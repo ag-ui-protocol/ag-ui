@@ -1,59 +1,49 @@
-<div align="center">
-  <h1>Agent User Interaction Protocol (AG-UI)</h1>
-  <p>
-    <a href="https://github.com/orgs/ag-ui-protocol/discussions">
-      <img src="https://img.shields.io/badge/discussions-join-brightgreen" alt="Discussions">
-    </a>
-  </p>
-  <p>
-    <b>AG-UI</b> standardizes how <b>front-end applications connect to AI agents</b> through an open protocol.
-  </p>
-</div>
+## What is AG-UI?
 
-## Build with Agent User Interaction Protocol
+AG-UI is an open, lightweight, event-based protocol that standardizes how AI agents connect to front-end applications.
 
-AG-UI has been integrated with several popular agent frameworks and frontend solutions:
+AG-UI helps developers build next-generation AI-native applications that need **real-time agent<>user interactivity**, **live state synchronization**, and **human-in-the-loop + human-on-the-loop collaboration**.
 
-### Agent Frameworks
+## AG-UI Specification
 
-- **[Mastra](https://mastra.ai)** - The TypeScript Agent Framework
+Learn more about the AG-UI protocol: [docs.ag-ui.com/introduction](https://docs.ag-ui.com/introduction)
 
-  - [Demo](https://demo-viewer-five.vercel.app)
-  - [Documentation](https://docs.copilotkit.ai/mastra)
-  - [Tutorial](https://todo)
+## Upcoming Events
 
-- **[LangGraph](https://www.langchain.com/langgraph)** - Balance agent control with agency
+- **Webinar:** Embed AI Agents in Your App using AG-UI  
+- **AG-UI Working Group:** Adding AG-UI support for a new agent framework
 
-  - [Demo](https://feature-viewer-langgraph.vercel.app/)
-  - [Documentation](https://docs.copilotkit.ai/langgraph)
-  - [Tutorial](https://todo)
+Video: 
 
-- **[CrewAI](https://crewai.com)** - Streamline workflows across industries with powerful AI agents.
 
-  - [Demo](https://todo)
-  - [Documentation](https://docs.copilotkit.ai/crewai)
-  - [Tutorial](https://todo)
+## Integrations
 
-- **[AG2](https://ag2.ai)** - The Open-Source AgentOS
-  - [Demo](https://todo)
-  - [Documentation](https://docs.copilotkit.ai/ag2)
-  - [Tutorial](https://todo)
+AG-UI works with several popular agent frameworks and frontend solutions:
 
-## Resources
+| Framework | Building Blocks Demo | Hello World App | Documentation |
+| --- | --- | --- | --- |
+| [LangGraph](https://www.langchain.com/langgraph) | [View Demo](https://feature-viewer-langgraph.vercel.app/) | [Live App](https://feature-viewer-langgraph.vercel.app/) | [Getting Started](https://docs.copilotkit.ai/coagents/quickstart/langgraph)  |
+| [Mastra](https://mastra.ai/) | [View Demo](https://demo-viewer-five.vercel.app/) | [Live App](https://demo-viewer-five.vercel.app/) | [Getting Started](https://docs.copilotkit.ai/getting-started) |
+| [CrewAI](https://crewai.com/) | Coming Soon | Coming Soon | [Getting Started](https://docs.copilotkit.ai/crewai-crews) |
+| [AG2](https://ag2.ai/) | Coming Soon | Coming Soon | Getting Started |
+| Agno | Work in Progress | Work in Progress | Coming Soon |
+| OpenAI | Work in Progress | Work in Progress | Coming Soon |
+| Google ADK | Work in Progress | Work in Progress | Coming Soon |
+| Bedrock | Work in Progress | Work in Progress | Coming Soon |
 
-AG-UI offers SDKs for TypeScript and Python, making it easy to integrate with your applications:
+## See AG-UI in Action
 
-### TypeScript SDK
+`/gif` <!-- Replace with actual gif or embed if available -->
 
-The [TypeScript SDK](https://github.com/ag-ui-protocol/typescript-sdk) provides everything you need to build AG-UI compatible applications and agents using TypeScript.
+## Client Libraries
 
-### Python SDK
+- **Official React client:** CopilotKit – [Documentation](http://copilotkit.ai/docs)
+- Want to build your own client? →  
 
-The [Python SDK](https://github.com/ag-ui-protocol/python-sdk) enables Python-based agent frameworks to communicate via the AG-UI protocol.
+## Build Your Own Integration
 
-## Getting Started with a new integration
+Learn how to build AG-UI hooks for a new framework: [Framework Integration Guide](http://agui.com/build-hooks)
 
-Choose the path that fits your needs:
+## Contributing
 
-- **[Build with AG-UI](https://github.com/ag-ui-protocol/specification/docs/quickstart/build)** - Implement AG-UI events directly in your agent framework
-- **[Connect to AG-UI](https://github.com/ag-ui-protocol/specification/docs/quickstart/connect)** - Connect AG-UI with existing protocols or custom solutions
+We 💜 contributions! Whether you're fixing bugs, improving documentation, or building demos — your contributions make AG-UI better.
