@@ -29,7 +29,7 @@ AG-UI works with several popular agent frameworks and frontend solutions:
 | Framework | Building Blocks Demo | Hello World App | Documentation |
 | --- | --- | --- | --- |
 | [LangGraph](https://www.langchain.com/langgraph) | [View Demo](https://feature-viewer-langgraph.vercel.app/) | [Live App](https://feature-viewer-langgraph.vercel.app/) | [Getting Started](https://docs.copilotkit.ai/coagents/quickstart/langgraph)  |
-| [Mastra](https://mastra.ai/) | [View Demo](https://demo-viewer-five.vercel.app/) | [Live App](https://demo-viewer-five.vercel.app/) | [Getting Started](https://docs.copilotkit.ai/getting-started) |
+| [Mastra](https://mastra.ai/) | [View Demo](https://demo-viewer-five.vercel.app/) | [Live App](https://demo-viewer-five.vercel.app/) | [Getting Started](https://mastra.ai/en/docs/frameworks/copilotkit) |
 | [CrewAI](https://crewai.com/) | Coming Soon | Coming Soon | [Getting Started](https://docs.copilotkit.ai/crewai-crews) |
 | [AG2](https://ag2.ai/) | Coming Soon | Coming Soon | Getting Started |
 | Agno | Work in Progress | Work in Progress | Coming Soon |
