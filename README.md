@@ -1,8 +1,12 @@
-## What is AG-UI?
+## Introducing AG-UI
 
 AG-UI is an open, lightweight, event-based protocol that standardizes how AI agents connect to front-end applications.
 
 AG-UI helps developers build next-generation AI-native applications that need **real-time agent<>user interactivity**, **live state synchronization**, and **human-in-the-loop + human-on-the-loop collaboration**.
+
+![AG-UI protocol](https://github.com/user-attachments/assets/c4a4b9ff-9c84-46ad-89dc-06fdc8bda45b)
+
+
 
 ## AG-UI Specification
 
