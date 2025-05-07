@@ -17,8 +17,9 @@ Learn more about the AG-UI protocol: [docs.ag-ui.com/introduction](https://docs.
 - **Webinar:** Embed AI Agents in Your App using AG-UI  
 - **AG-UI Working Group:** Adding AG-UI support for a new agent framework
 
-![Test GIF](https://cdn.copilotkit.ai/blog/ag-ui-repo-assetts/agentic-chat.gif)
 
+
+https://github.com/user-attachments/assets/6ff5ab5d-1b22-44e4-ac4f-020c868c01ea
 
 
 
