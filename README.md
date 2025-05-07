@@ -14,8 +14,7 @@ Learn more about the AG-UI protocol: [docs.ag-ui.com/introduction](https://docs.
 
 ## Upcoming Events
 
-- **Webinar:** Embed AI Agents in Your App using AG-UI  
-- **AG-UI Working Group:** Adding AG-UI support for a new agent framework
+- **Webinar:** [Build your first fullstack agent with Mastra+CopilotKit🪁](https://lu.ma/yurxbj2m?tk=yXQfDc)
 
 
 
@@ -40,12 +39,12 @@ AG-UI works with several popular agent frameworks and frontend solutions:
 
 ## See AG-UI in Action
 
-`/gif` <!-- Replace with actual gif or embed if available -->
+![agentic-chat2](https://github.com/user-attachments/assets/06e936b0-5587-4614-9b87-5a52fcb36bfd)
+
 
 ## Client Libraries
 
 - **Official React client:** CopilotKit – [Documentation](http://copilotkit.ai/docs)
-- Want to build your own client? →  
 
 ## Build Your Own Integration
 
