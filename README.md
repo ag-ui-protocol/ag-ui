@@ -1,59 +1,55 @@
-<div align="center">
-  <h1>Agent User Interaction Protocol (AG-UI)</h1>
-  <p>
-    <a href="https://github.com/orgs/ag-ui-protocol/discussions">
-      <img src="https://img.shields.io/badge/discussions-join-brightgreen" alt="Discussions">
-    </a>
-  </p>
-  <p>
-    <b>AG-UI</b> standardizes how <b>front-end applications connect to AI agents</b> through an open protocol.
-  </p>
-</div>
+## Introducing AG-UI
 
-## Build with Agent User Interaction Protocol
+AG-UI is an open, lightweight, event-based protocol that standardizes how AI agents connect to front-end applications.
 
-AG-UI has been integrated with several popular agent frameworks and frontend solutions:
+AG-UI helps developers build next-generation AI-native applications that need **real-time agent<>user interactivity**, **live state synchronization**, and **human-in-the-loop + human-on-the-loop collaboration**.
 
-### Agent Frameworks
+![AG-UI protocol](https://github.com/user-attachments/assets/c4a4b9ff-9c84-46ad-89dc-06fdc8bda45b)
 
-- **[Mastra](https://mastra.ai)** - The TypeScript Agent Framework
 
-  - [Demo](https://demo-viewer-five.vercel.app)
-  - [Documentation](https://docs.copilotkit.ai/mastra)
-  - [Tutorial](https://todo)
 
-- **[LangGraph](https://www.langchain.com/langgraph)** - Balance agent control with agency
+## AG-UI Specification
 
-  - [Demo](https://feature-viewer-langgraph.vercel.app/)
-  - [Documentation](https://docs.copilotkit.ai/langgraph)
-  - [Tutorial](https://todo)
+Learn more about the AG-UI protocol: [docs.ag-ui.com/introduction](https://docs.ag-ui.com/introduction)
 
-- **[CrewAI](https://crewai.com)** - Streamline workflows across industries with powerful AI agents.
+## Upcoming Events
 
-  - [Demo](https://todo)
-  - [Documentation](https://docs.copilotkit.ai/crewai)
-  - [Tutorial](https://todo)
+- **Webinar:** [Build your first fullstack agent with Mastra+CopilotKit🪁](https://lu.ma/yurxbj2m?tk=yXQfDc)
 
-- **[AG2](https://ag2.ai)** - The Open-Source AgentOS
-  - [Demo](https://todo)
-  - [Documentation](https://docs.copilotkit.ai/ag2)
-  - [Tutorial](https://todo)
 
-## Resources
 
-AG-UI offers SDKs for TypeScript and Python, making it easy to integrate with your applications:
+https://github.com/user-attachments/assets/6ff5ab5d-1b22-44e4-ac4f-020c868c01ea
 
-### TypeScript SDK
 
-The [TypeScript SDK](https://github.com/ag-ui-protocol/typescript-sdk) provides everything you need to build AG-UI compatible applications and agents using TypeScript.
 
-### Python SDK
+## Integrations
 
-The [Python SDK](https://github.com/ag-ui-protocol/python-sdk) enables Python-based agent frameworks to communicate via the AG-UI protocol.
+AG-UI works with several popular agent frameworks and frontend solutions:
 
-## Getting Started with a new integration
+| Framework | Building Blocks Demo | Hello World App | Documentation |
+| --- | --- | --- | --- |
+| [LangGraph](https://www.langchain.com/langgraph) | [View Demo](https://feature-viewer-langgraph.vercel.app/) | [Live App](https://feature-viewer-langgraph.vercel.app/) | [Getting Started](https://docs.copilotkit.ai/coagents/quickstart/langgraph)  |
+| [Mastra](https://mastra.ai/) | [View Demo](https://demo-viewer-five.vercel.app/) | [Live App](https://demo-viewer-five.vercel.app/) | [Getting Started](https://mastra.ai/en/docs/frameworks/copilotkit) |
+| [CrewAI](https://crewai.com/) | [View Demo](https://www.copilotkit.ai/ag-ui/) | [Live App](https://demo-viewer-five.vercel.app/) | [Getting Started](https://docs.copilotkit.ai/crewai-crews) |
+| [AG2](https://ag2.ai/) | Coming Soon | Coming Soon | Getting Started |
+| Agno | Work in Progress | Work in Progress | Coming Soon |
+| OpenAI | Work in Progress | Work in Progress | Coming Soon |
+| Google ADK | Work in Progress | Work in Progress | Coming Soon |
+| Bedrock | Work in Progress | Work in Progress | Coming Soon |
 
-Choose the path that fits your needs:
+## See AG-UI in Action
 
-- **[Build with AG-UI](https://github.com/ag-ui-protocol/specification/docs/quickstart/build)** - Implement AG-UI events directly in your agent framework
-- **[Connect to AG-UI](https://github.com/ag-ui-protocol/specification/docs/quickstart/connect)** - Connect AG-UI with existing protocols or custom solutions
+![agentic-chat2](https://github.com/user-attachments/assets/06e936b0-5587-4614-9b87-5a52fcb36bfd)
+
+
+## Client Libraries
+
+- **Official React client:** CopilotKit – [Documentation](http://copilotkit.ai/docs)
+
+## Build Your Own Integration
+
+Learn how to build AG-UI hooks for a new framework: [Framework Integration Guide](http://agui.com/build-hooks)
+
+## Contributing
+
+We 💜 contributions! Whether you're fixing bugs, improving documentation, or building demos — your contributions make AG-UI better.
