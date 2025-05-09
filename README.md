@@ -43,23 +43,23 @@ AG-UI works with several popular agent frameworks and frontend solutions:
 | [Agno](https://github.com/agno-agi/agno) | 🛠️ In Progress | – |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🤝 Contribution Wanted | – |
 | [Google ADK](https://google.github.io/adk-docs/get-started/) | 🤝 Contribution Wanted | – |
+| [Vercel AI SDK](https://github.com/vercel/ai) | 🤝 Contribution Wanted | – |
 | [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/) | 🤝 Contribution Wanted | – |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/) | 🤝 Contribution Wanted | – |
 
 
 ## Features
 
-AG-UI-compatible agents securely and efficiently implement support for:
+AG-UI-compatible agents **securely** and **efficiently** implement support for:
 - Agentic chat (with support for streaming)
 - Generative UI
-- Structured messages (with delta streaming)
-- Agent<>App state synchronization
+- Structured messages with delta streaming (e.g. for thinking steps)
+- Agent<>App bi-directional state synchronization
 - Realtime context encrichment
-- And more.
 
-[Learn more at ag-ui.com](https://ag-ui.com)
+And more. [Learn more at ag-ui.com](https://ag-ui.com)
 
-## AG-UI Showcase: Chat + App
+## AG-UI Showcase: The AG-UI Dojo (Building-Blocks Viewer)
 
 
 https://github.com/user-attachments/assets/419e4b8c-09f1-4cf0-b76b-339c7a207584
