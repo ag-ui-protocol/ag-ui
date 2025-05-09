@@ -40,10 +40,11 @@ AG-UI works with several popular agent frameworks and frontend solutions:
 | [Mastra](https://mastra.ai/) | ✅ Supported | ➡️ [Live Demo / Getting Started Docs](https://demo-viewer-five.vercel.app/) |
 | [CrewAI](https://crewai.com/) | ✅ Supported | ➡️ [Live Demo / Getting Started Docs](https://docs.copilotkit.ai/crewai-crews) |
 | [AG2](https://ag2.ai/) | ✅ Supported | ➡️ [Live Demo / Getting Started Docs](https://feature-viewer-ag2.vercel.app/) |
-| Agno | 🛠️ In Progress | Work in Progress |
-| OpenAI | 🤝 Contribution Wanted | Work in Progress |
-| Google ADK | 🤝 Contribution Wanted | Work in Progress |
-| Bedrock | 🤝 Contribution Wanted | Work in Progress |
+| [Agno](https://github.com/agno-agi/agno) | 🛠️ In Progress | – |
+| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🤝 Contribution Wanted | – |
+| [Google ADK](https://google.github.io/adk-docs/get-started/) | 🤝 Contribution Wanted | – |
+| [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/) | 🤝 Contribution Wanted | – |
+| [Cloudflare Agents](https://developers.cloudflare.com/agents/) | 🤝 Contribution Wanted | – |
 
 
 ## Features
@@ -58,21 +59,19 @@ AG-UI-compatible agents securely and efficiently implement support for:
 
 [Learn more at ag-ui.com](https://ag-ui.com)
 
+## AG-UI Showcase: Chat + App
+
+
+https://github.com/user-attachments/assets/419e4b8c-09f1-4cf0-b76b-339c7a207584
 
 ## Client Libraries
 
 - **React client:** CopilotKit – [Documentation](http://copilotkit.ai/docs)
 - WhatsApp, WeChat, and RCS client (WIP, in partnership with the AWS SNS Team)
 
-
 ## Build New AG-UI Framework Integrations
 
 Learn how to build AG-UI hooks for a new framework: [Framework Integration Guide](http://agui.com/build-hooks)
-
-## AG-UI Showcase: Chat + App
-
-https://github.com/user-attachments/assets/419e4b8c-09f1-4cf0-b76b-339c7a207584
-
 
 
 ## Community
