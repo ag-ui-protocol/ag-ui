@@ -35,7 +35,8 @@ AG-UI also includes a reference HTTP protocol implementation & an associated ref
 
 ## Build AG-UI-Powered Applications
 
-
+Play with this hello-world app here:
+https://agui-demo.vercel.app/
 
 https://github.com/user-attachments/assets/18c03330-1ebc-4863-b2b8-cc6c3a4c7bae
 
@@ -46,16 +47,17 @@ AG-UI works with several popular agent frameworks and frontend solutions:
 
 | Framework | Status | AG-UI Resources |
 |-----------|--------|-----------------|
-| [LangGraph](https://www.langchain.com/langgraph) | ✅ Supported | ➡️ [Live Demo / Getting Started Docs](https://feature-viewer-langgraph.vercel.app/) |
-| [Mastra](https://mastra.ai/) | ✅ Supported | ➡️ [Live Demo / Getting Started Docs](https://demo-viewer-five.vercel.app/) |
-| [CrewAI](https://crewai.com/) | ✅ Supported | ➡️ [Live Demo / Getting Started Docs](https://docs.copilotkit.ai/crewai-crews) |
-| [AG2](https://ag2.ai/) | ✅ Supported | ➡️ [Live Demo / Getting Started Docs](https://feature-viewer-ag2.vercel.app/) |
+| [LangGraph](https://www.langchain.com/langgraph) | ✅ Supported | ➡️ [Live Demo / Getting Started Docs](https://v0-langgraph-land.vercel.app/) |
+| [Mastra](https://mastra.ai/) | ✅ Supported | ➡️ [Live Demo / Getting Started Docs](https://v0-mastra-land.vercel.app/) |
+| [CrewAI](https://crewai.com/) | ✅ Supported | ➡️ [Live Demo / Getting Started Docs](https://v0-crew-land.vercel.app/) |
+| [AG2](https://ag2.ai/) | ✅ Supported | ➡️ [Live Demo / Getting Started Docs](https://v0-ag2-land.vercel.app/) |
 | [Agno](https://github.com/agno-agi/agno) | 🛠️ In Progress | – |
-| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🤝 Contribution Wanted | – |
-| [Google ADK](https://google.github.io/adk-docs/get-started/) | 🤝 Contribution Wanted | – |
-| [Vercel AI SDK](https://github.com/vercel/ai) | 🤝 Contribution Wanted | – |
-| [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/) | 🤝 Contribution Wanted | – |
-| [Cloudflare Agents](https://developers.cloudflare.com/agents/) | 🤝 Contribution Wanted | – |
+| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 💡 Open to Contributions | – |
+| [Google ADK](https://google.github.io/adk-docs/get-started/) | 💡 Open to Contributions | – |
+| [Vercel AI SDK](https://github.com/vercel/ai) | 💡 Open to Contributions | – |
+| [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/) | 💡 Open to Contributions | – |
+| [Cloudflare Agents](https://developers.cloudflare.com/agents/) | 💡 Open to Contributions | – |
+
 
 
 ## Features
