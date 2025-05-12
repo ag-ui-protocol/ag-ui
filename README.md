@@ -3,7 +3,7 @@
 [![Bring Agents Into Apps with AG-UI – May 16](https://img.shields.io/badge/Bring%20Agents%20Into%20Apps%20with%20AG--UI%E2%80%94May%2016-blue?style=flat-square)](https://lu.ma/c58yhgij)
 
 
-# <img src="https://github.com/user-attachments/assets/ebc0dd08-8732-4519-9b6c-452ce54d8058" alt="ag-ui Logo" height="42px" /> AG-UI
+# <img src="https://github.com/user-attachments/assets/ebc0dd08-8732-4519-9b6c-452ce54d8058" alt="ag-ui Logo" height="42px" /> AG-UI: The Agent-User Interaction Protocol
 
 AG-UI is an open, lightweight, event-based protocol that standardizes **how AI agents connect to front-end applications**.
 
