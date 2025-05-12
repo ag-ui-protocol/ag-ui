@@ -6,9 +6,14 @@ AG-UI is an open, lightweight, event-based protocol that standardizes **how AI a
 
 ---
 
-[![Event](https://img.shields.io/badge/Event-Build%20your%20first%20fullstack%20agent%20🚀-blue?style=for-the-badge)](https://lu.ma/yurxbj2m)
+[![Friday May 16,  9AM PT • lu.ma/c58yhgij](https://img.shields.io/badge/Friday%20May%2016%2C%20%209AM%20PT%20%E2%80%A2%20lu.ma%2Fc58yhgij-AG--UI%3A%20How%20to%20Bring%20AI%20Agents%20Into%20Frontend%20Applications-blue?style=for-the-badge)](https://lu.ma/c58yhgij)
 
-<img src="https://github.com/user-attachments/assets/c4a4b9ff-9c84-46ad-89dc-06fdc8bda45b" alt="ag-ui Logo" height="300px" />
+[![Friday May 16, 10AM PT • lu.ma/8supz1j0](https://img.shields.io/badge/Friday%20May%2016%2C%2010AM%20PT%20%E2%80%A2%20lu.ma%2F8supz1j0-AG--UI%20Protocol%20Working%20Group%20%231-blue?style=for-the-badge)](https://lu.ma/8supz1j0)
+
+
+
+<img src="https://github.com/user-attachments/assets/215227a5-9698-4d97-a46e-8904b95bfa08" alt="ag-ui Logo" height="300px" />
+
 
 
 ## AG-UI Specification
@@ -32,7 +37,12 @@ AG-UI also includes a reference HTTP protocol implementation & an associated ref
 
 ## Build AG-UI-Powered Applications
 
-https://github.com/user-attachments/assets/419e4b8c-09f1-4cf0-b76b-339c7a207584
+
+
+https://github.com/user-attachments/assets/18c03330-1ebc-4863-b2b8-cc6c3a4c7bae
+
+
+
 
 AG-UI works with several popular agent frameworks and frontend solutions:
 
@@ -53,18 +63,28 @@ AG-UI works with several popular agent frameworks and frontend solutions:
 ## Features
 
 AG-UI-compatible agents **securely** and **efficiently** implement support for:
-- Agentic chat (with support for streaming)
-- Generative UI
-- Structured messages with delta streaming (e.g. for thinking steps)
-- Agent<>App bi-directional state synchronization
-- Realtime context encrichment
+
+- ✅ Agentic chat (with support for streaming)
+- ✅ Bi-directional (agent<>app) state synchronization - for use inside & outside the chat
+- ✅ Generative UI
+- ✅ Structured messages with delta streaming (e.g. for thinking steps)  
+- ✅ Realtime context enrichment
+- ✅ Frontend tool calls
+- ✅ Human in the Loop 
+- ✅ Human on the Loop 
 
 And more. [Learn more at ag-ui.com](https://ag-ui.com)
 
 ## AG-UI Showcase: The AG-UI Dojo (Building-Blocks Viewer)
 
+The [ag-ui dojo](https://feature-viewer-langgraph.vercel.app/) showcases many of the building blocks that ag-ui supports.
 
-https://github.com/user-attachments/assets/419e4b8c-09f1-4cf0-b76b-339c7a207584
+The building blocks are designed to be simple and focused -- between 50-200 lines of code.
+
+
+https://github.com/user-attachments/assets/a67d3d54-36b2-4c7a-ac69-a0ca01365d5b
+
+
 
 ## Client Libraries
 
