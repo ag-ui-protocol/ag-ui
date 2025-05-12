@@ -30,7 +30,15 @@ It also ships with a **reference HTTP implementation** and **default connector**
 [Learn more at ag-ui.com](https://ag-ui.com)
 
 
+## Why AG-UI?
+AG-UI was developed based on real-world requirements and practical experience building in-app agent interactions.
 
+It was shaped through:
+- Working with users in the CopilotKit community to understand the needs of agent-based interactions in applications
+- Collaborating closely with leading agent frameworks (LangGraph, Mastra, CrewAI, AG2, etc.)
+- Extracting common infrastructure patterns that emerged across varied frameworks into a standardized, open protocol
+
+This practical approach has helped ensure that AG-UI is both flexible and immediately applicable in real-world use cases.
 
 
 ## Build AG-UI-Powered Applications
@@ -38,10 +46,12 @@ It also ships with a **reference HTTP implementation** and **default connector**
 Play with this hello-world app here:
 https://agui-demo.vercel.app/
 
+Video:
+
 https://github.com/user-attachments/assets/18c03330-1ebc-4863-b2b8-cc6c3a4c7bae
 
 
-
+## AG-UI Compatible Agent Frameworks
 
 AG-UI works with several popular agent frameworks and frontend solutions:
 
