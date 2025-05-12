@@ -16,7 +16,8 @@ AG-UI is an open, lightweight, event-based protocol that standardizes **how AI a
 
 ## AG-UI Specification
 
-AG-UI is an open, lightweight, event-based, maximally-accomodating protocol for facilitating agent-human interaction. <br/>Its operation is simple:
+AG-UI is an open, lightweight, event-based protocol for agent-human interaction.<br/> 
+It’s designed to be simple, flexible, and easy to integrate:
 * During agent executions, agent backends **emit events _compatible_ with one of AG-UI's 16 standard event types**
 * Agent backends can **accept one of a few simple AG-UI compatible inputs** as arguments
 
@@ -61,16 +62,15 @@ AG-UI works with several popular agent frameworks and frontend solutions:
 
 ## Features
 
-AG-UI-compatible agents **securely** and **efficiently** implement support for:
+AG-UI-compatible agents **securely** and **efficiently** support:
 
-- ✅ Agentic chat (with support for streaming)
-- ✅ Bi-directional (agent<>app) state synchronization - for use inside & outside the chat
-- ✅ Generative UI
-- ✅ Structured messages with delta streaming (e.g. for thinking steps)  
-- ✅ Realtime context enrichment
-- ✅ Frontend tool calls
-- ✅ Human in the Loop 
-- ✅ Human on the Loop 
+- 💬 Agentic chat with real-time streaming
+- 🔄 Bi-directional state sync (in and out of chat)
+- 🧩 Generative UI and structured messages (with delta streaming)
+- 🧠 Realtime context enrichment
+- 🛠️ Frontend tool use (tool calls)
+- 🧑‍💻 Human-in-the-loop and human-on-the-loop collaboration
+
 
 And more. [Learn more at ag-ui.com](https://ag-ui.com)
 
@@ -87,8 +87,11 @@ https://github.com/user-attachments/assets/a67d3d54-36b2-4c7a-ac69-a0ca01365d5b
 
 ## Client Libraries
 
-- **React client:** CopilotKit – [Documentation](http://copilotkit.ai/docs)
-- WhatsApp, WeChat, and RCS client (WIP, in partnership with the AWS SNS Team)
+AG-UI provides ready-to-use client libraries for building connected experiences:
+
+- **React client** via [CopilotKit](http://copilotkit.ai/docs)
+- Messaging clients (WhatsApp, WeChat, RCS) — WIP in collaboration with AWS SNS
+
 
 ## Build New AG-UI Framework Integrations
 
