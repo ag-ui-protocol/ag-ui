@@ -8,7 +8,7 @@
 AG-UI is an open, lightweight, event-based protocol that standardizes **how AI agents connect to front-end applications**.
 
 
-<img src="https://github.com/user-attachments/assets/215227a5-9698-4d97-a46e-8904b95bfa08" alt="ag-ui Logo" height="300px" />
+<img src="https://github.com/user-attachments/assets/215227a5-9698-4d97-a46e-8904b95bfa08" alt="ag-ui Logo" style="max-width: 100%; height: auto;" />
 
 
 
