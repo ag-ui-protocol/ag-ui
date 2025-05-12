@@ -1,18 +1,16 @@
 
+[![AG-UI Working Group #1 – May 16](https://img.shields.io/badge/AG--UI%20Working%20Group%20%231%E2%80%94May%2016-blue?style=flat-square)](https://lu.ma/8supz1j0)
+[![Bring Agents Into Apps with AG-UI – May 16](https://img.shields.io/badge/Bring%20Agents%20Into%20Apps%20with%20AG--UI%E2%80%94May%2016-blue?style=flat-square)](https://lu.ma/c58yhgij)
+
 
 # <img src="https://github.com/user-attachments/assets/ebc0dd08-8732-4519-9b6c-452ce54d8058" alt="ag-ui Logo" height="42px" /> AG-UI
 
 AG-UI is an open, lightweight, event-based protocol that standardizes **how AI agents connect to front-end applications**.
 
----
-
-[![Friday May 16,  9AM PT • lu.ma/c58yhgij](https://img.shields.io/badge/Friday%20May%2016%2C%20%209AM%20PT%20%E2%80%A2%20lu.ma%2Fc58yhgij-AG--UI%3A%20How%20to%20Bring%20AI%20Agents%20Into%20Frontend%20Applications-blue?style=for-the-badge)](https://lu.ma/c58yhgij)
-
-[![Friday May 16, 10AM PT • lu.ma/8supz1j0](https://img.shields.io/badge/Friday%20May%2016%2C%2010AM%20PT%20%E2%80%A2%20lu.ma%2F8supz1j0-AG--UI%20Protocol%20Working%20Group%20%231-blue?style=for-the-badge)](https://lu.ma/8supz1j0)
-
-
 
 <img src="https://github.com/user-attachments/assets/215227a5-9698-4d97-a46e-8904b95bfa08" alt="ag-ui Logo" height="300px" />
+
+
 
 
 
@@ -98,8 +96,16 @@ Learn how to build AG-UI hooks for a new framework: [Framework Integration Guide
 
 ## Community
 
-- **Webinar:** [Build your first fullstack agent with Mastra+CopilotKit🪁](https://lu.ma/yurxbj2m?tk=yXQfDc)
+### Upcoming Events
 
+- **[AG-UI: How to Bring AI Agents Into Frontend Applications](https://lu.ma/c58yhgij)**  
+  📅 Friday, May 16, 9:00 AM PT  
+  🔗 [lu.ma/c58yhgij](https://lu.ma/c58yhgij)
+
+- **[AG-UI Protocol Working Group #1](https://lu.ma/8supz1j0)**  
+  📅 Friday, May 16, 10:00 AM PT  
+  🔗 [lu.ma/8supz1j0](https://lu.ma/8supz1j0)
+  
 ## Contributing
 
 We 💜 contributions! Whether you're fixing bugs, improving documentation, or building demos — your contributions make AG-UI better.
