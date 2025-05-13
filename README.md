@@ -7,6 +7,7 @@
 
 AG-UI is an open, lightweight, event-based protocol that standardizes **how AI agents connect to front-end applications**.
 
+➡️ See demos of AG-UI-enabled applications [here](https://v0-ag-ui-landing-page.vercel.app/)
 
 <img src="https://github.com/user-attachments/assets/215227a5-9698-4d97-a46e-8904b95bfa08" alt="ag-ui Logo" style="max-width: 100%; height: auto;" />
 
