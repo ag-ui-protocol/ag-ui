@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+import "google/protobuf/struct.proto";
+
+package ag_ui;
+
+enum JsonPatchOperationType {
+  ADD = 0;
+  REMOVE = 1;
+  REPLACE = 2;
+  MOVE = 3;
+  COPY = 4;
+  TEST = 5;
+}
+
+message JsonPatchOperation {
+  JsonPatchOperationType op = 1;
+  string path = 2;
+  optional string from = 3;
+  optional google.protobuf.Value value = 4;
+}

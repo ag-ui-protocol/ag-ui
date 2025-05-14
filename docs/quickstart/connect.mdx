@@ -1,0 +1,291 @@
+---
+title: "Connect to AG-UI"
+description: "Connect AG-UI with existing protocols or custom solutions"
+---
+
+In this tutorial, you'll learn how to create an agent that connects to
+**OpenAI's API** and demonstrates how the Agent User Interaction Protocol
+(AG-UI) can integrate seamlessly with any modern AI service. Let's get started.
+
+## Prerequisites
+
+Make sure to have the following installed:
+
+- [Node.js](https://nodejs.org/) (v16 or later)
+- [npm](https://www.npmjs.com/) or [yarn](https://yarnpkg.com/)
+- An OpenAI API key
+
+## Setting up OpenAI access
+
+Before we start coding, make sure you have an OpenAI API key. You can get one by
+signing up at [OpenAI's platform](https://platform.openai.com/).
+
+Once you have your API key, set it as an environment variable:
+
+```bash
+# Set your OpenAI API key
+export OPENAI_API_KEY=your-api-key-here
+```
+
+## Bridge OpenAI with AG-UI
+
+Now let's demonstrate how AG-UI can connect to a modern AI service by
+implementing a bridge to OpenAI's API.
+
+### Project Setup
+
+Let's create a new project for our AG-UI bridge:
+
+```bash
+# Create a directory for your project
+mkdir awp-openai && cd awp-openai
+npm init -y
+npm install @ag-ui/client openai rxjs
+npm install -D typescript ts-node @types/node
+npx tsc --init --target ES2020 --module CommonJS --strict --esModuleInterop --skipLibCheck --outDir dist --rootDir src
+mkdir src
+```
+
+### AG-UI Recap
+
+The Agent User Interaction Protocol is a framework that lets you connect agents
+to clients in a structured, event-driven way. Agents implement the
+`AbstractAgent` class from `@ag-ui/client` and emit events for each piece of
+content, progress, etc.
+
+### OpenAIAgent
+
+We'll create a special agent class, `OpenAIAgent`, which:
+
+1. Connects to OpenAI's API using their official Node.js SDK.
+2. Sends the user's messages to OpenAI.
+3. Streams the response back, emitting AG-UI events for each chunk of text.
+
+Create a file called `src/openai-agent.ts`:
+
+```typescript
+// src/openai-agent.ts
+import {
+  AbstractAgent,
+  RunAgent,
+  RunAgentInput,
+  EventType,
+  BaseEvent,
+  RunStartedEventSchema,
+  TextMessageStartEventSchema,
+  TextMessageContentEventSchema,
+  TextMessageEndEventSchema,
+  RunFinishedEventSchema,
+  Message,
+} from "@ag-ui/client"
+import { Observable } from "rxjs"
+import { OpenAI } from "openai"
+
+export class OpenAIAgent extends AbstractAgent {
+  private client: OpenAI
+
+  constructor(apiKey?: string) {
+    super()
+    this.client = new OpenAI({ apiKey: apiKey || process.env.OPENAI_API_KEY })
+  }
+
+  protected run(input: RunAgentInput): RunAgent {
+    return () => {
+      return new Observable<BaseEvent>((observer) => {
+        // 1) Emit RUN_STARTED
+        observer.next(
+          RunStartedEventSchema.parse({
+            type: EventType.RUN_STARTED,
+            threadId: input.threadId,
+            runId: input.runId,
+          })
+        )
+
+        // Convert AG-UI messages to OpenAI format
+        const openaiMessages = input.messages
+          .filter((msg: Message) =>
+            ["user", "system", "assistant"].includes(msg.role)
+          )
+          .map((msg: Message) => ({
+            role: msg.role as "user" | "system" | "assistant",
+            content: msg.content || "",
+          }))
+
+        // Generate a message ID for the assistant's response
+        const messageId = Date.now().toString()
+
+        // Emit message start event
+        observer.next(
+          TextMessageStartEventSchema.parse({
+            type: EventType.TEXT_MESSAGE_START,
+            messageId,
+            role: "assistant",
+          })
+        )
+
+        // Create a streaming completion request
+        this.client.chat.completions
+          .create({
+            model: "gpt-3.5-turbo",
+            messages: openaiMessages,
+            stream: true,
+          })
+          .then(async (stream) => {
+            try {
+              // Process the streaming response
+              for await (const chunk of stream) {
+                if (chunk.choices[0]?.delta?.content) {
+                  const content = chunk.choices[0].delta.content
+                  observer.next(
+                    TextMessageContentEventSchema.parse({
+                      type: EventType.TEXT_MESSAGE_CONTENT,
+                      messageId,
+                      delta: content,
+                    })
+                  )
+                }
+              }
+
+              // Emit message end event
+              observer.next(
+                TextMessageEndEventSchema.parse({
+                  type: EventType.TEXT_MESSAGE_END,
+                  messageId,
+                })
+              )
+
+              // Emit RUN_FINISHED and complete
+              observer.next(
+                RunFinishedEventSchema.parse({
+                  type: EventType.RUN_FINISHED,
+                  threadId: input.threadId,
+                  runId: input.runId,
+                })
+              )
+
+              observer.complete()
+            } catch (error) {
+              observer.error(error)
+            }
+          })
+          .catch((error) => {
+            observer.error(error)
+          })
+
+        // Return a cleanup function
+        return () => {
+          // Nothing to clean up for OpenAI
+        }
+      })
+    }
+  }
+}
+```
+
+### Explanation
+
+1. **API Connection**: We create an OpenAI client using the official SDK and
+   connect to OpenAI's API using your API key.
+
+2. **Message Formatting**: We convert AG-UI messages to the format expected by
+   OpenAI.
+
+3. **Emitting Events**:
+
+   - `RUN_STARTED` means the agent started processing the request.
+   - `TEXT_MESSAGE_START` / `TEXT_MESSAGE_CONTENT` / `TEXT_MESSAGE_END` together
+     send the agent's textual response to the AG-UI pipeline.
+   - `RUN_FINISHED` means this run is over.
+
+4. **Stream Processing**:
+   - We create a streaming completion request to OpenAI.
+   - For each chunk of text received, we emit a `TEXT_MESSAGE_CONTENT` event.
+   - After all chunks are processed, we finalize the message and run.
+
+## Putting It All Together
+
+Create a main entry point file `src/index.ts` that sets up our AG-UI agent:
+
+```typescript
+// src/index.ts
+import { OpenAIAgent } from "./openai-agent"
+
+// Create an instance of our agent
+const openAIAgent = new OpenAIAgent()
+
+// Example: Set up some initial messages
+openAIAgent.messages = [
+  {
+    id: "1",
+    role: "user",
+    content: "What can you tell me about the Agent User Interaction Protocol?",
+  },
+]
+
+// Make a request to OpenAI through AG-UI
+const run = openAIAgent.runAgent({
+  runId: "run1",
+})
+
+// Subscribe to the observable to see events
+run.subscribe({
+  next: (event) => console.log("Event:", event),
+  error: (err) => console.error("Error:", err),
+  complete: () => console.log("Stream complete"),
+})
+```
+
+Run the application:
+
+```bash
+npx ts-node src/index.ts
+```
+
+## Bridging AG-UI to Any Protocol
+
+This example demonstrates how to bridge AG-UI with an external AI service. The
+key components are:
+
+1. **AG-UI Agent Implementation**: Create a class that extends `AbstractAgent`
+   and implements the `run` method.
+2. **API Integration**: Connect to an external API (in this case, OpenAI).
+3. **Message Formatting**: Convert between AG-UI's message format and the API's
+   expected format.
+4. **Event Streaming**: Stream the API responses back as AG-UI events.
+
+You can apply this pattern to connect AG-UI to virtually any AI service or
+protocol:
+
+- HTTP/REST APIs
+- WebSockets
+- MQTT for IoT devices
+- any other protocol
+
+By following this pattern of creating protocol adapters around your AG-UI
+agents, you can make your AI agents available through any AI service while
+maintaining a consistent agent implementation.
+
+## Conclusion
+
+Congratulations! You've created an agent that connects to OpenAI's API and
+bridges it to the Agent User Interaction Protocol. This tutorial demonstrates
+how easy it is to adopt AG-UI with any modern AI service—providing a consistent,
+streaming interface for your applications regardless of the backend provider.
+
+## Connect Your Agent to a Frontend
+
+Now that you've built your AG-UI compatible agent, it's ready to be connected to
+any frontend that supports the AG-UI protocol. One such frontend is
+[CopilotKit](https://docs.copilotkit.ai), which provides a rich set of UI
+components designed to work seamlessly with AG-UI agents.
+
+To connect your agent to CopilotKit:
+
+1. Follow the [CopilotKit documentation](https://docs.copilotkit.ai) to set up
+   your frontend
+2. Configure CopilotKit to connect to your agent using the AG-UI protocol
+3. Enjoy a fully functioning chat UI with streaming responses!
+
+With this setup, you can focus on building powerful agent capabilities while
+leveraging existing UI components that understand the AG-UI protocol,
+significantly reducing development time and effort.

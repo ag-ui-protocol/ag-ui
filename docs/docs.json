@@ -1,0 +1,136 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "willow",
+  "name": "Agent User Interaction Protocol",
+  "colors": {
+    "primary": "#09090b",
+    "light": "#FAFAFA",
+    "dark": "#09090b"
+  },
+  "favicon": "/favicon.svg",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              {
+                "group": "Quickstart",
+                "pages": ["quickstart/build", "quickstart/connect"]
+              },
+              "integrations"
+            ]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/events",
+              "concepts/agents",
+              "concepts/messages",
+              "concepts/state",
+              "concepts/tools"
+            ]
+          },
+          {
+            "group": "Tutorials",
+            "pages": ["tutorials/cursor", "tutorials/debugging"]
+          },
+          {
+            "group": "Development",
+            "pages": ["development/updates", "development/roadmap", "development/contributing"]
+          }
+        ]
+      },
+      {
+        "tab": "SDKs",
+        "icon": "book-open",
+        "groups": [
+          {
+            "group": "TypeScript",
+            "pages": [
+              {
+                "group": "@ag-ui/core",
+                "pages": ["sdk/js/core/overview", "sdk/js/core/types", "sdk/js/core/events"]
+              },
+              {
+                "group": "@ag-ui/client",
+                "pages": ["sdk/js/client/overview"]
+              },
+              "sdk/js/encoder",
+              "sdk/js/proto"
+            ]
+          },
+          {
+            "group": "Python",
+            "pages": [
+              {
+                "group": "ag_ui.core",
+                "pages": [
+                  "sdk/python/core/overview",
+                  "sdk/python/core/types",
+                  "sdk/python/core/events"
+                ]
+              },
+              {
+                "group": "ag_ui.encoder",
+                "pages": ["sdk/python/encoder/overview"]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "TypeScript SDK",
+          "href": "https://docs.ag-ui.com/sdk/js/core/overview",
+          "icon": "square-js"
+        },
+        {
+          "anchor": "Python SDK",
+          "href": "https://docs.ag-ui.com/sdk/python/core/overview",
+          "icon": "python"
+        },
+        {
+          "anchor": "Specification",
+          "href": "https://spec.ag-ui.com",
+          "icon": "book"
+        }
+      ]
+    }
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "navbar": {
+    "links": [],
+    "primary": {
+      "type": "button",
+      "label": "GitHub",
+      "href": "https://github.com/ag-ui-protocol"
+    }
+  },
+  "seo": {
+    "metatags": {
+      "og:image": "https://raw.githubusercontent.com/ag-ui-protocol/docs/logo/light.png"
+    },
+    "indexing": "navigable"
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/ag-ui-protocol"
+    }
+  },
+  "redirects": [
+    {
+      "source": "/quickstart",
+      "destination": "/quickstart/build"
+    }
+  ]
+}

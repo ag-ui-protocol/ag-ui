@@ -1,0 +1,62 @@
+---
+title: "Overview"
+description: "Client package overview"
+---
+
+# @ag-ui/client
+
+The Agent User Interaction Protocol Client SDK provides agent connectivity
+options for AI systems. This package builds on the core types and events to
+deliver flexible connection methods to agent implementations.
+
+```bash
+npm install @ag-ui/client
+```
+
+## AbstractAgent
+
+`AbstractAgent` is the base agent class for implementing custom agent
+connectivity. Extending this class and implementing `run()` lets you bridge your
+own service or agent implementation to AG-UI.
+
+- [Configuration](/sdk/js/client/abstract-agent#configuration) - Setup with
+  agent ID, messages, and state
+- [Core Methods](/sdk/js/client/abstract-agent#core-methods) - Run, abort, and
+  clone functionality
+- [Protected Methods](/sdk/js/client/abstract-agent#protected-methods) -
+  Extensible hooks for custom implementations
+- [Properties](/sdk/js/client/abstract-agent#properties) - State and message
+  tracking
+
+<Card
+  title="AbstractAgent Reference"
+  icon="cube"
+  href="/sdk/js/client/abstract-agent"
+  color="#3B82F6"
+  iconType="solid"
+>
+  Base class for creating custom agent connections
+</Card>
+
+## HttpAgent
+
+Concrete implementation for HTTP-based agent connectivity:
+
+- [Configuration](/sdk/js/client/http-agent#configuration) - URL and header
+  setup
+- [Methods](/sdk/js/client/http-agent#methods) - HTTP-specific execution and
+  cancellation
+- [Protected Methods](/sdk/js/client/http-agent#protected-methods) -
+  Customizable HTTP request handling
+- [Properties](/sdk/js/client/http-agent#properties) - Connection management
+
+<Card
+  title="HttpAgent Reference"
+  icon="cube"
+  href="/sdk/js/client/http-agent"
+  color="#3B82F6"
+  iconType="solid"
+>
+  Ready-to-use HTTP implementation for agent connectivity, using a highly
+  efficient event encoding format
+</Card>

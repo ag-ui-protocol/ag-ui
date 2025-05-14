@@ -1,0 +1,132 @@
+---
+title: "AbstractAgent"
+description: "Base agent implementation with core event handling"
+---
+
+# AbstractAgent
+
+The `AbstractAgent` class provides the foundation for all agent implementations
+in the Agent User Interaction Protocol. It handles the core event stream
+processing, state management, and message history.
+
+```typescript
+import { AbstractAgent } from "@ag-ui/client"
+```
+
+## Configuration
+
+By default, all agents are configured by providing an optional `AgentConfig`
+object to the constructor.
+
+```typescript
+interface AgentConfig {
+  agentId?: string // The identifier of the agent
+  description?: string // A description of the agent, used by the LLM
+  threadId?: string // The conversation thread identifier
+  initialMessages?: Message[] // An array of initial messages
+  initialState?: State // The initial state of the agent
+}
+```
+
+### Adding Configuration Options in your Subclass
+
+To add additional configuration options, it is recommended to extend the
+`AgentConfig` interface and call the super constructor with the extended config
+from your subclass like this:
+
+```typescript
+interface MyAgentConfig extends AgentConfig {
+  myConfigOption: string
+}
+
+class MyAgent extends AbstractAgent {
+  private myConfigOption: string
+
+  constructor(config: MyAgentConfig) {
+    super(config)
+    this.myConfigOption = config.myConfigOption
+  }
+}
+```
+
+## Core Methods
+
+### runAgent()
+
+The primary method for executing an agent and receiving the event stream.
+
+```typescript
+runAgent(parameters?: RunAgentParameters): Observable<RuntimeProtocolEvent>
+```
+
+#### Parameters
+
+```typescript
+interface RunAgentParameters {
+  runId?: string // Unique ID for this execution run
+  tools?: Tool[] // Available tools for the agent
+  context?: Context[] // Contextual information
+  forwardedProps?: Record<string, any> // Additional properties to forward
+}
+```
+
+### abortRun()
+
+Cancels the current agent execution.
+
+```typescript
+abortRun(): void
+```
+
+### clone()
+
+Creates a deep copy of the agent instance.
+
+```typescript
+clone(): AbstractAgent
+```
+
+## Properties
+
+- `agentId`: Unique identifier for the agent instance
+- `description`: Human-readable description
+- `threadId`: Conversation thread identifier
+- `messages`: Array of conversation messages
+- `state`: Current agent state object
+
+## Protected Methods
+
+These methods are meant to be implemented or extended by subclasses:
+
+### run()
+
+Executes the agent and returns an observable event stream.
+
+```typescript
+protected abstract run(input: RunAgentInput): RunAgent
+```
+
+### apply()
+
+Processes events from the run and updates the agent state.
+
+```typescript
+protected apply(input: RunAgentInput): ApplyEvents
+```
+
+### prepareRunAgentInput()
+
+Prepares the input parameters for the agent execution.
+
+```typescript
+protected prepareRunAgentInput(parameters?: RunAgentParameters): RunAgentInput
+```
+
+### onError() and onFinalize()
+
+Lifecycle hooks for error handling and cleanup operations.
+
+```typescript
+protected onError(error: Error): void
+protected onFinalize(): void
+```

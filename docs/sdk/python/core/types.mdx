@@ -1,0 +1,252 @@
+---
+title: "Types"
+description:
+  "Documentation for the core types used in the Agent User Interaction Protocol
+  Python SDK"
+---
+
+# Core Types
+
+The Agent User Interaction Protocol Python SDK is built on a set of core types
+that represent the fundamental structures used throughout the system. This page
+documents these types and their properties.
+
+## RunAgentInput
+
+`from ag_ui.core import RunAgentInput`
+
+Input parameters for running an agent. In the HTTP API, this is the body of the
+`POST` request.
+
+```python
+class RunAgentInput(ConfiguredBaseModel):
+    thread_id: str
+    run_id: str
+    state: Any
+    messages: List[Message]
+    tools: List[Tool]
+    context: List[Context]
+    forwarded_props: Any
+```
+
+| Property          | Type            | Description                                   |
+| ----------------- | --------------- | --------------------------------------------- |
+| `thread_id`       | `str`           | ID of the conversation thread                 |
+| `run_id`          | `str`           | ID of the current run                         |
+| `state`           | `Any`           | Current state of the agent                    |
+| `messages`        | `List[Message]` | List of messages in the conversation          |
+| `tools`           | `List[Tool]`    | List of tools available to the agent          |
+| `context`         | `List[Context]` | List of context objects provided to the agent |
+| `forwarded_props` | `Any`           | Additional properties forwarded to the agent  |
+
+## Message Types
+
+The SDK includes several message types that represent different kinds of
+messages in the system.
+
+### Role
+
+`from ag_ui.core import Role`
+
+Represents the possible roles a message sender can have.
+
+```python
+Role = Literal["developer", "system", "assistant", "user", "tool"]
+```
+
+### DeveloperMessage
+
+`from ag_ui.core import DeveloperMessage`
+
+Represents a message from a developer.
+
+```python
+class DeveloperMessage(BaseMessage):
+    role: Literal["developer"]
+    content: str
+```
+
+| Property  | Type                   | Description                                      |
+| --------- | ---------------------- | ------------------------------------------------ |
+| `id`      | `str`                  | Unique identifier for the message                |
+| `role`    | `Literal["developer"]` | Role of the message sender, fixed as "developer" |
+| `content` | `str`                  | Text content of the message (required)           |
+| `name`    | `Optional[str]`        | Optional name of the sender                      |
+
+### SystemMessage
+
+`from ag_ui.core import SystemMessage`
+
+Represents a system message.
+
+```python
+class SystemMessage(BaseMessage):
+    role: Literal["system"]
+    content: str
+```
+
+| Property  | Type                | Description                                   |
+| --------- | ------------------- | --------------------------------------------- |
+| `id`      | `str`               | Unique identifier for the message             |
+| `role`    | `Literal["system"]` | Role of the message sender, fixed as "system" |
+| `content` | `str`               | Text content of the message (required)        |
+| `name`    | `Optional[str]`     | Optional name of the sender                   |
+
+### AssistantMessage
+
+`from ag_ui.core import AssistantMessage`
+
+Represents a message from an assistant.
+
+```python
+class AssistantMessage(BaseMessage):
+    role: Literal["assistant"]
+    content: Optional[str] = None
+    tool_calls: Optional[List[ToolCall]] = None
+```
+
+| Property     | Type                       | Description                                      |
+| ------------ | -------------------------- | ------------------------------------------------ |
+| `id`         | `str`                      | Unique identifier for the message                |
+| `role`       | `Literal["assistant"]`     | Role of the message sender, fixed as "assistant" |
+| `content`    | `Optional[str]`            | Text content of the message                      |
+| `name`       | `Optional[str]`            | Name of the sender                               |
+| `tool_calls` | `Optional[List[ToolCall]]` | Tool calls made in this message                  |
+
+### UserMessage
+
+`from ag_ui.core import UserMessage`
+
+Represents a message from a user.
+
+```python
+class UserMessage(BaseMessage):
+    role: Literal["user"]
+    content: str
+```
+
+| Property  | Type              | Description                                 |
+| --------- | ----------------- | ------------------------------------------- |
+| `id`      | `str`             | Unique identifier for the message           |
+| `role`    | `Literal["user"]` | Role of the message sender, fixed as "user" |
+| `content` | `str`             | Text content of the message (required)      |
+| `name`    | `Optional[str]`   | Optional name of the sender                 |
+
+### ToolMessage
+
+`from ag_ui.core import ToolMessage`
+
+Represents a message from a tool.
+
+```python
+class ToolMessage(ConfiguredBaseModel):
+    id: str
+    role: Literal["tool"]
+    content: str
+    tool_call_id: str
+```
+
+| Property       | Type              | Description                                  |
+| -------------- | ----------------- | -------------------------------------------- |
+| `id`           | `str`             | Unique identifier for the message            |
+| `content`      | `str`             | Text content of the message                  |
+| `role`         | `Literal["tool"]` | Role of the message sender, fixed as "tool"  |
+| `tool_call_id` | `str`             | ID of the tool call this message responds to |
+
+### Message
+
+`from ag_ui.core import Message`
+
+A union type representing any type of message in the system.
+
+```python
+Message = Annotated[
+    Union[DeveloperMessage, SystemMessage, AssistantMessage, UserMessage, ToolMessage],
+    Field(discriminator="role")
+]
+```
+
+### ToolCall
+
+`from ag_ui.core import ToolCall`
+
+Represents a tool call made by an agent.
+
+```python
+class ToolCall(ConfiguredBaseModel):
+    id: str
+    type: Literal["function"]
+    function: FunctionCall
+```
+
+| Property   | Type                  | Description                              |
+| ---------- | --------------------- | ---------------------------------------- |
+| `id`       | `str`                 | Unique identifier for the tool call      |
+| `type`     | `Literal["function"]` | Type of the tool call, always "function" |
+| `function` | `FunctionCall`        | Details about the function being called  |
+
+#### FunctionCall
+
+`from ag_ui.core import FunctionCall`
+
+Represents function name and arguments in a tool call.
+
+```python
+class FunctionCall(ConfiguredBaseModel):
+    name: str
+    arguments: str
+```
+
+| Property    | Type  | Description                                      |
+| ----------- | ----- | ------------------------------------------------ |
+| `name`      | `str` | Name of the function to call                     |
+| `arguments` | `str` | JSON-encoded string of arguments to the function |
+
+## Context
+
+`from ag_ui.core import Context`
+
+Represents a piece of contextual information provided to an agent.
+
+```python
+class Context(ConfiguredBaseModel):
+    description: str
+    value: str
+```
+
+| Property      | Type  | Description                                 |
+| ------------- | ----- | ------------------------------------------- |
+| `description` | `str` | Description of what this context represents |
+| `value`       | `str` | The actual context value                    |
+
+## Tool
+
+`from ag_ui.core import Tool`
+
+Defines a tool that can be called by an agent.
+
+```python
+class Tool(ConfiguredBaseModel):
+    name: str
+    description: str
+    parameters: Any  # JSON Schema
+```
+
+| Property      | Type  | Description                                      |
+| ------------- | ----- | ------------------------------------------------ |
+| `name`        | `str` | Name of the tool                                 |
+| `description` | `str` | Description of what the tool does                |
+| `parameters`  | `Any` | JSON Schema defining the parameters for the tool |
+
+## State
+
+`from ag_ui.core import State`
+
+Represents the state of an agent during execution.
+
+```python
+State = Any
+```
+
+The state type is flexible and can hold any data structure needed by the agent
+implementation.

@@ -1,0 +1,361 @@
+---
+title: "Events"
+description:
+  "Documentation for the events used in the Agent User Interaction Protocol SDK"
+---
+
+# Events
+
+The Agent User Interaction Protocol SDK uses a streaming event-based
+architecture. Events are the fundamental units of communication between agents
+and the frontend. This section documents the event types and their properties.
+
+## EventType Enum
+
+The `EventType` enum defines all possible event types in the system:
+
+```typescript
+enum EventType {
+  TEXT_MESSAGE_START = "TEXT_MESSAGE_START",
+  TEXT_MESSAGE_CONTENT = "TEXT_MESSAGE_CONTENT",
+  TEXT_MESSAGE_END = "TEXT_MESSAGE_END",
+  TOOL_CALL_START = "TOOL_CALL_START",
+  TOOL_CALL_ARGS = "TOOL_CALL_ARGS",
+  TOOL_CALL_END = "TOOL_CALL_END",
+  STATE_SNAPSHOT = "STATE_SNAPSHOT",
+  STATE_DELTA = "STATE_DELTA",
+  MESSAGES_SNAPSHOT = "MESSAGES_SNAPSHOT",
+  RAW = "RAW",
+  CUSTOM = "CUSTOM",
+  RUN_STARTED = "RUN_STARTED",
+  RUN_FINISHED = "RUN_FINISHED",
+  RUN_ERROR = "RUN_ERROR",
+  STEP_STARTED = "STEP_STARTED",
+  STEP_FINISHED = "STEP_FINISHED",
+}
+```
+
+## BaseEvent
+
+All events inherit from the `BaseEvent` type, which provides common properties
+shared across all event types.
+
+```typescript
+type BaseEvent = {
+  type: EventType // Discriminator field
+  timestamp?: number
+  rawEvent?: any
+}
+```
+
+| Property    | Type                | Description                                           |
+| ----------- | ------------------- | ----------------------------------------------------- |
+| `type`      | `EventType`         | The type of event (discriminator field for the union) |
+| `timestamp` | `number` (optional) | Timestamp when the event was created                  |
+| `rawEvent`  | `any` (optional)    | Original event data if this event was transformed     |
+
+## Lifecycle Events
+
+These events represent the lifecycle of an agent run.
+
+### RunStartedEvent
+
+Signals the start of an agent run.
+
+```typescript
+type RunStartedEvent = BaseEvent & {
+  type: EventType.RUN_STARTED
+  threadId: string
+  runId: string
+}
+```
+
+| Property   | Type     | Description                   |
+| ---------- | -------- | ----------------------------- |
+| `threadId` | `string` | ID of the conversation thread |
+| `runId`    | `string` | ID of the agent run           |
+
+### RunFinishedEvent
+
+Signals the successful completion of an agent run.
+
+```typescript
+type RunFinishedEvent = BaseEvent & {
+  type: EventType.RUN_FINISHED
+  threadId: string
+  runId: string
+}
+```
+
+| Property   | Type     | Description                   |
+| ---------- | -------- | ----------------------------- |
+| `threadId` | `string` | ID of the conversation thread |
+| `runId`    | `string` | ID of the agent run           |
+
+### RunErrorEvent
+
+Signals an error during an agent run.
+
+```typescript
+type RunErrorEvent = BaseEvent & {
+  type: EventType.RUN_ERROR
+  message: string
+  code?: string
+}
+```
+
+| Property  | Type                | Description   |
+| --------- | ------------------- | ------------- |
+| `message` | `string`            | Error message |
+| `code`    | `string` (optional) | Error code    |
+
+### StepStartedEvent
+
+Signals the start of a step within an agent run.
+
+```typescript
+type StepStartedEvent = BaseEvent & {
+  type: EventType.STEP_STARTED
+  stepName: string
+}
+```
+
+| Property   | Type     | Description      |
+| ---------- | -------- | ---------------- |
+| `stepName` | `string` | Name of the step |
+
+### StepFinishedEvent
+
+Signals the completion of a step within an agent run.
+
+```typescript
+type StepFinishedEvent = BaseEvent & {
+  type: EventType.STEP_FINISHED
+  stepName: string
+}
+```
+
+| Property   | Type     | Description      |
+| ---------- | -------- | ---------------- |
+| `stepName` | `string` | Name of the step |
+
+## Text Message Events
+
+These events represent the lifecycle of text messages in a conversation.
+
+### TextMessageStartEvent
+
+Signals the start of a text message.
+
+```typescript
+type TextMessageStartEvent = BaseEvent & {
+  type: EventType.TEXT_MESSAGE_START
+  messageId: string
+  role: "assistant"
+}
+```
+
+| Property    | Type          | Description                       |
+| ----------- | ------------- | --------------------------------- |
+| `messageId` | `string`      | Unique identifier for the message |
+| `role`      | `"assistant"` | Role is always "assistant"        |
+
+### TextMessageContentEvent
+
+Represents a chunk of content in a streaming text message.
+
+```typescript
+type TextMessageContentEvent = BaseEvent & {
+  type: EventType.TEXT_MESSAGE_CONTENT
+  messageId: string
+  delta: string // Non-empty string
+}
+```
+
+| Property    | Type     | Description                               |
+| ----------- | -------- | ----------------------------------------- |
+| `messageId` | `string` | Matches the ID from TextMessageStartEvent |
+| `delta`     | `string` | Text content chunk (non-empty)            |
+
+### TextMessageEndEvent
+
+Signals the end of a text message.
+
+```typescript
+type TextMessageEndEvent = BaseEvent & {
+  type: EventType.TEXT_MESSAGE_END
+  messageId: string
+}
+```
+
+| Property    | Type     | Description                               |
+| ----------- | -------- | ----------------------------------------- |
+| `messageId` | `string` | Matches the ID from TextMessageStartEvent |
+
+## Tool Call Events
+
+These events represent the lifecycle of tool calls made by agents.
+
+### ToolCallStartEvent
+
+Signals the start of a tool call.
+
+```typescript
+type ToolCallStartEvent = BaseEvent & {
+  type: EventType.TOOL_CALL_START
+  toolCallId: string
+  toolCallName: string
+  parentMessageId?: string
+}
+```
+
+| Property          | Type                | Description                         |
+| ----------------- | ------------------- | ----------------------------------- |
+| `toolCallId`      | `string`            | Unique identifier for the tool call |
+| `toolCallName`    | `string`            | Name of the tool being called       |
+| `parentMessageId` | `string` (optional) | ID of the parent message            |
+
+### ToolCallArgsEvent
+
+Represents a chunk of argument data for a tool call.
+
+```typescript
+type ToolCallArgsEvent = BaseEvent & {
+  type: EventType.TOOL_CALL_ARGS
+  toolCallId: string
+  delta: string
+}
+```
+
+| Property     | Type     | Description                            |
+| ------------ | -------- | -------------------------------------- |
+| `toolCallId` | `string` | Matches the ID from ToolCallStartEvent |
+| `delta`      | `string` | Argument data chunk                    |
+
+### ToolCallEndEvent
+
+Signals the end of a tool call.
+
+```typescript
+type ToolCallEndEvent = BaseEvent & {
+  type: EventType.TOOL_CALL_END
+  toolCallId: string
+}
+```
+
+| Property     | Type     | Description                            |
+| ------------ | -------- | -------------------------------------- |
+| `toolCallId` | `string` | Matches the ID from ToolCallStartEvent |
+
+## State Management Events
+
+These events are used to manage agent state.
+
+### StateSnapshotEvent
+
+Provides a complete snapshot of an agent's state.
+
+```typescript
+type StateSnapshotEvent = BaseEvent & {
+  type: EventType.STATE_SNAPSHOT
+  snapshot: any // StateSchema
+}
+```
+
+| Property   | Type  | Description             |
+| ---------- | ----- | ----------------------- |
+| `snapshot` | `any` | Complete state snapshot |
+
+### StateDeltaEvent
+
+Provides a partial update to an agent's state using JSON Patch.
+
+```typescript
+type StateDeltaEvent = BaseEvent & {
+  type: EventType.STATE_DELTA
+  delta: any[] // JSON Patch operations (RFC 6902)
+}
+```
+
+| Property | Type    | Description                    |
+| -------- | ------- | ------------------------------ |
+| `delta`  | `any[]` | Array of JSON Patch operations |
+
+### MessagesSnapshotEvent
+
+Provides a snapshot of all messages in a conversation.
+
+```typescript
+type MessagesSnapshotEvent = BaseEvent & {
+  type: EventType.MESSAGES_SNAPSHOT
+  messages: Message[]
+}
+```
+
+| Property   | Type        | Description              |
+| ---------- | ----------- | ------------------------ |
+| `messages` | `Message[]` | Array of message objects |
+
+## Special Events
+
+### RawEvent
+
+Used to pass through events from external systems.
+
+```typescript
+type RawEvent = BaseEvent & {
+  type: EventType.RAW
+  event: any
+  source?: string
+}
+```
+
+| Property | Type                | Description         |
+| -------- | ------------------- | ------------------- |
+| `event`  | `any`               | Original event data |
+| `source` | `string` (optional) | Source of the event |
+
+### CustomEvent
+
+Used for application-specific custom events.
+
+```typescript
+type CustomEvent = BaseEvent & {
+  type: EventType.CUSTOM
+  name: string
+  value: any
+}
+```
+
+| Property | Type     | Description                     |
+| -------- | -------- | ------------------------------- |
+| `name`   | `string` | Name of the custom event        |
+| `value`  | `any`    | Value associated with the event |
+
+## Event Schemas
+
+The SDK uses Zod schemas to validate events:
+
+```typescript
+const EventSchemas = z.discriminatedUnion("type", [
+  TextMessageStartEventSchema,
+  TextMessageContentEventSchema,
+  TextMessageEndEventSchema,
+  ToolCallStartEventSchema,
+  ToolCallArgsEventSchema,
+  ToolCallEndEventSchema,
+  StateSnapshotEventSchema,
+  StateDeltaEventSchema,
+  MessagesSnapshotEventSchema,
+  RawEventSchema,
+  CustomEventSchema,
+  RunStartedEventSchema,
+  RunFinishedEventSchema,
+  RunErrorEventSchema,
+  StepStartedEventSchema,
+  StepFinishedEventSchema,
+])
+```
+
+This allows for runtime validation of events and provides TypeScript type
+inference.

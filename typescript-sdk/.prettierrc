@@ -1,0 +1,17 @@
+{
+  "printWidth": 100,
+  "singleQuote": false,
+  "semi": true,
+  "tabWidth": 2,
+  "overrides": [
+    {
+      "files": "*.mdx",
+      "options": {
+        "printWidth": 80,
+        "proseWrap": "always",
+        "semi": false,
+        "singleQuote": false
+      }
+    }
+  ]
+}

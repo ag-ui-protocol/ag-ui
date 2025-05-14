@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "ag-ui-protocol"
+version = "0.1.4"
+description = ""
+authors = ["Markus Ecker <markus.ecker@gmail.com>"]
+readme = "README.md"
+packages = [{include = "ag_ui", from = "."}]
+[tool.poetry.dependencies]
+python = "^3.9"
+pydantic = "^2.11.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

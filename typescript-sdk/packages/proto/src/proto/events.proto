@@ -1,0 +1,143 @@
+syntax = "proto3";
+
+package ag_ui;
+
+import "google/protobuf/struct.proto";
+import "patch.proto";
+import "types.proto";
+
+enum EventType {
+  TEXT_MESSAGE_START = 0;
+  TEXT_MESSAGE_CONTENT = 1;
+  TEXT_MESSAGE_END = 2;
+  TOOL_CALL_START = 3;
+  TOOL_CALL_ARGS = 4;
+  TOOL_CALL_END = 5;
+  STATE_SNAPSHOT = 6;
+  STATE_DELTA = 7;
+  MESSAGES_SNAPSHOT = 8;
+  RAW = 9;
+  CUSTOM = 10;
+  RUN_STARTED = 11;
+  RUN_FINISHED = 12;
+  RUN_ERROR = 13;
+  STEP_STARTED = 14;
+  STEP_FINISHED = 15;
+}
+
+message BaseEvent {
+  EventType type = 1;
+  optional int64 timestamp = 2;
+  optional google.protobuf.Value raw_event = 3;
+}
+
+message TextMessageStartEvent {
+  BaseEvent base_event = 1;
+  string message_id = 2;
+  optional string role = 3;
+}
+
+message TextMessageContentEvent {
+  BaseEvent base_event = 1;
+  string message_id = 2;
+  string delta = 3;
+}
+
+message TextMessageEndEvent {
+  BaseEvent base_event = 1;
+  string message_id = 2;
+}
+
+message ToolCallStartEvent {
+  BaseEvent base_event = 1;
+  string tool_call_id = 2;
+  string tool_call_name = 3;
+  optional string parent_message_id = 4;
+}
+
+message ToolCallArgsEvent {
+  BaseEvent base_event = 1;
+  string tool_call_id = 2;
+  string delta = 3;
+}
+
+message ToolCallEndEvent {
+  BaseEvent base_event = 1;
+  string tool_call_id = 2;
+}
+
+message StateSnapshotEvent {
+  BaseEvent base_event = 1;
+  google.protobuf.Value snapshot = 2;
+}
+
+message StateDeltaEvent {
+  BaseEvent base_event = 1;
+  repeated JsonPatchOperation delta = 2;
+}
+
+message MessagesSnapshotEvent {
+  BaseEvent base_event = 1;
+  repeated Message messages = 2;
+}
+
+message RawEvent {
+  BaseEvent base_event = 1;
+  google.protobuf.Value event = 2;
+  optional string source = 3;
+}
+
+message CustomEvent {
+  BaseEvent base_event = 1;
+  string name = 2;
+  optional google.protobuf.Value value = 3;
+}
+
+message RunStartedEvent {
+  BaseEvent base_event = 1;
+  string thread_id = 2;
+  string run_id = 3;
+}
+
+message RunFinishedEvent {
+  BaseEvent base_event = 1;
+  string thread_id = 2;
+  string run_id = 3;
+}
+
+message RunErrorEvent {
+  BaseEvent base_event = 1;
+  optional string code = 2;
+  string message = 3;
+}
+
+message StepStartedEvent {
+  BaseEvent base_event = 1;
+  string step_name = 2;
+}
+
+message StepFinishedEvent {
+  BaseEvent base_event = 1;
+  string step_name = 2;
+}
+
+message Event {
+  oneof event {
+    TextMessageStartEvent text_message_start = 1;
+    TextMessageContentEvent text_message_content = 2;
+    TextMessageEndEvent text_message_end = 3;
+    ToolCallStartEvent tool_call_start = 4;
+    ToolCallArgsEvent tool_call_args = 5;
+    ToolCallEndEvent tool_call_end = 6;
+    StateSnapshotEvent state_snapshot = 7;
+    StateDeltaEvent state_delta = 8;
+    MessagesSnapshotEvent messages_snapshot = 9;
+    RawEvent raw = 10;
+    CustomEvent custom = 11;
+    RunStartedEvent run_started = 12;
+    RunFinishedEvent run_finished = 13;
+    RunErrorEvent run_error = 14;
+    StepStartedEvent step_started = 15;
+    StepFinishedEvent step_finished = 16;
+  }
+}

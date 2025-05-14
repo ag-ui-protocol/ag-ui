@@ -1,0 +1,246 @@
+---
+title: "Types"
+description:
+  "Documentation for the core types used in the Agent User Interaction Protocol
+  SDK"
+---
+
+# Core Types
+
+The Agent User Interaction Protocol SDK is built on a set of core types that
+represent the fundamental structures used throughout the system. This page
+documents these types and their properties.
+
+## RunAgentInput
+
+Input parameters for running an agent. In the HTTP API, this is the body of the
+`POST` request.
+
+```typescript
+type RunAgentInput = {
+  threadId: string
+  runId: string
+  state: any
+  messages: Message[]
+  tools: Tool[]
+  context: Context[]
+  forwardedProps: any
+}
+```
+
+| Property         | Type        | Description                                    |
+| ---------------- | ----------- | ---------------------------------------------- |
+| `threadId`       | `string`    | ID of the conversation thread                  |
+| `runId`          | `string`    | ID of the current run                          |
+| `state`          | `any`       | Current state of the agent                     |
+| `messages`       | `Message[]` | Array of messages in the conversation          |
+| `tools`          | `Tool[]`    | Array of tools available to the agent          |
+| `context`        | `Context[]` | Array of context objects provided to the agent |
+| `forwardedProps` | `any`       | Additional properties forwarded to the agent   |
+
+## Message Types
+
+The SDK includes several message types that represent different kinds of
+messages in the system.
+
+### Role
+
+Represents the possible roles a message sender can have.
+
+```typescript
+type Role = "developer" | "system" | "assistant" | "user" | "tool"
+```
+
+### DeveloperMessage
+
+Represents a message from a developer.
+
+```typescript
+type DeveloperMessage = {
+  id: string
+  role: "developer"
+  content: string
+  name?: string
+}
+```
+
+| Property  | Type          | Description                                      |
+| --------- | ------------- | ------------------------------------------------ |
+| `id`      | `string`      | Unique identifier for the message                |
+| `role`    | `"developer"` | Role of the message sender, fixed as "developer" |
+| `content` | `string`      | Text content of the message (required)           |
+| `name`    | `string`      | Optional name of the sender                      |
+
+### SystemMessage
+
+Represents a system message.
+
+```typescript
+type SystemMessage = {
+  id: string
+  role: "system"
+  content: string
+  name?: string
+}
+```
+
+| Property  | Type       | Description                                   |
+| --------- | ---------- | --------------------------------------------- |
+| `id`      | `string`   | Unique identifier for the message             |
+| `role`    | `"system"` | Role of the message sender, fixed as "system" |
+| `content` | `string`   | Text content of the message (required)        |
+| `name`    | `string`   | Optional name of the sender                   |
+
+### AssistantMessage
+
+Represents a message from an assistant.
+
+```typescript
+type AssistantMessage = {
+  id: string
+  role: "assistant"
+  content?: string
+  name?: string
+  toolCalls?: ToolCall[]
+}
+```
+
+| Property    | Type                    | Description                                      |
+| ----------- | ----------------------- | ------------------------------------------------ |
+| `id`        | `string`                | Unique identifier for the message                |
+| `role`      | `"assistant"`           | Role of the message sender, fixed as "assistant" |
+| `content`   | `string` (optional)     | Text content of the message                      |
+| `name`      | `string` (optional)     | Name of the sender                               |
+| `toolCalls` | `ToolCall[]` (optional) | Tool calls made in this message                  |
+
+### UserMessage
+
+Represents a message from a user.
+
+```typescript
+type UserMessage = {
+  id: string
+  role: "user"
+  content: string
+  name?: string
+}
+```
+
+| Property  | Type     | Description                                 |
+| --------- | -------- | ------------------------------------------- |
+| `id`      | `string` | Unique identifier for the message           |
+| `role`    | `"user"` | Role of the message sender, fixed as "user" |
+| `content` | `string` | Text content of the message (required)      |
+| `name`    | `string` | Optional name of the sender                 |
+
+### ToolMessage
+
+Represents a message from a tool.
+
+```typescript
+type ToolMessage = {
+  id: string
+  content: string
+  role: "tool"
+  toolCallId: string
+}
+```
+
+| Property     | Type     | Description                                  |
+| ------------ | -------- | -------------------------------------------- |
+| `id`         | `string` | Unique identifier for the message            |
+| `content`    | `string` | Text content of the message                  |
+| `role`       | `"tool"` | Role of the message sender, fixed as "tool"  |
+| `toolCallId` | `string` | ID of the tool call this message responds to |
+
+### Message
+
+A union type representing any type of message in the system.
+
+```typescript
+type Message =
+  | DeveloperMessage
+  | SystemMessage
+  | AssistantMessage
+  | UserMessage
+  | ToolMessage
+```
+
+### ToolCall
+
+Represents a tool call made by an agent.
+
+```typescript
+type ToolCall = {
+  id: string
+  type: "function"
+  function: FunctionCall
+}
+```
+
+| Property   | Type           | Description                              |
+| ---------- | -------------- | ---------------------------------------- |
+| `id`       | `string`       | Unique identifier for the tool call      |
+| `type`     | `"function"`   | Type of the tool call, always "function" |
+| `function` | `FunctionCall` | Details about the function being called  |
+
+#### FunctionCall
+
+Represents function name and arguments in a tool call.
+
+```typescript
+type FunctionCall = {
+  name: string
+  arguments: string
+}
+```
+
+| Property    | Type     | Description                                      |
+| ----------- | -------- | ------------------------------------------------ |
+| `name`      | `string` | Name of the function to call                     |
+| `arguments` | `string` | JSON-encoded string of arguments to the function |
+
+## Context
+
+Represents a piece of contextual information provided to an agent.
+
+```typescript
+type Context = {
+  description: string
+  value: string
+}
+```
+
+| Property      | Type     | Description                                 |
+| ------------- | -------- | ------------------------------------------- |
+| `description` | `string` | Description of what this context represents |
+| `value`       | `string` | The actual context value                    |
+
+## Tool
+
+Defines a tool that can be called by an agent.
+
+```typescript
+type Tool = {
+  name: string
+  description: string
+  parameters: any // JSON Schema
+}
+```
+
+| Property      | Type     | Description                                      |
+| ------------- | -------- | ------------------------------------------------ |
+| `name`        | `string` | Name of the tool                                 |
+| `description` | `string` | Description of what the tool does                |
+| `parameters`  | `any`    | JSON Schema defining the parameters for the tool |
+
+## State
+
+Represents the state of an agent during execution.
+
+```typescript
+type State = any
+```
+
+The state type is flexible and can hold any data structure needed by the agent
+implementation.

@@ -1,0 +1,389 @@
+---
+title: "Events"
+description:
+  "Documentation for the events used in the Agent User Interaction Protocol
+  Python SDK"
+---
+
+# Events
+
+The Agent User Interaction Protocol Python SDK uses a streaming event-based
+architecture. Events are the fundamental units of communication between agents
+and the frontend. This section documents the event types and their properties.
+
+## EventType Enum
+
+`from ag_ui.core import EventType`
+
+The `EventType` enum defines all possible event types in the system:
+
+```python
+class EventType(str, Enum):
+    TEXT_MESSAGE_START = "TEXT_MESSAGE_START"
+    TEXT_MESSAGE_CONTENT = "TEXT_MESSAGE_CONTENT"
+    TEXT_MESSAGE_END = "TEXT_MESSAGE_END"
+    TOOL_CALL_START = "TOOL_CALL_START"
+    TOOL_CALL_ARGS = "TOOL_CALL_ARGS"
+    TOOL_CALL_END = "TOOL_CALL_END"
+    STATE_SNAPSHOT = "STATE_SNAPSHOT"
+    STATE_DELTA = "STATE_DELTA"
+    MESSAGES_SNAPSHOT = "MESSAGES_SNAPSHOT"
+    RAW = "RAW"
+    CUSTOM = "CUSTOM"
+    RUN_STARTED = "RUN_STARTED"
+    RUN_FINISHED = "RUN_FINISHED"
+    RUN_ERROR = "RUN_ERROR"
+    STEP_STARTED = "STEP_STARTED"
+    STEP_FINISHED = "STEP_FINISHED"
+```
+
+## BaseEvent
+
+`from ag_ui.core import BaseEvent`
+
+All events inherit from the `BaseEvent` class, which provides common properties
+shared across all event types.
+
+```python
+class BaseEvent(ConfiguredBaseModel):
+    type: EventType
+    timestamp: Optional[int] = None
+    raw_event: Optional[Any] = None
+```
+
+| Property    | Type            | Description                                           |
+| ----------- | --------------- | ----------------------------------------------------- |
+| `type`      | `EventType`     | The type of event (discriminator field for the union) |
+| `timestamp` | `Optional[int]` | Timestamp when the event was created                  |
+| `raw_event` | `Optional[Any]` | Original event data if this event was transformed     |
+
+## Lifecycle Events
+
+These events represent the lifecycle of an agent run.
+
+### RunStartedEvent
+
+`from ag_ui.core import RunStartedEvent`
+
+Signals the start of an agent run.
+
+```python
+class RunStartedEvent(BaseEvent):
+    type: Literal[EventType.RUN_STARTED]
+    thread_id: str
+    run_id: str
+```
+
+| Property    | Type  | Description                   |
+| ----------- | ----- | ----------------------------- |
+| `thread_id` | `str` | ID of the conversation thread |
+| `run_id`    | `str` | ID of the agent run           |
+
+### RunFinishedEvent
+
+`from ag_ui.core import RunFinishedEvent`
+
+Signals the successful completion of an agent run.
+
+```python
+class RunFinishedEvent(BaseEvent):
+    type: Literal[EventType.RUN_FINISHED]
+    thread_id: str
+    run_id: str
+```
+
+| Property    | Type  | Description                   |
+| ----------- | ----- | ----------------------------- |
+| `thread_id` | `str` | ID of the conversation thread |
+| `run_id`    | `str` | ID of the agent run           |
+
+### RunErrorEvent
+
+`from ag_ui.core import RunErrorEvent`
+
+Signals an error during an agent run.
+
+```python
+class RunErrorEvent(BaseEvent):
+    type: Literal[EventType.RUN_ERROR]
+    message: str
+    code: Optional[str] = None
+```
+
+| Property  | Type            | Description   |
+| --------- | --------------- | ------------- |
+| `message` | `str`           | Error message |
+| `code`    | `Optional[str]` | Error code    |
+
+### StepStartedEvent
+
+`from ag_ui.core import StepStartedEvent`
+
+Signals the start of a step within an agent run.
+
+```python
+class StepStartedEvent(BaseEvent):
+    type: Literal[EventType.STEP_STARTED]
+    step_name: str
+```
+
+| Property    | Type  | Description      |
+| ----------- | ----- | ---------------- |
+| `step_name` | `str` | Name of the step |
+
+### StepFinishedEvent
+
+`from ag_ui.core import StepFinishedEvent`
+
+Signals the completion of a step within an agent run.
+
+```python
+class StepFinishedEvent(BaseEvent):
+    type: Literal[EventType.STEP_FINISHED]
+    step_name: str
+```
+
+| Property    | Type  | Description      |
+| ----------- | ----- | ---------------- |
+| `step_name` | `str` | Name of the step |
+
+## Text Message Events
+
+These events represent the lifecycle of text messages in a conversation.
+
+### TextMessageStartEvent
+
+`from ag_ui.core import TextMessageStartEvent`
+
+Signals the start of a text message.
+
+```python
+class TextMessageStartEvent(BaseEvent):
+    type: Literal[EventType.TEXT_MESSAGE_START]
+    message_id: str
+    role: Literal["assistant"]
+```
+
+| Property     | Type                   | Description                       |
+| ------------ | ---------------------- | --------------------------------- |
+| `message_id` | `str`                  | Unique identifier for the message |
+| `role`       | `Literal["assistant"]` | Role is always "assistant"        |
+
+### TextMessageContentEvent
+
+`from ag_ui.core import TextMessageContentEvent`
+
+Represents a chunk of content in a streaming text message.
+
+```python
+class TextMessageContentEvent(BaseEvent):
+    type: Literal[EventType.TEXT_MESSAGE_CONTENT]
+    message_id: str
+    delta: str  # Non-empty string
+
+    def model_post_init(self, __context):
+        if len(self.delta) == 0:
+            raise ValueError("Delta must not be an empty string")
+```
+
+| Property     | Type  | Description                               |
+| ------------ | ----- | ----------------------------------------- |
+| `message_id` | `str` | Matches the ID from TextMessageStartEvent |
+| `delta`      | `str` | Text content chunk (non-empty)            |
+
+### TextMessageEndEvent
+
+`from ag_ui.core import TextMessageEndEvent`
+
+Signals the end of a text message.
+
+```python
+class TextMessageEndEvent(BaseEvent):
+    type: Literal[EventType.TEXT_MESSAGE_END]
+    message_id: str
+```
+
+| Property     | Type  | Description                               |
+| ------------ | ----- | ----------------------------------------- |
+| `message_id` | `str` | Matches the ID from TextMessageStartEvent |
+
+## Tool Call Events
+
+These events represent the lifecycle of tool calls made by agents.
+
+### ToolCallStartEvent
+
+`from ag_ui.core import ToolCallStartEvent`
+
+Signals the start of a tool call.
+
+```python
+class ToolCallStartEvent(BaseEvent):
+    type: Literal[EventType.TOOL_CALL_START]
+    tool_call_id: str
+    tool_call_name: str
+    parent_message_id: Optional[str] = None
+```
+
+| Property            | Type            | Description                         |
+| ------------------- | --------------- | ----------------------------------- |
+| `tool_call_id`      | `str`           | Unique identifier for the tool call |
+| `tool_call_name`    | `str`           | Name of the tool being called       |
+| `parent_message_id` | `Optional[str]` | ID of the parent message            |
+
+### ToolCallArgsEvent
+
+`from ag_ui.core import ToolCallArgsEvent`
+
+Represents a chunk of argument data for a tool call.
+
+```python
+class ToolCallArgsEvent(BaseEvent):
+    type: Literal[EventType.TOOL_CALL_ARGS]
+    tool_call_id: str
+    delta: str
+```
+
+| Property       | Type  | Description                            |
+| -------------- | ----- | -------------------------------------- |
+| `tool_call_id` | `str` | Matches the ID from ToolCallStartEvent |
+| `delta`        | `str` | Argument data chunk                    |
+
+### ToolCallEndEvent
+
+`from ag_ui.core import ToolCallEndEvent`
+
+Signals the end of a tool call.
+
+```python
+class ToolCallEndEvent(BaseEvent):
+    type: Literal[EventType.TOOL_CALL_END]
+    tool_call_id: str
+```
+
+| Property       | Type  | Description                            |
+| -------------- | ----- | -------------------------------------- |
+| `tool_call_id` | `str` | Matches the ID from ToolCallStartEvent |
+
+## State Management Events
+
+These events are used to manage agent state.
+
+### StateSnapshotEvent
+
+`from ag_ui.core import StateSnapshotEvent`
+
+Provides a complete snapshot of an agent's state.
+
+```python
+class StateSnapshotEvent(BaseEvent):
+    type: Literal[EventType.STATE_SNAPSHOT]
+    snapshot: State
+```
+
+| Property   | Type    | Description             |
+| ---------- | ------- | ----------------------- |
+| `snapshot` | `State` | Complete state snapshot |
+
+### StateDeltaEvent
+
+`from ag_ui.core import StateDeltaEvent`
+
+Provides a partial update to an agent's state using JSON Patch.
+
+```python
+class StateDeltaEvent(BaseEvent):
+    type: Literal[EventType.STATE_DELTA]
+    delta: List[Any]  # JSON Patch (RFC 6902)
+```
+
+| Property | Type        | Description                    |
+| -------- | ----------- | ------------------------------ |
+| `delta`  | `List[Any]` | Array of JSON Patch operations |
+
+### MessagesSnapshotEvent
+
+`from ag_ui.core import MessagesSnapshotEvent`
+
+Provides a snapshot of all messages in a conversation.
+
+```python
+class MessagesSnapshotEvent(BaseEvent):
+    type: Literal[EventType.MESSAGES_SNAPSHOT]
+    messages: List[Message]
+```
+
+| Property   | Type            | Description              |
+| ---------- | --------------- | ------------------------ |
+| `messages` | `List[Message]` | Array of message objects |
+
+## Special Events
+
+### RawEvent
+
+`from ag_ui.core import RawEvent`
+
+Used to pass through events from external systems.
+
+```python
+class RawEvent(BaseEvent):
+    type: Literal[EventType.RAW]
+    event: Any
+    source: Optional[str] = None
+```
+
+| Property | Type            | Description         |
+| -------- | --------------- | ------------------- |
+| `event`  | `Any`           | Original event data |
+| `source` | `Optional[str]` | Source of the event |
+
+### CustomEvent
+
+`from ag_ui.core import CustomEvent`
+
+Used for application-specific custom events.
+
+```python
+class CustomEvent(BaseEvent):
+    type: Literal[EventType.CUSTOM]
+    name: str
+    value: Any
+```
+
+| Property | Type  | Description                     |
+| -------- | ----- | ------------------------------- |
+| `name`   | `str` | Name of the custom event        |
+| `value`  | `Any` | Value associated with the event |
+
+## Event Discrimination
+
+`from ag_ui.core import Event`
+
+The SDK uses Pydantic's discriminated unions for event validation:
+
+```python
+Event = Annotated[
+    Union[
+        TextMessageStartEvent,
+        TextMessageContentEvent,
+        TextMessageEndEvent,
+        ToolCallStartEvent,
+        ToolCallArgsEvent,
+        ToolCallEndEvent,
+        StateSnapshotEvent,
+        StateDeltaEvent,
+        MessagesSnapshotEvent,
+        RawEvent,
+        CustomEvent,
+        RunStartedEvent,
+        RunFinishedEvent,
+        RunErrorEvent,
+        StepStartedEvent,
+        StepFinishedEvent,
+    ],
+    Field(discriminator="type")
+]
+```
+
+This allows for runtime validation of events and type checking at development
+time.
