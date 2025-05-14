@@ -11,7 +11,7 @@ AG-UI is an open, lightweight, event-based protocol that standardizes **how AI a
 
 ## AG-UI Specification
 
-AG-UI is an open, lightweight, event-based protocol for agent-human interaction, designed simplicity & flexibility:
+AG-UI is an open, lightweight, event-based protocol for agent-human interaction, designed for simplicity & flexibility:
 
 - During agent executions, agent backends **emit events _compatible_ with one of AG-UI's 16 standard event types**
 - Agent backends can **accept one of a few simple AG-UI compatible inputs** as arguments
