@@ -9,7 +9,7 @@ In this tutorial, you'll learn how to create an agent that connects to
 
 ## Prerequisites
 
-Make sure to have the following installed:
+Make sure to have the following:
 
 - [Node.js](https://nodejs.org/) (v16 or later)
 - [npm](https://www.npmjs.com/) or [yarn](https://yarnpkg.com/)
@@ -27,23 +27,96 @@ Once you have your API key, set it as an environment variable:
 export OPENAI_API_KEY=your-api-key-here
 ```
 
-## Bridge OpenAI with AG-UI
+## Project Setup
 
-Now let's demonstrate how AG-UI can connect to a modern AI service by
-implementing a bridge to OpenAI's API.
-
-### Project Setup
-
-Let's create a new project for our AG-UI bridge:
+We'll start by cloning the AG-UI repository and running the "dojo" application.
 
 ```bash
 # Create a directory for your project
-mkdir ag-ui-openai && cd ag-ui-openai
-npm init -y
-npm install @ag-ui/client openai rxjs
-npm install -D typescript ts-node @types/node
-npx tsc --init --target ES2020 --module CommonJS --strict --esModuleInterop --skipLibCheck --outDir dist --rootDir src
-mkdir src
+git clone git@github.com:ag-ui-protocol/ag-ui.git
+cd ag-ui/dojo
+
+# Install dependencies
+npm install
+
+# Run the application
+npm run dev
+```
+
+Now go to [http://localhost:3000](http://localhost:3000) to open the dojo. Open
+any example feature by clicking in the left sidebar and type something in the
+chat input.
+
+You should be greeted with a "Hello world!" message.
+
+### Custom Agent
+
+Next, we'll have a look at `src/custom-agent.ts`. We will be modifying this file
+to connect to OpenAI's API in a minute.
+
+```ts
+// src/custom-agent.ts
+import {
+  AbstractAgent,
+  RunAgentInput,
+  EventType,
+  BaseEvent,
+} from "@ag-ui/client"
+import { Observable } from "rxjs"
+
+export class CustomAgent extends AbstractAgent {
+  protected run(input: RunAgentInput): Observable<BaseEvent> {
+    const messageId = Date.now().toString()
+    return new Observable<BaseEvent>((observer) => {
+      observer.next({
+        type: EventType.RUN_STARTED,
+        threadId: input.threadId,
+        runId: input.runId,
+      } as any)
+
+      observer.next({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId,
+      } as any)
+
+      observer.next({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId,
+        delta: "Hello world!",
+      } as any)
+
+      observer.next({
+        type: EventType.TEXT_MESSAGE_END,
+        messageId,
+      } as any)
+
+      observer.next({
+        type: EventType.RUN_FINISHED,
+        threadId: input.threadId,
+        runId: input.runId,
+      } as any)
+
+      observer.complete()
+    })
+  }
+}
+```
+
+Our example contains the minimal structure of an AG-UI agent. We implement
+`run()` and emit a series of events. First, we signal the start of a new run
+(`RUN_STARTED`). Then, we emit a text message (`TEXT_MESSAGE_START` /
+`TEXT_MESSAGE_CONTENT` / `TEXT_MESSAGE_END`). Finally, we signal the end of the
+run (`RUN_FINISHED`).
+
+## Bridge OpenAI with AG-UI
+
+Now, let's build on this example by connecting to a simple ReAct agent based on
+OpenAI's API.
+
+Let's add OpenAI to the project:
+
+```bash
+npm install openai
 ```
 
 ### AG-UI Recap
@@ -55,16 +128,14 @@ content, progress, etc.
 
 ### OpenAIAgent
 
-We'll create a special agent class, `OpenAIAgent`, which:
+We'll now modify the `CustomAgent` to:
 
-1. Connects to OpenAI's API using their official Node.js SDK.
-2. Sends the user's messages to OpenAI.
-3. Streams the response back, emitting AG-UI events for each chunk of text.
-
-Create a file called `src/openai-agent.ts`:
+1. Connect to OpenAI's API using their official Node.js SDK.
+2. Send the user's messages to OpenAI.
+3. Stream the response back, emitting AG-UI events for each chunk of text.
 
 ```typescript
-// src/openai-agent.ts
+// src/custom-agent.ts
 import {
   AbstractAgent,
   RunAgent,

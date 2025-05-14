@@ -8,7 +8,6 @@ import { Observable } from "rxjs";
 
 export class CustomAgent extends AbstractAgent {
   protected run(input: RunAgentInput): Observable<BaseEvent> {
-    const _messages = input.messages;
     const messageId = Date.now().toString();
     return new Observable<BaseEvent>((observer) => {
       observer.next({
