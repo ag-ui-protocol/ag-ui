@@ -126,7 +126,7 @@ to clients in a structured, event-driven way. Agents implement the
 `AbstractAgent` class from `@ag-ui/client` and emit events for each piece of
 content, progress, etc.
 
-### OpenAIAgent
+### Implementing OpenAI
 
 We'll now modify the `CustomAgent` to:
 
@@ -138,21 +138,17 @@ We'll now modify the `CustomAgent` to:
 // src/custom-agent.ts
 import {
   AbstractAgent,
-  RunAgent,
   RunAgentInput,
   EventType,
   BaseEvent,
-  RunStartedEventSchema,
-  TextMessageStartEventSchema,
   TextMessageContentEventSchema,
-  TextMessageEndEventSchema,
-  RunFinishedEventSchema,
-  Message,
 } from "@ag-ui/client"
 import { Observable } from "rxjs"
-import { OpenAI } from "openai"
 
-export class OpenAIAgent extends AbstractAgent {
+import { OpenAI } from "openai"
+import { randomUUID } from "crypto"
+
+export class CustomAgent extends AbstractAgent {
   private client: OpenAI
 
   constructor(apiKey?: string) {
@@ -160,95 +156,58 @@ export class OpenAIAgent extends AbstractAgent {
     this.client = new OpenAI({ apiKey: apiKey || process.env.OPENAI_API_KEY })
   }
 
-  protected run(input: RunAgentInput): RunAgent {
-    return () => {
-      return new Observable<BaseEvent>((observer) => {
-        // 1) Emit RUN_STARTED
-        observer.next(
-          RunStartedEventSchema.parse({
-            type: EventType.RUN_STARTED,
-            threadId: input.threadId,
-            runId: input.runId,
-          })
-        )
+  protected run(input: RunAgentInput): Observable<BaseEvent> {
+    return new Observable<BaseEvent>((observer) => {
+      observer.next({
+        type: EventType.RUN_STARTED,
+        threadId: input.threadId,
+        runId: input.runId,
+      } as any)
 
-        // Convert AG-UI messages to OpenAI format
-        const openaiMessages = input.messages
-          .filter((msg: Message) =>
-            ["user", "system", "assistant"].includes(msg.role)
-          )
-          .map((msg: Message) => ({
+      const messageId = randomUUID()
+
+      this.client.chat.completions
+        .create({
+          model: "gpt-4o",
+          messages: input.messages.map((msg) => ({
             role: msg.role as "user" | "system" | "assistant",
             content: msg.content || "",
-          }))
-
-        // Generate a message ID for the assistant's response
-        const messageId = Date.now().toString()
-
-        // Emit message start event
-        observer.next(
-          TextMessageStartEventSchema.parse({
+          })),
+          stream: true,
+        })
+        .then(async (stream) => {
+          observer.next({
             type: EventType.TEXT_MESSAGE_START,
             messageId,
-            role: "assistant",
-          })
-        )
+          } as any)
 
-        // Create a streaming completion request
-        this.client.chat.completions
-          .create({
-            model: "gpt-3.5-turbo",
-            messages: openaiMessages,
-            stream: true,
-          })
-          .then(async (stream) => {
-            try {
-              // Process the streaming response
-              for await (const chunk of stream) {
-                if (chunk.choices[0]?.delta?.content) {
-                  const content = chunk.choices[0].delta.content
-                  observer.next(
-                    TextMessageContentEventSchema.parse({
-                      type: EventType.TEXT_MESSAGE_CONTENT,
-                      messageId,
-                      delta: content,
-                    })
-                  )
-                }
-              }
-
-              // Emit message end event
+          for await (const chunk of stream) {
+            if (chunk.choices[0]?.delta?.content) {
+              const content = chunk.choices[0].delta.content
               observer.next(
-                TextMessageEndEventSchema.parse({
-                  type: EventType.TEXT_MESSAGE_END,
+                TextMessageContentEventSchema.parse({
+                  type: EventType.TEXT_MESSAGE_CONTENT,
                   messageId,
+                  delta: content,
                 })
               )
-
-              // Emit RUN_FINISHED and complete
-              observer.next(
-                RunFinishedEventSchema.parse({
-                  type: EventType.RUN_FINISHED,
-                  threadId: input.threadId,
-                  runId: input.runId,
-                })
-              )
-
-              observer.complete()
-            } catch (error) {
-              observer.error(error)
             }
-          })
-          .catch((error) => {
-            observer.error(error)
-          })
+          }
 
-        // Return a cleanup function
-        return () => {
-          // Nothing to clean up for OpenAI
-        }
-      })
-    }
+          observer.next({
+            type: EventType.TEXT_MESSAGE_END,
+            messageId,
+          } as any)
+
+          observer.next({
+            type: EventType.RUN_FINISHED,
+            threadId: input.threadId,
+            runId: input.runId,
+          } as any)
+
+          observer.complete()
+        })
+    })
   }
 }
 ```
@@ -273,44 +232,11 @@ export class OpenAIAgent extends AbstractAgent {
    - For each chunk of text received, we emit a `TEXT_MESSAGE_CONTENT` event.
    - After all chunks are processed, we finalize the message and run.
 
-## Putting It All Together
+## Interacting with the agent
 
-Create a main entry point file `src/index.ts` that sets up our AG-UI agent:
-
-```typescript
-// src/index.ts
-import { OpenAIAgent } from "./openai-agent"
-
-// Create an instance of our agent
-const openAIAgent = new OpenAIAgent()
-
-// Example: Set up some initial messages
-openAIAgent.messages = [
-  {
-    id: "1",
-    role: "user",
-    content: "What can you tell me about the Agent User Interaction Protocol?",
-  },
-]
-
-// Make a request to OpenAI through AG-UI
-const run = openAIAgent.runAgent({
-  runId: "run1",
-})
-
-// Subscribe to the observable to see events
-run.subscribe({
-  next: (event) => console.log("Event:", event),
-  error: (err) => console.error("Error:", err),
-  complete: () => console.log("Stream complete"),
-})
-```
-
-Run the application:
-
-```bash
-npx ts-node src/index.ts
-```
+Now go to the [agentic chat](http://localhost:3000/feature/agentic_chat) demo
+and type something in the chat input. You should see the agent responding using
+OpenAI's gpt4o model.
 
 ## Bridging AG-UI to Any Protocol
 
