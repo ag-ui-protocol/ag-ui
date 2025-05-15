@@ -23,7 +23,7 @@ AG-UI is an open, lightweight, event-based protocol for agent-human interaction,
 
 It also ships with a **reference HTTP implementation** and **default connector** to help teams get started fast.
 
-[Learn more at ag-ui.com](https://ag-ui.com)
+[Learn more at docs.ag-ui.com](https://ag-ui.com)
 
 ## Why AG-UI?
 
@@ -96,9 +96,9 @@ AG-UI provides ready-to-use client libraries for building connected experiences:
 - **React client** via [CopilotKit](https://docs.copilotkit.ai/)
 - Messaging clients (WhatsApp, WeChat, RCS) — WIP in collaboration with AWS SNS
 
-## Build New AG-UI Framework Integrations
+## Connect AG-UI to Agentic Framework
 
-Learn how to build AG-UI hooks for a new framework: [Framework Integration Guide](http://ag-ui.com/build-hooks)
+Learn how to connect AG-UI to a new framework: [Framework Integration Guide](https://docs.ag-ui.com/quickstart/connect)
 
 ## Community
 
