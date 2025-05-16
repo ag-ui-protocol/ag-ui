@@ -1,4 +1,4 @@
-# Agent Wire Protocol Dojo
+# AG-UI Protocol Dojo
 
 A modern, interactive viewer for exploring CopilotKit agent demos with a clean, responsive UI and dark/light theme support.
 
