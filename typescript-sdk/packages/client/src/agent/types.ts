@@ -6,6 +6,7 @@ export interface AgentConfig {
   threadId?: string;
   initialMessages?: Message[];
   initialState?: State;
+  debug?: boolean;
 }
 
 export interface HttpAgentConfig extends AgentConfig {

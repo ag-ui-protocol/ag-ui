@@ -7,6 +7,16 @@ In this tutorial, you'll learn how to create an agent that connects to
 **OpenAI's API** and demonstrates how the Agent User Interaction Protocol
 (AG-UI) can integrate seamlessly with any modern AI service. Let's get started.
 
+<Note>
+
+This tutorial uses features from AG-UI `0.0.28` which we expect to be released
+in the next few days.
+
+In the current version, `TEXT_MESSAGE_CHUNK` and `TOOL_CALL_CHUNK` are not
+available yet.
+
+</Note>
+
 ## Prerequisites
 
 Make sure to have the following:
@@ -141,19 +151,17 @@ import {
   RunAgentInput,
   EventType,
   BaseEvent,
-  TextMessageContentEventSchema,
 } from "@ag-ui/client"
 import { Observable } from "rxjs"
 
 import { OpenAI } from "openai"
-import { randomUUID } from "crypto"
 
 export class CustomAgent extends AbstractAgent {
-  private client: OpenAI
+  private openai: OpenAI
 
-  constructor(apiKey?: string) {
+  constructor(openai?: OpenAI) {
     super()
-    this.client = new OpenAI({ apiKey: apiKey || process.env.OPENAI_API_KEY })
+    this.openai = openai ?? new OpenAI()
   }
 
   protected run(input: RunAgentInput): Observable<BaseEvent> {
@@ -164,40 +172,53 @@ export class CustomAgent extends AbstractAgent {
         runId: input.runId,
       } as any)
 
-      const messageId = randomUUID()
-
-      this.client.chat.completions
+      this.openai.chat.completions
         .create({
           model: "gpt-4o",
-          messages: input.messages.map((msg) => ({
-            role: msg.role as "user" | "system" | "assistant",
-            content: msg.content || "",
-          })),
           stream: true,
+          tools: input.tools.map((tool) => ({
+            type: "function",
+            function: {
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.parameters,
+            },
+          })),
+          messages: input.messages.map((message) => ({
+            role: message.role as any,
+            content: message.content ?? "",
+            ...(message.role === "assistant" && message.toolCalls
+              ? {
+                  tool_calls: message.toolCalls,
+                }
+              : {}),
+            ...(message.role === "tool"
+              ? { tool_call_id: message.toolCallId }
+              : {}),
+          })),
         })
-        .then(async (stream) => {
-          observer.next({
-            type: EventType.TEXT_MESSAGE_START,
-            messageId,
-          } as any)
+        .then(async (response) => {
+          const messageId = Date.now().toString()
 
-          for await (const chunk of stream) {
-            if (chunk.choices[0]?.delta?.content) {
-              const content = chunk.choices[0].delta.content
-              observer.next(
-                TextMessageContentEventSchema.parse({
-                  type: EventType.TEXT_MESSAGE_CONTENT,
-                  messageId,
-                  delta: content,
-                })
-              )
+          for await (const chunk of response) {
+            if (chunk.choices[0].delta.content) {
+              observer.next({
+                type: EventType.TEXT_MESSAGE_CHUNK,
+                messageId,
+                delta: chunk.choices[0].delta.content,
+              } as any)
+            } else if (chunk.choices[0].delta.tool_calls) {
+              let toolCall = chunk.choices[0].delta.tool_calls[0]
+
+              observer.next({
+                type: EventType.TOOL_CALL_CHUNK,
+                toolCallId: toolCall.id,
+                toolCallName: toolCall.function?.name,
+                parentMessageId: messageId,
+                delta: toolCall.function?.arguments,
+              } as any)
             }
           }
-
-          observer.next({
-            type: EventType.TEXT_MESSAGE_END,
-            messageId,
-          } as any)
 
           observer.next({
             type: EventType.RUN_FINISHED,
@@ -206,6 +227,14 @@ export class CustomAgent extends AbstractAgent {
           } as any)
 
           observer.complete()
+        })
+        .catch((error) => {
+          observer.next({
+            type: EventType.RUN_ERROR,
+            message: error.message,
+          } as any)
+
+          observer.error(error)
         })
     })
   }
@@ -223,8 +252,8 @@ export class CustomAgent extends AbstractAgent {
 3. **Emitting Events**:
 
    - `RUN_STARTED` means the agent started processing the request.
-   - `TEXT_MESSAGE_START` / `TEXT_MESSAGE_CONTENT` / `TEXT_MESSAGE_END` together
-     send the agent's textual response to the AG-UI pipeline.
+   - `TEXT_MESSAGE_CHUNK` / `TOOL_CALL_CHUNK` let us conveniently stream the
+     agent's textual response to the AG-UI pipeline.
    - `RUN_FINISHED` means this run is over.
 
 4. **Stream Processing**:

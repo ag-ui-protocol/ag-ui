@@ -1,16 +1,17 @@
 import { defaultApplyEvents } from "@/apply/default";
-import { Message, State, RunAgentInput, RunAgent, ApplyEvents } from "@ag-ui/core";
+import { Message, State, RunAgentInput, RunAgent, ApplyEvents, BaseEvent } from "@ag-ui/core";
 
 import { AgentConfig, RunAgentParameters } from "./types";
 import { v4 as uuidv4 } from "uuid";
 import { structuredClone_ } from "@/utils";
-import { catchError, tap } from "rxjs/operators";
+import { catchError, map, tap } from "rxjs/operators";
 import { finalize } from "rxjs/operators";
 import { throwError, pipe, Observable } from "rxjs";
 import { verifyEvents } from "@/verify";
 import { convertToLegacyEvents } from "@/legacy/convert";
 import { LegacyRuntimeProtocolEvent } from "@/legacy/types";
 import { lastValueFrom, of } from "rxjs";
+import { transformChunks } from "@/chunks";
 
 export abstract class AbstractAgent {
   public agentId?: string;
@@ -18,13 +19,22 @@ export abstract class AbstractAgent {
   public threadId: string;
   public messages: Message[];
   public state: State;
+  public debug: boolean;
 
-  constructor({ agentId, description, threadId, initialMessages, initialState }: AgentConfig = {}) {
+  constructor({
+    agentId,
+    description,
+    threadId,
+    initialMessages,
+    initialState,
+    debug,
+  }: AgentConfig = {}) {
     this.agentId = agentId;
     this.description = description ?? "";
     this.threadId = threadId ?? uuidv4();
     this.messages = structuredClone_(initialMessages ?? []);
     this.state = structuredClone_(initialState ?? {});
+    this.debug = debug ?? false;
   }
 
   protected abstract run(...args: Parameters<RunAgent>): ReturnType<RunAgent>;
@@ -35,7 +45,8 @@ export abstract class AbstractAgent {
 
     const pipeline = pipe(
       () => this.run(input),
-      verifyEvents,
+      transformChunks(this.debug),
+      verifyEvents(this.debug),
       (source$) => this.apply(input, source$),
       (source$) => this.processApplyEvents(input, source$),
       catchError((error) => {
@@ -110,8 +121,19 @@ export abstract class AbstractAgent {
     const input = this.prepareRunAgentInput(config);
 
     return this.run(input).pipe(
-      verifyEvents,
+      transformChunks(this.debug),
+      verifyEvents(this.debug),
       convertToLegacyEvents(this.threadId, input.runId, this.agentId),
+      (events$: Observable<LegacyRuntimeProtocolEvent>) => {
+        return events$.pipe(
+          map((event) => {
+            if (this.debug) {
+              console.debug("[LEGACY]:", JSON.stringify(event));
+            }
+            return event;
+          }),
+        );
+      },
     );
   }
 }

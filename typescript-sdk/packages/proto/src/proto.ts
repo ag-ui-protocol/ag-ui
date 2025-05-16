@@ -35,7 +35,7 @@ export function encode(event: BaseEvent): Uint8Array {
   const eventMessage = {
     [oneofField]: {
       baseEvent: {
-        type: protoEvents.EventType[event.type],
+        type: protoEvents.EventType[event.type as keyof typeof protoEvents.EventType],
         timestamp,
         rawEvent,
       },

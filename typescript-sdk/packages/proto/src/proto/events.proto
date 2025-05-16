@@ -121,6 +121,21 @@ message StepFinishedEvent {
   string step_name = 2;
 }
 
+message TextMessageChunkEvent {
+  BaseEvent base_event = 1;
+  optional string message_id = 2;
+  optional string role = 3;
+  optional string delta = 4;
+}
+
+message ToolCallChunkEvent {
+  BaseEvent base_event = 1;
+  optional string tool_call_id = 2;
+  optional string tool_call_name = 3;
+  optional string parent_message_id = 4;
+  optional string delta = 5;
+}
+
 message Event {
   oneof event {
     TextMessageStartEvent text_message_start = 1;
@@ -139,5 +154,7 @@ message Event {
     RunErrorEvent run_error = 14;
     StepStartedEvent step_started = 15;
     StepFinishedEvent step_finished = 16;
+    TextMessageChunkEvent text_message_chunk = 17;
+    ToolCallChunkEvent tool_call_chunk = 18;
   }
 }

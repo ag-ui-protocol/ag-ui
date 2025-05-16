@@ -16,9 +16,11 @@ class EventType(str, Enum):
     TEXT_MESSAGE_START = "TEXT_MESSAGE_START"
     TEXT_MESSAGE_CONTENT = "TEXT_MESSAGE_CONTENT"
     TEXT_MESSAGE_END = "TEXT_MESSAGE_END"
+    TEXT_MESSAGE_CHUNK = "TEXT_MESSAGE_CHUNK"
     TOOL_CALL_START = "TOOL_CALL_START"
     TOOL_CALL_ARGS = "TOOL_CALL_ARGS"
     TOOL_CALL_END = "TOOL_CALL_END"
+    TOOL_CALL_CHUNK = "TOOL_CALL_CHUNK"
     STATE_SNAPSHOT = "STATE_SNAPSHOT"
     STATE_DELTA = "STATE_DELTA"
     MESSAGES_SNAPSHOT = "MESSAGES_SNAPSHOT"
@@ -69,6 +71,14 @@ class TextMessageEndEvent(BaseEvent):
     type: Literal[EventType.TEXT_MESSAGE_END]
     message_id: str
 
+class TextMessageChunkEvent(BaseEvent):
+    """
+    Event containing a chunk of text message content.
+    """
+    type: Literal[EventType.TEXT_MESSAGE_CHUNK]
+    message_id: Optional[str] = None
+    role: Optional[Literal["assistant"]] = None
+    delta: Optional[str] = None
 
 class ToolCallStartEvent(BaseEvent):
     """
@@ -96,6 +106,15 @@ class ToolCallEndEvent(BaseEvent):
     type: Literal[EventType.TOOL_CALL_END]
     tool_call_id: str
 
+class ToolCallChunkEvent(BaseEvent):
+    """
+    Event containing a chunk of tool call content.
+    """
+    type: Literal[EventType.TOOL_CALL_CHUNK]
+    tool_call_id: Optional[str] = None
+    tool_call_name: Optional[str] = None
+    parent_message_id: Optional[str] = None
+    delta: Optional[str] = None
 
 class StateSnapshotEvent(BaseEvent):
     """
@@ -187,9 +206,11 @@ Event = Annotated[
         TextMessageStartEvent,
         TextMessageContentEvent,
         TextMessageEndEvent,
+        TextMessageChunkEvent,
         ToolCallStartEvent,
         ToolCallArgsEvent,
         ToolCallEndEvent,
+        ToolCallChunkEvent,
         StateSnapshotEvent,
         StateDeltaEvent,
         MessagesSnapshotEvent,

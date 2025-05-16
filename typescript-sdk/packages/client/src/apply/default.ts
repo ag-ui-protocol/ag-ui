@@ -225,6 +225,14 @@ export const defaultApplyEvents = (...args: Parameters<ApplyEvents>): ReturnType
           predictState = undefined;
           return emitNoUpdate();
         }
+
+        case EventType.TEXT_MESSAGE_CHUNK: {
+          throw new Error("TEXT_MESSAGE_CHUNK must be tranformed before being applied");
+        }
+
+        case EventType.TOOL_CALL_CHUNK: {
+          throw new Error("TOOL_CALL_CHUNK must be tranformed before being applied");
+        }
       }
 
       // This makes TypeScript check that the switch is exhaustive
