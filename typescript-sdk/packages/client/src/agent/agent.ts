@@ -19,7 +19,7 @@ export abstract class AbstractAgent {
   public threadId: string;
   public messages: Message[];
   public state: State;
-  private debug: boolean;
+  #debug?: boolean;
 
   constructor({
     agentId,
@@ -34,7 +34,7 @@ export abstract class AbstractAgent {
     this.threadId = threadId ?? uuidv4();
     this.messages = structuredClone_(initialMessages ?? []);
     this.state = structuredClone_(initialState ?? {});
-    this.debug = debug ?? false;
+    this.#debug = debug ?? false;
   }
 
   protected abstract run(...args: Parameters<RunAgent>): ReturnType<RunAgent>;
@@ -45,8 +45,8 @@ export abstract class AbstractAgent {
 
     const pipeline = pipe(
       () => this.run(input),
-      transformChunks(this.debug),
-      verifyEvents(this.debug),
+      transformChunks(this.#debug ?? false),
+      verifyEvents(this.#debug ?? false),
       (source$) => this.apply(input, source$),
       (source$) => this.processApplyEvents(input, source$),
       catchError((error) => {
@@ -121,13 +121,13 @@ export abstract class AbstractAgent {
     const input = this.prepareRunAgentInput(config);
 
     return this.run(input).pipe(
-      transformChunks(this.debug),
-      verifyEvents(this.debug),
+      transformChunks(this.#debug ?? false),
+      verifyEvents(this.#debug ?? false),
       convertToLegacyEvents(this.threadId, input.runId, this.agentId),
       (events$: Observable<LegacyRuntimeProtocolEvent>) => {
         return events$.pipe(
           map((event) => {
-            if (this.debug) {
+            if (this.#debug) {
               console.debug("[LEGACY]:", JSON.stringify(event));
             }
             return event;
