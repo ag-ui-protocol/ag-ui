@@ -19,7 +19,7 @@ export abstract class AbstractAgent {
   public threadId: string;
   public messages: Message[];
   public state: State;
-  public debug: boolean;
+  private debug: boolean;
 
   constructor({
     agentId,
