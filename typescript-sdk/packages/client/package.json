@@ -1,7 +1,7 @@
 {
   "name": "@ag-ui/client",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.28-alpha.6",
+  "version": "0.0.28",
   "private": false,
   "publishConfig": {
     "access": "public"
