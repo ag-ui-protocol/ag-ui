@@ -16,7 +16,8 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
-    }
+    },
+    "stripInternal": true
   },
   "include": ["src"],
   "exclude": ["node_modules", "dist"]
