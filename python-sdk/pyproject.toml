@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ag-ui-protocol"
-version = "0.1.4"
+version = "0.1.5"
 description = ""
 authors = ["Markus Ecker <markus.ecker@gmail.com>"]
 readme = "README.md"
