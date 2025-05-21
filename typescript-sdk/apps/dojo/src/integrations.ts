@@ -4,12 +4,12 @@ import { StarterAgent } from "@ag-ui/starter";
 export const integrations: IntegrationConfig[] = [];
 
 // A helper method to configure
-function configureIntegration({ id, name, features }: IntegrationConfig) {
+function configureIntegration({ id, name, features, agents }: IntegrationConfig) {
   const availableFeatures = featureConfig.map((f) => f.id);
 
   for (const feature of features) {
-    if (!availableFeatures.includes(feature.featureID)) {
-      throw new Error(`Feature ${feature.featureID} not found`);
+    if (!availableFeatures.includes(feature)) {
+      throw new Error(`Feature ${feature} not found`);
     }
   }
 
@@ -17,11 +17,17 @@ function configureIntegration({ id, name, features }: IntegrationConfig) {
     id,
     name,
     features,
+    agents,
   });
 }
 
 configureIntegration({
   id: "starter",
   name: "Starter",
-  features: [{ featureID: "agentic_chat", agent: new StarterAgent() }],
+  features: ["agentic_chat"],
+  agents: async (features) => {
+    return {
+      agentic_chat: new StarterAgent(),
+    };
+  },
 });

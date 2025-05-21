@@ -9,10 +9,6 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@ag-ui/client": "workspace:*",
-    "@ag-ui/core": "workspace:*",
-    "@ag-ui/encoder": "workspace:*",
-    "@ag-ui/proto": "workspace:*",
     "@ag-ui/starter": "workspace:*",
     "@copilotkit/react-core": "1.8.12",
     "@copilotkit/react-ui": "1.8.12",
@@ -51,6 +47,12 @@
     "tailwind-merge": "^3.0.2",
     "tailwindcss-animate": "^1.0.7",
     "uuid": "^11.1.0"
+  },
+  "peerDependencies": {
+    "@ag-ui/client": "workspace:*",
+    "@ag-ui/core": "workspace:*",
+    "@ag-ui/encoder": "workspace:*",
+    "@ag-ui/proto": "workspace:*"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
