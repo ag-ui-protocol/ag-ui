@@ -8,23 +8,7 @@ import {
 
 import { NextRequest } from "next/server";
 
-const agenticChatAgent = new CustomAgent();
-const agentiveGenerativeUIAgent = new CustomAgent();
-const humanInTheLoopAgent = new CustomAgent();
-const predictiveStateUpdatesAgent = new CustomAgent();
-const sharedStateAgent = new CustomAgent();
-const toolBasedGenerativeUIAgent = new CustomAgent();
-
-const runtime = new CopilotRuntime({
-  agents: {
-    agenticChatAgent,
-    agentiveGenerativeUIAgent,
-    humanInTheLoopAgent,
-    predictiveStateUpdatesAgent,
-    sharedStateAgent,
-    toolBasedGenerativeUIAgent,
-  },
-});
+const runtime = new CopilotRuntime({});
 
 export const POST = async (req: NextRequest) => {
   const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({

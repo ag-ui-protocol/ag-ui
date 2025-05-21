@@ -6,8 +6,17 @@ import { useRouter, usePathname } from "next/navigation";
 import { DemoList } from "@/components/demo-list/demo-list";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Eye, Code, Book } from "lucide-react";
-import config from "@/config";
+import { Eye, Code, Book, List, ChevronDown } from "lucide-react";
+import featureConfig from "@/config";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "../ui/dropdown-menu";
+import { Button } from "../ui/button";
 
 interface SidebarProps {
   activeTab?: string;
@@ -19,14 +28,14 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: S
   const router = useRouter();
   const pathname = usePathname();
   const [isDarkTheme, setIsDarkTheme] = useState<boolean>(false);
-  
+
   // Extract the current demo ID from the pathname
-  const pathParts = pathname.split('/');
+  const pathParts = pathname.split("/");
   const currentDemoId = pathParts[pathParts.length - 1];
-  
+
   // Handle selecting a demo
   const handleDemoSelect = (demoId: string) => {
-    const demo = config.find((d) => d.id === demoId);
+    const demo = featureConfig.find((d) => d.id === demoId);
     if (demo) {
       router.push(demo.path);
     }
@@ -84,11 +93,9 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: S
               className="h-6 w-auto object-contain"
             />
             <h1
-              className={`text-lg font-extralight ${
-                isDarkTheme ? "text-white" : "text-gray-900"
-              }`}
+              className={`text-lg font-extralight ${isDarkTheme ? "text-white" : "text-gray-900"}`}
             >
-              Interactive Demos
+              Interactive Dojo
             </h1>
           </div>
 
@@ -100,49 +107,38 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: S
       <div className="p-4 border-b bg-background">
         {/* Preview/Code Tabs */}
         <div className="mb-1">
-          <label className="block text-sm font-medium text-muted-foreground mb-2">
-            View
-          </label>
-          <Tabs
-            value={activeTab}
-            onValueChange={handleTabChange}
-            className="w-full"
-          >
-            <TabsList className="w-full h-9 bg-background border shadow-sm rounded-lg p-1">
-              <TabsTrigger
-                value="preview"
-                className="flex-1 h-7 px-2 text-sm font-medium gap-1 rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow"
-              >
-                <Eye className="h-3 w-3" />
+          <label className="block text-sm font-medium text-muted-foreground mb-2">View</label>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="w-full justify-between">
+                Select Integration
+                <ChevronDown className="h-4 w-4 opacity-50" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-56">
+              <DropdownMenuLabel>View Options</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem>
+                <Eye className="mr-2 h-4 w-4" />
                 <span>Preview</span>
-              </TabsTrigger>
-              <TabsTrigger
-                value="code"
-                className="flex-1 h-7 px-2 text-sm font-medium gap-1 rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow"
-              >
-                <Code className="h-3 w-3" />
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <Code className="mr-2 h-4 w-4" />
                 <span>Code</span>
-              </TabsTrigger>
-              <TabsTrigger
-                value="readme"
-                className="flex-1 h-7 px-2 text-sm font-medium gap-1 rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow"
-              >
-                <Book className="h-3 w-3" />
-                <span>Docs</span>
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <Book className="mr-2 h-4 w-4" />
+                <span>Documentation</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
       {/* Demo List */}
       <div className="flex-1 overflow-auto">
-        <DemoList
-          demos={config}
-          selectedDemo={currentDemoId}
-          onSelect={handleDemoSelect}
-        />
+        <DemoList demos={featureConfig} selectedDemo={currentDemoId} onSelect={handleDemoSelect} />
       </div>
     </div>
   );
-} 
+}
