@@ -95,11 +95,6 @@
           "anchor": "Python SDK",
           "href": "https://docs.ag-ui.com/sdk/python/core/overview",
           "icon": "python"
-        },
-        {
-          "anchor": "Specification",
-          "href": "https://spec.ag-ui.com",
-          "icon": "book"
         }
       ]
     }
