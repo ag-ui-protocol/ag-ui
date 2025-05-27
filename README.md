@@ -103,13 +103,10 @@ Learn how to connect AG-UI to a new framework: [Framework Integration Guide](htt
 
 ### Upcoming Events
 
-- **[AG-UI: How to Bring AI Agents Into Frontend Applications](https://lu.ma/c58yhgij)**  
+- **[AG-UI: Workshop](https://lu.ma/c58yhgij)**  
   📅 Friday, May 16, 9:00 AM PT  
-  🔗 [lu.ma/c58yhgij](https://lu.ma/c58yhgij)
+  🔗 [Register now](https://lu.ma/ogc6owmi)
 
-- **[AG-UI Protocol Working Group #1](https://lu.ma/8supz1j0)**  
-  📅 Friday, May 16, 10:00 AM PT  
-  🔗 [lu.ma/8supz1j0](https://lu.ma/8supz1j0)
 
 ## Contributing
 
