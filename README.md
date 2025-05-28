@@ -61,11 +61,18 @@ AG-UI works with several popular agent frameworks and frontend solutions:
 | [CrewAI](https://crewai.com/)                                      | ✅ Supported             | ➡️ [Live Demo / Getting Started Docs](https://v0-crew-land.vercel.app/)      |
 | [AG2](https://ag2.ai/)                                             | ✅ Supported             | ➡️ [Live Demo / Getting Started Docs](https://v0-ag2-land.vercel.app/)       |
 | [Agno](https://github.com/agno-agi/agno)                           | 🛠️ In Progress           | –                                                                            |
+| [LlamaIndex](https://www.llamaindex.ai)                            | 🛠️ In Progress           | –                                                                            |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 💡 Open to Contributions | –                                                                            |
 | [Google ADK](https://google.github.io/adk-docs/get-started/)       | 💡 Open to Contributions | –                                                                            |
 | [Vercel AI SDK](https://github.com/vercel/ai)                      | 💡 Open to Contributions | –                                                                            |
 | [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/)       | 💡 Open to Contributions | –                                                                            |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/)     | 💡 Open to Contributions | –                                                                            |
+| [Pydantic AI ](https://ai.pydantic.dev/)                           | 💡 Open to Contributions | –                                                                            |
+
+| Language SDK                                                      | Status                | AG-UI Resources                                                                 |
+| ------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------- |
+| [.NET]()                                                           | 🛠️ In Progress               | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/38)                 |
+| [Nim]()                                                            | 🛠️ In Progress               | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/29)                 |
 
 ## Features
 
