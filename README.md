@@ -68,6 +68,7 @@ AG-UI works with several popular agent frameworks and frontend solutions:
 | [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/)       | 💡 Open to Contributions | –                                                                            |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/)     | 💡 Open to Contributions | –                                                                            |
 | [Pydantic AI ](https://ai.pydantic.dev/)                           | 💡 Open to Contributions | –                                                                            |
+| [Strands Agents SDK](https://github.com/strands-agents/sdk-python) | 💡 Open to Contributions | –                                                                            |
 
 | Language SDK                                                      | Status                | AG-UI Resources                                                                 |
 | ------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------- |
