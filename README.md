@@ -111,7 +111,7 @@ Learn how to connect AG-UI to a new framework: [Framework Integration Guide](htt
 ### Upcoming Events
 
 - **[AG-UI: Workshop](https://lu.ma/c58yhgij)**  
-  📅 Friday, May 16, 9:00 AM PT  
+  📅 Friday, May 29, 9:00 AM PT  
   🔗 [Register now](https://lu.ma/ogc6owmi)
 
 
