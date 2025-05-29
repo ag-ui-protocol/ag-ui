@@ -2,7 +2,6 @@
   "name": "@ag-ui/starter",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
   "version": "0.0.1",
-  "private": true,
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
