@@ -7,25 +7,14 @@ In this tutorial, you'll learn how to create an agent that connects to
 **OpenAI's API** and demonstrates how the Agent User Interaction Protocol
 (AG-UI) can integrate seamlessly with any modern AI service. Let's get started.
 
-<Note>
-
-This tutorial uses features from AG-UI `0.0.28` which we expect to be released
-in the next few days.
-
-In the current version, `TEXT_MESSAGE_CHUNK` and `TOOL_CALL_CHUNK` are not
-available yet.
-
-</Note>
-
 ## Prerequisites
 
 Make sure to have the following:
 
 - [Node.js](https://nodejs.org/) (v16 or later)
-- [npm](https://www.npmjs.com/) or [yarn](https://yarnpkg.com/)
 - An OpenAI API key
 
-## Setting up OpenAI access
+### Setting up OpenAI access
 
 Before we start coding, make sure you have an OpenAI API key. You can get one by
 signing up at [OpenAI's platform](https://platform.openai.com/).
@@ -37,44 +26,116 @@ Once you have your API key, set it as an environment variable:
 export OPENAI_API_KEY=your-api-key-here
 ```
 
-## Project Setup
+### Install the build tools
 
-We'll start by cloning the AG-UI repository and running the "dojo" application.
+We will need `protoc`, `turbo` and `pnpm` installed.
 
 ```bash
-# Create a directory for your project
-git clone git@github.com:ag-ui-protocol/ag-ui.git
-cd ag-ui/dojo
-
-# Install dependencies
-npm install
-
-# Run the application
-npm run dev
+brew install protobuf
 ```
 
-Now go to [http://localhost:3000](http://localhost:3000) to open the dojo. Open
-any example feature by clicking in the left sidebar and type something in the
-chat input.
+```bash
+npm i turbo
+```
 
-You should be greeted with a "Hello world!" message.
+```bash
+curl -fsSL https://get.pnpm.io/install.sh | sh -
+```
 
-### Custom Agent
+## Setting up a new integration
 
-Next, we'll have a look at `src/custom-agent.ts`. We will be modifying this file
-to connect to OpenAI's API in a minute.
+We'll start by cloning the AG-UI repository.
+
+```bash
+git clone git@github.com:ag-ui-protocol/ag-ui.git
+cd ag-ui/typescript-sdk
+```
+
+Next, we duplicate the starter integration by running:
+
+```bash
+cp -r integrations/starter integrations/openai
+```
+
+This will create a new integration called `openai` in the `integrations`
+directory.
+
+Next we need to update `integrations/openai/package.json` to match the name of
+the directory, `@ag-ui/openai`. Also, we set `private` to `false`.
+
+```json
+{
+  "name": "@ag-ui/openai",
+  "private": false,
+  "author": "Your Name <your-email@example.com>",
+  "version": "0.0.1",
+
+  ... rest of package.json
+}
+```
+
+Then, we update the `integrations/openai/src/index.ts` and give it a matching
+name:
 
 ```ts
-// src/custom-agent.ts
+// change the name to OpenAIAgent
+export class OpenAIAgent extends AbstractAgent {}
+```
+
+Finally, we need to let the dojo know about our new integration. We do this by
+adding it to the `integrations` array in `apps/dojo/src/integrations.ts`.
+
+```ts
+import { configureIntegration } from "./types/integration"
+import { StarterAgent } from "@ag-ui/starter"
+export const integrations = [
+  // ...
+
+  configureIntegration({
+    id: "openai",
+    name: "OpenAI",
+    features: ["agentic_chat"],
+    agents: async () => {
+      return {
+        agentic_chat: new OpenAIAgent(),
+      }
+    },
+  }),
+]
+```
+
+## Running the dojo
+
+Now we can run the dojo, a web app for testing AG-UI agents and see our new
+integration in action.
+
+```bash
+# Install dependencies
+pnpm install
+
+# Compile the project and run the dojo
+turbo run dev
+```
+
+We can open the dojo at [http://localhost:3000](http://localhost:3000) and see
+the integration we made by selecting "OpenAI" from the dropdown on the left.
+
+When we try to chat with it, we should be greeted with a "Hello world!" message.
+
+Next, we'll have a look at `integrations/openai/src/index.ts`. We will be
+modifying this file to connect to OpenAI's API in a minute.
+
+```ts
+// integrations/openai/src/index.ts
 import {
   AbstractAgent,
-  RunAgentInput,
-  EventType,
   BaseEvent,
+  EventType,
+  RunAgentInput,
 } from "@ag-ui/client"
 import { Observable } from "rxjs"
 
-export class CustomAgent extends AbstractAgent {
+export class StarterAgent extends AbstractAgent {
   protected run(input: RunAgentInput): Observable<BaseEvent> {
     const messageId = Date.now().toString()
     return new Observable<BaseEvent>((observer) => {
@@ -126,7 +187,7 @@ OpenAI's API.
 Let's add OpenAI to the project:
 
 ```bash
-npm install openai
+pnpm install openai
 ```
 
 ### AG-UI Recap
@@ -145,7 +206,7 @@ We'll now modify the `CustomAgent` to:
 3. Stream the response back, emitting AG-UI events for each chunk of text.
 
 ```typescript
-// src/custom-agent.ts
+// integrations/openai/src/index.ts
 import {
   AbstractAgent,
   RunAgentInput,
