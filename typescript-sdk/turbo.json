@@ -11,6 +11,11 @@
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
+    "demo-viewer#build": {
+      "dependsOn": ["^build", "generate"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+    },
     "lint": {
       "dependsOn": ["^lint"]
     },
@@ -19,6 +24,11 @@
     },
     "dev": {
       "dependsOn": ["generate"],
+      "cache": false,
+      "persistent": true
+    },
+    "demo-viewer#dev": {
+      "dependsOn": ["^build", "generate"],
       "cache": false,
       "persistent": true
     },
