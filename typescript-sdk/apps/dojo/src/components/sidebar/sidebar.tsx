@@ -29,15 +29,26 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: S
   const pathname = usePathname();
   const [isDarkTheme, setIsDarkTheme] = useState<boolean>(false);
 
-  // Extract the current demo ID from the pathname
+  // Extract the current integration ID from the pathname
   const pathParts = pathname.split("/");
+  const currentIntegrationId = pathParts[1]; // First segment after root
   const currentDemoId = pathParts[pathParts.length - 1];
+
+  // Find the current integration (only if we have a valid integration ID)
+  const currentIntegration =
+    currentIntegrationId && currentIntegrationId !== ""
+      ? integrations.find((integration) => integration.id === currentIntegrationId)
+      : null;
+
+  // Filter demos based on current integration's features
+  const filteredDemos = currentIntegration
+    ? featureConfig.filter((demo) => currentIntegration.features.includes(demo.id))
+    : []; // Show no demos if no integration is selected
 
   // Handle selecting a demo
   const handleDemoSelect = (demoId: string) => {
-    const demo = featureConfig.find((d) => d.id === demoId);
-    if (demo) {
-      router.push(demo.path);
+    if (currentIntegration) {
+      router.push(`/${currentIntegration.id}/feature/${demoId}`);
     }
   };
 
@@ -79,17 +90,8 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: S
       <div className="p-4 border-b bg-background">
         <div className="flex items-center justify-between ml-1">
           <div className="flex items-start flex-col">
-            <Image
-              src={isDarkTheme ? "/logo_light.webp" : "/logo_dark.webp"}
-              width={120}
-              height={24}
-              alt="CopilotKit"
-              className="h-6 w-auto object-contain"
-            />
-            <h1
-              className={`text-lg font-extralight ${isDarkTheme ? "text-white" : "text-gray-900"}`}
-            >
-              Interactive Dojo
+            <h1 className={`text-lg font-light ${isDarkTheme ? "text-white" : "text-gray-900"}`}>
+              AG-UI Interactive Dojo
             </h1>
           </div>
 
@@ -105,7 +107,7 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: S
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" className="w-full justify-between">
-                Select Integration
+                {currentIntegration ? currentIntegration.name : "Select Integration"}
                 <ChevronDown className="h-4 w-4 opacity-50" />
               </Button>
             </DropdownMenuTrigger>
@@ -126,7 +128,17 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: S
 
       {/* Demo List */}
       <div className="flex-1 overflow-auto">
-        <DemoList demos={featureConfig} selectedDemo={currentDemoId} onSelect={handleDemoSelect} />
+        {currentIntegration ? (
+          <DemoList
+            demos={filteredDemos}
+            selectedDemo={currentDemoId}
+            onSelect={handleDemoSelect}
+          />
+        ) : (
+          <div className="flex items-center justify-center h-full p-8">
+            <p className="text-muted-foreground text-center"></p>
+          </div>
+        )}
       </div>
     </div>
   );
