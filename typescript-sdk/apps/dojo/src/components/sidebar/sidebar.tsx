@@ -5,8 +5,7 @@ import Image from "next/image";
 import { useRouter, usePathname } from "next/navigation";
 import { DemoList } from "@/components/demo-list/demo-list";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Eye, Code, Book, List, ChevronDown } from "lucide-react";
+import { Eye, Code, Book, ChevronDown } from "lucide-react";
 import featureConfig from "@/config";
 import {
   DropdownMenu,
@@ -17,6 +16,7 @@ import {
   DropdownMenuSeparator,
 } from "../ui/dropdown-menu";
 import { Button } from "../ui/button";
+import { integrations } from "@/integrations";
 
 interface SidebarProps {
   activeTab?: string;
@@ -73,12 +73,6 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: S
     }
   }, []);
 
-  const handleTabChange = (value: string) => {
-    if (onTabChange) {
-      onTabChange(value);
-    }
-  };
-
   return (
     <div className="flex flex-col h-full w-74 min-w-[296px] flex-shrink-0 border-r">
       {/* Sidebar Header */}
@@ -116,20 +110,11 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: S
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-56">
-              <DropdownMenuLabel>View Options</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem>
-                <Eye className="mr-2 h-4 w-4" />
-                <span>Preview</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <Code className="mr-2 h-4 w-4" />
-                <span>Code</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <Book className="mr-2 h-4 w-4" />
-                <span>Documentation</span>
-              </DropdownMenuItem>
+              {integrations.map((integration) => (
+                <DropdownMenuItem key={integration.id}>
+                  <span>{integration.name}</span>
+                </DropdownMenuItem>
+              ))}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
