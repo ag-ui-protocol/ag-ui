@@ -115,7 +115,14 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: S
               {integrations.map((integration) => (
                 <DropdownMenuItem
                   key={integration.id}
-                  onClick={() => router.push(`/${integration.id}`)}
+                  onClick={() => {
+                    const firstFeature = integration.features[0];
+                    if (firstFeature) {
+                      router.push(`/${integration.id}/feature/${firstFeature}`);
+                    } else {
+                      router.push(`/${integration.id}`);
+                    }
+                  }}
                   className="cursor-pointer"
                 >
                   <span>{integration.name}</span>
