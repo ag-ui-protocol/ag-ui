@@ -8,12 +8,7 @@ import { diffWords } from "diff";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useState } from "react";
-import {
-  CopilotKit,
-  useCoAgent,
-  useCopilotAction,
-  useCopilotChat,
-} from "@copilotkit/react-core";
+import { CopilotKit, useCoAgent, useCopilotAction, useCopilotChat } from "@copilotkit/react-core";
 import { CopilotSidebar } from "@copilotkit/react-ui";
 
 const extensions = [StarterKit];
@@ -24,7 +19,7 @@ export default function PredictiveStateUpdates() {
       runtimeUrl="/api/copilotkit"
       showDevConsole={false}
       // agent lock to the relevant agent
-      agent="predictiveStateUpdatesAgent"
+      agent="predictive_state_updates"
     >
       <div
         className="min-h-screen w-full"
@@ -87,10 +82,7 @@ const DocumentEditor = () => {
   useEffect(() => {
     if (nodeName == "end") {
       // set the text one final time when loading is done
-      if (
-        currentDocument.trim().length > 0 &&
-        currentDocument !== agentState?.document
-      ) {
+      if (currentDocument.trim().length > 0 && currentDocument !== agentState?.document) {
         const newDocument = agentState?.document || "";
         const diff = diffPartialText(currentDocument, newDocument, true);
         const markdown = fromMarkdown(diff);
@@ -166,13 +158,7 @@ interface ConfirmChangesProps {
   onConfirm: () => void;
 }
 
-function ConfirmChanges({
-  args,
-  respond,
-  status,
-  onReject,
-  onConfirm,
-}: ConfirmChangesProps) {
+function ConfirmChanges({ args, respond, status, onReject, onConfirm }: ConfirmChangesProps) {
   const [accepted, setAccepted] = useState<boolean | null>(null);
   return (
     <div className="bg-white p-6 rounded shadow-lg border border-gray-200 mt-5 mb-5">
@@ -232,11 +218,7 @@ function fromMarkdown(text: string) {
   return md.render(text);
 }
 
-function diffPartialText(
-  oldText: string,
-  newText: string,
-  isComplete: boolean = false
-) {
+function diffPartialText(oldText: string, newText: string, isComplete: boolean = false) {
   let oldTextToCompare = oldText;
   if (oldText.length > newText.length && !isComplete) {
     // make oldText shorter

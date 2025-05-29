@@ -2,20 +2,24 @@
 import React, { useState } from "react";
 import "@copilotkit/react-ui/styles.css";
 import "./style.css";
-import {
-  CopilotKit,
-  useCopilotAction,
-  useCopilotChat,
-} from "@copilotkit/react-core";
+import { CopilotKit, useCopilotAction, useCopilotChat } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 
-const AgenticChat: React.FC = () => {
+interface AgenticChatProps {
+  params: Promise<{
+    integrationId: string;
+  }>;
+}
+
+const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
+  const { integrationId } = React.use(params);
+
   return (
     <CopilotKit
-      runtimeUrl="/api/copilotkit"
+      runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
       // agent lock to the relevant agent
-      agent="agenticChatAgent"
+      agent="agentic_chat"
     >
       <Chat />
     </CopilotKit>
@@ -23,9 +27,7 @@ const AgenticChat: React.FC = () => {
 };
 
 const Chat = () => {
-  const [background, setBackground] = useState<string>(
-    "--copilot-kit-background-color"
-  );
+  const [background, setBackground] = useState<string>("--copilot-kit-background-color");
 
   useCopilotAction({
     name: "change_background",
@@ -46,10 +48,7 @@ const Chat = () => {
   });
 
   return (
-    <div
-      className="flex justify-center items-center h-full w-full"
-      style={{ background }}
-    >
+    <div className="flex justify-center items-center h-full w-full" style={{ background }}>
       <div className="w-8/10 h-8/10 rounded-lg">
         <CopilotChat
           className="h-full rounded-2xl"

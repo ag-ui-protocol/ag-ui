@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
   if (!integration) {
     return new Response("Integration not found", { status: 404 });
   }
-  const agents = await integration.agents(integration.features);
+  const agents = await integration.agents();
   const runtime = new CopilotRuntime({
     // @ts-ignore for now
     agents,

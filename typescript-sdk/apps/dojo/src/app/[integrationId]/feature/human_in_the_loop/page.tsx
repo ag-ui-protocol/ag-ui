@@ -11,7 +11,7 @@ const HumanInTheLoop: React.FC = () => {
       runtimeUrl="/api/copilotkit"
       showDevConsole={false}
       // agent lock to the relevant agent
-      agent="humanInTheLoopAgent"
+      agent="human_in_the_loop"
     >
       <Chat />
     </CopilotKit>
@@ -58,15 +58,7 @@ const Chat = () => {
   );
 };
 
-const StepsFeedback = ({
-  args,
-  respond,
-  status,
-}: {
-  args: any;
-  respond: any;
-  status: any;
-}) => {
+const StepsFeedback = ({ args, respond, status }: { args: any; respond: any; status: any }) => {
   const [localSteps, setLocalSteps] = useState<
     {
       description: string;
@@ -94,8 +86,8 @@ const StepsFeedback = ({
               ...step,
               status: step.status === "enabled" ? "disabled" : "enabled",
             }
-          : step
-      )
+          : step,
+      ),
     );
   };
 
@@ -112,11 +104,7 @@ const StepsFeedback = ({
               className="mr-2"
             />
             <span
-              className={
-                step.status !== "enabled" && status != "inProgress"
-                  ? "line-through"
-                  : ""
-              }
+              className={step.status !== "enabled" && status != "inProgress" ? "line-through" : ""}
             >
               {step.description}
             </span>
@@ -129,10 +117,7 @@ const StepsFeedback = ({
               const selectedSteps = localSteps
                 .filter((step) => step.status === "enabled")
                 .map((step) => step.description);
-              respond(
-                "The user selected the following steps: " +
-                  selectedSteps.join(", ")
-              );
+              respond("The user selected the following steps: " + selectedSteps.join(", "));
             }}
           >
             ✨ Perform Steps

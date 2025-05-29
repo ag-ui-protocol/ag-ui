@@ -44,7 +44,7 @@ export default function SharedState() {
       runtimeUrl="/api/copilotkit"
       showDevConsole={false}
       // agent lock to the relevant agent
-      agent="sharedStateAgent"
+      agent="shared_state"
     >
       <div
         className="min-h-screen w-full flex items-center justify-center"
@@ -94,11 +94,10 @@ const INITIAL_STATE: RecipeAgentState = {
 };
 
 function Recipe() {
-  const { state: agentState, setState: setAgentState } =
-    useCoAgent<RecipeAgentState>({
-      name: "sharedStateAgent",
-      initialState: INITIAL_STATE,
-    });
+  const { state: agentState, setState: setAgentState } = useCoAgent<RecipeAgentState>({
+    name: "sharedStateAgent",
+    initialState: INITIAL_STATE,
+  });
 
   const [recipe, setRecipe] = useState(INITIAL_STATE.recipe);
   const { appendMessage, isLoading } = useCopilotChat();
@@ -122,10 +121,7 @@ function Recipe() {
   const changedKeysRef = useRef<string[]>([]);
 
   for (const key in recipe) {
-    if (
-      (agentState.recipe as any)[key] !== undefined &&
-      (agentState.recipe as any)[key] !== null
-    ) {
+    if ((agentState.recipe as any)[key] !== undefined && (agentState.recipe as any)[key] !== null) {
       let agentValue = (agentState.recipe as any)[key];
       const recipeValue = (recipe as any)[key];
 
@@ -155,53 +151,37 @@ function Recipe() {
     setRecipe(newRecipeState);
   }, [JSON.stringify(newRecipeState)]);
 
-  const handleSkillLevelChange = (
-    event: React.ChangeEvent<HTMLSelectElement>
-  ) => {
+  const handleSkillLevelChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     updateRecipe({
       skill_level: event.target.value as SkillLevel,
     });
   };
 
-  const handlePreferenceChange = (
-    preference: SpecialPreferences,
-    checked: boolean
-  ) => {
+  const handlePreferenceChange = (preference: SpecialPreferences, checked: boolean) => {
     if (checked) {
       updateRecipe({
-        special_preferences: [
-          ...agentState.recipe.special_preferences,
-          preference,
-        ],
+        special_preferences: [...agentState.recipe.special_preferences, preference],
       });
     } else {
       updateRecipe({
-        special_preferences: agentState.recipe.special_preferences.filter(
-          (p) => p !== preference
-        ),
+        special_preferences: agentState.recipe.special_preferences.filter((p) => p !== preference),
       });
     }
   };
 
-  const handleCookingTimeChange = (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
+  const handleCookingTimeChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     updateRecipe({
       cooking_time: cookingTimeValues[Number(event.target.value)].label,
     });
   };
 
-  const handleIngredientsChange = (
-    event: React.ChangeEvent<HTMLTextAreaElement>
-  ) => {
+  const handleIngredientsChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     updateRecipe({
       ingredients: event.target.value,
     });
   };
 
-  const handleInstructionsChange = (
-    event: React.ChangeEvent<HTMLTextAreaElement>
-  ) => {
+  const handleInstructionsChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     updateRecipe({
       instructions: event.target.value,
     });
@@ -219,10 +199,7 @@ function Recipe() {
     >
       <div className="mb-4 relative">
         {changedKeysRef.current.includes("skill_level") && <Ping />}
-        <label
-          className="block text-gray-700 text-sm font-bold mb-2"
-          htmlFor="skillLevel"
-        >
+        <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="skillLevel">
           Skill Level
         </label>
         <select
@@ -240,10 +217,7 @@ function Recipe() {
       </div>
       <div className="mb-4 relative">
         {changedKeysRef.current.includes("cooking_time") && <Ping />}
-        <label
-          className="block text-gray-700 text-sm font-bold mb-2"
-          htmlFor="cookingTime"
-        >
+        <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="cookingTime">
           Cooking Time: {recipe.cooking_time}
         </label>
         <input
@@ -251,18 +225,14 @@ function Recipe() {
           id="cookingTime"
           min="0"
           max={cookingTimeValues.length - 1}
-          value={cookingTimeValues.findIndex(
-            (value) => value.label === recipe.cooking_time
-          )}
+          value={cookingTimeValues.findIndex((value) => value.label === recipe.cooking_time)}
           onChange={handleCookingTimeChange}
           className="w-full h-2 bg-gray-200 shadow rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
       <div className="mb-4 relative">
         {changedKeysRef.current.includes("special_preferences") && <Ping />}
-        <label className="block text-gray-700 text-sm font-bold mb-4">
-          Special Preferences:
-        </label>
+        <label className="block text-gray-700 text-sm font-bold mb-4">Special Preferences:</label>
         <div className="flex flex-wrap mt-2">
           {Object.values(SpecialPreferences).map((preference) => (
             <label
@@ -273,9 +243,7 @@ function Recipe() {
               <input
                 type="checkbox"
                 checked={recipe.special_preferences.includes(preference)}
-                onChange={(e) =>
-                  handlePreferenceChange(preference, e.target.checked)
-                }
+                onChange={(e) => handlePreferenceChange(preference, e.target.checked)}
                 className="mr-1"
               />
               {preference}
@@ -286,10 +254,7 @@ function Recipe() {
 
       <div className="mb-4 relative">
         {changedKeysRef.current.includes("ingredients") && <Ping />}
-        <label
-          className="block text-gray-700 text-sm font-bold mb-2"
-          htmlFor="ingredients"
-        >
+        <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="ingredients">
           Ingredients:
         </label>
         <textarea
@@ -304,10 +269,7 @@ function Recipe() {
 
       <div className="mb-4 relative">
         {changedKeysRef.current.includes("instructions") && <Ping />}
-        <label
-          className="block text-gray-700 text-sm font-bold mb-2"
-          htmlFor="instructions"
-        >
+        <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="instructions">
           Instructions:
         </label>
         <textarea
@@ -323,9 +285,7 @@ function Recipe() {
       <div className="flex items-center justify-end mt-2">
         <button
           className={`${
-            isLoading
-              ? "bg-gray-400 cursor-not-allowed"
-              : "bg-black hover:bg-gray-800"
+            isLoading ? "bg-gray-400 cursor-not-allowed" : "bg-black hover:bg-gray-800"
           } text-white font-base py-2 px-4 rounded focus:outline-none focus:shadow-outline`}
           type="button"
           onClick={() => {
@@ -334,7 +294,7 @@ function Recipe() {
                 new TextMessage({
                   content: "Improve the recipe",
                   role: Role.User,
-                })
+                }),
               );
             }
           }}

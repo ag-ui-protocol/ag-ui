@@ -11,7 +11,7 @@ export default function AgenticChat() {
       runtimeUrl="/api/copilotkit"
       showDevConsole={false}
       // agent lock to the relevant agent
-      agent="toolBasedGenerativeUIAgent"
+      agent="tool_based_generative_ui"
     >
       <div
         className="min-h-full w-full flex items-center justify-center"
@@ -42,11 +42,7 @@ function Haiku() {
     english: string[];
   }>({
     japanese: ["仮の句よ", "まっさらながら", "花を呼ぶ"],
-    english: [
-      "A placeholder verse—",
-      "even in a blank canvas,",
-      "it beckons flowers.",
-    ],
+    english: ["A placeholder verse—", "even in a blank canvas,", "it beckons flowers."],
   });
 
   useCopilotAction({
@@ -66,13 +62,7 @@ function Haiku() {
       return "Haiku generated.";
     },
     render: ({ args: generatedHaiku, result, status }) => {
-      return (
-        <HaikuApproval
-          setHaiku={setHaiku}
-          generatedHaiku={generatedHaiku}
-          status={status}
-        />
-      );
+      return <HaikuApproval setHaiku={setHaiku} generatedHaiku={generatedHaiku} status={status} />;
     },
   });
   return (
@@ -95,31 +85,19 @@ interface HaikuApprovalProps {
   generatedHaiku: any;
 }
 
-function HaikuApproval({
-  setHaiku,
-  status,
-  generatedHaiku,
-}: HaikuApprovalProps) {
+function HaikuApproval({ setHaiku, status, generatedHaiku }: HaikuApprovalProps) {
   const [isApplied, setIsApplied] = useState(false);
-  if (
-    !generatedHaiku ||
-    !generatedHaiku.japanese ||
-    !generatedHaiku.japanese.length
-  ) {
+  if (!generatedHaiku || !generatedHaiku.japanese || !generatedHaiku.japanese.length) {
     return <></>;
   }
 
   return (
     <div className="text-left rounded-md p-4 mt-4 mb-4 flex flex-col bg-gray-100 dark:bg-zinc-900">
-      <div
-        className={status === "complete" ? "border-b border-gray-300 mb-4" : ""}
-      >
+      <div className={status === "complete" ? "border-b border-gray-300 mb-4" : ""}>
         {generatedHaiku?.japanese?.map((line: string, index: number) => (
           <div className="flex items-center gap-3 mb-2 pb-2" key={index}>
             <p className="text-lg font-bold">{line}</p>
-            <p className="text-sm font-light">
-              {generatedHaiku?.english?.[index]}
-            </p>
+            <p className="text-sm font-light">{generatedHaiku?.english?.[index]}</p>
           </div>
         ))}
       </div>

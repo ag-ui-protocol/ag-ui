@@ -11,7 +11,7 @@ const AgenticGenerativeUI: React.FC = () => {
       runtimeUrl="/api/copilotkit"
       showDevConsole={false}
       // agent lock to the relevant agent
-      agent="agentiveGenerativeUIAgent"
+      agent="agentic_generative_ui"
     >
       <Chat />
     </CopilotKit>
@@ -48,10 +48,7 @@ const Chat = () => {
                 index === state.steps.findIndex((s) => s.status === "pending")
               ) {
                 return (
-                  <div
-                    key={index}
-                    className="text-3xl font-bold text-slate-700"
-                  >
+                  <div key={index} className="text-3xl font-bold text-slate-700">
                     <Spinner />
                     {step.description}
                   </div>
