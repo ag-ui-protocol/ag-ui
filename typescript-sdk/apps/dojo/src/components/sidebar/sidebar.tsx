@@ -111,7 +111,11 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: S
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-56">
               {integrations.map((integration) => (
-                <DropdownMenuItem key={integration.id}>
+                <DropdownMenuItem
+                  key={integration.id}
+                  onClick={() => router.push(`/${integration.id}`)}
+                  className="cursor-pointer"
+                >
                   <span>{integration.name}</span>
                 </DropdownMenuItem>
               ))}
