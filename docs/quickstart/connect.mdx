@@ -3,32 +3,32 @@ title: "Connect to AG-UI"
 description: "Connect AG-UI with existing protocols or custom solutions"
 ---
 
-In this tutorial, you'll learn how to create an agent that connects to
-**OpenAI's API** and demonstrates how the Agent User Interaction Protocol
-(AG-UI) can integrate seamlessly with any modern AI service. Let's get started.
+# Introduction
+
+AG-UI provides a concise, event-driven protocol that lets any agent stream rich,
+structured output to any client. In this quick-start you will:
+
+1. Scaffold a new AG-UI integration that wraps **OpenAI's GPT-4o** model.
+2. Register the integration with the **dojo**, a local web playground.
+3. Stream responses from OpenAI through AG-UI's unified interface.
 
 ## Prerequisites
 
-Make sure to have the following:
+Make sure the following are available on your machine:
 
-- [Node.js](https://nodejs.org/) (v16 or later)
-- An OpenAI API key
+- [Node.js](https://nodejs.org/) **v16 or later**
+- An **OpenAI API key**
 
-### Setting up OpenAI access
-
-Before we start coding, make sure you have an OpenAI API key. You can get one by
-signing up at [OpenAI's platform](https://platform.openai.com/).
-
-Once you have your API key, set it as an environment variable:
+### 1. Provide your OpenAI API key
 
 ```bash
 # Set your OpenAI API key
 export OPENAI_API_KEY=your-api-key-here
 ```
 
-### Install the build tools
+### 2. Install build utilities
 
-We will need `protoc`, `turbo` and `pnpm` installed.
+You only have to do this once:
 
 ```bash
 brew install protobuf
@@ -42,26 +42,25 @@ npm i turbo
 curl -fsSL https://get.pnpm.io/install.sh | sh -
 ```
 
-## Setting up a new integration
+## Step 1 – Scaffold the integration
 
-We'll start by cloning the AG-UI repository.
+Clone the repo and change into the TypeScript SDK:
 
 ```bash
 git clone git@github.com:ag-ui-protocol/ag-ui.git
 cd ag-ui/typescript-sdk
 ```
 
-Next, we duplicate the starter integration by running:
+Copy the starter template:
 
 ```bash
 cp -r integrations/starter integrations/openai
 ```
 
-This will create a new integration called `openai` in the `integrations`
-directory.
+### Update metadata
 
-Next we need to update `integrations/openai/package.json` to match the name of
-the directory, `@ag-ui/openai`. Also, we set `private` to `false`.
+Open `integrations/openai/package.json` and adjust the fields so they match the
+new folder:
 
 ```json
 {
@@ -74,16 +73,15 @@ the directory, `@ag-ui/openai`. Also, we set `private` to `false`.
 }
 ```
 
-Then, we update the `integrations/openai/src/index.ts` and give it a matching
-name:
+Update the class name inside `integrations/openai/src/index.ts`:
 
 ```ts
 // change the name to OpenAIAgent
 export class OpenAIAgent extends AbstractAgent {}
 ```
 
-Finally, we need to let the dojo know about our new integration. We do this by
-adding it to the `integrations` array in `apps/dojo/src/integrations.ts`.
+Finally, tell the dojo about the integration by adding it to
+`apps/dojo/src/integrations.ts`:
 
 ```ts
 import { configureIntegration } from "./types/integration"
@@ -104,10 +102,9 @@ export const integrations = [
 ]
 ```
 
-## Running the dojo
+## Step 2 – Start the dojo
 
-Now we can run the dojo, a web app for testing AG-UI agents and see our new
-integration in action.
+Install dependencies and launch the dev server:
 
 ```bash
 # Install dependencies
@@ -117,13 +114,11 @@ pnpm install
 turbo run dev
 ```
 
-We can open the dojo at [http://localhost:3000](http://localhost:3000) and see
-the integration we made by selecting "OpenAI" from the dropdown on the left.
+Open [http://localhost:3000](http://localhost:3000) and choose **OpenAI** from
+the drop-down. The stub agent replies with **Hello world!** for now.
 
-When we try to chat with it, we should be greeted with a "Hello world!" message.
-
-Next, we'll have a look at `integrations/openai/src/index.ts`. We will be
-modifying this file to connect to OpenAI's API in a minute.
+The following code shows the minimal structure of that stub agent
+(`StarterAgent`):
 
 ```ts
 // integrations/openai/src/index.ts
@@ -135,7 +130,7 @@ import {
 } from "@ag-ui/client"
 import { Observable } from "rxjs"
 
-export class StarterAgent extends AbstractAgent {
+export class OpenAIAgent extends AbstractAgent {
   protected run(input: RunAgentInput): Observable<BaseEvent> {
     const messageId = Date.now().toString()
     return new Observable<BaseEvent>((observer) => {
@@ -173,37 +168,24 @@ export class StarterAgent extends AbstractAgent {
 }
 ```
 
-Our example contains the minimal structure of an AG-UI agent. We implement
-`run()` and emit a series of events. First, we signal the start of a new run
-(`RUN_STARTED`). Then, we emit a text message (`TEXT_MESSAGE_START` /
-`TEXT_MESSAGE_CONTENT` / `TEXT_MESSAGE_END`). Finally, we signal the end of the
-run (`RUN_FINISHED`).
+## Step 3 – Bridge OpenAI with AG-UI
 
-## Bridge OpenAI with AG-UI
+To turn the stub into a real agent we will stream completions from OpenAI.
 
-Now, let's build on this example by connecting to a simple ReAct agent based on
-OpenAI's API.
-
-Let's add OpenAI to the project:
+### Install the OpenAI SDK
 
 ```bash
 pnpm install openai
 ```
 
-### AG-UI Recap
+### AG-UI recap
 
-The Agent User Interaction Protocol is a framework that lets you connect agents
-to clients in a structured, event-driven way. Agents implement the
-`AbstractAgent` class from `@ag-ui/client` and emit events for each piece of
-content, progress, etc.
+An AG-UI agent extends `AbstractAgent` and emits a sequence of events to signal:
 
-### Implementing OpenAI
+- lifecycle (`RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR`)
+- content (`TEXT_MESSAGE_*`, `TOOL_CALL_*`, …)
 
-We'll now modify the `CustomAgent` to:
-
-1. Connect to OpenAI's API using their official Node.js SDK.
-2. Send the user's messages to OpenAI.
-3. Stream the response back, emitting AG-UI events for each chunk of text.
+### Implement the streaming agent
 
 ```typescript
 // integrations/openai/src/index.ts
@@ -217,7 +199,7 @@ import { Observable } from "rxjs"
 
 import { OpenAI } from "openai"
 
-export class CustomAgent extends AbstractAgent {
+export class OpenAIAgent extends AbstractAgent {
   private openai: OpenAI
 
   constructor(openai?: OpenAI) {
@@ -302,77 +284,59 @@ export class CustomAgent extends AbstractAgent {
 }
 ```
 
-### Explanation
+### What happens under the hood?
 
-1. **API Connection**: We create an OpenAI client using the official SDK and
-   connect to OpenAI's API using your API key.
+1. **Setup** – create an OpenAI client and emit `RUN_STARTED`.
+2. **Request** – send the user's messages to `chat.completions` with
+   `stream: true`.
+3. **Streaming** – forward each chunk as either `TEXT_MESSAGE_CHUNK` or
+   `TOOL_CALL_CHUNK`.
+4. **Finish** – emit `RUN_FINISHED` (or `RUN_ERROR` on failure) and complete the
+   observable.
 
-2. **Message Formatting**: We convert AG-UI messages to the format expected by
-   OpenAI.
+## Step 4 – Chat with the agent
 
-3. **Emitting Events**:
+Reload the dojo page and start typing. GPT-4o will now stream its answer, word
+by word.
 
-   - `RUN_STARTED` means the agent started processing the request.
-   - `TEXT_MESSAGE_CHUNK` / `TOOL_CALL_CHUNK` let us conveniently stream the
-     agent's textual response to the AG-UI pipeline.
-   - `RUN_FINISHED` means this run is over.
+## Bridging AG-UI to any protocol
 
-4. **Stream Processing**:
-   - We create a streaming completion request to OpenAI.
-   - For each chunk of text received, we emit a `TEXT_MESSAGE_CONTENT` event.
-   - After all chunks are processed, we finalize the message and run.
+The pattern you just implemented—translate inputs, forward streaming chunks,
+emit AG-UI events—works for virtually any backend:
 
-## Interacting with the agent
-
-Now go to the [agentic chat](http://localhost:3000/feature/agentic_chat) demo
-and type something in the chat input. You should see the agent responding using
-OpenAI's gpt4o model.
-
-## Bridging AG-UI to Any Protocol
-
-This example demonstrates how to bridge AG-UI with an external AI service. The
-key components are:
-
-1. **AG-UI Agent Implementation**: Create a class that extends `AbstractAgent`
-   and implements the `run` method.
-2. **API Integration**: Connect to an external API (in this case, OpenAI).
-3. **Message Formatting**: Convert between AG-UI's message format and the API's
-   expected format.
-4. **Event Streaming**: Stream the API responses back as AG-UI events.
-
-You can apply this pattern to connect AG-UI to virtually any AI service or
-protocol:
-
-- HTTP/REST APIs
+- REST or GraphQL APIs
 - WebSockets
-- MQTT for IoT devices
-- any other protocol
+- IoT protocols such as MQTT
 
-By following this pattern of creating protocol adapters around your AG-UI
-agents, you can make your AI agents available through any AI service while
-maintaining a consistent agent implementation.
+## Connect your agent to a frontend
+
+Tools like [CopilotKit](https://docs.copilotkit.ai) already understand AG-UI and
+provide plug-and-play React components. Point them at your agent endpoint and
+you get a full-featured chat UI out of the box.
+
+## Contribute your integration
+
+Did you build a custom adapter that others could reuse? We welcome community
+contributions!
+
+1. Fork the [AG-UI repository](https://github.com/ag-ui-protocol/ag-ui).
+2. Add your package under `integrations/` and include minimal docs and tests.
+3. Open a pull request describing your use-case and design decisions.
+
+If you have questions, need feedback, or want to validate an idea first, start a
+thread in the GitHub Discussions board:
+<https://github.com/orgs/ag-ui-protocol/discussions>.
+
+Your integration might ship in the next release and help the entire AG-UI
+ecosystem grow.
 
 ## Conclusion
 
-Congratulations! You've created an agent that connects to OpenAI's API and
-bridges it to the Agent User Interaction Protocol. This tutorial demonstrates
-how easy it is to adopt AG-UI with any modern AI service—providing a consistent,
-streaming interface for your applications regardless of the backend provider.
+You now have a fully-functional AG-UI adapter for OpenAI and a local playground
+to test it. From here you can:
 
-## Connect Your Agent to a Frontend
+- add tool calls to enrich the agent
+- publish the integration to npm
+- or bridge AG-UI to any other model or service you like.
 
-Now that you've built your AG-UI compatible agent, it's ready to be connected to
-any frontend that supports the AG-UI protocol. One such frontend is
-[CopilotKit](https://docs.copilotkit.ai), which provides a rich set of UI
-components designed to work seamlessly with AG-UI agents.
-
-To connect your agent to CopilotKit:
-
-1. Follow the [CopilotKit documentation](https://docs.copilotkit.ai) to set up
-   your frontend
-2. Configure CopilotKit to connect to your agent using the AG-UI protocol
-3. Enjoy a fully functioning chat UI with streaming responses!
-
-With this setup, you can focus on building powerful agent capabilities while
-leveraging existing UI components that understand the AG-UI protocol,
-significantly reducing development time and effort.
+Happy building! 🚀
