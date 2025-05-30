@@ -19,8 +19,7 @@ export abstract class AbstractAgent {
   public threadId: string;
   public messages: Message[];
   public state: State;
-  /** @internal – internal debugging flag */
-  private debug: boolean = false;
+  public debug: boolean = false;
 
   constructor({
     agentId,

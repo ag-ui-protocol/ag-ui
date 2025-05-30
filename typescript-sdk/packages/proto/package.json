@@ -15,7 +15,7 @@
     "lint": "eslint \"src/**/*.ts*\"",
     "clean": "rm -rf .turbo && rm -rf node_modules && rm -rf dist",
     "test": "jest",
-    "generate": "protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=./src/generated --ts_proto_opt=esModuleInterop=true,outputJsonMethods=false,outputClientImpl=false -I ./src/proto ./src/proto/*.proto",
+    "generate": "mkdir -p ./src/generated && protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=./src/generated --ts_proto_opt=esModuleInterop=true,outputJsonMethods=false,outputClientImpl=false -I ./src/proto ./src/proto/*.proto",
     "link:global": "pnpm link --global",
     "unlink:global": "pnpm unlink --global"
   },

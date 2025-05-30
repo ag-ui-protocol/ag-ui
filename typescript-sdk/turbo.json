@@ -1,11 +1,17 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
+  "envMode": "loose",
   "tasks": {
     "generate": {
       "outputs": ["src/generated/**"]
     },
     "build": {
+      "dependsOn": ["^build", "generate"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+    },
+    "demo-viewer#build": {
       "dependsOn": ["^build", "generate"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
@@ -17,7 +23,12 @@
       "dependsOn": ["^check-types"]
     },
     "dev": {
-      "dependsOn": ["generate"],
+      "dependsOn": ["^build", "generate"],
+      "cache": false,
+      "persistent": true
+    },
+    "demo-viewer#dev": {
+      "dependsOn": ["^build", "generate"],
       "cache": false,
       "persistent": true
     },
