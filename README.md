@@ -105,7 +105,7 @@ AG-UI provides ready-to-use client libraries for building connected experiences:
 
 # ➡️ Contribute to AG-UI
 
-Learn how to connect AG-UI to a new framework: [Framework Integration Guide](https://docs.ag-ui.com/quickstart/connect)
+Learn how to contribute to AG-UI: [AG-UI Contribution Guide](https://github.com/ag-ui-protocol/ag-ui/blob/main/CONTRIBUTING.md)
 
 Book time with Markus Ecker, the creator of AG-UI: https://calendly.com/markus-copilotkit/ag-ui
 
