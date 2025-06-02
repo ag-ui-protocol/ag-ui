@@ -36,7 +36,7 @@ It was shaped through:
 
 This practical approach has helped ensure that AG-UI is both flexible and immediately applicable in real-world use cases.
 
-## ➡️ Build AG-UI-Powered Applications
+# ➡️ Build AG-UI-Powered Applications
 
 Play with this hello-world app here:
 https://agui-demo.vercel.app/
@@ -103,7 +103,7 @@ AG-UI provides ready-to-use client libraries for building connected experiences:
 - **React client** via [CopilotKit](https://docs.copilotkit.ai/)
 - Messaging clients (WhatsApp, WeChat, RCS) — WIP in collaboration with AWS SNS
 
-## ➡️ Contribute to AG-UI
+# ➡️ Contribute to AG-UI
 
 Learn how to connect AG-UI to a new framework: [Framework Integration Guide](https://docs.ag-ui.com/quickstart/connect)
 
