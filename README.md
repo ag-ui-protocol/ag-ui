@@ -1,4 +1,4 @@
-[![AG-UI Workshop – May 30](https://img.shields.io/badge/AG--UI%20Workshop%20%E2%80%94May%2030-blue?style=flat-square)](https://lu.ma/ogc6owmi)
+[![AG-UI Workshop – June 5](https://img.shields.io/badge/AG--UI%20Workshop%20%E2%80%94June%2030-blue?style=flat-square)](https://go.copilotkit.ai/ag-ui-working-group-3)
 
 # <img src="https://github.com/user-attachments/assets/ebc0dd08-8732-4519-9b6c-452ce54d8058" alt="ag-ui Logo" height="42px" /> AG-UI: The Agent-User Interaction Protocol
 
@@ -8,7 +8,7 @@ AG-UI is an open, lightweight, event-based protocol that standardizes **how AI a
 
 <img src="https://github.com/user-attachments/assets/215227a5-9698-4d97-a46e-8904b95bfa08" alt="ag-ui Logo" style="max-width: 100px; height: auto;" />
 
-## AG-UI Specification
+## ➡️ Learn more (AG-UI Specification)
 
 AG-UI is an open, lightweight, event-based protocol for agent-human interaction, designed for simplicity & flexibility:
 
@@ -36,7 +36,7 @@ It was shaped through:
 
 This practical approach has helped ensure that AG-UI is both flexible and immediately applicable in real-world use cases.
 
-## Build AG-UI-Powered Applications
+## ➡️ Build AG-UI-Powered Applications
 
 Play with this hello-world app here:
 https://agui-demo.vercel.app/
@@ -103,17 +103,21 @@ AG-UI provides ready-to-use client libraries for building connected experiences:
 - **React client** via [CopilotKit](https://docs.copilotkit.ai/)
 - Messaging clients (WhatsApp, WeChat, RCS) — WIP in collaboration with AWS SNS
 
-## Connect AG-UI to Agentic Framework
+## ➡️ Contribute to AG-UI
 
 Learn how to connect AG-UI to a new framework: [Framework Integration Guide](https://docs.ag-ui.com/quickstart/connect)
+
+Book time with Markus Ecker, the creator of AG-UI: https://calendly.com/markus-copilotkit/ag-ui
+
+Join the Discord: https://discord.gg/Jd3FzfdJa8
 
 ## Community
 
 ### Upcoming Events
 
-- **[AG-UI: Workshop](https://lu.ma/c58yhgij)**  
-  📅 Friday, May 29, 9:00 AM PT  
-  🔗 [Register now](https://lu.ma/ogc6owmi)
+- **[AG-UI: Workshop](https://go.copilotkit.ai/ag-ui-working-group-3)**  
+  📅 Friday, June 5, 9:00 AM PT  
+  🔗 [Register now](https://go.copilotkit.ai/ag-ui-working-group-3)
 
 
 ## Contributing
