@@ -1,7 +1,7 @@
 import { AbstractAgent, BaseEvent, EventType, RunAgentInput } from "@ag-ui/client";
 import { Observable } from "rxjs";
 
-export class StarterAgent extends AbstractAgent {
+export class MiddlewareStarterAgent extends AbstractAgent {
   protected run(input: RunAgentInput): Observable<BaseEvent> {
     const messageId = Date.now().toString();
     return new Observable<BaseEvent>((observer) => {

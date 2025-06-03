@@ -19,7 +19,7 @@
               "introduction",
               {
                 "group": "Quickstart",
-                "pages": ["quickstart/build", "quickstart/connect"]
+                "pages": ["quickstart/middleware", "quickstart/server"]
               },
               "integrations"
             ]
@@ -126,6 +126,14 @@
     {
       "source": "/quickstart",
       "destination": "/quickstart/build"
+    },
+    {
+      "source": "/quickstart/connect",
+      "destination": "/quickstart/middleware"
+    },
+    {
+      "source": "/quickstart/build",
+      "destination": "/quickstart/server"
     }
   ]
 }

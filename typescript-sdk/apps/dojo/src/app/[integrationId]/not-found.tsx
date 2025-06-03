@@ -6,7 +6,7 @@ export default function NotFound() {
     <div className="flex-1 h-screen w-full flex flex-col items-center justify-center p-8">
       <h1 className="text-4xl font-bold text-center mb-4">Integration Not Found</h1>
       <p className="text-muted-foreground mb-6 text-center">
-        The integration you're looking for doesn't exist.
+        The integration you&apos;re looking for doesn&apos;t exist.
       </p>
       <Link
         href="/"

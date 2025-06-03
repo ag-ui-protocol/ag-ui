@@ -1,5 +1,5 @@
 {
-  "name": "@ag-ui/starter",
+  "name": "@ag-ui/middleware-starter",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
   "version": "0.0.1",
   "main": "./dist/index.js",

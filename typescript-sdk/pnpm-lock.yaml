@@ -32,12 +32,12 @@ importers:
       '@ag-ui/mastra':
         specifier: workspace:*
         version: link:../../integrations/mastra
+      '@ag-ui/middleware-starter':
+        specifier: workspace:*
+        version: link:../../integrations/middleware-starter
       '@ag-ui/proto':
         specifier: workspace:*
         version: link:../../packages/proto
-      '@ag-ui/starter':
-        specifier: workspace:*
-        version: link:../../integrations/starter
       '@ag-ui/vercel-ai-sdk':
         specifier: workspace:*
         version: link:../../integrations/vercel-ai-sdk
@@ -245,7 +245,7 @@ importers:
         specifier: ^5.3.3
         version: 5.8.2
 
-  integrations/starter:
+  integrations/middleware-starter:
     dependencies:
       '@ag-ui/client':
         specifier: workspace:*

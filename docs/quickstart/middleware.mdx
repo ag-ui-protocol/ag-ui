@@ -1,6 +1,8 @@
 ---
-title: "Connect to AG-UI"
-description: "Connect AG-UI with existing protocols or custom solutions"
+title: "AG-UI Middleware Connectors"
+description:
+  "Connect AG-UI with existing protocols, in process agents or custom solutions
+  using TypeScript"
 ---
 
 # Getting Started with AG-UI
@@ -53,10 +55,10 @@ git clone git@github.com:ag-ui-protocol/ag-ui.git
 cd ag-ui/typescript-sdk
 ```
 
-Copy the starter template to create your OpenAI integration:
+Copy the middleware-starter template to create your OpenAI integration:
 
 ```bash
-cp -r integrations/starter integrations/openai
+cp -r integrations/middleware-starter integrations/openai
 ```
 
 ### Update metadata
@@ -133,7 +135,7 @@ Head over to [http://localhost:3000](http://localhost:3000) and choose
 **OpenAI** from the drop-down. You'll see the stub agent replies with **Hello
 world!** for now.
 
-Here's what's happening with that stub agent (`StarterAgent`):
+Here's what's happening with that stub agent:
 
 ```ts
 // integrations/openai/src/index.ts

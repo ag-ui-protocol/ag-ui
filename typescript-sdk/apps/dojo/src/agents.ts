@@ -1,5 +1,5 @@
 import { AgentIntegrationConfig } from "./types/integration";
-import { StarterAgent } from "@ag-ui/starter";
+import { MiddlewareStarterAgent } from "@ag-ui/middleware-starter";
 import { MastraClient } from "@mastra/client-js";
 import { MastraAgent } from "@ag-ui/mastra";
 import { VercelAISDKAgent } from "@ag-ui/vercel-ai-sdk";
@@ -7,10 +7,10 @@ import { openai } from "@ai-sdk/openai";
 
 export const agentsIntegrations: AgentIntegrationConfig[] = [
   {
-    id: "starter",
+    id: "middleware-starter",
     agents: async () => {
       return {
-        agentic_chat: new StarterAgent(),
+        agentic_chat: new MiddlewareStarterAgent(),
       };
     },
   },
