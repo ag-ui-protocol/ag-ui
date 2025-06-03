@@ -3,14 +3,14 @@ import {
   ExperimentalEmptyAdapter,
   copilotRuntimeNextJSAppRouterEndpoint,
 } from "@copilotkit/runtime";
-import { integrations } from "@/integrations";
+import { agentsIntegrations } from "@/agents";
 
 import { NextRequest } from "next/server";
 
 export async function POST(request: NextRequest) {
   const integrationId = request.url.split("/").pop();
 
-  const integration = integrations.find((i) => i.id === integrationId);
+  const integration = agentsIntegrations.find((i) => i.id === integrationId);
   if (!integration) {
     return new Response("Integration not found", { status: 404 });
   }

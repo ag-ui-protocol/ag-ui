@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { integrations } from "@/integrations";
+import { menuIntegrations } from "@/menu";
 import { notFound } from "next/navigation";
 
 interface IntegrationPageProps {
@@ -14,7 +14,7 @@ export default function IntegrationPage({ params }: IntegrationPageProps) {
   const { integrationId } = React.use(params);
 
   // Find the integration by ID
-  const integration = integrations.find((integration) => integration.id === integrationId);
+  const integration = menuIntegrations.find((integration) => integration.id === integrationId);
 
   // If integration not found, show 404
   if (!integration) {

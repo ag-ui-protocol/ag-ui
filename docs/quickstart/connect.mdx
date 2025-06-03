@@ -82,25 +82,38 @@ export class OpenAIAgent extends AbstractAgent {}
 ```
 
 Finally, introduce your integration to the dojo by adding it to
-`apps/dojo/src/integrations.ts`:
+`apps/dojo/src/menu.ts`:
 
 ```ts
 // ...
-import { OpenAIAgent } from "@ag-ui/openai"
-
-export const integrations = [
+export const menuIntegrations: MenuIntegrationConfig[] = [
   // ...
 
   configureIntegration({
     id: "openai",
     name: "OpenAI",
     features: ["agentic_chat"],
+  }),
+]
+```
+
+And `apps/dojo/src/agents.ts`:
+
+```ts
+// ...
+import { OpenAIAgent } from "@ag-ui/openai"
+
+export const agentsIntegrations: AgentIntegrationConfig[] = [
+  // ...
+
+  {
+    id: "openai",
     agents: async () => {
       return {
         agentic_chat: new OpenAIAgent(),
       }
     },
-  }),
+  },
 ]
 ```
 

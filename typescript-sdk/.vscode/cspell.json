@@ -1,7 +1,7 @@
 {
   "version": "0.2",
   "language": "en",
-  "words": ["ag-ui", "uuidv4", "untruncate"],
+  "words": ["ag-ui", "uuidv4", "untruncate", "mastra", "agui", "agentic"],
   "ignorePaths": ["node_modules/**", "dist/**", "build/**", ".git/**", "coverage/**"],
   "allowCompoundWords": true,
   "ignoreRegExpList": ["\\([^)]*\\)", "`[^`]*`", "'[^']*'", "\"[^\"]*\""]

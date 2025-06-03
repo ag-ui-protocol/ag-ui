@@ -16,7 +16,7 @@ import {
   DropdownMenuSeparator,
 } from "../ui/dropdown-menu";
 import { Button } from "../ui/button";
-import { integrations } from "@/integrations";
+import { menuIntegrations } from "@/menu";
 
 interface SidebarProps {
   activeTab?: string;
@@ -37,7 +37,7 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: S
   // Find the current integration (only if we have a valid integration ID)
   const currentIntegration =
     currentIntegrationId && currentIntegrationId !== ""
-      ? integrations.find((integration) => integration.id === currentIntegrationId)
+      ? menuIntegrations.find((integration) => integration.id === currentIntegrationId)
       : null;
 
   // Filter demos based on current integration's features
@@ -112,7 +112,7 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: S
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-56">
-              {integrations.map((integration) => (
+              {menuIntegrations.map((integration) => (
                 <DropdownMenuItem
                   key={integration.id}
                   onClick={() => {

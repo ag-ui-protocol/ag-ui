@@ -8,15 +8,13 @@ export type Feature =
   | "shared_state"
   | "tool_based_generative_ui";
 
-export interface IntegrationConfig<TFeatures extends Feature[]> {
+export interface MenuIntegrationConfig {
   id: string;
   name: string;
-  features: TFeatures;
-  agents: () => Promise<Record<TFeatures[number], AbstractAgent>>;
+  features: Feature[];
 }
 
-export function configureIntegration<TFeatures extends Feature[]>(
-  config: IntegrationConfig<TFeatures>,
-) {
-  return config;
+export interface AgentIntegrationConfig {
+  id: string;
+  agents: () => Promise<Partial<Record<Feature, AbstractAgent>>>;
 }

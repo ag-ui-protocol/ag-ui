@@ -41,7 +41,6 @@ const Chat = () => {
       },
     ],
     handler: ({ background }) => {
-      console.log("Changing background to", background);
       setBackground(background);
     },
     followUp: false,
