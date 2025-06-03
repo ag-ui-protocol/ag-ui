@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from "react";
 import "@copilotkit/react-ui/styles.css";
 import "./style.css";
-import { CopilotKit, useCopilotAction } from "@copilotkit/react-core";
+import { CopilotKit, useCopilotAction, useLangGraphInterrupt } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 
 interface HumanInTheLoopProps {
@@ -26,7 +26,86 @@ const HumanInTheLoop: React.FC<HumanInTheLoopProps> = ({ params }) => {
   );
 };
 
+interface Step {
+  description: string;
+  status: "disabled" | "enabled" | "executing";
+}
+const InterruptHumanInTheLoop: React.FC<{
+  event: { value: { steps: Step[] } };
+  resolve: (value: string) => void;
+}> = ({ event, resolve }) => {
+
+  // Ensure we have valid steps data
+  let initialSteps: Step[] = [];
+  if (event.value && event.value.steps && Array.isArray(event.value.steps)) {
+    initialSteps = event.value.steps.map((step: any) => ({
+      description: typeof step === 'string' ? step : step.description || '',
+      status: (typeof step === 'object' && step.status) ? step.status : 'enabled'
+    }));
+  }
+
+  const [localSteps, setLocalSteps] = useState<
+    Step[]
+  >(initialSteps);
+
+  const handleCheckboxChange = (index: number) => {
+    setLocalSteps((prevSteps) =>
+      prevSteps.map((step, i) =>
+        i === index
+          ? {
+            ...step,
+            status: step.status === "enabled" ? "disabled" : "enabled",
+          }
+          : step
+      )
+    );
+  };
+
+  return (
+    <div className="flex flex-col gap-4 w-[500px] bg-gray-100 rounded-lg p-8 mb-4">
+      <div className="text-black space-y-2">
+        <h2 className="text-lg font-bold mb-4">Select Steps</h2>
+        {localSteps.map((step, index) => (
+          <div key={index} className="text-sm flex items-center">
+            <label className="flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={step.status === "enabled"}
+                onChange={() => handleCheckboxChange(index)}
+                className="mr-2"
+              />
+              <span
+                className={
+                  step.status !== "enabled" ? "line-through" : ""
+                }
+              >
+                    {step.description}
+                  </span>
+            </label>
+          </div>
+        ))}
+        <button
+          className="mt-4 bg-gradient-to-r from-purple-400 to-purple-600 text-white py-2 px-4 rounded cursor-pointer w-48 font-bold"
+          onClick={() => {
+            const selectedSteps = localSteps
+              .filter((step) => step.status === "enabled")
+              .map((step) => step.description);
+            resolve("The user selected the following steps: " + selectedSteps.join(", "));
+          }}
+        >
+          ✨ Perform Steps
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const Chat = () => {
+  useLangGraphInterrupt({
+    render: ({ event, resolve }) => (
+      <InterruptHumanInTheLoop event={event} resolve={resolve} />
+    )
+  })
   useCopilotAction({
     name: "generate_task_steps",
     parameters: [
@@ -80,6 +159,8 @@ const StepsFeedback = ({ args, respond, status }: { args: any; respond: any; sta
     }
   }, [status, args.steps, localSteps]);
 
+  if (status === 'complete') return;
+
   if (args.steps === undefined || args.steps.length === 0) {
     return <></>;
   }
@@ -118,19 +199,6 @@ const StepsFeedback = ({ args, respond, status }: { args: any; respond: any; sta
             </span>
           </div>
         ))}
-        {status === "executing" && (
-          <button
-            className="mt-4 bg-gradient-to-r from-purple-400 to-purple-600 text-white py-2 px-4 rounded cursor-pointer w-48 font-bold"
-            onClick={() => {
-              const selectedSteps = localSteps
-                .filter((step) => step.status === "enabled")
-                .map((step) => step.description);
-              respond("The user selected the following steps: " + selectedSteps.join(", "));
-            }}
-          >
-            ✨ Perform Steps
-          </button>
-        )}
       </div>
     </div>
   );

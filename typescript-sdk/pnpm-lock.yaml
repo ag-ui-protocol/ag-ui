@@ -29,6 +29,9 @@ importers:
       '@ag-ui/encoder':
         specifier: workspace:*
         version: link:../../packages/encoder
+      '@ag-ui/langgraph':
+        specifier: workspace:*
+        version: link:../../integrations/langgraph
       '@ag-ui/mastra':
         specifier: workspace:*
         version: link:../../integrations/mastra
@@ -51,23 +54,23 @@ importers:
         specifier: ^1.3.22
         version: 1.3.22(zod@3.25.17)
       '@copilotkit/react-core':
-        specifier: 1.8.12
-        version: 1.8.12(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+        specifier: 1.8.14-next.4
+        version: 1.8.14-next.4(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@copilotkit/react-ui':
-        specifier: 1.8.12
-        version: 1.8.12(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+        specifier: 1.8.14-next.4
+        version: 1.8.14-next.4(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@copilotkit/runtime':
-        specifier: 1.8.12
-        version: 1.8.12(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.821.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.52.0)(deepmerge@4.3.1)(dotenv@16.5.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(zod@3.25.17))(@ibm-cloud/watsonx-ai@1.6.6)(@smithy/eventstream-codec@1.1.0)(@smithy/protocol-http@5.1.2)(@smithy/signature-v4@5.1.2)(@smithy/util-utf8@4.0.0)(axios@1.9.0)(cohere-ai@7.17.1)(fast-xml-parser@4.4.1)(google-auth-library@8.9.0)(ibm-cloud-sdk-core@5.3.2)(ignore@7.0.4)(jsonwebtoken@9.0.2)(playwright@1.52.0)(react@19.1.0)(ws@8.18.2)
+        specifier: 1.8.14-next.4
+        version: 1.8.14-next.4(@ag-ui/client@packages+client)(@ag-ui/core@packages+core)(@ag-ui/encoder@packages+encoder)(@ag-ui/proto@packages+proto)(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.821.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.52.0)(deepmerge@4.3.1)(dotenv@16.5.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(zod@3.25.17))(@ibm-cloud/watsonx-ai@1.6.6)(@smithy/util-utf8@2.3.0)(axios@1.9.0)(cohere-ai@7.17.1)(fast-xml-parser@4.4.1)(google-auth-library@8.9.0)(ibm-cloud-sdk-core@5.3.2)(ignore@5.3.2)(jsonwebtoken@9.0.2)(playwright@1.52.0)(react@19.1.0)(ws@8.18.2)
       '@copilotkit/runtime-client-gql':
-        specifier: 1.8.12
-        version: 1.8.12(graphql@16.11.0)(react@19.1.0)
+        specifier: 1.8.14-next.4
+        version: 1.8.14-next.4(graphql@16.11.0)(react@19.1.0)
       '@copilotkit/shared':
-        specifier: 1.8.12
-        version: 1.8.12
+        specifier: 1.8.14-next.4
+        version: 1.8.14-next.4
       '@mastra/client-js':
         specifier: ^0.10.1
-        version: 0.10.1(@mastra/core@0.10.1(@sinclair/typebox@0.27.8)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.17))(zod@3.25.17)
+        version: 0.10.1(@mastra/core@0.10.1(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.17))(zod@3.25.17)
       '@mdx-js/loader':
         specifier: ^3.1.0
         version: 3.1.0(acorn@8.14.1)
@@ -233,6 +236,46 @@ importers:
         specifier: ^5.3.3
         version: 5.8.2
 
+  integrations/langgraph:
+    dependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@langchain/core':
+        specifier: ^0.3.38
+        version: 0.3.56(openai@4.100.0(zod@3.25.17))
+      '@langchain/langgraph-sdk':
+        specifier: ^0.0.78
+        version: 0.0.78(@langchain/core@0.3.56(openai@4.100.0(zod@3.25.17)))(react@19.1.0)
+      partial-json:
+        specifier: ^0.1.7
+        version: 0.1.7
+      rxjs:
+        specifier: 7.8.1
+        version: 7.8.1
+    devDependencies:
+      '@types/jest':
+        specifier: ^29.5.14
+        version: 29.5.14
+      '@types/node':
+        specifier: ^20.11.19
+        version: 20.17.50
+      jest:
+        specifier: ^29.7.0
+        version: 29.7.0(@types/node@20.17.50)
+      ts-jest:
+        specifier: ^29.1.2
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+      tsup:
+        specifier: ^8.0.2
+        version: 8.5.0(jiti@2.4.2)(postcss@8.5.3)(typescript@5.8.2)(yaml@2.8.0)
+      typescript:
+        specifier: ^5.3.3
+        version: 5.8.2
+
   integrations/mastra:
     dependencies:
       '@ag-ui/client':
@@ -243,13 +286,13 @@ importers:
         version: 1.2.11(zod@3.25.17)
       '@copilotkit/runtime':
         specifier: ^1.8.13
-        version: 1.8.13(@ag-ui/client@packages+client)(@ag-ui/core@0.0.28)(@ag-ui/encoder@0.0.28)(@ag-ui/proto@0.0.28)(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.821.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.52.0)(deepmerge@4.3.1)(dotenv@16.5.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(zod@3.25.17))(@ibm-cloud/watsonx-ai@1.6.6)(@smithy/eventstream-codec@1.1.0)(@smithy/protocol-http@5.1.2)(@smithy/signature-v4@5.1.2)(@smithy/util-utf8@4.0.0)(axios@1.9.0)(cohere-ai@7.17.1)(fast-xml-parser@4.4.1)(google-auth-library@8.9.0)(ibm-cloud-sdk-core@5.3.2)(ignore@7.0.4)(jsonwebtoken@9.0.2)(playwright@1.52.0)(react@19.1.0)(ws@8.18.2)
+        version: 1.8.13(@ag-ui/client@packages+client)(@ag-ui/core@0.0.28)(@ag-ui/encoder@0.0.28)(@ag-ui/proto@0.0.28)(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.821.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.52.0)(deepmerge@4.3.1)(dotenv@16.5.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(zod@3.25.17))(@ibm-cloud/watsonx-ai@1.6.6)(@smithy/util-utf8@2.3.0)(axios@1.9.0)(cohere-ai@7.17.1)(fast-xml-parser@4.4.1)(google-auth-library@8.9.0)(ibm-cloud-sdk-core@5.3.2)(ignore@5.3.2)(jsonwebtoken@9.0.2)(playwright@1.52.0)(react@19.1.0)(ws@8.18.2)
       '@mastra/client-js':
         specifier: ^0.10.1
-        version: 0.10.1(@mastra/core@0.10.1(@sinclair/typebox@0.27.8)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.17))(zod@3.25.17)
+        version: 0.10.1(@mastra/core@0.10.1(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.17))(zod@3.25.17)
       '@mastra/core':
         specifier: ^0.10.1
-        version: 0.10.1(@sinclair/typebox@0.27.8)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.17)
+        version: 0.10.1(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.17)
       hono:
         specifier: ^4.5.1
         version: 4.7.11
@@ -463,7 +506,7 @@ importers:
         version: 29.7.0(@types/node@20.17.50)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0)(typescript@5.8.2)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.4.2)(postcss@8.5.3)(typescript@5.8.2)(yaml@2.8.0)
@@ -488,7 +531,7 @@ importers:
         version: 29.7.0(@types/node@20.17.50)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0)(typescript@5.8.2)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.4.2)(postcss@8.5.3)(typescript@5.8.2)(yaml@2.8.0)
@@ -516,7 +559,7 @@ importers:
         version: 29.7.0(@types/node@20.17.50)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0)(typescript@5.8.2)
       ts-proto:
         specifier: ^2.7.0
         version: 2.7.0
@@ -924,24 +967,21 @@ packages:
   '@cfworker/json-schema@4.1.1':
     resolution: {integrity: sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og==}
 
-  '@copilotkit/react-core@1.8.12':
-    resolution: {integrity: sha512-Tk9VRaPVAORv+wEg2zrKeT5hso/M03PWg+lErgHiklTznpY/KA73Ies1bfr/rk7hRdzpYebp2GLdJwrUjDz99Q==}
+  '@copilotkit/react-core@1.8.14-next.4':
+    resolution: {integrity: sha512-A5K7InmD5Jx9kDBHIk7/gc0q6PGciR42mxE5mPqwsxsliTx47hcKHlx1fiyxYAko7jBYiaYPhUshzQ902t/b4A==}
     peerDependencies:
       react: ^18 || ^19 || ^19.0.0-rc
       react-dom: ^18 || ^19 || ^19.0.0-rc
 
-  '@copilotkit/react-ui@1.8.12':
-    resolution: {integrity: sha512-kd7UdP7XkOSCfeJUq0y5z+EW3AQvYwMSUt0pJ7874mGxN3eNNNalEVGvZ8g7WVucwVqGNkbmvpW2Uqo93UJT5A==}
+  '@copilotkit/react-ui@1.8.14-next.4':
+    resolution: {integrity: sha512-J6sHg+2AAiQ3CNSfxZvv7b3b03znFrSLoX+t5a9Sf0ydjuRnICI+r0PTMqaffwkSGGZwwJXOzazlfWEKcLxfWQ==}
     peerDependencies:
       react: ^18 || ^19 || ^19.0.0-rc
 
-  '@copilotkit/runtime-client-gql@1.8.12':
-    resolution: {integrity: sha512-TSoXOj+ri5z23YdNH+PgJK5BRsrTVfgwsmJn3a0BqzWXQNHTYVIfR645M9oEsj+vSHLsPQrLSHV3jYS6h+Rl2Q==}
+  '@copilotkit/runtime-client-gql@1.8.14-next.4':
+    resolution: {integrity: sha512-kUWekwX2t5jYVvvLtnvL7mIYR7gJxTu5s03uCtx1PlnfythB6DHZDuLBaVbWNijYVPzswtegx/CxPZL/1haUGw==}
     peerDependencies:
       react: ^18 || ^19 || ^19.0.0-rc
-
-  '@copilotkit/runtime@1.8.12':
-    resolution: {integrity: sha512-VyCI/DqVpb+VENrDe/3GApGpgLTrtdmL4NrAPB7QsjEL8UccLxMyk2HJobarW0TB1hMwNIsyk7/+jxeXLkkP7w==}
 
   '@copilotkit/runtime@1.8.13':
     resolution: {integrity: sha512-PKiyo+ciH5h6b9Sn/DLJNuwB4IVQZCsPiJgYiYmL2bksoGkbr+hAiILmB9+Tizc2Ta6YG/IIKaldLf7eSRd6yQ==}
@@ -951,11 +991,19 @@ packages:
       '@ag-ui/encoder': '>=0.0.28'
       '@ag-ui/proto': '>=0.0.28'
 
-  '@copilotkit/shared@1.8.12':
-    resolution: {integrity: sha512-jlb7H9vJynMumhi4dw0o3pt73NNvtcjX8jhRNYE9RTPIEIhwthHWMksHrkUVlYFk0yuokMAjtS2kUU1M4FGsiA==}
+  '@copilotkit/runtime@1.8.14-next.4':
+    resolution: {integrity: sha512-CJhIpl0B9B7UwDiWkES15ArwXKOeKh3HwA9fvpHs1m5shPisepcFhFVxokuByLOixPvWYyuyaHRkKxFrY0rIhw==}
+    peerDependencies:
+      '@ag-ui/client': '>=0.0.28'
+      '@ag-ui/core': '>=0.0.28'
+      '@ag-ui/encoder': '>=0.0.28'
+      '@ag-ui/proto': '>=0.0.28'
 
   '@copilotkit/shared@1.8.13':
     resolution: {integrity: sha512-5J0+4KSh8kzwH9OZ627PtqBcQn0QyK4+1sqQLeNt35piWp++lOfLor2q0Daq8v277GI9dgLVO6UjK2MZkEpJiQ==}
+
+  '@copilotkit/shared@1.8.14-next.4':
+    resolution: {integrity: sha512-E3dfid8uArZg49XNzMtqzD67kHVJMH3D6ekdDGvwNStXXyDibwJLTXGhHPxxnTsh/ooO0NC8nC1egwTe2SCm9g==}
 
   '@emnapi/core@1.4.3':
     resolution: {integrity: sha512-4m62DuCE07lw01soJwPiBGC0nAww0Q+RY70VZ+n49yDIO13yyinhbWCeNnaob0lakDtWQzSdtNWzJeOJt2ma+g==}
@@ -1890,6 +1938,17 @@ packages:
 
   '@langchain/langgraph-sdk@0.0.70':
     resolution: {integrity: sha512-O8I12bfeMVz5fOrXnIcK4IdRf50IqyJTO458V56wAIHLNoi4H8/JHM+2M+Y4H2PtslXIGnvomWqlBd0eY5z/Og==}
+    peerDependencies:
+      '@langchain/core': '>=0.2.31 <0.4.0'
+      react: ^18 || ^19
+    peerDependenciesMeta:
+      '@langchain/core':
+        optional: true
+      react:
+        optional: true
+
+  '@langchain/langgraph-sdk@0.0.78':
+    resolution: {integrity: sha512-skkUDmEhClWzlsr8jRaS1VpXVBISm5OFd0MUtS1jKRL5pn08K+IJRvHnlzgum9x7Dste9KXGcIGVoR7cNKJQrw==}
     peerDependencies:
       '@langchain/core': '>=0.2.31 <0.4.0'
       react: ^18 || ^19
@@ -4506,6 +4565,10 @@ packages:
     resolution: {integrity: sha512-V0hjH4dGPh9Ao5p0MoRY6BVqtwCjhz6vI5LT8AJ55H+4g9/4vbHx1I54fS0XuclLhDHArPQCiMjDxjaL8fPxhw==}
     engines: {node: '>=0.12'}
 
+  entities@6.0.0:
+    resolution: {integrity: sha512-aKstq2TDOndCn4diEyp9Uq/Flu2i1GlLkc6XIDQSDMuaFE3OPW5OphLCyQ5SpSJZTb4reN+kTcYru5yIfXoRPw==}
+    engines: {node: '>=0.12'}
+
   error-ex@1.3.2:
     resolution: {integrity: sha512-7dFHNmqeFSEt2ZBsCriorKnn3Z2pj+fd9kmI6QoWw4//DL+icEBfc0U7qJCisqrTsKTjw4fNFy2pW9OqStD84g==}
 
@@ -5097,14 +5160,26 @@ packages:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
     engines: {node: '>= 0.4'}
 
+  hast-util-from-parse5@8.0.3:
+    resolution: {integrity: sha512-3kxEVkEKt0zvcZ3hCRYI8rqrgwtlIOFMWkbclACvjlDw8Li9S2hk/d51OI0nr/gIpdMHNepwgOKqZ/sy0Clpyg==}
+
   hast-util-parse-selector@2.2.5:
     resolution: {integrity: sha512-7j6mrk/qqkSehsM92wQjdIgWM2/BW61u/53G6xmC8i1OmEdKLHbk419QKQUjz6LglWsfqoiHmyMRkP1BGjecNQ==}
+
+  hast-util-parse-selector@4.0.0:
+    resolution: {integrity: sha512-wkQCkSYoOGCRKERFWcxMVMOcYE2K1AaNLU8DXS9arxnLOUEWbOXKXiJUNzEpqZ3JOKpnha3jkFrumEjVliDe7A==}
+
+  hast-util-raw@9.1.0:
+    resolution: {integrity: sha512-Y8/SBAHkZGoNkpzqqfCldijcuUKh7/su31kEBp67cFY09Wy0mTRgtsLYsiIxMJxlu0f6AA5SUTbDR8K0rxnbUw==}
 
   hast-util-to-estree@3.1.3:
     resolution: {integrity: sha512-48+B/rJWAp0jamNbAAf9M7Uf//UVqAoMmgXhBdxTDJLGKY+LRnZ99qcG+Qjl5HfMpYNzS5v4EAwVEF34LeAj7w==}
 
   hast-util-to-jsx-runtime@2.3.6:
     resolution: {integrity: sha512-zl6s8LwNyo1P9uw+XJGvZtdFF1GdAkOg8ujOw+4Pyb76874fLps4ueHXDhXWdk6YHQ6OgUtinliG7RsYvCbbBg==}
+
+  hast-util-to-parse5@8.0.0:
+    resolution: {integrity: sha512-3KKrV5ZVI8if87DVSi1vDeByYrkGzg4mEfeu4alwgmmIeARiBLKCZS2uw5Gb6nU9x9Yufyj3iudm6i7nl52PFw==}
 
   hast-util-whitespace@2.0.1:
     resolution: {integrity: sha512-nAxA0v8+vXSBDt3AnRUNjyRIQ0rD+ntpbAp4LnPkumc5M9yUbSMa4XDU9Q6etY4f1Wp4bNgvc1yjiZtsTTrSng==}
@@ -5114,6 +5189,9 @@ packages:
 
   hastscript@6.0.0:
     resolution: {integrity: sha512-nDM6bvd7lIqDUiYEiu5Sl/+6ReP0BMk/2f4U/Rooccxkj0P5nm+acM5PrGJ/t5I8qPGiqZSE6hVAwZEdZIvP4w==}
+
+  hastscript@9.0.1:
+    resolution: {integrity: sha512-g7df9rMFX/SPi34tyGCyUBREQoKkapwdY/T04Qn9TDWfHhAYt4/I0gMVirzK5wEzeUqIjEB+LXC/ypb7Aqno5w==}
 
   help-me@5.0.0:
     resolution: {integrity: sha512-7xgomUX6ADmcYzFik0HzAxh/73YlKR9bmFzf51CZwR+b6YtzU2m0u49hQCqV6SvlqIqsaxovfwdvbnsw3b/zpg==}
@@ -5178,6 +5256,9 @@ packages:
 
   html-url-attributes@3.0.1:
     resolution: {integrity: sha512-ol6UPyBWqsrO6EJySPz2O7ZSr856WDrEzM5zMqp+FJJLGMW35cLYmmZnl0vztAZxRUoNZJFTCohfjuIJ8I4QBQ==}
+
+  html-void-elements@3.0.0:
+    resolution: {integrity: sha512-bEqo66MRXsUGxWHV5IP0PUiAWwoEjba4VCzg0LjFJBpchPaTfyfCKTG6bc5F8ucKec3q5y6qOdGyYTSBEvhCrg==}
 
   http-errors@2.0.0:
     resolution: {integrity: sha512-FtwrG/euBzaEjYeRqOgly7G0qviiXoJWnvEH2Z1plBdXgbyjv34pHTSb9zoeHMyDy33+DWy5Wt9Wo+TURtOYSQ==}
@@ -5987,8 +6068,8 @@ packages:
   mdast-util-definitions@5.1.2:
     resolution: {integrity: sha512-8SVPMuHqlPME/z3gqVwWY4zVXn8lqKv/pAhC57FuJ40ImXyBpmO5ukh98zB2v7Blql2FiHjHv9LVztSIqjY+MA==}
 
-  mdast-util-find-and-replace@2.2.2:
-    resolution: {integrity: sha512-MTtdFRz/eMDHXzeK6W3dO7mXUlF82Gom4y0oOgvHhh/HXZAGvIQDUvQ0SuUx+j2tv44b8xTHOm8K/9OoRFnXKw==}
+  mdast-util-find-and-replace@3.0.2:
+    resolution: {integrity: sha512-Tmd1Vg/m3Xz43afeNxDIhWRtFZgM2VLyaf4vSTYwudTyeuTneoL3qtWMA5jeLyz/O1vDJmmV4QuScFCA2tBPwg==}
 
   mdast-util-from-markdown@1.3.1:
     resolution: {integrity: sha512-4xTO/M8c82qBcnQc1tgpNtubGUW/Y1tBQ1B0i5CtSoelOLKFYlElIr3bvgREYYO5iRqbMY1YuqZng0GVOI8Qww==}
@@ -5996,26 +6077,26 @@ packages:
   mdast-util-from-markdown@2.0.2:
     resolution: {integrity: sha512-uZhTV/8NBuw0WHkPTrCqDOl0zVe1BIng5ZtHoDk49ME1qqcjYmmLmOf0gELgcRMxN4w2iuIeVso5/6QymSrgmA==}
 
-  mdast-util-gfm-autolink-literal@1.0.3:
-    resolution: {integrity: sha512-My8KJ57FYEy2W2LyNom4n3E7hKTuQk/0SES0u16tjA9Z3oFkF4RrC/hPAPgjlSpezsOvI8ObcXcElo92wn5IGA==}
+  mdast-util-gfm-autolink-literal@2.0.1:
+    resolution: {integrity: sha512-5HVP2MKaP6L+G6YaxPNjuL0BPrq9orG3TsrZ9YXbA3vDw/ACI4MEsnoDpn6ZNm7GnZgtAcONJyPhOP8tNJQavQ==}
 
-  mdast-util-gfm-footnote@1.0.2:
-    resolution: {integrity: sha512-56D19KOGbE00uKVj3sgIykpwKL179QsVFwx/DCW0u/0+URsryacI4MAdNJl0dh+u2PSsD9FtxPFbHCzJ78qJFQ==}
+  mdast-util-gfm-footnote@2.1.0:
+    resolution: {integrity: sha512-sqpDWlsHn7Ac9GNZQMeUzPQSMzR6Wv0WKRNvQRg0KqHh02fpTz69Qc1QSseNX29bhz1ROIyNyxExfawVKTm1GQ==}
 
-  mdast-util-gfm-strikethrough@1.0.3:
-    resolution: {integrity: sha512-DAPhYzTYrRcXdMjUtUjKvW9z/FNAMTdU0ORyMcbmkwYNbKocDpdk+PX1L1dQgOID/+vVs1uBQ7ElrBQfZ0cuiQ==}
+  mdast-util-gfm-strikethrough@2.0.0:
+    resolution: {integrity: sha512-mKKb915TF+OC5ptj5bJ7WFRPdYtuHv0yTRxK2tJvi+BDqbkiG7h7u/9SI89nRAYcmap2xHQL9D+QG/6wSrTtXg==}
 
-  mdast-util-gfm-table@1.0.7:
-    resolution: {integrity: sha512-jjcpmNnQvrmN5Vx7y7lEc2iIOEytYv7rTvu+MeyAsSHTASGCCRA79Igg2uKssgOs1i1po8s3plW0sTu1wkkLGg==}
+  mdast-util-gfm-table@2.0.0:
+    resolution: {integrity: sha512-78UEvebzz/rJIxLvE7ZtDd/vIQ0RHv+3Mh5DR96p7cS7HsBhYIICDBCu8csTNWNO6tBWfqXPWekRuj2FNOGOZg==}
 
-  mdast-util-gfm-task-list-item@1.0.2:
-    resolution: {integrity: sha512-PFTA1gzfp1B1UaiJVyhJZA1rm0+Tzn690frc/L8vNX1Jop4STZgOE6bxUhnzdVSB+vm2GU1tIsuQcA9bxTQpMQ==}
+  mdast-util-gfm-task-list-item@2.0.0:
+    resolution: {integrity: sha512-IrtvNvjxC1o06taBAVJznEnkiHxLFTzgonUdy8hzFVeDun0uTjxxrRGVaNFqkU1wJR3RBPEfsxmU6jDWPofrTQ==}
 
-  mdast-util-gfm@2.0.2:
-    resolution: {integrity: sha512-qvZ608nBppZ4icQlhQQIAdc6S3Ffj9RGmzwUKUWuEICFnd1LVkN3EktF7ZHAgfcEdvZB5owU9tQgt99e2TlLjg==}
+  mdast-util-gfm@3.1.0:
+    resolution: {integrity: sha512-0ulfdQOM3ysHhCJ1p06l0b0VKlhU0wuQs3thxZQagjcjPrlFRqY215uZGHHJan9GEAXd9MbfPjFJz+qMkVR6zQ==}
 
-  mdast-util-math@2.0.2:
-    resolution: {integrity: sha512-8gmkKVp9v6+Tgjtq6SYx9kGPpTf6FVYRa53/DLh479aldR9AyP48qeVOgNZ5X7QUK7nOy4yw7vg6mbiGcs9jWQ==}
+  mdast-util-math@3.0.0:
+    resolution: {integrity: sha512-Tl9GBNeG/AhJnQM221bJR2HPvLOSnLE/T9cJI9tlc6zwQk2nPk/4f0cHkOdEixQPC/j8UtKDdITswvLAy1OZ1w==}
 
   mdast-util-mdx-expression@2.0.1:
     resolution: {integrity: sha512-J6f+9hUp+ldTZqKRSg7Vw5V6MqjATc+3E4gf3CFNcuZNWD8XdyI6zQ8GqH7f8169MM6P7hMBRDVGnn7oHB9kXQ==}
@@ -6029,9 +6110,6 @@ packages:
   mdast-util-mdxjs-esm@2.0.1:
     resolution: {integrity: sha512-EcmOpxsZ96CvlP03NghtH1EsLtr0n9Tm4lPUJUBccV9RwUOneqSycg19n5HGzCf+10LozMRSObtVr3ee1WoHtg==}
 
-  mdast-util-phrasing@3.0.1:
-    resolution: {integrity: sha512-WmI1gTXUBJo4/ZmSk79Wcb2HcjPJBzM1nlI/OUWA8yk2X9ik3ffNbBGsU+09BFmXaL1IBb9fiuvq6/KMiNycSg==}
-
   mdast-util-phrasing@4.1.0:
     resolution: {integrity: sha512-TqICwyvJJpBwvGAMZjj4J2n0X8QWp21b9l0o7eXyVJ25YNWYbJDVIyD1bZXE6WtV6RmKJVYmQAKWa0zWOABz2w==}
 
@@ -6040,9 +6118,6 @@ packages:
 
   mdast-util-to-hast@13.2.0:
     resolution: {integrity: sha512-QGYKEuUsYT9ykKBCMOEDLsU5JRObWQusAolFMeko/tYPufNkRffBAQjIE+99jbA87xv6FgmjLtwjh9wBWajwAA==}
-
-  mdast-util-to-markdown@1.5.0:
-    resolution: {integrity: sha512-bbv7TPv/WC49thZPg3jXuqzuvI45IL2EVAr/KxF0BSdHsU0ceFHOmwQn6evxAh1GaoK/6GQ1wp4R4oW2+LFL/A==}
 
   mdast-util-to-markdown@2.1.2:
     resolution: {integrity: sha512-xj68wMTvGXVOKonmog6LwyJKrYXZPvlwabaryTjLh9LuvovB/KAH+kvi8Gjj+7rJjsFi23nkUxRQv1KqSroMqA==}
@@ -6080,29 +6155,29 @@ packages:
   micromark-core-commonmark@2.0.3:
     resolution: {integrity: sha512-RDBrHEMSxVFLg6xvnXmb1Ayr2WzLAWjeSATAoxwKYJV94TeNavgoIdA0a9ytzDSVzBy2YKFK+emCPOEibLeCrg==}
 
-  micromark-extension-gfm-autolink-literal@1.0.5:
-    resolution: {integrity: sha512-z3wJSLrDf8kRDOh2qBtoTRD53vJ+CWIyo7uyZuxf/JAbNJjiHsOpG1y5wxk8drtv3ETAHutCu6N3thkOOgueWg==}
+  micromark-extension-gfm-autolink-literal@2.1.0:
+    resolution: {integrity: sha512-oOg7knzhicgQ3t4QCjCWgTmfNhvQbDDnJeVu9v81r7NltNCVmhPy1fJRX27pISafdjL+SVc4d3l48Gb6pbRypw==}
 
-  micromark-extension-gfm-footnote@1.1.2:
-    resolution: {integrity: sha512-Yxn7z7SxgyGWRNa4wzf8AhYYWNrwl5q1Z8ii+CSTTIqVkmGZF1CElX2JI8g5yGoM3GAman9/PVCUFUSJ0kB/8Q==}
+  micromark-extension-gfm-footnote@2.1.0:
+    resolution: {integrity: sha512-/yPhxI1ntnDNsiHtzLKYnE3vf9JZ6cAisqVDauhp4CEHxlb4uoOTxOCJ+9s51bIB8U1N1FJ1RXOKTIlD5B/gqw==}
 
-  micromark-extension-gfm-strikethrough@1.0.7:
-    resolution: {integrity: sha512-sX0FawVE1o3abGk3vRjOH50L5TTLr3b5XMqnP9YDRb34M0v5OoZhG+OHFz1OffZ9dlwgpTBKaT4XW/AsUVnSDw==}
+  micromark-extension-gfm-strikethrough@2.1.0:
+    resolution: {integrity: sha512-ADVjpOOkjz1hhkZLlBiYA9cR2Anf8F4HqZUO6e5eDcPQd0Txw5fxLzzxnEkSkfnD0wziSGiv7sYhk/ktvbf1uw==}
 
-  micromark-extension-gfm-table@1.0.7:
-    resolution: {integrity: sha512-3ZORTHtcSnMQEKtAOsBQ9/oHp9096pI/UvdPtN7ehKvrmZZ2+bbWhi0ln+I9drmwXMt5boocn6OlwQzNXeVeqw==}
+  micromark-extension-gfm-table@2.1.1:
+    resolution: {integrity: sha512-t2OU/dXXioARrC6yWfJ4hqB7rct14e8f7m0cbI5hUmDyyIlwv5vEtooptH8INkbLzOatzKuVbQmAYcbWoyz6Dg==}
 
-  micromark-extension-gfm-tagfilter@1.0.2:
-    resolution: {integrity: sha512-5XWB9GbAUSHTn8VPU8/1DBXMuKYT5uOgEjJb8gN3mW0PNW5OPHpSdojoqf+iq1xo7vWzw/P8bAHY0n6ijpXF7g==}
+  micromark-extension-gfm-tagfilter@2.0.0:
+    resolution: {integrity: sha512-xHlTOmuCSotIA8TW1mDIM6X2O1SiX5P9IuDtqGonFhEK0qgRI4yeC6vMxEV2dgyr2TiD+2PQ10o+cOhdVAcwfg==}
 
-  micromark-extension-gfm-task-list-item@1.0.5:
-    resolution: {integrity: sha512-RMFXl2uQ0pNQy6Lun2YBYT9g9INXtWJULgbt01D/x8/6yJ2qpKyzdZD3pi6UIkzF++Da49xAelVKUeUMqd5eIQ==}
+  micromark-extension-gfm-task-list-item@2.1.0:
+    resolution: {integrity: sha512-qIBZhqxqI6fjLDYFTBIa4eivDMnP+OZqsNwmQ3xNLE4Cxwc+zfQEfbs6tzAo2Hjq+bh6q5F+Z8/cksrLFYWQQw==}
 
-  micromark-extension-gfm@2.0.3:
-    resolution: {integrity: sha512-vb9OoHqrhCmbRidQv/2+Bc6pkP0FrtlhurxZofvOEy5o8RtuuvTq+RQ1Vw5ZDNrVraQZu3HixESqbG+0iKk/MQ==}
+  micromark-extension-gfm@3.0.0:
+    resolution: {integrity: sha512-vsKArQsicm7t0z2GugkCKtZehqUm31oeGBV/KVSorWSy8ZlNAv7ytjFhvaryUiCUJYqs+NoE6AFhpQvBTM6Q4w==}
 
-  micromark-extension-math@2.1.2:
-    resolution: {integrity: sha512-es0CcOV89VNS9wFmyn+wyFTKweXGW4CEvdaAca6SWRWPyYCbBisnjaHLjWO4Nszuiud84jCpkHsqAJoa768Pvg==}
+  micromark-extension-math@3.1.0:
+    resolution: {integrity: sha512-lvEqd+fHjATVs+2v/8kg9i5Q0AP2k85H0WUOwpIVvUML8BapsMvh1XAogmQjOCsLpoKRCVQqEkQBB3NhVBcsOg==}
 
   micromark-extension-mdx-expression@3.0.1:
     resolution: {integrity: sha512-dD/ADLJ1AeMvSAKBwO22zG22N4ybhe7kFIZ3LsDI0GlsNr2A3KYxb0LdC1u5rj4Nw+CHKY0RVdnHX8vj8ejm4Q==}
@@ -6541,6 +6616,9 @@ packages:
     resolution: {integrity: sha512-ayCKvm/phCGxOkYRSCM82iDwct8/EonSEgCSxWxD7ve6jHggsFl4fZVQBPRNgQoKiuV/odhFrGzQXZwbifC8Rg==}
     engines: {node: '>=8'}
 
+  parse5@7.3.0:
+    resolution: {integrity: sha512-IInvU7fabl34qmi9gY8XOVxhYyMyuH2xUNpb2q8/Y+7552KlejkRvqvD19nMoUW/uQGGbqNpA6Tufu5FL5BZgw==}
+
   parseurl@1.3.3:
     resolution: {integrity: sha512-CiyeOxFT/JZyN5m0z9PfXw4SCBJ6Sygz1Dpl0wqjlhDEGGBP1GnsUVEL0p63hoG1fcj3fHynXi9NYO4nWOL+qQ==}
     engines: {node: '>= 0.8'}
@@ -6959,14 +7037,17 @@ packages:
     resolution: {integrity: sha512-dYqgNSZbDwkaJ2ceRd9ojCGjBq+mOm9LmtXnAnEGyHhN/5R7iDW2TRw3h+o/jCFxus3P2LfWIIiwowAjANm7IA==}
     engines: {node: '>= 0.4'}
 
+  rehype-raw@7.0.0:
+    resolution: {integrity: sha512-/aE8hCfKlQeA8LmyeyQvQF3eBiLRGNlfBJEvWH7ivp9sBqs7TNqBL5X3v157rM4IFETqDnIOO+z5M/biZbo9Ww==}
+
   rehype-recma@1.0.0:
     resolution: {integrity: sha512-lqA4rGUf1JmacCNWWZx0Wv1dHqMwxzsDWYMTowuplHF3xH0N/MmrZ/G3BDZnzAkRmxDadujCjaKM2hqYdCBOGw==}
 
-  remark-gfm@3.0.1:
-    resolution: {integrity: sha512-lEFDoi2PICJyNrACFOfDD3JlLkuSbOa5Wd8EPt06HUdptv8Gn0bxYTdbU/XXQ3swAPkEaGxxPN9cbnMHvVu1Ig==}
+  remark-gfm@4.0.1:
+    resolution: {integrity: sha512-1quofZ2RQ9EWdeN34S79+KExV1764+wCUGop5CPL1WGdD0ocPpu91lzPGbwWMECpEpd42kJGQwzRfyov9j4yNg==}
 
-  remark-math@5.1.1:
-    resolution: {integrity: sha512-cE5T2R/xLVtfFI4cCePtiRn+e6jKMtFDR3P8V3qpv8wpKjwvHoBA4eJzvX+nVrnlNy0911bdGmuspCSwetfYHw==}
+  remark-math@6.0.0:
+    resolution: {integrity: sha512-MMqgnP74Igy+S3WwnhQ7kqGlEerTETXMvJhrUzDikVZ2/uogJCb+WHUg97hK9/jcfc0dkD73s3LN8zU49cTEtA==}
 
   remark-mdx@3.1.0:
     resolution: {integrity: sha512-Ngl/H3YXyBV9RcRNdlYsZujAmhsxwzxpDzpDEhFBVAGthS4GDgnctpDjgFl/ULx5UEDzqtW1cyBSNKqYYrqLBA==}
@@ -6982,6 +7063,9 @@ packages:
 
   remark-rehype@11.1.2:
     resolution: {integrity: sha512-Dh7l57ianaEoIpzbp0PC9UKAdCSVklD8E5Rpw7ETfbTl3FqcOOgq5q2LVDhgGCkaBv7p24JXikPdvhhmHvKMsw==}
+
+  remark-stringify@11.0.0:
+    resolution: {integrity: sha512-1OSmLd3awB/t8qdoEOMazZkNsfVTeY4fTsgzcQFdXNq8ToTN4ZGwrMnlda4K6smTFKD+GRV6O48i6Z4iKgPPpw==}
 
   require-directory@2.1.1:
     resolution: {integrity: sha512-fGxEI7+wsG9xrvdjsrlmL22OMTTiHRwAMroiEeMgq8gzoLC/PQr7RsRDSTLUg/bZAZtF+TVIkHc6/4RIKrui+Q==}
@@ -7631,6 +7715,9 @@ packages:
   unist-util-position@5.0.0:
     resolution: {integrity: sha512-fucsC7HjXvkB5R3kTCO7kUjRdrS0BJt3M/FPxmHMBOm8JQi2BsHAHFsy27E0EolP8rp0NzXsJ+jNPyDWvOJZPA==}
 
+  unist-util-remove-position@5.0.0:
+    resolution: {integrity: sha512-Hp5Kh3wLxv0PHj9m2yZhhLt58KzPtEYKQQ4yxfYFEO7EvHwzyDYnduhHnY1mDxoqr7VUwVuHXk9RXKIiYS1N8Q==}
+
   unist-util-stringify-position@3.0.3:
     resolution: {integrity: sha512-k5GzIBZ/QatR8N5X2y+drfpWG8IDBzdnVj6OInRNWm1oXrzydiaAT2OQiA8DPRRZyAKb9b6I2a6PxYklZD0gKg==}
 
@@ -7752,6 +7839,9 @@ packages:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
     engines: {node: '>= 0.8'}
 
+  vfile-location@5.0.3:
+    resolution: {integrity: sha512-5yXvWDEgqeiYiBe1lbxYF7UMAIm/IcopxMHrMQDq3nvKcjPKIhZklUKL+AE7J7uApI4kwe2snsK+eI6UTj9EHg==}
+
   vfile-message@3.1.4:
     resolution: {integrity: sha512-fa0Z6P8HUrQN4BZaX05SIVXic+7kE3b05PWAtPuYP9QLHsLKYR7/AlLW3NtOrpXRLeawpDLMsVkmk5DG0NXgWw==}
 
@@ -7772,6 +7862,9 @@ packages:
 
   wcwidth@1.0.1:
     resolution: {integrity: sha512-XHPEwS0q6TaxcvG85+8EYkbiCux2XtWG2mkc47Ng2A77BQu9+DqIOJldST4HgPkuea7dvKSj5VgX3P1d4rW8Tg==}
+
+  web-namespaces@2.0.1:
+    resolution: {integrity: sha512-bKr1DkiNa2krS7qxNtdrtHAmzuYGFQLiQ13TsorsdT6ULTkPLKuu5+GsFpDlg6JFjUTwX2DyhMPG2be8uPrqsQ==}
 
   web-streams-polyfill@3.3.3:
     resolution: {integrity: sha512-d2JWLCivmZYTSIoge9MsgFCZrt571BikcWGYkjC1khllbTeDlGqZ2D8vD8E/lJa8WGWbb7Plm8/XJYV7IJHZZw==}
@@ -8680,10 +8773,10 @@ snapshots:
 
   '@cfworker/json-schema@4.1.1': {}
 
-  '@copilotkit/react-core@1.8.12(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
+  '@copilotkit/react-core@1.8.14-next.4(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
-      '@copilotkit/runtime-client-gql': 1.8.12(graphql@16.11.0)(react@19.1.0)
-      '@copilotkit/shared': 1.8.12
+      '@copilotkit/runtime-client-gql': 1.8.14-next.4(graphql@16.11.0)(react@19.1.0)
+      '@copilotkit/shared': 1.8.14-next.4
       '@scarf/scarf': 1.4.0
       react: 19.1.0
       react-dom: 19.1.0(react@19.1.0)
@@ -8695,17 +8788,18 @@ snapshots:
       - graphql
       - supports-color
 
-  '@copilotkit/react-ui@1.8.12(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
+  '@copilotkit/react-ui@1.8.14-next.4(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
-      '@copilotkit/react-core': 1.8.12(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
-      '@copilotkit/runtime-client-gql': 1.8.12(graphql@16.11.0)(react@19.1.0)
-      '@copilotkit/shared': 1.8.12
+      '@copilotkit/react-core': 1.8.14-next.4(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      '@copilotkit/runtime-client-gql': 1.8.14-next.4(graphql@16.11.0)(react@19.1.0)
+      '@copilotkit/shared': 1.8.14-next.4
       '@headlessui/react': 2.2.4(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       react: 19.1.0
-      react-markdown: 8.0.7(@types/react@19.1.5)(react@19.1.0)
+      react-markdown: 10.1.0(@types/react@19.1.5)(react@19.1.0)
       react-syntax-highlighter: 15.6.1(react@19.1.0)
-      remark-gfm: 3.0.1
-      remark-math: 5.1.1
+      rehype-raw: 7.0.0
+      remark-gfm: 4.0.1
+      remark-math: 6.0.0
     transitivePeerDependencies:
       - '@types/react'
       - encoding
@@ -8713,9 +8807,9 @@ snapshots:
       - react-dom
       - supports-color
 
-  '@copilotkit/runtime-client-gql@1.8.12(graphql@16.11.0)(react@19.1.0)':
+  '@copilotkit/runtime-client-gql@1.8.14-next.4(graphql@16.11.0)(react@19.1.0)':
     dependencies:
-      '@copilotkit/shared': 1.8.12
+      '@copilotkit/shared': 1.8.14-next.4
       '@urql/core': 5.1.1(graphql@16.11.0)
       react: 19.1.0
       untruncate-json: 0.0.1
@@ -8724,184 +8818,7 @@ snapshots:
       - encoding
       - graphql
 
-  '@copilotkit/runtime@1.8.12(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.821.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.52.0)(deepmerge@4.3.1)(dotenv@16.5.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(zod@3.25.17))(@ibm-cloud/watsonx-ai@1.6.6)(@smithy/eventstream-codec@1.1.0)(@smithy/protocol-http@5.1.2)(@smithy/signature-v4@5.1.2)(@smithy/util-utf8@4.0.0)(axios@1.9.0)(cohere-ai@7.17.1)(fast-xml-parser@4.4.1)(google-auth-library@8.9.0)(ibm-cloud-sdk-core@5.3.2)(ignore@7.0.4)(jsonwebtoken@9.0.2)(playwright@1.52.0)(react@19.1.0)(ws@8.18.2)':
-    dependencies:
-      '@ag-ui/client': 0.0.27
-      '@ag-ui/core': 0.0.27
-      '@ag-ui/encoder': 0.0.27
-      '@ag-ui/proto': 0.0.27
-      '@anthropic-ai/sdk': 0.27.3
-      '@copilotkit/shared': 1.8.12
-      '@graphql-yoga/plugin-defer-stream': 3.13.4(graphql-yoga@5.13.4(graphql@16.11.0))(graphql@16.11.0)
-      '@langchain/community': 0.3.43(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.821.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.52.0)(deepmerge@4.3.1)(dotenv@16.5.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(zod@3.25.17))(@ibm-cloud/watsonx-ai@1.6.6)(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(@smithy/eventstream-codec@1.1.0)(@smithy/protocol-http@5.1.2)(@smithy/signature-v4@5.1.2)(@smithy/util-utf8@4.0.0)(axios@1.9.0)(cohere-ai@7.17.1)(fast-xml-parser@4.4.1)(google-auth-library@8.9.0)(ibm-cloud-sdk-core@5.3.2)(ignore@7.0.4)(jsonwebtoken@9.0.2)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(playwright@1.52.0)(ws@8.18.2)
-      '@langchain/core': 0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17))
-      '@langchain/google-gauth': 0.1.8(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(zod@3.25.17)
-      '@langchain/langgraph-sdk': 0.0.70(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(react@19.1.0)
-      '@langchain/openai': 0.4.9(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(ws@8.18.2)
-      class-transformer: 0.5.1
-      class-validator: 0.14.2
-      express: 4.21.2
-      graphql: 16.11.0
-      graphql-scalars: 1.24.2(graphql@16.11.0)
-      graphql-yoga: 5.13.4(graphql@16.11.0)
-      groq-sdk: 0.5.0
-      langchain: 0.3.26(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(axios@1.9.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(ws@8.18.2)
-      openai: 4.100.0(ws@8.18.2)(zod@3.25.17)
-      partial-json: 0.1.7
-      pino: 9.7.0
-      pino-pretty: 11.3.0
-      reflect-metadata: 0.2.2
-      rxjs: 7.8.1
-      type-graphql: 2.0.0-rc.1(class-validator@0.14.2)(graphql-scalars@1.24.2(graphql@16.11.0))(graphql@16.11.0)
-      zod: 3.25.17
-    transitivePeerDependencies:
-      - '@arcjet/redact'
-      - '@aws-crypto/sha256-js'
-      - '@aws-sdk/client-bedrock-agent-runtime'
-      - '@aws-sdk/client-bedrock-runtime'
-      - '@aws-sdk/client-dynamodb'
-      - '@aws-sdk/client-kendra'
-      - '@aws-sdk/client-lambda'
-      - '@aws-sdk/client-s3'
-      - '@aws-sdk/client-sagemaker-runtime'
-      - '@aws-sdk/client-sfn'
-      - '@aws-sdk/credential-provider-node'
-      - '@aws-sdk/dsql-signer'
-      - '@azure/search-documents'
-      - '@azure/storage-blob'
-      - '@browserbasehq/sdk'
-      - '@browserbasehq/stagehand'
-      - '@clickhouse/client'
-      - '@cloudflare/ai'
-      - '@datastax/astra-db-ts'
-      - '@elastic/elasticsearch'
-      - '@getmetal/metal-sdk'
-      - '@getzep/zep-cloud'
-      - '@getzep/zep-js'
-      - '@gomomento/sdk'
-      - '@gomomento/sdk-core'
-      - '@google-ai/generativelanguage'
-      - '@google-cloud/storage'
-      - '@gradientai/nodejs-sdk'
-      - '@huggingface/inference'
-      - '@huggingface/transformers'
-      - '@ibm-cloud/watsonx-ai'
-      - '@lancedb/lancedb'
-      - '@langchain/anthropic'
-      - '@langchain/aws'
-      - '@langchain/cerebras'
-      - '@langchain/cohere'
-      - '@langchain/deepseek'
-      - '@langchain/google-genai'
-      - '@langchain/google-vertexai'
-      - '@langchain/google-vertexai-web'
-      - '@langchain/groq'
-      - '@langchain/mistralai'
-      - '@langchain/ollama'
-      - '@langchain/xai'
-      - '@layerup/layerup-security'
-      - '@libsql/client'
-      - '@mendable/firecrawl-js'
-      - '@mlc-ai/web-llm'
-      - '@mozilla/readability'
-      - '@neondatabase/serverless'
-      - '@notionhq/client'
-      - '@opensearch-project/opensearch'
-      - '@pinecone-database/pinecone'
-      - '@planetscale/database'
-      - '@premai/prem-sdk'
-      - '@qdrant/js-client-rest'
-      - '@raycast/api'
-      - '@rockset/client'
-      - '@smithy/eventstream-codec'
-      - '@smithy/protocol-http'
-      - '@smithy/signature-v4'
-      - '@smithy/util-utf8'
-      - '@spider-cloud/spider-client'
-      - '@supabase/supabase-js'
-      - '@tensorflow-models/universal-sentence-encoder'
-      - '@tensorflow/tfjs-converter'
-      - '@tensorflow/tfjs-core'
-      - '@upstash/ratelimit'
-      - '@upstash/redis'
-      - '@upstash/vector'
-      - '@vercel/kv'
-      - '@vercel/postgres'
-      - '@writerai/writer-sdk'
-      - '@xata.io/client'
-      - '@zilliz/milvus2-sdk-node'
-      - apify-client
-      - assemblyai
-      - axios
-      - azion
-      - better-sqlite3
-      - cassandra-driver
-      - cborg
-      - cheerio
-      - chromadb
-      - closevector-common
-      - closevector-node
-      - closevector-web
-      - cohere-ai
-      - convex
-      - crypto-js
-      - d3-dsv
-      - discord.js
-      - dria
-      - duck-duck-scrape
-      - encoding
-      - epub2
-      - fast-xml-parser
-      - firebase-admin
-      - google-auth-library
-      - googleapis
-      - handlebars
-      - hnswlib-node
-      - html-to-text
-      - ibm-cloud-sdk-core
-      - ignore
-      - interface-datastore
-      - ioredis
-      - it-all
-      - jsdom
-      - jsonwebtoken
-      - llmonitor
-      - lodash
-      - lunary
-      - mammoth
-      - mariadb
-      - mem0ai
-      - mongodb
-      - mysql2
-      - neo4j-driver
-      - notion-to-md
-      - officeparser
-      - pdf-parse
-      - peggy
-      - pg
-      - pg-copy-streams
-      - pickleparser
-      - playwright
-      - portkey-ai
-      - puppeteer
-      - pyodide
-      - react
-      - redis
-      - replicate
-      - sonix-speech-recognition
-      - srt-parser-2
-      - supports-color
-      - typeorm
-      - typesense
-      - usearch
-      - voy-search
-      - weaviate-ts-client
-      - web-auth-library
-      - word-extractor
-      - ws
-      - youtubei.js
-
-  '@copilotkit/runtime@1.8.13(@ag-ui/client@packages+client)(@ag-ui/core@0.0.28)(@ag-ui/encoder@0.0.28)(@ag-ui/proto@0.0.28)(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.821.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.52.0)(deepmerge@4.3.1)(dotenv@16.5.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(zod@3.25.17))(@ibm-cloud/watsonx-ai@1.6.6)(@smithy/eventstream-codec@1.1.0)(@smithy/protocol-http@5.1.2)(@smithy/signature-v4@5.1.2)(@smithy/util-utf8@4.0.0)(axios@1.9.0)(cohere-ai@7.17.1)(fast-xml-parser@4.4.1)(google-auth-library@8.9.0)(ibm-cloud-sdk-core@5.3.2)(ignore@7.0.4)(jsonwebtoken@9.0.2)(playwright@1.52.0)(react@19.1.0)(ws@8.18.2)':
+  '@copilotkit/runtime@1.8.13(@ag-ui/client@packages+client)(@ag-ui/core@0.0.28)(@ag-ui/encoder@0.0.28)(@ag-ui/proto@0.0.28)(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.821.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.52.0)(deepmerge@4.3.1)(dotenv@16.5.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(zod@3.25.17))(@ibm-cloud/watsonx-ai@1.6.6)(@smithy/util-utf8@2.3.0)(axios@1.9.0)(cohere-ai@7.17.1)(fast-xml-parser@4.4.1)(google-auth-library@8.9.0)(ibm-cloud-sdk-core@5.3.2)(ignore@5.3.2)(jsonwebtoken@9.0.2)(playwright@1.52.0)(react@19.1.0)(ws@8.18.2)':
     dependencies:
       '@ag-ui/client': link:packages/client
       '@ag-ui/core': 0.0.28
@@ -8910,8 +8827,8 @@ snapshots:
       '@anthropic-ai/sdk': 0.27.3
       '@copilotkit/shared': 1.8.13
       '@graphql-yoga/plugin-defer-stream': 3.13.4(graphql-yoga@5.13.4(graphql@16.11.0))(graphql@16.11.0)
-      '@langchain/community': 0.3.43(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.821.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.52.0)(deepmerge@4.3.1)(dotenv@16.5.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(zod@3.25.17))(@ibm-cloud/watsonx-ai@1.6.6)(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(@smithy/eventstream-codec@1.1.0)(@smithy/protocol-http@5.1.2)(@smithy/signature-v4@5.1.2)(@smithy/util-utf8@4.0.0)(axios@1.9.0)(cohere-ai@7.17.1)(fast-xml-parser@4.4.1)(google-auth-library@8.9.0)(ibm-cloud-sdk-core@5.3.2)(ignore@7.0.4)(jsonwebtoken@9.0.2)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(playwright@1.52.0)(ws@8.18.2)
-      '@langchain/core': 0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17))
+      '@langchain/community': 0.3.43(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.821.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.52.0)(deepmerge@4.3.1)(dotenv@16.5.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(zod@3.25.17))(@ibm-cloud/watsonx-ai@1.6.6)(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(@smithy/util-utf8@2.3.0)(axios@1.9.0)(cohere-ai@7.17.1)(fast-xml-parser@4.4.1)(google-auth-library@8.9.0)(ibm-cloud-sdk-core@5.3.2)(ignore@5.3.2)(jsonwebtoken@9.0.2)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(playwright@1.52.0)(ws@8.18.2)
+      '@langchain/core': 0.3.56(openai@4.100.0(zod@3.25.17))
       '@langchain/google-gauth': 0.1.8(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(zod@3.25.17)
       '@langchain/langgraph-sdk': 0.0.70(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(react@19.1.0)
       '@langchain/openai': 0.4.9(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(ws@8.18.2)
@@ -9078,7 +8995,184 @@ snapshots:
       - ws
       - youtubei.js
 
-  '@copilotkit/shared@1.8.12':
+  '@copilotkit/runtime@1.8.14-next.4(@ag-ui/client@packages+client)(@ag-ui/core@packages+core)(@ag-ui/encoder@packages+encoder)(@ag-ui/proto@packages+proto)(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.821.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.52.0)(deepmerge@4.3.1)(dotenv@16.5.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(zod@3.25.17))(@ibm-cloud/watsonx-ai@1.6.6)(@smithy/util-utf8@2.3.0)(axios@1.9.0)(cohere-ai@7.17.1)(fast-xml-parser@4.4.1)(google-auth-library@8.9.0)(ibm-cloud-sdk-core@5.3.2)(ignore@5.3.2)(jsonwebtoken@9.0.2)(playwright@1.52.0)(react@19.1.0)(ws@8.18.2)':
+    dependencies:
+      '@ag-ui/client': link:packages/client
+      '@ag-ui/core': link:packages/core
+      '@ag-ui/encoder': link:packages/encoder
+      '@ag-ui/proto': link:packages/proto
+      '@anthropic-ai/sdk': 0.27.3
+      '@copilotkit/shared': 1.8.14-next.4
+      '@graphql-yoga/plugin-defer-stream': 3.13.4(graphql-yoga@5.13.4(graphql@16.11.0))(graphql@16.11.0)
+      '@langchain/community': 0.3.43(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.821.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.52.0)(deepmerge@4.3.1)(dotenv@16.5.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(zod@3.25.17))(@ibm-cloud/watsonx-ai@1.6.6)(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(@smithy/util-utf8@2.3.0)(axios@1.9.0)(cohere-ai@7.17.1)(fast-xml-parser@4.4.1)(google-auth-library@8.9.0)(ibm-cloud-sdk-core@5.3.2)(ignore@5.3.2)(jsonwebtoken@9.0.2)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(playwright@1.52.0)(ws@8.18.2)
+      '@langchain/core': 0.3.56(openai@4.100.0(zod@3.25.17))
+      '@langchain/google-gauth': 0.1.8(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(zod@3.25.17)
+      '@langchain/langgraph-sdk': 0.0.70(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(react@19.1.0)
+      '@langchain/openai': 0.4.9(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(ws@8.18.2)
+      class-transformer: 0.5.1
+      class-validator: 0.14.2
+      express: 4.21.2
+      graphql: 16.11.0
+      graphql-scalars: 1.24.2(graphql@16.11.0)
+      graphql-yoga: 5.13.4(graphql@16.11.0)
+      groq-sdk: 0.5.0
+      langchain: 0.3.26(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(axios@1.9.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(ws@8.18.2)
+      openai: 4.100.0(ws@8.18.2)(zod@3.25.17)
+      partial-json: 0.1.7
+      pino: 9.7.0
+      pino-pretty: 11.3.0
+      reflect-metadata: 0.2.2
+      rxjs: 7.8.1
+      type-graphql: 2.0.0-rc.1(class-validator@0.14.2)(graphql-scalars@1.24.2(graphql@16.11.0))(graphql@16.11.0)
+      zod: 3.25.17
+    transitivePeerDependencies:
+      - '@arcjet/redact'
+      - '@aws-crypto/sha256-js'
+      - '@aws-sdk/client-bedrock-agent-runtime'
+      - '@aws-sdk/client-bedrock-runtime'
+      - '@aws-sdk/client-dynamodb'
+      - '@aws-sdk/client-kendra'
+      - '@aws-sdk/client-lambda'
+      - '@aws-sdk/client-s3'
+      - '@aws-sdk/client-sagemaker-runtime'
+      - '@aws-sdk/client-sfn'
+      - '@aws-sdk/credential-provider-node'
+      - '@aws-sdk/dsql-signer'
+      - '@azure/search-documents'
+      - '@azure/storage-blob'
+      - '@browserbasehq/sdk'
+      - '@browserbasehq/stagehand'
+      - '@clickhouse/client'
+      - '@cloudflare/ai'
+      - '@datastax/astra-db-ts'
+      - '@elastic/elasticsearch'
+      - '@getmetal/metal-sdk'
+      - '@getzep/zep-cloud'
+      - '@getzep/zep-js'
+      - '@gomomento/sdk'
+      - '@gomomento/sdk-core'
+      - '@google-ai/generativelanguage'
+      - '@google-cloud/storage'
+      - '@gradientai/nodejs-sdk'
+      - '@huggingface/inference'
+      - '@huggingface/transformers'
+      - '@ibm-cloud/watsonx-ai'
+      - '@lancedb/lancedb'
+      - '@langchain/anthropic'
+      - '@langchain/aws'
+      - '@langchain/cerebras'
+      - '@langchain/cohere'
+      - '@langchain/deepseek'
+      - '@langchain/google-genai'
+      - '@langchain/google-vertexai'
+      - '@langchain/google-vertexai-web'
+      - '@langchain/groq'
+      - '@langchain/mistralai'
+      - '@langchain/ollama'
+      - '@langchain/xai'
+      - '@layerup/layerup-security'
+      - '@libsql/client'
+      - '@mendable/firecrawl-js'
+      - '@mlc-ai/web-llm'
+      - '@mozilla/readability'
+      - '@neondatabase/serverless'
+      - '@notionhq/client'
+      - '@opensearch-project/opensearch'
+      - '@pinecone-database/pinecone'
+      - '@planetscale/database'
+      - '@premai/prem-sdk'
+      - '@qdrant/js-client-rest'
+      - '@raycast/api'
+      - '@rockset/client'
+      - '@smithy/eventstream-codec'
+      - '@smithy/protocol-http'
+      - '@smithy/signature-v4'
+      - '@smithy/util-utf8'
+      - '@spider-cloud/spider-client'
+      - '@supabase/supabase-js'
+      - '@tensorflow-models/universal-sentence-encoder'
+      - '@tensorflow/tfjs-converter'
+      - '@tensorflow/tfjs-core'
+      - '@upstash/ratelimit'
+      - '@upstash/redis'
+      - '@upstash/vector'
+      - '@vercel/kv'
+      - '@vercel/postgres'
+      - '@writerai/writer-sdk'
+      - '@xata.io/client'
+      - '@zilliz/milvus2-sdk-node'
+      - apify-client
+      - assemblyai
+      - axios
+      - azion
+      - better-sqlite3
+      - cassandra-driver
+      - cborg
+      - cheerio
+      - chromadb
+      - closevector-common
+      - closevector-node
+      - closevector-web
+      - cohere-ai
+      - convex
+      - crypto-js
+      - d3-dsv
+      - discord.js
+      - dria
+      - duck-duck-scrape
+      - encoding
+      - epub2
+      - fast-xml-parser
+      - firebase-admin
+      - google-auth-library
+      - googleapis
+      - handlebars
+      - hnswlib-node
+      - html-to-text
+      - ibm-cloud-sdk-core
+      - ignore
+      - interface-datastore
+      - ioredis
+      - it-all
+      - jsdom
+      - jsonwebtoken
+      - llmonitor
+      - lodash
+      - lunary
+      - mammoth
+      - mariadb
+      - mem0ai
+      - mongodb
+      - mysql2
+      - neo4j-driver
+      - notion-to-md
+      - officeparser
+      - pdf-parse
+      - peggy
+      - pg
+      - pg-copy-streams
+      - pickleparser
+      - playwright
+      - portkey-ai
+      - puppeteer
+      - pyodide
+      - react
+      - redis
+      - replicate
+      - sonix-speech-recognition
+      - srt-parser-2
+      - supports-color
+      - typeorm
+      - typesense
+      - usearch
+      - voy-search
+      - weaviate-ts-client
+      - web-auth-library
+      - word-extractor
+      - ws
+      - youtubei.js
+
+  '@copilotkit/shared@1.8.13':
     dependencies:
       '@segment/analytics-node': 2.2.1
       chalk: 4.1.2
@@ -9089,7 +9183,7 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  '@copilotkit/shared@1.8.13':
+  '@copilotkit/shared@1.8.14-next.4':
     dependencies:
       '@segment/analytics-node': 2.2.1
       chalk: 4.1.2
@@ -9661,11 +9755,11 @@ snapshots:
 
   '@jsdevtools/ono@7.1.3': {}
 
-  '@langchain/community@0.3.43(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.821.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.52.0)(deepmerge@4.3.1)(dotenv@16.5.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(zod@3.25.17))(@ibm-cloud/watsonx-ai@1.6.6)(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(@smithy/eventstream-codec@1.1.0)(@smithy/protocol-http@5.1.2)(@smithy/signature-v4@5.1.2)(@smithy/util-utf8@4.0.0)(axios@1.9.0)(cohere-ai@7.17.1)(fast-xml-parser@4.4.1)(google-auth-library@8.9.0)(ibm-cloud-sdk-core@5.3.2)(ignore@7.0.4)(jsonwebtoken@9.0.2)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(playwright@1.52.0)(ws@8.18.2)':
+  '@langchain/community@0.3.43(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/credential-provider-node@3.821.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.52.0)(deepmerge@4.3.1)(dotenv@16.5.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(zod@3.25.17))(@ibm-cloud/watsonx-ai@1.6.6)(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(@smithy/util-utf8@2.3.0)(axios@1.9.0)(cohere-ai@7.17.1)(fast-xml-parser@4.4.1)(google-auth-library@8.9.0)(ibm-cloud-sdk-core@5.3.2)(ignore@5.3.2)(jsonwebtoken@9.0.2)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(playwright@1.52.0)(ws@8.18.2)':
     dependencies:
       '@browserbasehq/stagehand': 1.14.0(@playwright/test@1.52.0)(deepmerge@4.3.1)(dotenv@16.5.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(zod@3.25.17)
       '@ibm-cloud/watsonx-ai': 1.6.6
-      '@langchain/core': 0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17))
+      '@langchain/core': 0.3.56(openai@4.100.0(zod@3.25.17))
       '@langchain/openai': 0.4.9(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(ws@8.18.2)
       binary-extensions: 2.3.0
       expr-eval: 2.0.2
@@ -9673,7 +9767,7 @@ snapshots:
       ibm-cloud-sdk-core: 5.3.2
       js-yaml: 4.1.0
       langchain: 0.3.26(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(axios@1.9.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(ws@8.18.2)
-      langsmith: 0.3.29(openai@4.100.0(ws@8.18.2)(zod@3.25.17))
+      langsmith: 0.3.29(openai@4.100.0(zod@3.25.17))
       openai: 4.100.0(ws@8.18.2)(zod@3.25.17)
       uuid: 10.0.0
       zod: 3.25.17
@@ -9682,14 +9776,11 @@ snapshots:
       '@aws-crypto/sha256-js': 5.2.0
       '@aws-sdk/credential-provider-node': 3.821.0
       '@browserbasehq/sdk': 2.6.0
-      '@smithy/eventstream-codec': 1.1.0
-      '@smithy/protocol-http': 5.1.2
-      '@smithy/signature-v4': 5.1.2
-      '@smithy/util-utf8': 4.0.0
+      '@smithy/util-utf8': 2.3.0
       cohere-ai: 7.17.1
       fast-xml-parser: 4.4.1
       google-auth-library: 8.9.0
-      ignore: 7.0.4
+      ignore: 5.3.2
       jsonwebtoken: 9.0.2
       playwright: 1.52.0
       ws: 8.18.2
@@ -9711,14 +9802,14 @@ snapshots:
       - handlebars
       - peggy
 
-  '@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17))':
+  '@langchain/core@0.3.56(openai@4.100.0(zod@3.25.17))':
     dependencies:
       '@cfworker/json-schema': 4.1.1
       ansi-styles: 5.2.0
       camelcase: 6.3.0
       decamelize: 1.2.0
       js-tiktoken: 1.0.20
-      langsmith: 0.3.29(openai@4.100.0(ws@8.18.2)(zod@3.25.17))
+      langsmith: 0.3.29(openai@4.100.0(zod@3.25.17))
       mustache: 4.2.0
       p-queue: 6.6.2
       p-retry: 4.6.2
@@ -9730,7 +9821,7 @@ snapshots:
 
   '@langchain/google-common@0.1.8(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(zod@3.25.17)':
     dependencies:
-      '@langchain/core': 0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17))
+      '@langchain/core': 0.3.56(openai@4.100.0(zod@3.25.17))
       uuid: 10.0.0
       zod-to-json-schema: 3.24.5(zod@3.25.17)
     transitivePeerDependencies:
@@ -9738,7 +9829,7 @@ snapshots:
 
   '@langchain/google-gauth@0.1.8(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(zod@3.25.17)':
     dependencies:
-      '@langchain/core': 0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17))
+      '@langchain/core': 0.3.56(openai@4.100.0(zod@3.25.17))
       '@langchain/google-common': 0.1.8(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(zod@3.25.17)
       google-auth-library: 8.9.0
     transitivePeerDependencies:
@@ -9753,12 +9844,22 @@ snapshots:
       p-retry: 4.6.2
       uuid: 9.0.1
     optionalDependencies:
-      '@langchain/core': 0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17))
+      '@langchain/core': 0.3.56(openai@4.100.0(zod@3.25.17))
+      react: 19.1.0
+
+  '@langchain/langgraph-sdk@0.0.78(@langchain/core@0.3.56(openai@4.100.0(zod@3.25.17)))(react@19.1.0)':
+    dependencies:
+      '@types/json-schema': 7.0.15
+      p-queue: 6.6.2
+      p-retry: 4.6.2
+      uuid: 9.0.1
+    optionalDependencies:
+      '@langchain/core': 0.3.56(openai@4.100.0(zod@3.25.17))
       react: 19.1.0
 
   '@langchain/openai@0.4.9(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(ws@8.18.2)':
     dependencies:
-      '@langchain/core': 0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17))
+      '@langchain/core': 0.3.56(openai@4.100.0(zod@3.25.17))
       js-tiktoken: 1.0.20
       openai: 4.100.0(ws@8.18.2)(zod@3.25.17)
       zod: 3.25.17
@@ -9769,7 +9870,7 @@ snapshots:
 
   '@langchain/textsplitters@0.1.0(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))':
     dependencies:
-      '@langchain/core': 0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17))
+      '@langchain/core': 0.3.56(openai@4.100.0(zod@3.25.17))
       js-tiktoken: 1.0.20
 
   '@lukeed/csprng@1.1.0': {}
@@ -9778,17 +9879,17 @@ snapshots:
     dependencies:
       '@lukeed/csprng': 1.1.0
 
-  '@mastra/client-js@0.10.1(@mastra/core@0.10.1(@sinclair/typebox@0.27.8)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.17))(zod@3.25.17)':
+  '@mastra/client-js@0.10.1(@mastra/core@0.10.1(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.17))(zod@3.25.17)':
     dependencies:
       '@ag-ui/client': 0.0.27
       '@ai-sdk/ui-utils': 1.2.11(zod@3.25.17)
-      '@mastra/core': 0.10.1(@sinclair/typebox@0.27.8)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.17)
+      '@mastra/core': 0.10.1(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.17)
       json-schema: 0.4.0
       rxjs: 7.8.1
       zod: 3.25.17
       zod-to-json-schema: 3.24.5(zod@3.25.17)
 
-  '@mastra/core@0.10.1(@sinclair/typebox@0.27.8)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.17)':
+  '@mastra/core@0.10.1(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.17)':
     dependencies:
       '@opentelemetry/api': 1.9.0
       '@opentelemetry/auto-instrumentations-node': 0.59.0(@opentelemetry/api@1.9.0)(@opentelemetry/core@2.0.1(@opentelemetry/api@1.9.0))
@@ -9809,7 +9910,7 @@ snapshots:
       date-fns: 3.6.0
       dotenv: 16.5.0
       hono: 4.7.11
-      hono-openapi: 0.4.8(@sinclair/typebox@0.27.8)(hono@4.7.11)(openapi-types@12.1.3)(zod@3.25.17)
+      hono-openapi: 0.4.8(hono@4.7.11)(openapi-types@12.1.3)(zod@3.25.17)
       json-schema: 0.4.0
       json-schema-to-zod: 2.6.1
       pino: 9.7.0
@@ -12728,6 +12829,8 @@ snapshots:
 
   entities@4.5.0: {}
 
+  entities@6.0.0: {}
+
   error-ex@1.3.2:
     dependencies:
       is-arrayish: 0.2.1
@@ -13595,7 +13698,38 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
+  hast-util-from-parse5@8.0.3:
+    dependencies:
+      '@types/hast': 3.0.4
+      '@types/unist': 3.0.3
+      devlop: 1.1.0
+      hastscript: 9.0.1
+      property-information: 7.1.0
+      vfile: 6.0.3
+      vfile-location: 5.0.3
+      web-namespaces: 2.0.1
+
   hast-util-parse-selector@2.2.5: {}
+
+  hast-util-parse-selector@4.0.0:
+    dependencies:
+      '@types/hast': 3.0.4
+
+  hast-util-raw@9.1.0:
+    dependencies:
+      '@types/hast': 3.0.4
+      '@types/unist': 3.0.3
+      '@ungap/structured-clone': 1.3.0
+      hast-util-from-parse5: 8.0.3
+      hast-util-to-parse5: 8.0.0
+      html-void-elements: 3.0.0
+      mdast-util-to-hast: 13.2.0
+      parse5: 7.3.0
+      unist-util-position: 5.0.0
+      unist-util-visit: 5.0.0
+      vfile: 6.0.3
+      web-namespaces: 2.0.1
+      zwitch: 2.0.4
 
   hast-util-to-estree@3.1.3:
     dependencies:
@@ -13638,6 +13772,16 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  hast-util-to-parse5@8.0.0:
+    dependencies:
+      '@types/hast': 3.0.4
+      comma-separated-tokens: 2.0.3
+      devlop: 1.1.0
+      property-information: 6.5.0
+      space-separated-tokens: 2.0.2
+      web-namespaces: 2.0.1
+      zwitch: 2.0.4
+
   hast-util-whitespace@2.0.1: {}
 
   hast-util-whitespace@3.0.0:
@@ -13652,18 +13796,25 @@ snapshots:
       property-information: 5.6.0
       space-separated-tokens: 1.1.5
 
+  hastscript@9.0.1:
+    dependencies:
+      '@types/hast': 3.0.4
+      comma-separated-tokens: 2.0.3
+      hast-util-parse-selector: 4.0.0
+      property-information: 7.1.0
+      space-separated-tokens: 2.0.2
+
   help-me@5.0.0: {}
 
   highlight.js@10.7.3: {}
 
   highlightjs-vue@1.0.0: {}
 
-  hono-openapi@0.4.8(@sinclair/typebox@0.27.8)(hono@4.7.11)(openapi-types@12.1.3)(zod@3.25.17):
+  hono-openapi@0.4.8(hono@4.7.11)(openapi-types@12.1.3)(zod@3.25.17):
     dependencies:
       json-schema-walker: 2.0.0
       openapi-types: 12.1.3
     optionalDependencies:
-      '@sinclair/typebox': 0.27.8
       hono: 4.7.11
       zod: 3.25.17
 
@@ -13672,6 +13823,8 @@ snapshots:
   html-escaper@2.0.2: {}
 
   html-url-attributes@3.0.1: {}
+
+  html-void-elements@3.0.0: {}
 
   http-errors@2.0.0:
     dependencies:
@@ -14422,13 +14575,13 @@ snapshots:
 
   langchain@0.3.26(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(axios@1.9.0)(openai@4.100.0(ws@8.18.2)(zod@3.25.17))(ws@8.18.2):
     dependencies:
-      '@langchain/core': 0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17))
+      '@langchain/core': 0.3.56(openai@4.100.0(zod@3.25.17))
       '@langchain/openai': 0.4.9(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))(ws@8.18.2)
       '@langchain/textsplitters': 0.1.0(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.2)(zod@3.25.17)))
       js-tiktoken: 1.0.20
       js-yaml: 4.1.0
       jsonpointer: 5.0.1
-      langsmith: 0.3.29(openai@4.100.0(ws@8.18.2)(zod@3.25.17))
+      langsmith: 0.3.29(openai@4.100.0(zod@3.25.17))
       openapi-types: 12.1.3
       p-retry: 4.6.2
       uuid: 10.0.0
@@ -14442,7 +14595,7 @@ snapshots:
       - openai
       - ws
 
-  langsmith@0.3.29(openai@4.100.0(ws@8.18.2)(zod@3.25.17)):
+  langsmith@0.3.29(openai@4.100.0(zod@3.25.17)):
     dependencies:
       '@types/uuid': 10.0.0
       chalk: 4.1.2
@@ -14629,12 +14782,12 @@ snapshots:
       '@types/unist': 2.0.11
       unist-util-visit: 4.1.2
 
-  mdast-util-find-and-replace@2.2.2:
+  mdast-util-find-and-replace@3.0.2:
     dependencies:
-      '@types/mdast': 3.0.15
+      '@types/mdast': 4.0.4
       escape-string-regexp: 5.0.0
-      unist-util-is: 5.2.1
-      unist-util-visit-parents: 5.1.3
+      unist-util-is: 6.0.0
+      unist-util-visit-parents: 6.0.1
 
   mdast-util-from-markdown@1.3.1:
     dependencies:
@@ -14670,55 +14823,74 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  mdast-util-gfm-autolink-literal@1.0.3:
+  mdast-util-gfm-autolink-literal@2.0.1:
     dependencies:
-      '@types/mdast': 3.0.15
+      '@types/mdast': 4.0.4
       ccount: 2.0.1
-      mdast-util-find-and-replace: 2.2.2
-      micromark-util-character: 1.2.0
+      devlop: 1.1.0
+      mdast-util-find-and-replace: 3.0.2
+      micromark-util-character: 2.1.1
 
-  mdast-util-gfm-footnote@1.0.2:
+  mdast-util-gfm-footnote@2.1.0:
     dependencies:
-      '@types/mdast': 3.0.15
-      mdast-util-to-markdown: 1.5.0
-      micromark-util-normalize-identifier: 1.1.0
+      '@types/mdast': 4.0.4
+      devlop: 1.1.0
+      mdast-util-from-markdown: 2.0.2
+      mdast-util-to-markdown: 2.1.2
+      micromark-util-normalize-identifier: 2.0.1
+    transitivePeerDependencies:
+      - supports-color
 
-  mdast-util-gfm-strikethrough@1.0.3:
+  mdast-util-gfm-strikethrough@2.0.0:
     dependencies:
-      '@types/mdast': 3.0.15
-      mdast-util-to-markdown: 1.5.0
+      '@types/mdast': 4.0.4
+      mdast-util-from-markdown: 2.0.2
+      mdast-util-to-markdown: 2.1.2
+    transitivePeerDependencies:
+      - supports-color
 
-  mdast-util-gfm-table@1.0.7:
+  mdast-util-gfm-table@2.0.0:
     dependencies:
-      '@types/mdast': 3.0.15
+      '@types/mdast': 4.0.4
+      devlop: 1.1.0
       markdown-table: 3.0.4
-      mdast-util-from-markdown: 1.3.1
-      mdast-util-to-markdown: 1.5.0
+      mdast-util-from-markdown: 2.0.2
+      mdast-util-to-markdown: 2.1.2
     transitivePeerDependencies:
       - supports-color
 
-  mdast-util-gfm-task-list-item@1.0.2:
+  mdast-util-gfm-task-list-item@2.0.0:
     dependencies:
-      '@types/mdast': 3.0.15
-      mdast-util-to-markdown: 1.5.0
-
-  mdast-util-gfm@2.0.2:
-    dependencies:
-      mdast-util-from-markdown: 1.3.1
-      mdast-util-gfm-autolink-literal: 1.0.3
-      mdast-util-gfm-footnote: 1.0.2
-      mdast-util-gfm-strikethrough: 1.0.3
-      mdast-util-gfm-table: 1.0.7
-      mdast-util-gfm-task-list-item: 1.0.2
-      mdast-util-to-markdown: 1.5.0
+      '@types/mdast': 4.0.4
+      devlop: 1.1.0
+      mdast-util-from-markdown: 2.0.2
+      mdast-util-to-markdown: 2.1.2
     transitivePeerDependencies:
       - supports-color
 
-  mdast-util-math@2.0.2:
+  mdast-util-gfm@3.1.0:
     dependencies:
-      '@types/mdast': 3.0.15
+      mdast-util-from-markdown: 2.0.2
+      mdast-util-gfm-autolink-literal: 2.0.1
+      mdast-util-gfm-footnote: 2.1.0
+      mdast-util-gfm-strikethrough: 2.0.0
+      mdast-util-gfm-table: 2.0.0
+      mdast-util-gfm-task-list-item: 2.0.0
+      mdast-util-to-markdown: 2.1.2
+    transitivePeerDependencies:
+      - supports-color
+
+  mdast-util-math@3.0.0:
+    dependencies:
+      '@types/hast': 3.0.4
+      '@types/mdast': 4.0.4
+      devlop: 1.1.0
       longest-streak: 3.1.0
-      mdast-util-to-markdown: 1.5.0
+      mdast-util-from-markdown: 2.0.2
+      mdast-util-to-markdown: 2.1.2
+      unist-util-remove-position: 5.0.0
+    transitivePeerDependencies:
+      - supports-color
 
   mdast-util-mdx-expression@2.0.1:
     dependencies:
@@ -14769,11 +14941,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  mdast-util-phrasing@3.0.1:
-    dependencies:
-      '@types/mdast': 3.0.15
-      unist-util-is: 5.2.1
-
   mdast-util-phrasing@4.1.0:
     dependencies:
       '@types/mdast': 4.0.4
@@ -14801,17 +14968,6 @@ snapshots:
       unist-util-position: 5.0.0
       unist-util-visit: 5.0.0
       vfile: 6.0.3
-
-  mdast-util-to-markdown@1.5.0:
-    dependencies:
-      '@types/mdast': 3.0.15
-      '@types/unist': 2.0.11
-      longest-streak: 3.1.0
-      mdast-util-phrasing: 3.0.1
-      mdast-util-to-string: 3.2.0
-      micromark-util-decode-string: 1.1.0
-      unist-util-visit: 4.1.2
-      zwitch: 2.0.4
 
   mdast-util-to-markdown@2.1.2:
     dependencies:
@@ -14883,73 +15039,73 @@ snapshots:
       micromark-util-symbol: 2.0.1
       micromark-util-types: 2.0.2
 
-  micromark-extension-gfm-autolink-literal@1.0.5:
+  micromark-extension-gfm-autolink-literal@2.1.0:
     dependencies:
-      micromark-util-character: 1.2.0
-      micromark-util-sanitize-uri: 1.2.0
-      micromark-util-symbol: 1.1.0
-      micromark-util-types: 1.1.0
+      micromark-util-character: 2.1.1
+      micromark-util-sanitize-uri: 2.0.1
+      micromark-util-symbol: 2.0.1
+      micromark-util-types: 2.0.2
 
-  micromark-extension-gfm-footnote@1.1.2:
+  micromark-extension-gfm-footnote@2.1.0:
     dependencies:
-      micromark-core-commonmark: 1.1.0
-      micromark-factory-space: 1.1.0
-      micromark-util-character: 1.2.0
-      micromark-util-normalize-identifier: 1.1.0
-      micromark-util-sanitize-uri: 1.2.0
-      micromark-util-symbol: 1.1.0
-      micromark-util-types: 1.1.0
-      uvu: 0.5.6
+      devlop: 1.1.0
+      micromark-core-commonmark: 2.0.3
+      micromark-factory-space: 2.0.1
+      micromark-util-character: 2.1.1
+      micromark-util-normalize-identifier: 2.0.1
+      micromark-util-sanitize-uri: 2.0.1
+      micromark-util-symbol: 2.0.1
+      micromark-util-types: 2.0.2
 
-  micromark-extension-gfm-strikethrough@1.0.7:
+  micromark-extension-gfm-strikethrough@2.1.0:
     dependencies:
-      micromark-util-chunked: 1.1.0
-      micromark-util-classify-character: 1.1.0
-      micromark-util-resolve-all: 1.1.0
-      micromark-util-symbol: 1.1.0
-      micromark-util-types: 1.1.0
-      uvu: 0.5.6
+      devlop: 1.1.0
+      micromark-util-chunked: 2.0.1
+      micromark-util-classify-character: 2.0.1
+      micromark-util-resolve-all: 2.0.1
+      micromark-util-symbol: 2.0.1
+      micromark-util-types: 2.0.2
 
-  micromark-extension-gfm-table@1.0.7:
+  micromark-extension-gfm-table@2.1.1:
     dependencies:
-      micromark-factory-space: 1.1.0
-      micromark-util-character: 1.2.0
-      micromark-util-symbol: 1.1.0
-      micromark-util-types: 1.1.0
-      uvu: 0.5.6
+      devlop: 1.1.0
+      micromark-factory-space: 2.0.1
+      micromark-util-character: 2.1.1
+      micromark-util-symbol: 2.0.1
+      micromark-util-types: 2.0.2
 
-  micromark-extension-gfm-tagfilter@1.0.2:
+  micromark-extension-gfm-tagfilter@2.0.0:
     dependencies:
-      micromark-util-types: 1.1.0
+      micromark-util-types: 2.0.2
 
-  micromark-extension-gfm-task-list-item@1.0.5:
+  micromark-extension-gfm-task-list-item@2.1.0:
     dependencies:
-      micromark-factory-space: 1.1.0
-      micromark-util-character: 1.2.0
-      micromark-util-symbol: 1.1.0
-      micromark-util-types: 1.1.0
-      uvu: 0.5.6
+      devlop: 1.1.0
+      micromark-factory-space: 2.0.1
+      micromark-util-character: 2.1.1
+      micromark-util-symbol: 2.0.1
+      micromark-util-types: 2.0.2
 
-  micromark-extension-gfm@2.0.3:
+  micromark-extension-gfm@3.0.0:
     dependencies:
-      micromark-extension-gfm-autolink-literal: 1.0.5
-      micromark-extension-gfm-footnote: 1.1.2
-      micromark-extension-gfm-strikethrough: 1.0.7
-      micromark-extension-gfm-table: 1.0.7
-      micromark-extension-gfm-tagfilter: 1.0.2
-      micromark-extension-gfm-task-list-item: 1.0.5
-      micromark-util-combine-extensions: 1.1.0
-      micromark-util-types: 1.1.0
+      micromark-extension-gfm-autolink-literal: 2.1.0
+      micromark-extension-gfm-footnote: 2.1.0
+      micromark-extension-gfm-strikethrough: 2.1.0
+      micromark-extension-gfm-table: 2.1.1
+      micromark-extension-gfm-tagfilter: 2.0.0
+      micromark-extension-gfm-task-list-item: 2.1.0
+      micromark-util-combine-extensions: 2.0.1
+      micromark-util-types: 2.0.2
 
-  micromark-extension-math@2.1.2:
+  micromark-extension-math@3.1.0:
     dependencies:
       '@types/katex': 0.16.7
+      devlop: 1.1.0
       katex: 0.16.22
-      micromark-factory-space: 1.1.0
-      micromark-util-character: 1.2.0
-      micromark-util-symbol: 1.1.0
-      micromark-util-types: 1.1.0
-      uvu: 0.5.6
+      micromark-factory-space: 2.0.1
+      micromark-util-character: 2.1.1
+      micromark-util-symbol: 2.0.1
+      micromark-util-types: 2.0.2
 
   micromark-extension-mdx-expression@3.0.1:
     dependencies:
@@ -15556,6 +15712,10 @@ snapshots:
       json-parse-even-better-errors: 2.3.1
       lines-and-columns: 1.2.4
 
+  parse5@7.3.0:
+    dependencies:
+      entities: 6.0.0
+
   parseurl@1.3.3: {}
 
   partial-json@0.1.7: {}
@@ -16079,6 +16239,12 @@ snapshots:
       gopd: 1.2.0
       set-function-name: 2.0.2
 
+  rehype-raw@7.0.0:
+    dependencies:
+      '@types/hast': 3.0.4
+      hast-util-raw: 9.1.0
+      vfile: 6.0.3
+
   rehype-recma@1.0.0:
     dependencies:
       '@types/estree': 1.0.7
@@ -16087,21 +16253,25 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  remark-gfm@3.0.1:
+  remark-gfm@4.0.1:
     dependencies:
-      '@types/mdast': 3.0.15
-      mdast-util-gfm: 2.0.2
-      micromark-extension-gfm: 2.0.3
-      unified: 10.1.2
+      '@types/mdast': 4.0.4
+      mdast-util-gfm: 3.1.0
+      micromark-extension-gfm: 3.0.0
+      remark-parse: 11.0.0
+      remark-stringify: 11.0.0
+      unified: 11.0.5
     transitivePeerDependencies:
       - supports-color
 
-  remark-math@5.1.1:
+  remark-math@6.0.0:
     dependencies:
-      '@types/mdast': 3.0.15
-      mdast-util-math: 2.0.2
-      micromark-extension-math: 2.1.2
-      unified: 10.1.2
+      '@types/mdast': 4.0.4
+      mdast-util-math: 3.0.0
+      micromark-extension-math: 3.1.0
+      unified: 11.0.5
+    transitivePeerDependencies:
+      - supports-color
 
   remark-mdx@3.1.0:
     dependencies:
@@ -16141,6 +16311,12 @@ snapshots:
       mdast-util-to-hast: 13.2.0
       unified: 11.0.5
       vfile: 6.0.3
+
+  remark-stringify@11.0.0:
+    dependencies:
+      '@types/mdast': 4.0.4
+      mdast-util-to-markdown: 2.1.2
+      unified: 11.0.5
 
   require-directory@2.1.1: {}
 
@@ -16693,6 +16869,26 @@ snapshots:
       babel-jest: 29.7.0(@babel/core@7.27.1)
       esbuild: 0.25.4
 
+  ts-jest@29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0)(typescript@5.8.2):
+    dependencies:
+      bs-logger: 0.2.6
+      ejs: 3.1.10
+      fast-json-stable-stringify: 2.1.0
+      jest: 29.7.0(@types/node@20.17.50)
+      jest-util: 29.7.0
+      json5: 2.2.3
+      lodash.memoize: 4.1.2
+      make-error: 1.3.6
+      semver: 7.7.2
+      type-fest: 4.41.0
+      typescript: 5.8.2
+      yargs-parser: 21.1.1
+    optionalDependencies:
+      '@babel/core': 7.27.1
+      '@jest/transform': 29.7.0
+      '@jest/types': 29.6.3
+      babel-jest: 29.7.0(@babel/core@7.27.1)
+
   ts-poet@6.11.0:
     dependencies:
       dprint-node: 1.0.8
@@ -16894,6 +17090,11 @@ snapshots:
     dependencies:
       '@types/unist': 3.0.3
 
+  unist-util-remove-position@5.0.0:
+    dependencies:
+      '@types/unist': 3.0.3
+      unist-util-visit: 5.0.0
+
   unist-util-stringify-position@3.0.3:
     dependencies:
       '@types/unist': 2.0.11
@@ -17025,6 +17226,11 @@ snapshots:
 
   vary@1.1.2: {}
 
+  vfile-location@5.0.3:
+    dependencies:
+      '@types/unist': 3.0.3
+      vfile: 6.0.3
+
   vfile-message@3.1.4:
     dependencies:
       '@types/unist': 2.0.11
@@ -17056,6 +17262,8 @@ snapshots:
   wcwidth@1.0.1:
     dependencies:
       defaults: 1.0.4
+
+  web-namespaces@2.0.1: {}
 
   web-streams-polyfill@3.3.3: {}
 
