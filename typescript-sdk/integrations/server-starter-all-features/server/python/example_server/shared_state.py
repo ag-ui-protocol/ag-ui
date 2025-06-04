@@ -21,8 +21,6 @@ async def shared_state_endpoint(input_data: RunAgentInput, request: Request):
     # Create an event encoder to properly format SSE events
     encoder = EventEncoder(accept=accept_header)
 
-    print("Shared state endpoint called", flush=True)
-
     async def event_generator():
         # Send run started event
         yield encoder.encode(
