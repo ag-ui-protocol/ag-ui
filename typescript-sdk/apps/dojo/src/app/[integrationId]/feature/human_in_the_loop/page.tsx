@@ -5,10 +5,18 @@ import "./style.css";
 import { CopilotKit, useCopilotAction } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 
-const HumanInTheLoop: React.FC = () => {
+interface HumanInTheLoopProps {
+  params: Promise<{
+    integrationId: string;
+  }>;
+}
+
+const HumanInTheLoop: React.FC<HumanInTheLoopProps> = ({ params }) => {
+  const { integrationId } = React.use(params);
+
   return (
     <CopilotKit
-      runtimeUrl="/api/copilotkit"
+      runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
       // agent lock to the relevant agent
       agent="human_in_the_loop"

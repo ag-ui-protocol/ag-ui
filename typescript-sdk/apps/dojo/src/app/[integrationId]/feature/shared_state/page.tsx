@@ -3,6 +3,7 @@ import { CopilotKit, useCoAgent, useCopilotChat } from "@copilotkit/react-core";
 import { CopilotSidebar } from "@copilotkit/react-ui";
 import { useState, useEffect, useRef } from "react";
 import { Role, TextMessage } from "@copilotkit/runtime-client-gql";
+import React from "react";
 import "@copilotkit/react-ui/styles.css";
 import "./style.css";
 
@@ -38,10 +39,17 @@ const cookingTimeValues = [
   { label: CookingTime.SixtyPlusMin, value: 4 },
 ];
 
-export default function SharedState() {
+interface SharedStateProps {
+  params: Promise<{
+    integrationId: string;
+  }>;
+}
+
+export default function SharedState({ params }: SharedStateProps) {
+  const { integrationId } = React.use(params);
   return (
     <CopilotKit
-      runtimeUrl="/api/copilotkit"
+      runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
       // agent lock to the relevant agent
       agent="shared_state"
@@ -95,7 +103,7 @@ const INITIAL_STATE: RecipeAgentState = {
 
 function Recipe() {
   const { state: agentState, setState: setAgentState } = useCoAgent<RecipeAgentState>({
-    name: "sharedStateAgent",
+    name: "shared_state",
     initialState: INITIAL_STATE,
   });
 

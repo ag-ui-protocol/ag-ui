@@ -44,7 +44,7 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: S
   // Filter demos based on current integration's features
   const filteredDemos = currentIntegration
     ? featureConfig.filter((demo) =>
-        currentIntegration.features.includes(demo as unknown as Feature),
+        currentIntegration.features.includes(demo.id as unknown as Feature),
       )
     : []; // Show no demos if no integration is selected
 

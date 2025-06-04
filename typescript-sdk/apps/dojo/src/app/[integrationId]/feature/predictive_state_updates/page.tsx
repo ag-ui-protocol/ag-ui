@@ -3,6 +3,7 @@ import "@copilotkit/react-ui/styles.css";
 import "./style.css";
 
 import MarkdownIt from "markdown-it";
+import React from "react";
 
 import { diffWords } from "diff";
 import { useEditor, EditorContent } from "@tiptap/react";
@@ -13,10 +14,18 @@ import { CopilotSidebar } from "@copilotkit/react-ui";
 
 const extensions = [StarterKit];
 
-export default function PredictiveStateUpdates() {
+interface PredictiveStateUpdatesProps {
+  params: Promise<{
+    integrationId: string;
+  }>;
+}
+
+export default function PredictiveStateUpdates({ params }: PredictiveStateUpdatesProps) {
+  const { integrationId } = React.use(params);
+
   return (
     <CopilotKit
-      runtimeUrl="/api/copilotkit"
+      runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
       // agent lock to the relevant agent
       agent="predictive_state_updates"
@@ -66,7 +75,7 @@ const DocumentEditor = () => {
     setState: setAgentState,
     nodeName,
   } = useCoAgent<AgentState>({
-    name: "predictiveStateUpdatesAgent",
+    name: "predictive_state_updates",
     initialState: {
       document: "",
     },

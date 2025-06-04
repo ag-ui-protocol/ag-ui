@@ -4,11 +4,20 @@ import { CopilotKitCSSProperties, CopilotSidebar } from "@copilotkit/react-ui";
 import { useState } from "react";
 import "@copilotkit/react-ui/styles.css";
 import "./style.css";
+import React from "react";
 
-export default function AgenticChat() {
+interface ToolBasedGenerativeUIProps {
+  params: Promise<{
+    integrationId: string;
+  }>;
+}
+
+export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIProps) {
+  const { integrationId } = React.use(params);
+
   return (
     <CopilotKit
-      runtimeUrl="/api/copilotkit"
+      runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
       // agent lock to the relevant agent
       agent="tool_based_generative_ui"

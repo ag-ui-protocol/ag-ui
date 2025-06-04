@@ -5,10 +5,17 @@ import "./style.css";
 import { CopilotKit, useCoAgentStateRender } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 
-const AgenticGenerativeUI: React.FC = () => {
+interface AgenticGenerativeUIProps {
+  params: Promise<{
+    integrationId: string;
+  }>;
+}
+
+const AgenticGenerativeUI: React.FC<AgenticGenerativeUIProps> = ({ params }) => {
+  const { integrationId } = React.use(params);
   return (
     <CopilotKit
-      runtimeUrl="/api/copilotkit"
+      runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
       // agent lock to the relevant agent
       agent="agentic_generative_ui"
@@ -27,7 +34,7 @@ interface AgentState {
 
 const Chat = () => {
   useCoAgentStateRender<AgentState>({
-    name: "agentiveGenerativeUIAgent",
+    name: "agentic_generative_ui",
     render: ({ state }) => {
       if (!state.steps || state.steps.length === 0) {
         return null;
