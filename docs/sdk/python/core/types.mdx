@@ -71,7 +71,7 @@ class DeveloperMessage(BaseMessage):
 | `id`      | `str`                  | Unique identifier for the message                |
 | `role`    | `Literal["developer"]` | Role of the message sender, fixed as "developer" |
 | `content` | `str`                  | Text content of the message (required)           |
-| `name`    | `Optional[str]`        | Optional name of the sender                      |
+| `name`    | `str | None`           | Optional name of the sender                      |
 
 ### SystemMessage
 
@@ -90,7 +90,7 @@ class SystemMessage(BaseMessage):
 | `id`      | `str`               | Unique identifier for the message             |
 | `role`    | `Literal["system"]` | Role of the message sender, fixed as "system" |
 | `content` | `str`               | Text content of the message (required)        |
-| `name`    | `Optional[str]`     | Optional name of the sender                   |
+| `name`    | `str | None`        | Optional name of the sender                   |
 
 ### AssistantMessage
 
@@ -101,17 +101,17 @@ Represents a message from an assistant.
 ```python
 class AssistantMessage(BaseMessage):
     role: Literal["assistant"]
-    content: Optional[str] = None
-    tool_calls: Optional[List[ToolCall]] = None
+    content: str | None = None
+    tool_calls: List[ToolCall] | None = None
 ```
 
 | Property     | Type                       | Description                                      |
 | ------------ | -------------------------- | ------------------------------------------------ |
 | `id`         | `str`                      | Unique identifier for the message                |
 | `role`       | `Literal["assistant"]`     | Role of the message sender, fixed as "assistant" |
-| `content`    | `Optional[str]`            | Text content of the message                      |
-| `name`       | `Optional[str]`            | Name of the sender                               |
-| `tool_calls` | `Optional[List[ToolCall]]` | Tool calls made in this message                  |
+| `content`    | `str | None`.              | Text content of the message                      |
+| `name`       | `str | None`               | Name of the sender                               |
+| `tool_calls` | `List[ToolCall] | None`    | Tool calls made in this message                  |
 
 ### UserMessage
 
@@ -130,7 +130,7 @@ class UserMessage(BaseMessage):
 | `id`      | `str`             | Unique identifier for the message           |
 | `role`    | `Literal["user"]` | Role of the message sender, fixed as "user" |
 | `content` | `str`             | Text content of the message (required)      |
-| `name`    | `Optional[str]`   | Optional name of the sender                 |
+| `name`    | `str | None`      | Optional name of the sender                 |
 
 ### ToolMessage
 
@@ -161,7 +161,7 @@ A union type representing any type of message in the system.
 
 ```python
 Message = Annotated[
-    Union[DeveloperMessage, SystemMessage, AssistantMessage, UserMessage, ToolMessage],
+    DeveloperMessage | SystemMessage | AssistantMessage | UserMessage | ToolMessage,
     Field(discriminator="role")
 ]
 ```

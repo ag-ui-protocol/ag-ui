@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import uuid
 import json
-from typing import Optional, List, Any, Union, AsyncGenerator, Generator
+from typing import List, Any, AsyncGenerator, Generator
 
 from langgraph.graph.state import CompiledStateGraph
 from langchain.schema import BaseMessage, SystemMessage
@@ -55,35 +57,34 @@ from ag_ui.core import (
     ThinkingStartEvent,
     ThinkingEndEvent,
 )
-from ag_ui.encoder import EventEncoder
 
-ProcessedEvents = Union[
-    TextMessageStartEvent,
-    TextMessageContentEvent,
-    TextMessageEndEvent,
-    ToolCallStartEvent,
-    ToolCallArgsEvent,
-    ToolCallEndEvent,
-    StateSnapshotEvent,
-    StateDeltaEvent,
-    MessagesSnapshotEvent,
-    RawEvent,
-    CustomEvent,
-    RunStartedEvent,
-    RunFinishedEvent,
-    RunErrorEvent,
-    StepStartedEvent,
-    StepFinishedEvent,
-]
+ProcessedEvents = (
+    TextMessageStartEvent |
+    TextMessageContentEvent |
+    TextMessageEndEvent |
+    ToolCallStartEvent |
+    ToolCallArgsEvent |
+    ToolCallEndEvent |
+    StateSnapshotEvent |
+    StateDeltaEvent |
+    MessagesSnapshotEvent |
+    RawEvent |
+    CustomEvent |
+    RunStartedEvent |
+    RunFinishedEvent |
+    RunErrorEvent |
+    StepStartedEvent |
+    StepFinishedEvent
+)
 
 class LangGraphAgent:
-    def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None):
+    def __init__(self, *, name: str, graph: CompiledStateGraph, description: str | None = None, config: RunnableConfig | dict | None = None):
         self.name = name
         self.description = description
         self.graph = graph
         self.config = config or {}
         self.messages_in_process: MessagesInProgressRecord = {}
-        self.active_run: Optional[RunMetadata] = None
+        self.active_run: RunMetadata | None = None
         self.constant_schema_keys = ['messages', 'tools']
 
     def _dispatch_event(self, event: ProcessedEvents) -> str:
@@ -358,7 +359,7 @@ class LangGraphAgent:
             "config": config
         }
 
-    def get_message_in_progress(self, run_id: str) -> Optional[MessageInProgress]:
+    def get_message_in_progress(self, run_id: str) -> MessageInProgress | None:
         return self.messages_in_process.get(run_id)
 
     def set_message_in_progress(self, run_id: str, data: MessageInProgress):
@@ -604,7 +605,7 @@ class LangGraphAgent:
                 yield self._dispatch_event(
                     StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(state), raw_event=event)
                 )
-            
+
             yield self._dispatch_event(
                 CustomEvent(type=EventType.CUSTOM, name=event["name"], value=event["data"], raw_event=event)
             )

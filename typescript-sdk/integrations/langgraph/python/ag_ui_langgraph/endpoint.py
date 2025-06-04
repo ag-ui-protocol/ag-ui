@@ -1,4 +1,6 @@
-from fastapi import FastAPI, HTTPException, Request
+from __future__ import annotations
+
+from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 
 from ag_ui.core.types import RunAgentInput

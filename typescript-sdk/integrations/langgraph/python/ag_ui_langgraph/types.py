@@ -1,6 +1,10 @@
-from typing import TypedDict, Optional, List, Any, Dict, Union, Literal
-from typing_extensions import NotRequired
+from __future__ import annotations
+
+from typing import Any, Dict, List, Literal, TypedDict, Union
 from enum import Enum
+
+from typing_extensions import NotRequired
+
 
 class LangGraphEventTypes(str, Enum):
     OnChainStart = "on_chain_start"
@@ -23,34 +27,34 @@ class CustomEventNames(str, Enum):
 State = Dict[str, Any]
 
 SchemaKeys = TypedDict("SchemaKeys", {
-    "input": NotRequired[Optional[List[str]]],
-    "output": NotRequired[Optional[List[str]]],
-    "config": NotRequired[Optional[List[str]]]
+    "input": NotRequired[List[str] | None],
+    "output": NotRequired[List[str] | None],
+    "config": NotRequired[List[str] | None],
 })
 
 ThinkingProcess = TypedDict("ThinkingProcess", {
     "index": int,
-    "type": NotRequired[Optional[Literal['text']]],
+    "type": NotRequired[Literal['text'] | None],
 })
 
 MessageInProgress = TypedDict("MessageInProgress", {
     "id": str,
-    "tool_call_id": NotRequired[Optional[str]],
-    "tool_call_name": NotRequired[Optional[str]]
+    "tool_call_id": NotRequired[str | None],
+    "tool_call_name": NotRequired[str | None]
 })
 
 RunMetadata = TypedDict("RunMetadata", {
     "id": str,
-    "schema_keys": NotRequired[Optional[SchemaKeys]],
-    "node_name": NotRequired[Optional[str]],
-    "prev_node_name": NotRequired[Optional[str]],
+    "schema_keys": NotRequired[SchemaKeys | None],
+    "node_name": NotRequired[str | None],
+    "prev_node_name": NotRequired[str | None],
     "exiting_node": NotRequired[bool],
-    "manually_emitted_state": NotRequired[Optional[State]],
-    "thread_id": NotRequired[Optional[ThinkingProcess]],
-    "thinking_process": NotRequired[Optional[str]]
+    "manually_emitted_state": NotRequired[State | None],
+    "thread_id": NotRequired[ThinkingProcess | None],
+    "thinking_process": NotRequired[str | None],
 })
 
-MessagesInProgressRecord = Dict[str, Optional[MessageInProgress]]
+MessagesInProgressRecord = Dict[str, MessageInProgress | None]
 
 ToolCall = TypedDict("ToolCall", {
     "id": str,

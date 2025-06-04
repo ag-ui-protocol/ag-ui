@@ -1,6 +1,7 @@
 """
 Agentic chat endpoint for the AG-UI protocol.
 """
+from __future__ import annotations
 
 import uuid
 import asyncio
@@ -23,7 +24,6 @@ from ag_ui.core import (
     ToolCall,
     AssistantMessage
 )
-from ag_ui.core.events import TextMessageChunkEvent
 from ag_ui.encoder import EventEncoder
 
 async def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):
