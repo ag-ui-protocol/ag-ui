@@ -12,10 +12,6 @@ interface FileTreeNavProps {
 
 export function FileTreeNav({ path, rootPath, onNavigate }: FileTreeNavProps) {
   const folderName = rootPath.split("/").pop();
-  // console.log("FILE TREE NAV", path, rootPath);
-  // // Get path relative to the demo's root
-  // const relativePath = "/" + relative(rootPath, path);
-  // const parts = relativePath.split("/").filter(Boolean);
 
   return (
     <div className="flex items-center gap-1 p-2 text-sm border-b overflow-x-auto">
