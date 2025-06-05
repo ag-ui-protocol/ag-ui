@@ -1,16 +1,8 @@
-import {
-  Message as LangGraphMessage,
-} from "@langchain/langgraph-sdk";
-import {
-  State,
-  SchemaKeys,
-} from "./types";
-import {
-  Message,
-  ToolCall
-} from "@ag-ui/core";
+import { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
+import { State, SchemaKeys } from "./types";
+import { Message, ToolCall } from "@ag-ui/core";
 
-export const DEFAULT_SCHEMA_KEYS = ['tools']
+export const DEFAULT_SCHEMA_KEYS = ["tools"];
 
 export function filterObjectBySchemaKeys(obj: Record<string, any>, schemaKeys: string[]) {
   return Object.fromEntries(Object.entries(obj).filter(([key]) => schemaKeys.includes(key)));
@@ -35,7 +27,7 @@ export function getStreamPayloadInput({
 }
 
 export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[] {
-  return messages.map(message => {
+  return messages.map((message) => {
     switch (message.type) {
       case "human":
         return {
@@ -48,13 +40,13 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
           id: message.id!,
           role: "assistant",
           content: stringifyIfNeeded(message.content),
-          toolCalls: message.tool_calls?.map(tc => ({
+          toolCalls: message.tool_calls?.map((tc) => ({
             id: tc.id!,
-            type: 'function',
+            type: "function",
             function: {
               name: tc.name,
               arguments: JSON.stringify(tc.args),
-            }
+            },
           })),
         };
       case "system":
@@ -66,14 +58,14 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
       case "tool":
         return {
           id: message.id!,
-          role: 'tool',
+          role: "tool",
           content: stringifyIfNeeded(message.content),
           toolCallId: message.tool_call_id,
-        }
+        };
       default:
-        throw new Error('message type returned from LangGraph is not supported.')
+        throw new Error("message type returned from LangGraph is not supported.");
     }
-  })
+  });
 }
 
 export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[] {
@@ -84,27 +76,27 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
           id: message.id,
           role: message.role,
           content: message.content,
-          type: 'human',
+          type: "human",
         };
       case "assistant":
         return {
           id: message.id,
-          type: 'ai',
+          type: "ai",
           role: message.role,
-          content: message.content ?? '',
+          content: message.content ?? "",
           tool_calls: (message.toolCalls ?? []).map((tc: ToolCall) => ({
             id: tc.id,
             name: tc.function.name,
             args: JSON.parse(tc.function.arguments),
-            type: 'tool_call'
-          }))
-        }
+            type: "tool_call",
+          })),
+        };
       case "system":
         return {
           id: message.id,
           role: message.role,
           content: message.content,
-          type: 'system',
+          type: "system",
         };
       case "tool":
         return {
@@ -113,12 +105,12 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
           type: message.role,
           tool_call_id: message.toolCallId,
           id: message.id,
-        }
+        };
       default:
-        console.error(`Message role ${message.role} is not implemented`)
-        throw new Error('message role is not supported.')
+        console.error(`Message role ${message.role} is not implemented`);
+        throw new Error("message role is not supported.");
     }
-  })
+  });
 }
 
 function stringifyIfNeeded(item: any) {

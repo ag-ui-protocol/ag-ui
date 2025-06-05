@@ -15,12 +15,7 @@ export function FileTreeNav({ path, rootPath, onNavigate }: FileTreeNavProps) {
 
   return (
     <div className="flex items-center gap-1 p-2 text-sm border-b overflow-x-auto">
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-6 px-2"
-        onClick={() => onNavigate?.(rootPath)}
-      >
+      <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => onNavigate?.(rootPath)}>
         <FolderOpen className="h-4 w-4" />
       </Button>
       <Button

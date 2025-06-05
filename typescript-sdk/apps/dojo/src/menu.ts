@@ -36,6 +36,13 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   {
     id: "langgraph",
     name: "LangGraph",
-    features: ["agentic_chat", "human_in_the_loop", "agentic_generative_ui", "tool_based_generative_ui", "predictive_state_updates", "shared_state"],
+    features: [
+      "agentic_chat",
+      "human_in_the_loop",
+      "agentic_generative_ui",
+      "tool_based_generative_ui",
+      "predictive_state_updates",
+      "shared_state",
+    ],
   },
 ];

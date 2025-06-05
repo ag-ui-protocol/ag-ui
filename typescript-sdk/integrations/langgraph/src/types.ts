@@ -1,6 +1,4 @@
-import {
-  Message,
-} from "@langchain/langgraph-sdk";
+import { Message } from "@langchain/langgraph-sdk";
 import { MessageType } from "@langchain/core/messages";
 
 export enum LangGraphEventTypes {
@@ -28,7 +26,7 @@ export type MessageInProgress = {
   id: string;
   toolCallId?: string | null;
   toolCallName?: string | null;
-}
+};
 
 export interface RunMetadata {
   id: string;
@@ -40,10 +38,7 @@ export interface RunMetadata {
   threadId?: string;
 }
 
-export type MessagesInProgressRecord = Record<
-  string,
-  MessageInProgress | null
->
+export type MessagesInProgressRecord = Record<string, MessageInProgress | null>;
 
 // The following types are our own definition to the messages accepted by LangGraph Platform, enhanced with some of our extra data.
 export interface ToolCall {

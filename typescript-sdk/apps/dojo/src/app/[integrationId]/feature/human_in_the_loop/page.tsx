@@ -34,30 +34,27 @@ const InterruptHumanInTheLoop: React.FC<{
   event: { value: { steps: Step[] } };
   resolve: (value: string) => void;
 }> = ({ event, resolve }) => {
-
   // Ensure we have valid steps data
   let initialSteps: Step[] = [];
   if (event.value && event.value.steps && Array.isArray(event.value.steps)) {
     initialSteps = event.value.steps.map((step: any) => ({
-      description: typeof step === 'string' ? step : step.description || '',
-      status: (typeof step === 'object' && step.status) ? step.status : 'enabled'
+      description: typeof step === "string" ? step : step.description || "",
+      status: typeof step === "object" && step.status ? step.status : "enabled",
     }));
   }
 
-  const [localSteps, setLocalSteps] = useState<
-    Step[]
-  >(initialSteps);
+  const [localSteps, setLocalSteps] = useState<Step[]>(initialSteps);
 
   const handleCheckboxChange = (index: number) => {
     setLocalSteps((prevSteps) =>
       prevSteps.map((step, i) =>
         i === index
           ? {
-            ...step,
-            status: step.status === "enabled" ? "disabled" : "enabled",
-          }
-          : step
-      )
+              ...step,
+              status: step.status === "enabled" ? "disabled" : "enabled",
+            }
+          : step,
+      ),
     );
   };
 
@@ -74,13 +71,9 @@ const InterruptHumanInTheLoop: React.FC<{
                 onChange={() => handleCheckboxChange(index)}
                 className="mr-2"
               />
-              <span
-                className={
-                  step.status !== "enabled" ? "line-through" : ""
-                }
-              >
-                    {step.description}
-                  </span>
+              <span className={step.status !== "enabled" ? "line-through" : ""}>
+                {step.description}
+              </span>
             </label>
           </div>
         ))}
@@ -102,10 +95,8 @@ const InterruptHumanInTheLoop: React.FC<{
 
 const Chat = () => {
   useLangGraphInterrupt({
-    render: ({ event, resolve }) => (
-      <InterruptHumanInTheLoop event={event} resolve={resolve} />
-    )
-  })
+    render: ({ event, resolve }) => <InterruptHumanInTheLoop event={event} resolve={resolve} />,
+  });
   useCopilotAction({
     name: "generate_task_steps",
     parameters: [
@@ -159,7 +150,7 @@ const StepsFeedback = ({ args, respond, status }: { args: any; respond: any; sta
     }
   }, [status, args.steps, localSteps]);
 
-  if (status === 'complete') return;
+  if (status === "complete") return;
 
   if (args.steps === undefined || args.steps.length === 0) {
     return <></>;

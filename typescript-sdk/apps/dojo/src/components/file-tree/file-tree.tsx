@@ -83,9 +83,7 @@ function FileTreeNode({
 
   return (
     <div className={cn("relative", depth > 0 && "pl-2")}>
-      {depth > 0 && (
-        <div className="absolute left-0 top-0 h-full w-px bg-border" />
-      )}
+      {depth > 0 && <div className="absolute left-0 top-0 h-full w-px bg-border" />}
       <button
         className={cn(
           "flex w-full items-center gap-2 rounded-sm px-2 py-1 text-sm hover:bg-accent/50",
@@ -94,7 +92,7 @@ function FileTreeNode({
           depth === 2 && "ml-1",
           depth === 3 && "ml-1.5",
           depth === 4 && "ml-2",
-          depth > 4 && "ml-2.5"
+          depth > 4 && "ml-2.5",
         )}
         onClick={() => {
           if (isDirectory) {
@@ -106,11 +104,7 @@ function FileTreeNode({
       >
         {isDirectory ? (
           <>
-            {isOpen ? (
-              <ChevronDown className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )}
+            {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             <Folder className="h-4 w-4" />
           </>
         ) : (
