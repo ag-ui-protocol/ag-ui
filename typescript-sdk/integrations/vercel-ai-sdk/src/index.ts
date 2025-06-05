@@ -15,7 +15,7 @@ import {
   ToolCallStartEvent,
   ToolCall,
   ToolMessage,
-} from '@ag-ui/client';
+} from "@ag-ui/client";
 import { Observable } from "rxjs";
 import {
   CoreMessage,
@@ -24,9 +24,9 @@ import {
   streamText,
   tool as createVercelAISDKTool,
   ToolChoice,
-  ToolSet
+  ToolSet,
 } from "ai";
-import { randomUUID } from 'crypto';
+import { randomUUID } from "crypto";
 import { z } from "zod";
 
 type ProcessedEvent =
@@ -36,12 +36,12 @@ type ProcessedEvent =
   | TextMessageChunkEvent
   | ToolCallArgsEvent
   | ToolCallEndEvent
-  | ToolCallStartEvent
+  | ToolCallStartEvent;
 
 interface VercelAISDKAgentConfig extends AgentConfig {
-  model: LanguageModelV1
-  maxSteps?: number
-  toolChoice?: ToolChoice<Record<string, unknown>>
+  model: LanguageModelV1;
+  maxSteps?: number;
+  toolChoice?: ToolChoice<Record<string, unknown>>;
 }
 
 export class VercelAISDKAgent extends AbstractAgent {
@@ -51,8 +51,8 @@ export class VercelAISDKAgent extends AbstractAgent {
   constructor({ model, maxSteps, toolChoice, ...rest }: VercelAISDKAgentConfig) {
     super({ ...rest });
     this.model = model;
-    this.maxSteps = maxSteps ?? 1
-    this.toolChoice = toolChoice ?? 'auto'
+    this.maxSteps = maxSteps ?? 1;
+    this.toolChoice = toolChoice ?? "auto";
   }
 
   protected run(input: RunAgentInput): Observable<BaseEvent> {
@@ -76,19 +76,19 @@ export class VercelAISDKAgent extends AbstractAgent {
       let messageId = randomUUID();
       let assistantMessage: AssistantMessage = {
         id: messageId,
-        role: 'assistant',
-        content: '',
+        role: "assistant",
+        content: "",
         toolCalls: [],
       };
       finalMessages.push(assistantMessage);
 
       processDataStream({
         stream: response.toDataStreamResponse().body!,
-        onTextPart: text => {
+        onTextPart: (text) => {
           assistantMessage.content += text;
           const event: TextMessageChunkEvent = {
             type: EventType.TEXT_MESSAGE_CHUNK,
-            role: 'assistant',
+            role: "assistant",
             messageId,
             delta: text,
           };
@@ -115,7 +115,7 @@ export class VercelAISDKAgent extends AbstractAgent {
         onToolCallPart(streamPart) {
           let toolCall: ToolCall = {
             id: streamPart.toolCallId,
-            type: 'function',
+            type: "function",
             function: {
               name: streamPart.toolName,
               arguments: JSON.stringify(streamPart.args),
@@ -146,7 +146,7 @@ export class VercelAISDKAgent extends AbstractAgent {
         },
         onToolResultPart(streamPart) {
           const toolMessage: ToolMessage = {
-            role: 'tool',
+            role: "tool",
             id: randomUUID(),
             toolCallId: streamPart.toolCallId,
             content: JSON.stringify(streamPart.result),
@@ -154,15 +154,15 @@ export class VercelAISDKAgent extends AbstractAgent {
           finalMessages.push(toolMessage);
         },
         onErrorPart(streamPart) {
-          subscriber.error(streamPart)
+          subscriber.error(streamPart);
         },
-      }).catch(error => {
-        console.error('catch error', error);
+      }).catch((error) => {
+        console.error("catch error", error);
         // Handle error
         subscriber.error(error);
       });
 
-      return () => {}
+      return () => {};
     });
   }
 }
@@ -171,29 +171,29 @@ export function convertMessagesToVercelAISDKMessages(messages: Message[]): CoreM
   const result: CoreMessage[] = [];
 
   for (const message of messages) {
-    if (message.role === 'assistant') {
-      const parts: any[] = message.content ? [{ type: 'text', text: message.content }] : [];
+    if (message.role === "assistant") {
+      const parts: any[] = message.content ? [{ type: "text", text: message.content }] : [];
       for (const toolCall of message.toolCalls ?? []) {
         parts.push({
-          type: 'tool-call',
+          type: "tool-call",
           toolCallId: toolCall.id,
           toolName: toolCall.function.name,
           args: JSON.parse(toolCall.function.arguments),
         });
       }
       result.push({
-        role: 'assistant',
+        role: "assistant",
         content: parts,
       });
-    } else if (message.role === 'user') {
+    } else if (message.role === "user") {
       result.push({
-        role: 'user',
-        content: message.content || '',
+        role: "user",
+        content: message.content || "",
       });
-    } else if (message.role === 'tool') {
-      let toolName = 'unknown';
+    } else if (message.role === "tool") {
+      let toolName = "unknown";
       for (const msg of messages) {
-        if (msg.role === 'assistant') {
+        if (msg.role === "assistant") {
           for (const toolCall of msg.toolCalls ?? []) {
             if (toolCall.id === message.toolCallId) {
               toolName = toolCall.function.name;
@@ -203,10 +203,10 @@ export function convertMessagesToVercelAISDKMessages(messages: Message[]): CoreM
         }
       }
       result.push({
-        role: 'tool',
+        role: "tool",
         content: [
           {
-            type: 'tool-result',
+            type: "tool-result",
             toolCallId: message.toolCallId,
             toolName: toolName,
             result: message.content,
@@ -252,12 +252,15 @@ export function convertJsonSchemaToZodSchema(jsonSchema: any, required: boolean)
   throw new Error("Invalid JSON schema");
 }
 
-export function convertToolToVerlAISDKTools(tools: RunAgentInput['tools']): ToolSet {
-  return tools.reduce((acc: ToolSet, tool: RunAgentInput['tools'][number]) => ({
-    ...acc,
-    [tool.name]: createVercelAISDKTool({
-      description: tool.description,
-      parameters: convertJsonSchemaToZodSchema(tool.parameters, true),
+export function convertToolToVerlAISDKTools(tools: RunAgentInput["tools"]): ToolSet {
+  return tools.reduce(
+    (acc: ToolSet, tool: RunAgentInput["tools"][number]) => ({
+      ...acc,
+      [tool.name]: createVercelAISDKTool({
+        description: tool.description,
+        parameters: convertJsonSchemaToZodSchema(tool.parameters, true),
+      }),
     }),
-  }), {})
+    {},
+  );
 }
