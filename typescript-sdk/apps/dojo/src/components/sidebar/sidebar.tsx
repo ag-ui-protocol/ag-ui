@@ -119,12 +119,7 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: S
                 <DropdownMenuItem
                   key={integration.id}
                   onClick={() => {
-                    const firstFeature = integration.features[0];
-                    if (firstFeature) {
-                      router.push(`/${integration.id}/feature/${firstFeature}`);
-                    } else {
-                      router.push(`/${integration.id}`);
-                    }
+                    router.push(`/${integration.id}`);
                   }}
                   className="cursor-pointer"
                 >
