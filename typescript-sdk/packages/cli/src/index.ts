@@ -125,14 +125,7 @@ async function createProject() {
   });
 
   copilotkit.on("close", (code) => {
-    if (code === 0) {
-      console.log("\n✅ Project created successfully!");
-      if (!packageJsonExists) {
-        console.log(`\n📁 Your new AG-UI project is ready in: ${projectDir}`);
-        console.log(`   cd ${path.basename(projectDir)}`);
-        console.log("   npm run dev");
-      }
-    } else {
+    if (code !== 0) {
       console.log("\n❌ Project creation failed.");
     }
   });
