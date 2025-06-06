@@ -55,13 +55,10 @@ async function createProject() {
   });
 }
 
-program.name("@ag-ui/cli").description("AG UI CLI tool").version("0.0.28");
+program.name("ag-ui-create").description("AG-UI CLI").version("0.0.1-alpha.0");
 
-program
-  .command("create")
-  .description("Create a new AG UI project")
-  .action(async () => {
-    await createProject();
-  });
+program.action(async () => {
+  await createProject();
+});
 
 program.parse();
