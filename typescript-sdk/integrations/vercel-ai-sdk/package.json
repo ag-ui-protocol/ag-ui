@@ -18,7 +18,6 @@
     "unlink:global": "pnpm unlink --global"
   },
   "peerDependencies": {
-    "@ag-ui/client": "workspace:*",
     "rxjs": "7.8.1"
   },
   "devDependencies": {
@@ -30,6 +29,7 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
+    "@ag-ui/client": "workspace:*",
     "ai": "^4.3.16",
     "zod": "^3.22.4"
   }
