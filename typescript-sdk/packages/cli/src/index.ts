@@ -39,7 +39,10 @@ async function createProject() {
       type: "list",
       name: "client",
       message: "What client do you want to use?",
-      choices: ["CopilotKit/Next.js", new inquirer.Separator("(Other clients coming soon)")],
+      choices: [
+        "CopilotKit/Next.js",
+        new inquirer.Separator("Other clients coming soon (SMS, Whatsapp, Slack ...)"),
+      ],
     },
   ]);
 
