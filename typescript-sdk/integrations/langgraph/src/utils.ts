@@ -1,6 +1,6 @@
 import { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
 import { State, SchemaKeys } from "./types";
-import { Message, ToolCall } from "@ag-ui/core";
+import { Message, ToolCall } from "@ag-ui/client";
 
 export const DEFAULT_SCHEMA_KEYS = ["tools"];
 
