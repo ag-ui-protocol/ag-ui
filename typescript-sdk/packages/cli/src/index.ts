@@ -131,7 +131,7 @@ async function createProject() {
   });
 }
 
-program.name("ag-ui-create").description("AG-UI CLI").version("0.0.1-alpha.0");
+program.name("create-ag-ui-app").description("AG-UI CLI").version("0.0.1-alpha.1");
 
 program.action(async () => {
   await createProject();
