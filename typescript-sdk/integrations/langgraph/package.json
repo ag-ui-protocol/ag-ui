@@ -18,7 +18,6 @@
     "unlink:global": "pnpm unlink --global"
   },
   "dependencies": {
-    "@ag-ui/core": "workspace:*",
     "@ag-ui/client": "workspace:*",
     "partial-json": "^0.1.7"
   },

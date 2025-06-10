@@ -24,6 +24,8 @@ import {
   PredictStateTool,
 } from "./types";
 import {
+  AbstractAgent,
+  AgentConfig,
   CustomEvent,
   EventType,
   MessagesSnapshotEvent,
@@ -42,8 +44,7 @@ import {
   ToolCallArgsEvent,
   ToolCallEndEvent,
   ToolCallStartEvent,
-} from "@ag-ui/core";
-import { AbstractAgent, AgentConfig } from "@ag-ui/client";
+} from "@ag-ui/client";
 import { RunsStreamPayload } from "@langchain/langgraph-sdk/dist/types";
 import {
   aguiMessagesToLangChain,
@@ -739,3 +740,5 @@ export class LangGraphAgent extends AbstractAgent {
     };
   }
 }
+
+export * from "./types";

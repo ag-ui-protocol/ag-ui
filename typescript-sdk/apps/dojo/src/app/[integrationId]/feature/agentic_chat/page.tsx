@@ -43,7 +43,6 @@ const Chat = () => {
     handler: ({ background }) => {
       setBackground(background);
     },
-    followUp: false,
   });
 
   return (

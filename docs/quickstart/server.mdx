@@ -3,113 +3,161 @@ title: "AG-UI Compatible Servers"
 description: "Implement AG-UI compatible servers"
 ---
 
-In this tutorial, you'll learn how to build an HTTP endpoint that is compatible
-with the [AG-UI protocol](https://github.com/ag-ui-protocol).
+# Getting Started with AG-UI
 
-<Tabs>
-<Tab title="Python">
+AG-UI provides a concise, event-driven protocol that lets any agent stream rich,
+structured output to any client. In this quick-start guide, we'll walk through:
+
+1. Scaffolding a new AG-UI server that wraps **OpenAI's GPT-4o** model
+2. Registering your server with the **dojo**, our local web playground
+3. Streaming responses from OpenAI through AG-UI's unified interface
 
 ## Prerequisites
 
-Make sure to have [Python](https://www.python.org/downloads/) and
-[Poetry](https://python-poetry.org/docs/#installation) installed.
+Before we begin, make sure you have:
 
-## Setup a New Project with Poetry
+- [Python](https://www.python.org/downloads/) **3.12 or later**
+- [Poetry](https://python-poetry.org/docs/#installation) for dependency
+  management
+- An **OpenAI API key**
 
-First, let's create a new project and set up Poetry for dependency management:
+### 1. Provide your OpenAI API key
 
-```bash
-poetry new my-endpoint --python=">=3.12,<4.0" && cd my-endpoint
-```
-
-## Install Dependencies
-
-Now, let's install the necessary packages:
+First, let's set up your API key:
 
 ```bash
-poetry add ag-ui-protocol openai fastapi uvicorn
+# Set your OpenAI API key
+export OPENAI_API_KEY=your-api-key-here
 ```
 
-## Create a Basic Endpoint with FastAPI
+### 2. Install build utilities
 
-Create a new file called `my_endpoint/main.py` with the following code:
-
-```python
-from fastapi import FastAPI, Request
-import json
-from ag_ui.core.types import RunAgentInput
-
-app = FastAPI(title="AG-UI Endpoint")
-
-@app.post("/awp")
-async def my_endpoint():
-    return { "message": "Hello World" }
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-```
-
-## Run and Test Your Endpoint
-
-Start the server with:
+Install the following tools:
 
 ```bash
-poetry run uvicorn my_endpoint.main:app --reload
+brew install protobuf
 ```
-
-In another terminal, test your endpoint is running using curl:
 
 ```bash
-curl -X POST http://localhost:8000/awp
+npm i turbo
 ```
 
-You should see the following response:
+```bash
+curl -fsSL https://get.pnpm.io/install.sh | sh -
+```
+
+## Step 1 – Scaffold your server
+
+Start by cloning the repo and navigating to the TypeScript SDK:
+
+```bash
+git clone git@github.com:ag-ui-protocol/ag-ui.git
+cd ag-ui/typescript-sdk
+```
+
+Copy the server-starter template to create your OpenAI server:
+
+```bash
+cp -r integrations/server-starter integrations/openai
+```
+
+### Update metadata
+
+Open `integrations/openai/package.json` and update the fields to match your new
+folder:
 
 ```json
-{ "message": "Hello World" }
+{
+  "name": "@ag-ui/openai",
+  "author": "Your Name <your-email@example.com>",
+  "version": "0.0.1",
+
+  ... rest of package.json
+}
 ```
 
-## Parsing AG-UI Input
+Next, update the class name inside `integrations/openai/src/index.ts`:
 
-Next let's update our endpoint to properly parse the incoming AG-UI request
-using the `RunAgentInput` Pydantic model:
-
-```python
-from fastapi import FastAPI, Request, HTTPException
-from ag_ui.core import RunAgentInput, Message
-
-app = FastAPI(title="AG-UI Endpoint")
-
-@app.post("/awp")
-async def my_endpoint(input_data: RunAgentInput):
-    thread_id = input_data.thread_id
-
-    return { "message": "Hello World from " + thread_id }
+```ts
+// change the name to OpenAIAgent
+export class OpenAIAgent extends AbstractAgent {}
 ```
 
-FastAPI automatically validates the incoming request against the RunAgentInput
-schema. If the request doesn't match the expected format, it will return a 422
-Validation Error with details about what went wrong.
+Finally, introduce your integration to the dojo by adding it to
+`apps/dojo/src/menu.ts`:
 
-## Add Event Streaming
+```ts
+// ...
+export const menuIntegrations: MenuIntegrationConfig[] = [
+  // ...
 
-AG-UI supports streaming events using Server-Sent Events (SSE). Let's modify our
-`/awp` endpoint to stream events back to the client:
+  configureIntegration({
+    id: "openai",
+    name: "OpenAI",
+    features: ["agentic_chat"],
+  }),
+]
+```
+
+And `apps/dojo/src/agents.ts`:
+
+```ts
+// ...
+import { OpenAIAgent } from "@ag-ui/openai"
+
+export const agentsIntegrations: AgentIntegrationConfig[] = [
+  // ...
+
+  {
+    id: "openai",
+    agents: async () => {
+      return {
+        agentic_chat: new OpenAIAgent(),
+      }
+    },
+  },
+]
+```
+
+## Step 2 – Start the dojo and server
+
+Now let's see your work in action. First, start your Python server:
+
+```bash
+cd integrations/openai/server/python
+poetry install && poetry run dev
+```
+
+In another terminal, start the dojo:
+
+```bash
+cd typescript-sdk
+
+# Install dependencies
+pnpm install
+
+# Compile the project and run the dojo
+turbo run dev
+```
+
+Head over to [http://localhost:3000](http://localhost:3000) and choose
+**OpenAI** from the drop-down. You'll see the stub server replies with **Hello
+world!** for now.
+
+Here's what's happening with that stub server:
 
 ```python
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import StreamingResponse
-from ag_ui.core import RunAgentInput, Message, EventType, RunStartedEvent, RunFinishedEvent
-from ag_ui.encoder import EventEncoder
+# integrations/openai/server/python/example_server/__init__.py
+@app.post("/")
+async def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):
+    """Agentic chat endpoint"""
+    # Get the accept header from the request
+    accept_header = request.headers.get("accept")
 
-app = FastAPI(title="AG-UI Endpoint")
+    # Create an event encoder to properly format SSE events
+    encoder = EventEncoder(accept=accept_header)
 
-@app.post("/awp")
-async def my_endpoint(input_data: RunAgentInput):
     async def event_generator():
-        # Create an event encoder to properly format SSE events
-        encoder = EventEncoder()
 
         # Send run started event
         yield encoder.encode(
@@ -117,78 +165,11 @@ async def my_endpoint(input_data: RunAgentInput):
             type=EventType.RUN_STARTED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id
-          )
+          ),
         )
 
-        # Send run finished event
-        yield encoder.encode(
-          RunFinishedEvent(
-            type=EventType.RUN_FINISHED,
-            thread_id=input_data.thread_id,
-            run_id=input_data.run_id
-          )
-        )
+        message_id = str(uuid.uuid4())
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream"
-    )
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-```
-
-Awesome! We are already sending `RunStartedEvent` and `RunFinishedEvent` events,
-which gives us a basic AG-UI compliant endpoint. Now let's make it do something
-useful.
-
-## Implementing Basic Chat
-
-Let's enhance our endpoint to call OpenAI's API and stream the responses back as
-AG-UI events:
-
-```python
-from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
-from ag_ui.core import (
-  RunAgentInput,
-  Message,
-  EventType,
-  RunStartedEvent,
-  RunFinishedEvent,
-  TextMessageStartEvent,
-  TextMessageContentEvent,
-  TextMessageEndEvent
-)
-from ag_ui.encoder import EventEncoder
-import uuid
-from openai import OpenAI
-
-app = FastAPI(title="AG-UI Endpoint")
-
-@app.post("/awp")
-async def my_endpoint(input_data: RunAgentInput):
-    async def event_generator():
-        # Create an event encoder to properly format SSE events
-        encoder = EventEncoder()
-
-        # Send run started event
-        yield encoder.encode(
-          RunStartedEvent(
-            type=EventType.RUN_STARTED,
-            thread_id=input_data.thread_id,
-            run_id=input_data.run_id
-          )
-        )
-
-        # Initialize OpenAI client
-        client = OpenAI()
-
-        # Generate a message ID for the assistant's response
-        message_id = uuid.uuid4()
-
-        # Send text message start event
         yield encoder.encode(
             TextMessageStartEvent(
                 type=EventType.TEXT_MESSAGE_START,
@@ -197,26 +178,14 @@ async def my_endpoint(input_data: RunAgentInput):
             )
         )
 
-        # Create a streaming completion request
-        stream = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=openai_messages,
-            stream=True
+        yield encoder.encode(
+            TextMessageContentEvent(
+                type=EventType.TEXT_MESSAGE_CONTENT,
+                message_id=message_id,
+                delta="Hello world!"
+            )
         )
 
-        # Process the streaming response and send content events
-        for chunk in stream:
-            if hasattr(chunk.choices[0].delta, "content") and chunk.choices[0].delta.content:
-                content = chunk.choices[0].delta.content
-                yield encoder.encode(
-                    TextMessageContentEvent(
-                        type=EventType.TEXT_MESSAGE_CONTENT,
-                        message_id=message_id,
-                        delta=content
-                    )
-                )
-
-        # Send text message end event
         yield encoder.encode(
             TextMessageEndEvent(
                 type=EventType.TEXT_MESSAGE_END,
@@ -230,327 +199,222 @@ async def my_endpoint(input_data: RunAgentInput):
             type=EventType.RUN_FINISHED,
             thread_id=input_data.thread_id,
             run_id=input_data.run_id
-          )
+          ),
         )
 
     return StreamingResponse(
         event_generator(),
-        media_type="text/event-stream"
+        media_type=encoder.get_content_type()
+    )
+```
+
+## Step 3 – Bridge OpenAI with AG-UI
+
+Let's transform our stub into a real server that streams completions from
+OpenAI.
+
+### Install the OpenAI SDK
+
+First, we need the OpenAI SDK:
+
+```bash
+cd integrations/openai/server/python
+poetry add openai
+```
+
+### AG-UI recap
+
+An AG-UI server implements the endpoint and emits a sequence of events to
+signal:
+
+- lifecycle events (`RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR`)
+- content events (`TEXT_MESSAGE_*`, `TOOL_CALL_*`, and more)
+
+### Implement the streaming server
+
+Now we'll transform our stub server into a real OpenAI integration. The key
+difference is that instead of sending a hardcoded "Hello world!" message, we'll
+connect to OpenAI's API and stream the response back through AG-UI events.
+
+The implementation follows the same event flow as our stub, but we'll add the
+OpenAI client initialization and replace our mock response with actual API
+calls. We'll also handle tool calls if they're present in the response, making
+our server fully capable of using functions when needed.
+
+```python
+import os
+import uuid
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
+from ag_ui.core import (
+    RunAgentInput,
+    EventType,
+    RunStartedEvent,
+    RunFinishedEvent,
+    RunErrorEvent,
+    TextMessageStartEvent,
+    TextMessageContentEvent,
+    TextMessageEndEvent,
+    ToolCallStartEvent,
+    ToolCallContentEvent,
+    ToolCallEndEvent
+)
+from ag_ui.encoder import EventEncoder
+from openai import OpenAI
+
+app = FastAPI(title="AG-UI OpenAI Server")
+
+# Initialize OpenAI client - uses OPENAI_API_KEY from environment
+client = OpenAI()
+
+@app.post("/")
+async def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):
+    """OpenAI agentic chat endpoint"""
+    accept_header = request.headers.get("accept")
+    encoder = EventEncoder(accept=accept_header)
+
+    async def event_generator():
+        try:
+            yield encoder.encode(
+                RunStartedEvent(
+                    type=EventType.RUN_STARTED,
+                    thread_id=input_data.thread_id,
+                    run_id=input_data.run_id
+                )
+            )
+
+            # Call OpenAI's API with streaming enabled
+            stream = client.chat.completions.create(
+                model="gpt-4o",
+                stream=True,
+                # Convert AG-UI tools format to OpenAI's expected format
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": tool.parameters,
+                        }
+                    }
+                    for tool in input_data.tools
+                ] if input_data.tools else None,
+                # Transform AG-UI messages to OpenAI's message format
+                messages=[
+                    {
+                        "role": message.role,
+                        "content": message.content or "",
+                        # Include tool calls if this is an assistant message with tools
+                        **({"tool_calls": message.tool_calls} if message.role == "assistant" and hasattr(message, 'tool_calls') and message.tool_calls else {}),
+                        # Include tool call ID if this is a tool result message
+                        **({"tool_call_id": message.tool_call_id} if message.role == "tool" and hasattr(message, 'tool_call_id') else {}),
+                    }
+                    for message in input_data.messages
+                ],
+            )
+
+            message_id = str(uuid.uuid4())
+
+            # Stream each chunk from OpenAI's response
+            for chunk in stream:
+                # Handle text content chunks
+                if chunk.choices[0].delta.content:
+                    yield encoder.encode({
+                        "type": EventType.TEXT_MESSAGE_CHUNK,
+                        "message_id": message_id,
+                        "delta": chunk.choices[0].delta.content,
+                    })
+                # Handle tool call chunks
+                elif chunk.choices[0].delta.tool_calls:
+                    tool_call = chunk.choices[0].delta.tool_calls[0]
+
+                    yield encoder.encode({
+                        "type": EventType.TOOL_CALL_CHUNK,
+                        "tool_call_id": tool_call.id,
+                        "tool_call_name": tool_call.function.name if tool_call.function else None,
+                        "parent_message_id": message_id,
+                        "delta": tool_call.function.arguments if tool_call.function else None,
+                    })
+
+            yield encoder.encode(
+                RunFinishedEvent(
+                    type=EventType.RUN_FINISHED,
+                    thread_id=input_data.thread_id,
+                    run_id=input_data.run_id
+                )
+            )
+
+        except Exception as error:
+            yield encoder.encode(
+                RunErrorEvent(
+                    type=EventType.RUN_ERROR,
+                    message=str(error)
+                )
+            )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type=encoder.get_content_type()
+    )
+
+def main():
+    """Run the uvicorn server."""
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run(
+        "example_server:app",
+        host="0.0.0.0",
+        port=port,
+        reload=True
     )
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    main()
 ```
 
-You'll need to set your OpenAI API key as an environment variable and then
-restart the server:
+### What happens under the hood?
 
-```bash
-export OPENAI_API_KEY=your-api-key
-poetry run uvicorn my_endpoint.main:app --reload
-```
+Let's break down what your server is doing:
 
-This implementation creates a fully functional AG-UI endpoint that processes
-messages and streams back the responses in real-time.
+1. **Setup** – We create an OpenAI client and emit `RUN_STARTED`
+2. **Request** – We send the user's messages to `chat.completions` with
+   `stream=True`
+3. **Streaming** – We forward each chunk as either `TEXT_MESSAGE_CHUNK` or
+   `TOOL_CALL_CHUNK`
+4. **Finish** – We emit `RUN_FINISHED` (or `RUN_ERROR` if something goes wrong)
 
-</Tab>
-<Tab title="Node">
+## Step 4 – Chat with your server
 
-## Prerequisites
+Reload the dojo page and start typing. You'll see GPT-4o streaming its answer in
+real-time, word by word.
 
-Make sure to have [Node.js](https://nodejs.org/) (v16 or later) and
-[npm](https://www.npmjs.com/) or [yarn](https://yarnpkg.com/) installed.
+Tools like [CopilotKit](https://docs.copilotkit.ai) already understand AG-UI and
+provide plug-and-play React components. Point them at your server endpoint and
+you get a full-featured chat UI out of the box.
 
-## Setup a New Project
+## Share your integration
 
-First, let's create a new project and set up npm with TypeScript:
+Did you build a custom server that others could reuse? We welcome community
+contributions!
 
-```bash
-mkdir awp-endpoint && cd awp-endpoint
-npm init -y
-npm install typescript ts-node @types/node @types/express --save-dev
-npx tsc --init
-```
+1. Fork the [AG-UI repository](https://github.com/ag-ui-protocol/ag-ui)
+2. Add your package under `integrations/` with docs and tests
+3. Open a pull request describing your use-case and design decisions
 
-## Install Dependencies
+If you have questions, need feedback, or want to validate an idea first, start a
+thread in the GitHub Discussions board:
+[AG-UI GitHub Discussions board](https://github.com/orgs/ag-ui-protocol/discussions).
 
-Install the necessary packages:
+Your integration might ship in the next release and help the entire AG-UI
+ecosystem grow.
 
-```bash
-npm install express openai @ag-ui/core @ag-ui/encoder uuid
-npm install @types/uuid --save-dev
-```
+## Conclusion
 
-## Create a Basic Endpoint with Express
+You now have a fully-functional AG-UI server for OpenAI and a local playground
+to test it. From here you can:
 
-Create a new file called `src/server.ts` with the following code:
+- Add tool calls to enhance your server
+- Deploy your server to production
+- Bring AG-UI to any other model or service
 
-```typescript
-import express from "express"
-import { Request, Response } from "express"
-
-const app = express()
-
-app.use(express.json())
-
-app.post("/awp", (req: Request, res: Response) => {
-  res.json({ message: "Hello World" })
-})
-
-app.listen(8000, () => {
-  console.log("Server running on http://localhost:8000")
-})
-```
-
-## Run and Test Your Endpoint
-
-Start the server with:
-
-```bash
-npx ts-node src/server.ts
-```
-
-In another terminal, test your endpoint is running using curl:
-
-```bash
-curl -X POST http://localhost:8000/awp
-```
-
-You should see the following response:
-
-```json
-{ "message": "Hello World" }
-```
-
-## Parsing AG-UI Input
-
-Next let's update our endpoint to properly parse the incoming AG-UI request
-using the `RunAgentInput` schema:
-
-```typescript
-import express, { Request, Response } from "express"
-import { RunAgentInputSchema, RunAgentInput } from "@ag-ui/core"
-
-const app = express()
-
-app.use(express.json())
-
-app.post("/awp", (req: Request, res: Response) => {
-  try {
-    // Parse and validate the request body
-    const input: RunAgentInput = RunAgentInputSchema.parse(req.body)
-    res.json({ message: `Hello World from ${input.threadId}` })
-  } catch (error) {
-    res.status(422).json({ error: (error as Error).message })
-  }
-})
-
-app.listen(8000, () => {
-  console.log("Server running on http://localhost:8000")
-})
-```
-
-Express with zod validation ensures the incoming request conforms to the AG-UI
-protocol format. If the request doesn't match the expected format, it will
-return a 422 Validation Error with details about what went wrong.
-
-## Add Event Streaming
-
-AG-UI supports streaming events using Server-Sent Events (SSE). Let's modify our
-`/awp` endpoint to stream events back to the client:
-
-```typescript
-import express, { Request, Response } from "express"
-import { RunAgentInputSchema, RunAgentInput, EventType } from "@ag-ui/core"
-import { EventEncoder } from "@ag-ui/encoder"
-
-const app = express()
-
-app.use(express.json())
-
-app.post("/awp", async (req: Request, res: Response) => {
-  try {
-    // Parse and validate the request body
-    const input: RunAgentInput = RunAgentInputSchema.parse(req.body)
-
-    // Set up SSE headers
-    res.setHeader("Content-Type", "text/event-stream")
-    res.setHeader("Cache-Control", "no-cache")
-    res.setHeader("Connection", "keep-alive")
-
-    // Create an event encoder
-    const encoder = new EventEncoder()
-
-    // Send run started event
-    const runStarted = {
-      type: EventType.RUN_STARTED,
-      threadId: input.threadId,
-      runId: input.runId,
-    }
-    res.write(encoder.encode(runStarted))
-
-    // Send run finished event
-    const runFinished = {
-      type: EventType.RUN_FINISHED,
-      threadId: input.threadId,
-      runId: input.runId,
-    }
-    res.write(encoder.encode(runFinished))
-
-    // End the response
-    res.end()
-  } catch (error) {
-    res.status(422).json({ error: (error as Error).message })
-  }
-})
-
-app.listen(8000, () => {
-  console.log("Server running on http://localhost:8000")
-})
-```
-
-## Implementing Basic Chat
-
-Let's enhance our endpoint to call OpenAI's API and stream the responses back as
-AG-UI events:
-
-```typescript
-import express, { Request, Response } from "express"
-import {
-  RunAgentInputSchema,
-  RunAgentInput,
-  EventType,
-  Message,
-} from "@ag-ui/core"
-import { EventEncoder } from "@ag-ui/encoder"
-import { OpenAI } from "openai"
-import { v4 as uuidv4 } from "uuid"
-
-const app = express()
-
-app.use(express.json())
-
-app.post("/awp", async (req: Request, res: Response) => {
-  try {
-    // Parse and validate the request body
-    const input: RunAgentInput = RunAgentInputSchema.parse(req.body)
-
-    // Set up SSE headers
-    res.setHeader("Content-Type", "text/event-stream")
-    res.setHeader("Cache-Control", "no-cache")
-    res.setHeader("Connection", "keep-alive")
-
-    // Create an event encoder
-    const encoder = new EventEncoder()
-
-    // Send run started event
-    const runStarted = {
-      type: EventType.RUN_STARTED,
-      threadId: input.threadId,
-      runId: input.runId,
-    }
-    res.write(encoder.encode(runStarted))
-
-    // Initialize OpenAI client
-    const client = new OpenAI()
-
-    // Convert AG-UI messages to OpenAI messages format
-    const openaiMessages = input.messages
-      .filter((msg: Message) =>
-        ["user", "system", "assistant"].includes(msg.role)
-      )
-      .map((msg: Message) => ({
-        role: msg.role as "user" | "system" | "assistant",
-        content: msg.content || "",
-      }))
-
-    // Generate a message ID for the assistant's response
-    const messageId = uuidv4()
-
-    // Send text message start event
-    const textMessageStart = {
-      type: EventType.TEXT_MESSAGE_START,
-      messageId,
-      role: "assistant",
-    }
-    res.write(encoder.encode(textMessageStart))
-
-    // Create a streaming completion request
-    const stream = await client.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: openaiMessages,
-      stream: true,
-    })
-
-    // Process the streaming response and send content events
-    for await (const chunk of stream) {
-      if (chunk.choices[0]?.delta?.content) {
-        const content = chunk.choices[0].delta.content
-        const textMessageContent = {
-          type: EventType.TEXT_MESSAGE_CONTENT,
-          messageId,
-          delta: content,
-        }
-        res.write(encoder.encode(textMessageContent))
-      }
-    }
-
-    // Send text message end event
-    const textMessageEnd = {
-      type: EventType.TEXT_MESSAGE_END,
-      messageId,
-    }
-    res.write(encoder.encode(textMessageEnd))
-
-    // Send run finished event
-    const runFinished = {
-      type: EventType.RUN_FINISHED,
-      threadId: input.threadId,
-      runId: input.runId,
-    }
-    res.write(encoder.encode(runFinished))
-
-    // End the response
-    res.end()
-  } catch (error) {
-    res.status(422).json({ error: (error as Error).message })
-  }
-})
-
-app.listen(8000, () => {
-  console.log("Server running on http://localhost:8000")
-})
-```
-
-You'll need to set your OpenAI API key as an environment variable and then start
-the server:
-
-```bash
-export OPENAI_API_KEY=your-api-key
-npx ts-node src/server.ts
-```
-
-This implementation creates a fully functional AG-UI endpoint that processes
-messages and streams back the responses in real-time.
-
-</Tab>
-</Tabs>
-
-## Connect Your Agent to a Frontend
-
-Now that you've built your AG-UI compatible agent, it's ready to be connected to
-any frontend that supports the AG-UI protocol. One such frontend is
-[CopilotKit](https://docs.copilotkit.ai), which provides a rich set of UI
-components designed to work seamlessly with AG-UI agents.
-
-To connect your agent to CopilotKit:
-
-1. Follow the [CopilotKit documentation](https://docs.copilotkit.ai) to set up
-   your frontend
-2. Configure CopilotKit to connect to your agent using the AG-UI protocol
-3. Enjoy a fully functioning chat UI with streaming responses!
-
-With this setup, you can focus on building powerful agent capabilities while
-leveraging existing UI components that understand the AG-UI protocol,
-significantly reducing development time and effort.
+Happy building!
