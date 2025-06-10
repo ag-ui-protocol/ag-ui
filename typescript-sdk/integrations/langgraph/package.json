@@ -5,6 +5,10 @@
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "sideEffects": false,
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "dist/**"
   ],
