@@ -30,6 +30,34 @@ const Chat = () => {
   const [background, setBackground] = useState<string>("--copilot-kit-background-color");
 
   useCopilotAction({
+    name: "lookup_weather",
+    description: "Lookup the weather for a given city",
+    parameters: [
+      {
+        name: "city",
+        type: "string",
+        description: "The city to lookup the weather for",
+      },
+      {
+        name: "weather",
+        type: "string",
+        description: "The weather for the city",
+      },
+    ],
+    render: ({ status, args }) => {
+      return (
+        <div>
+          <div>
+            Looked up weather for {args.city}: {args.weather}
+          </div>
+          <div>Status: {status}</div>
+        </div>
+      );
+    },
+    followUp: false,
+  });
+
+  useCopilotAction({
     name: "change_background",
     description:
       "Change the background color of the chat. Can be anything that the CSS background attribute accepts. Regular colors, linear of radial gradients etc.",

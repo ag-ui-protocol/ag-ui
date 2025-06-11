@@ -17,7 +17,11 @@ from ag_ui.core import (
     TextMessageEndEvent,
     ToolCallStartEvent,
     ToolCallArgsEvent,
-    ToolCallEndEvent
+    ToolCallEndEvent,
+    MessagesSnapshotEvent,
+    ToolMessage,
+    ToolCall,
+    AssistantMessage
 )
 from ag_ui.encoder import EventEncoder
 
@@ -53,6 +57,9 @@ async def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):
                 yield encoder.encode(event)
         elif last_message_content == "tool":
             async for event in send_tool_call_events():
+                yield encoder.encode(event)
+        elif last_message_content == "backend_tool":
+            async for event in send_backend_tool_call_events(input_data.messages):
                 yield encoder.encode(event)
         else:
             async for event in send_text_message_events():
@@ -166,4 +173,38 @@ async def send_tool_call_events():
     yield ToolCallEndEvent(
         type=EventType.TOOL_CALL_END,
         tool_call_id=tool_call_id
+    )
+
+async def send_backend_tool_call_events(messages):
+    """Send backend tool call events"""
+    tool_call_id = str(uuid.uuid4())
+
+    new_message = AssistantMessage(
+        id=str(uuid.uuid4()),
+        role="assistant",
+        tool_calls=[
+            ToolCall(
+                id=tool_call_id,
+                type="function",
+                function={
+                    "name": "lookup_weather",
+                    "arguments": json.dumps({"city": "San Francisco", "weather": "sunny"})
+                }
+            )
+        ]
+    )
+
+    result_message = ToolMessage(
+        id=str(uuid.uuid4()),
+        role="tool",
+        content="The weather in San Francisco is sunny.",
+        tool_call_id=tool_call_id
+    )
+
+    all_messages = list(messages) + [new_message, result_message]
+
+    # Send messages snapshot event
+    yield MessagesSnapshotEvent(
+        type=EventType.MESSAGES_SNAPSHOT,
+        messages=all_messages
     )
