@@ -16,6 +16,20 @@ The Demo Viewer provides a centralized interface for browsing, viewing, and expl
 
 To run the Demo Viewer locally for development, follow these steps:
 
+### Install dependencies
+
+```bash
+brew install protobuf
+```
+
+```bash
+npm i turbo
+```
+
+```bash
+curl -fsSL https://get.pnpm.io/install.sh | sh -
+```
+
 ### Run the Demo Viewer
 
 In a new terminal, navigate to the project root and start the Demo Viewer:
