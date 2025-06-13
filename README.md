@@ -1,4 +1,4 @@
-[![AG-UI Workshop – June 5](https://img.shields.io/badge/AG--UI%20Workshop%20%E2%80%94June%2005-blue?style=flat-square)](https://go.copilotkit.ai/ag-ui-build-an-agent-canvas)
+[![AG-UI Workshop – June 5](https://img.shields.io/badge/AG--UI%20Workshop%20%E2%80%94June%2019-blue?style=flat-square)](https://go.copilotkit.ai/ag-ui-build-an-agent-canvas)
 ![Discord](https://img.shields.io/discord/1379082175625953370?logo=discord&logoColor=%23FFFFFF&label=Discord&color=%236963ff)
 
 # <img src="https://github.com/user-attachments/assets/ebc0dd08-8732-4519-9b6c-452ce54d8058" alt="ag-ui Logo" height="42px" /> AG-UI: The Agent-User Interaction Protocol
