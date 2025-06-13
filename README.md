@@ -6,7 +6,7 @@ AG-UI is an open, lightweight, event-based protocol that standardizes **how AI a
 
 ➡️ See demos of AG-UI-enabled applications [here](https://github.com/ag-ui-protocol/ag-ui?tab=readme-ov-file#ag-ui-compatible-agent-frameworks)
 
-<img src="https://github.com/user-attachments/assets/215227a5-9698-4d97-a46e-8904b95bfa08" alt="ag-ui Logo" style="max-width: 100px; height: auto;" />
+<img src="./assets/banner.png" alt="ag-ui Logo" style="width: 100%; height: auto;" />
 
 # ➡️ Learn more (AG-UI Specification)
 
