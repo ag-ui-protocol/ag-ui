@@ -143,14 +143,13 @@ const StepsFeedback = ({ args, respond, status }: { args: any; respond: any; sta
       status: "disabled" | "enabled" | "executing";
     }[]
   >([]);
+  const [accepted, setAccepted] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (status === "executing" && localSteps.length === 0) {
       setLocalSteps(args.steps);
     }
   }, [status, args.steps, localSteps]);
-
-  if (status === "complete") return;
 
   if (args.steps === undefined || args.steps.length === 0) {
     return <></>;
@@ -191,6 +190,45 @@ const StepsFeedback = ({ args, respond, status }: { args: any; respond: any; sta
           </div>
         ))}
       </div>
+      {accepted === null && (
+        <div className="flex justify-end space-x-4">
+          <button
+            className={`bg-gray-200 text-black py-2 px-4 rounded disabled:opacity-50 ${
+              status === "executing" ? "cursor-pointer" : "cursor-default"
+            }`}
+            disabled={status !== "executing"}
+            onClick={() => {
+              if (respond) {
+                setAccepted(false);
+                respond({ accepted: false });
+              }
+            }}
+          >
+            Reject
+          </button>
+          <button
+            className={`bg-black text-white py-2 px-4 rounded disabled:opacity-50 ${
+              status === "executing" ? "cursor-pointer" : "cursor-default"
+            }`}
+            disabled={status !== "executing"}
+            onClick={() => {
+              if (respond) {
+                setAccepted(true);
+                respond({ accepted: true, steps: localSteps.filter(step => step.status === "enabled")});
+              }
+            }}
+          >
+            Confirm
+          </button>
+        </div>
+      )}
+      {accepted !== null && (
+        <div className="flex justify-end">
+          <div className="mt-4 bg-gray-200 text-black py-2 px-4 rounded inline-block">
+            {accepted ? "✓ Accepted" : "✗ Rejected"}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
