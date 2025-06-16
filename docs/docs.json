@@ -116,11 +116,7 @@
         "href": "https://discord.gg/Jd3FzfdJa8",
         "icon": "server"
       },
-      {
-        "label": "GitHub",
-        "href": "https://github.com/ag-ui-protocol/ag-ui",
-        "icon": "github"
-      }
+  
     ],
     "primary": {
       "type": "github",
