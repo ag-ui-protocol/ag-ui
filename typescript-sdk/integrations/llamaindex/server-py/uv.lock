@@ -838,43 +838,15 @@ wheels = [
 
 [[package]]
 name = "llama-index-protocols-ag-ui"
-version = "0.5.15"
-source = { directory = "../../../../" }
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ag-ui-protocol" },
     { name = "llama-index-core" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "ag-ui-protocol", specifier = ">=0.1.5" },
-    { name = "fastapi", marker = "extra == 'fastapi'" },
-    { name = "llama-index-core", specifier = ">=0.12.0,<0.13" },
-]
-provides-extras = ["fastapi"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "black", extras = ["jupyter"], specifier = ">=23.7.0,<=23.9.1" },
-    { name = "codespell", extras = ["toml"], specifier = ">=2.2.6" },
-    { name = "diff-cover", specifier = ">=9.2.0" },
-    { name = "fastapi" },
-    { name = "ipython", specifier = "==8.10.0" },
-    { name = "jupyter", specifier = ">=1.0.0,<2" },
-    { name = "mypy", specifier = "==0.991" },
-    { name = "pre-commit", specifier = "==3.2.0" },
-    { name = "pylint", specifier = "==2.15.10" },
-    { name = "pytest", specifier = "==7.2.1" },
-    { name = "pytest-cov", specifier = ">=6.1.1" },
-    { name = "pytest-mock", specifier = "==3.11.1" },
-    { name = "ruff", specifier = "==0.11.11" },
-    { name = "tree-sitter-languages", specifier = ">=1.8.0,<2" },
-    { name = "types-deprecated", specifier = ">=0.1.0" },
-    { name = "types-protobuf", specifier = ">=4.24.0.4,<5" },
-    { name = "types-pyyaml", specifier = ">=6.0.12.12,<7" },
-    { name = "types-redis", specifier = "==4.5.5.0" },
-    { name = "types-requests", specifier = "==2.28.11.8" },
-    { name = "types-setuptools", specifier = "==67.1.0.0" },
+sdist = { url = "https://files.pythonhosted.org/packages/a0/eb/5ee4925732835611fc298677c0848eef128c2f8ddbe23081ee83c1804c6d/llama_index_protocols_ag_ui-0.1.2.tar.gz", hash = "sha256:344013766dc300ff9d0692685929ad709026d87af575f420a68005358c379252", size = 8244, upload-time = "2025-06-16T20:52:36.214Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/92/dc/9cb1a834e8cb74af60f143e71140d9bb8db7b85e18ff5c6cd63ad6678990/llama_index_protocols_ag_ui-0.1.2-py3-none-any.whl", hash = "sha256:405c13eed60095e7013e98062bf6c33dd524e1978c509a0d99147543bad7cae2", size = 9799, upload-time = "2025-06-16T20:52:35.389Z" },
 ]
 
 [[package]]
@@ -1848,7 +1820,7 @@ requires-dist = [
     { name = "jsonpatch", specifier = ">=1.33" },
     { name = "llama-index-agent-openai", specifier = ">=0.4.9,<0.5" },
     { name = "llama-index-core", specifier = ">=0.12.41,<0.13" },
-    { name = "llama-index-protocols-ag-ui", directory = "../../../../" },
+    { name = "llama-index-protocols-ag-ui", specifier = ">=0.1.2" },
     { name = "uvicorn", specifier = ">=0.27.0" },
 ]
 

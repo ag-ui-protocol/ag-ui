@@ -52,7 +52,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   },
   {
     id: "llama-index",
-    name: "Llama Index",
+    name: "LlamaIndex",
     features: [
       "agentic_chat",
       "human_in_the_loop",

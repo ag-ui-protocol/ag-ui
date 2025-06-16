@@ -8,9 +8,8 @@ import { VercelAISDKAgent } from "@ag-ui/vercel-ai-sdk";
 import { openai } from "@ai-sdk/openai";
 import { LangGraphAgent } from "@ag-ui/langgraph";
 import { AgnoAgent } from "@ag-ui/agno";
-import { HttpAgent } from "@ag-ui/client";
+import { LlamaIndexAgent } from "@ag-ui/llamaindex";
 
-HttpAgent
 export const agentsIntegrations: AgentIntegrationConfig[] = [
   {
     id: "middleware-starter",
@@ -118,16 +117,16 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     id: "llama-index",
     agents: async () => {
       return {
-        agentic_chat: new HttpAgent({
+        agentic_chat: new LlamaIndexAgent({
           url: "http://127.0.0.1:9000/agentic_chat/run",
         }),
-        human_in_the_loop: new HttpAgent({
+        human_in_the_loop: new LlamaIndexAgent({
           url: "http://127.0.0.1:9000/human_in_the_loop/run",
         }),
-        agentic_generative_ui: new HttpAgent({
+        agentic_generative_ui: new LlamaIndexAgent({
           url: "http://127.0.0.1:9000/agentic_generative_ui/run",
         }),
-        shared_state: new HttpAgent({
+        shared_state: new LlamaIndexAgent({
           url: "http://127.0.0.1:9000/shared_state/run",
         }),
       };

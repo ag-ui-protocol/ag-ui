@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from llama_index.core.workflow import Context
 from llama_index.llms.openai import OpenAI
 from llama_index.protocols.ag_ui.events import StateSnapshotWorkflowEvent
-from llama_index.protocols.ag_ui.server import get_ag_ui_workflow_router
+from llama_index.protocols.ag_ui.router import get_ag_ui_workflow_router
 
 
 class Ingredient(BaseModel):
