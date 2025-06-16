@@ -1,4 +1,4 @@
-[![AG-UI Workshop – June 5](https://img.shields.io/badge/AG--UI%20Workshop%20%E2%80%94June%2019-blue?style=flat-square)](https://go.copilotkit.ai/ag-ui-build-an-agent-canvas)
+[![AG-UI Workshop – June 20](https://img.shields.io/badge/AG--UI%20Workshop%20%E2%80%94June%2020-blue?style=flat-square)](https://go.copilotkit.ai/ag-ui-build-an-agent-canvas)
 ![Discord](https://img.shields.io/discord/1379082175625953370?logo=discord&logoColor=%23FFFFFF&label=Discord&color=%236963ff)
 
 # <img src="https://github.com/user-attachments/assets/ebc0dd08-8732-4519-9b6c-452ce54d8058" alt="ag-ui Logo" height="42px" /> AG-UI: The Agent-User Interaction Protocol
@@ -24,6 +24,15 @@ AG-UI is an open, lightweight, event-based protocol for agent-human interaction,
 It also ships with a **reference HTTP implementation** and **default connector** to help teams get started fast.
 
 [Learn more at docs.ag-ui.com](https://ag-ui.com)
+
+## Where does AGUI fit in the agentic protocol stack?
+AG-UI is complementary to the other 2 top agentic protocols
+- MCP gives agents tools
+- A2A allows agents to communicate with other agents
+- AG-UI brings agents into user-facing applications
+
+![image](https://github.com/user-attachments/assets/8cdaa246-2eb9-4f51-9a2c-c3991b064bb2)
+
 
 ## Why AG-UI?
 
@@ -119,7 +128,7 @@ Join the Discord: https://discord.gg/Jd3FzfdJa8
 ### Upcoming Events
 
 - **[AG-UI: Build an agent canvas with AG-UI](https://go.copilotkit.ai/ag-ui-build-an-agent-canvas)**  
-  📅 Friday, June 19, 9:00 AM PT  
+  📅 Friday, June 20, 9:00 AM PT  
 
 
 ## Contributing
