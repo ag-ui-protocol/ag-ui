@@ -43,7 +43,7 @@ async def update_recipe(ctx: Context, recipe: Recipe) -> str:
 
 shared_state_router = get_ag_ui_workflow_router(
     llm=OpenAI(model="gpt-4.1"),
-    tools=[update_recipe],
+    frontend_tools=[update_recipe],
     initial_state={
         "recipe": None,
     }

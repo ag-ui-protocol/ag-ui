@@ -18,7 +18,7 @@ class Task(BaseModel):
 async def run_task(
     ctx: Context, task: Task,
 ) -> str:
-    """Execute the list of steps needed to complete the task. Useful for anything the user wants to do."""
+    """Execute any list of steps needed to complete a task. Useful for anything the user wants to do."""
     state = await ctx.get("state", default={})
     task = Task.model_validate(task)
 
@@ -77,6 +77,11 @@ async def run_task(
 
 agentic_generative_ui_router = get_ag_ui_workflow_router(
     llm=OpenAI(model="gpt-4.1"),
-    tools=[run_task],
+    frontend_tools=[run_task],
     initial_state={},
+    system_prompt=(
+        "You are a helpful assistant that can help the user with their task. "
+        "If the user asks you to do any task, use the run_task tool to do it. "
+        "Use your best judgement to describe the steps."
+    )
 )

@@ -17,5 +17,5 @@ def generate_task_steps(steps: List[Step]) -> str:
 
 human_in_the_loop_router = get_ag_ui_workflow_router(
     llm=OpenAI(model="gpt-4.1"),
-    tools=[generate_task_steps],
+    frontend_tools=[generate_task_steps],
 )

@@ -12,5 +12,5 @@ def change_background(
 
 agentic_chat_router = get_ag_ui_workflow_router(
     llm=OpenAI(model="gpt-4.1"),
-    tools=[change_background],
+    frontend_tools=[change_background],
 )
