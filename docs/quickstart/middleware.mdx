@@ -1,18 +1,25 @@
 ---
 title: "Middleware"
 description:
-  "Connect to existing protocols, in process agents or custom solutions via AG-UI"
+  "Connect to existing protocols, in process agents or custom solutions via
+  AG-UI"
 ---
 
 # Introduction
 
-A middleware implementation allows you to **translate existing protocols and applications to AG-UI events**. This approach creates a bridge between your existing system and AG-UI, making it perfect for adding agent capabilities to current applications.
+A middleware implementation allows you to **translate existing protocols and
+applications to AG-UI events**. This approach creates a bridge between your
+existing system and AG-UI, making it perfect for adding agent capabilities to
+current applications.
 
 ## When to use a middleware implementation
-Middleware is the flexible option. It allows you to translate existing protocols and applications to AG-UI events
-creating a bridge between your existing system and AG-UI.
+
+Middleware is the flexible option. It allows you to translate existing protocols
+and applications to AG-UI events creating a bridge between your existing system
+and AG-UI.
 
 Middleware is great for:
+
 - Taking your **existing protocol or API** and **translating it universally**
 - Working within the confines of **an existing system or framework**
 - **When you don't have direct control** over the agent framework or system
@@ -20,12 +27,14 @@ Middleware is great for:
 ## What you'll build
 
 In this guide, we'll create a middleware agent that:
+
 1. Extends the `AbstractAgent` class
 2. Connects to OpenAI's GPT-4o model
 3. Translates OpenAI responses to AG-UI events
 4. Runs in-process with your application
 
-This approach gives you maximum flexibility to integrate with existing codebases while maintaining the full power of the AG-UI protocol.
+This approach gives you maximum flexibility to integrate with existing codebases
+while maintaining the full power of the AG-UI protocol.
 
 Let's get started!
 
@@ -408,7 +417,9 @@ Did you build a custom adapter that others could reuse? We welcome community
 contributions!
 
 1. Fork the [AG-UI repository](https://github.com/ag-ui-protocol/ag-ui)
-2. Add your package under `integrations/` with docs and tests
+2. Add your package under `typescript-sdk/integrations/`. See
+   [Contributing](../development/contributing) for more details and naming
+   conventions.
 3. Open a pull request describing your use-case and design decisions
 
 If you have questions, need feedback, or want to validate an idea first, start a

@@ -23,7 +23,11 @@
                   "quickstart/applications",
                   {
                     "group": "Build integrations",
-                    "pages": ["quickstart/introduction", "quickstart/server", "quickstart/middleware"]
+                    "pages": [
+                      "quickstart/introduction",
+                      "quickstart/server",
+                      "quickstart/middleware"
+                    ]
                   }
                 ]
               },
@@ -115,8 +119,7 @@
         "label": "Discord",
         "href": "https://discord.gg/Jd3FzfdJa8",
         "icon": "server"
-      },
-  
+      }
     ],
     "primary": {
       "type": "github",
