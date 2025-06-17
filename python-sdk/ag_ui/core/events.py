@@ -17,10 +17,15 @@ class EventType(str, Enum):
     TEXT_MESSAGE_CONTENT = "TEXT_MESSAGE_CONTENT"
     TEXT_MESSAGE_END = "TEXT_MESSAGE_END"
     TEXT_MESSAGE_CHUNK = "TEXT_MESSAGE_CHUNK"
+    THINKING_TEXT_MESSAGE_START = "THINKING_TEXT_MESSAGE_START",
+    THINKING_TEXT_MESSAGE_CONTENT = "THINKING_TEXT_MESSAGE_CONTENT",
+    THINKING_TEXT_MESSAGE_END = "THINKING_TEXT_MESSAGE_END",
     TOOL_CALL_START = "TOOL_CALL_START"
     TOOL_CALL_ARGS = "TOOL_CALL_ARGS"
     TOOL_CALL_END = "TOOL_CALL_END"
     TOOL_CALL_CHUNK = "TOOL_CALL_CHUNK"
+    THINKING_START = "THINKING_START",
+    THINKING_END = "THINKING_END",
     STATE_SNAPSHOT = "STATE_SNAPSHOT"
     STATE_DELTA = "STATE_DELTA"
     MESSAGES_SNAPSHOT = "MESSAGES_SNAPSHOT"
@@ -80,6 +85,29 @@ class TextMessageChunkEvent(BaseEvent):
     role: Optional[Literal["assistant"]] = None
     delta: Optional[str] = None
 
+class ThinkingTextMessageStartEvent(BaseEvent):
+    """
+    Event indicating the start of a thinking text message.
+    """
+    type: Literal[EventType.THINKING_TEXT_MESSAGE_START]
+
+class ThinkingTextMessageContentEvent(BaseEvent):
+    """
+    Event indicating a piece of a thinking text message.
+    """
+    type: Literal[EventType.THINKING_TEXT_MESSAGE_CONTENT]
+    delta: str  # This should not be an empty string
+
+    def model_post_init(self, __context):
+        if len(self.delta) == 0:
+            raise ValueError("Delta must not be an empty string")
+
+class ThinkingTextMessageEndEvent(BaseEvent):
+    """
+    Event indicating the end of a thinking text message.
+    """
+    type: Literal[EventType.THINKING_TEXT_MESSAGE_END]
+
 class ToolCallStartEvent(BaseEvent):
     """
     Event indicating the start of a tool call.
@@ -115,6 +143,18 @@ class ToolCallChunkEvent(BaseEvent):
     tool_call_name: Optional[str] = None
     parent_message_id: Optional[str] = None
     delta: Optional[str] = None
+
+class ThinkingStartEvent(BaseEvent):
+    """
+    Event indicating the start of a thinking step event.
+    """
+    type: Literal[EventType.THINKING_START]
+
+class ThinkingEndEvent(BaseEvent):
+    """
+    Event indicating the end of a thinking step event.
+    """
+    type: Literal[EventType.THINKING_END]
 
 class StateSnapshotEvent(BaseEvent):
     """
