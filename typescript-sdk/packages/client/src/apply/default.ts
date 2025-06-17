@@ -233,6 +233,26 @@ export const defaultApplyEvents = (...args: Parameters<ApplyEvents>): ReturnType
         case EventType.TOOL_CALL_CHUNK: {
           throw new Error("TOOL_CALL_CHUNK must be tranformed before being applied");
         }
+
+        case EventType.THINKING_START: {
+          return emitNoUpdate();
+        }
+
+        case EventType.THINKING_END: {
+          return emitNoUpdate();
+        }
+
+        case EventType.THINKING_TEXT_MESSAGE_START: {
+          return emitNoUpdate();
+        }
+
+        case EventType.THINKING_TEXT_MESSAGE_CONTENT: {
+          return emitNoUpdate();
+        }
+
+        case EventType.THINKING_TEXT_MESSAGE_END: {
+          return emitNoUpdate();
+        }
       }
 
       // This makes TypeScript check that the switch is exhaustive

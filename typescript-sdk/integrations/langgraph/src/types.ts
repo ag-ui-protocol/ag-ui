@@ -28,6 +28,11 @@ export type MessageInProgress = {
   toolCallName?: string | null;
 };
 
+export type ThinkingInProgress = {
+  index: number;
+  type?: LangGraphReasoning['type'];
+}
+
 export interface RunMetadata {
   id: string;
   schemaKeys?: SchemaKeys;
@@ -88,4 +93,10 @@ export interface PredictStateTool {
   tool: string;
   state_key: string;
   tool_argument: string;
+}
+
+export interface LangGraphReasoning {
+  type: 'text';
+  text: string;
+  index: number
 }
