@@ -3,6 +3,7 @@
 Thanks for your interest in improving **AG-UI**!
 
 This short guide shows the fastest way to get your idea merged.
+You can find more detailed contribution guides at [ag-ui.com](ag-ui.com) 
 
 ---
 
