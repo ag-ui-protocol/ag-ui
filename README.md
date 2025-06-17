@@ -32,15 +32,12 @@ AG-UI is complementary to the other 2 top agentic protocols
 - MCP gives agents tools
 - A2A allows agents to communicate with other agents
 - AG-UI brings agents into user-facing applications
-  
+
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/8cdaa246-2eb9-4f51-9a2c-c3991b064bb2" height="500px" />
+</div>    
 
     
-<img src="https://github.com/user-attachments/assets/8cdaa246-2eb9-4f51-9a2c-c3991b064bb2" height="500px" />
-    
-
-
-  
-
 ## Features
 
 - 💬 Real-time agentic chat with streaming
@@ -62,8 +59,8 @@ AG-UI integrates with many popular agent frameworks
 | [CrewAI](https://crewai.com/)                                      | ✅ Supported             | ➡️ [Live Demo / Getting Started Docs](https://v0-crew-land.vercel.app/)      |
 | [AG2](https://ag2.ai/)                                             | ✅ Supported             | ➡️ [Live Demo / Getting Started Docs](https://v0-ag2-land.vercel.app/)       |
 | [Agno](https://github.com/agno-agi/agno)                           | 🛠️ In Progress           | –                                                                            |
-| [LlamaIndex](https://github.com/run-llama/llama_index)                            | 🛠️ In Progress           | –                                                                            |
-| [Pydantic AI](https://github.com/pydantic/pydantic-ai)                            | 🛠️ In Progress           | –                                                                            |
+| [LlamaIndex](https://github.com/run-llama/llama_index)             | 🛠️ In Progress           | –                                                                            |
+| [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | 🛠️ In Progress           | –                                                                            |
 | [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 💡 Open to Contributions | –                                                                            |
 | [Google ADK](https://google.github.io/adk-docs/get-started/)       | 💡 Open to Contributions | –                                                                            |
@@ -79,8 +76,6 @@ AG-UI integrates with many popular agent frameworks
 
 
 [View all supported frameworks →](https://ag-ui.com/frameworks)
-
-
 
 ## AG-UI Hello World
 
