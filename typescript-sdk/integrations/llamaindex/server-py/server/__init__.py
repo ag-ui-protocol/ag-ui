@@ -15,7 +15,7 @@ app.include_router(shared_state_router, prefix="/shared_state")
 
 def main():
     """Main function to start the FastAPI server."""
-    uvicorn.run(app, host="127.0.0.1", port=9000)
+    uvicorn.run(app, host="0.0.0.0", port=9000)
 
 if __name__ == "__main__":
     main()

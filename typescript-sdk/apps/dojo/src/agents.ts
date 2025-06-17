@@ -23,7 +23,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     id: "server-starter",
     agents: async () => {
       return {
-        agentic_chat: new ServerStarterAgent({ url: "http://127.0.0.1:8000/" }),
+        agentic_chat: new ServerStarterAgent({ url: "http://localhost:8000/" }),
       };
     },
   },
@@ -32,22 +32,22 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new ServerStarterAllFeaturesAgent({
-          url: "http://127.0.0.1:8000/agentic_chat",
+          url: "http://localhost:8000/agentic_chat",
         }),
         human_in_the_loop: new ServerStarterAllFeaturesAgent({
-          url: "http://127.0.0.1:8000/human_in_the_loop",
+          url: "http://localhost:8000/human_in_the_loop",
         }),
         agentic_generative_ui: new ServerStarterAllFeaturesAgent({
-          url: "http://127.0.0.1:8000/agentic_generative_ui",
+          url: "http://localhost:8000/agentic_generative_ui",
         }),
         tool_based_generative_ui: new ServerStarterAllFeaturesAgent({
-          url: "http://127.0.0.1:8000/tool_based_generative_ui",
+          url: "http://localhost:8000/tool_based_generative_ui",
         }),
         shared_state: new ServerStarterAllFeaturesAgent({
-          url: "http://127.0.0.1:8000/shared_state",
+          url: "http://localhost:8000/shared_state",
         }),
         predictive_state_updates: new ServerStarterAllFeaturesAgent({
-          url: "http://127.0.0.1:8000/predictive_state_updates",
+          url: "http://localhost:8000/predictive_state_updates",
         }),
       };
     },
@@ -56,7 +56,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     id: "mastra",
     agents: async () => {
       const mastraClient = new MastraClient({
-        baseUrl: "http://127.0.0.14111",
+        baseUrl: "http://localhost:4111",
       });
 
       return MastraAgent.getRemoteAgents({
@@ -77,27 +77,27 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new LangGraphAgent({
-          deploymentUrl: "http://127.0.0.12024",
+          deploymentUrl: "http://localhost:2024",
           graphId: "agentic_chat",
         }),
         agentic_generative_ui: new LangGraphAgent({
-          deploymentUrl: "http://127.0.0.12024",
+          deploymentUrl: "http://localhost:2024",
           graphId: "agentic_generative_ui",
         }),
         human_in_the_loop: new LangGraphAgent({
-          deploymentUrl: "http://127.0.0.12024",
+          deploymentUrl: "http://localhost:2024",
           graphId: "human_in_the_loop",
         }),
         predictive_state_updates: new LangGraphAgent({
-          deploymentUrl: "http://127.0.0.12024",
+          deploymentUrl: "http://localhost:2024",
           graphId: "predictive_state_updates",
         }),
         shared_state: new LangGraphAgent({
-          deploymentUrl: "http://127.0.0.12024",
+          deploymentUrl: "http://localhost:2024",
           graphId: "shared_state",
         }),
         tool_based_generative_ui: new LangGraphAgent({
-          deploymentUrl: "http://127.0.0.12024",
+          deploymentUrl: "http://localhost:2024",
           graphId: "tool_based_generative_ui",
         }),
       };
@@ -108,7 +108,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new AgnoAgent({
-          url: "http://127.0.0.1:8000/agui",
+          url: "http://localhost:8000/agui",
         }),
       };
     },
@@ -118,16 +118,16 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new LlamaIndexAgent({
-          url: "http://127.0.0.1:9000/agentic_chat/run",
+          url: "http://localhost:9000/agentic_chat/run",
         }),
         human_in_the_loop: new LlamaIndexAgent({
-          url: "http://127.0.0.1:9000/human_in_the_loop/run",
+          url: "http://localhost:9000/human_in_the_loop/run",
         }),
         agentic_generative_ui: new LlamaIndexAgent({
-          url: "http://127.0.0.1:9000/agentic_generative_ui/run",
+          url: "http://localhost:9000/agentic_generative_ui/run",
         }),
         shared_state: new LlamaIndexAgent({
-          url: "http://127.0.0.1:9000/shared_state/run",
+          url: "http://localhost:9000/shared_state/run",
         }),
       };
     },
