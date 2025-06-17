@@ -53,11 +53,11 @@ AG-UI integrates with many popular agent frameworks
 
 | Framework                                                          | Status                   | AG-UI Resources                                                              |
 | ------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------- |
-| No-framework                                            | ✅ Supported             | ➡️ Docs coming soon       |
-| [LangGraph](https://www.langchain.com/langgraph)                   | ✅ Supported             | ➡️ [Live Demo / Getting Started Docs](https://v0-langgraph-land.vercel.app/) |
-| [Mastra](https://mastra.ai/)                                       | ✅ Supported             | ➡️ [Live Demo / Getting Started Docs](https://v0-mastra-land.vercel.app/)    |
-| [CrewAI](https://crewai.com/)                                      | ✅ Supported             | ➡️ [Live Demo / Getting Started Docs](https://v0-crew-land.vercel.app/)      |
-| [AG2](https://ag2.ai/)                                             | ✅ Supported             | ➡️ [Live Demo / Getting Started Docs](https://v0-ag2-land.vercel.app/)       |
+| No-framework                                                       | ✅ Supported             | ➡️ Docs coming soon       |
+| [LangGraph](https://www.langchain.com/langgraph)                   | ✅ Supported             | ➡️ [Demo](https://v0-langgraph-land.vercel.app/) |
+| [Mastra](https://mastra.ai/)                                       | ✅ Supported             | ➡️ [Demo](https://v0-mastra-land.vercel.app/)    |
+| [CrewAI](https://crewai.com/)                                      | ✅ Supported             | ➡️ [Demo](https://v0-crew-land.vercel.app/)      |
+| [AG2](https://ag2.ai/)                                             | ✅ Supported             | ➡️ [Demo](https://v0-ag2-land.vercel.app/)       |
 | [Agno](https://github.com/agno-agi/agno)                           | 🛠️ In Progress           | –                                                                            |
 | [LlamaIndex](https://github.com/run-llama/llama_index)             | 🛠️ In Progress           | –                                                                            |
 | [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | 🛠️ In Progress           | –                                                                            |
@@ -101,7 +101,7 @@ Create a new AG-UI application in seconds:
 npx create-ag-ui-app my-agent-app
 ```
 
-[View Documentation](https://ag-ui.com) · [Join Discord](https://discord.gg/Jd3FzfdJa8) · 
+[View Documentation](https://ag-ui.com) · [Join Discord](https://discord.gg/Jd3FzfdJa8)
 
 ### Building AG-UI Integrations (new frameworks)
 
