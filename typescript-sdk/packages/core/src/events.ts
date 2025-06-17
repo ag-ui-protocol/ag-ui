@@ -125,6 +125,7 @@ export const ToolCallChunkEventSchema = BaseEventSchema.extend({
 
 export const ThinkingStartEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.THINKING_START),
+  title: z.string().optional().default("Thinking..."),
 });
 
 export const ThinkingEndEventSchema = BaseEventSchema.extend({

@@ -149,6 +149,7 @@ class ThinkingStartEvent(BaseEvent):
     Event indicating the start of a thinking step event.
     """
     type: Literal[EventType.THINKING_START]
+    title: Optional[str] = 'Thinking...'
 
 class ThinkingEndEvent(BaseEvent):
     """
