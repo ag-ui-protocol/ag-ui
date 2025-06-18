@@ -9,6 +9,10 @@
   "files": [
     "dist/**"
   ],
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
