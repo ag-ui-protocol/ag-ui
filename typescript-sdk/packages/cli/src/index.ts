@@ -120,9 +120,29 @@ async function createProject() {
     }
   }
 
-  // Run copilotkit init
+  // Run copilotkit init with framework flags
   console.log("\n🚀 Running CopilotKit initialization...\n");
-  const copilotkit = spawn("npx", ["copilotkit", "init"], {
+  
+  const options = program.opts();
+  const frameworkArgs = [];
+
+  if (options.langgraph) {
+    frameworkArgs.push("-m", "LangGraph");
+  } else if (options.crewiAiCrews) {
+    frameworkArgs.push("-m", "CrewAI", "--crew-type", "Crews");
+  } else if (options.crewiAiFlows) {
+    frameworkArgs.push("-m", "CrewAI", "--crew-type", "Flows");
+  } else if (options.mastra) {
+    frameworkArgs.push("-m", "Mastra");
+  } else if (options.ag2) {
+    frameworkArgs.push("-m", "AG2");
+  } else if (options.llamaindex) {
+    frameworkArgs.push("-m", "LlamaIndex");
+  } else if (options.agno) {
+    frameworkArgs.push("-m", "Agno");
+  }
+
+  const copilotkit = spawn("npx", ["copilotkit", "init", ...frameworkArgs], {
     stdio: "inherit",
     shell: true,
   });
@@ -135,6 +155,17 @@ async function createProject() {
 }
 
 program.name("create-ag-ui-app").description("AG-UI CLI").version("0.0.1-alpha.1");
+
+// Add framework flags
+program
+  .option("--langgraph", "Use the LangGraph framework")
+  .option("--crewi-ai-crews", "Use the CrewAI framework with Crews")
+  .option("--crewi-ai-flows", "Use the CrewAI framework with Flows")
+  .option("--mastra", "Use the Mastra framework")
+  .option("--ag2", "Use the AG2 framework")
+  .option("--llamaindex", "Use the LlamaIndex framework")
+  .option("--agno", "Use the Agno framework");
+
 
 program.action(async () => {
   await createProject();

@@ -1,5 +1,5 @@
 import { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
-import { State, SchemaKeys } from "./types";
+import { State, SchemaKeys, LangGraphReasoning } from "./types";
 import { Message, ToolCall } from "@ag-ui/client";
 
 export const DEFAULT_SCHEMA_KEYS = ["tools"];
@@ -33,13 +33,14 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
         return {
           id: message.id!,
           role: "user",
-          content: stringifyIfNeeded(message.content),
+          content: stringifyIfNeeded(resolveMessageContent(message.content)),
         };
       case "ai":
+        const content = resolveMessageContent(message.content)
         return {
           id: message.id!,
           role: "assistant",
-          content: stringifyIfNeeded(message.content),
+          content: content ? stringifyIfNeeded(content) : '',
           toolCalls: message.tool_calls?.map((tc) => ({
             id: tc.id!,
             type: "function",
@@ -53,13 +54,13 @@ export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[]
         return {
           id: message.id!,
           role: "system",
-          content: stringifyIfNeeded(message.content),
+          content: stringifyIfNeeded(resolveMessageContent(message.content)),
         };
       case "tool":
         return {
           id: message.id!,
           role: "tool",
-          content: stringifyIfNeeded(message.content),
+          content: stringifyIfNeeded(resolveMessageContent(message.content)),
           toolCallId: message.tool_call_id,
         };
       default:
@@ -116,4 +117,46 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
 function stringifyIfNeeded(item: any) {
   if (typeof item === "string") return item;
   return JSON.stringify(item);
+}
+
+export function resolveReasoningContent(eventData: any): LangGraphReasoning | null {
+  const content = eventData.chunk?.content
+
+  // Anthropic reasoning response
+  if (content && Array.isArray(content) && content.length && content[0]) {
+    if (!content[0].thinking) return null
+    return {
+      text: content[0].thinking,
+      type: 'text',
+      index: content[0].index,
+    }
+  }
+
+  /// OpenAI reasoning response
+  if (eventData.chunk.additional_kwargs?.reasoning?.summary?.[0]) {
+    const data = eventData.chunk.additional_kwargs?.reasoning.summary[0]
+    if (!data || !data.text) return null
+    return {
+      type: 'text',
+      text: data.text,
+      index: data.index,
+    }
+  }
+
+  return null
+}
+
+export function resolveMessageContent(content?: LangGraphMessage['content']): string | null {
+  if (!content) return null;
+
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (Array.isArray(content) && content.length) {
+    const contentText = content.find(c => c.type === 'text')?.text
+    return contentText ?? null;
+  }
+
+  return null
 }

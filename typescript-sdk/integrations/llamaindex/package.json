@@ -1,19 +1,18 @@
 {
-  "name": "create-ag-ui-app",
-  "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.2",
-  "private": false,
-  "publishConfig": {
-    "access": "public"
-  },
+  "name": "@ag-ui/llamaindex",
+  "author": "Logan Markewich <logan@runllama.ai>",
+  "version": "0.1.0",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
-  "bin": "./dist/index.js",
   "sideEffects": false,
   "files": [
     "dist/**"
   ],
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -24,9 +23,10 @@
     "unlink:global": "pnpm unlink --global"
   },
   "dependencies": {
-    "@types/inquirer": "^9.0.8",
-    "commander": "^12.1.0",
-    "inquirer": "^12.6.3"
+    "@ag-ui/client": "workspace:*"
+  },
+  "peerDependencies": {
+    "rxjs": "7.8.1"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
