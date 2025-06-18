@@ -60,8 +60,8 @@ AG-UI integrates with many popular agent frameworks
 | [Mastra](https://mastra.ai/)                                       | ✅ Supported             | ➡️ [Demo](https://v0-mastra-land.vercel.app/)    |
 | [CrewAI](https://crewai.com/)                                      | ✅ Supported             | ➡️ [Demo](https://v0-crew-land.vercel.app/)      |
 | [AG2](https://ag2.ai/)                                             | ✅ Supported             | ➡️ [Demo](https://v0-ag2-land.vercel.app/)       |
-| [Agno](https://github.com/agno-agi/agno)                           | ✅ Supported             |                                                                             |
-| [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported           | –                                                                            |
+| [Agno](https://github.com/agno-agi/agno)                           | ✅ Supported             | ➡️ Demo coming soon!      |                                                  |
+| [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported             |   ➡️ Demo coming soon!      |                                               |
 | [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | 🛠️ In Progress           | –                                                                            |
 | [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 💡 Open to Contributions | –                                                                            |
