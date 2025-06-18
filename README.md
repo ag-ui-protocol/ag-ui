@@ -1,6 +1,5 @@
 
 [![AG-UI Workshop – June 20](https://img.shields.io/badge/AG--UI%20Workshop%20%E2%80%94June%2020-blue?style=flat-square)](https://go.copilotkit.ai/ag-ui-build-an-agent-canvas)
-
 ![Discord](https://img.shields.io/discord/1379082175625953370?logo=discord&logoColor=%23FFFFFF&label=Discord&color=%236963ff)
 
 
@@ -26,15 +25,6 @@ It also ships with a **reference HTTP implementation** and **default connector**
 
 
 [Learn more about the specs](https://go.copilotkit.ai/ag-ui-introduction)
-
-
-## Where does AGUI fit in the agentic protocol stack?
-AG-UI is complementary to the other 2 top agentic protocols
-- MCP gives agents tools
-- A2A allows agents to communicate with other agents
-- AG-UI brings agents into user-facing applications
-
-![image](https://github.com/user-attachments/assets/8cdaa246-2eb9-4f51-9a2c-c3991b064bb2)
 
 
 ## Why AG-UI?
