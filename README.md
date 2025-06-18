@@ -24,7 +24,7 @@ AG-UI is an open, lightweight, event-based protocol for agent-human interaction,
 
 It also ships with a **reference HTTP implementation** and **default connector** to help teams get started fast.
 
-[Learn more about the specs](https://docs.ag-ui.com/introduction)
+[Learn more about the specs](https://go.copilotkit.ai/ag-ui-introduction)
 
 
 ## Where does AGUI fit in the agentic protocol stack?
@@ -102,13 +102,13 @@ Create a new AG-UI application in seconds:
 npx create-ag-ui-app my-agent-app
 ```
 
-[View Documentation](https://ag-ui.com) · [Join Discord](https://discord.gg/Jd3FzfdJa8)
+[View Documentation](https://go.copilotkit.ai/ag-ui-introduction) · [Join Discord](https://discord.gg/Jd3FzfdJa8)
 
 ### Building AG-UI Integrations (new frameworks)
 
-1. [Build new integrations (Quickstart)](https://docs.ag-ui.com/quickstart/introduction)
-2. [Book a call to discuss an AG-UI integration with a new framework](https://calendly.com/markus-copilotkit/ag-ui)
-3. [Join the Discord Community](https://discord.gg/Jd3FzfdJa8)
+1. [Build new integrations (Quickstart)](https://go.copilotkit.ai/build-quickstart)
+2. [Book a call to discuss an AG-UI integration with a new framework](https://go.copilotkit.ai/ag-ui-book-a-call)
+3. [Join the Discord Community](https://go.copilotkit.ai/AG-UI-Discord)
 
 
 ## Contributing
