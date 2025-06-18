@@ -136,6 +136,10 @@ async function createProject() {
     frameworkArgs.push("-m", "Mastra");
   } else if (options.ag2) {
     frameworkArgs.push("-m", "AG2");
+  } else if (options.llamaindex) {
+    frameworkArgs.push("-m", "LlamaIndex");
+  } else if (options.agno) {
+    frameworkArgs.push("-m", "Agno");
   }
 
   const copilotkit = spawn("npx", ["copilotkit", "init", ...frameworkArgs], {
@@ -158,7 +162,10 @@ program
   .option("--crewi-ai-crews", "Use the CrewAI framework with Crews")
   .option("--crewi-ai-flows", "Use the CrewAI framework with Flows")
   .option("--mastra", "Use the Mastra framework")
-  .option("--ag2", "Use the AG2 framework");
+  .option("--ag2", "Use the AG2 framework")
+  .option("--llamaindex", "Use the LlamaIndex framework")
+  .option("--agno", "Use the Agno framework");
+
 
 program.action(async () => {
   await createProject();
