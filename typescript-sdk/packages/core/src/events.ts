@@ -87,15 +87,18 @@ export const TextMessageChunkEventSchema = BaseEventSchema.extend({
 
 export const ThinkingTextMessageStartEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.THINKING_TEXT_MESSAGE_START),
-})
+});
 
-export const ThinkingTextMessageContentEventSchema = TextMessageContentEventSchema.omit({ messageId: true, type: true }).extend({
+export const ThinkingTextMessageContentEventSchema = TextMessageContentEventSchema.omit({
+  messageId: true,
+  type: true,
+}).extend({
   type: z.literal(EventType.THINKING_TEXT_MESSAGE_CONTENT),
-})
+});
 
 export const ThinkingTextMessageEndEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.THINKING_TEXT_MESSAGE_END),
-})
+});
 
 export const ToolCallStartEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TOOL_CALL_START),
@@ -125,7 +128,7 @@ export const ToolCallChunkEventSchema = BaseEventSchema.extend({
 
 export const ThinkingStartEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.THINKING_START),
-  title: z.string().optional().default("Thinking..."),
+  title: z.string().optional(),
 });
 
 export const ThinkingEndEventSchema = BaseEventSchema.extend({
