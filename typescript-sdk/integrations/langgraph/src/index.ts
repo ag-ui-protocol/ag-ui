@@ -9,6 +9,7 @@ import {
   Message as LangGraphMessage,
   Config,
   Interrupt,
+  Thread
 } from "@langchain/langgraph-sdk";
 import { randomUUID } from "node:crypto";
 import { RemoveMessage } from "@langchain/core/messages";
@@ -165,7 +166,9 @@ export class LangGraphAgent extends AbstractAgent {
       this.assistant = await this.getAssistant();
     }
 
-    let agentState = await this.getOrCreateThreadAndReturnState(threadId);
+    const thread = await this.getOrCreateThread(threadId);
+    this.activeRun!.threadId = thread.thread_id;
+    const agentState = await this.client.threads.getState(thread.thread_id) ?? { values: {} } as ThreadState
 
     const agentStateValues = agentState.values as State;
     const aguiToLangChainMessage = aguiMessagesToLangChain(messages);
@@ -414,7 +417,7 @@ export class LangGraphAgent extends AbstractAgent {
 
         const isToolCallStartEvent = !hasCurrentStream && toolCallData?.name;
         const isToolCallArgsEvent =
-          hasCurrentStream && currentStream?.toolCallId && toolCallData.args;
+          hasCurrentStream && currentStream?.toolCallId && toolCallData?.args;
         const isToolCallEndEvent = hasCurrentStream && currentStream?.toolCallId && !toolCallData;
 
         const reasoningData = resolveReasoningContent(event.data);
@@ -670,16 +673,27 @@ export class LangGraphAgent extends AbstractAgent {
     return state;
   }
 
-  async getOrCreateThreadAndReturnState(threadId: string): Promise<ThreadState<{}>> {
-    let agentState = { values: {} } as ThreadState;
+  async getOrCreateThread(threadId: string): Promise<Thread> {
+    let thread: Thread;
     try {
-      await this.client.threads.get(threadId);
-      agentState = await this.client.threads.getState(threadId);
-    } catch (error) {
-      await this.client.threads.create({ threadId });
+      try {
+        thread = await this.getThread(threadId);
+      } catch (error) {
+        thread = await this.createThread({ threadId });
+      }
+    } catch (error: unknown) {
+      throw new Error(`Failed to create thread: ${(error as Error).message}`);
     }
 
-    return agentState;
+    return thread;
+  }
+
+  async getThread(threadId: string) {
+    return this.client.threads.get(threadId);
+  }
+
+  async createThread(payload?: Parameters<typeof this.client.threads.create>[0]) {
+    return this.client.threads.create(payload);
   }
 
   async mergeConfigs({
@@ -750,11 +764,11 @@ export class LangGraphAgent extends AbstractAgent {
     const assistants = await this.client.assistants.search();
     const retrievedAssistant = assistants.find(
       (searchResult) =>
-        searchResult.assistant_id === this.agentId || searchResult.graph_id === this.graphId,
+        searchResult.graph_id === this.graphId,
     );
     if (!retrievedAssistant) {
       console.error(`
-      No agent found with graph ID ${this.graphId} or agent ID ${this.agentId} found..\n
+      No agent found with graph ID ${this.graphId} found..\n
       
       These are the available agents: [${assistants.map((a) => `${a.graph_id} (ID: ${a.assistant_id})`).join(", ")}]
       `);
