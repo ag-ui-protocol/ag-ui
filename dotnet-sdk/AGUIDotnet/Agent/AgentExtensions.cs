@@ -30,23 +30,19 @@ public static class AgentExtensions
             AllowSynchronousContinuations = true
         });
 
-        // Invoke the agent in a separate throwaway task to run asynchronously.
-        _ = Task.Run(async () =>
+
+        var agentTask = Task.Run(async () =>
         {
             try
             {
                 await agent.RunAsync(input, channel.Writer, cancellationToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException)
+            finally
             {
-                // Operation was cancelled, we can ignore this.
-            }
-            catch (Exception ex)
-            {
-                // An error occurred while running the agent, try to complete the channel with exception detail if possible.
+                // Always complete the channel when exiting the agent's RunAsync method to ensure that the reader can finish processing.
                 try
                 {
-                    channel.Writer.Complete(ex);
+                    channel.Writer.Complete();
                 }
                 catch (ChannelClosedException)
                 {
@@ -60,5 +56,8 @@ public static class AgentExtensions
         {
             yield return ev;
         }
+
+        // Make sure we truly let the agent finish just in case the channel was closed before the agent completed.
+        await agentTask.ConfigureAwait(false);
     }
 }

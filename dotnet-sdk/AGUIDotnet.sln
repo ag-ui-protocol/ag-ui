@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AGUIDotnet", "AGUIDotnet\AG
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AGUIDotnetWebApiExample", "AGUIDotnetWebApiExample\AGUIDotnetWebApiExample.csproj", "{C1EBFBA2-0D51-4CFA-8C1D-7E9952B23AAD}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AGUIDotnet.Tests", "AGUIDotnet.Tests\AGUIDotnet.Tests.csproj", "{4A32E00E-80DD-4C2A-8483-C008D595DFEF}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -41,6 +43,18 @@ Global
 		{C1EBFBA2-0D51-4CFA-8C1D-7E9952B23AAD}.Release|x64.Build.0 = Release|Any CPU
 		{C1EBFBA2-0D51-4CFA-8C1D-7E9952B23AAD}.Release|x86.ActiveCfg = Release|Any CPU
 		{C1EBFBA2-0D51-4CFA-8C1D-7E9952B23AAD}.Release|x86.Build.0 = Release|Any CPU
+		{4A32E00E-80DD-4C2A-8483-C008D595DFEF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4A32E00E-80DD-4C2A-8483-C008D595DFEF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4A32E00E-80DD-4C2A-8483-C008D595DFEF}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{4A32E00E-80DD-4C2A-8483-C008D595DFEF}.Debug|x64.Build.0 = Debug|Any CPU
+		{4A32E00E-80DD-4C2A-8483-C008D595DFEF}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{4A32E00E-80DD-4C2A-8483-C008D595DFEF}.Debug|x86.Build.0 = Debug|Any CPU
+		{4A32E00E-80DD-4C2A-8483-C008D595DFEF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4A32E00E-80DD-4C2A-8483-C008D595DFEF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4A32E00E-80DD-4C2A-8483-C008D595DFEF}.Release|x64.ActiveCfg = Release|Any CPU
+		{4A32E00E-80DD-4C2A-8483-C008D595DFEF}.Release|x64.Build.0 = Release|Any CPU
+		{4A32E00E-80DD-4C2A-8483-C008D595DFEF}.Release|x86.ActiveCfg = Release|Any CPU
+		{4A32E00E-80DD-4C2A-8483-C008D595DFEF}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
