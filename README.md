@@ -60,8 +60,8 @@ AG-UI integrates with many popular agent frameworks
 | [Mastra](https://mastra.ai/)                                       | ✅ Supported             | ➡️ [Demo](https://v0-mastra-land.vercel.app/)    |
 | [CrewAI](https://crewai.com/)                                      | ✅ Supported             | ➡️ [Demo](https://v0-crew-land.vercel.app/)      |
 | [AG2](https://ag2.ai/)                                             | ✅ Supported             | ➡️ [Demo](https://v0-ag2-land.vercel.app/)       |
-| [Agno](https://github.com/agno-agi/agno)                           | ✅ Supported             | ➡️ Demo coming soon!      |                                                  |
-| [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported             |   ➡️ Demo coming soon!      |                                               |
+| [Agno](https://github.com/agno-agi/agno)                           | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/agno)     |                                                  |
+| [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported             |   ➡️ [Docs](https://docs.copilotkit.ai/llamaindex)      |                                               |
 | [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | 🛠️ In Progress           | –                                                                            |
 | [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 💡 Open to Contributions | –                                                                            |
@@ -81,15 +81,15 @@ AG-UI integrates with many popular agent frameworks
 
 ## AG-UI Hello World
 
-Play with this hello-world app here: https://agui-demo.vercel.app/
-
-[Video:](https://github.com/user-attachments/assets/18c03330-1ebc-4863-b2b8-cc6c3a4c7bae)
+https://github.com/user-attachments/assets/419e4b8c-09f1-4cf0-b76b-339c7a207584
 
 
 ## AG-UI Showcase: The AG-UI Dojo (Building-Blocks Viewer)
-The AG-UI Dojo showcases many of the building blocks that AG-UI supports.
+The [AG-UI Dojo](https://copilotkit-feature-viewer.vercel.app/) showcases many of the building blocks that AG-UI supports ([AG-UI Dojo Source Code](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo)).
 
 The building blocks are designed to be simple and focused -- between 50-200 lines of code.
+
+[Video:](https://github.com/user-attachments/assets/18c03330-1ebc-4863-b2b8-cc6c3a4c7bae)
 
 ## Getting Started
 
