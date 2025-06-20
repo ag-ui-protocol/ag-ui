@@ -87,7 +87,7 @@ Play with this hello-world app here: https://agui-demo.vercel.app/
 
 
 ## AG-UI Showcase: The AG-UI Dojo (Building-Blocks Viewer)
-The AG-UI Dojo showcases many of the building blocks that AG-UI supports.
+The [AG-UI Dojo](https://copilotkit-feature-viewer.vercel.app/) showcases many of the building blocks that AG-UI supports ([AG-UI Dojo Source Code](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo)).
 
 The building blocks are designed to be simple and focused -- between 50-200 lines of code.
 
