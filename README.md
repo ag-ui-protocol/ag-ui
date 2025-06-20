@@ -81,15 +81,15 @@ AG-UI integrates with many popular agent frameworks
 
 ## AG-UI Hello World
 
-Play with this hello-world app here: https://agui-demo.vercel.app/
-
-[Video:](https://github.com/user-attachments/assets/18c03330-1ebc-4863-b2b8-cc6c3a4c7bae)
+https://github.com/user-attachments/assets/419e4b8c-09f1-4cf0-b76b-339c7a207584
 
 
 ## AG-UI Showcase: The AG-UI Dojo (Building-Blocks Viewer)
 The [AG-UI Dojo](https://copilotkit-feature-viewer.vercel.app/) showcases many of the building blocks that AG-UI supports ([AG-UI Dojo Source Code](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo)).
 
 The building blocks are designed to be simple and focused -- between 50-200 lines of code.
+
+[Video:](https://github.com/user-attachments/assets/18c03330-1ebc-4863-b2b8-cc6c3a4c7bae)
 
 ## Getting Started
 
