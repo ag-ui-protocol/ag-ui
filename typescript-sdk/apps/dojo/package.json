@@ -11,6 +11,7 @@
   "dependencies": {
     "@ag-ui/agno": "workspace:*",
     "@ag-ui/langgraph": "workspace:*",
+    "@ag-ui/llamaindex": "workspace:*",
     "@ag-ui/mastra": "workspace:*",
     "@ag-ui/middleware-starter": "workspace:*",
     "@ag-ui/server-starter": "workspace:*",

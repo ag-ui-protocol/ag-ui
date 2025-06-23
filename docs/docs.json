@@ -19,7 +19,17 @@
               "introduction",
               {
                 "group": "Quickstart",
-                "pages": ["quickstart/middleware", "quickstart/server"]
+                "pages": [
+                  "quickstart/applications",
+                  {
+                    "group": "Build integrations",
+                    "pages": [
+                      "quickstart/introduction",
+                      "quickstart/server",
+                      "quickstart/middleware"
+                    ]
+                  }
+                ]
               },
               "integrations"
             ]
@@ -104,11 +114,16 @@
     "dark": "/logo/dark.svg"
   },
   "navbar": {
-    "links": [],
+    "links": [
+      {
+        "label": "Discord",
+        "href": "https://discord.gg/Jd3FzfdJa8",
+        "icon": "server"
+      }
+    ],
     "primary": {
-      "type": "button",
-      "label": "GitHub",
-      "href": "https://github.com/ag-ui-protocol"
+      "type": "github",
+      "href": "https://github.com/ag-ui-protocol/ag-ui"
     }
   },
   "seo": {
@@ -119,7 +134,7 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/ag-ui-protocol"
+      "github": "https://github.com/ag-ui-protocol/ag-ui"
     }
   },
   "redirects": [

@@ -93,6 +93,11 @@ export const transformChunks =
           case EventType.RUN_ERROR:
           case EventType.STEP_STARTED:
           case EventType.STEP_FINISHED:
+          case EventType.THINKING_START:
+          case EventType.THINKING_END:
+          case EventType.THINKING_TEXT_MESSAGE_START:
+          case EventType.THINKING_TEXT_MESSAGE_CONTENT:
+          case EventType.THINKING_TEXT_MESSAGE_END:
             return [...closePendingEvent(), event];
           case EventType.RAW:
             return [event];
