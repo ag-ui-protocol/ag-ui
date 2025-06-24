@@ -298,3 +298,41 @@ def litellm_messages_to_ag_ui_messages(messages: List[LiteLLMMessage]) -> List[M
         ag_ui_messages.append(ag_ui_message)
 
     return ag_ui_messages
+
+
+async def copilotkit_exit() -> Literal[True]:
+    """
+    Exits the current agent after the run completes. Calling copilotkit_exit() will
+    not immediately stop the agent. Instead, it signals to CopilotKit to stop the agent after
+    the run completes.
+
+    ### Examples
+
+    ```python
+    from copilotkit.crewai import copilotkit_exit
+
+    def my_function():
+        await copilotkit_exit()
+        return state
+    ```
+
+    Returns
+    -------
+    Awaitable[bool]
+        Always return True.
+    """
+
+    flow = flow_context.get(None)
+
+    crewai_event_bus.emit(
+        flow,
+        BridgedCustomEvent(
+            type=EventType.CUSTOM,
+            name="Exit",
+            value=""
+        )
+    )
+
+    await yield_control()
+
+    return True

@@ -13,7 +13,6 @@ from ag_ui.core.events import (
 class BridgedToolCallChunkEvent(BaseEvent, ToolCallChunkEvent):
     """Bridged tool call chunk event"""
 
-
 class BridgedTextMessageChunkEvent(BaseEvent, TextMessageChunkEvent):
     """Bridged text message chunk event"""
 

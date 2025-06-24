@@ -2,7 +2,7 @@ import os
 import uvicorn
 from fastapi import FastAPI
 
-from .endpoint import add_crewai_fastapi_endpoint
+from .endpoint import add_crewai_flow_fastapi_endpoint
 from .examples.agentic_chat import AgenticChatFlow
 from .examples.human_in_the_loop import HumanInTheLoopFlow
 from .examples.tool_based_generative_ui import ToolBasedGenerativeUIFlow
@@ -12,39 +12,39 @@ from .examples.predictive_state_updates import PredictiveStateUpdatesFlow
 
 app = FastAPI(title="CrewAI Dojo Example Server")
 
-add_crewai_fastapi_endpoint(
+add_crewai_flow_fastapi_endpoint(
     app=app,
-    flow_class=AgenticChatFlow,
+    flow=AgenticChatFlow(),
     path="/agentic_chat",
 )
 
-add_crewai_fastapi_endpoint(
+add_crewai_flow_fastapi_endpoint(
     app=app,
-    flow_class=HumanInTheLoopFlow,
+    flow=HumanInTheLoopFlow(),
     path="/human_in_the_loop",
 )
 
-add_crewai_fastapi_endpoint(
+add_crewai_flow_fastapi_endpoint(
     app=app,
-    flow_class=ToolBasedGenerativeUIFlow,
+    flow=ToolBasedGenerativeUIFlow(),
     path="/tool_based_generative_ui",
 )
 
-add_crewai_fastapi_endpoint(
+add_crewai_flow_fastapi_endpoint(
     app=app,
-    flow_class=AgenticGenerativeUIFlow,
+    flow=AgenticGenerativeUIFlow(),
     path="/agentic_generative_ui",
 )
 
-add_crewai_fastapi_endpoint(
+add_crewai_flow_fastapi_endpoint(
     app=app,
-    flow_class=SharedStateFlow,
+    flow=SharedStateFlow(),
     path="/shared_state",
 )
 
-add_crewai_fastapi_endpoint(
+add_crewai_flow_fastapi_endpoint(
     app=app,
-    flow_class=PredictiveStateUpdatesFlow,
+    flow=PredictiveStateUpdatesFlow(),
     path="/predictive_state_updates",
 )
 
