@@ -1,12 +1,12 @@
 [tool.poetry]
-name = "agui_crewai"
+name = "ag-ui-crewai"
 version = "0.1.0"
 description = ""
 authors = ["Markus Ecker <markus.ecker@gmail.com>"]
 readme = "README.md"
 exclude = [
-    "agui_crewai/dojo.py",
-    "agui_crewai/examples/**",
+    "ag_ui_crewai/dojo.py",
+    "ag_ui_crewai/examples/**",
 ]
 
 [tool.poetry.dependencies]
@@ -21,4 +21,4 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-dev = "agui_crewai.dojo:main"
+dev = "ag_ui_crewai.dojo:main"

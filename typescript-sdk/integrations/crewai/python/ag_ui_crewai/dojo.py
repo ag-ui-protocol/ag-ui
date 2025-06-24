@@ -52,7 +52,7 @@ def main():
     """Run the uvicorn server."""
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run(
-        "agui_crewai.dojo:app",
+        "ag_ui_crewai.dojo:app",
         host="0.0.0.0",
         port=port,
         reload=True
