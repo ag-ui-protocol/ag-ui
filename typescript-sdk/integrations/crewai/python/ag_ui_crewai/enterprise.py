@@ -73,6 +73,7 @@ class CrewEnterpriseEventListener(BaseEventListener):
         @crewai_event_bus.on(FlowStartedEvent)
         def _(source, event):  # pylint: disable=unused-argument
             crewai_event_bus.emit(
+                source,
                 EnterpriseRunStartedEvent(
                   type=EventType.RUN_STARTED
                 )
@@ -81,6 +82,7 @@ class CrewEnterpriseEventListener(BaseEventListener):
         @crewai_event_bus.on(FlowFinishedEvent)
         def _(source, event):  # pylint: disable=unused-argument
             crewai_event_bus.emit(
+                source,
                 EnterpriseRunFinishedEvent(
                   type=EventType.RUN_FINISHED
                 )
@@ -89,6 +91,7 @@ class CrewEnterpriseEventListener(BaseEventListener):
         @crewai_event_bus.on(MethodExecutionStartedEvent)
         def _(source, event):  # pylint: disable=unused-argument
             crewai_event_bus.emit(
+                source,
                 EnterpriseStepStartedEvent(
                   type=EventType.STEP_STARTED,
                   step_name=event.method_name
@@ -100,6 +103,7 @@ class CrewEnterpriseEventListener(BaseEventListener):
             messages = litellm_messages_to_ag_ui_messages(source.state.messages)
 
             crewai_event_bus.emit(
+                source,
                 EnterpriseMessagesSnapshotEvent(
                   type=EventType.MESSAGES_SNAPSHOT,
                   messages=messages
@@ -107,6 +111,7 @@ class CrewEnterpriseEventListener(BaseEventListener):
             )
 
             crewai_event_bus.emit(
+                source,
                 EnterpriseStateSnapshotEvent(
                   type=EventType.STATE_SNAPSHOT,
                   snapshot=source.state
@@ -114,6 +119,7 @@ class CrewEnterpriseEventListener(BaseEventListener):
             )
 
             crewai_event_bus.emit(
+                source,
                 EnterpriseStepFinishedEvent(
                   type=EventType.STEP_FINISHED,
                   step_name=event.method_name
@@ -123,6 +129,7 @@ class CrewEnterpriseEventListener(BaseEventListener):
         @crewai_event_bus.on(BridgedTextMessageChunkEvent)
         def _(source, event):  # pylint: disable=unused-argument
             crewai_event_bus.emit(
+                source,
                 EnterpriseTextMessageChunkEvent(
                   type=EventType.TEXT_MESSAGE_CHUNK,
                   message_id=event.message_id,
@@ -134,6 +141,7 @@ class CrewEnterpriseEventListener(BaseEventListener):
         @crewai_event_bus.on(BridgedToolCallChunkEvent)
         def _(source, event):  # pylint: disable=unused-argument
             crewai_event_bus.emit(
+                source,
                 EnterpriseToolCallChunkEvent(
                   type=EventType.TOOL_CALL_CHUNK,
                   tool_call_id=event.tool_call_id,
@@ -146,6 +154,7 @@ class CrewEnterpriseEventListener(BaseEventListener):
         @crewai_event_bus.on(BridgedCustomEvent)
         def _(source, event):  # pylint: disable=unused-argument
             crewai_event_bus.emit(
+                source,
                 EnterpriseCustomEvent(
                   type=EventType.CUSTOM,
                   name=event.name,
@@ -156,6 +165,7 @@ class CrewEnterpriseEventListener(BaseEventListener):
         @crewai_event_bus.on(BridgedStateSnapshotEvent)
         def _(source, event):  # pylint: disable=unused-argument
             crewai_event_bus.emit(
+                source,
                 EnterpriseStateSnapshotEvent(
                   type=EventType.STATE_SNAPSHOT,
                   snapshot=event.snapshot
