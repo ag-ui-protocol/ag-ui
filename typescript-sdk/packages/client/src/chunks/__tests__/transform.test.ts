@@ -33,7 +33,7 @@ describe("transformChunks", () => {
     };
 
     const events$ = concat(of(chunk), of(closeEvent));
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$.pipe(toArray()).subscribe((events) => {
       expect(events.length).toBe(4);
@@ -82,7 +82,7 @@ describe("transformChunks", () => {
     };
 
     const events$ = concat(of(chunk1, chunk2), of(closeEvent));
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$.pipe(toArray()).subscribe((events) => {
       expect(events.length).toBe(5);
@@ -132,7 +132,7 @@ describe("transformChunks", () => {
     };
 
     const events$ = concat(of(chunk), of(closeEvent));
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$.pipe(toArray()).subscribe((events) => {
       expect(events.length).toBe(4);
@@ -182,7 +182,7 @@ describe("transformChunks", () => {
     };
 
     const events$ = concat(of(textChunk, toolChunk), of(closeEvent));
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$.pipe(toArray()).subscribe((events) => {
       expect(events.length).toBe(7);
@@ -212,7 +212,7 @@ describe("transformChunks", () => {
     };
 
     const events$ = of(runStartEvent);
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$.pipe(toArray()).subscribe((events) => {
       expect(events.length).toBe(1);
@@ -235,7 +235,7 @@ describe("transformChunks", () => {
     };
 
     const events$ = of(textChunk, runStartEvent);
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$.pipe(toArray()).subscribe((events) => {
       expect(events.length).toBe(4);
@@ -270,7 +270,7 @@ describe("transformChunks", () => {
     };
 
     const events$ = concat(of(chunk1, chunk2), of(closeEvent));
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$.pipe(toArray()).subscribe((events) => {
       expect(events.length).toBe(7);
@@ -309,7 +309,7 @@ describe("transformChunks", () => {
     };
 
     const events$ = of(invalidChunk);
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$
       .pipe(
@@ -336,7 +336,7 @@ describe("transformChunks", () => {
     };
 
     const events$ = of(invalidChunk);
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$
       .pipe(
@@ -364,7 +364,7 @@ describe("transformChunks", () => {
     };
 
     const events$ = of(invalidChunk);
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$
       .pipe(
@@ -401,7 +401,7 @@ describe("transformChunks", () => {
     };
 
     const events$ = concat(of(chunk), of(closeEvent));
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$.pipe(toArray()).subscribe((events) => {
       expect(events.length).toBe(4);
@@ -438,7 +438,7 @@ describe("transformChunks", () => {
     };
 
     const events$ = of(rawEvent);
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$.pipe(toArray()).subscribe((events) => {
       expect(events.length).toBe(1);
@@ -480,7 +480,7 @@ describe("transformChunks", () => {
     ];
 
     const events$ = of(...events);
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$.pipe(toArray()).subscribe((result) => {
       expect(result.length).toBe(10);
@@ -522,7 +522,7 @@ describe("transformChunks", () => {
     };
 
     const events$ = concat(of(chunk), of(closeEvent));
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$.pipe(toArray()).subscribe((events) => {
       expect(events.length).toBe(3);
@@ -562,7 +562,7 @@ describe("transformChunks", () => {
     };
 
     const events$ = concat(of(chunk), of(closeEvent));
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$.pipe(toArray()).subscribe((events) => {
       expect(events.length).toBe(3);
@@ -619,7 +619,7 @@ describe("transformChunks", () => {
     };
 
     const events$ = concat(of(...chunks), of(closeEvent));
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$.pipe(toArray()).subscribe((events) => {
       expect(events.length).toBe(7); // 1 start + 4 content + 1 end + 1 close event
@@ -724,7 +724,7 @@ describe("transformChunks", () => {
     ];
 
     const events$ = of(...events);
-    const transformed$ = transformChunks(events$);
+    const transformed$ = transformChunks(false)(events$);
 
     transformed$.pipe(toArray()).subscribe((results) => {
       // Count events by type
