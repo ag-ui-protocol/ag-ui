@@ -99,6 +99,7 @@ const Chat = () => {
   });
   useCopilotAction({
     name: "generate_task_steps",
+    description: "Generates a list of steps for the user to perform",
     parameters: [
       {
         name: "steps",
