@@ -42,6 +42,10 @@ const Chat = () => {
     ],
     handler: ({ background }) => {
       setBackground(background);
+      return {
+        status: "success",
+        message: `Background changed to ${background}`,
+      };
     },
   });
 
