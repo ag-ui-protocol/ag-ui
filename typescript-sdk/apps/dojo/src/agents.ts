@@ -13,6 +13,7 @@ import { AgnoAgent } from "@ag-ui/agno";
 import { LlamaIndexAgent } from "@ag-ui/llamaindex";
 import { CrewAIAgent } from "@ag-ui/crewai";
 import { mastra } from "./mastra";
+import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 
 export const agentsIntegrations: AgentIntegrationConfig[] = [
   {
@@ -20,6 +21,31 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new MiddlewareStarterAgent(),
+      };
+    },
+  },
+  {
+    id: "pydantic-ai",
+    agents: async () => {
+      return {
+        agentic_chat: new PydanticAIAgent({
+          url: "http://localhost:9000/agentic_chat/",
+        }),
+        agentic_generative_ui: new PydanticAIAgent({
+          url: "http://localhost:9000/agentic_generative_ui/",
+        }),
+        human_in_the_loop: new PydanticAIAgent({
+          url: "http://localhost:9000/human_in_the_loop/",
+        }),
+        predictive_state_updates: new PydanticAIAgent({
+          url: "http://localhost:9000/predictive_state_updates/",
+        }),
+        shared_state: new PydanticAIAgent({
+          url: "http://localhost:9000/shared_state/",
+        }),
+        tool_based_generative_ui: new PydanticAIAgent({
+          url: "http://localhost:9000/tool_based_generative_ui/",
+        }),
       };
     },
   },
