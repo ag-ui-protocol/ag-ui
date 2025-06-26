@@ -211,6 +211,7 @@ def add_crewai_flow_fastapi_endpoint(app: FastAPI, flow: Flow, path: str = "/"):
             messages=input_data.messages,
             tools=input_data.tools,
         )
+        inputs["id"] = input_data.thread_id
 
         async def event_generator():
             queue = await create_queue(flow_copy)
