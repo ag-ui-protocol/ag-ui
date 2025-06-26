@@ -7,9 +7,9 @@ You can find more detailed contribution guides at [ag-ui.com](ag-ui.com)
 
 ---
 
-## 1. Start a Discussion
+## 1. Start a Discussion in Discord
 
-Before writing code, open a new **Discussion** and briefly cover:
+Before writing code, join the contributing channel in Discord:
 
 1. **Problem** – what you’re trying to solve.
 2. **Proposal** – how you plan to solve it (code, docs, design, etc.).
@@ -46,11 +46,12 @@ Need a quick sync?
 
 ## 5. Open Your Pull Request
 
+1. Please refer to naming convention: https://docs.ag-ui.com/development/contributing
 1. **Fork** the repo and create a feature branch.
 2. Keep changes focused—one PR per feature or fix.
 3. Link back to your Discussion in the PR description.
 
-We review PRs weekly. Feel free to nudge us in your Discussion if you haven’t heard back in a few days.
+We review PRs weekly. Feel free to nudge us in Discord if you haven’t heard back in a few days.
 
 ---
 
