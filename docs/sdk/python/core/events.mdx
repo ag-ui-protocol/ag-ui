@@ -25,6 +25,7 @@ class EventType(str, Enum):
     TOOL_CALL_START = "TOOL_CALL_START"
     TOOL_CALL_ARGS = "TOOL_CALL_ARGS"
     TOOL_CALL_END = "TOOL_CALL_END"
+    TOOL_CALL_RESULT = "TOOL_CALL_RESULT"
     STATE_SNAPSHOT = "STATE_SNAPSHOT"
     STATE_DELTA = "STATE_DELTA"
     MESSAGES_SNAPSHOT = "MESSAGES_SNAPSHOT"
@@ -265,6 +266,28 @@ class ToolCallEndEvent(BaseEvent):
 | -------------- | ----- | -------------------------------------- |
 | `tool_call_id` | `str` | Matches the ID from ToolCallStartEvent |
 
+### ToolCallResultEvent
+
+`from ag_ui.core import ToolCallResultEvent`
+
+Provides the result of a tool call execution.
+
+```python
+class ToolCallResultEvent(BaseEvent):
+    message_id: str
+    type: Literal[EventType.TOOL_CALL_RESULT]
+    tool_call_id: str
+    content: str
+    role: Optional[Literal["tool"]] = None
+```
+
+| Property       | Type                        | Description                                                 |
+| -------------- | --------------------------- | ----------------------------------------------------------- |
+| `message_id`   | `str`                       | ID of the conversation message this result belongs to       |
+| `tool_call_id` | `str`                       | Matches the ID from the corresponding ToolCallStartEvent    |
+| `content`      | `str`                       | The actual result/output content from the tool execution    |
+| `role`         | `Optional[Literal["tool"]]` | Optional role identifier, typically "tool" for tool results |
+
 ## State Management Events
 
 These events are used to manage agent state.
@@ -370,6 +393,7 @@ Event = Annotated[
         ToolCallStartEvent,
         ToolCallArgsEvent,
         ToolCallEndEvent,
+        ToolCallResultEvent,
         StateSnapshotEvent,
         StateDeltaEvent,
         MessagesSnapshotEvent,

@@ -1,6 +1,4 @@
 import { toArray } from "rxjs/operators";
-import { v4 as uuidv4 } from "uuid";
-import { LegacyRuntimeProtocolEvent } from "../../legacy/types";
 import { EventType, BaseEvent, RunAgentInput } from "@ag-ui/core";
 import { AbstractAgent } from "../../agent/agent";
 import { Observable, lastValueFrom } from "rxjs";
@@ -86,6 +84,63 @@ class ChunkTestAgent extends AbstractAgent {
   }
 }
 
+// Agent that emits tool call events with results
+class ToolCallTestAgent extends AbstractAgent {
+  protected run(input: RunAgentInput): Observable<BaseEvent> {
+    const toolCallId = "test-tool-call-id";
+    const toolCallName = "get_weather";
+    return new Observable<BaseEvent>((observer) => {
+      observer.next({
+        type: EventType.RUN_STARTED,
+        threadId: input.threadId,
+        runId: input.runId,
+        timestamp: Date.now(),
+      } as BaseEvent);
+
+      // Start tool call
+      observer.next({
+        type: EventType.TOOL_CALL_START,
+        toolCallId,
+        toolCallName,
+        timestamp: Date.now(),
+      } as BaseEvent);
+
+      // Tool call arguments
+      observer.next({
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId,
+        delta: '{"location": "San Francisco"}',
+        timestamp: Date.now(),
+      } as BaseEvent);
+
+      // End tool call
+      observer.next({
+        type: EventType.TOOL_CALL_END,
+        toolCallId,
+        timestamp: Date.now(),
+      } as BaseEvent);
+
+      // Tool call result
+      observer.next({
+        messageId: "test-message-id",
+        type: EventType.TOOL_CALL_RESULT,
+        toolCallId,
+        content: "The weather in San Francisco is 72°F and sunny.",
+        timestamp: Date.now(),
+      } as BaseEvent);
+
+      observer.next({
+        type: EventType.RUN_FINISHED,
+        threadId: input.threadId,
+        runId: input.runId,
+        timestamp: Date.now(),
+      } as BaseEvent);
+
+      observer.complete();
+    });
+  }
+}
+
 describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -96,7 +151,6 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
     const agent = new TestAgent({
       threadId: "test-thread-id",
       agentId: "test-agent-id",
-      debug: true,
     });
 
     // Get the observable that emits legacy events
@@ -241,7 +295,6 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
     const agent = new ChunkTestAgent({
       threadId: "test-thread-id",
       agentId: "test-agent-id",
-      debug: true,
     });
 
     // Get the observable that emits legacy events
@@ -274,6 +327,59 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
 
     // Final AgentStateMessage
     expect(legacyEvents[3]).toMatchObject({
+      type: "AgentStateMessage",
+      threadId: "test-thread-id",
+      agentName: "test-agent-id",
+      active: false,
+    });
+  });
+
+  it("should transform tool call events with results into legacy events with correct tool name", async () => {
+    // Setup agent with mock IDs
+    const agent = new ToolCallTestAgent({
+      threadId: "test-thread-id",
+      agentId: "test-agent-id",
+    });
+
+    // Get the observable that emits legacy events
+    const legacy$ = agent.legacy_to_be_removed_runAgentBridged();
+
+    // Collect all emitted events
+    const legacyEvents = await lastValueFrom(legacy$.pipe(toArray()));
+
+    // Verify events are in correct legacy format
+    expect(legacyEvents).toHaveLength(5); // ActionExecutionStart, ActionExecutionArgs, ActionExecutionEnd, ActionExecutionResult, AgentStateMessage
+
+    // ActionExecutionStart
+    expect(legacyEvents[0]).toMatchObject({
+      type: "ActionExecutionStart",
+      actionExecutionId: "test-tool-call-id",
+      actionName: "get_weather",
+    });
+
+    // ActionExecutionArgs
+    expect(legacyEvents[1]).toMatchObject({
+      type: "ActionExecutionArgs",
+      actionExecutionId: "test-tool-call-id",
+      args: '{"location": "San Francisco"}',
+    });
+
+    // ActionExecutionEnd
+    expect(legacyEvents[2]).toMatchObject({
+      type: "ActionExecutionEnd",
+      actionExecutionId: "test-tool-call-id",
+    });
+
+    // ActionExecutionResult - this should include the tool name
+    expect(legacyEvents[3]).toMatchObject({
+      type: "ActionExecutionResult",
+      actionExecutionId: "test-tool-call-id",
+      actionName: "get_weather", // This verifies the tool name is correctly included
+      result: "The weather in San Francisco is 72°F and sunny.",
+    });
+
+    // Final AgentStateMessage
+    expect(legacyEvents[4]).toMatchObject({
       type: "AgentStateMessage",
       threadId: "test-thread-id",
       agentName: "test-agent-id",

@@ -13,6 +13,7 @@ export enum EventType {
   TOOL_CALL_ARGS = "TOOL_CALL_ARGS",
   TOOL_CALL_END = "TOOL_CALL_END",
   TOOL_CALL_CHUNK = "TOOL_CALL_CHUNK",
+  TOOL_CALL_RESULT = "TOOL_CALL_RESULT",
   THINKING_START = "THINKING_START",
   THINKING_END = "THINKING_END",
   STATE_SNAPSHOT = "STATE_SNAPSHOT",
@@ -118,6 +119,14 @@ export const ToolCallEndEventSchema = BaseEventSchema.extend({
   toolCallId: z.string(),
 });
 
+export const ToolCallResultEventSchema = BaseEventSchema.extend({
+  messageId: z.string(),
+  type: z.literal(EventType.TOOL_CALL_RESULT),
+  toolCallId: z.string(),
+  content: z.string(),
+  role: z.literal("tool").optional(),
+});
+
 export const ToolCallChunkEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TOOL_CALL_CHUNK),
   toolCallId: z.string().optional(),
@@ -202,6 +211,7 @@ export const EventSchemas = z.discriminatedUnion("type", [
   ToolCallArgsEventSchema,
   ToolCallEndEventSchema,
   ToolCallChunkEventSchema,
+  ToolCallResultEventSchema,
   StateSnapshotEventSchema,
   StateDeltaEventSchema,
   MessagesSnapshotEventSchema,
@@ -226,6 +236,7 @@ export type ToolCallStartEvent = z.infer<typeof ToolCallStartEventSchema>;
 export type ToolCallArgsEvent = z.infer<typeof ToolCallArgsEventSchema>;
 export type ToolCallEndEvent = z.infer<typeof ToolCallEndEventSchema>;
 export type ToolCallChunkEvent = z.infer<typeof ToolCallChunkEventSchema>;
+export type ToolCallResultEvent = z.infer<typeof ToolCallResultEventSchema>;
 export type ThinkingStartEvent = z.infer<typeof ThinkingStartEventSchema>;
 export type ThinkingEndEvent = z.infer<typeof ThinkingEndEventSchema>;
 export type StateSnapshotEvent = z.infer<typeof StateSnapshotEventSchema>;

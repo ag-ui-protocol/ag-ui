@@ -22,6 +22,7 @@ enum EventType {
   TOOL_CALL_START = "TOOL_CALL_START",
   TOOL_CALL_ARGS = "TOOL_CALL_ARGS",
   TOOL_CALL_END = "TOOL_CALL_END",
+  TOOL_CALL_RESULT = "TOOL_CALL_RESULT",
   STATE_SNAPSHOT = "STATE_SNAPSHOT",
   STATE_DELTA = "STATE_DELTA",
   MESSAGES_SNAPSHOT = "MESSAGES_SNAPSHOT",
@@ -247,6 +248,27 @@ type ToolCallEndEvent = BaseEvent & {
 | ------------ | -------- | -------------------------------------- |
 | `toolCallId` | `string` | Matches the ID from ToolCallStartEvent |
 
+### ToolCallResultEvent
+
+Provides the result of a tool call execution.
+
+```typescript
+type ToolCallResultEvent = BaseEvent & {
+  type: EventType.TOOL_CALL_RESULT
+  messageId: string
+  toolCallId: string
+  content: string
+  role?: "tool"
+}
+```
+
+| Property     | Type                | Description                                                 |
+| ------------ | ------------------- | ----------------------------------------------------------- |
+| `messageId`  | `string`            | ID of the conversation message this result belongs to       |
+| `toolCallId` | `string`            | Matches the ID from the corresponding ToolCallStartEvent    |
+| `content`    | `string`            | The actual result/output content from the tool execution    |
+| `role`       | `"tool"` (optional) | Optional role identifier, typically "tool" for tool results |
+
 ## State Management Events
 
 These events are used to manage agent state.
@@ -344,6 +366,7 @@ const EventSchemas = z.discriminatedUnion("type", [
   ToolCallStartEventSchema,
   ToolCallArgsEventSchema,
   ToolCallEndEventSchema,
+  ToolCallResultEventSchema,
   StateSnapshotEventSchema,
   StateDeltaEventSchema,
   MessagesSnapshotEventSchema,

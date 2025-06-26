@@ -84,6 +84,7 @@ export const transformChunks =
           case EventType.TOOL_CALL_START:
           case EventType.TOOL_CALL_ARGS:
           case EventType.TOOL_CALL_END:
+          case EventType.TOOL_CALL_RESULT:
           case EventType.STATE_SNAPSHOT:
           case EventType.STATE_DELTA:
           case EventType.MESSAGES_SNAPSHOT:

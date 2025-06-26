@@ -24,6 +24,7 @@ class EventType(str, Enum):
     TOOL_CALL_ARGS = "TOOL_CALL_ARGS"
     TOOL_CALL_END = "TOOL_CALL_END"
     TOOL_CALL_CHUNK = "TOOL_CALL_CHUNK"
+    TOOL_CALL_RESULT = "TOOL_CALL_RESULT"
     THINKING_START = "THINKING_START"
     THINKING_END = "THINKING_END"
     STATE_SNAPSHOT = "STATE_SNAPSHOT"
@@ -144,6 +145,16 @@ class ToolCallChunkEvent(BaseEvent):
     parent_message_id: Optional[str] = None
     delta: Optional[str] = None
 
+class ToolCallResultEvent(BaseEvent):
+    """
+    Event containing the result of a tool call.
+    """
+    message_id: str
+    type: Literal[EventType.TOOL_CALL_RESULT]
+    tool_call_id: str
+    content: str
+    role: Optional[Literal["tool"]] = None
+
 class ThinkingStartEvent(BaseEvent):
     """
     Event indicating the start of a thinking step event.
@@ -252,6 +263,7 @@ Event = Annotated[
         ToolCallArgsEvent,
         ToolCallEndEvent,
         ToolCallChunkEvent,
+        ToolCallResultEvent,
         StateSnapshotEvent,
         StateDeltaEvent,
         MessagesSnapshotEvent,

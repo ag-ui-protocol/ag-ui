@@ -12,6 +12,8 @@ import {
   CustomEvent,
   BaseEvent,
   AssistantMessage,
+  ToolCallResultEvent,
+  ToolMessage,
 } from "@ag-ui/core";
 import { mergeMap } from "rxjs/operators";
 import { structuredClone_ } from "../utils";
@@ -148,6 +150,21 @@ export const defaultApplyEvents = (...args: Parameters<ApplyEvents>): ReturnType
         }
 
         case EventType.TOOL_CALL_END: {
+          return emitNoUpdate();
+        }
+
+        case EventType.TOOL_CALL_RESULT: {
+          const { messageId, toolCallId, content, role } = event as ToolCallResultEvent;
+
+          const toolMessage: ToolMessage = {
+            id: messageId,
+            toolCallId,
+            role: role || "tool",
+            content: content,
+          };
+
+          messages.push(toolMessage);
+
           return emitNoUpdate();
         }
 
