@@ -7,6 +7,7 @@ import type {
   RunAgentInput,
   RunFinishedEvent,
   RunStartedEvent,
+  StateSnapshotEvent,
   TextMessageChunkEvent,
   ToolCall,
   ToolCallArgsEvent,
@@ -22,9 +23,9 @@ import {
   ExperimentalEmptyAdapter,
 } from "@copilotkit/runtime";
 import { processDataStream } from "@ai-sdk/ui-utils";
-import type { CoreMessage, Mastra } from "@mastra/core";
+import type { CoreMessage, Mastra, StorageThreadType } from "@mastra/core";
 import { registerApiRoute } from "@mastra/core/server";
-import type { Agent as LocalMastraAgent } from "@mastra/core/agent";
+import { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import type { Context } from "hono";
 import { RuntimeContext } from "@mastra/core/runtime-context";
 import { randomUUID } from "crypto";
@@ -185,88 +186,148 @@ export class MastraAgent extends AbstractAgent {
     finalMessages.push(assistantMessage);
 
     return new Observable<BaseEvent>((subscriber) => {
-      subscriber.next({
-        type: EventType.RUN_STARTED,
-        threadId: input.threadId,
-        runId: input.runId,
-      } as RunStartedEvent);
+      const run = async () => {
+        subscriber.next({
+          type: EventType.RUN_STARTED,
+          threadId: input.threadId,
+          runId: input.runId,
+        } as RunStartedEvent);
 
-      this.streamMastraAgent(input, {
-        onTextPart: (text) => {
-          assistantMessage.content += text;
-          const event: TextMessageChunkEvent = {
-            type: EventType.TEXT_MESSAGE_CHUNK,
-            role: "assistant",
-            messageId,
-            delta: text,
-          };
-          subscriber.next(event);
-        },
-        onToolCallPart: (streamPart) => {
-          let toolCall: ToolCall = {
-            id: streamPart.toolCallId,
-            type: "function",
-            function: {
-              name: streamPart.toolName,
-              arguments: JSON.stringify(streamPart.args),
+        // Handle local agent memory management (from Mastra implementation)
+        if ('metrics' in this.agent) {
+          const memory = this.agent.getMemory();
+
+          if (memory && input.state && Object.keys(input.state || {}).length > 0) {
+            let thread: StorageThreadType | null = await memory.getThreadById({ threadId: input.threadId });
+
+            if (!thread) {
+              thread = {
+                id: input.threadId,
+                title: '',
+                metadata: {},
+                resourceId: this.resourceId as string,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              };
+            }
+
+            if (thread.resourceId && thread.resourceId !== this.resourceId) {
+              throw new Error(
+                `Thread with id ${input.threadId} resourceId does not match the current resourceId ${this.resourceId}`,
+              );
+            }
+
+            const { messages, ...rest } = input.state;
+            const workingMemory = JSON.stringify(rest);
+            
+            // Update thread metadata with new working memory
+            await memory.saveThread({
+              thread: {
+                ...thread,
+                metadata: {
+                  ...thread.metadata,
+                  workingMemory,
+                },
+              },
+            });
+          }
+        }
+
+        try {
+          await this.streamMastraAgent(input, {
+            onTextPart: (text) => {
+              assistantMessage.content += text;
+              const event: TextMessageChunkEvent = {
+                type: EventType.TEXT_MESSAGE_CHUNK,
+                role: "assistant",
+                messageId,
+                delta: text,
+              };
+              subscriber.next(event);
             },
-          };
-          assistantMessage.toolCalls!.push(toolCall);
+            onToolCallPart: (streamPart) => {
+              let toolCall: ToolCall = {
+                id: streamPart.toolCallId,
+                type: "function",
+                function: {
+                  name: streamPart.toolName,
+                  arguments: JSON.stringify(streamPart.args),
+                },
+              };
+              assistantMessage.toolCalls!.push(toolCall);
 
-          const startEvent: ToolCallStartEvent = {
-            type: EventType.TOOL_CALL_START,
-            parentMessageId: messageId,
-            toolCallId: streamPart.toolCallId,
-            toolCallName: streamPart.toolName,
-          };
-          subscriber.next(startEvent);
+              const startEvent: ToolCallStartEvent = {
+                type: EventType.TOOL_CALL_START,
+                parentMessageId: messageId,
+                toolCallId: streamPart.toolCallId,
+                toolCallName: streamPart.toolName,
+              };
+              subscriber.next(startEvent);
 
-          const argsEvent: ToolCallArgsEvent = {
-            type: EventType.TOOL_CALL_ARGS,
-            toolCallId: streamPart.toolCallId,
-            delta: JSON.stringify(streamPart.args),
-          };
-          subscriber.next(argsEvent);
+              const argsEvent: ToolCallArgsEvent = {
+                type: EventType.TOOL_CALL_ARGS,
+                toolCallId: streamPart.toolCallId,
+                delta: JSON.stringify(streamPart.args),
+              };
+              subscriber.next(argsEvent);
 
-          const endEvent: ToolCallEndEvent = {
-            type: EventType.TOOL_CALL_END,
-            toolCallId: streamPart.toolCallId,
-          };
-          subscriber.next(endEvent);
-        },
-        onToolResultPart(streamPart) {
-          const toolMessage: ToolMessage = {
-            role: "tool",
-            id: randomUUID(),
-            toolCallId: streamPart.toolCallId,
-            content: JSON.stringify(streamPart.result),
-          };
-          finalMessages.push(toolMessage);
-        },
-        onFinishMessagePart: () => {
-          // Emit message snapshot
-          const event: MessagesSnapshotEvent = {
-            type: EventType.MESSAGES_SNAPSHOT,
-            messages: finalMessages,
-          };
-          subscriber.next(event);
+              const endEvent: ToolCallEndEvent = {
+                type: EventType.TOOL_CALL_END,
+                toolCallId: streamPart.toolCallId,
+              };
+              subscriber.next(endEvent);
+            },
+            onToolResultPart(streamPart) {
+              const toolMessage: ToolMessage = {
+                role: "tool",
+                id: randomUUID(),
+                toolCallId: streamPart.toolCallId,
+                content: JSON.stringify(streamPart.result),
+              };
+              finalMessages.push(toolMessage);
+            },
+            onFinishMessagePart: async () => {
+              // Emit message snapshot
+              const event: MessagesSnapshotEvent = {
+                type: EventType.MESSAGES_SNAPSHOT,
+                messages: finalMessages,
+              };
+              subscriber.next(event);
 
-          // Emit run finished event
-          subscriber.next({
-            type: EventType.RUN_FINISHED,
-            threadId: input.threadId,
-            runId: input.runId,
-          } as RunFinishedEvent);
+              if ('metrics' in this.agent){
+                const memory = this.agent.getMemory();
+                if (memory) {
+                  const workingMemory = await memory.getWorkingMemory({ threadId: input.threadId, format: 'json' });
+                  subscriber.next({
+                    type: EventType.STATE_SNAPSHOT,
+                    snapshot: workingMemory,
+                  } as StateSnapshotEvent);
+                }
+              }
 
-          // Complete the observable
-          subscriber.complete();
-        },
-        onError: (error) => {
-          console.error("error", error);
-          // Handle error
+              // Emit run finished event
+              subscriber.next({
+                type: EventType.RUN_FINISHED,
+                threadId: input.threadId,
+                runId: input.runId,
+              } as RunFinishedEvent);
+
+              // Complete the observable
+              subscriber.complete();
+            },
+            onError: (error) => {
+              console.error("error", error);
+              // Handle error
+              subscriber.error(error);
+            },
+          });
+        } catch (error) {
+          console.error("Stream error:", error);
           subscriber.error(error);
-        },
-      });
+        }
+      };
+
+      run();
 
       return () => {};
     });
@@ -278,7 +339,7 @@ export class MastraAgent extends AbstractAgent {
    * @param options - The options for the mastra agent.
    * @returns The stream of the mastra agent.
    */
-  private streamMastraAgent(
+  private async streamMastraAgent(
     { threadId, runId, messages, tools }: RunAgentInput,
     {
       onTextPart,
@@ -287,7 +348,7 @@ export class MastraAgent extends AbstractAgent {
       onToolResultPart,
       onError,
     }: MastraAgentStreamOptions,
-  ) {
+  ): Promise<void> {
     const clientTools = tools.reduce(
       (acc, tool) => {
         acc[tool.name as string] = {
@@ -310,48 +371,74 @@ export class MastraAgent extends AbstractAgent {
     }
 
     if (isLocalMastraAgent(this.agent)) {
-      // in process agent
-      return this.agent
-        .stream(convertedMessages, {
+      // Local agent - use the agent's stream method directly
+      try {
+        const response = await this.agent.stream(convertedMessages, {
           threadId,
           resourceId,
           runId,
           clientTools,
           runtimeContext,
-        })
-        .then((response) => {
-          return processDataStream({
-            stream: (response as any).toDataStreamResponse().body!,
-            onTextPart,
-            onToolCallPart,
-            onToolResultPart,
-            onFinishMessagePart,
-          });
-        })
-        .catch((error) => {
-          onError?.(error);
         });
+
+        // For local agents, the response should already be a stream
+        // Process it using the agent's built-in streaming mechanism
+        if (response && typeof response === 'object') {
+          // If the response has a toDataStreamResponse method, use it
+          if ('toDataStreamResponse' in response && typeof response.toDataStreamResponse === 'function') {
+            const dataStreamResponse = response.toDataStreamResponse();
+            if (dataStreamResponse && dataStreamResponse.body) {
+              await processDataStream({
+                stream: dataStreamResponse.body,
+                onTextPart,
+                onToolCallPart,
+                onToolResultPart,
+                onFinishMessagePart,
+              });
+            } else {
+              throw new Error('Invalid data stream response from local agent');
+            }
+          } else {
+            // If it's already a readable stream, process it directly
+            await processDataStream({
+              stream: response as any,
+              onTextPart,
+              onToolCallPart,
+              onToolResultPart,
+              onFinishMessagePart,
+            });
+          }
+        } else {
+          throw new Error('Invalid response from local agent');
+        }
+      } catch (error) {
+        onError?.(error as Error);
+      }
     } else {
-      // remote agent
-      return this.agent
-        .stream({
+      // Remote agent - use the remote agent's stream method
+      try {
+        const response = await this.agent.stream({
           threadId,
           resourceId,
           runId,
           messages: convertedMessages,
           clientTools,
-        })
-        .then((response) => {
-          return response.processDataStream({
+        });
+
+        // Remote agents should have a processDataStream method
+        if (response && typeof response.processDataStream === 'function') {
+          await response.processDataStream({
             onTextPart,
             onToolCallPart,
             onToolResultPart,
             onFinishMessagePart,
           });
-        })
-        .catch((error) => {
-          onError?.(error);
-        });
+        } else {
+          throw new Error('Invalid response from remote agent');
+        }
+      } catch (error) {
+        onError?.(error as Error);
+      }
     }
   }
 }

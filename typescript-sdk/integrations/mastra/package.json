@@ -31,7 +31,7 @@
   },
   "peerDependencies": {
     "@copilotkit/runtime": "^1.8.13",
-    "@mastra/core": "^0.10.1",
+    "@mastra/core": "^0.10.6",
     "zod": "^3.0.0"
   },
   "devDependencies": {
