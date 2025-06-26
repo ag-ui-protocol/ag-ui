@@ -127,22 +127,9 @@ async def chat_node(state: AgentState, config: RunnableConfig):
                 "content": "Document written.",
                 "tool_call_id": tool_call_id
             }
-            
-            # Add confirmation tool call
-            confirm_tool_call = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [{
-                    "id": str(uuid.uuid4()),
-                    "function": {
-                        "name": "confirm_changes",
-                        "arguments": "{}"
-                    }
-                }]
-            }
-            
-            messages = messages + [tool_response, confirm_tool_call]
-            
+
+            messages = messages + [tool_response]
+
             # Return Command to route to end
             return Command(
                 goto=END,

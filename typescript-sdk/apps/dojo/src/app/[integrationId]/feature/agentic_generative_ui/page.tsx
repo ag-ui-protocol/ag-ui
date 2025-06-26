@@ -42,7 +42,7 @@ const Chat = () => {
 
       return (
         <div className="flex">
-          <div className="bg-gray-100 rounded-lg w-[500px] p-4 text-black space-y-2">
+          <div className="bg-gray-100 rounded-lg w-[800px] p-4 text-black space-y-2">
             {state.steps.map((step, index) => {
               if (step.status === "completed") {
                 return (
@@ -55,7 +55,7 @@ const Chat = () => {
                 index === state.steps.findIndex((s) => s.status === "pending")
               ) {
                 return (
-                  <div key={index} className="text-3xl font-bold text-slate-700">
+                  <div key={index} className="text-2xl font-bold text-slate-700">
                     <Spinner />
                     {step.description}
                   </div>
