@@ -2,16 +2,6 @@ import { MenuIntegrationConfig } from "./types/integration";
 
 export const menuIntegrations: MenuIntegrationConfig[] = [
   {
-    id: "middleware-starter",
-    name: "Middleware Starter",
-    features: ["agentic_chat"],
-  },
-  {
-    id: "server-starter",
-    name: "Server Starter",
-    features: ["agentic_chat"],
-  },
-  {
     id: "server-starter-all-features",
     name: "Server Starter All Features",
     features: [

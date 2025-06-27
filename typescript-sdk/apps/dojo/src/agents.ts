@@ -1,6 +1,4 @@
 import { AgentIntegrationConfig } from "./types/integration";
-import { MiddlewareStarterAgent } from "@ag-ui/middleware-starter";
-import { ServerStarterAgent } from "@ag-ui/server-starter";
 import { ServerStarterAllFeaturesAgent } from "@ag-ui/server-starter-all-features";
 import { MastraClient } from "@mastra/client-js";
 import { MastraAgent } from "@ag-ui/mastra";
@@ -12,22 +10,6 @@ import { LlamaIndexAgent } from "@ag-ui/llamaindex";
 import { CrewAIAgent } from "@ag-ui/crewai";
 
 export const agentsIntegrations: AgentIntegrationConfig[] = [
-  {
-    id: "middleware-starter",
-    agents: async () => {
-      return {
-        agentic_chat: new MiddlewareStarterAgent(),
-      };
-    },
-  },
-  {
-    id: "server-starter",
-    agents: async () => {
-      return {
-        agentic_chat: new ServerStarterAgent({ url: "http://localhost:8000/" }),
-      };
-    },
-  },
   {
     id: "server-starter-all-features",
     agents: async () => {
