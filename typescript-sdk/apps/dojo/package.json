@@ -59,7 +59,8 @@
     "rxjs": "7.8.1",
     "tailwind-merge": "^3.0.2",
     "tailwindcss-animate": "^1.0.7",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "zod": "^3.22.4"
   },
   "peerDependencies": {
     "@ag-ui/client": "workspace:*",
@@ -79,7 +80,6 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "15.2.1",
-    "nextjs-node-loader": "^1.1.9",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

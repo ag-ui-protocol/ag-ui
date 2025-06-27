@@ -4,6 +4,7 @@ import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { MockStore } from "@mastra/core/storage";
 import { Mastra } from "@mastra/core";
+import { z } from "zod";
 
 // import { weatherTool } from "../tools/weather-tool";
 
@@ -27,6 +28,14 @@ export const LOCAL_MASTRA = new Mastra({
       // tools: { weatherTool },
       memory: new Memory({
         storage: new MockStore(),
+        options: {
+          workingMemory: {
+            enabled: true,
+            schema: z.object({
+              firstName: z.string(),
+            }),
+          },
+        },
       }),
     }),
   },

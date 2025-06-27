@@ -2,7 +2,7 @@
 import React, { useState } from "react";
 import "@copilotkit/react-ui/styles.css";
 import "./style.css";
-import { CopilotKit, useCopilotAction, useCopilotChat } from "@copilotkit/react-core";
+import { CopilotKit, useCoAgent, useCopilotAction, useCopilotChat } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 
 interface AgenticChatProps {
@@ -28,6 +28,17 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
 
 const Chat = () => {
   const [background, setBackground] = useState<string>("--copilot-kit-background-color");
+
+  const { state: agentState, setState: setAgentState } = useCoAgent({
+    name: "agentic_chat",
+    initialState: {
+      firstName: "Markus",
+    },
+  });
+
+  delete (agentState as any).messages;
+
+  console.log(agentState);
 
   useCopilotAction({
     name: "lookup_weather",
