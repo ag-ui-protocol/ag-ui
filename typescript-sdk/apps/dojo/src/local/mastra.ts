@@ -2,6 +2,8 @@ import "server-only";
 import { openai } from "@ai-sdk/openai";
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
+import { MockStore } from "@mastra/core/storage";
+
 // import { weatherTool } from "../tools/weather-tool";
 
 export const agenticChatMastraAgent = (name: string) =>
@@ -21,5 +23,7 @@ export const agenticChatMastraAgent = (name: string) =>
 `,
     model: openai("gpt-4o-mini"),
     // tools: { weatherTool },
-    memory: new Memory({}),
+    memory: new Memory({
+      storage: new MockStore(),
+    }),
   });
