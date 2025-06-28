@@ -93,6 +93,7 @@ type RunAgentExtendedInput<
 > = Omit<RunAgentInput, "forwardedProps"> & {
   forwardedProps?: Omit<RunsStreamPayload<TStreamMode, TSubgraphs>, "input"> & {
     nodeName?: string;
+    threadMetadata?: Record<string, any>;
   };
 };
 
@@ -166,7 +167,7 @@ export class LangGraphAgent extends AbstractAgent {
       this.assistant = await this.getAssistant();
     }
 
-    const thread = await this.getOrCreateThread(threadId);
+    const thread = await this.getOrCreateThread(threadId, forwardedProps?.threadMetadata);
     this.activeRun!.threadId = thread.thread_id;
     const agentState = await this.client.threads.getState(thread.thread_id) ?? { values: {} } as ThreadState
 
@@ -673,13 +674,16 @@ export class LangGraphAgent extends AbstractAgent {
     return state;
   }
 
-  async getOrCreateThread(threadId: string): Promise<Thread> {
+  async getOrCreateThread(threadId: string, threadMetadata?: Record<string, any>): Promise<Thread> {
     let thread: Thread;
     try {
       try {
         thread = await this.getThread(threadId);
       } catch (error) {
-        thread = await this.createThread({ threadId });
+        thread = await this.createThread({ 
+          threadId,
+          metadata: threadMetadata 
+        });
       }
     } catch (error: unknown) {
       throw new Error(`Failed to create thread: ${(error as Error).message}`);
