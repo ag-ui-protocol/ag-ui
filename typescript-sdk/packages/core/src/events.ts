@@ -81,8 +81,8 @@ export const TextMessageEndEventSchema = BaseEventSchema.extend({
 
 export const TextMessageChunkEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TEXT_MESSAGE_CHUNK),
-  messageId: z.string().optional(),
-  role: z.literal("assistant").optional(),
+  messageId: z.string(),
+  role: z.literal("assistant"),
   delta: z.string().optional(),
 });
 
@@ -90,11 +90,9 @@ export const ThinkingTextMessageStartEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.THINKING_TEXT_MESSAGE_START),
 });
 
-export const ThinkingTextMessageContentEventSchema = TextMessageContentEventSchema.omit({
-  messageId: true,
-  type: true,
-}).extend({
+export const ThinkingTextMessageContentEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.THINKING_TEXT_MESSAGE_CONTENT),
+  delta: z.string().refine((s) => s.length > 0, "Delta must not be an empty string"),
 });
 
 export const ThinkingTextMessageEndEventSchema = BaseEventSchema.extend({
@@ -151,7 +149,7 @@ export const StateSnapshotEventSchema = BaseEventSchema.extend({
 
 export const StateDeltaEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.STATE_DELTA),
-  delta: z.array(z.any()), // JSON Patch (RFC 6902)
+  delta: z.array(z.any()), // JSON Patch (RFC 6902) operations
 });
 
 export const MessagesSnapshotEventSchema = BaseEventSchema.extend({
@@ -171,33 +169,7 @@ export const CustomEventSchema = BaseEventSchema.extend({
   value: z.any(),
 });
 
-export const RunStartedEventSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.RUN_STARTED),
-  threadId: z.string(),
-  runId: z.string(),
-});
 
-export const RunFinishedEventSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.RUN_FINISHED),
-  threadId: z.string(),
-  runId: z.string(),
-});
-
-export const RunErrorEventSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.RUN_ERROR),
-  message: z.string(),
-  code: z.string().optional(),
-});
-
-export const StepStartedEventSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.STEP_STARTED),
-  stepName: z.string(),
-});
-
-export const StepFinishedEventSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.STEP_FINISHED),
-  stepName: z.string(),
-});
 
 export const EventSchemas = z.discriminatedUnion("type", [
   TextMessageStartEventSchema,
