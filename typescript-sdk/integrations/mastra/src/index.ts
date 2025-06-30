@@ -175,6 +175,8 @@ export class MastraAgent extends AbstractAgent {
   }
 
   protected run(input: RunAgentInput): Observable<BaseEvent> {
+    console.log("STATE INPUT", input.state);
+
     const finalMessages: Message[] = [...input.messages];
     let messageId = randomUUID();
     let assistantMessage: AssistantMessage = {
@@ -194,32 +196,34 @@ export class MastraAgent extends AbstractAgent {
         } as RunStartedEvent);
 
         // Handle local agent memory management (from Mastra implementation)
-        if ('metrics' in this.agent) {
+        if ("metrics" in this.agent) {
           const memory = this.agent.getMemory();
 
           if (memory && input.state && Object.keys(input.state || {}).length > 0) {
-            let thread: StorageThreadType | null = await memory.getThreadById({ threadId: input.threadId });
+            let thread: StorageThreadType | null = await memory.getThreadById({
+              threadId: input.threadId,
+            });
 
             if (!thread) {
               thread = {
                 id: input.threadId,
-                title: '',
+                title: "",
                 metadata: {},
-                resourceId: this.resourceId as string,
+                resourceId: this.resourceId ?? input.threadId,
                 createdAt: new Date(),
                 updatedAt: new Date(),
               };
             }
 
-            if (thread.resourceId && thread.resourceId !== this.resourceId) {
-              throw new Error(
-                `Thread with id ${input.threadId} resourceId does not match the current resourceId ${this.resourceId}`,
-              );
-            }
+            // if (thread.resourceId && thread.resourceId !== this.resourceId) {
+            //   throw new Error(
+            //     `Thread with id ${input.threadId} resourceId does not match the current resourceId ${this.resourceId}`,
+            //   );
+            // }
 
             const { messages, ...rest } = input.state;
             const workingMemory = JSON.stringify(rest);
-            
+
             // Update thread metadata with new working memory
             await memory.saveThread({
               thread: {
@@ -294,10 +298,16 @@ export class MastraAgent extends AbstractAgent {
               };
               subscriber.next(event);
 
-              if ('metrics' in this.agent){
+              if ("metrics" in this.agent) {
                 const memory = this.agent.getMemory();
                 if (memory) {
-                  const workingMemory = await memory.getWorkingMemory({ threadId: input.threadId, format: 'json' });
+                  const workingMemory = await memory.getWorkingMemory({
+                    threadId: input.threadId,
+                    format: "json",
+                  });
+
+                  console.log(">>> workingMemory", workingMemory);
+
                   subscriber.next({
                     type: EventType.STATE_SNAPSHOT,
                     snapshot: workingMemory,
@@ -383,9 +393,12 @@ export class MastraAgent extends AbstractAgent {
 
         // For local agents, the response should already be a stream
         // Process it using the agent's built-in streaming mechanism
-        if (response && typeof response === 'object') {
+        if (response && typeof response === "object") {
           // If the response has a toDataStreamResponse method, use it
-          if ('toDataStreamResponse' in response && typeof response.toDataStreamResponse === 'function') {
+          if (
+            "toDataStreamResponse" in response &&
+            typeof response.toDataStreamResponse === "function"
+          ) {
             const dataStreamResponse = response.toDataStreamResponse();
             if (dataStreamResponse && dataStreamResponse.body) {
               await processDataStream({
@@ -396,7 +409,7 @@ export class MastraAgent extends AbstractAgent {
                 onFinishMessagePart,
               });
             } else {
-              throw new Error('Invalid data stream response from local agent');
+              throw new Error("Invalid data stream response from local agent");
             }
           } else {
             // If it's already a readable stream, process it directly
@@ -409,7 +422,7 @@ export class MastraAgent extends AbstractAgent {
             });
           }
         } else {
-          throw new Error('Invalid response from local agent');
+          throw new Error("Invalid response from local agent");
         }
       } catch (error) {
         onError?.(error as Error);
@@ -426,7 +439,7 @@ export class MastraAgent extends AbstractAgent {
         });
 
         // Remote agents should have a processDataStream method
-        if (response && typeof response.processDataStream === 'function') {
+        if (response && typeof response.processDataStream === "function") {
           await response.processDataStream({
             onTextPart,
             onToolCallPart,
@@ -434,7 +447,7 @@ export class MastraAgent extends AbstractAgent {
             onFinishMessagePart,
           });
         } else {
-          throw new Error('Invalid response from remote agent');
+          throw new Error("Invalid response from remote agent");
         }
       } catch (error) {
         onError?.(error as Error);

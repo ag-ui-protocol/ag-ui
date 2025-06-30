@@ -31,12 +31,10 @@ const Chat = () => {
 
   const { state: agentState, setState: setAgentState } = useCoAgent({
     name: "agentic_chat",
-    initialState: {
-      firstName: "Markus",
-    },
+    // initialState: {
+    //   firstName: "Markus",
+    // },
   });
-
-  delete (agentState as any).messages;
 
   console.log(agentState);
 
