@@ -64,7 +64,7 @@ GENERATE_RECIPE_TOOL = {
                             "enum": [level.value for level in SkillLevel],
                             "description": "The skill level required for the recipe."
                         },
-                        "dietary_preferences": {
+                        "special_preferences": {
                             "type": "array",
                             "items": {
                                 "type": "string"
@@ -95,7 +95,7 @@ GENERATE_RECIPE_TOOL = {
                             "description": "Step-by-step instructions for preparing the recipe."
                         }
                     },
-                    "required": ["title", "skill_level", "cooking_time", "dietary_preferences", "ingredients", "instructions"]
+                    "required": ["title", "skill_level", "cooking_time", "special_preferences", "ingredients", "instructions"]
                 }
             },
             "required": ["recipe"]
@@ -109,7 +109,7 @@ class Recipe(BaseModel):
     """
     title: str
     skill_level: SkillLevel
-    dietary_preferences: List[str] = Field(default_factory=list)
+    special_preferences: List[str] = Field(default_factory=list)
     cooking_time: CookingTime
     ingredients: List[Ingredient] = Field(default_factory=list)
     instructions: List[str] = Field(default_factory=list)
@@ -132,6 +132,8 @@ class SharedStateFlow(Flow[AgentState]):
         """
         This is the entry point for the flow.
         """
+        print(f"start_flow")
+        print(f"self.state: {self.state}")
 
     @router(start_flow)
     async def chat(self):
