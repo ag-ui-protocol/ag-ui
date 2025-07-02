@@ -6,7 +6,8 @@ export type Feature =
   | "human_in_the_loop"
   | "predictive_state_updates"
   | "shared_state"
-  | "tool_based_generative_ui";
+  | "tool_based_generative_ui"
+  | "gomoku";
 
 export interface MenuIntegrationConfig {
   id: string;
