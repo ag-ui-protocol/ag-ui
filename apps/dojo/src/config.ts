@@ -93,6 +93,12 @@ export const featureConfig: FeatureConfig[] = [
     description: "Chat with rich A2UI surface rendering using BuiltInAgent",
     tags: ["Chat", "A2UI", "Generative UI", "Streaming"],
   }),
+  createFeatureConfig({
+    id: "gomoku",
+    name: "Gomoku",
+    description: "A game of Gomoku",
+    tags: ["Game", "Gomoku"],
+  }),
 ];
 
 export default featureConfig;

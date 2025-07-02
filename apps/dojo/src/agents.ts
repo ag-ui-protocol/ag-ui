@@ -126,6 +126,7 @@ export const agentsIntegrations = {
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
         subgraphs: "subgraphs",
+        gomoku: "gomoku",
       }
     ),
     // Uses LangGraphHttpAgent instead of LangGraphAgent
