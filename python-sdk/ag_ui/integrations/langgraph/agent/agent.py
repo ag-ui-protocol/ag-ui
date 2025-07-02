@@ -1,0 +1,556 @@
+import uuid
+import json
+from typing import Optional, List, Any, Union, AsyncGenerator
+
+from fastapi.responses import StreamingResponse
+
+from langgraph.graph.graph import CompiledGraph
+from langchain.schema import BaseMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig, ensure_config
+from langchain_core.messages import HumanMessage
+from langgraph.types import Command
+
+from .types import State, LangGraphPlatformMessage, MessagesInProgressRecord, SchemaKeys, MessageInProgress, RunMetadata, LangGraphEventTypes, CustomEventNames
+from .utils import agui_messages_to_langchain, DEFAULT_SCHEMA_KEYS, filter_object_by_schema_keys, get_stream_payload_input, langchain_messages_to_agui
+
+from ag_ui.core import EventType, CustomEvent, MessagesSnapshotEvent, RawEvent, RunAgentInput, RunErrorEvent, RunFinishedEvent, RunStartedEvent, StateDeltaEvent, StateSnapshotEvent, StepFinishedEvent, StepStartedEvent, TextMessageContentEvent, TextMessageEndEvent, TextMessageStartEvent, ToolCallArgsEvent, ToolCallEndEvent, ToolCallStartEvent
+from ag_ui.encoder import EventEncoder
+
+ProcessedEvents = Union[
+    TextMessageStartEvent,
+    TextMessageContentEvent,
+    TextMessageEndEvent,
+    ToolCallStartEvent,
+    ToolCallArgsEvent,
+    ToolCallEndEvent,
+    StateSnapshotEvent,
+    StateDeltaEvent,
+    MessagesSnapshotEvent,
+    RawEvent,
+    CustomEvent,
+    RunStartedEvent,
+    RunFinishedEvent,
+    RunErrorEvent,
+    StepStartedEvent,
+    StepFinishedEvent,
+]
+
+class LangGraphAgent:
+    def __init__(self, *, name: str, graph: CompiledGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None):
+        self.name = name
+        self.description = description
+        self.graph = graph
+        self.config = config or {}
+        self.messages_in_process: MessagesInProgressRecord = {}
+        self.active_run: Optional[RunMetadata] = None
+        self.encoder: Optional[EventEncoder] = None
+
+    def _dispatch_event(self, event: ProcessedEvents) -> str:
+        if self.encoder:
+            return self.encoder.encode(event)
+        return str(event)  # Fallback if no encoder
+
+    async def run(self, input_data: RunAgentInput, encoder: Optional[EventEncoder] = None) -> AsyncGenerator[str, None]:
+        self.encoder = encoder
+        async for event_str in self._handle_stream_events(input_data):
+            yield event_str
+
+    async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[str, None]:
+        thread_id = input.thread_id or str(uuid.uuid4())
+        self.active_run = {
+            "id": input.run_id,
+            "thread_id": thread_id,
+        }
+
+        messages = input.messages or []
+        forwarded_props = input.forwarded_props
+        
+        self.active_run["manually_emitted_state"] = None
+        self.active_run["node_name"] = forwarded_props.get('node_name', None) if forwarded_props else None
+
+        config = ensure_config(self.config.copy() if self.config else {})
+        config["configurable"] = {**(config.get('configurable', {})), "thread_id": thread_id}
+
+        agent_state = await self.graph.aget_state(config)
+        prepared_stream_response = await self.prepare_stream(input=input, agent_state=agent_state, config=config)
+
+        yield self._dispatch_event(
+            RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["id"])
+        )
+
+        langchain_messages = agui_messages_to_langchain(messages)
+        non_system_messages = [msg for msg in langchain_messages if not isinstance(msg, SystemMessage)]
+
+        if len(agent_state.values.get("messages", [])) > len(non_system_messages):
+            # Find the last user message by working backwards from the last message
+            last_user_message = None
+            for i in range(len(langchain_messages) - 1, -1, -1):
+                if isinstance(langchain_messages[i], HumanMessage):
+                    last_user_message = langchain_messages[i]
+                    break
+
+            if last_user_message:
+                prepared_stream_response = await self.prepare_regenerate_stream(
+                    input=input,
+                    message_checkpoint=last_user_message,
+                    config=config
+                )
+
+        state = prepared_stream_response["state"]
+        stream = prepared_stream_response["stream"]
+        config = prepared_stream_response["config"]
+        events_to_dispatch = prepared_stream_response.get('events_to_dispatch', None)
+
+        if events_to_dispatch is not None and len(events_to_dispatch) > 0:
+            for event in events_to_dispatch:
+                yield self._dispatch_event(event)
+            return
+
+        should_exit = False
+        latest_state_values = state
+        async for event in stream:
+            if event["event"] == "error":
+                yield self._dispatch_event(
+                    RunErrorEvent(type=EventType.RUN_ERROR, message=event["data"]["message"], raw_event=event)
+                )
+                break
+
+            if event["event"] == "values":
+                latest_state_values = event["data"]
+                continue
+
+            if event["event"] == "updates":
+                continue
+
+            current_node_name = event.get("name")
+            event_type = event.get("event")
+            self.active_run["id"] = event.get("run_id")
+
+            should_exit = should_exit or (
+                    event_type == "on_custom_event" and
+                    event["name"] == "exit"
+                )
+
+            if current_node_name and current_node_name != self.active_run.get("node_name"):
+                if self.active_run.get("node_name"):
+                    yield self._dispatch_event(
+                        StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=self.active_run["node_name"])
+                    )
+                
+                if current_node_name:
+                    yield self._dispatch_event(
+                        StepStartedEvent(type=EventType.STEP_STARTED, step_name=current_node_name)
+                    )
+                    self.active_run["node_name"] = current_node_name
+
+            updated_state = self.active_run.get("manually_emitted_state") or latest_state_values
+            has_state_diff = updated_state != state
+
+            if has_state_diff and not self.get_message_in_progress(self.active_run["id"]):
+                state = updated_state
+                self.active_run["prev_node_name"] = self.active_run["node_name"]
+                yield self._dispatch_event(
+                    StateSnapshotEvent(
+                        type=EventType.STATE_SNAPSHOT,
+                        snapshot=self.get_state_snapshot(state),
+                        raw_event=event,
+                    )
+                )
+
+            yield self._dispatch_event(
+                RawEvent(type=EventType.RAW, event=event)
+            )
+
+            async for single_event in self._handle_single_event(event, state):
+                yield single_event
+
+        state_after_run = await self.graph.aget_state(config)
+        tasks = state_after_run.tasks
+        interrupts = tasks[0].interrupts if tasks and len(tasks) > 0 else []
+
+        if interrupts:
+            self.active_run["node_name"] = self.active_run["node_name"]
+        elif "writes" in state_after_run.metadata and state_after_run.metadata["writes"]:
+            self.active_run["node_name"] = list(state_after_run.metadata["writes"].keys())[0]
+        elif hasattr(state_after_run, "next") and state_after_run.next and state_after_run.next[0]:
+            self.active_run["node_name"] = state_after_run.next[0]
+        else:
+            self.active_run["node_name"] = "__end__"
+
+        for interrupt in interrupts:
+            yield self._dispatch_event(
+                CustomEvent(
+                    type=EventType.CUSTOM,
+                    name=LangGraphEventTypes.OnInterrupt.value,
+                    value=json.dumps(interrupt.value) if not isinstance(interrupt.value, str) else interrupt.value,
+                    raw_event=interrupt,
+                )
+            )
+
+        yield self._dispatch_event(
+            StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(state_after_run.values))
+        )
+        
+        yield self._dispatch_event(
+            MessagesSnapshotEvent(
+                type=EventType.MESSAGES_SNAPSHOT,
+                messages=langchain_messages_to_agui(state_after_run.values.get("messages", [])),
+            )
+        )
+
+        if self.active_run.get("node_name"):
+            yield self._dispatch_event(
+                StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=self.active_run["node_name"])
+            )
+
+        yield self._dispatch_event(
+            RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
+        )
+
+    async def prepare_stream(self, input: RunAgentInput, agent_state: State, config: RunnableConfig):
+        state_input = input.state or {}
+        messages = input.messages or []
+        tools = input.tools or []
+        forwarded_props = input.forwarded_props or {}
+        thread_id = input.thread_id
+
+        state_input["messages"] = agent_state.values.get("messages", [])
+        # TODO: validate if we need current graph state
+        self.active_run["current_graph_state"] = agent_state.values
+        langchain_messages = agui_messages_to_langchain(messages)
+        state = self.langgraph_default_merge_state(state_input, langchain_messages, tools)
+        self.active_run["current_graph_state"].update(state)
+        config["configurable"]["thread_id"] = thread_id
+        interrupts = agent_state.tasks[0].interrupts if agent_state.tasks and len(agent_state.tasks) > 0 else []
+        has_active_interrupts = len(interrupts) > 0
+        resume_input = forwarded_props.get('command', {}).get('resume', None)
+
+        events_to_dispatch = []
+        if has_active_interrupts and not resume_input:
+            events_to_dispatch.append(
+                RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["id"])
+            )
+
+            for interrupt in interrupts:
+                events_to_dispatch.append(
+                    CustomEvent(
+                        type=EventType.CUSTOM,
+                        name=LangGraphEventTypes.OnInterrupt.value,
+                        value=json.dumps(interrupt.value) if not isinstance(interrupt.value, str) else interrupt.value,
+                        raw_event=interrupt,
+                    )
+                )
+
+            events_to_dispatch.append(
+                RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
+            )
+            return {
+                "stream": None,
+                "state": None,
+                "config": None,
+                "events_to_dispatch": events_to_dispatch,
+            }
+
+        mode = "continue" if thread_id and self.active_run.get("node_name") != "__end__" and self.active_run.get("node_name") else "start"
+
+        if mode == "continue":
+            await self.graph.aupdate_state(config, state, as_node=self.active_run.get("node_name"))
+
+        self.active_run["schema_keys"] = self.get_schema_keys(config)
+
+        if resume_input:
+            stream_input = Command(resume=resume_input)
+        else:
+            payload_input = get_stream_payload_input(
+                mode=mode,
+                state=state,
+                schema_keys=self.active_run["schema_keys"],
+            )
+            stream_input = {**forwarded_props, **payload_input}
+
+        return {
+            "stream": self.graph.astream_events(stream_input, config, version="v2"),
+            "state": state,
+            "config": config
+        }
+
+    async def prepare_regenerate_stream( # pylint: disable=too-many-arguments
+            self,
+            input: RunAgentInput,
+            message_checkpoint: HumanMessage,
+            config: RunnableConfig
+    ):
+        tools = input.tools or []
+        thread_id = input.thread_id
+
+        time_travel_checkpoint = await self.get_checkpoint_before_message(message_checkpoint.id, thread_id)
+        if time_travel_checkpoint is None:
+            return None
+
+        fork = await self.graph.aupdate_state(
+            time_travel_checkpoint.config,
+            time_travel_checkpoint.values,
+            as_node=time_travel_checkpoint.next[0] if time_travel_checkpoint.next else "__start__"
+        )
+
+        stream_input = self.langgraph_default_merge_state(time_travel_checkpoint.values, [message_checkpoint], tools)
+        stream = self.graph.astream_events(stream_input, fork, version="v2")
+
+        return {
+            "stream": stream,
+            "state": time_travel_checkpoint.values,
+            "config": config
+        }
+
+    def get_message_in_progress(self, run_id: str) -> Optional[MessageInProgress]:
+        return self.messages_in_process.get(run_id)
+
+    def set_message_in_progress(self, run_id: str, data: MessageInProgress):
+        current_message_in_progress = self.messages_in_process.get(run_id, {})
+        self.messages_in_process[run_id] = {
+            **current_message_in_progress,
+            **data,
+        }
+
+    def get_schema_keys(self, config) -> SchemaKeys:
+        CONSTANT_KEYS = ['messages']
+        try:
+            input_schema = self.graph.get_input_jsonschema(config)
+            output_schema = self.graph.get_output_jsonschema(config)
+            config_schema = self.graph.config_schema().schema()
+
+            input_schema_keys = list(input_schema["properties"].keys()) if "properties" in input_schema else []
+            output_schema_keys = list(output_schema["properties"].keys()) if "properties" in output_schema else []
+            config_schema_keys = list(config_schema["properties"].keys()) if "properties" in config_schema else []
+
+            return {
+                "input": [*input_schema_keys, *CONSTANT_KEYS],
+                "output": [*output_schema_keys, *CONSTANT_KEYS],
+                "config": config_schema_keys,
+            }
+        except Exception:
+            return {
+                "input": CONSTANT_KEYS,
+                "output": CONSTANT_KEYS,
+                "config": [],
+            }
+
+    def langgraph_default_merge_state(self, state: State, messages: List[BaseMessage], tools: Any) -> State:
+        if messages and isinstance(messages[0], SystemMessage):
+            messages = messages[1:]
+
+        existing_messages: List[LangGraphPlatformMessage] = state.get("messages", [])
+        existing_message_ids = {msg.id for msg in existing_messages}
+
+        new_messages = [msg for msg in messages if msg.id not in existing_message_ids]
+
+        tools_as_dicts = []
+        if tools:
+            for tool in tools:
+                if hasattr(tool, "model_dump"):
+                    tools_as_dicts.append(tool.model_dump())
+                elif hasattr(tool, "dict"):
+                    tools_as_dicts.append(tool.dict())
+                else:
+                    tools_as_dicts.append(tool)
+
+        return {
+            **state,
+            "messages": new_messages,
+            "tools": [*state.get("tools", []), *tools_as_dicts],
+        }
+
+    def get_state_snapshot(self, state: State) -> State:
+        schema_keys = self.active_run["schema_keys"]
+        if schema_keys and schema_keys.get("output"):
+            state = filter_object_by_schema_keys(state, [*DEFAULT_SCHEMA_KEYS, *schema_keys["output"]])
+        return state
+
+    async def _handle_single_event(self, event: Any, state: State) -> AsyncGenerator[str, None]:
+        event_type = event.get("event")
+        if event_type == LangGraphEventTypes.OnChatModelStream:
+            should_emit_messages = event["metadata"].get("emit-messages", True)
+            should_emit_tool_calls = event["metadata"].get("emit-tool-calls", True)
+
+            if event["data"]["chunk"].response_metadata.get('finish_reason', None):
+                return
+
+            current_stream = self.get_message_in_progress(self.active_run["id"])
+            has_current_stream = bool(current_stream and current_stream.get("id"))
+            tool_call_data = event["data"]["chunk"].tool_call_chunks[0] if event["data"]["chunk"].tool_call_chunks else None
+            predict_state_metadata = event["metadata"].get("predict_state", [])
+            tool_call_used_to_predict_state = False
+            if tool_call_data and tool_call_data.get("name") and predict_state_metadata:
+                tool_call_used_to_predict_state = any(
+                    predict_tool.get("tool") == tool_call_data["name"]
+                    for predict_tool in predict_state_metadata
+                )
+
+            is_tool_call_start_event = not has_current_stream and tool_call_data and tool_call_data.get("name")
+            is_tool_call_args_event = has_current_stream and current_stream.get("tool_call_id") and tool_call_data and tool_call_data.get("args")
+            is_tool_call_end_event = has_current_stream and current_stream.get("tool_call_id") and not tool_call_data
+
+            is_message_start_event = not has_current_stream and not tool_call_data
+            is_message_content_event = has_current_stream and not tool_call_data
+            is_message_end_event = has_current_stream and not current_stream.get("tool_call_id") and not is_message_content_event
+
+            if tool_call_used_to_predict_state:
+                yield self._dispatch_event(
+                    CustomEvent(
+                        type=EventType.CUSTOM,
+                        name="PredictState",
+                        value=predict_state_metadata,
+                        raw_event=event
+                    )
+                )
+
+            if is_tool_call_end_event:
+                resolved = self._dispatch_event(
+                    ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=current_stream["tool_call_id"], raw_event=event)
+                )
+                if resolved:
+                    self.messages_in_process[self.active_run["id"]] = None
+                yield resolved
+                return
+
+            if is_message_end_event:
+                resolved = self._dispatch_event(
+                    TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=current_stream["id"], raw_event=event)
+                )
+                if resolved:
+                    self.messages_in_process[self.active_run["id"]] = None
+                yield resolved
+                return
+
+            if is_tool_call_start_event and should_emit_tool_calls:
+                resolved = self._dispatch_event(
+                    ToolCallStartEvent(
+                        type=EventType.TOOL_CALL_START,
+                        tool_call_id=tool_call_data["id"],
+                        tool_call_name=tool_call_data["name"],
+                        parent_message_id=event["data"]["chunk"].id,
+                        raw_event=event,
+                    )
+                )
+                if resolved:
+                    self.set_message_in_progress(
+                        self.active_run["id"],
+                        MessageInProgress(id=event["data"]["chunk"].id, tool_call_id=tool_call_data["id"], tool_call_name=tool_call_data["name"])
+                    )
+                yield resolved
+                return
+
+            if is_tool_call_args_event and should_emit_tool_calls:
+                yield self._dispatch_event(
+                    ToolCallArgsEvent(type=EventType.TOOL_CALL_ARGS, tool_call_id=current_stream["tool_call_id"], delta=tool_call_data["args"], raw_event=event)
+                )
+                return
+
+            if is_message_start_event and should_emit_messages:
+                resolved = self._dispatch_event(
+                    TextMessageStartEvent(
+                        type=EventType.TEXT_MESSAGE_START,
+                        role="assistant",
+                        message_id=event["data"]["chunk"].id,
+                        raw_event=event,
+                    )
+                )
+                if resolved:
+                    self.set_message_in_progress(
+                        self.active_run["id"], MessageInProgress(id=event["data"]["chunk"].id)
+                    )
+                yield resolved
+                return
+
+            if is_message_content_event and should_emit_messages:
+                yield self._dispatch_event(
+                    TextMessageContentEvent(
+                        type=EventType.TEXT_MESSAGE_CONTENT,
+                        message_id=current_stream["id"],
+                        delta=event["data"]["chunk"].content,
+                        raw_event=event,
+                    )
+                )
+                return
+
+        elif event_type == LangGraphEventTypes.OnChatModelEnd:
+            if self.get_message_in_progress(self.active_run["id"]) and self.get_message_in_progress(self.active_run["id"]).get("tool_call_id"):
+                resolved = self._dispatch_event(
+                    ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=self.get_message_in_progress(self.active_run["id"])["tool_call_id"], raw_event=event)
+                )
+                if resolved:
+                    self.messages_in_process[self.active_run["id"]] = None
+                yield resolved
+            elif self.get_message_in_progress(self.active_run["id"]) and self.get_message_in_progress(self.active_run["id"]).get("id"):
+                resolved = self._dispatch_event(
+                    TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=self.get_message_in_progress(self.active_run["id"])["id"], raw_event=event)
+                )
+                if resolved:
+                    self.messages_in_process[self.active_run["id"]] = None
+                yield resolved
+
+        elif event_type == LangGraphEventTypes.OnCustomEvent:
+            if event["name"] == CustomEventNames.ManuallyEmitMessage:
+                yield self._dispatch_event(
+                    TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, role="assistant", message_id=event["data"]["message_id"], raw_event=event)
+                )
+                yield self._dispatch_event(
+                    TextMessageContentEvent(
+                        type=EventType.TEXT_MESSAGE_CONTENT,
+                        message_id=event["data"]["message_id"],
+                        delta=event["data"]["message"],
+                        raw_event=event,
+                    )
+                )
+                yield self._dispatch_event(
+                    TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=event["data"]["message_id"], raw_event=event)
+                )
+
+            elif event["name"] == CustomEventNames.ManuallyEmitToolCall:
+                yield self._dispatch_event(
+                    ToolCallStartEvent(
+                        type=EventType.TOOL_CALL_START,
+                        tool_call_id=event["data"]["id"],
+                        tool_call_name=event["data"]["name"],
+                        parent_message_id=event["data"]["id"],
+                        raw_event=event,
+                    )
+                )
+                yield self._dispatch_event(
+                    ToolCallArgsEvent(type=EventType.TOOL_CALL_ARGS, tool_call_id=event["data"]["id"], delta=event["data"]["args"], raw_event=event)
+                )
+                yield self._dispatch_event(
+                    ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=event["data"]["id"], raw_event=event)
+                )
+
+            elif event["name"] == CustomEventNames.ManuallyEmitState:
+                self.active_run["manually_emitted_state"] = event["data"]
+                yield self._dispatch_event(
+                    StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(state), raw_event=event)
+                )
+            
+            yield self._dispatch_event(
+                CustomEvent(type=EventType.CUSTOM, name=event["name"], value=event["data"], raw_event=event)
+            )
+
+    async def get_checkpoint_before_message(self, message_id: str, thread_id: str):
+        if not thread_id:
+            raise ValueError("Missing thread_id in config")
+
+        history_list = []
+        async for snapshot in self.graph.aget_state_history({"configurable": {"thread_id": thread_id}}):
+            history_list.append(snapshot)
+
+        history_list.reverse()
+        for idx, snapshot in enumerate(history_list):
+            messages = snapshot.values.get("messages", [])
+            if any(getattr(m, "id", None) == message_id for m in messages):
+                if idx == 0:
+                    # No snapshot before this
+                    # Return synthetic "empty before" version
+                    empty_snapshot = snapshot
+                    empty_snapshot.values["messages"] = []
+                    return empty_snapshot
+                return history_list[idx - 1]  # return one snapshot *before* the one that includes the message
+
+        raise ValueError("Message ID not found in history")

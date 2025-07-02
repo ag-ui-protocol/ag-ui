@@ -6,10 +6,12 @@ import os
 from dotenv import load_dotenv
 load_dotenv() # pylint: disable=wrong-import-position
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 import uvicorn
 from ag_ui.core.types import RunAgentInput
 from ag_ui.integrations.langgraph import LangGraphAgent
+from fastapi.responses import StreamingResponse
+from ag_ui.encoder import EventEncoder
 
 # Import all agent examples
 from .human_in_the_loop.agent import human_in_the_loop_graph
@@ -57,19 +59,28 @@ def create_agents(context):
     }
 
 @app.post("/agent/{agent_id}")
-async def run_agent_endpoint(agent_id: str, input_data: RunAgentInput):
-    """
-    This endpoint consumes the LangGraphAgent.
-    """
+async def run_agent_endpoint(agent_id: str, input_data: RunAgentInput, request: Request):
+    """Agentic chat endpoint"""
+    # Get the accept header from the request
+    accept_header = request.headers.get("accept")
+
+    # Create an event encoder to properly format SSE events
+    encoder = EventEncoder(accept=accept_header)
+
     agents = create_agents({})
     agent = agents.get(agent_id)
-    # agent_names = set(agents.keys())
-    # filtered_tools = [tool for tool in input_data.tools if tool.name not in agent_names]
-    # print(filtered_tools)
-    # input_data.tools = filtered_tools
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
-    return await agent.run(input_data)
+
+    async def event_generator():
+        async for event in agent.run(input_data, encoder):
+            yield event  # Events are already encoded by the agent
+
+    return StreamingResponse(
+        event_generator(),
+        media_type=encoder.get_content_type()
+    )
+
 
 
 def main():
