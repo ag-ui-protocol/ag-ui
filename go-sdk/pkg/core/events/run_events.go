@@ -23,6 +23,42 @@ func NewRunStartedEvent(threadID, runID string) *RunStartedEvent {
 	}
 }
 
+// NewRunStartedEventWithOptions creates a new run started event with options
+func NewRunStartedEventWithOptions(threadID, runID string, options ...RunStartedOption) *RunStartedEvent {
+	event := &RunStartedEvent{
+		BaseEvent: NewBaseEvent(EventTypeRunStarted),
+		ThreadID:  threadID,
+		RunID:     runID,
+	}
+
+	for _, opt := range options {
+		opt(event)
+	}
+
+	return event
+}
+
+// RunStartedOption defines options for creating run started events
+type RunStartedOption func(*RunStartedEvent)
+
+// WithAutoRunID automatically generates a unique run ID if the provided runID is empty
+func WithAutoRunID() RunStartedOption {
+	return func(e *RunStartedEvent) {
+		if e.RunID == "" {
+			e.RunID = GenerateRunID()
+		}
+	}
+}
+
+// WithAutoThreadID automatically generates a unique thread ID if the provided threadID is empty
+func WithAutoThreadID() RunStartedOption {
+	return func(e *RunStartedEvent) {
+		if e.ThreadID == "" {
+			e.ThreadID = GenerateThreadID()
+		}
+	}
+}
+
 // Validate validates the run started event
 func (e *RunStartedEvent) Validate() error {
 	if err := e.BaseEvent.Validate(); err != nil {
@@ -30,11 +66,11 @@ func (e *RunStartedEvent) Validate() error {
 	}
 
 	if e.ThreadID == "" {
-		return fmt.Errorf("thread ID is required")
+		return fmt.Errorf("RunStartedEvent validation failed: threadId field is required")
 	}
 
 	if e.RunID == "" {
-		return fmt.Errorf("run ID is required")
+		return fmt.Errorf("RunStartedEvent validation failed: runId field is required")
 	}
 
 	return nil
@@ -76,6 +112,42 @@ func NewRunFinishedEvent(threadID, runID string) *RunFinishedEvent {
 	}
 }
 
+// NewRunFinishedEventWithOptions creates a new run finished event with options
+func NewRunFinishedEventWithOptions(threadID, runID string, options ...RunFinishedOption) *RunFinishedEvent {
+	event := &RunFinishedEvent{
+		BaseEvent: NewBaseEvent(EventTypeRunFinished),
+		ThreadID:  threadID,
+		RunID:     runID,
+	}
+
+	for _, opt := range options {
+		opt(event)
+	}
+
+	return event
+}
+
+// RunFinishedOption defines options for creating run finished events
+type RunFinishedOption func(*RunFinishedEvent)
+
+// WithAutoRunIDFinished automatically generates a unique run ID if the provided runID is empty
+func WithAutoRunIDFinished() RunFinishedOption {
+	return func(e *RunFinishedEvent) {
+		if e.RunID == "" {
+			e.RunID = GenerateRunID()
+		}
+	}
+}
+
+// WithAutoThreadIDFinished automatically generates a unique thread ID if the provided threadID is empty
+func WithAutoThreadIDFinished() RunFinishedOption {
+	return func(e *RunFinishedEvent) {
+		if e.ThreadID == "" {
+			e.ThreadID = GenerateThreadID()
+		}
+	}
+}
+
 // Validate validates the run finished event
 func (e *RunFinishedEvent) Validate() error {
 	if err := e.BaseEvent.Validate(); err != nil {
@@ -83,11 +155,11 @@ func (e *RunFinishedEvent) Validate() error {
 	}
 
 	if e.ThreadID == "" {
-		return fmt.Errorf("thread ID is required")
+		return fmt.Errorf("RunFinishedEvent validation failed: threadId field is required")
 	}
 
 	if e.RunID == "" {
-		return fmt.Errorf("run ID is required")
+		return fmt.Errorf("RunFinishedEvent validation failed: runId field is required")
 	}
 
 	return nil
@@ -152,6 +224,15 @@ func WithRunID(runID string) RunErrorOption {
 	}
 }
 
+// WithAutoRunIDError automatically generates a unique run ID if the provided runID is empty
+func WithAutoRunIDError() RunErrorOption {
+	return func(e *RunErrorEvent) {
+		if e.RunID == "" {
+			e.RunID = GenerateRunID()
+		}
+	}
+}
+
 // Validate validates the run error event
 func (e *RunErrorEvent) Validate() error {
 	if err := e.BaseEvent.Validate(); err != nil {
@@ -159,7 +240,7 @@ func (e *RunErrorEvent) Validate() error {
 	}
 
 	if e.Message == "" {
-		return fmt.Errorf("error message is required")
+		return fmt.Errorf("RunErrorEvent validation failed: message field is required")
 	}
 
 	return nil
@@ -202,6 +283,32 @@ func NewStepStartedEvent(stepName string) *StepStartedEvent {
 	}
 }
 
+// NewStepStartedEventWithOptions creates a new step started event with options
+func NewStepStartedEventWithOptions(stepName string, options ...StepStartedOption) *StepStartedEvent {
+	event := &StepStartedEvent{
+		BaseEvent: NewBaseEvent(EventTypeStepStarted),
+		StepName:  stepName,
+	}
+
+	for _, opt := range options {
+		opt(event)
+	}
+
+	return event
+}
+
+// StepStartedOption defines options for creating step started events
+type StepStartedOption func(*StepStartedEvent)
+
+// WithAutoStepName automatically generates a unique step name if the provided stepName is empty
+func WithAutoStepName() StepStartedOption {
+	return func(e *StepStartedEvent) {
+		if e.StepName == "" {
+			e.StepName = GenerateStepID()
+		}
+	}
+}
+
 // Validate validates the step started event
 func (e *StepStartedEvent) Validate() error {
 	if err := e.BaseEvent.Validate(); err != nil {
@@ -209,7 +316,7 @@ func (e *StepStartedEvent) Validate() error {
 	}
 
 	if e.StepName == "" {
-		return fmt.Errorf("step name is required")
+		return fmt.Errorf("StepStartedEvent validation failed: stepName field is required")
 	}
 
 	return nil
@@ -248,6 +355,32 @@ func NewStepFinishedEvent(stepName string) *StepFinishedEvent {
 	}
 }
 
+// NewStepFinishedEventWithOptions creates a new step finished event with options
+func NewStepFinishedEventWithOptions(stepName string, options ...StepFinishedOption) *StepFinishedEvent {
+	event := &StepFinishedEvent{
+		BaseEvent: NewBaseEvent(EventTypeStepFinished),
+		StepName:  stepName,
+	}
+
+	for _, opt := range options {
+		opt(event)
+	}
+
+	return event
+}
+
+// StepFinishedOption defines options for creating step finished events
+type StepFinishedOption func(*StepFinishedEvent)
+
+// WithAutoStepNameFinished automatically generates a unique step name if the provided stepName is empty
+func WithAutoStepNameFinished() StepFinishedOption {
+	return func(e *StepFinishedEvent) {
+		if e.StepName == "" {
+			e.StepName = GenerateStepID()
+		}
+	}
+}
+
 // Validate validates the step finished event
 func (e *StepFinishedEvent) Validate() error {
 	if err := e.BaseEvent.Validate(); err != nil {
@@ -255,7 +388,7 @@ func (e *StepFinishedEvent) Validate() error {
 	}
 
 	if e.StepName == "" {
-		return fmt.Errorf("step name is required")
+		return fmt.Errorf("StepFinishedEvent validation failed: stepName field is required")
 	}
 
 	return nil

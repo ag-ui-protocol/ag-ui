@@ -46,7 +46,7 @@ func (e *RawEvent) Validate() error {
 	}
 
 	if e.Event == nil {
-		return fmt.Errorf("event data is required")
+		return fmt.Errorf("RawEvent validation failed: event field is required")
 	}
 
 	return nil
@@ -119,7 +119,7 @@ func (e *CustomEvent) Validate() error {
 	}
 
 	if e.Name == "" {
-		return fmt.Errorf("custom event name is required")
+		return fmt.Errorf("CustomEvent validation failed: name field is required")
 	}
 
 	return nil

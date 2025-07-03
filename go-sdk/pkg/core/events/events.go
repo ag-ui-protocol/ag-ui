@@ -93,11 +93,11 @@ func NewBaseEvent(eventType EventType) *BaseEvent {
 // Validate validates the base event structure
 func (b *BaseEvent) Validate() error {
 	if b.EventType == "" {
-		return fmt.Errorf("event type is required")
+		return fmt.Errorf("BaseEvent validation failed: type field is required")
 	}
 
 	if !isValidEventType(b.EventType) {
-		return fmt.Errorf("invalid event type: %s", b.EventType)
+		return fmt.Errorf("BaseEvent validation failed: invalid event type '%s'", b.EventType)
 	}
 
 	return nil

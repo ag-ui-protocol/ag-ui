@@ -38,6 +38,15 @@ func WithRole(role string) TextMessageStartOption {
 	}
 }
 
+// WithAutoMessageID automatically generates a unique message ID if the provided messageID is empty
+func WithAutoMessageID() TextMessageStartOption {
+	return func(e *TextMessageStartEvent) {
+		if e.MessageID == "" {
+			e.MessageID = GenerateMessageID()
+		}
+	}
+}
+
 // Validate validates the text message start event
 func (e *TextMessageStartEvent) Validate() error {
 	if err := e.BaseEvent.Validate(); err != nil {
@@ -45,7 +54,7 @@ func (e *TextMessageStartEvent) Validate() error {
 	}
 
 	if e.MessageID == "" {
-		return fmt.Errorf("message ID is required")
+		return fmt.Errorf("TextMessageStartEvent validation failed: messageId field is required")
 	}
 
 	return nil
@@ -90,6 +99,33 @@ func NewTextMessageContentEvent(messageID, delta string) *TextMessageContentEven
 	}
 }
 
+// NewTextMessageContentEventWithOptions creates a new text message content event with options
+func NewTextMessageContentEventWithOptions(messageID, delta string, options ...TextMessageContentOption) *TextMessageContentEvent {
+	event := &TextMessageContentEvent{
+		BaseEvent: NewBaseEvent(EventTypeTextMessageContent),
+		MessageID: messageID,
+		Delta:     delta,
+	}
+
+	for _, opt := range options {
+		opt(event)
+	}
+
+	return event
+}
+
+// TextMessageContentOption defines options for creating text message content events
+type TextMessageContentOption func(*TextMessageContentEvent)
+
+// WithAutoMessageIDContent automatically generates a unique message ID if the provided messageID is empty
+func WithAutoMessageIDContent() TextMessageContentOption {
+	return func(e *TextMessageContentEvent) {
+		if e.MessageID == "" {
+			e.MessageID = GenerateMessageID()
+		}
+	}
+}
+
 // Validate validates the text message content event
 func (e *TextMessageContentEvent) Validate() error {
 	if err := e.BaseEvent.Validate(); err != nil {
@@ -97,11 +133,11 @@ func (e *TextMessageContentEvent) Validate() error {
 	}
 
 	if e.MessageID == "" {
-		return fmt.Errorf("message ID is required")
+		return fmt.Errorf("TextMessageContentEvent validation failed: messageId field is required")
 	}
 
 	if e.Delta == "" {
-		return fmt.Errorf("delta must not be empty")
+		return fmt.Errorf("TextMessageContentEvent validation failed: delta field must not be empty")
 	}
 
 	return nil
@@ -141,6 +177,32 @@ func NewTextMessageEndEvent(messageID string) *TextMessageEndEvent {
 	}
 }
 
+// NewTextMessageEndEventWithOptions creates a new text message end event with options
+func NewTextMessageEndEventWithOptions(messageID string, options ...TextMessageEndOption) *TextMessageEndEvent {
+	event := &TextMessageEndEvent{
+		BaseEvent: NewBaseEvent(EventTypeTextMessageEnd),
+		MessageID: messageID,
+	}
+
+	for _, opt := range options {
+		opt(event)
+	}
+
+	return event
+}
+
+// TextMessageEndOption defines options for creating text message end events
+type TextMessageEndOption func(*TextMessageEndEvent)
+
+// WithAutoMessageIDEnd automatically generates a unique message ID if the provided messageID is empty
+func WithAutoMessageIDEnd() TextMessageEndOption {
+	return func(e *TextMessageEndEvent) {
+		if e.MessageID == "" {
+			e.MessageID = GenerateMessageID()
+		}
+	}
+}
+
 // Validate validates the text message end event
 func (e *TextMessageEndEvent) Validate() error {
 	if err := e.BaseEvent.Validate(); err != nil {
@@ -148,7 +210,7 @@ func (e *TextMessageEndEvent) Validate() error {
 	}
 
 	if e.MessageID == "" {
-		return fmt.Errorf("message ID is required")
+		return fmt.Errorf("TextMessageEndEvent validation failed: messageId field is required")
 	}
 
 	return nil

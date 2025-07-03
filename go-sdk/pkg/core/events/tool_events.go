@@ -40,6 +40,15 @@ func WithParentMessageID(parentMessageID string) ToolCallStartOption {
 	}
 }
 
+// WithAutoToolCallID automatically generates a unique tool call ID if the provided toolCallID is empty
+func WithAutoToolCallID() ToolCallStartOption {
+	return func(e *ToolCallStartEvent) {
+		if e.ToolCallID == "" {
+			e.ToolCallID = GenerateToolCallID()
+		}
+	}
+}
+
 // Validate validates the tool call start event
 func (e *ToolCallStartEvent) Validate() error {
 	if err := e.BaseEvent.Validate(); err != nil {
@@ -47,11 +56,11 @@ func (e *ToolCallStartEvent) Validate() error {
 	}
 
 	if e.ToolCallID == "" {
-		return fmt.Errorf("tool call ID is required")
+		return fmt.Errorf("ToolCallStartEvent validation failed: toolCallId field is required")
 	}
 
 	if e.ToolCallName == "" {
-		return fmt.Errorf("tool call name is required")
+		return fmt.Errorf("ToolCallStartEvent validation failed: toolCallName field is required")
 	}
 
 	return nil
@@ -97,6 +106,33 @@ func NewToolCallArgsEvent(toolCallID, delta string) *ToolCallArgsEvent {
 	}
 }
 
+// NewToolCallArgsEventWithOptions creates a new tool call args event with options
+func NewToolCallArgsEventWithOptions(toolCallID, delta string, options ...ToolCallArgsOption) *ToolCallArgsEvent {
+	event := &ToolCallArgsEvent{
+		BaseEvent:  NewBaseEvent(EventTypeToolCallArgs),
+		ToolCallID: toolCallID,
+		Delta:      delta,
+	}
+
+	for _, opt := range options {
+		opt(event)
+	}
+
+	return event
+}
+
+// ToolCallArgsOption defines options for creating tool call args events
+type ToolCallArgsOption func(*ToolCallArgsEvent)
+
+// WithAutoToolCallIDArgs automatically generates a unique tool call ID if the provided toolCallID is empty
+func WithAutoToolCallIDArgs() ToolCallArgsOption {
+	return func(e *ToolCallArgsEvent) {
+		if e.ToolCallID == "" {
+			e.ToolCallID = GenerateToolCallID()
+		}
+	}
+}
+
 // Validate validates the tool call args event
 func (e *ToolCallArgsEvent) Validate() error {
 	if err := e.BaseEvent.Validate(); err != nil {
@@ -104,11 +140,11 @@ func (e *ToolCallArgsEvent) Validate() error {
 	}
 
 	if e.ToolCallID == "" {
-		return fmt.Errorf("tool call ID is required")
+		return fmt.Errorf("ToolCallArgsEvent validation failed: toolCallId field is required")
 	}
 
 	if e.Delta == "" {
-		return fmt.Errorf("delta must not be empty")
+		return fmt.Errorf("ToolCallArgsEvent validation failed: delta field must not be empty")
 	}
 
 	return nil
@@ -148,6 +184,32 @@ func NewToolCallEndEvent(toolCallID string) *ToolCallEndEvent {
 	}
 }
 
+// NewToolCallEndEventWithOptions creates a new tool call end event with options
+func NewToolCallEndEventWithOptions(toolCallID string, options ...ToolCallEndOption) *ToolCallEndEvent {
+	event := &ToolCallEndEvent{
+		BaseEvent:  NewBaseEvent(EventTypeToolCallEnd),
+		ToolCallID: toolCallID,
+	}
+
+	for _, opt := range options {
+		opt(event)
+	}
+
+	return event
+}
+
+// ToolCallEndOption defines options for creating tool call end events
+type ToolCallEndOption func(*ToolCallEndEvent)
+
+// WithAutoToolCallIDEnd automatically generates a unique tool call ID if the provided toolCallID is empty
+func WithAutoToolCallIDEnd() ToolCallEndOption {
+	return func(e *ToolCallEndEvent) {
+		if e.ToolCallID == "" {
+			e.ToolCallID = GenerateToolCallID()
+		}
+	}
+}
+
 // Validate validates the tool call end event
 func (e *ToolCallEndEvent) Validate() error {
 	if err := e.BaseEvent.Validate(); err != nil {
@@ -155,7 +217,7 @@ func (e *ToolCallEndEvent) Validate() error {
 	}
 
 	if e.ToolCallID == "" {
-		return fmt.Errorf("tool call ID is required")
+		return fmt.Errorf("ToolCallEndEvent validation failed: toolCallId field is required")
 	}
 
 	return nil

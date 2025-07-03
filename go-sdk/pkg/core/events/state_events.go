@@ -29,7 +29,7 @@ func (e *StateSnapshotEvent) Validate() error {
 	}
 
 	if e.Snapshot == nil {
-		return fmt.Errorf("snapshot is required")
+		return fmt.Errorf("StateSnapshotEvent validation failed: snapshot field is required")
 	}
 
 	return nil
@@ -89,46 +89,47 @@ func (e *StateDeltaEvent) Validate() error {
 	}
 
 	if len(e.Delta) == 0 {
-		return fmt.Errorf("delta operations are required")
+		return fmt.Errorf("StateDeltaEvent validation failed: delta field must contain at least one operation")
 	}
 
-	// Validate each JSON Patch operation
+	// Validate each JSON patch operation
 	for i, op := range e.Delta {
 		if err := validateJSONPatchOperation(op); err != nil {
-			return fmt.Errorf("invalid JSON patch operation at index %d: %w", i, err)
+			return fmt.Errorf("StateDeltaEvent validation failed: invalid operation at index %d: %w", i, err)
 		}
 	}
 
 	return nil
 }
 
-// validateJSONPatchOperation validates a single JSON Patch operation
+// validateJSONPatchOperation validates a single JSON patch operation
 func validateJSONPatchOperation(op JSONPatchOperation) error {
 	// Validate operation type
-	switch op.Op {
-	case "add", "remove", "replace", "move", "copy", "test":
-		// Valid operation
-	default:
-		return fmt.Errorf("invalid operation: %s", op.Op)
+	validOps := []string{"add", "remove", "replace", "move", "copy", "test"}
+	validOp := false
+	for _, valid := range validOps {
+		if op.Op == valid {
+			validOp = true
+			break
+		}
+	}
+	if !validOp {
+		return fmt.Errorf("op field must be one of: add, remove, replace, move, copy, test, got: %s", op.Op)
 	}
 
 	// Validate path
 	if op.Path == "" {
-		return fmt.Errorf("path is required")
+		return fmt.Errorf("path field is required")
 	}
 
-	// Validate required fields for specific operations
-	switch op.Op {
-	case "add", "replace", "test":
-		// These operations require a value
-		if op.Value == nil {
-			return fmt.Errorf("value is required for %s operation", op.Op)
-		}
-	case "move", "copy":
-		// These operations require a from path
-		if op.From == "" {
-			return fmt.Errorf("from path is required for %s operation", op.Op)
-		}
+	// Validate value for operations that require it
+	if (op.Op == "add" || op.Op == "replace" || op.Op == "test") && op.Value == nil {
+		return fmt.Errorf("value field is required for %s operation", op.Op)
+	}
+
+	// Validate from for operations that require it
+	if (op.Op == "move" || op.Op == "copy") && op.From == "" {
+		return fmt.Errorf("from field is required for %s operation", op.Op)
 	}
 
 	return nil
@@ -252,11 +253,11 @@ func (e *MessagesSnapshotEvent) Validate() error {
 // validateMessage validates a single message
 func validateMessage(msg Message) error {
 	if msg.ID == "" {
-		return fmt.Errorf("message ID is required")
+		return fmt.Errorf("message id field is required")
 	}
 
 	if msg.Role == "" {
-		return fmt.Errorf("message role is required")
+		return fmt.Errorf("message role field is required")
 	}
 
 	// Validate tool calls if present
@@ -272,15 +273,15 @@ func validateMessage(msg Message) error {
 // validateToolCall validates a single tool call
 func validateToolCall(toolCall ToolCall) error {
 	if toolCall.ID == "" {
-		return fmt.Errorf("tool call ID is required")
+		return fmt.Errorf("tool call id field is required")
 	}
 
 	if toolCall.Type == "" {
-		return fmt.Errorf("tool call type is required")
+		return fmt.Errorf("tool call type field is required")
 	}
 
 	if toolCall.Function.Name == "" {
-		return fmt.Errorf("function name is required")
+		return fmt.Errorf("function name field is required")
 	}
 
 	return nil

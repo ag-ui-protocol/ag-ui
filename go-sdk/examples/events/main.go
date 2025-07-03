@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/ag-ui/go-sdk/pkg/core/events"
 )
@@ -12,179 +14,313 @@ func main() {
 	fmt.Println("AG-UI Events Example")
 	fmt.Println("====================")
 
-	// Create a sequence of events representing an agent interaction
-	sequence := createEventSequence()
+	// 1. Basic event creation and validation
+	demonstrateBasicEvents()
 
-	// Demonstrate validation
-	fmt.Println("\n1. Validating event sequence...")
-	if err := events.ValidateSequence(sequence); err != nil {
-		log.Fatal("Validation failed:", err)
-	}
-	fmt.Println("✓ Event sequence is valid")
+	// 2. Auto-generation features
+	demonstrateAutoGeneration()
 
-	// Demonstrate JSON serialization
-	fmt.Println("\n2. JSON serialization example...")
-	demonstrateJSONSerialization(sequence[1]) // Use the message start event
+	// 3. Fluent builder pattern
+	demonstrateFluentBuilder()
 
-	// Demonstrate protobuf conversion
-	fmt.Println("\n3. Protobuf conversion example...")
-	demonstrateProtobufConversion(sequence[2]) // Use the message content event
+	// 4. Validation levels
+	demonstrateValidationLevels()
 
-	// Demonstrate event creation with options
-	fmt.Println("\n4. Event creation with options...")
-	demonstrateEventOptions()
+	// 5. Event sequence validation
+	demonstrateSequenceValidation()
 
-	// Demonstrate state events
-	fmt.Println("\n5. State event examples...")
+	// 6. JSON and protobuf serialization
+	demonstrateSerialization()
+
+	// 7. State management
 	demonstrateStateEvents()
+
+	// 8. Custom events
+	demonstrateCustomEvents()
 
 	fmt.Println("\nAll examples completed successfully!")
 }
 
-func createEventSequence() []events.Event {
-	fmt.Println("Creating a typical agent interaction sequence...")
+func demonstrateBasicEvents() {
+	fmt.Println("\n1. Basic Event Creation and Validation")
+	fmt.Println("======================================")
 
-	// Create events in order
-	runStarted := events.NewRunStartedEvent("thread-123", "run-456")
-	fmt.Printf("  - Created RUN_STARTED event (Run ID: %s)\n", runStarted.RunID)
+	// Create basic events
+	runEvent := events.NewRunStartedEvent("thread-123", "run-456")
+	msgEvent := events.NewTextMessageStartEvent("msg-1", events.WithRole("user"))
+	toolEvent := events.NewToolCallStartEvent("tool-1", "get_weather",
+		events.WithParentMessageID("msg-1"))
 
-	msgStart := events.NewTextMessageStartEvent("msg-1", events.WithRole("user"))
-	fmt.Printf("  - Created TEXT_MESSAGE_START event (Message ID: %s)\n", msgStart.MessageID)
-
-	msgContent1 := events.NewTextMessageContentEvent("msg-1", "What's the weather like in ")
-	msgContent2 := events.NewTextMessageContentEvent("msg-1", "San Francisco?")
-	fmt.Printf("  - Created TEXT_MESSAGE_CONTENT events\n")
-
-	msgEnd := events.NewTextMessageEndEvent("msg-1")
-	fmt.Printf("  - Created TEXT_MESSAGE_END event\n")
-
-	toolStart := events.NewToolCallStartEvent("tool-1", "get_weather", events.WithParentMessageID("msg-1"))
-	fmt.Printf("  - Created TOOL_CALL_START event (Tool: %s)\n", toolStart.ToolCallName)
-
-	toolArgs := events.NewToolCallArgsEvent("tool-1", `{"location": "San Francisco, CA"}`)
-	fmt.Printf("  - Created TOOL_CALL_ARGS event\n")
-
-	toolEnd := events.NewToolCallEndEvent("tool-1")
-	fmt.Printf("  - Created TOOL_CALL_END event\n")
-
-	runFinished := events.NewRunFinishedEvent("thread-123", "run-456")
-	fmt.Printf("  - Created RUN_FINISHED event\n")
-
-	return []events.Event{
-		runStarted, msgStart, msgContent1, msgContent2, msgEnd,
-		toolStart, toolArgs, toolEnd, runFinished,
+	// Validate events
+	events := []events.Event{runEvent, msgEvent, toolEvent}
+	for i, event := range events {
+		if err := event.Validate(); err != nil {
+			log.Printf("Event %d validation failed: %v", i, err)
+		} else {
+			fmt.Printf("✓ %s event is valid\n", event.Type())
+		}
 	}
 }
 
-func demonstrateJSONSerialization(event events.Event) {
-	// Serialize to JSON
+func demonstrateAutoGeneration() {
+	fmt.Println("\n2. Automatic ID Generation")
+	fmt.Println("===========================")
+
+	// Manual ID generation
+	runID := events.GenerateRunID()
+	messageID := events.GenerateMessageID()
+	toolCallID := events.GenerateToolCallID()
+	fmt.Printf("Generated IDs: run=%s, message=%s, tool=%s\n", runID, messageID, toolCallID)
+
+	// Auto-generation with options
+	runEvent := events.NewRunStartedEventWithOptions("", "",
+		events.WithAutoRunID(),
+		events.WithAutoThreadID())
+
+	msgEvent := events.NewTextMessageStartEvent("",
+		events.WithAutoMessageID(),
+		events.WithRole("assistant"))
+
+	fmt.Printf("Auto-generated run event: threadId=%s, runId=%s\n",
+		runEvent.ThreadID, runEvent.RunID)
+	fmt.Printf("Auto-generated message event: messageId=%s\n",
+		msgEvent.MessageID)
+}
+
+func demonstrateFluentBuilder() {
+	fmt.Println("\n3. Fluent Builder Pattern")
+	fmt.Println("=========================")
+
+	// Simple event with builder
+	event, err := events.NewEventBuilder().
+		RunStarted().
+		WithThreadID("thread-456").
+		WithRunID("run-789").
+		WithCurrentTimestamp().
+		Build()
+
+	if err != nil {
+		log.Printf("Builder error: %v", err)
+		return
+	}
+
+	fmt.Printf("✓ Built run started event with timestamp: %d\n", *event.Timestamp())
+
+	// Complex event with auto-generation
+	complexEvent, err := events.NewEventBuilder().
+		TextMessageStart().
+		WithRole("user").
+		WithAutoGenerateIDs().
+		Build()
+
+	if err != nil {
+		log.Printf("Builder error: %v", err)
+		return
+	}
+
+	if msgEvent, ok := complexEvent.(*events.TextMessageStartEvent); ok {
+		fmt.Printf("✓ Built message start event with auto ID: %s\n", msgEvent.MessageID)
+	}
+
+	// State delta with multiple operations
+	stateEvent, err := events.NewEventBuilder().
+		StateDelta().
+		AddDeltaOperation("add", "/counter", 42).
+		AddDeltaOperation("replace", "/status", "active").
+		AddDeltaOperation("remove", "/oldField", nil).
+		Build()
+
+	if err != nil {
+		log.Printf("Builder error: %v", err)
+		return
+	}
+
+	if deltaEvent, ok := stateEvent.(*events.StateDeltaEvent); ok {
+		fmt.Printf("✓ Built state delta event with %d operations\n", len(deltaEvent.Delta))
+	}
+}
+
+func demonstrateValidationLevels() {
+	fmt.Println("\n4. Validation Levels")
+	fmt.Println("====================")
+
+	// Create an event with some missing fields
+	baseEvent := &events.BaseEvent{
+		EventType: events.EventTypeRunStarted,
+		// Missing timestamp
+	}
+
+	runEvent := &events.RunStartedEvent{
+		BaseEvent: baseEvent,
+		ThreadID:  "thread-123",
+		RunID:     "", // Empty run ID
+	}
+
+	ctx := context.Background()
+
+	// Strict validation (should fail)
+	strictValidator := events.NewValidator(events.DefaultValidationConfig())
+	if err := strictValidator.ValidateEvent(ctx, runEvent); err != nil {
+		fmt.Printf("✓ Strict validation failed as expected: %v\n", err)
+	}
+
+	// Permissive validation (should pass with allowEmptyIDs)
+	permissiveConfig := events.PermissiveValidationConfig()
+	permissiveConfig.AllowEmptyIDs = true
+	permissiveValidator := events.NewValidator(permissiveConfig)
+
+	if err := permissiveValidator.ValidateEvent(ctx, runEvent); err != nil {
+		fmt.Printf("Permissive validation failed: %v\n", err)
+	} else {
+		fmt.Printf("✓ Permissive validation passed\n")
+	}
+
+	// Custom validation with timestamp range
+	start := time.Now().Add(-1 * time.Hour).UnixMilli()
+	end := time.Now().Add(1 * time.Hour).UnixMilli()
+
+	customConfig := &events.ValidationConfig{
+		Level: events.ValidationCustom,
+		CustomValidators: []events.CustomValidator{
+			events.NewTimestampValidator(start, end),
+			events.NewEventTypeValidator(events.EventTypeRunStarted, events.EventTypeRunFinished),
+		},
+	}
+
+	customValidator := events.NewValidator(customConfig)
+
+	// Create event with valid timestamp
+	validEvent := events.NewRunStartedEvent("thread-123", "run-456")
+	if err := customValidator.ValidateEvent(ctx, validEvent); err != nil {
+		fmt.Printf("Custom validation failed: %v\n", err)
+	} else {
+		fmt.Printf("✓ Custom validation passed\n")
+	}
+}
+
+func demonstrateSequenceValidation() {
+	fmt.Println("\n5. Event Sequence Validation")
+	fmt.Println("=============================")
+
+	// Create a valid sequence
+	validSequence := []events.Event{
+		events.NewRunStartedEvent("thread-1", "run-1"),
+		events.NewStepStartedEvent("planning"),
+		events.NewTextMessageStartEvent("msg-1", events.WithRole("user")),
+		events.NewTextMessageContentEvent("msg-1", "What's the weather like?"),
+		events.NewTextMessageEndEvent("msg-1"),
+		events.NewToolCallStartEvent("tool-1", "get_weather",
+			events.WithParentMessageID("msg-1")),
+		events.NewToolCallArgsEvent("tool-1", `{"location": "San Francisco"}`),
+		events.NewToolCallEndEvent("tool-1"),
+		events.NewStepFinishedEvent("planning"),
+		events.NewRunFinishedEvent("thread-1", "run-1"),
+	}
+
+	if err := events.ValidateSequence(validSequence); err != nil {
+		log.Printf("Valid sequence validation failed: %v", err)
+	} else {
+		fmt.Printf("✓ Valid sequence passed validation (%d events)\n", len(validSequence))
+	}
+
+	// Create an invalid sequence (duplicate message start)
+	invalidSequence := []events.Event{
+		events.NewTextMessageStartEvent("msg-1", events.WithRole("user")),
+		events.NewTextMessageStartEvent("msg-1", events.WithRole("user")), // Duplicate
+	}
+
+	if err := events.ValidateSequence(invalidSequence); err != nil {
+		fmt.Printf("✓ Invalid sequence correctly rejected: %v\n", err)
+	} else {
+		fmt.Println("Invalid sequence unexpectedly passed validation")
+	}
+}
+
+func demonstrateSerialization() {
+	fmt.Println("\n6. JSON and Protobuf Serialization")
+	fmt.Println("===================================")
+
+	// Create a complex event
+	event := events.NewToolCallStartEvent("tool-123", "get_weather",
+		events.WithParentMessageID("msg-456"))
+
+	// JSON serialization
 	jsonData, err := event.ToJSON()
 	if err != nil {
-		log.Fatal("JSON serialization failed:", err)
+		log.Printf("JSON serialization failed: %v", err)
+		return
 	}
 
-	// Pretty print the JSON
-	var prettyJSON map[string]interface{}
-	json.Unmarshal(jsonData, &prettyJSON)
-	prettyData, _ := json.MarshalIndent(prettyJSON, "", "  ")
+	fmt.Printf("JSON: %s\n", string(jsonData))
 
-	fmt.Printf("Event type: %s\n", event.Type())
-	fmt.Printf("JSON output:\n%s\n", string(prettyData))
-
-	// Parse back from JSON
+	// JSON deserialization
 	parsedEvent, err := events.EventFromJSON(jsonData)
 	if err != nil {
-		log.Fatal("JSON parsing failed:", err)
+		log.Printf("JSON deserialization failed: %v", err)
+		return
 	}
 
-	fmt.Printf("✓ Successfully parsed back from JSON (type: %s)\n", parsedEvent.Type())
-}
+	fmt.Printf("✓ JSON round-trip successful, type: %s\n", parsedEvent.Type())
 
-func demonstrateProtobufConversion(event events.Event) {
-	// Convert to protobuf
-	_, err := event.ToProtobuf()
+	// Protobuf serialization
+	pbEvent, err := event.ToProtobuf()
 	if err != nil {
-		log.Fatal("Protobuf conversion failed:", err)
+		log.Printf("Protobuf serialization failed: %v", err)
+		return
 	}
 
-	fmt.Printf("Event type: %s\n", event.Type())
-	fmt.Printf("✓ Successfully converted to protobuf\n")
+	fmt.Printf("✓ Protobuf serialization successful\n")
 
-	// Serialize to binary
-	binaryData, err := events.EventToProtobufBytes(event)
+	// Protobuf deserialization
+	parsedPbEvent, err := events.EventFromProtobuf(pbEvent)
 	if err != nil {
-		log.Fatal("Protobuf binary serialization failed:", err)
+		log.Printf("Protobuf deserialization failed: %v", err)
+		return
 	}
 
-	fmt.Printf("✓ Binary serialization: %d bytes\n", len(binaryData))
-
-	// Parse back from binary
-	parsedEvent, err := events.EventFromProtobufBytes(binaryData)
-	if err != nil {
-		log.Fatal("Protobuf binary parsing failed:", err)
-	}
-
-	fmt.Printf("✓ Successfully parsed back from binary (type: %s)\n", parsedEvent.Type())
-}
-
-func demonstrateEventOptions() {
-	// Run error with options
-	errorEvent := events.NewRunErrorEvent(
-		"Database connection failed",
-		events.WithErrorCode("DB_CONNECTION_ERROR"),
-		events.WithRunID("run-789"),
-	)
-	fmt.Printf("Run error event: %s (code: %s)\n", errorEvent.Message, *errorEvent.Code)
-
-	// Tool call with parent message
-	toolEvent := events.NewToolCallStartEvent(
-		"tool-2",
-		"search_database",
-		events.WithParentMessageID("msg-2"),
-	)
-	fmt.Printf("Tool call event: %s (parent: %s)\n", toolEvent.ToolCallName, *toolEvent.ParentMessageID)
-
-	// Raw event with source
-	rawEvent := events.NewRawEvent(
-		map[string]interface{}{"system": "external", "data": "raw"},
-		events.WithSource("external-api"),
-	)
-	fmt.Printf("Raw event from source: %s\n", *rawEvent.Source)
-
-	// Custom event with value
-	customEvent := events.NewCustomEvent(
-		"user-interaction",
-		events.WithValue(map[string]interface{}{"action": "click", "target": "button"}),
-	)
-	fmt.Printf("Custom event: %s\n", customEvent.Name)
+	fmt.Printf("✓ Protobuf round-trip successful, type: %s\n", parsedPbEvent.Type())
 }
 
 func demonstrateStateEvents() {
+	fmt.Println("\n7. State Management")
+	fmt.Println("===================")
+
 	// State snapshot
-	state := map[string]interface{}{
+	state := map[string]any{
 		"counter": 42,
 		"status":  "active",
-		"user_id": "user-123",
-		"preferences": map[string]interface{}{
-			"theme": "dark",
-			"lang":  "en",
+		"data":    []string{"item1", "item2", "item3"},
+		"config": map[string]any{
+			"timeout": 30,
+			"retries": 3,
 		},
 	}
 
 	snapshotEvent := events.NewStateSnapshotEvent(state)
-	fmt.Printf("State snapshot with %d top-level keys\n", len(state))
+	fmt.Printf("✓ Created state snapshot with %d top-level fields\n", len(state))
 
-	// State delta (JSON Patch operations)
-	delta := []events.JSONPatchOperation{
+	// State delta with JSON Patch operations
+	deltaOps := []events.JSONPatchOperation{
+		{Op: "add", Path: "/newField", Value: "newValue"},
 		{Op: "replace", Path: "/counter", Value: 43},
-		{Op: "add", Path: "/preferences/notifications", Value: true},
-		{Op: "remove", Path: "/status"},
+		{Op: "remove", Path: "/data/1"}, // Remove "item2"
+		{Op: "replace", Path: "/config/timeout", Value: 60},
 	}
 
-	deltaEvent := events.NewStateDeltaEvent(delta)
-	fmt.Printf("State delta with %d operations:\n", len(delta))
-	for i, op := range delta {
-		fmt.Printf("  %d. %s %s\n", i+1, op.Op, op.Path)
+	deltaEvent := events.NewStateDeltaEvent(deltaOps)
+	fmt.Printf("✓ Created state delta with %d operations\n", len(deltaOps))
+
+	// Validate events
+	if err := snapshotEvent.Validate(); err != nil {
+		log.Printf("Snapshot validation failed: %v", err)
+	} else {
+		fmt.Printf("✓ State snapshot validation passed\n")
+	}
+
+	if err := deltaEvent.Validate(); err != nil {
+		log.Printf("Delta validation failed: %v", err)
+	} else {
+		fmt.Printf("✓ State delta validation passed\n")
 	}
 
 	// Messages snapshot
@@ -192,18 +328,23 @@ func demonstrateStateEvents() {
 		{
 			ID:      "msg-1",
 			Role:    "user",
-			Content: stringPtr("Hello, can you help me?"),
+			Content: stringPtr("Hello, how can you help me?"),
 		},
 		{
-			ID:   "msg-2",
+			ID:      "msg-2",
+			Role:    "assistant",
+			Content: stringPtr("I can help you with various tasks. What would you like to do?"),
+		},
+		{
+			ID:   "msg-3",
 			Role: "assistant",
 			ToolCalls: []events.ToolCall{
 				{
 					ID:   "tool-1",
 					Type: "function",
 					Function: events.Function{
-						Name:      "search_help",
-						Arguments: `{"query": "user assistance"}`,
+						Name:      "search_docs",
+						Arguments: `{"query": "task examples"}`,
 					},
 				},
 			},
@@ -211,16 +352,69 @@ func demonstrateStateEvents() {
 	}
 
 	messagesEvent := events.NewMessagesSnapshotEvent(messages)
-	fmt.Printf("Messages snapshot with %d messages\n", len(messages))
+	fmt.Printf("✓ Created messages snapshot with %d messages\n", len(messages))
 
-	// Validate all state events
-	stateEvents := []events.Event{snapshotEvent, deltaEvent, messagesEvent}
-	if err := events.ValidateSequence(stateEvents); err != nil {
-		log.Fatal("State events validation failed:", err)
+	if err := messagesEvent.Validate(); err != nil {
+		log.Printf("Messages validation failed: %v", err)
+	} else {
+		fmt.Printf("✓ Messages snapshot validation passed\n")
 	}
-	fmt.Printf("✓ All state events validated successfully\n")
 }
 
+func demonstrateCustomEvents() {
+	fmt.Println("\n8. Custom Events")
+	fmt.Println("================")
+
+	// Custom event with structured data
+	customEvent := events.NewCustomEvent("user-interaction",
+		events.WithValue(map[string]any{
+			"action":    "button_click",
+			"target":    "submit-form",
+			"timestamp": time.Now().Unix(),
+			"metadata": map[string]any{
+				"page":    "/checkout",
+				"session": "sess-789",
+			},
+		}))
+
+	fmt.Printf("✓ Created custom event: %s\n", customEvent.Name)
+
+	// Raw event for external data
+	externalData := map[string]any{
+		"source": "analytics-service",
+		"event":  "page_view",
+		"url":    "/dashboard",
+		"userId": "user-123",
+	}
+
+	rawEvent := events.NewRawEvent(externalData,
+		events.WithSource("analytics-service"))
+
+	fmt.Printf("✓ Created raw event from source: %s\n", *rawEvent.Source)
+
+	// Validate custom events
+	events := []events.Event{customEvent, rawEvent}
+	for i, event := range events {
+		if err := event.Validate(); err != nil {
+			log.Printf("Custom event %d validation failed: %v", i, err)
+		} else {
+			fmt.Printf("✓ Custom event %d validation passed\n", i)
+		}
+	}
+
+	// Serialize custom event to see the output
+	jsonData, err := customEvent.ToJSON()
+	if err != nil {
+		log.Printf("Custom event JSON serialization failed: %v", err)
+	} else {
+		var prettyJSON map[string]any
+		json.Unmarshal(jsonData, &prettyJSON)
+		prettyData, _ := json.MarshalIndent(prettyJSON, "", "  ")
+		fmt.Printf("Custom event JSON:\n%s\n", string(prettyData))
+	}
+}
+
+// Helper function for creating string pointers
 func stringPtr(s string) *string {
 	return &s
 }
