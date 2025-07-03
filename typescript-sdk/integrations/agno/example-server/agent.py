@@ -29,4 +29,4 @@ agui_app = AGUIApp(
 app = agui_app.get_app()
 
 if __name__ == "__main__":
-  agui_app.serve(app="agent:app", port=9001, reload=True)
+  agui_app.serve(app="agent:app", host="0.0.0.0", port=9001, reload=True)
