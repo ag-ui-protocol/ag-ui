@@ -16,7 +16,7 @@ var (
 // ConfigError represents configuration-related errors
 type ConfigError struct {
 	Field string
-	Value interface{}
+	Value any
 	Err   error
 }
 
@@ -55,5 +55,21 @@ func (e *ProtocolError) Error() string {
 }
 
 func (e *ProtocolError) Unwrap() error {
+	return e.Err
+}
+
+// ProtobufError represents protobuf-specific errors
+type ProtobufError struct {
+	Operation string
+	EventType string
+	Err       error
+}
+
+func (e *ProtobufError) Error() string {
+	return fmt.Sprintf("protobuf error in %s for event type %s: %v",
+		e.Operation, e.EventType, e.Err)
+}
+
+func (e *ProtobufError) Unwrap() error {
 	return e.Err
 }

@@ -14,7 +14,7 @@ func TestNew(t *testing.T) {
 		name    string
 		config  Config
 		wantErr bool
-		errType interface{}
+		errType any
 	}{
 		{
 			name: "valid config",
@@ -108,9 +108,9 @@ func TestClient_SendEvent(t *testing.T) {
 	tests := []struct {
 		name      string
 		agentName string
-		event     interface{}
+		event     any
 		wantErr   bool
-		errType   interface{}
+		errType   any
 	}{
 		{
 			name:      "valid request",
@@ -177,7 +177,7 @@ func TestClient_Stream(t *testing.T) {
 		name      string
 		agentName string
 		wantErr   bool
-		errType   interface{}
+		errType   any
 	}{
 		{
 			name:      "valid request",

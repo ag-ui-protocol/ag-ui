@@ -64,7 +64,7 @@ func TestEventInterface(t *testing.T) {
 	t.Run("ToolEvent", func(t *testing.T) {
 		data := ToolData{
 			ToolName: "calculator",
-			Args: map[string]interface{}{
+			Args: map[string]any{
 				"operation": "add",
 				"x":         5,
 				"y":         3,
@@ -166,14 +166,14 @@ type mockAgent struct {
 func (m *mockAgent) Name() string        { return m.name }
 func (m *mockAgent) Description() string { return m.desc }
 
-func (m *mockAgent) HandleEvent(ctx context.Context, event interface{}) ([]interface{}, error) {
+func (m *mockAgent) HandleEvent(ctx context.Context, event any) ([]any, error) {
 	// Type assert to MessageEvent and create a response
 	if msgEvent, ok := event.(Event[MessageData]); ok {
 		response := NewEvent("response-"+msgEvent.ID(), "response", MessageData{
 			Content: "Echo: " + msgEvent.Data().Content,
 			Sender:  m.name,
 		})
-		return []interface{}{response}, nil
+		return []any{response}, nil
 	}
 	return nil, nil
 }

@@ -159,23 +159,28 @@ proto-gen:
 		echo "Proto directory $(PROTO_DIR) not found. Creating..."; \
 		mkdir -p $(PROTO_DIR); \
 	fi
-	@if [ ! -d "$(PROTO_OUT)" ]; then \
-		mkdir -p $(PROTO_OUT); \
+	@if [ ! -d "$(PROTO_OUT)/generated" ]; then \
+		mkdir -p $(PROTO_OUT)/generated; \
 	fi
 	@if command -v $(PROTOC) >/dev/null 2>&1 && command -v $(PROTOC_GEN_GO) >/dev/null 2>&1; then \
-		find $(PROTO_DIR) -name "*.proto" -exec $(PROTOC) \
-			--go_out=$(PROTO_OUT) \
+		$(PROTOC) \
+			--go_out=$(PROTO_OUT)/generated \
 			--go_opt=paths=source_relative \
-			--proto_path=$(PROTO_DIR) {} + ; \
+			--proto_path=$(PROTO_DIR) \
+			$(PROTO_DIR)/*.proto; \
 		echo "Protobuf code generation completed"; \
+		echo "Generated files:"; \
+		ls -la $(PROTO_OUT)/generated/*.pb.go 2>/dev/null || echo "No .pb.go files found"; \
 	else \
 		echo "protoc or protoc-gen-go not found. Install protoc and run: go install google.golang.org/protobuf/cmd/protoc-gen-go@latest"; \
+		exit 1; \
 	fi
 
 ## proto-clean: Clean generated protobuf files
 proto-clean:
 	@echo "Cleaning generated protobuf files..."
-	find $(PROTO_OUT) -name "*.pb.go" -delete 2>/dev/null || true
+	find $(PROTO_OUT)/generated -name "*.pb.go" -delete 2>/dev/null || true
+	@echo "Cleaned protobuf files"
 
 ## build-all: Build for all supported platforms
 build-all: clean

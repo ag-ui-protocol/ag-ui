@@ -94,11 +94,46 @@ make deps-update  # Update all dependencies
 make deps-verify  # Verify integrity and security
 ```
 
-#### Protocol Buffers (Future)
+#### Protocol Buffers
 ```bash
 make proto-gen    # Generate Go code from .proto files
 make proto-clean  # Clean generated protobuf files
 ```
+
+### Protocol Buffer Development
+
+The AG-UI Go SDK uses Protocol Buffers for efficient cross-platform message serialization. Protocol definitions are maintained in the `proto/` directory and Go code is automatically generated.
+
+#### Setup Requirements
+- `protoc` compiler (3.21+)
+- `protoc-gen-go` plugin
+
+#### Generation Workflow
+```bash
+# Install tools (if not already done)
+make tools-install
+
+# Generate Go code from proto files
+make proto-gen
+
+# Verify compatibility with other SDKs
+go run scripts/verify-proto-compatibility.go
+
+# Clean generated files (if needed)
+make proto-clean
+```
+
+#### Protocol Files
+- `proto/events.proto` - Core AG-UI event definitions (16 event types)
+- `proto/types.proto` - Common message types (Message, ToolCall)
+- `proto/patch.proto` - JSON Patch operations for state deltas
+
+Generated Go code is placed in `pkg/proto/generated/` and includes:
+- Proper Go naming conventions (PascalCase)
+- JSON serialization tags (camelCase for web compatibility)
+- Cross-SDK compatibility with TypeScript and Python implementations
+
+For detailed information, see [proto/README.md](proto/README.md).
 
 ### Development Best Practices
 
@@ -129,13 +164,17 @@ go-sdk/
 │   ├── core/           # Core types and interfaces
 │   ├── encoding/       # Message encoding
 │   ├── middleware/     # Middleware components
-│   ├── proto/          # Generated protobuf code (future)
+│   ├── proto/          # Generated protobuf code
+│   │   └── generated/  # Auto-generated Go code from .proto files
 │   ├── server/         # Server implementation
 │   ├── state/          # State management
 │   ├── tools/          # Development tools
 │   └── transport/      # Transport implementations
 ├── internal/           # Private packages
-├── proto/              # Protocol buffer definitions (future)
+├── proto/              # Protocol buffer definitions
+│   ├── events.proto    # Core AG-UI event definitions
+│   ├── types.proto     # Common message types
+│   └── patch.proto     # JSON Patch operations
 ├── scripts/            # Automation scripts
 ├── test/               # Test data and integration tests
 └── tools/              # Development tools
