@@ -122,6 +122,11 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
     ],
   },
   {
+    id: "a2a",
+    name: "A2A",
+    features: ["a2a_chat"],
+  },
+  {
     id: "vercel-ai-sdk",
     name: "Vercel AI SDK",
     features: ["agentic_chat"],

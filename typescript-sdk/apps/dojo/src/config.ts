@@ -65,6 +65,12 @@ export const featureConfig: FeatureConfig[] = [
     description: "Have your tasks performed by multiple agents, working together",
     tags: ["Chat", "Multi-agent architecture", "Streaming", "Subgraphs"],
   }),
+  createFeatureConfig({
+    id: "a2a_chat",
+    name: "A2A Chat",
+    description: "Chat with your Copilot and call frontend tools",
+    tags: ["Chat", "Tools", "Streaming"],
+  }),
 ];
 
 export default featureConfig;
