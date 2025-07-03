@@ -131,9 +131,9 @@ func EventFromProtobufBytes(data []byte) (Event, error) {
 }
 
 // Helper functions to convert protobuf events to Go events
-func protobufToBaseEvent(pbBase *generated.BaseEvent) *BaseEvent {
+func protobufToBaseEvent(pbBase *generated.BaseEvent) (*BaseEvent, error) {
 	if pbBase == nil {
-		return NewBaseEvent(EventTypeTextMessageStart) // Default fallback
+		return nil, fmt.Errorf("protobuf base event is nil")
 	}
 
 	base := &BaseEvent{
