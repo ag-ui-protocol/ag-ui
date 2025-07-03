@@ -1,3 +1,4 @@
 bin/
 coverage.out
 coverage.html
+gosec-report.json
