@@ -127,5 +127,10 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
       "tool_based_generative_ui",
     ],
   },
+  {
+    id: "a2a",
+    name: "A2A",
+    features: ["a2a_chat"],
+  },
 ];
 

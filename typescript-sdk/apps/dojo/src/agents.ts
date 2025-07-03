@@ -16,6 +16,7 @@ import getEnvVars from "./env";
 import { mastra } from "./mastra";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 import { ADKAgent } from "@ag-ui/adk";
+import { A2AClientAgent } from "@ag-ui/a2a";
 
 const envVars = getEnvVars();
 export const agentsIntegrations: AgentIntegrationConfig[] = [
@@ -282,6 +283,25 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         }),
         predictive_state_updates: new CrewAIAgent({
           url: `${envVars.crewAiUrl}/predictive_state_updates`,
+        }),
+      };
+    },
+  },
+  {
+    id: "a2a",
+    agents: async () => {
+      return {
+        a2a_chat: new A2AClientAgent({
+          model: openai("gpt-4o", { parallelToolCalls: false }),
+          agentUrls: ["http://127.0.0.1:9999", "http://127.0.0.1:9998", "http://127.0.0.1:9997"],
+          instructions: `
+          You are an HR agent. You are responsible for hiring employees and other typical HR tasks.
+
+          It's very important to contact all the departments necessary to complete the task.
+          For example, to hire an employee, you must contact the Finance and IT departments and to find a table at buildings management.
+
+          DO NOT FORGET TO COMMUNICATE BACK TO THE RELEVANT AGENT IF MAKING A TOOL CALL ON BEHALF OF ANOTHER AGENT!!!
+   `,
         }),
       };
     },
