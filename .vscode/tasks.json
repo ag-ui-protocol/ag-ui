@@ -1,0 +1,172 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Go: Build",
+            "type": "shell",
+            "command": "go",
+            "args": [
+                "build",
+                "-v",
+                "./..."
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/go-sdk"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": "$go"
+        },
+        {
+            "label": "Go: Test All",
+            "type": "shell",
+            "command": "go",
+            "args": [
+                "test",
+                "-v",
+                "-race",
+                "-cover",
+                "./..."
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/go-sdk"
+            },
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "problemMatcher": "$go"
+        },
+        {
+            "label": "Go: Test with Coverage Report",
+            "type": "shell",
+            "command": "go",
+            "args": [
+                "test",
+                "-v",
+                "-race",
+                "-coverprofile=coverage.out",
+                "-covermode=atomic",
+                "./..."
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/go-sdk"
+            },
+            "group": "test",
+            "problemMatcher": "$go"
+        },
+        {
+            "label": "Go: Lint",
+            "type": "shell",
+            "command": "golangci-lint",
+            "args": [
+                "run",
+                "--config=.golangci.yaml"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/go-sdk"
+            },
+            "group": "build",
+            "problemMatcher": "$go"
+        },
+        {
+            "label": "Go: Format",
+            "type": "shell",
+            "command": "gofmt",
+            "args": [
+                "-s",
+                "-w",
+                "."
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/go-sdk"
+            },
+            "group": "build"
+        },
+        {
+            "label": "Go: Mod Tidy",
+            "type": "shell",
+            "command": "go",
+            "args": [
+                "mod",
+                "tidy"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/go-sdk"
+            },
+            "group": "build"
+        },
+        {
+            "label": "Go: Benchmark",
+            "type": "shell",
+            "command": "go",
+            "args": [
+                "test",
+                "-bench=.",
+                "-benchmem",
+                "./..."
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/go-sdk"
+            },
+            "group": "test"
+        },
+        {
+            "label": "Go: Vet",
+            "type": "shell",
+            "command": "go",
+            "args": [
+                "vet",
+                "./..."
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/go-sdk"
+            },
+            "group": "build",
+            "problemMatcher": "$go"
+        },
+        {
+            "label": "Task Status",
+            "type": "shell",
+            "command": "./scripts/task-status.sh",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Go: Full Quality Check",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "Go: Format",
+                "Go: Mod Tidy",
+                "Go: Vet",
+                "Go: Lint",
+                "Go: Test with Coverage Report"
+            ],
+            "group": "build",
+            "problemMatcher": "$go"
+        },
+        {
+            "label": "Go: Install Tools",
+            "type": "shell",
+            "command": "go",
+            "args": [
+                "install",
+                "github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+            ],
+            "group": "build",
+            "runOptions": {
+                "runOn": "folderOpen"
+            }
+        }
+    ]
+}

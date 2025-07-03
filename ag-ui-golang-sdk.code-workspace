@@ -1,0 +1,108 @@
+{
+    "folders": [
+        {
+            "name": "AG-UI Golang SDK",
+            "path": "."
+        }
+    ],
+    "settings": {
+        "files.associations": {
+            "*.yaml": "yaml",
+            "*.yml": "yaml",
+            "*.go": "go",
+            "*.mod": "go.mod",
+            "*.sum": "go.sum"
+        },
+        "yaml.schemas": {
+            "./proompts/docs/task-schema.json": "proompts/tasks.yaml"
+        },
+        "editor.formatOnSave": true,
+        "editor.rulers": [
+            80,
+            120
+        ],
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": true,
+            "source.fixAll": true
+        },
+        "go.toolsManagement.checkForUpdates": "proxy",
+        "go.useLanguageServer": true,
+        "go.formatTool": "goimports",
+        "go.lintTool": "golangci-lint",
+        "go.lintFlags": [
+            "--fast"
+        ],
+        "go.testFlags": [
+            "-race",
+            "-cover"
+        ],
+        "go.buildFlags": [
+            "-race"
+        ],
+        "go.coverOnSave": true,
+        "go.coverOnSingleTest": true,
+        "go.coverOnTestPackage": true,
+        "go.testTimeout": "30s",
+        "[go]": {
+            "editor.defaultFormatter": "golang.go",
+            "editor.tabSize": 4,
+            "editor.insertSpaces": false,
+            "editor.formatOnSave": true,
+            "editor.codeActionsOnSave": {
+                "source.organizeImports": true
+            }
+        },
+        "[yaml]": {
+            "editor.defaultFormatter": "redhat.vscode-yaml",
+            "editor.tabSize": 2,
+            "editor.insertSpaces": true
+        },
+        "[markdown]": {
+            "editor.defaultFormatter": "esbenp.prettier-vscode",
+            "editor.tabSize": 2,
+            "editor.insertSpaces": true,
+            "editor.wordWrap": "on"
+        },
+        "cline.autocomplete.enabled": true,
+        "cline.suggestions.enabled": true,
+        "terminal.integrated.defaultProfile.osx": "zsh",
+        "terminal.integrated.cwd": "${workspaceFolder}",
+        "workbench.colorTheme": "Default Dark+",
+        "explorer.confirmDelete": false,
+        "explorer.confirmDragAndDrop": false,
+        "git.confirmSync": false,
+        "git.autofetch": true,
+        "git.enableSmartCommit": true
+    },
+    "extensions": {
+        "recommendations": [
+            "golang.go",
+            "redhat.vscode-yaml",
+            "ms-vscode.vscode-json",
+            "esbenp.prettier-vscode",
+            "ryanluker.vscode-coverage-gutters",
+            "streetsidesoftware.code-spell-checker",
+            "GitHub.copilot"
+        ]
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "Quick Status Check",
+                "type": "shell",
+                "command": "./scripts/task-status.sh",
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                },
+                "options": {
+                    "cwd": "${workspaceFolder}"
+                }
+            }
+        ]
+    }
+}

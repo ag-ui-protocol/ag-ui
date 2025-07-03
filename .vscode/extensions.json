@@ -1,0 +1,19 @@
+{
+    "recommendations": [
+        "golang.go",
+        "redhat.vscode-yaml",
+        "ms-vscode.vscode-json",
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss",
+        "ms-vscode.test-adapter-converter",
+        "hbenl.vscode-test-explorer",
+        "ryanluker.vscode-coverage-gutters",
+        "streetsidesoftware.code-spell-checker",
+        "GitHub.copilot",
+        "ms-vscode.hexeditor",
+        "charliermarsh.ruff"
+    ],
+    "unwantedRecommendations": [
+        "ms-vscode.vscode-typescript-next"
+    ]
+}

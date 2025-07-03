@@ -1,0 +1,113 @@
+# AG-UI Golang SDK Project Context
+
+## Project Overview
+- **Name**: AG-UI Golang SDK
+- **Purpose**: High-performance, production-ready Golang SDK for Agent UI development
+- **Primary Language**: Go 1.21+
+- **Architecture**: Modular SDK with pluggable transports and event handling
+- **Target**: Full AG-UI protocol compliance with TypeScript/Python SDK compatibility
+
+## Current Status
+- **Task Management**: proompts/tasks.yaml contains structured development plan
+- **Documentation**: proompts/docs/ contains agent guidelines and templates
+- **Development Structure**: Monorepo with separate SDK directories
+- **Quality Standards**: 85% test coverage minimum, strict linting, zero data races
+
+## Key Files and Directories
+```
+/proompts/
+  ├── tasks.yaml              # Master task list and project roadmap
+  ├── docs/                   # Agent guidelines and documentation
+  │   ├── agent-guidelines.md # AI development best practices
+  │   ├── task-format-guide.md# YAML task structure guide
+  │   └── prompt-templates.md # Common prompt templates
+  └── tasks/                  # Individual task files
+
+/go-sdk/                      # Primary development directory
+  ├── pkg/                    # Core packages
+  ├── internal/               # Internal utilities
+  ├── examples/               # Usage examples
+  └── cmd/                    # CLI tools
+
+/docs/                        # User documentation
+/typescript-sdk/              # Reference implementation
+/python-sdk/                  # Reference implementation
+```
+
+## Development Workflow
+1. **Task Selection**: Check proompts/tasks.yaml for next available task
+2. **Research Phase**: Use web_search for current best practices
+3. **Implementation**: Follow Go standards and AG-UI protocol
+4. **Testing**: Minimum 85% coverage with race detection
+5. **Documentation**: Go doc comments and usage examples
+6. **Quality Gates**: golangci-lint, gofmt, go vet, go mod tidy
+
+## AG-UI Protocol Requirements
+- **Event Types**: 16 standardized event types (run_start, run_complete, etc.)
+- **Transports**: HTTP/SSE and WebSocket with auto-reconnection
+- **State Management**: JSON Patch (RFC 6902) compliance
+- **Error Handling**: Structured errors with recovery strategies
+- **Performance**: Low latency, high throughput, minimal memory footprint
+
+## Go-Specific Guidelines
+- Follow golang-standards/project-layout
+- Use semantic import versioning
+- Implement context.Context throughout
+- Design for testability with dependency injection
+- Use structured logging (no fmt.Print in production code)
+- Graceful shutdown and signal handling
+- Thread-safe concurrent design
+
+## Quality Standards
+- **Code Coverage**: Minimum 85% with go test -cover
+- **Race Detection**: All tests run with -race flag
+- **Linting**: golangci-lint with strict configuration
+- **Performance**: Benchmark critical paths
+- **Memory**: Profile and optimize allocations
+- **Documentation**: All exported symbols have Go doc comments
+
+## Task Management Context
+- Tasks are in YAML format with dependencies, priorities, and status tracking
+- Status values: pending, in-progress, completed, blocked
+- Priority levels: critical, high, medium, low
+- Phases organize related tasks (Foundation, Core Implementation, etc.)
+- Dependencies must be completed before starting dependent tasks
+
+## Research and Information Gathering
+- Use web_search for up-to-date Go best practices
+- Check current versions of dependencies before implementing
+- Research performance characteristics of libraries before adoption
+- Verify compatibility across target platforms (Linux, macOS, Windows)
+- Reference TypeScript SDK for compatibility requirements
+
+## Interoperability Requirements
+- Event structures must match TypeScript SDK exactly
+- JSON serialization compatibility across all SDKs
+- Protocol version handling and negotiation
+- Shared test vectors for cross-SDK validation
+- Performance parity expectations
+
+## AI Assistant Guidelines
+1. **Always reference current task**: Check proompts/tasks.yaml for context
+2. **Research before implementing**: Use web_search for current practices
+3. **Follow Go idioms**: Prefer Go-native solutions over ports from other languages
+4. **Test thoroughly**: Include edge cases, error scenarios, and concurrent usage
+5. **Document comprehensively**: Go doc comments with examples
+6. **Consider performance**: Profile and benchmark critical paths
+7. **Think cross-platform**: Ensure compatibility across target operating systems
+8. **Maintain compatibility**: Check TypeScript SDK for behavior expectations
+
+## Common Prompt Patterns
+- "What's the next available task with all dependencies completed?"
+- "Research Go best practices for [TECHNOLOGY] before implementing"
+- "Implement [FEATURE] following the TypeScript SDK pattern"
+- "Add comprehensive tests for [COMPONENT] with 85%+ coverage"
+- "Verify AG-UI protocol compliance for [EVENT_TYPE]"
+
+## Quality Metrics
+- Test coverage reports with go test -cover
+- Race condition detection with go test -race  
+- Linting scores with golangci-lint
+- Performance benchmarks with go test -bench
+- Memory profiles with go tool pprof
+- Cross-platform build verification 
