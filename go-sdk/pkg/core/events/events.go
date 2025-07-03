@@ -216,10 +216,11 @@ func ValidateSequence(events []Event) error {
 		return nil
 	}
 
-	// Track active runs and message/tool call states
+	// Track active runs, messages, tool calls, and steps
 	activeRuns := make(map[string]bool)
 	activeMessages := make(map[string]bool)
 	activeToolCalls := make(map[string]bool)
+	activeSteps := make(map[string]bool)
 	finishedRuns := make(map[string]bool)
 
 	for i, event := range events {
@@ -260,12 +261,36 @@ func ValidateSequence(events []Event) error {
 				}
 			}
 
+		case EventTypeStepStarted:
+			if stepEvent, ok := event.(*StepStartedEvent); ok {
+				if activeSteps[stepEvent.StepName] {
+					return fmt.Errorf("step %s already started", stepEvent.StepName)
+				}
+				activeSteps[stepEvent.StepName] = true
+			}
+
+		case EventTypeStepFinished:
+			if stepEvent, ok := event.(*StepFinishedEvent); ok {
+				if !activeSteps[stepEvent.StepName] {
+					return fmt.Errorf("cannot finish step %s that was not started", stepEvent.StepName)
+				}
+				delete(activeSteps, stepEvent.StepName)
+			}
+
 		case EventTypeTextMessageStart:
 			if msgEvent, ok := event.(*TextMessageStartEvent); ok {
 				if activeMessages[msgEvent.MessageID] {
 					return fmt.Errorf("message %s already started", msgEvent.MessageID)
 				}
 				activeMessages[msgEvent.MessageID] = true
+			}
+
+		case EventTypeTextMessageContent:
+			if msgEvent, ok := event.(*TextMessageContentEvent); ok {
+				if !activeMessages[msgEvent.MessageID] {
+					return fmt.Errorf("cannot add content to message %s that was not started", msgEvent.MessageID)
+				}
+				// Content events are valid between start and end
 			}
 
 		case EventTypeTextMessageEnd:
@@ -284,6 +309,14 @@ func ValidateSequence(events []Event) error {
 				activeToolCalls[toolEvent.ToolCallID] = true
 			}
 
+		case EventTypeToolCallArgs:
+			if toolEvent, ok := event.(*ToolCallArgsEvent); ok {
+				if !activeToolCalls[toolEvent.ToolCallID] {
+					return fmt.Errorf("cannot add args to tool call %s that was not started", toolEvent.ToolCallID)
+				}
+				// Args events are valid between start and end
+			}
+
 		case EventTypeToolCallEnd:
 			if toolEvent, ok := event.(*ToolCallEndEvent); ok {
 				if !activeToolCalls[toolEvent.ToolCallID] {
@@ -291,6 +324,35 @@ func ValidateSequence(events []Event) error {
 				}
 				delete(activeToolCalls, toolEvent.ToolCallID)
 			}
+
+		case EventTypeStateSnapshot:
+			// State snapshot events are always valid in sequence context
+			// They represent complete state at any point in time
+			// Additional validation could be added if needed (e.g., frequency limits)
+
+		case EventTypeStateDelta:
+			// State delta events are always valid in sequence context
+			// They represent incremental changes at any point in time
+			// Additional validation could be added if needed (e.g., conflict detection)
+
+		case EventTypeMessagesSnapshot:
+			// Message snapshot events are always valid in sequence context
+			// They represent complete message state at any point in time
+			// Additional validation could be added if needed (e.g., consistency checks)
+
+		case EventTypeRaw:
+			// Raw events are always valid in sequence context
+			// They contain external data that should be passed through
+			// Additional validation could be added via custom validators
+
+		case EventTypeCustom:
+			// Custom events are always valid in sequence context
+			// They contain application-specific data
+			// Additional validation could be added via custom validators
+
+		default:
+			// This should not happen due to prior validation, but add safety check
+			return fmt.Errorf("unknown event type in sequence: %s", event.Type())
 		}
 	}
 

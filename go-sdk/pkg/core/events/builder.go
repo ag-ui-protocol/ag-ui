@@ -334,42 +334,57 @@ func (b *EventBuilder) Build() (Event, error) {
 	}
 
 	// Build the appropriate event type
+	var event Event
+	var err error
+
 	switch b.eventType {
 	case EventTypeRunStarted:
-		return b.buildRunStartedEvent()
+		event, err = b.buildRunStartedEvent()
 	case EventTypeRunFinished:
-		return b.buildRunFinishedEvent()
+		event, err = b.buildRunFinishedEvent()
 	case EventTypeRunError:
-		return b.buildRunErrorEvent()
+		event, err = b.buildRunErrorEvent()
 	case EventTypeStepStarted:
-		return b.buildStepStartedEvent()
+		event, err = b.buildStepStartedEvent()
 	case EventTypeStepFinished:
-		return b.buildStepFinishedEvent()
+		event, err = b.buildStepFinishedEvent()
 	case EventTypeTextMessageStart:
-		return b.buildTextMessageStartEvent()
+		event, err = b.buildTextMessageStartEvent()
 	case EventTypeTextMessageContent:
-		return b.buildTextMessageContentEvent()
+		event, err = b.buildTextMessageContentEvent()
 	case EventTypeTextMessageEnd:
-		return b.buildTextMessageEndEvent()
+		event, err = b.buildTextMessageEndEvent()
 	case EventTypeToolCallStart:
-		return b.buildToolCallStartEvent()
+		event, err = b.buildToolCallStartEvent()
 	case EventTypeToolCallArgs:
-		return b.buildToolCallArgsEvent()
+		event, err = b.buildToolCallArgsEvent()
 	case EventTypeToolCallEnd:
-		return b.buildToolCallEndEvent()
+		event, err = b.buildToolCallEndEvent()
 	case EventTypeStateSnapshot:
-		return b.buildStateSnapshotEvent()
+		event, err = b.buildStateSnapshotEvent()
 	case EventTypeStateDelta:
-		return b.buildStateDeltaEvent()
+		event, err = b.buildStateDeltaEvent()
 	case EventTypeMessagesSnapshot:
-		return b.buildMessagesSnapshotEvent()
+		event, err = b.buildMessagesSnapshotEvent()
 	case EventTypeRaw:
-		return b.buildRawEvent()
+		event, err = b.buildRawEvent()
 	case EventTypeCustom:
-		return b.buildCustomEvent()
+		event, err = b.buildCustomEvent()
 	default:
 		return nil, fmt.Errorf("unknown event type: %s", b.eventType)
 	}
+
+	// Check for build errors
+	if err != nil {
+		return nil, fmt.Errorf("failed to build event: %w", err)
+	}
+
+	// Validate the constructed event before returning
+	if err := event.Validate(); err != nil {
+		return nil, fmt.Errorf("built event validation failed: %w", err)
+	}
+
+	return event, nil
 }
 
 // applyAutoGeneration generates IDs for empty fields

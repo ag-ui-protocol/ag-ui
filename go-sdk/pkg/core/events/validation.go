@@ -3,6 +3,7 @@ package events
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // ValidationLevel defines the level of validation to apply
@@ -294,7 +295,6 @@ func isValidIDFormat(id, expectedPrefix string) bool {
 	if id == "" {
 		return false
 	}
-	// Allow any format for now, but this could be enhanced with regex
-	// For example: return strings.HasPrefix(id, expectedPrefix)
-	return true
+	// Check if the ID starts with the expected prefix
+	return strings.HasPrefix(id, expectedPrefix)
 }

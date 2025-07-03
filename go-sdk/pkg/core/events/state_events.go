@@ -8,6 +8,16 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
+// validJSONPatchOps contains the valid JSON Patch operations for efficient lookup
+var validJSONPatchOps = map[string]bool{
+	"add":     true,
+	"remove":  true,
+	"replace": true,
+	"move":    true,
+	"copy":    true,
+	"test":    true,
+}
+
 // StateSnapshotEvent contains a complete snapshot of the state
 type StateSnapshotEvent struct {
 	*BaseEvent
@@ -104,16 +114,8 @@ func (e *StateDeltaEvent) Validate() error {
 
 // validateJSONPatchOperation validates a single JSON patch operation
 func validateJSONPatchOperation(op JSONPatchOperation) error {
-	// Validate operation type
-	validOps := []string{"add", "remove", "replace", "move", "copy", "test"}
-	validOp := false
-	for _, valid := range validOps {
-		if op.Op == valid {
-			validOp = true
-			break
-		}
-	}
-	if !validOp {
+	// Validate operation type using map lookup for better performance
+	if !validJSONPatchOps[op.Op] {
 		return fmt.Errorf("op field must be one of: add, remove, replace, move, copy, test, got: %s", op.Op)
 	}
 
