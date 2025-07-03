@@ -177,10 +177,49 @@ func (v *Validator) validateMinimalFields(event Event) error {
 				return fmt.Errorf("RunStartedEvent: threadId and runId are required")
 			}
 		}
+	case EventTypeRunFinished:
+		if runEvent, ok := event.(*RunFinishedEvent); ok {
+			if !v.config.AllowEmptyIDs && (runEvent.ThreadID == "" || runEvent.RunID == "") {
+				return fmt.Errorf("RunFinishedEvent: threadId and runId are required")
+			}
+		}
+	case EventTypeRunError:
+		if errorEvent, ok := event.(*RunErrorEvent); ok {
+			if errorEvent.Message == "" {
+				return fmt.Errorf("RunErrorEvent: message is required")
+			}
+		}
+	case EventTypeStepStarted:
+		if stepEvent, ok := event.(*StepStartedEvent); ok {
+			if stepEvent.StepName == "" {
+				return fmt.Errorf("StepStartedEvent: stepName is required")
+			}
+		}
+	case EventTypeStepFinished:
+		if stepEvent, ok := event.(*StepFinishedEvent); ok {
+			if stepEvent.StepName == "" {
+				return fmt.Errorf("StepFinishedEvent: stepName is required")
+			}
+		}
 	case EventTypeTextMessageStart:
 		if msgEvent, ok := event.(*TextMessageStartEvent); ok {
 			if !v.config.AllowEmptyIDs && msgEvent.MessageID == "" {
 				return fmt.Errorf("TextMessageStartEvent: messageId is required")
+			}
+		}
+	case EventTypeTextMessageContent:
+		if msgEvent, ok := event.(*TextMessageContentEvent); ok {
+			if !v.config.AllowEmptyIDs && msgEvent.MessageID == "" {
+				return fmt.Errorf("TextMessageContentEvent: messageId is required")
+			}
+			if msgEvent.Delta == "" {
+				return fmt.Errorf("TextMessageContentEvent: delta is required")
+			}
+		}
+	case EventTypeTextMessageEnd:
+		if msgEvent, ok := event.(*TextMessageEndEvent); ok {
+			if !v.config.AllowEmptyIDs && msgEvent.MessageID == "" {
+				return fmt.Errorf("TextMessageEndEvent: messageId is required")
 			}
 		}
 	case EventTypeToolCallStart:
@@ -192,13 +231,57 @@ func (v *Validator) validateMinimalFields(event Event) error {
 				return fmt.Errorf("ToolCallStartEvent: toolCallName is required")
 			}
 		}
+	case EventTypeToolCallArgs:
+		if toolEvent, ok := event.(*ToolCallArgsEvent); ok {
+			if !v.config.AllowEmptyIDs && toolEvent.ToolCallID == "" {
+				return fmt.Errorf("ToolCallArgsEvent: toolCallId is required")
+			}
+			if toolEvent.Delta == "" {
+				return fmt.Errorf("ToolCallArgsEvent: delta is required")
+			}
+		}
+	case EventTypeToolCallEnd:
+		if toolEvent, ok := event.(*ToolCallEndEvent); ok {
+			if !v.config.AllowEmptyIDs && toolEvent.ToolCallID == "" {
+				return fmt.Errorf("ToolCallEndEvent: toolCallId is required")
+			}
+		}
+	case EventTypeStateSnapshot:
+		if stateEvent, ok := event.(*StateSnapshotEvent); ok {
+			if stateEvent.Snapshot == nil {
+				return fmt.Errorf("StateSnapshotEvent: snapshot is required")
+			}
+		}
+	case EventTypeStateDelta:
+		if deltaEvent, ok := event.(*StateDeltaEvent); ok {
+			if len(deltaEvent.Delta) == 0 {
+				return fmt.Errorf("StateDeltaEvent: delta must contain at least one operation")
+			}
+		}
+	case EventTypeMessagesSnapshot:
+		if msgEvent, ok := event.(*MessagesSnapshotEvent); ok {
+			// Messages field can be empty, but each message needs validation
+			for i, msg := range msgEvent.Messages {
+				if !v.config.AllowEmptyIDs && msg.ID == "" {
+					return fmt.Errorf("MessagesSnapshotEvent: message[%d].id is required", i)
+				}
+				if msg.Role == "" {
+					return fmt.Errorf("MessagesSnapshotEvent: message[%d].role is required", i)
+				}
+			}
+		}
+	case EventTypeRaw:
+		if rawEvent, ok := event.(*RawEvent); ok {
+			if rawEvent.Event == nil {
+				return fmt.Errorf("RawEvent: event is required")
+			}
+		}
 	case EventTypeCustom:
 		if customEvent, ok := event.(*CustomEvent); ok {
 			if customEvent.Name == "" {
 				return fmt.Errorf("CustomEvent: name is required")
 			}
 		}
-		// Add other minimal validations as needed
 	}
 	return nil
 }
