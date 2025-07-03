@@ -11,7 +11,7 @@ import {
   Interrupt,
   Thread
 } from "@langchain/langgraph-sdk";
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "@ag-ui/client";
 import { RemoveMessage } from "@langchain/core/messages";
 import {
   LangGraphPlatformMessage,
