@@ -1,0 +1,161 @@
+{
+    "New Task": {
+        "prefix": "task",
+        "body": [
+            "- id: ${1:task-id}",
+            "  name: \"${2:Task name}\"",
+            "  description: |",
+            "    ${3:Detailed description}",
+            "  priority: ${4|critical,high,medium,low|}",
+            "  status: pending",
+            "  dependencies: [${5}]",
+            "  phase: \"${6:Phase name}\""
+        ],
+        "description": "Create a new task entry in tasks.yaml"
+    },
+    "Task Update": {
+        "prefix": "update",
+        "body": [
+            "- date: \"${1:$CURRENT_YEAR-$CURRENT_MONTH-$CURRENT_DATE}\"",
+            "  description: \"${2:Update description}\"",
+            "  author: \"${3:AI Assistant}\""
+        ],
+        "description": "Add a task update entry"
+    },
+    "External Dependency": {
+        "prefix": "dep",
+        "body": [
+            "- name: \"${1:dependency-name}\"",
+            "  description: \"${2:Why this dependency exists}\"",
+            "  url: \"${3:https://example.com}\"",
+            "  location: \"${4:path/to/dependency}\""
+        ],
+        "description": "Add external dependency"
+    },
+    "Go Package Structure": {
+        "prefix": "gopkg",
+        "body": [
+            "// Package ${1:packagename} ${2:provides functionality for...}",
+            "package ${1:packagename}",
+            "",
+            "import (",
+            "\t\"context\"",
+            "\t\"fmt\"",
+            "\t\"${3:additional/import}\"",
+            ")",
+            "",
+            "// ${4:StructName} ${5:represents...}",
+            "type ${4:StructName} struct {",
+            "\t${6:field} ${7:type}",
+            "}",
+            "",
+            "// New${4:StructName} creates a new ${4:StructName}",
+            "func New${4:StructName}(${8:params}) *${4:StructName} {",
+            "\treturn &${4:StructName}{",
+            "\t\t${6:field}: ${9:value},",
+            "\t}",
+            "}"
+        ],
+        "description": "Create a Go package structure"
+    },
+    "AG-UI Event Type": {
+        "prefix": "aguievent",
+        "body": [
+            "// ${1:EventType} represents ${2:description}",
+            "type ${1:EventType} struct {",
+            "\tEventType string `json:\"eventType\"`",
+            "\tTimestamp time.Time `json:\"timestamp\"`",
+            "\tRunID     string `json:\"runId,omitempty\"`",
+            "\t${3:Data}     ${4:DataType} `json:\"${5:data}\"`",
+            "}",
+            "",
+            "// NewEvent${1:EventType} creates a new ${1:EventType} event",
+            "func NewEvent${1:EventType}(runID string, data ${4:DataType}) *${1:EventType} {",
+            "\treturn &${1:EventType}{",
+            "\t\tEventType: \"${6:EVENT_TYPE}\",",
+            "\t\tTimestamp: time.Now(),",
+            "\t\tRunID:     runID,",
+            "\t\t${3:Data}:     data,",
+            "\t}",
+            "}",
+            "",
+            "// Validate validates the ${1:EventType} event",
+            "func (e *${1:EventType}) Validate() error {",
+            "\tif e.EventType != \"${6:EVENT_TYPE}\" {",
+            "\t\treturn fmt.Errorf(\"invalid event type: %s\", e.EventType)",
+            "\t}",
+            "\t${7:// Add additional validation}",
+            "\treturn nil",
+            "}"
+        ],
+        "description": "Create an AG-UI event type structure"
+    },
+    "Go Test Structure": {
+        "prefix": "gotest",
+        "body": [
+            "func Test${1:FunctionName}(t *testing.T) {",
+            "\ttests := []struct {",
+            "\t\tname string",
+            "\t\t${2:input} ${3:InputType}",
+            "\t\twant ${4:OutputType}",
+            "\t\twantErr bool",
+            "\t}{",
+            "\t\t{",
+            "\t\t\tname: \"${5:test case description}\",",
+            "\t\t\t${2:input}: ${6:inputValue},",
+            "\t\t\twant: ${7:expectedValue},",
+            "\t\t\twantErr: false,",
+            "\t\t},",
+            "\t\t${8:// Add more test cases}",
+            "\t}",
+            "",
+            "\tfor _, tt := range tests {",
+            "\t\tt.Run(tt.name, func(t *testing.T) {",
+            "\t\t\tgot, err := ${1:FunctionName}(${9:tt.input})",
+            "\t\t\tif (err != nil) != tt.wantErr {",
+            "\t\t\t\tt.Errorf(\"${1:FunctionName}() error = %v, wantErr %v\", err, tt.wantErr)",
+            "\t\t\t\treturn",
+            "\t\t\t}",
+            "\t\t\tif !reflect.DeepEqual(got, tt.want) {",
+            "\t\t\t\tt.Errorf(\"${1:FunctionName}() = %v, want %v\", got, tt.want)",
+            "\t\t\t}",
+            "\t\t})",
+            "\t}",
+            "}"
+        ],
+        "description": "Create a table-driven Go test"
+    },
+    "HTTP Handler": {
+        "prefix": "httphandler",
+        "body": [
+            "// ${1:HandlerName} handles ${2:description}",
+            "func ${1:HandlerName}(w http.ResponseWriter, r *http.Request) {",
+            "\tctx := r.Context()",
+            "\t",
+            "\t// Set content type",
+            "\tw.Header().Set(\"Content-Type\", \"application/json\")",
+            "\t",
+            "\t// ${3:Handle the request}",
+            "\t${4:// Implementation here}",
+            "\t",
+            "\t// Send response",
+            "\tif err := json.NewEncoder(w).Encode(${5:response}); err != nil {",
+            "\t\thttp.Error(w, \"Internal server error\", http.StatusInternalServerError)",
+            "\t\treturn",
+            "\t}",
+            "}"
+        ],
+        "description": "Create an HTTP handler function"
+    },
+    "Interface Definition": {
+        "prefix": "gointerface",
+        "body": [
+            "// ${1:InterfaceName} defines ${2:description}",
+            "type ${1:InterfaceName} interface {",
+            "\t${3:MethodName}(${4:params}) ${5:returnType}",
+            "\t${6:// Add more methods}",
+            "}"
+        ],
+        "description": "Create a Go interface definition"
+    }
+}

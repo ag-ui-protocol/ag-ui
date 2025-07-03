@@ -1,0 +1,92 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Current Go File",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${file}",
+            "cwd": "${workspaceFolder}",
+            "env": {},
+            "args": [],
+            "showLog": true
+        },
+        {
+            "name": "Debug Go Package",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/go-sdk/cmd",
+            "cwd": "${workspaceFolder}",
+            "env": {},
+            "args": [],
+            "showLog": true
+        },
+        {
+            "name": "Debug Tests in Current Package",
+            "type": "go",
+            "request": "launch",
+            "mode": "test",
+            "program": "${workspaceFolder}",
+            "cwd": "${workspaceFolder}",
+            "env": {},
+            "args": [
+                "-test.v"
+            ],
+            "showLog": true
+        },
+        {
+            "name": "Debug Specific Test Function",
+            "type": "go",
+            "request": "launch",
+            "mode": "test",
+            "program": "${workspaceFolder}",
+            "cwd": "${workspaceFolder}",
+            "env": {},
+            "args": [
+                "-test.run",
+                "^${input:testFunction}$",
+                "-test.v"
+            ],
+            "showLog": true
+        },
+        {
+            "name": "Run Benchmarks",
+            "type": "go",
+            "request": "launch",
+            "mode": "test",
+            "program": "${workspaceFolder}",
+            "cwd": "${workspaceFolder}",
+            "env": {},
+            "args": [
+                "-test.bench",
+                ".",
+                "-test.benchmem"
+            ],
+            "showLog": true
+        },
+        {
+            "name": "Debug with Race Detection",
+            "type": "go",
+            "request": "launch",
+            "mode": "test",
+            "program": "${workspaceFolder}",
+            "cwd": "${workspaceFolder}",
+            "env": {},
+            "args": [
+                "-test.v",
+                "-race"
+            ],
+            "showLog": true
+        }
+    ],
+    "inputs": [
+        {
+            "id": "testFunction",
+            "description": "Test function name to debug",
+            "default": "TestExample",
+            "type": "promptString"
+        }
+    ]
+}
