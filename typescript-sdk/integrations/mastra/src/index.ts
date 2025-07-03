@@ -26,7 +26,6 @@ import { processDataStream } from "@ai-sdk/ui-utils";
 import type { CoreMessage, Mastra, StorageThreadType } from "@mastra/core";
 import { registerApiRoute } from "@mastra/core/server";
 import { Agent as LocalMastraAgent } from "@mastra/core/agent";
-import type { Context } from "hono";
 import { RuntimeContext } from "@mastra/core/runtime-context";
 import { randomUUID } from "crypto";
 import { Observable } from "rxjs";
@@ -175,7 +174,7 @@ export class MastraAgent extends AbstractAgent {
   }
 
   protected run(input: RunAgentInput): Observable<BaseEvent> {
-    console.log("STATE INPUT", input.state);
+    // console.log("STATE INPUT", input.state);
 
     const finalMessages: Message[] = [...input.messages];
     let messageId = randomUUID();
@@ -189,6 +188,8 @@ export class MastraAgent extends AbstractAgent {
 
     return new Observable<BaseEvent>((subscriber) => {
       const run = async () => {
+        console.log(">>> RUN STARTED", input.threadId, input.runId);
+        console.log(">>> STATE", JSON.stringify(input.state));
         subscriber.next({
           type: EventType.RUN_STARTED,
           threadId: input.threadId,
@@ -204,6 +205,8 @@ export class MastraAgent extends AbstractAgent {
               threadId: input.threadId,
             });
 
+            console.log(">>> THREAD (getThreadById)", thread);
+
             if (!thread) {
               thread = {
                 id: input.threadId,
@@ -215,14 +218,24 @@ export class MastraAgent extends AbstractAgent {
               };
             }
 
+            // TODO: thread.metadata / use previous memory with spread operator to preserve it
+            // TODO: state is empty when coming back from AG-UI
+
             // if (thread.resourceId && thread.resourceId !== this.resourceId) {
             //   throw new Error(
             //     `Thread with id ${input.threadId} resourceId does not match the current resourceId ${this.resourceId}`,
             //   );
-            // }
 
             const { messages, ...rest } = input.state;
             const workingMemory = JSON.stringify(rest);
+
+            console.log(">>> SAVING THREAD", {
+              ...thread,
+              metadata: {
+                ...thread.metadata,
+                workingMemory,
+              },
+            });
 
             // Update thread metadata with new working memory
             await memory.saveThread({
@@ -303,7 +316,12 @@ export class MastraAgent extends AbstractAgent {
                 if (memory) {
                   const workingMemory = await memory.getWorkingMemory({
                     threadId: input.threadId,
-                    format: "json",
+                    // @ts-ignore
+                    memoryConfig: {
+                      workingMemory: {
+                        enabled: true,
+                      },
+                    },
                   });
 
                   console.log(">>> workingMemory", workingMemory);
@@ -519,14 +537,7 @@ export function registerCopilotKit<T extends Record<string, any> | unknown = unk
   resourceId: string;
   serviceAdapter?: CopilotServiceAdapter;
   agents?: Record<string, AbstractAgent>;
-  setContext?: (
-    c: Context<{
-      Variables: {
-        mastra: Mastra;
-      };
-    }>,
-    runtimeContext: RuntimeContext<T>,
-  ) => void | Promise<void>;
+  setContext?: (c: any, runtimeContext: RuntimeContext<T>) => void | Promise<void>;
 }) {
   return registerApiRoute(path, {
     method: `ALL`,

@@ -1,14 +1,13 @@
-import "server-only";
 import { openai } from "@ai-sdk/openai";
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
-import { MockStore } from "@mastra/core/storage";
+import { LibSQLStore } from "@mastra/libsql";
 import { Mastra } from "@mastra/core";
 import { z } from "zod";
 
 // import { weatherTool } from "../tools/weather-tool";
 
-export const LOCAL_MASTRA = new Mastra({
+export const mastra = new Mastra({
   agents: {
     agentic_chat: new Agent({
       name: "agentic_chat",
@@ -24,10 +23,10 @@ export const LOCAL_MASTRA = new Mastra({
   
         Use the weatherTool to fetch current weather data.
   `,
-      model: openai("gpt-4o-mini"),
+      model: openai("gpt-4o"),
       // tools: { weatherTool },
       memory: new Memory({
-        storage: new MockStore(),
+        storage: new LibSQLStore({ url: "file::memory:" }),
         options: {
           workingMemory: {
             enabled: true,

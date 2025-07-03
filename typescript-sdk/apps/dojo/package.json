@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "mastra:dev": "mastra dev"
   },
   "dependencies": {
     "@ag-ui/agno": "workspace:*",
@@ -24,10 +25,11 @@
     "@copilotkit/runtime": "1.8.14-next.4",
     "@copilotkit/runtime-client-gql": "1.8.14-next.4",
     "@copilotkit/shared": "1.8.14-next.4",
-    "@mastra/client-js": "^0.10.7",
-    "@mastra/core": "^0.10.8",
-    "@mastra/loggers": "^0.10.2",
-    "@mastra/memory": "^0.11.0",
+    "@mastra/client-js": "^0.10.9",
+    "@mastra/core": "^0.10.10",
+    "@mastra/libsql": "^0.11.0",
+    "@mastra/loggers": "^0.10.3",
+    "@mastra/memory": "^0.11.1",
     "@mdx-js/loader": "^3.1.0",
     "@mdx-js/mdx": "^3.1.0",
     "@mdx-js/react": "^3.1.0",
@@ -80,6 +82,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "15.2.1",
+    "mastra": "^0.10.10",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

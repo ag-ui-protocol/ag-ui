@@ -27,6 +27,7 @@ const nextConfig: NextConfig = {
 
     return config;
   },
+  serverExternalPackages: ["@mastra/libsql"],
 };
 
 // Merge MDX config with Next.js config

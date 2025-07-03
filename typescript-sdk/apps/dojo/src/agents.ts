@@ -12,7 +12,7 @@ import { LangGraphAgent } from "@ag-ui/langgraph";
 import { AgnoAgent } from "@ag-ui/agno";
 import { LlamaIndexAgent } from "@ag-ui/llamaindex";
 import { CrewAIAgent } from "@ag-ui/crewai";
-import { LOCAL_MASTRA } from "./local/mastra";
+import { mastra } from "./mastra";
 
 export const agentsIntegrations: AgentIntegrationConfig[] = [
   {
@@ -71,7 +71,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
   {
     id: "mastra-agent-local",
     agents: async () => {
-      return MastraAgent.getLocalAgents({ mastra: LOCAL_MASTRA });
+      return MastraAgent.getLocalAgents({ mastra });
     },
   },
   {
