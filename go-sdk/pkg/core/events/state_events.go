@@ -143,22 +143,22 @@ func (e *StateDeltaEvent) ToJSON() ([]byte, error) {
 }
 
 // stringToJsonPatchOperationType converts string operation to protobuf enum
-func stringToJsonPatchOperationType(op string) generated.JsonPatchOperationType {
+func stringToJsonPatchOperationType(op string) (generated.JsonPatchOperationType, error) {
 	switch op {
 	case "add":
-		return generated.JsonPatchOperationType_ADD
+		return generated.JsonPatchOperationType_ADD, nil
 	case "remove":
-		return generated.JsonPatchOperationType_REMOVE
+		return generated.JsonPatchOperationType_REMOVE, nil
 	case "replace":
-		return generated.JsonPatchOperationType_REPLACE
+		return generated.JsonPatchOperationType_REPLACE, nil
 	case "move":
-		return generated.JsonPatchOperationType_MOVE
+		return generated.JsonPatchOperationType_MOVE, nil
 	case "copy":
-		return generated.JsonPatchOperationType_COPY
+		return generated.JsonPatchOperationType_COPY, nil
 	case "test":
-		return generated.JsonPatchOperationType_TEST
+		return generated.JsonPatchOperationType_TEST, nil
 	default:
-		return generated.JsonPatchOperationType_ADD // Default fallback
+		return generated.JsonPatchOperationType(0), fmt.Errorf("unrecognized JSON Patch operation: %s", op)
 	}
 }
 
