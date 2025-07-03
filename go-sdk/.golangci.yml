@@ -1,0 +1,283 @@
+# .golangci.yml - Comprehensive linting configuration for AG-UI Go SDK
+
+# Linting settings for specific linters
+linters-settings:
+  # Import grouping and ordering
+  gci:
+    sections:
+      - standard                                    # Standard library packages
+      - default                                     # Third-party packages
+      - prefix(github.com/ag-ui/go-sdk)            # Local packages
+    skip-generated: true
+    custom-order: true
+
+  # Code formatting
+  gofmt:
+    simplify: true
+    rewrite-rules:
+      - pattern: 'interface{}'
+        replacement: 'any'
+
+  # Import management
+  goimports:
+    local-prefixes: github.com/ag-ui/go-sdk
+
+  # Security analysis
+  gosec:
+    severity: "medium"
+    confidence: "medium"
+    excludes:
+      - G104  # Errors unhandled (we use errcheck for this)
+    config:
+      G306: "0644"  # File permissions
+
+  # Static analysis
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment  # Can be overly strict for readability
+
+  # Spelling errors
+  misspell:
+    locale: US
+    ignore-words:
+      - protobuf
+      - websocket
+      - middleware
+
+  # Line length and complexity
+  lll:
+    line-length: 120
+
+  # Cyclomatic complexity
+  cyclop:
+    max-complexity: 15
+    package-average: 10.0
+    skip-tests: true
+
+  # Cognitive complexity
+  gocognit:
+    min-complexity: 20
+
+  # Function length
+  funlen:
+    lines: 80
+    statements: 40
+
+  # Unused parameters and variables
+  unparam:
+    check-exported: true
+
+  # Error handling
+  errorlint:
+    errorf: true
+    asserts: true
+    comparison: true
+
+  # Performance linting
+  prealloc:
+    simple: true
+    range-loops: true
+    for-loops: true
+
+  # Naming conventions
+  revive:
+    severity: warning
+    rules:
+      - name: exported
+        severity: warning
+        disabled: false
+      - name: package-comments
+        severity: warning
+        disabled: false
+      - name: var-naming
+        severity: warning
+        disabled: false
+      - name: unexported-return
+        severity: warning
+        disabled: false
+      - name: error-return
+        severity: warning
+        disabled: false
+      - name: error-naming
+        severity: warning
+        disabled: false
+      - name: if-return
+        severity: warning
+        disabled: false
+      - name: var-declaration
+        severity: warning
+        disabled: false
+      - name: range
+        severity: warning
+        disabled: false
+      - name: receiver-naming
+        severity: warning
+        disabled: false
+      - name: time-naming
+        severity: warning
+        disabled: false
+      - name: context-as-argument
+        severity: warning
+        disabled: false
+      - name: context-keys-type
+        severity: warning
+        disabled: false
+
+# Enabled linters
+linters:
+  enable:
+    # Code quality and style
+    - gci           # Import grouping and organization
+    - gofmt         # Code formatting
+    - goimports     # Import management and formatting
+    - revive        # Replacement for golint with better rules
+    - misspell      # Spelling errors detection
+    - lll           # Line length checking
+    
+    # Security and safety
+    - gosec         # Security issues detection
+    - errcheck      # Unchecked error detection
+    - errorlint     # Error handling best practices
+    
+    # Performance and efficiency
+    - prealloc      # Slice preallocation detection
+    - unparam       # Unused parameter detection
+    - ineffassign   # Ineffective assignment detection
+    
+    # Code complexity and maintainability
+    - cyclop        # Cyclomatic complexity
+    - gocognit      # Cognitive complexity
+    - funlen        # Function length
+    - nestif        # Nested if statements
+    
+    # Static analysis
+    - govet         # Go vet static analysis
+    - predeclared   # Variable shadowing detection
+    - staticcheck   # Advanced static analysis
+    - typecheck     # Type checking
+    - unused        # Unused code detection
+    
+    # Testing
+    - testpackage   # Tests in separate packages
+    - tparallel     # Parallel test detection
+    
+    # Maintenance and cleanup
+    - unconvert     # Unnecessary type conversions
+    - wastedassign  # Wasted assignments
+    - whitespace    # Whitespace issues
+
+  disable:
+    # Disabled linters (with reasons)
+    - exhaustruct   # Too strict for most use cases
+    - gochecknoglobals  # Globals are sometimes necessary
+    - gochecknoinits    # Init functions are sometimes necessary
+    - godox         # TODOs are acceptable during development
+    - mnd           # Magic numbers are sometimes acceptable (gomnd replacement)
+    - wrapcheck     # Error wrapping can be context-dependent
+    - nlreturn      # Can conflict with team preferences
+    - wsl           # Whitespace style can be subjective
+    - goconst       # Can be overly aggressive
+    - dupl          # Can flag acceptable code duplication
+
+# Run configuration
+run:
+  # Timeout for analysis
+  timeout: 5m
+  
+  # Exit code when issues are found
+  issues-exit-code: 1
+  
+  # Include test files in analysis
+  tests: true
+  
+  # Go version to target
+  go: "1.21"
+
+# Issues configuration
+issues:
+  # Maximum issues count, 0 = unlimited
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  
+  # Show issues in new code only
+  new: false
+  
+  # Fix issues automatically when possible
+  fix: false
+  
+  # Make issues output unique by line
+  uniq-by-line: true
+  
+  # Directories to exclude
+  exclude-dirs:
+    - bin
+    - build
+    - vendor
+    - .git
+    - node_modules
+  
+  # Files to exclude (regex patterns)
+  exclude-files:
+    - ".*\\.pb\\.go$"        # Skip generated protobuf files
+    - ".*\\.pb\\.gw\\.go$"   # Skip generated gateway files
+    - ".*_gen\\.go$"         # Skip other generated files
+    - "mock_.*\\.go$"        # Skip mock files
+  
+  # Exclude certain issues
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - cyclop
+        - funlen
+        - lll
+        - gocognit
+        - gosec
+    
+    # Exclude some issues in example code
+    - path: examples/
+      linters:
+        - errcheck
+        - gosec
+    
+    # Exclude certain revive rules for test files
+    - path: _test\.go
+      text: "exported"
+      linters:
+        - revive
+    
+    # Exclude line length issues in long error messages
+    - linters:
+        - lll
+      source: "^\\s*return.*errors\\.(New|Wrap)"
+
+# Output configuration
+output:
+  # Formats: colored-line-number|line-number|json|tab|checkstyle|code-climate
+  formats:
+    - format: colored-line-number
+  
+  # Print lines of code with issue
+  print-issued-lines: true
+  
+  # Print linter name in issue line
+  print-linter-name: true
+  
+  # Sort results by: filepath, line and column
+  sort-results: true
+
+# Severity configuration
+severity:
+  # Default severity for issues
+  default-severity: warning
+  
+  # Set the default severity to error for certain linters
+  rules:
+    - linters:
+        - errcheck
+        - gosec
+        - govet
+        - staticcheck
+        - typecheck
+      severity: error 

@@ -25,7 +25,39 @@ AG-UI is a lightweight, event-based protocol that standardizes how AI agents con
 ### Installation
 
 ```bash
+# Install the SDK
 go get github.com/ag-ui/go-sdk
+
+# Install development tools (for contributors)
+make tools-install
+# or
+./scripts/install-tools.sh
+```
+
+### Prerequisites
+
+- **Go 1.21+** - Required for all features and compatibility
+- **protoc** - Protocol buffer compiler (auto-installed by setup scripts)
+- **golangci-lint** - For code quality checks (auto-installed)
+
+### Quick Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/ag-ui/go-sdk.git
+cd go-sdk
+
+# Install all dependencies and development tools
+./scripts/install-tools.sh
+
+# Verify installation
+make deps-verify
+
+# Run tests
+make test
+
+# Check code quality
+make lint
 ```
 
 ### Basic Server

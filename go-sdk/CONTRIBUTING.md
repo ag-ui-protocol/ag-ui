@@ -19,15 +19,86 @@ Thank you for your interest in contributing to the AG-UI Go SDK! This document p
    cd ag-ui/go-sdk
    ```
 
-3. Install dependencies:
+3. Install all dependencies and development tools:
    ```bash
+   # Automated installation (recommended)
+   ./scripts/install-tools.sh
+   
+   # Or manual installation
+   make tools-install
    go mod download
    ```
 
 4. Verify the setup:
    ```bash
-   go test ./...
+   # Verify dependencies and tools
+   make deps-verify
+   
+   # Run full quality checks
+   make full-check
    ```
+
+### Development Tools
+
+The project uses several development tools for quality assurance:
+
+#### Required Tools
+- **golangci-lint**: Comprehensive linting and static analysis
+- **gosec**: Security vulnerability scanning  
+- **govulncheck**: Known vulnerability detection
+- **protoc**: Protocol buffer compiler
+- **protoc-gen-go**: Go code generation for protocol buffers
+- **goimports**: Import statement management
+- **mockgen**: Mock generation for testing
+
+#### Tool Installation
+```bash
+# Install all tools automatically
+make tools-install
+
+# Or install individually
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+go install golang.org/x/vuln/cmd/govulncheck@latest
+go install github.com/securego/gosec/v2/cmd/gosec@latest
+# ... see scripts/install-tools.sh for complete list
+```
+
+### Dependency Management
+
+#### Adding Dependencies
+```bash
+# Add a new dependency
+go get github.com/example/package@v1.2.3
+
+# Update go.mod and verify
+go mod tidy
+go mod verify
+
+# Test with new dependency
+make test
+```
+
+#### Updating Dependencies
+```bash
+# Update all dependencies safely
+./scripts/update-deps.sh
+
+# Update to major versions (careful!)
+./scripts/update-deps.sh --major
+
+# Update only development tools
+./scripts/update-deps.sh --tools-only
+```
+
+#### Security Checking
+```bash
+# Check for vulnerabilities
+make security
+govulncheck ./...
+
+# Verify dependency integrity
+go mod verify
+```
 
 ## Development Workflow
 
