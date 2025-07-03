@@ -11,7 +11,7 @@ from ag_ui.core import (
     ToolCall as AGUIToolCall,
     FunctionCall as AGUIFunctionCall,
 )
-from .types import State, SchemaKeys
+from .types import State, SchemaKeys, LangGraphReasoning
 
 DEFAULT_SCHEMA_KEYS = ["tools"]
 
@@ -43,7 +43,7 @@ def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]
             agui_messages.append(AGUIUserMessage(
                 id=str(message.id),
                 role="user",
-                content=stringify_if_needed(message.content),
+                content=stringify_if_needed(resolve_message_content(message.content)),
                 name=message.name,
             ))
         elif isinstance(message, AIMessage):
@@ -63,7 +63,7 @@ def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]
             agui_messages.append(AGUIAssistantMessage(
                 id=str(message.id),
                 role="assistant",
-                content=stringify_if_needed(message.content),
+                content=stringify_if_needed(resolve_message_content(message.content)),
                 tool_calls=tool_calls,
                 name=message.name,
             ))
@@ -71,14 +71,14 @@ def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]
             agui_messages.append(AGUISystemMessage(
                 id=str(message.id),
                 role="system",
-                content=stringify_if_needed(message.content),
+                content=stringify_if_needed(resolve_message_content(message.content)),
                 name=message.name,
             ))
         elif isinstance(message, ToolMessage):
             agui_messages.append(AGUIToolMessage(
                 id=str(message.id),
                 role="tool",
-                content=stringify_if_needed(message.content),
+                content=stringify_if_needed(resolve_message_content(message.content)),
                 tool_call_id=message.tool_call_id,
             ))
         else:
@@ -126,3 +126,55 @@ def agui_messages_to_langchain(messages: List[AGUIMessage]) -> List[BaseMessage]
         else:
             raise ValueError(f"Unsupported message role: {role}")
     return langchain_messages
+
+def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
+    content = chunk.content
+    if not content:
+        return None
+
+    # Anthropic reasoning response
+    if isinstance(content, list) and content and content[0]:
+        if not content[0].get("thinking"):
+            return None
+        return LangGraphReasoning(
+            text=content[0]["thinking"],
+            type="text",
+            index=content[0].get("index", 0)
+        )
+
+    # OpenAI reasoning response
+    if hasattr(chunk, "additional_kwargs"):
+        reasoning = chunk.additional_kwargs.get("reasoning", {})
+        summary = reasoning.get("summary", [])
+        if summary:
+            data = summary[0]
+            if not data or not data.get("text"):
+                return None
+            return LangGraphReasoning(
+                type="text",
+                text=data["text"],
+                index=data.get("index", 0)
+            )
+
+    try:
+        parsed = json.loads(content)
+        return LangGraphReasoning(
+            type=parsed.get("type", "text"),
+            text=parsed.get("text", ""),
+            index=parsed.get("index", 0)
+        )
+    except json.JSONDecodeError:
+        return None
+
+def resolve_message_content(content: Any) -> str | None:
+    if not content:
+        return None
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list) and content:
+        content_text = next((c.get("text") for c in content if isinstance(c, dict) and c.get("type") == "text"), None)
+        return content_text
+
+    return None

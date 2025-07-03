@@ -1,6 +1,6 @@
 import uuid
 import json
-from typing import Optional, List, Any, Union, AsyncGenerator
+from typing import Optional, List, Any, Union, AsyncGenerator, Generator
 
 from fastapi.responses import StreamingResponse
 
@@ -10,10 +10,52 @@ from langchain_core.runnables import RunnableConfig, ensure_config
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
-from .types import State, LangGraphPlatformMessage, MessagesInProgressRecord, SchemaKeys, MessageInProgress, RunMetadata, LangGraphEventTypes, CustomEventNames
-from .utils import agui_messages_to_langchain, DEFAULT_SCHEMA_KEYS, filter_object_by_schema_keys, get_stream_payload_input, langchain_messages_to_agui
+from .types import (
+    State,
+    LangGraphPlatformMessage,
+    MessagesInProgressRecord,
+    SchemaKeys,
+    MessageInProgress,
+    RunMetadata,
+    LangGraphEventTypes,
+    CustomEventNames,
+    LangGraphReasoning
+)
+from .utils import (
+    agui_messages_to_langchain,
+    DEFAULT_SCHEMA_KEYS,
+    filter_object_by_schema_keys,
+    get_stream_payload_input,
+    langchain_messages_to_agui,
+    resolve_reasoning_content,
+    resolve_message_content
+)
 
-from ag_ui.core import EventType, CustomEvent, MessagesSnapshotEvent, RawEvent, RunAgentInput, RunErrorEvent, RunFinishedEvent, RunStartedEvent, StateDeltaEvent, StateSnapshotEvent, StepFinishedEvent, StepStartedEvent, TextMessageContentEvent, TextMessageEndEvent, TextMessageStartEvent, ToolCallArgsEvent, ToolCallEndEvent, ToolCallStartEvent
+from ag_ui.core import (
+    EventType,
+    CustomEvent,
+    MessagesSnapshotEvent,
+    RawEvent,
+    RunAgentInput,
+    RunErrorEvent,
+    RunFinishedEvent,
+    RunStartedEvent,
+    StateDeltaEvent,
+    StateSnapshotEvent,
+    StepFinishedEvent,
+    StepStartedEvent,
+    TextMessageContentEvent,
+    TextMessageEndEvent,
+    TextMessageStartEvent,
+    ToolCallArgsEvent,
+    ToolCallEndEvent,
+    ToolCallStartEvent,
+    ThinkingTextMessageStartEvent,
+    ThinkingTextMessageContentEvent,
+    ThinkingTextMessageEndEvent,
+    ThinkingStartEvent,
+    ThinkingEndEvent,
+)
 from ag_ui.encoder import EventEncoder
 
 ProcessedEvents = Union[
@@ -60,6 +102,7 @@ class LangGraphAgent:
         self.active_run = {
             "id": input.run_id,
             "thread_id": thread_id,
+            "thinking_process": None,
         }
 
         messages = input.messages or []
@@ -390,9 +433,27 @@ class LangGraphAgent:
             is_tool_call_args_event = has_current_stream and current_stream.get("tool_call_id") and tool_call_data and tool_call_data.get("args")
             is_tool_call_end_event = has_current_stream and current_stream.get("tool_call_id") and not tool_call_data
 
-            is_message_start_event = not has_current_stream and not tool_call_data
-            is_message_content_event = has_current_stream and not tool_call_data
+            reasoning_data = resolve_reasoning_content(event["data"]["chunk"]) if event["data"]["chunk"] else None
+            message_content = resolve_message_content(event["data"]["chunk"].content) if event["data"]["chunk"] and event["data"]["chunk"].content else None
+            is_message_content_event = tool_call_data is None and message_content
             is_message_end_event = has_current_stream and not current_stream.get("tool_call_id") and not is_message_content_event
+
+            if reasoning_data:
+                self.handle_thinking_event(reasoning_data)
+                return
+
+            if reasoning_data is None and self.active_run.get('thinking_process', None) is not None:
+                yield self._dispatch_event(
+                    ThinkingTextMessageEndEvent(
+                        type=EventType.THINKING_TEXT_MESSAGE_END,
+                    )
+                )
+                yield self._dispatch_event(
+                    ThinkingEndEvent(
+                        type=EventType.THINKING_END,
+                    )
+                )
+                self.active_run["thinking_process"] = None
 
             if tool_call_used_to_predict_state:
                 yield self._dispatch_event(
@@ -442,27 +503,35 @@ class LangGraphAgent:
 
             if is_tool_call_args_event and should_emit_tool_calls:
                 yield self._dispatch_event(
-                    ToolCallArgsEvent(type=EventType.TOOL_CALL_ARGS, tool_call_id=current_stream["tool_call_id"], delta=tool_call_data["args"], raw_event=event)
-                )
-                return
-
-            if is_message_start_event and should_emit_messages:
-                resolved = self._dispatch_event(
-                    TextMessageStartEvent(
-                        type=EventType.TEXT_MESSAGE_START,
-                        role="assistant",
-                        message_id=event["data"]["chunk"].id,
-                        raw_event=event,
+                    ToolCallArgsEvent(
+                        type=EventType.TOOL_CALL_ARGS,
+                        tool_call_id=current_stream["tool_call_id"],
+                        delta=tool_call_data["args"],
+                        raw_event=event
                     )
                 )
-                if resolved:
-                    self.set_message_in_progress(
-                        self.active_run["id"], MessageInProgress(id=event["data"]["chunk"].id)
-                    )
-                yield resolved
                 return
 
             if is_message_content_event and should_emit_messages:
+                if bool(current_stream and current_stream.get("id")) == False:
+                    yield self._dispatch_event(
+                        TextMessageStartEvent(
+                            type=EventType.TEXT_MESSAGE_START,
+                            role="assistant",
+                            message_id=event["data"]["chunk"].id,
+                            raw_event=event,
+                        )
+                    )
+                    self.set_message_in_progress(
+                        self.active_run["id"],
+                        MessageInProgress(
+                            id=event["data"]["chunk"].id,
+                            tool_call_id=None,
+                            tool_call_name=None
+                        )
+                    )
+                    current_stream = self.get_message_in_progress(self.active_run["id"])
+
                 yield self._dispatch_event(
                     TextMessageContentEvent(
                         type=EventType.TEXT_MESSAGE_CONTENT,
@@ -531,6 +600,55 @@ class LangGraphAgent:
             
             yield self._dispatch_event(
                 CustomEvent(type=EventType.CUSTOM, name=event["name"], value=event["data"], raw_event=event)
+            )
+
+    def handle_thinking_event(self, reasoning_data: LangGraphReasoning) -> Generator[str, Any, str | None]:
+        if not reasoning_data or "type" not in reasoning_data or "text" not in reasoning_data:
+            return ""
+
+        thinking_step_index = reasoning_data.get("index")
+
+        if (self.active_run.get("thinking_process") and
+                self.active_run["thinking_process"].get("index") and
+                self.active_run["thinking_process"]["index"] != thinking_step_index):
+
+            if self.active_run["thinking_process"].get("type"):
+                yield self._dispatch_event(
+                    ThinkingTextMessageEndEvent(
+                        type=EventType.THINKING_TEXT_MESSAGE_END,
+                    )
+                )
+            yield self._dispatch_event(
+                ThinkingEndEvent(
+                    type=EventType.THINKING_END,
+                )
+            )
+            self.active_run["thinking_process"] = None
+
+        if not self.active_run.get("thinking_process"):
+            yield self._dispatch_event(
+                ThinkingStartEvent(
+                    type=EventType.THINKING_START,
+                )
+            )
+            self.active_run["thinking_process"] = {
+                "index": thinking_step_index
+            }
+
+        if self.active_run["thinking_process"].get("type") != reasoning_data["type"]:
+            yield self._dispatch_event(
+                ThinkingTextMessageStartEvent(
+                    type=EventType.THINKING_TEXT_MESSAGE_START,
+                )
+            )
+            self.active_run["thinking_process"]["type"] = reasoning_data["type"]
+
+        if self.active_run["thinking_process"].get("type"):
+            yield self._dispatch_event(
+                ThinkingTextMessageContentEvent(
+                    type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
+                    delta=reasoning_data["text"]
+                )
             )
 
     async def get_checkpoint_before_message(self, message_id: str, thread_id: str):

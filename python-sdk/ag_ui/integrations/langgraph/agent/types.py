@@ -1,4 +1,4 @@
-from typing import TypedDict, Optional, List, Any, Dict, Union
+from typing import TypedDict, Optional, List, Any, Dict, Union, Literal
 from typing_extensions import NotRequired
 from enum import Enum
 
@@ -28,6 +28,11 @@ SchemaKeys = TypedDict("SchemaKeys", {
     "config": NotRequired[Optional[List[str]]]
 })
 
+ThinkingProcess = TypedDict("ThinkingProcess", {
+    "index": int,
+    "type": NotRequired[Optional[Literal['text']]],
+})
+
 MessageInProgress = TypedDict("MessageInProgress", {
     "id": str,
     "tool_call_id": NotRequired[Optional[str]],
@@ -41,7 +46,8 @@ RunMetadata = TypedDict("RunMetadata", {
     "prev_node_name": NotRequired[Optional[str]],
     "exiting_node": NotRequired[bool],
     "manually_emitted_state": NotRequired[Optional[State]],
-    "thread_id": NotRequired[Optional[str]]
+    "thread_id": NotRequired[Optional[ThinkingProcess]],
+    "thinking_process": NotRequired[Optional[str]]
 })
 
 MessagesInProgressRecord = Dict[str, Optional[MessageInProgress]]
@@ -76,4 +82,10 @@ PredictStateTool = TypedDict("PredictStateTool", {
     "tool": str,
     "state_key": str,
     "tool_argument": str
+})
+
+LangGraphReasoning = TypedDict("LangGraphReasoning", {
+    "type": str,
+    "text": str,
+    "index": int
 })
