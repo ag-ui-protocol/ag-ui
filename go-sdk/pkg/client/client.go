@@ -50,7 +50,13 @@ func New(config Config) (*Client, error) {
 }
 
 // SendEvent sends an event to the specified agent and returns the response.
-func (c *Client) SendEvent(ctx context.Context, agentName string, event interface{}) ([]interface{}, error) {
+func (c *Client) SendEvent(ctx context.Context, agentName string, event any) (responses []any, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("SendEvent failed for agent %s: %w", agentName, err)
+		}
+	}()
+
 	if agentName == "" {
 		return nil, &core.ConfigError{
 			Field: "agentName",
@@ -67,12 +73,23 @@ func (c *Client) SendEvent(ctx context.Context, agentName string, event interfac
 		}
 	}
 
+	// Validate event type if it has a type field
+	if err := validateEventType(event); err != nil {
+		return nil, err
+	}
+
 	// TODO: Implement event sending via transport layer (Issue #123)
-	return nil, fmt.Errorf("SendEvent for agent %s: %w", agentName, core.ErrNotImplemented)
+	return nil, core.ErrNotImplemented
 }
 
 // Stream opens a streaming connection to the specified agent.
-func (c *Client) Stream(ctx context.Context, agentName string) (<-chan interface{}, error) {
+func (c *Client) Stream(ctx context.Context, agentName string) (eventChan <-chan any, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("Stream failed for agent %s: %w", agentName, err)
+		}
+	}()
+
 	if agentName == "" {
 		return nil, &core.ConfigError{
 			Field: "agentName",
@@ -82,11 +99,25 @@ func (c *Client) Stream(ctx context.Context, agentName string) (<-chan interface
 	}
 
 	// TODO: Implement streaming connection (Issue #124)
-	return nil, fmt.Errorf("Stream for agent %s: %w", agentName, core.ErrNotImplemented)
+	return nil, core.ErrNotImplemented
 }
 
 // Close closes the client and releases any resources.
 func (c *Client) Close() error {
 	// TODO: Implement resource cleanup
+	return nil
+}
+
+// validateEventType validates that the event has a valid type if it contains type information.
+func validateEventType(event any) error {
+	// For now, we accept any event type since this is for basic validation
+	// TODO: Add proper event type validation once protobuf events are integrated
+	if event == nil {
+		return &core.ConfigError{
+			Field: "event",
+			Value: event,
+			Err:   errors.New("event cannot be nil"),
+		}
+	}
 	return nil
 }

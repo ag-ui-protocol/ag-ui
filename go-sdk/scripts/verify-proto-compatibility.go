@@ -14,9 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ag-ui/go-sdk/pkg/proto/generated"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/ag-ui/go-sdk/pkg/proto/generated"
 )
 
 func main() {
@@ -44,7 +45,9 @@ func main() {
 }
 
 func testEventTypes() {
-	expectedTypes := []generated.EventType{
+	// Pre-allocate slice with known capacity for better memory efficiency
+	expectedTypes := make([]generated.EventType, 0, 16)
+	expectedTypes = append(expectedTypes,
 		generated.EventType_TEXT_MESSAGE_START,
 		generated.EventType_TEXT_MESSAGE_CONTENT,
 		generated.EventType_TEXT_MESSAGE_END,
@@ -61,12 +64,18 @@ func testEventTypes() {
 		generated.EventType_RUN_ERROR,
 		generated.EventType_STEP_STARTED,
 		generated.EventType_STEP_FINISHED,
-	}
+	)
 
 	fmt.Printf("   - Checking %d event types...\n", len(expectedTypes))
 	for i, eventType := range expectedTypes {
-		if int32(eventType) != int32(i) {
-			log.Fatalf("   ❌ Event type %s has wrong value: got %d, expected %d", eventType.String(), int32(eventType), i)
+		// Ensure safe conversion - event types should be small integers
+		if i < 0 || i > 255 {
+			log.Fatalf("   ❌ Event type index out of safe range: %d", i)
+		}
+		expectedValue := int32(i)
+		actualValue := int32(eventType)
+		if actualValue != expectedValue {
+			log.Fatalf("   ❌ Event type %s has wrong value: got %d, expected %d", eventType.String(), actualValue, expectedValue)
 		}
 	}
 	fmt.Printf("   ✅ All %d event types have correct values\n", len(expectedTypes))
@@ -93,7 +102,7 @@ func testJSONFieldNaming() {
 	}
 
 	// Parse JSON to verify field names
-	var jsonObj map[string]interface{}
+	var jsonObj map[string]any
 	if err := json.Unmarshal(jsonData, &jsonObj); err != nil {
 		log.Fatalf("   ❌ Failed to parse JSON: %v", err)
 	}
@@ -113,7 +122,7 @@ func testJSONFieldNaming() {
 	}
 
 	// Verify baseEvent structure
-	baseEventObj, ok := jsonObj["baseEvent"].(map[string]interface{})
+	baseEventObj, ok := jsonObj["baseEvent"].(map[string]any)
 	if !ok {
 		log.Fatal("   ❌ baseEvent field is not an object")
 	}

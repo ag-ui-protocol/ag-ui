@@ -51,14 +51,14 @@ type MessageData struct {
 }
 
 type StateData struct {
-	Key   string      `json:"key"`
-	Value interface{} `json:"value"`
+	Key   string `json:"key"`
+	Value any    `json:"value"`
 }
 
 type ToolData struct {
-	ToolName string                 `json:"tool_name"`
-	Args     map[string]interface{} `json:"args"`
-	Result   interface{}            `json:"result,omitempty"`
+	ToolName string         `json:"tool_name"`
+	Args     map[string]any `json:"args"`
+	Result   any            `json:"result,omitempty"`
 }
 
 // Concrete event types
@@ -71,7 +71,7 @@ type ToolEvent = Event[ToolData]
 type Agent interface {
 	// HandleEvent processes an incoming event and optionally returns response events
 	// Note: Returns generic events - agents must handle type assertions as needed
-	HandleEvent(ctx context.Context, event interface{}) ([]interface{}, error)
+	HandleEvent(ctx context.Context, event any) ([]any, error)
 
 	// Name returns the agent's identifier
 	Name() string
@@ -81,7 +81,7 @@ type Agent interface {
 }
 
 // EventHandler is a function type for handling specific event types.
-type EventHandler[T any] func(ctx context.Context, event Event[T]) ([]interface{}, error)
+type EventHandler[T any] func(ctx context.Context, event Event[T]) ([]any, error)
 
 // StreamConfig contains configuration for event streaming.
 type StreamConfig struct {
