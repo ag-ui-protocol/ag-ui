@@ -1,5 +1,5 @@
-from .agent.agent import LangGraphAgent
-from .agent.types import (
+from .agent import LangGraphAgent
+from .types import (
     LangGraphEventTypes,
     CustomEventNames,
     State,

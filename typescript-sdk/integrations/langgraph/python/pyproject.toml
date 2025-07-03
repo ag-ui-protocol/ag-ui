@@ -1,30 +1,30 @@
 [tool.poetry]
-name = "langgraph_agui_dojo"
-version = "0.1.0"
-description = ""
-readme = "README.md"
-[project]
-name = "agents"
+name = "ag-ui-langgraph"
 version = "0.0.1"
+description = ""
+authors = ["Ran Shem Tov <ran@copilotkit.ai>"]
+readme = "README.md"
+exclude = [
+    "ag_ui_langgraph/dojo.py",
+    "ag_ui_langgraph/examples/**",
+]
 
 [tool.poetry.dependencies]
-python = ">=3.12,<3.13"
-copilotkit = "0.1.46"
-tavily-python = "^0.5.1"
-uvicorn = "^0.34.0"
-dotenv = "^0.9.9"
-crewai = "0.118.0"
+python = "<3.14,>=3.10"
+ag-ui-protocol = "==0.1.7"
+python-dotenv = "^1.0.0"
+fastapi = "^0.115.12"
+uvicorn = "^0.34.3"
 langchain = ">=0.1.0"
 langchain-core = ">=0.1.5"
 langchain-community = ">=0.0.1"
 langchain-experimental = ">=0.0.11"
 langchain-openai = ">=0.0.1"
 langgraph = "^0.3.25"
-ag-ui-protocol = {path = "../../../..", develop = true}
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-server = "agents.server:main"
+dev = "ag_ui_langgraph.dojo:main"

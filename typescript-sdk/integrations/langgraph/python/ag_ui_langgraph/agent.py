@@ -85,15 +85,11 @@ class LangGraphAgent:
         self.config = config or {}
         self.messages_in_process: MessagesInProgressRecord = {}
         self.active_run: Optional[RunMetadata] = None
-        self.encoder: Optional[EventEncoder] = None
 
     def _dispatch_event(self, event: ProcessedEvents) -> str:
-        if self.encoder:
-            return self.encoder.encode(event)
-        return str(event)  # Fallback if no encoder
+        return event  # Fallback if no encoder
 
-    async def run(self, input_data: RunAgentInput, encoder: Optional[EventEncoder] = None) -> AsyncGenerator[str, None]:
-        self.encoder = encoder
+    async def run(self, input_data: RunAgentInput) -> AsyncGenerator[str, None]:
         async for event_str in self._handle_stream_events(input_data):
             yield event_str
 
