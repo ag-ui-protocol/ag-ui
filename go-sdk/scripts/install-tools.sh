@@ -113,7 +113,6 @@ install_go_tools() {
         "golang.org/x/vuln/cmd/govulncheck@latest"
         "github.com/securego/gosec/v2/cmd/gosec@latest"
         "go.uber.org/mock/mockgen@latest"
-        "github.com/golang/mock/mockgen@latest"
     )
 
     for tool in "${tools[@]}"; do

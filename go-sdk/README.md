@@ -172,9 +172,11 @@ This is the foundational structure for the AG-UI Go SDK. The project is organize
 
 ## Documentation
 
+- [Development Guide](DEVELOPMENT.md) - **Complete development setup and workflow guide**
 - [Getting Started](docs/getting-started.md) - Detailed setup and usage guide
 - [Architecture](ARCHITECTURE.md) - Technical architecture and design decisions
 - [Contributing](CONTRIBUTING.md) - Development guidelines and contribution process
+- [Dependencies](docs/dependencies.md) - Dependency management and security strategy
 - [Examples](examples/) - Code examples and tutorials
 
 ## Contributing

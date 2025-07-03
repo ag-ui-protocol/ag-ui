@@ -213,6 +213,7 @@ tools-install:
 	$(GOCMD) install golang.org/x/tools/cmd/goimports@latest
 	$(GOCMD) install golang.org/x/vuln/cmd/govulncheck@latest
 	$(GOCMD) install github.com/securego/gosec/v2/cmd/gosec@latest
+	$(GOCMD) install go.uber.org/mock/mockgen@latest
 	@echo "Development tools installed ✓"
 
 ## full-check: Run comprehensive quality checks

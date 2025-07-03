@@ -72,10 +72,9 @@ The AG-UI Go SDK has been designed with a careful selection of dependencies that
 - **Version strategy**: Regular updates, backward compatibility typically maintained
 
 #### Mock Generation
-- **Package**: `github.com/golang/mock`
 - **Package**: `go.uber.org/mock`
 - **Purpose**: Interface mock generation for testing
-- **Why chosen**: Both libraries provide complementary mocking capabilities
+- **Why chosen**: Modern, well-maintained mock library with excellent Go 1.18+ generics support
 - **Version strategy**: Regular updates, regenerate mocks after updates
 
 ### Code Quality & Security
@@ -245,7 +244,6 @@ gosec -version
 
 ### Potential Removals
 - **logrus**: May migrate to slog in Go 1.21+ for better performance
-- **golang/mock**: May consolidate on uber/mock for consistency
 
 ### Migration Planning
 - **Go version updates**: Plan for Go 1.22+ features
