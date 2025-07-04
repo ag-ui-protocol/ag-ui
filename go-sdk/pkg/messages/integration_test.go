@@ -149,10 +149,10 @@ func TestValidationAndSanitizationFlow(t *testing.T) {
 		
 		// Create validator and sanitizer
 		validator := messages.NewValidator(messages.ValidationOptions{
-			MaxContentLength:   1000,
+			MaxContentBytes:    1000,
 			MaxNameLength:      50,
 			MaxToolCalls:       10,
-			MaxArgumentsLength: 1000,
+			MaxArgumentsBytes:  1000,
 			AllowEmptyContent:  false,
 			StrictRoleCheck:    true,
 			SanitizeContent:    true,
@@ -278,7 +278,7 @@ func TestErrorHandlingFlow(t *testing.T) {
 		longMsg := messages.NewUserMessage(string(longContent))
 		
 		validator = messages.NewValidator(messages.ValidationOptions{
-			MaxContentLength: 1000000, // 1MB limit
+			MaxContentBytes: 1000000, // 1MB limit
 		})
 		err = validator.ValidateMessage(longMsg)
 		require.Error(t, err)

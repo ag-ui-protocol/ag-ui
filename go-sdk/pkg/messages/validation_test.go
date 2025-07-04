@@ -26,7 +26,7 @@ func TestValidator(t *testing.T) {
 
 	t.Run("Validate message content length", func(t *testing.T) {
 		v := NewValidator(ValidationOptions{
-			MaxContentLength: 100,
+			MaxContentBytes: 100,
 		})
 
 		// Create message with content exceeding limit
@@ -161,8 +161,8 @@ func TestValidator(t *testing.T) {
 			AllowEmptyContent:  false,
 			MaxToolCalls:       100, // Ensure we allow tool calls
 			MaxNameLength:      256, // Ensure we allow names
-			MaxContentLength:   1000000,
-			MaxArgumentsLength: 100000,
+			MaxContentBytes:    1000000,
+			MaxArgumentsBytes:  100000,
 			StrictRoleCheck:    true,
 		})
 
@@ -403,7 +403,7 @@ func TestValidateAndSanitize(t *testing.T) {
 		msg := NewUserMessage("  \n\n\n\nContent\n\n\n\n  ")
 
 		validationOpts := ValidationOptions{
-			MaxContentLength: 100,
+			MaxContentBytes: 100,
 		}
 		sanitizationOpts := SanitizationOptions{
 			TrimWhitespace:         true,
