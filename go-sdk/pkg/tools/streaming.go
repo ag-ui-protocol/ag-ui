@@ -89,15 +89,11 @@ func (sc *StreamingContext) sendChunk(chunkType string, data interface{}) error 
 
 // StreamingToolHelper provides utilities for implementing streaming tools.
 type StreamingToolHelper struct {
-	// BufferSize controls the internal buffer size
-	BufferSize int
 }
 
 // NewStreamingToolHelper creates a new streaming tool helper.
 func NewStreamingToolHelper() *StreamingToolHelper {
-	return &StreamingToolHelper{
-		BufferSize: 1024 * 1024, // 1MB default buffer
-	}
+	return &StreamingToolHelper{}
 }
 
 // StreamJSON streams a large JSON object in chunks.

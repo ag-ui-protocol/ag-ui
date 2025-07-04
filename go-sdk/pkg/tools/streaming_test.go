@@ -175,7 +175,6 @@ func TestStreamingToolHelper(t *testing.T) {
 	t.Run("NewStreamingToolHelper", func(t *testing.T) {
 		helper := NewStreamingToolHelper()
 		assert.NotNil(t, helper)
-		assert.Equal(t, 1024*1024, helper.BufferSize)
 	})
 
 	t.Run("StreamJSON", func(t *testing.T) {
