@@ -427,7 +427,7 @@ func isValidURL(url string) bool {
 
 func isValidDateTime(dt string) bool {
 	// ISO 8601 date-time format validation
-	matched, _ := regexp.MatchString(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}`, dt)
+	matched, _ := regexp.MatchString(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z?$`, dt)
 	return matched
 }
 
