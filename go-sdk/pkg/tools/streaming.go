@@ -145,9 +145,13 @@ func (h *StreamingToolHelper) StreamJSON(ctx context.Context, data interface{}, 
 		}
 
 		// Send completion chunk
-		out <- &ToolStreamChunk{
+		select {
+		case out <- &ToolStreamChunk{
 			Type:  "complete",
 			Index: index,
+		}:
+		case <-ctx.Done():
+			return
 		}
 	}()
 
