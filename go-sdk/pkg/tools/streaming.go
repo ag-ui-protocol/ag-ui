@@ -8,6 +8,11 @@ import (
 	"sync"
 )
 
+const (
+	// defaultStreamBufferSize is the default buffer size for streaming channels
+	defaultStreamBufferSize = 100
+)
+
 // StreamingContext provides context and utilities for streaming tool execution.
 type StreamingContext struct {
 	ctx    context.Context
@@ -19,9 +24,12 @@ type StreamingContext struct {
 
 // NewStreamingContext creates a new streaming context.
 func NewStreamingContext(ctx context.Context) *StreamingContext {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return &StreamingContext{
 		ctx:    ctx,
-		chunks: make(chan *ToolStreamChunk, 100), // Buffered channel
+		chunks: make(chan *ToolStreamChunk, defaultStreamBufferSize), // Buffered channel
 		index:  0,
 	}
 }

@@ -963,16 +963,14 @@ func TestStreamingEdgeCases(t *testing.T) {
 	})
 
 	t.Run("NilContext", func(t *testing.T) {
-		// Creating with nil context is allowed
+		// Creating with nil context defaults to background context
 		sc := NewStreamingContext(nil)
 		assert.NotNil(t, sc)
-		assert.Nil(t, sc.ctx)
+		assert.Equal(t, context.Background(), sc.ctx)
 		
-		// But operations will panic when trying to use the context
-		// This is expected behavior - users should provide a valid context
-		assert.Panics(t, func() {
-			sc.Send("test")
-		})
+		// Operations should work normally with the background context
+		err := sc.Send("test")
+		assert.NoError(t, err)
 	})
 
 	t.Run("VeryLargeChunk", func(t *testing.T) {

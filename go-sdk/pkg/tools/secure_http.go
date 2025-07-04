@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"golang.org/x/net/idna"
 )
 
 // SecureHTTPOptions defines security options for HTTP operations
@@ -119,9 +120,11 @@ func (e *SecureHTTPExecutor) validateURL(urlStr string) error {
 	// Check allowed hosts if specified
 	if len(e.options.AllowedHosts) > 0 {
 		allowed := false
+		normalizedHostname := e.normalizeHostname(hostname)
 		for _, allowedHost := range e.options.AllowedHosts {
-			if strings.EqualFold(hostname, allowedHost) || 
-			   strings.HasSuffix(strings.ToLower(hostname), "."+strings.ToLower(allowedHost)) {
+			normalizedAllowed := e.normalizeHostname(allowedHost)
+			if normalizedHostname == normalizedAllowed || 
+			   strings.HasSuffix(normalizedHostname, "."+normalizedAllowed) {
 				allowed = true
 				break
 			}
@@ -199,6 +202,21 @@ func isPrivateIP(ip net.IP) bool {
 	}
 	
 	return false
+}
+
+// normalizeHostname normalizes a hostname to prevent bypass attacks
+func (e *SecureHTTPExecutor) normalizeHostname(hostname string) string {
+	// Convert to lowercase
+	hostname = strings.ToLower(hostname)
+	
+	// Handle internationalized domain names (IDN)
+	normalized, err := idna.ToASCII(hostname)
+	if err != nil {
+		// If IDN conversion fails, return the lowercase original
+		return hostname
+	}
+	
+	return normalized
 }
 
 // NewSecureHTTPGetTool creates a secure HTTP GET tool

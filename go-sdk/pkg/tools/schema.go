@@ -212,20 +212,20 @@ func (v *SchemaValidator) validateNumber(prop *Property, value interface{}, path
 func (v *SchemaValidator) validateInteger(prop *Property, value interface{}, path string) error {
 	var num int64
 
-	switch v := value.(type) {
+	switch val := value.(type) {
 	case int:
-		num = int64(v)
+		num = int64(val)
 	case int32:
-		num = int64(v)
+		num = int64(val)
 	case int64:
-		num = v
+		num = val
 	case float64:
-		if v != float64(int64(v)) {
-			return newValidationError(path, fmt.Sprintf("expected integer, got float %v", v))
+		if val != float64(int64(val)) {
+			return newValidationError(path, fmt.Sprintf("expected integer, got float %v", val))
 		}
-		num = int64(v)
+		num = int64(val)
 	case json.Number:
-		i, err := v.Int64()
+		i, err := val.Int64()
 		if err != nil {
 			return newValidationError(path, fmt.Sprintf("invalid integer: %v", err))
 		}

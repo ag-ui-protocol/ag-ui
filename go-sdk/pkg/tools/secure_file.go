@@ -44,18 +44,20 @@ func DefaultSecureFileOptions() *SecureFileOptions {
 
 // SecureFileExecutor wraps file operations with security checks
 type SecureFileExecutor struct {
-	options  *SecureFileOptions
-	executor ToolExecutor
+	options       *SecureFileOptions
+	executor      ToolExecutor
+	operationType string // "read" or "write"
 }
 
 // NewSecureFileExecutor creates a new secure file executor
-func NewSecureFileExecutor(executor ToolExecutor, options *SecureFileOptions) *SecureFileExecutor {
+func NewSecureFileExecutor(executor ToolExecutor, options *SecureFileOptions, operationType string) *SecureFileExecutor {
 	if options == nil {
 		options = DefaultSecureFileOptions()
 	}
 	return &SecureFileExecutor{
-		options:  options,
-		executor: executor,
+		options:       options,
+		executor:      executor,
+		operationType: operationType,
 	}
 }
 
@@ -158,9 +160,7 @@ func (e *SecureFileExecutor) checkFileSize(path string) error {
 
 // isReadOperation checks if this executor is for a read operation
 func (e *SecureFileExecutor) isReadOperation() bool {
-	// This is a simple check - in practice, you might want to
-	// pass this information explicitly or check the tool type
-	return true // Conservative default
+	return e.operationType == "read"
 }
 
 // expandPath expands ~ to home directory
@@ -177,13 +177,13 @@ func expandPath(path string) string {
 // NewSecureReadFileTool creates a secure file reading tool
 func NewSecureReadFileTool(options *SecureFileOptions) *Tool {
 	baseTool := NewReadFileTool()
-	baseTool.Executor = NewSecureFileExecutor(&readFileExecutor{}, options)
+	baseTool.Executor = NewSecureFileExecutor(&readFileExecutor{}, options, "read")
 	return baseTool
 }
 
 // NewSecureWriteFileTool creates a secure file writing tool
 func NewSecureWriteFileTool(options *SecureFileOptions) *Tool {
 	baseTool := NewWriteFileTool()
-	baseTool.Executor = NewSecureFileExecutor(&writeFileExecutor{}, options)
+	baseTool.Executor = NewSecureFileExecutor(&writeFileExecutor{}, options, "write")
 	return baseTool
 }

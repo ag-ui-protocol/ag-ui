@@ -4,10 +4,14 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Cache for parsed constraint versions to avoid re-parsing
-var parsedConstraints = make(map[string]*semverVersion)
+var (
+	parsedConstraints   = make(map[string]*semverVersion)
+	parsedConstraintsMu sync.RWMutex
+)
 
 // semverVersion represents a parsed semantic version
 type semverVersion struct {
@@ -124,14 +128,20 @@ func matchesVersionConstraint(version, constraint string) (bool, error) {
 	
 	// Check cache for parsed constraint version
 	var cv *semverVersion
-	if cachedVersion, found := parsedConstraints[constraintVersion]; found {
+	parsedConstraintsMu.RLock()
+	cachedVersion, found := parsedConstraints[constraintVersion]
+	parsedConstraintsMu.RUnlock()
+	
+	if found {
 		cv = cachedVersion
 	} else {
 		cv, err = parseSemverVersion(constraintVersion)
 		if err != nil {
 			return false, fmt.Errorf("invalid constraint version: %w", err)
 		}
+		parsedConstraintsMu.Lock()
 		parsedConstraints[constraintVersion] = cv
+		parsedConstraintsMu.Unlock()
 	}
 	
 	// Apply the constraint
