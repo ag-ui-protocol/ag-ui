@@ -162,19 +162,19 @@ func (v *SchemaValidator) validateString(prop *Property, value interface{}, path
 func (v *SchemaValidator) validateNumber(prop *Property, value interface{}, path string) error {
 	var num float64
 
-	switch v := value.(type) {
+	switch val := value.(type) {
 	case float64:
-		num = v
+		num = val
 	case float32:
-		num = float64(v)
+		num = float64(val)
 	case int:
-		num = float64(v)
+		num = float64(val)
 	case int32:
-		num = float64(v)
+		num = float64(val)
 	case int64:
-		num = float64(v)
+		num = float64(val)
 	case json.Number:
-		f, err := v.Float64()
+		f, err := val.Float64()
 		if err != nil {
 			return newValidationError(path, fmt.Sprintf("invalid number: %v", err))
 		}
