@@ -100,7 +100,11 @@ func (e *SecureFileExecutor) validatePath(path string) error {
 	// Expand home directory in deny paths
 	for _, denyPath := range e.options.DenyPaths {
 		expandedDeny := expandPath(denyPath)
-		if strings.HasPrefix(cleanPath, expandedDeny) {
+		absDeny, err := filepath.Abs(filepath.Clean(expandedDeny))
+		if err != nil {
+			continue // Skip invalid deny paths
+		}
+		if strings.HasPrefix(cleanPath, absDeny) {
 			return fmt.Errorf("access denied: path is in restricted directory")
 		}
 	}

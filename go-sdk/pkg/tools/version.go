@@ -6,6 +6,9 @@ import (
 	"strings"
 )
 
+// Cache for parsed constraint versions to avoid re-parsing
+var parsedConstraints = make(map[string]*semverVersion)
+
 // semverVersion represents a parsed semantic version
 type semverVersion struct {
 	Major int
