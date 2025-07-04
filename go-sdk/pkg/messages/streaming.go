@@ -157,7 +157,12 @@ func (sb *StreamBuilder) AddToolCall(index int, delta ToolCall) error {
 	
 	// Rebuild tool calls array
 	assistantMsg.ToolCalls = make([]ToolCall, 0, len(sb.toolCallBuffers))
-	for i := 0; i < len(sb.toolCallBuffers); i++ {
+	keys := make([]int, 0, len(sb.toolCallBuffers))
+	for k := range sb.toolCallBuffers {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys) // Ensure keys are sorted
+	for _, i := range keys {
 		if tc, exists := sb.toolCallBuffers[i]; exists {
 			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, *tc)
 		}
