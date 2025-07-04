@@ -1334,3 +1334,93 @@ func float64Ptr2(f float64) *float64 {
 func boolPtr2(b bool) *bool {
 	return &b
 }
+
+// Benchmarks
+func BenchmarkSchemaValidator_Simple(b *testing.B) {
+	schema := &ToolSchema{
+		Type: "object",
+		Properties: map[string]*Property{
+			"name": {Type: "string"},
+			"age":  {Type: "number"},
+		},
+		Required: []string{"name"},
+	}
+	
+	validator := NewSchemaValidator(schema)
+	params := map[string]interface{}{
+		"name": "John Doe",
+		"age":  30,
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = validator.Validate(params)
+	}
+}
+
+func BenchmarkSchemaValidator_Complex(b *testing.B) {
+	schema := &ToolSchema{
+		Type: "object",
+		Properties: map[string]*Property{
+			"user": {
+				Type: "object",
+				Properties: map[string]*Property{
+					"name":  {Type: "string", MinLength: intPtr2(1), MaxLength: intPtr2(100)},
+					"email": {Type: "string", Format: "email"},
+					"age":   {Type: "integer", Minimum: float64Ptr2(0), Maximum: float64Ptr2(150)},
+					"tags":  {Type: "array", Items: &Property{Type: "string"}},
+				},
+				Required: []string{"name", "email"},
+			},
+			"metadata": {
+				Type: "object",
+				Properties: map[string]*Property{
+					"created_at": {Type: "string", Format: "date-time"},
+					"version":    {Type: "string", Pattern: "^v\\d+\\.\\d+\\.\\d+$"},
+				},
+			},
+		},
+		Required: []string{"user"},
+	}
+	
+	validator := NewSchemaValidator(schema)
+	params := map[string]interface{}{
+		"user": map[string]interface{}{
+			"name":  "John Doe",
+			"email": "john@example.com",
+			"age":   30,
+			"tags":  []interface{}{"admin", "user"},
+		},
+		"metadata": map[string]interface{}{
+			"created_at": "2023-01-01T00:00:00Z",
+			"version":    "v1.2.3",
+		},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = validator.Validate(params)
+	}
+}
+
+func BenchmarkSchemaValidator_ValidationFailure(b *testing.B) {
+	schema := &ToolSchema{
+		Type: "object",
+		Properties: map[string]*Property{
+			"email": {Type: "string", Format: "email"},
+			"age":   {Type: "integer", Minimum: float64Ptr2(0)},
+		},
+		Required: []string{"email", "age"},
+	}
+	
+	validator := NewSchemaValidator(schema)
+	params := map[string]interface{}{
+		"email": "invalid-email",
+		"age":   -5,
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = validator.Validate(params)
+	}
+}

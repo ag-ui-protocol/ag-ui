@@ -116,8 +116,8 @@ func NewExecutionEngine(registry *Registry, opts ...ExecutionEngineOption) *Exec
 
 // Execute runs a tool with the given parameters.
 func (e *ExecutionEngine) Execute(ctx context.Context, toolID string, params map[string]interface{}) (*ToolExecutionResult, error) {
-	// Get the tool from registry
-	tool, err := e.registry.Get(toolID)
+	// Get the tool from registry (read-only view for memory efficiency)
+	toolView, err := e.registry.GetReadOnly(toolID)
 	if err != nil {
 		return nil, fmt.Errorf("tool not found: %w", err)
 	}
@@ -135,7 +135,7 @@ func (e *ExecutionEngine) Execute(ctx context.Context, toolID string, params map
 	}
 
 	// Validate parameters
-	validator := NewSchemaValidator(tool.Schema)
+	validator := NewSchemaValidator(toolView.GetSchema())
 	if err := validator.Validate(params); err != nil {
 		return nil, fmt.Errorf("parameter validation failed: %w", err)
 	}
@@ -149,8 +149,8 @@ func (e *ExecutionEngine) Execute(ctx context.Context, toolID string, params map
 
 	// Set up execution context with timeout
 	timeout := e.defaultTimeout
-	if tool.Capabilities != nil && tool.Capabilities.Timeout > 0 {
-		timeout = tool.Capabilities.Timeout
+	if capabilities := toolView.GetCapabilities(); capabilities != nil && capabilities.Timeout > 0 {
+		timeout = capabilities.Timeout
 	}
 
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -165,33 +165,20 @@ func (e *ExecutionEngine) Execute(ctx context.Context, toolID string, params map
 	startTime := time.Now()
 
 	// Execute the tool
-	result, err := e.executeWithRecovery(execCtx, tool, params)
+	result, err := e.executeWithRecovery(execCtx, toolView, params)
 
 	// Record execution time
 	duration := time.Since(startTime)
 
-	// Update metrics
-	e.updateMetrics(toolID, err == nil, duration)
-
-	// Run after-execute hooks
-	for _, hook := range e.afterExecute {
-		if hookErr := hook(ctx, toolID, params); hookErr != nil {
-			// Log hook errors but don't fail the execution
-			fmt.Printf("post-execution hook error: %v\n", hookErr)
-		}
-	}
-
 	// Prepare result
 	if err != nil {
-		return &ToolExecutionResult{
+		result = &ToolExecutionResult{
 			Success:   false,
 			Error:     err.Error(),
 			Duration:  duration,
 			Timestamp: time.Now(),
-		}, nil
-	}
-
-	if result == nil {
+		}
+	} else if result == nil {
 		result = &ToolExecutionResult{
 			Success:   true,
 			Duration:  duration,
@@ -202,25 +189,36 @@ func (e *ExecutionEngine) Execute(ctx context.Context, toolID string, params map
 		result.Timestamp = time.Now()
 	}
 
+	// Update metrics based on final result
+	e.updateMetrics(toolID, result.Success, duration)
+
+	// Run after-execute hooks
+	for _, hook := range e.afterExecute {
+		if hookErr := hook(ctx, toolID, params); hookErr != nil {
+			// Log hook errors but don't fail the execution
+			fmt.Printf("post-execution hook error: %v\n", hookErr)
+		}
+	}
+
 	return result, nil
 }
 
 // ExecuteStream runs a streaming tool with the given parameters.
 func (e *ExecutionEngine) ExecuteStream(ctx context.Context, toolID string, params map[string]interface{}) (<-chan *ToolStreamChunk, error) {
-	// Get the tool from registry
-	tool, err := e.registry.Get(toolID)
+	// Get the tool from registry (read-only view for memory efficiency)
+	toolView, err := e.registry.GetReadOnly(toolID)
 	if err != nil {
 		return nil, fmt.Errorf("tool not found: %w", err)
 	}
 
 	// Check if tool supports streaming
-	streamingExecutor, ok := tool.Executor.(StreamingToolExecutor)
+	streamingExecutor, ok := toolView.GetExecutor().(StreamingToolExecutor)
 	if !ok {
 		return nil, fmt.Errorf("tool %q does not support streaming", toolID)
 	}
 
 	// Validate parameters
-	validator := NewSchemaValidator(tool.Schema)
+	validator := NewSchemaValidator(toolView.GetSchema())
 	if err := validator.Validate(params); err != nil {
 		return nil, fmt.Errorf("parameter validation failed: %w", err)
 	}
@@ -239,8 +237,8 @@ func (e *ExecutionEngine) ExecuteStream(ctx context.Context, toolID string, para
 
 	// Set up execution context with timeout
 	timeout := e.defaultTimeout
-	if tool.Capabilities != nil && tool.Capabilities.Timeout > 0 {
-		timeout = tool.Capabilities.Timeout
+	if capabilities := toolView.GetCapabilities(); capabilities != nil && capabilities.Timeout > 0 {
+		timeout = capabilities.Timeout
 	}
 
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -288,7 +286,7 @@ func (e *ExecutionEngine) ExecuteStream(ctx context.Context, toolID string, para
 }
 
 // executeWithRecovery executes a tool with panic recovery.
-func (e *ExecutionEngine) executeWithRecovery(ctx context.Context, tool *Tool, params map[string]interface{}) (result *ToolExecutionResult, err error) {
+func (e *ExecutionEngine) executeWithRecovery(ctx context.Context, tool ReadOnlyTool, params map[string]interface{}) (result *ToolExecutionResult, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("tool execution panicked: %v", r)
@@ -296,7 +294,7 @@ func (e *ExecutionEngine) executeWithRecovery(ctx context.Context, tool *Tool, p
 		}
 	}()
 
-	return tool.Executor.Execute(ctx, params)
+	return tool.GetExecutor().Execute(ctx, params)
 }
 
 // checkConcurrencyLimit checks if we can execute another tool.

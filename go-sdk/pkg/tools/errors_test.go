@@ -770,3 +770,62 @@ func TestEdgeCases(t *testing.T) {
 		assert.Contains(t, []CircuitState{CircuitClosed, CircuitOpen, CircuitHalfOpen}, cb.state)
 	})
 }
+
+// Benchmarks
+func BenchmarkCircuitBreaker_Success(b *testing.B) {
+	cb := NewCircuitBreaker(5, time.Second)
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = cb.Call(func() error {
+			return nil
+		})
+	}
+}
+
+func BenchmarkCircuitBreaker_Failure(b *testing.B) {
+	cb := NewCircuitBreaker(5, time.Second)
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = cb.Call(func() error {
+			return fmt.Errorf("test error")
+		})
+	}
+}
+
+func BenchmarkCircuitBreaker_OpenCircuit(b *testing.B) {
+	cb := NewCircuitBreaker(1, time.Minute) // Long timeout to keep circuit open
+	
+	// Trigger circuit to open
+	cb.Call(func() error { return fmt.Errorf("error") })
+	cb.Call(func() error { return fmt.Errorf("error") })
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = cb.Call(func() error {
+			return nil
+		})
+	}
+}
+
+func BenchmarkErrorBuilder_Build(b *testing.B) {
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		NewToolError(ErrorTypeValidation, "TEST_ERROR", "Test error message").
+			WithToolID("test-tool").
+			WithDetail("field", "test").
+			WithRetry(time.Second)
+	}
+}
+
+func BenchmarkValidationErrorBuilder_Build(b *testing.B) {
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		builder := NewValidationErrorBuilder()
+		builder.AddError("Test validation error")
+		builder.AddFieldError("field1", "Field error 1")
+		builder.AddFieldError("field2", "Field error 2")
+		_ = builder.Build("test-tool")
+	}
+}

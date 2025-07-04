@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -369,7 +370,8 @@ type CircuitBreaker struct {
 	failureThreshold int
 	resetTimeout     time.Duration
 
-	// State
+	// State (protected by mutex)
+	mu          sync.RWMutex
 	failures    int
 	lastFailure time.Time
 	state       CircuitState
@@ -409,6 +411,9 @@ func (cb *CircuitBreaker) Call(fn func() error) error {
 
 // canProceed checks if the circuit allows the call.
 func (cb *CircuitBreaker) canProceed() error {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
 	switch cb.state {
 	case CircuitOpen:
 		if time.Since(cb.lastFailure) > cb.resetTimeout {
@@ -432,6 +437,9 @@ func (cb *CircuitBreaker) canProceed() error {
 
 // recordResult updates circuit breaker state based on result.
 func (cb *CircuitBreaker) recordResult(err error) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
 	if err == nil {
 		if cb.state == CircuitHalfOpen {
 			cb.state = CircuitClosed
@@ -450,11 +458,15 @@ func (cb *CircuitBreaker) recordResult(err error) {
 
 // GetState returns the current circuit breaker state.
 func (cb *CircuitBreaker) GetState() CircuitState {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
 	return cb.state
 }
 
 // Reset manually resets the circuit breaker.
 func (cb *CircuitBreaker) Reset() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
 	cb.state = CircuitClosed
 	cb.failures = 0
 }

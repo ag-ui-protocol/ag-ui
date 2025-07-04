@@ -35,6 +35,67 @@ type Tool struct {
 	Capabilities *ToolCapabilities `json:"capabilities,omitempty"`
 }
 
+// ReadOnlyTool provides a read-only view of a tool to avoid cloning overhead.
+// This interface prevents modifications while allowing access to tool properties.
+type ReadOnlyTool interface {
+	GetID() string
+	GetName() string
+	GetDescription() string
+	GetVersion() string
+	GetSchema() *ToolSchema
+	GetMetadata() *ToolMetadata
+	GetExecutor() ToolExecutor
+	GetCapabilities() *ToolCapabilities
+	// Clone returns a full copy if modification is needed
+	Clone() *Tool
+}
+
+// readOnlyToolView implements ReadOnlyTool by wrapping a Tool pointer.
+type readOnlyToolView struct {
+	tool *Tool
+}
+
+// NewReadOnlyTool creates a read-only view of a tool without cloning.
+func NewReadOnlyTool(tool *Tool) ReadOnlyTool {
+	return &readOnlyToolView{tool: tool}
+}
+
+func (r *readOnlyToolView) GetID() string {
+	return r.tool.ID
+}
+
+func (r *readOnlyToolView) GetName() string {
+	return r.tool.Name
+}
+
+func (r *readOnlyToolView) GetDescription() string {
+	return r.tool.Description
+}
+
+func (r *readOnlyToolView) GetVersion() string {
+	return r.tool.Version
+}
+
+func (r *readOnlyToolView) GetSchema() *ToolSchema {
+	return r.tool.Schema
+}
+
+func (r *readOnlyToolView) GetMetadata() *ToolMetadata {
+	return r.tool.Metadata
+}
+
+func (r *readOnlyToolView) GetExecutor() ToolExecutor {
+	return r.tool.Executor
+}
+
+func (r *readOnlyToolView) GetCapabilities() *ToolCapabilities {
+	return r.tool.Capabilities
+}
+
+func (r *readOnlyToolView) Clone() *Tool {
+	return r.tool.Clone()
+}
+
 // ToolSchema represents a JSON Schema for tool parameters.
 // It validates and describes the expected input structure.
 type ToolSchema struct {

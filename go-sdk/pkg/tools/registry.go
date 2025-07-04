@@ -124,6 +124,7 @@ func (r *Registry) Unregister(toolID string) error {
 
 // Get retrieves a tool by its ID.
 // It returns nil if the tool is not found.
+// This method returns a clone for backward compatibility.
 func (r *Registry) Get(toolID string) (*Tool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -137,8 +138,24 @@ func (r *Registry) Get(toolID string) (*Tool, error) {
 	return tool.Clone(), nil
 }
 
+// GetReadOnly retrieves a read-only view of a tool by its ID.
+// This is more memory-efficient than Get() as it avoids cloning.
+func (r *Registry) GetReadOnly(toolID string) (ReadOnlyTool, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	tool, exists := r.tools[toolID]
+	if !exists {
+		return nil, fmt.Errorf("tool with ID %q not found", toolID)
+	}
+
+	// Return a read-only view without cloning
+	return NewReadOnlyTool(tool), nil
+}
+
 // GetByName retrieves a tool by its name.
 // It returns nil if the tool is not found.
+// This method returns a clone for backward compatibility.
 func (r *Registry) GetByName(name string) (*Tool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -152,8 +169,24 @@ func (r *Registry) GetByName(name string) (*Tool, error) {
 	return tool.Clone(), nil
 }
 
+// GetByNameReadOnly retrieves a read-only view of a tool by its name.
+// This is more memory-efficient than GetByName() as it avoids cloning.
+func (r *Registry) GetByNameReadOnly(name string) (ReadOnlyTool, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	toolID, exists := r.nameIndex[name]
+	if !exists {
+		return nil, fmt.Errorf("tool with name %q not found", name)
+	}
+
+	tool := r.tools[toolID]
+	return NewReadOnlyTool(tool), nil
+}
+
 // List returns all tools that match the given filter.
 // If filter is nil, all tools are returned.
+// This method returns clones for backward compatibility.
 func (r *Registry) List(filter *ToolFilter) ([]*Tool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -163,6 +196,23 @@ func (r *Registry) List(filter *ToolFilter) ([]*Tool, error) {
 	for _, tool := range r.tools {
 		if filter == nil || r.matchesFilter(tool, filter) {
 			results = append(results, tool.Clone())
+		}
+	}
+
+	return results, nil
+}
+
+// ListReadOnly returns read-only views of all tools that match the given filter.
+// This is more memory-efficient than List() as it avoids cloning.
+func (r *Registry) ListReadOnly(filter *ToolFilter) ([]ReadOnlyTool, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var results []ReadOnlyTool
+
+	for _, tool := range r.tools {
+		if filter == nil || r.matchesFilter(tool, filter) {
+			results = append(results, NewReadOnlyTool(tool))
 		}
 	}
 

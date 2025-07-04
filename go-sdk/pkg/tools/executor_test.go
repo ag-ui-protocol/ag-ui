@@ -3,6 +3,10 @@ package tools
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math/rand"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -548,8 +552,13 @@ func TestExecutionEngine_Metrics(t *testing.T) {
 	tool2 := testTool()
 	tool2.ID = "tool2"
 	tool2.Name = "tool2"
-	tool2.Executor = &mockExecutor{
-		err: errors.New("tool2 always fails"),
+	tool2.Executor = &mockToolExecutor{
+		executeFunc: func(ctx context.Context, params map[string]interface{}) (*ToolExecutionResult, error) {
+			return &ToolExecutionResult{
+				Success: false,
+				Error:   "tool2 always fails",
+			}, nil
+		},
 	}
 	
 	require.NoError(t, registry.Register(tool1))
@@ -648,5 +657,482 @@ func BenchmarkExecutionEngine_ConcurrentExecute(b *testing.B) {
 				b.Fatal(err)
 			}
 		}
+	})
+}
+
+// Comprehensive Concurrency Tests - addressing PR review feedback
+func TestExecutionEngine_ConcurrentExecutionLoad(t *testing.T) {
+	t.Run("high concurrency load test", func(t *testing.T) {
+		registry := NewRegistry()
+		tool := testTool()
+		
+		var executionCount int64
+		var maxConcurrent int64
+		var currentConcurrent int64
+		
+		tool.Executor = &mockToolExecutor{
+			executeFunc: func(ctx context.Context, params map[string]interface{}) (*ToolExecutionResult, error) {
+				current := atomic.AddInt64(&currentConcurrent, 1)
+				for {
+					max := atomic.LoadInt64(&maxConcurrent)
+					if current <= max || atomic.CompareAndSwapInt64(&maxConcurrent, max, current) {
+						break
+					}
+				}
+				
+				// Simulate some work
+				time.Sleep(10 * time.Millisecond)
+				
+				atomic.AddInt64(&executionCount, 1)
+				atomic.AddInt64(&currentConcurrent, -1)
+				
+				return &ToolExecutionResult{
+					Success: true,
+					Data:    fmt.Sprintf("execution-%d", atomic.LoadInt64(&executionCount)),
+				}, nil
+			},
+		}
+		require.NoError(t, registry.Register(tool))
+
+		engine := NewExecutionEngine(registry, WithMaxConcurrent(50))
+		params := map[string]interface{}{"input": "test"}
+
+		// Execute 200 concurrent requests
+		var wg sync.WaitGroup
+		results := make(chan *ToolExecutionResult, 200)
+		errors := make(chan error, 200)
+		
+		for i := 0; i < 200; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				result, err := engine.Execute(context.Background(), "test-tool", params)
+				if err != nil {
+					errors <- err
+					return
+				}
+				results <- result
+			}(i)
+		}
+
+		wg.Wait()
+		close(results)
+		close(errors)
+
+		// Verify results
+		resultCount := 0
+		for result := range results {
+			assert.True(t, result.Success)
+			assert.NotNil(t, result.Data)
+			resultCount++
+		}
+		
+		errorCount := 0
+		for err := range errors {
+			t.Errorf("Unexpected error: %v", err)
+			errorCount++
+		}
+		
+		assert.Equal(t, 200, resultCount, "All executions should complete")
+		assert.Equal(t, 0, errorCount, "No errors should occur")
+		assert.Equal(t, int64(200), atomic.LoadInt64(&executionCount), "Execution count should match")
+		assert.LessOrEqual(t, int(atomic.LoadInt64(&maxConcurrent)), 50, "Max concurrent should not exceed limit")
+		assert.Equal(t, 0, engine.GetActiveExecutions(), "No active executions should remain")
+	})
+
+	t.Run("concurrent execution with mixed success/failure", func(t *testing.T) {
+		registry := NewRegistry()
+		tool := testTool()
+		
+		var executionCount int64
+		tool.Executor = &mockToolExecutor{
+			executeFunc: func(ctx context.Context, params map[string]interface{}) (*ToolExecutionResult, error) {
+				count := atomic.AddInt64(&executionCount, 1)
+				time.Sleep(5 * time.Millisecond)
+				
+				// Fail every 5th execution
+				if count%5 == 0 {
+					return &ToolExecutionResult{
+						Success: false,
+						Error:   fmt.Sprintf("simulated failure for execution %d", count),
+					}, nil
+				}
+				
+				return &ToolExecutionResult{
+					Success: true,
+					Data:    fmt.Sprintf("success-%d", count),
+				}, nil
+			},
+		}
+		require.NoError(t, registry.Register(tool))
+
+		engine := NewExecutionEngine(registry, WithMaxConcurrent(20))
+		params := map[string]interface{}{"input": "test"}
+
+		// Execute 100 concurrent requests
+		var wg sync.WaitGroup
+		var successCount, failureCount int64
+		
+		for i := 0; i < 100; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				result, err := engine.Execute(context.Background(), "test-tool", params)
+				require.NoError(t, err)
+				
+				if result.Success {
+					atomic.AddInt64(&successCount, 1)
+				} else {
+					atomic.AddInt64(&failureCount, 1)
+				}
+			}()
+		}
+
+		wg.Wait()
+		
+		assert.Equal(t, int64(100), atomic.LoadInt64(&executionCount), "All executions should complete")
+		assert.Equal(t, int64(80), atomic.LoadInt64(&successCount), "80% should succeed")
+		assert.Equal(t, int64(20), atomic.LoadInt64(&failureCount), "20% should fail")
+		assert.Equal(t, 0, engine.GetActiveExecutions(), "No active executions should remain")
+	})
+
+	t.Run("concurrent execution with timeouts", func(t *testing.T) {
+		registry := NewRegistry()
+		tool := testTool()
+		
+		var timeoutCount, successCount int64
+		tool.Executor = &mockToolExecutor{
+			executeFunc: func(ctx context.Context, params map[string]interface{}) (*ToolExecutionResult, error) {
+				// Randomly sleep for 0-150ms to trigger some timeouts
+				sleepTime := time.Duration(rand.Intn(150)) * time.Millisecond
+				select {
+				case <-time.After(sleepTime):
+					atomic.AddInt64(&successCount, 1)
+					return &ToolExecutionResult{Success: true, Data: "completed"}, nil
+				case <-ctx.Done():
+					atomic.AddInt64(&timeoutCount, 1)
+					return nil, ctx.Err()
+				}
+			},
+		}
+		tool.Capabilities.Timeout = 100 * time.Millisecond
+		require.NoError(t, registry.Register(tool))
+
+		engine := NewExecutionEngine(registry, WithMaxConcurrent(30))
+		params := map[string]interface{}{"input": "test"}
+
+		// Execute 50 concurrent requests
+		var wg sync.WaitGroup
+		var completedCount int64
+		
+		for i := 0; i < 50; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				result, err := engine.Execute(context.Background(), "test-tool", params)
+				require.NoError(t, err)
+				atomic.AddInt64(&completedCount, 1)
+				
+				if !result.Success {
+					assert.Contains(t, result.Error, "deadline exceeded")
+				}
+			}()
+		}
+
+		wg.Wait()
+		
+		assert.Equal(t, int64(50), atomic.LoadInt64(&completedCount), "All executions should complete")
+		totalProcessed := atomic.LoadInt64(&successCount) + atomic.LoadInt64(&timeoutCount)
+		assert.Equal(t, int64(50), totalProcessed, "All executions should be processed")
+		assert.Greater(t, atomic.LoadInt64(&timeoutCount), int64(0), "Some executions should timeout")
+		assert.Equal(t, 0, engine.GetActiveExecutions(), "No active executions should remain")
+	})
+
+	t.Run("concurrent execution with cancellation", func(t *testing.T) {
+		registry := NewRegistry()
+		tool := testTool()
+		
+		var cancelledCount, completedCount, startedCount int64
+		var allStarted = make(chan struct{})
+		
+		tool.Executor = &mockToolExecutor{
+			executeFunc: func(ctx context.Context, params map[string]interface{}) (*ToolExecutionResult, error) {
+				started := atomic.AddInt64(&startedCount, 1)
+				if started == 30 {
+					close(allStarted)
+				}
+				
+				select {
+				case <-time.After(200 * time.Millisecond):
+					atomic.AddInt64(&completedCount, 1)
+					return &ToolExecutionResult{Success: true, Data: "completed"}, nil
+				case <-ctx.Done():
+					atomic.AddInt64(&cancelledCount, 1)
+					return nil, ctx.Err()
+				}
+			},
+		}
+		require.NoError(t, registry.Register(tool))
+
+		engine := NewExecutionEngine(registry, WithMaxConcurrent(30))
+		params := map[string]interface{}{"input": "test"}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		
+		// Start 30 concurrent executions
+		var wg sync.WaitGroup
+		for i := 0; i < 30; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, err := engine.Execute(ctx, "test-tool", params)
+				// Error is expected due to cancellation
+				if err != nil {
+					assert.Contains(t, err.Error(), "context canceled")
+				}
+			}()
+		}
+
+		// Wait for all executions to start, then cancel
+		<-allStarted
+		time.Sleep(10 * time.Millisecond) // Small delay to ensure they're running
+		cancel()
+
+		wg.Wait()
+		
+		assert.Equal(t, int64(30), atomic.LoadInt64(&startedCount), "All executions should start")
+		totalProcessed := atomic.LoadInt64(&completedCount) + atomic.LoadInt64(&cancelledCount)
+		assert.Equal(t, int64(30), totalProcessed, "All executions should be processed")
+		assert.Greater(t, atomic.LoadInt64(&cancelledCount), int64(0), "Some executions should be cancelled")
+		assert.Equal(t, 0, engine.GetActiveExecutions(), "No active executions should remain")
+	})
+}
+
+func TestExecutionEngine_ResourceContention(t *testing.T) {
+	t.Run("memory usage under concurrent load", func(t *testing.T) {
+		registry := NewRegistry()
+		tool := testTool()
+		
+		// Create executor that uses memory
+		tool.Executor = &mockToolExecutor{
+			executeFunc: func(ctx context.Context, params map[string]interface{}) (*ToolExecutionResult, error) {
+				// Allocate some memory to simulate real work
+				data := make([]byte, 1024*1024) // 1MB
+				for i := range data {
+					data[i] = byte(i % 256)
+				}
+				
+				time.Sleep(10 * time.Millisecond)
+				
+				return &ToolExecutionResult{
+					Success: true,
+					Data:    fmt.Sprintf("processed %d bytes", len(data)),
+				}, nil
+			},
+		}
+		require.NoError(t, registry.Register(tool))
+
+		engine := NewExecutionEngine(registry, WithMaxConcurrent(20))
+		params := map[string]interface{}{"input": "test"}
+
+		// Get initial memory stats
+		var m1 runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&m1)
+
+		// Execute 100 concurrent requests
+		var wg sync.WaitGroup
+		for i := 0; i < 100; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				result, err := engine.Execute(context.Background(), "test-tool", params)
+				require.NoError(t, err)
+				assert.True(t, result.Success)
+			}()
+		}
+
+		wg.Wait()
+		
+		// Get final memory stats
+		var m2 runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&m2)
+
+		// Memory should be released after executions complete  
+		// Use signed arithmetic to handle the case where memory decreases
+		memoryGrowth := int64(m2.Alloc) - int64(m1.Alloc)
+		if memoryGrowth > 0 {
+			assert.Less(t, memoryGrowth, int64(50*1024*1024), "Memory growth should be reasonable (<50MB)")
+		}
+		assert.Equal(t, 0, engine.GetActiveExecutions(), "No active executions should remain")
+	})
+
+	t.Run("goroutine leak detection", func(t *testing.T) {
+		registry := NewRegistry()
+		tool := testTool()
+		require.NoError(t, registry.Register(tool))
+
+		engine := NewExecutionEngine(registry, WithMaxConcurrent(15))
+		params := map[string]interface{}{"input": "test"}
+
+		// Get initial goroutine count
+		initialGoroutines := runtime.NumGoroutine()
+
+		// Execute many concurrent requests
+		var wg sync.WaitGroup
+		for i := 0; i < 100; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				result, err := engine.Execute(context.Background(), "test-tool", params)
+				require.NoError(t, err)
+				assert.True(t, result.Success)
+			}()
+		}
+
+		wg.Wait()
+		
+		// Allow some time for cleanup
+		time.Sleep(100 * time.Millisecond)
+		runtime.GC()
+		
+		// Check for goroutine leaks
+		finalGoroutines := runtime.NumGoroutine()
+		goroutineGrowth := finalGoroutines - initialGoroutines
+		assert.LessOrEqual(t, goroutineGrowth, 5, "Goroutine growth should be minimal")
+		assert.Equal(t, 0, engine.GetActiveExecutions(), "No active executions should remain")
+	})
+}
+
+func TestExecutionEngine_RateLimitingConcurrency(t *testing.T) {
+	t.Run("rate limiting under concurrent load", func(t *testing.T) {
+		registry := NewRegistry()
+		tool := testTool()
+		require.NoError(t, registry.Register(tool))
+
+		// Create a rate limiter that allows 10 requests per second
+		var allowedCount int64
+		var blockedCount int64
+		
+		rateLimiter := &mockRateLimiter{
+			waitFunc: func(ctx context.Context, toolID string) error {
+				if atomic.LoadInt64(&allowedCount) < 10 {
+					atomic.AddInt64(&allowedCount, 1)
+					return nil
+				}
+				atomic.AddInt64(&blockedCount, 1)
+				return errors.New("rate limit exceeded")
+			},
+		}
+
+		engine := NewExecutionEngine(registry, 
+			WithMaxConcurrent(50),
+			WithRateLimiter(rateLimiter),
+		)
+		params := map[string]interface{}{"input": "test"}
+
+		// Execute 25 concurrent requests
+		var wg sync.WaitGroup
+		var successCount, errorCount int64
+		
+		for i := 0; i < 25; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				result, err := engine.Execute(context.Background(), "test-tool", params)
+				if err != nil {
+					atomic.AddInt64(&errorCount, 1)
+					assert.Contains(t, err.Error(), "rate limit exceeded")
+				} else {
+					atomic.AddInt64(&successCount, 1)
+					assert.True(t, result.Success)
+				}
+			}()
+		}
+
+		wg.Wait()
+		
+		assert.Equal(t, int64(10), atomic.LoadInt64(&allowedCount), "Should allow exactly 10 requests")
+		assert.Equal(t, int64(15), atomic.LoadInt64(&blockedCount), "Should block 15 requests")
+		assert.Equal(t, int64(10), atomic.LoadInt64(&successCount), "Should have 10 successful executions")
+		assert.Equal(t, int64(15), atomic.LoadInt64(&errorCount), "Should have 15 rate limit errors")
+		assert.Equal(t, 0, engine.GetActiveExecutions(), "No active executions should remain")
+	})
+}
+
+func TestExecutionEngine_StressTest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping stress test in short mode")
+	}
+	
+	t.Run("sustained high load", func(t *testing.T) {
+		registry := NewRegistry()
+		tool := testTool()
+		
+		var totalExecutions int64
+		tool.Executor = &mockToolExecutor{
+			executeFunc: func(ctx context.Context, params map[string]interface{}) (*ToolExecutionResult, error) {
+				atomic.AddInt64(&totalExecutions, 1)
+				// Simulate varying work load
+				workTime := time.Duration(rand.Intn(20)) * time.Millisecond
+				time.Sleep(workTime)
+				
+				return &ToolExecutionResult{
+					Success: true,
+					Data:    fmt.Sprintf("execution-%d", atomic.LoadInt64(&totalExecutions)),
+				}, nil
+			},
+		}
+		require.NoError(t, registry.Register(tool))
+
+		engine := NewExecutionEngine(registry, WithMaxConcurrent(100))
+		params := map[string]interface{}{"input": "test"}
+
+		// Run for 2 seconds with continuous load
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		
+		var wg sync.WaitGroup
+		var activeWorkers int64
+		
+		// Start 500 workers
+		for i := 0; i < 500; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				atomic.AddInt64(&activeWorkers, 1)
+				defer atomic.AddInt64(&activeWorkers, -1)
+				
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+						result, err := engine.Execute(ctx, "test-tool", params)
+						if err != nil {
+							if !strings.Contains(err.Error(), "context deadline exceeded") {
+								t.Errorf("Unexpected error: %v", err)
+							}
+							return
+						}
+						if result != nil && !result.Success {
+							t.Errorf("Execution failed: %s", result.Error)
+						}
+					}
+				}
+			}()
+		}
+
+		wg.Wait()
+		
+		assert.Greater(t, atomic.LoadInt64(&totalExecutions), int64(50), "Should complete many executions")
+		assert.Equal(t, int64(0), atomic.LoadInt64(&activeWorkers), "All workers should complete")
+		assert.Equal(t, 0, engine.GetActiveExecutions(), "No active executions should remain")
+		
+		// Verify metrics are reasonable
+		metrics := engine.GetMetrics()
+		assert.Greater(t, metrics.totalExecutions, int64(50), "Should have recorded many executions")
+		assert.Greater(t, metrics.successCount, int64(40), "Most executions should succeed")
 	})
 }

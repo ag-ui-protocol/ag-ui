@@ -651,3 +651,118 @@ func BenchmarkRegistry_List(b *testing.B) {
 		reg.List(&ToolFilter{Tags: []string{fmt.Sprintf("tag%d", i%10)}})
 	}
 }
+
+func BenchmarkRegistry_GetReadOnly(b *testing.B) {
+	reg := NewRegistry()
+	// Pre-populate registry
+	for i := 0; i < 1000; i++ {
+		tool := createTestTool(fmt.Sprintf("tool%d", i), fmt.Sprintf("Tool %d", i))
+		reg.Register(tool)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reg.GetReadOnly(fmt.Sprintf("tool%d", i%1000))
+	}
+}
+
+func TestMemoryOptimization_ReadOnlyVsCloning(t *testing.T) {
+	registry := NewRegistry()
+	
+	// Create a tool with substantial metadata to show memory differences
+	tool := &Tool{
+		ID:          "memory-test-tool",
+		Name:        "Memory Test Tool", 
+		Description: "Tool for testing memory optimization",
+		Version:     "1.0.0",
+		Schema: &ToolSchema{
+			Type: "object",
+			Properties: map[string]*Property{
+				"data": {Type: "string", Description: "Large data field"},
+				"config": {
+					Type: "object",
+					Properties: map[string]*Property{
+						"nested1": {Type: "string", Description: "Nested field 1"},
+						"nested2": {Type: "string", Description: "Nested field 2"},
+						"nested3": {Type: "string", Description: "Nested field 3"},
+					},
+				},
+			},
+			Required: []string{"data"},
+		},
+		Metadata: &ToolMetadata{
+			Author:        "Test Author",
+			Documentation: "https://example.com/docs/memory-test-tool",
+			Tags:          []string{"test", "memory", "optimization", "benchmark", "performance"},
+			Examples: []ToolExample{
+				{
+					Input:       map[string]interface{}{"data": "example1", "config": map[string]interface{}{"nested1": "value1"}},
+					Output:      "Example output 1",
+					Description: "Example 1 for testing memory usage",
+				},
+				{
+					Input:       map[string]interface{}{"data": "example2", "config": map[string]interface{}{"nested2": "value2"}},
+					Output:      "Example output 2", 
+					Description: "Example 2 for testing memory usage",
+				},
+			},
+		},
+		Executor: &mockToolExecutor{},
+		Capabilities: &ToolCapabilities{
+			Streaming:   false,
+			Timeout:     30 * time.Second,
+			Retryable:   true,
+			Cancellable: true,
+		},
+	}
+	
+	require.NoError(t, registry.Register(tool))
+
+	t.Run("read-only access does not clone", func(t *testing.T) {
+		// Get read-only view
+		readOnlyTool, err := registry.GetReadOnly("memory-test-tool")
+		require.NoError(t, err)
+		
+		// Verify we can access all properties
+		assert.Equal(t, "memory-test-tool", readOnlyTool.GetID())
+		assert.Equal(t, "Memory Test Tool", readOnlyTool.GetName())
+		assert.Equal(t, "Tool for testing memory optimization", readOnlyTool.GetDescription())
+		assert.Equal(t, "1.0.0", readOnlyTool.GetVersion())
+		assert.NotNil(t, readOnlyTool.GetSchema())
+		assert.NotNil(t, readOnlyTool.GetMetadata())
+		assert.NotNil(t, readOnlyTool.GetExecutor())
+		assert.NotNil(t, readOnlyTool.GetCapabilities())
+		
+		// Verify schema access
+		schema := readOnlyTool.GetSchema()
+		assert.Equal(t, "object", schema.Type)
+		assert.Contains(t, schema.Properties, "data")
+		assert.Contains(t, schema.Properties, "config")
+		
+		// Verify metadata access
+		metadata := readOnlyTool.GetMetadata()
+		assert.Equal(t, "Test Author", metadata.Author)
+		assert.Equal(t, "https://example.com/docs/memory-test-tool", metadata.Documentation)
+		assert.Len(t, metadata.Tags, 5)
+		assert.Len(t, metadata.Examples, 2)
+	})
+
+	t.Run("can clone when modification needed", func(t *testing.T) {
+		// Get read-only view
+		readOnlyTool, err := registry.GetReadOnly("memory-test-tool")
+		require.NoError(t, err)
+		
+		// Clone when modification is needed
+		clonedTool := readOnlyTool.Clone()
+		require.NotNil(t, clonedTool)
+		
+		// Verify cloned tool has same content
+		assert.Equal(t, readOnlyTool.GetID(), clonedTool.ID)
+		assert.Equal(t, readOnlyTool.GetName(), clonedTool.Name) 
+		assert.Equal(t, readOnlyTool.GetDescription(), clonedTool.Description)
+		
+		// Modification of clone should not affect original
+		clonedTool.Description = "Modified description"
+		assert.NotEqual(t, readOnlyTool.GetDescription(), clonedTool.Description)
+	})
+}
