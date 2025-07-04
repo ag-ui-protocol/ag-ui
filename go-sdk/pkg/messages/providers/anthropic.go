@@ -303,12 +303,13 @@ func (c *AnthropicConverter) convertFromAnthropic(anthropicMsg AnthropicMessage)
 			case "text":
 				if content.Text != nil {
 					// Check for developer message prefix
-					if len(*content.Text) > 19 && (*content.Text)[:19] == "[Developer Message] " {
+					if len(*content.Text) >= 20 && (*content.Text)[:20] == "[Developer Message] " {
 						// This is a converted developer message
-						devContent := (*content.Text)[19:]
+						devContent := (*content.Text)[20:]
 						msg := messages.NewDeveloperMessage(devContent)
 						result = append(result, msg)
 						isDeveloperMessage = true
+						// Skip adding to builder since this is a developer message
 						continue
 					}
 					

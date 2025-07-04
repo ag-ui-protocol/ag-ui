@@ -268,10 +268,16 @@ func TestAnthropicConverter(t *testing.T) {
 
 		if len(msgs) != 1 {
 			t.Errorf("Expected 1 message, got %d", len(msgs))
+			for i, msg := range msgs {
+				t.Logf("Message %d: type=%T, content=%v", i, msg, msg.GetContent())
+			}
 		}
 
 		if devMsg, ok := msgs[0].(*messages.DeveloperMessage); !ok {
 			t.Errorf("Expected DeveloperMessage, got %T", msgs[0])
+			if content := msgs[0].GetContent(); content != nil {
+				t.Logf("Message content: %s", *content)
+			}
 		} else {
 			if content := devMsg.GetContent(); content == nil || *content != "Debug info" {
 				t.Errorf("Expected content 'Debug info', got %v", content)

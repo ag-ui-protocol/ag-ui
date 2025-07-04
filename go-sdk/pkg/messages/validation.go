@@ -61,6 +61,12 @@ func (v *Validator) ValidateMessage(msg Message) error {
 		return fmt.Errorf("message is nil")
 	}
 
+	// First, call the message's own validation
+	if err := msg.Validate(); err != nil {
+		return err
+	}
+
+	// Additional validation based on options
 	// Validate role
 	if v.options.StrictRoleCheck {
 		if err := msg.GetRole().Validate(); err != nil {

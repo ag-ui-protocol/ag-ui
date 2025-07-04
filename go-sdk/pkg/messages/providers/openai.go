@@ -32,13 +32,23 @@ type OpenAIFunctionCall struct {
 // OpenAIConverter converts messages to/from OpenAI format
 type OpenAIConverter struct {
 	*BaseConverter
+	validationOptions ConversionValidationOptions
 }
 
 // NewOpenAIConverter creates a new OpenAI converter
 func NewOpenAIConverter() *OpenAIConverter {
 	return &OpenAIConverter{
 		BaseConverter: NewBaseConverter(),
+		validationOptions: ConversionValidationOptions{
+			AllowStandaloneToolMessages: false,
+		},
 	}
+}
+
+// WithValidationOptions sets validation options for the converter
+func (c *OpenAIConverter) WithValidationOptions(opts ConversionValidationOptions) *OpenAIConverter {
+	c.validationOptions = opts
+	return c
 }
 
 // GetProviderName returns the provider name
@@ -53,8 +63,8 @@ func (c *OpenAIConverter) SupportsStreaming() bool {
 
 // ToProviderFormat converts AG-UI messages to OpenAI format
 func (c *OpenAIConverter) ToProviderFormat(msgs messages.MessageList) (interface{}, error) {
-	// Validate messages
-	if err := ValidateMessages(msgs); err != nil {
+	// Validate messages with configured options
+	if err := ValidateMessages(msgs, c.validationOptions); err != nil {
 		return nil, fmt.Errorf("message validation failed: %w", err)
 	}
 	

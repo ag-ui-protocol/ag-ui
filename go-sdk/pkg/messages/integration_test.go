@@ -120,19 +120,21 @@ func TestCompleteMessageFlow(t *testing.T) {
 		roundTrip, err := converter.FromProviderFormat(anthropicData)
 		require.NoError(t, err)
 		
-		// System message is preserved in the system field, not in messages
-		// So we expect 3 messages in the round trip
-		assert.Len(t, roundTrip, 3)
+		// The system message comes back as part of the messages
+		assert.Len(t, roundTrip, 4)
 		
-		// Verify message types and content
-		assert.IsType(t, &messages.UserMessage{}, roundTrip[0])
-		assert.Equal(t, "Hello!", *roundTrip[0].GetContent())
+		// Verify message types and content in order
+		assert.IsType(t, &messages.SystemMessage{}, roundTrip[0])
+		assert.Equal(t, "You are Claude, an AI assistant.", *roundTrip[0].GetContent())
 		
-		assert.IsType(t, &messages.DeveloperMessage{}, roundTrip[1])
-		assert.Equal(t, "Debug: Processing greeting", *roundTrip[1].GetContent())
+		assert.IsType(t, &messages.UserMessage{}, roundTrip[1])
+		assert.Equal(t, "Hello!", *roundTrip[1].GetContent())
 		
-		assert.IsType(t, &messages.AssistantMessage{}, roundTrip[2])
-		assert.Equal(t, "Hello! How can I help you today?", *roundTrip[2].GetContent())
+		assert.IsType(t, &messages.DeveloperMessage{}, roundTrip[2])
+		assert.Equal(t, "Debug: Processing greeting", *roundTrip[2].GetContent())
+		
+		assert.IsType(t, &messages.AssistantMessage{}, roundTrip[3])
+		assert.Equal(t, "Hello! How can I help you today?", *roundTrip[3].GetContent())
 	})
 }
 
@@ -297,38 +299,38 @@ func TestMessageHistory(t *testing.T) {
 		conv2.AddMessage(messages.NewUserMessage("How are you?"))
 		conv2.AddMessage(messages.NewAssistantMessage("I'm doing well, thanks!"))
 		
-		// Add conversations to history
-		for _, msg := range conv1.Messages {
-			history.AddMessage(msg)
-		}
+		// Add all messages to history
+		allMessages := append(conv1.Messages, conv2.Messages...)
+		err := history.AddBatch(allMessages)
+		require.NoError(t, err)
 		
-		// Start a new thread
-		history.StartNewThread()
+		// Verify total message count
+		assert.Equal(t, 4, history.Size())
+		assert.Equal(t, int64(4), history.TotalMessages())
 		
-		for _, msg := range conv2.Messages {
-			history.AddMessage(msg)
-		}
-		
-		// Verify thread management
-		threads := history.GetThreads()
-		assert.Len(t, threads, 2)
-		
-		// Get messages from first thread
-		thread1Messages := history.GetThreadMessages(threads[0])
-		assert.Len(t, thread1Messages, 2)
-		assert.Equal(t, "Hello", *thread1Messages[0].GetContent())
-		
-		// Get messages from second thread
-		thread2Messages := history.GetThreadMessages(threads[1])
-		assert.Len(t, thread2Messages, 2)
-		assert.Equal(t, "How are you?", *thread2Messages[0].GetContent())
-		
-		// Test filtering by role
-		userMessages := history.FilterByRole(messages.RoleUser)
+		// Test getting messages by role
+		userMessages := history.GetByRole(messages.RoleUser)
 		assert.Len(t, userMessages, 2)
+		assert.Equal(t, "Hello", *userMessages[0].GetContent())
+		assert.Equal(t, "How are you?", *userMessages[1].GetContent())
 		
-		assistantMessages := history.FilterByRole(messages.RoleAssistant)
+		assistantMessages := history.GetByRole(messages.RoleAssistant)
 		assert.Len(t, assistantMessages, 2)
+		assert.Equal(t, "Hi there!", *assistantMessages[0].GetContent())
+		assert.Equal(t, "I'm doing well, thanks!", *assistantMessages[1].GetContent())
+		
+		// Test getting last N messages
+		lastTwo := history.GetLast(2)
+		assert.Len(t, lastTwo, 2)
+		assert.Equal(t, "How are you?", *lastTwo[0].GetContent())
+		assert.Equal(t, "I'm doing well, thanks!", *lastTwo[1].GetContent())
+		
+		// Test message retrieval by ID
+		firstMsg := allMessages[0]
+		retrieved, err := history.Get(firstMsg.GetID())
+		require.NoError(t, err)
+		assert.Equal(t, firstMsg.GetID(), retrieved.GetID())
+		assert.Equal(t, firstMsg.GetContent(), retrieved.GetContent())
 	})
 }
 

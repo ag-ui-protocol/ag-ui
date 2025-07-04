@@ -41,9 +41,11 @@ type ToolResponseProvider interface {
 	GetToolCallID() string
 }
 
-// Message is the composite interface that combines all message capabilities
-// This maintains backward compatibility while allowing more granular interfaces
-type Message interface {
+// Note: The main Message interface is defined in types.go for backward compatibility
+// These interfaces provide more granular contracts for specific use cases
+
+// UserMessageInterface defines the specific interface for user messages
+type UserMessageInterface interface {
 	MessageCore
 	ContentProvider
 	MetadataProvider
@@ -52,20 +54,25 @@ type Message interface {
 	SerializableMessage
 }
 
-// UserMessageInterface defines the specific interface for user messages
-type UserMessageInterface interface {
-	Message
-}
-
 // AssistantMessageInterface defines the specific interface for assistant messages
 type AssistantMessageInterface interface {
-	Message
+	MessageCore
+	ContentProvider
+	MetadataProvider
+	NamedMessage
+	ValidatableMessage
+	SerializableMessage
 	ToolCallProvider
 }
 
 // SystemMessageInterface defines the specific interface for system messages
 type SystemMessageInterface interface {
-	Message
+	MessageCore
+	ContentProvider
+	MetadataProvider
+	NamedMessage
+	ValidatableMessage
+	SerializableMessage
 }
 
 // ToolMessageInterface defines the specific interface for tool messages
@@ -80,7 +87,12 @@ type ToolMessageInterface interface {
 
 // DeveloperMessageInterface defines the specific interface for developer messages
 type DeveloperMessageInterface interface {
-	Message
+	MessageCore
+	ContentProvider
+	MetadataProvider
+	NamedMessage
+	ValidatableMessage
+	SerializableMessage
 }
 
 // MessageVisitor defines the visitor pattern for type-safe message processing

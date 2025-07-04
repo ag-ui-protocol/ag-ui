@@ -175,7 +175,12 @@ func (m *UserMessage) Validate() error {
 		return err
 	}
 	if m.Content == nil || *m.Content == "" {
-		return fmt.Errorf("user message content is required")
+		return NewValidationError("user message content is required",
+			ValidationViolation{
+				Field:   "content",
+				Message: "content is required",
+				Value:   nil,
+			})
 	}
 	return nil
 }

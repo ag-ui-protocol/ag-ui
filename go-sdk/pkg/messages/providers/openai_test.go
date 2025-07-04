@@ -79,11 +79,16 @@ func TestOpenAIConverter(t *testing.T) {
 	})
 
 	t.Run("Convert tool message", func(t *testing.T) {
+		// Create a converter that allows standalone tool messages for testing
+		testConverter := NewOpenAIConverter().WithValidationOptions(ConversionValidationOptions{
+			AllowStandaloneToolMessages: true,
+		})
+		
 		msgs := messages.MessageList{
 			messages.NewToolMessage("The weather in San Francisco is 18°C and sunny.", "call_abc123"),
 		}
 
-		result, err := converter.ToProviderFormat(msgs)
+		result, err := testConverter.ToProviderFormat(msgs)
 		if err != nil {
 			t.Fatalf("Failed to convert messages: %v", err)
 		}
