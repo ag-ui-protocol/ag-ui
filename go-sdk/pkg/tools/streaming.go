@@ -79,7 +79,9 @@ func (sc *StreamingContext) sendChunk(chunkType string, data interface{}) error 
 		Index: sc.index,
 	}
 	sc.index++
-	sc.mu.Unlock()
+	
+	// Keep the lock while sending to prevent race with Close()
+	defer sc.mu.Unlock()
 
 	select {
 	case sc.chunks <- chunk:
