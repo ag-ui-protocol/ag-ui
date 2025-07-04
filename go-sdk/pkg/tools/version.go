@@ -119,9 +119,16 @@ func matchesVersionConstraint(version, constraint string) (bool, error) {
 		return false, fmt.Errorf("invalid version: %w", err)
 	}
 	
-	cv, err := parseSemverVersion(constraintVersion)
-	if err != nil {
-		return false, fmt.Errorf("invalid constraint version: %w", err)
+	// Check cache for parsed constraint version
+	var cv *semverVersion
+	if cachedVersion, found := parsedConstraints[constraintVersion]; found {
+		cv = cachedVersion
+	} else {
+		cv, err = parseSemverVersion(constraintVersion)
+		if err != nil {
+			return false, fmt.Errorf("invalid constraint version: %w", err)
+		}
+		parsedConstraints[constraintVersion] = cv
 	}
 	
 	// Apply the constraint
