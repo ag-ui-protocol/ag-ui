@@ -35,7 +35,8 @@ type ValidationOptions struct {
 	MaxArgumentsBytes  int   // Maximum arguments size in bytes
 	AllowEmptyContent  bool
 	StrictRoleCheck    bool
-	SanitizeContent    bool
+	// NOTE: SanitizeContent has been removed. Use ValidateAndSanitize() or
+	// the Sanitizer type directly for content sanitization.
 }
 
 // DefaultValidationOptions returns default validation options
@@ -47,7 +48,6 @@ func DefaultValidationOptions() ValidationOptions {
 		MaxArgumentsBytes:  100 * 1024,      // 100KB
 		AllowEmptyContent:  false,
 		StrictRoleCheck:    true,
-		SanitizeContent:    true,
 	}
 }
 

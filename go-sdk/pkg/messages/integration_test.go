@@ -155,7 +155,6 @@ func TestValidationAndSanitizationFlow(t *testing.T) {
 			MaxArgumentsBytes:  1000,
 			AllowEmptyContent:  false,
 			StrictRoleCheck:    true,
-			SanitizeContent:    true,
 		})
 		
 		sanitizer := messages.NewSanitizer(messages.SanitizationOptions{
