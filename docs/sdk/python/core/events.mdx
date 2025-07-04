@@ -91,12 +91,14 @@ class RunFinishedEvent(BaseEvent):
     type: Literal[EventType.RUN_FINISHED]
     thread_id: str
     run_id: str
+    result: Optional[Any] = None
 ```
 
-| Property    | Type  | Description                   |
-| ----------- | ----- | ----------------------------- |
-| `thread_id` | `str` | ID of the conversation thread |
-| `run_id`    | `str` | ID of the agent run           |
+| Property    | Type            | Description                    |
+| ----------- | --------------- | ------------------------------ |
+| `thread_id` | `str`           | ID of the conversation thread  |
+| `run_id`    | `str`           | ID of the agent run            |
+| `result`    | `Optional[Any]` | Result data from the agent run |
 
 ### RunErrorEvent
 

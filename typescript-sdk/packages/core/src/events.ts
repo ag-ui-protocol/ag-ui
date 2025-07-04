@@ -34,34 +34,6 @@ const BaseEventSchema = z.object({
   rawEvent: z.any().optional(),
 });
 
-export const RunStartedSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.RUN_STARTED),
-  threadId: z.string(),
-  runId: z.string(),
-});
-
-export const RunFinishedSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.RUN_FINISHED),
-  threadId: z.string(),
-  runId: z.string(),
-});
-
-export const RunErrorSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.RUN_ERROR),
-  message: z.string(),
-  code: z.string().optional(),
-});
-
-export const StepStartedSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.STEP_STARTED),
-  stepName: z.string(),
-});
-
-export const StepFinishedSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.STEP_FINISHED),
-  stepName: z.string(),
-});
-
 export const TextMessageStartEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TEXT_MESSAGE_START),
   messageId: z.string(),
@@ -181,6 +153,7 @@ export const RunFinishedEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.RUN_FINISHED),
   threadId: z.string(),
   runId: z.string(),
+  result: z.any().optional(),
 });
 
 export const RunErrorEventSchema = BaseEventSchema.extend({

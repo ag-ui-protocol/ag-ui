@@ -4,25 +4,36 @@ import { firstValueFrom } from "rxjs";
 import {
   BaseEvent,
   EventType,
-  AgentState,
   RunStartedEvent,
   ToolCallStartEvent,
   ToolCallArgsEvent,
   ToolCallEndEvent,
+  RunAgentInput,
+  AssistantMessage,
 } from "@ag-ui/core";
 import { defaultApplyEvents } from "../default";
+import { AbstractAgent } from "@/agent";
+
+const FAKE_AGENT = null as unknown as AbstractAgent;
 
 describe("defaultApplyEvents with tool calls", () => {
   it("should handle a single tool call correctly", async () => {
     // Create a subject and state for events
     const events$ = new Subject<BaseEvent>();
-    const initialState: AgentState = {
+    const initialState = {
       messages: [],
-      state: {},
+      state: {
+        count: 0,
+        text: "hello",
+      },
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
     };
 
     // Create the observable stream
-    const result$ = defaultApplyEvents(initialState, events$);
+    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
@@ -70,36 +81,46 @@ describe("defaultApplyEvents with tool calls", () => {
     expect(stateUpdates.length).toBe(4);
 
     // First update: tool call created
-    expect(stateUpdates[0].messages.length).toBe(1);
-    expect(stateUpdates[0].messages[0]?.toolCalls?.length).toBe(1);
-    expect(stateUpdates[0].messages[0]?.toolCalls?.[0]?.id).toBe("tool1");
-    expect(stateUpdates[0].messages[0]?.toolCalls?.[0]?.function?.name).toBe("search");
-    expect(stateUpdates[0].messages[0]?.toolCalls?.[0]?.function?.arguments).toBe("");
+    expect(stateUpdates[0].messages?.length).toBe(1);
+    expect((stateUpdates[0].messages?.[0] as AssistantMessage).toolCalls?.length).toBe(1);
+    expect((stateUpdates[0].messages?.[0] as AssistantMessage).toolCalls?.[0]?.id).toBe("tool1");
+    expect((stateUpdates[0].messages?.[0] as AssistantMessage).toolCalls?.[0]?.function?.name).toBe(
+      "search",
+    );
+    expect(
+      (stateUpdates[0].messages?.[0] as AssistantMessage).toolCalls?.[0]?.function?.arguments,
+    ).toBe("");
 
     // Second update: first args chunk added
-    expect(stateUpdates[1].messages[0]?.toolCalls?.[0]?.function?.arguments).toBe('{"query": "');
+    expect(
+      (stateUpdates[1].messages?.[0] as AssistantMessage).toolCalls?.[0]?.function?.arguments,
+    ).toBe('{"query": "');
 
     // Third update: second args chunk appended
-    expect(stateUpdates[2].messages[0]?.toolCalls?.[0]?.function?.arguments).toBe(
-      '{"query": "test search',
-    );
+    expect(
+      (stateUpdates[2].messages?.[0] as AssistantMessage).toolCalls?.[0]?.function?.arguments,
+    ).toBe('{"query": "test search');
 
     // Fourth update: third args chunk appended
-    expect(stateUpdates[3].messages[0]?.toolCalls?.[0]?.function?.arguments).toBe(
-      '{"query": "test search"}',
-    );
+    expect(
+      (stateUpdates[3].messages?.[0] as AssistantMessage).toolCalls?.[0]?.function?.arguments,
+    ).toBe('{"query": "test search"}');
   });
 
   it("should handle multiple tool calls correctly", async () => {
     // Create a subject and state for events
     const events$ = new Subject<BaseEvent>();
-    const initialState: AgentState = {
+    const initialState: RunAgentInput = {
       messages: [],
       state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
     };
 
     // Create the observable stream
-    const result$ = defaultApplyEvents(initialState, events$);
+    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
@@ -157,19 +178,25 @@ describe("defaultApplyEvents with tool calls", () => {
 
     // Check last state update for the correct tool calls
     const finalState = stateUpdates[stateUpdates.length - 1];
-    expect(finalState.messages.length).toBe(2);
+    expect(finalState.messages?.length).toBe(2);
 
     // First message should have first tool call
-    expect(finalState.messages[0]?.toolCalls?.length).toBe(1);
-    expect(finalState.messages[0]?.toolCalls?.[0]?.id).toBe("tool1");
-    expect(finalState.messages[0]?.toolCalls?.[0]?.function?.name).toBe("search");
-    expect(finalState.messages[0]?.toolCalls?.[0]?.function?.arguments).toBe('{"query":"test"}');
+    expect((finalState.messages?.[0] as AssistantMessage).toolCalls?.length).toBe(1);
+    expect((finalState.messages?.[0] as AssistantMessage).toolCalls?.[0]?.id).toBe("tool1");
+    expect((finalState.messages?.[0] as AssistantMessage).toolCalls?.[0]?.function?.name).toBe(
+      "search",
+    );
+    expect((finalState.messages?.[0] as AssistantMessage).toolCalls?.[0]?.function?.arguments).toBe(
+      '{"query":"test"}',
+    );
 
     // Second message should have second tool call
-    expect(finalState.messages[1]?.toolCalls?.length).toBe(1);
-    expect(finalState.messages[1]?.toolCalls?.[0]?.id).toBe("tool2");
-    expect(finalState.messages[1]?.toolCalls?.[0]?.function?.name).toBe("calculate");
-    expect(finalState.messages[1]?.toolCalls?.[0]?.function?.arguments).toBe(
+    expect((finalState.messages?.[1] as AssistantMessage).toolCalls?.length).toBe(1);
+    expect((finalState.messages?.[1] as AssistantMessage).toolCalls?.[0]?.id).toBe("tool2");
+    expect((finalState.messages?.[1] as AssistantMessage).toolCalls?.[0]?.function?.name).toBe(
+      "calculate",
+    );
+    expect((finalState.messages?.[1] as AssistantMessage).toolCalls?.[0]?.function?.arguments).toBe(
       '{"expression":"1+1"}',
     );
   });
@@ -180,7 +207,7 @@ describe("defaultApplyEvents with tool calls", () => {
 
     // Create initial state with an existing message
     const parentMessageId = "existing_message";
-    const initialState: AgentState = {
+    const initialState: RunAgentInput = {
       messages: [
         {
           id: parentMessageId,
@@ -190,10 +217,14 @@ describe("defaultApplyEvents with tool calls", () => {
         },
       ],
       state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
     };
 
     // Create the observable stream
-    const result$ = defaultApplyEvents(initialState, events$);
+    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
@@ -230,25 +261,33 @@ describe("defaultApplyEvents with tool calls", () => {
 
     // Check that the tool call was added to the existing message
     const finalState = stateUpdates[stateUpdates.length - 1];
-    expect(finalState.messages.length).toBe(1);
-    expect(finalState.messages[0].id).toBe(parentMessageId);
-    expect(finalState.messages[0].content).toBe("I'll help you with that.");
-    expect(finalState.messages[0]?.toolCalls?.length).toBe(1);
-    expect(finalState.messages[0]?.toolCalls?.[0]?.id).toBe("tool1");
-    expect(finalState.messages[0]?.toolCalls?.[0]?.function?.name).toBe("search");
-    expect(finalState.messages[0]?.toolCalls?.[0]?.function?.arguments).toBe('{"query":"test"}');
+    expect(finalState.messages?.length).toBe(1);
+    expect(finalState.messages?.[0]?.id).toBe(parentMessageId);
+    expect(finalState.messages?.[0]?.content).toBe("I'll help you with that.");
+    expect((finalState.messages?.[0] as AssistantMessage).toolCalls?.length).toBe(1);
+    expect((finalState.messages?.[0] as AssistantMessage).toolCalls?.[0]?.id).toBe("tool1");
+    expect((finalState.messages?.[0] as AssistantMessage).toolCalls?.[0]?.function?.name).toBe(
+      "search",
+    );
+    expect((finalState.messages?.[0] as AssistantMessage).toolCalls?.[0]?.function?.arguments).toBe(
+      '{"query":"test"}',
+    );
   });
 
   it("should handle errors and partial updates correctly", async () => {
     // Create a subject and state for events
     const events$ = new Subject<BaseEvent>();
-    const initialState: AgentState = {
+    const initialState: RunAgentInput = {
       messages: [],
       state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
     };
 
     // Create the observable stream
-    const result$ = defaultApplyEvents(initialState, events$);
+    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
@@ -289,19 +328,25 @@ describe("defaultApplyEvents with tool calls", () => {
 
     // Check the final JSON (should be valid now)
     const finalState = stateUpdates[stateUpdates.length - 1];
-    expect(finalState.messages[0]?.toolCalls?.[0]?.function?.arguments).toBe('{"query:"test"}');
+    expect((finalState.messages?.[0] as AssistantMessage).toolCalls?.[0]?.function?.arguments).toBe(
+      '{"query:"test"}',
+    );
   });
 
   it("should handle advanced scenarios with multiple tools and text messages", async () => {
     // Create a subject and state for events
     const events$ = new Subject<BaseEvent>();
-    const initialState: AgentState = {
+    const initialState: RunAgentInput = {
       messages: [],
       state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
     };
 
     // Create the observable stream
-    const result$ = defaultApplyEvents(initialState, events$);
+    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
@@ -355,16 +400,20 @@ describe("defaultApplyEvents with tool calls", () => {
 
     // Check the final state for both tool calls
     const finalState = stateUpdates[stateUpdates.length - 1];
-    expect(finalState.messages.length).toBe(2);
+    expect(finalState.messages?.length).toBe(2);
 
     // Verify first tool call
-    expect(finalState.messages[0]?.toolCalls?.length).toBe(1);
-    expect(finalState.messages[0]?.toolCalls?.[0]?.id).toBe("tool1");
-    expect(finalState.messages[0]?.toolCalls?.[0]?.function?.name).toBe("search");
+    expect((finalState.messages?.[0] as AssistantMessage).toolCalls?.length).toBe(1);
+    expect((finalState.messages?.[0] as AssistantMessage).toolCalls?.[0]?.id).toBe("tool1");
+    expect((finalState.messages?.[0] as AssistantMessage).toolCalls?.[0]?.function?.name).toBe(
+      "search",
+    );
 
     // Verify second tool call
-    expect(finalState.messages[1]?.toolCalls?.length).toBe(1);
-    expect(finalState.messages[1]?.toolCalls?.[0]?.id).toBe("tool2");
-    expect(finalState.messages[1]?.toolCalls?.[0]?.function?.name).toBe("calculate");
+    expect((finalState.messages?.[1] as AssistantMessage).toolCalls?.length).toBe(1);
+    expect((finalState.messages?.[1] as AssistantMessage).toolCalls?.[0]?.id).toBe("tool2");
+    expect((finalState.messages?.[1] as AssistantMessage).toolCalls?.[0]?.function?.name).toBe(
+      "calculate",
+    );
   });
 });

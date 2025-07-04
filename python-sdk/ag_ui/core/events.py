@@ -226,6 +226,7 @@ class RunFinishedEvent(BaseEvent):
     type: Literal[EventType.RUN_FINISHED]
     thread_id: str
     run_id: str
+    result: Optional[Any] = None
 
 
 class RunErrorEvent(BaseEvent):

@@ -1,23 +1,10 @@
+import { AbstractAgent } from "@/agent";
 import { defaultApplyEvents } from "../default";
-import { EventType, StateDeltaEvent, AgentState } from "@ag-ui/core";
+import { EventType, StateDeltaEvent } from "@ag-ui/core";
 import { of } from "rxjs";
+import { AgentStateMutation } from "@/agent/subscriber";
 
-// Define the exact type expected by defaultApplyEvents
-interface RunAgentInput {
-  threadId: string;
-  runId: string;
-  messages: {
-    id: string;
-    role: "developer" | "system" | "assistant" | "user";
-    content?: string;
-    name?: string;
-    toolCalls?: any[];
-  }[];
-  tools: any[];
-  context: any[];
-  state?: any;
-  forwardedProps?: any;
-}
+const FAKE_AGENT = null as unknown as AbstractAgent;
 
 describe("defaultApplyEvents - State Patching", () => {
   it("should apply state delta patch correctly", (done) => {
@@ -43,9 +30,9 @@ describe("defaultApplyEvents - State Patching", () => {
 
     const events$ = of(stateDelta);
 
-    const result$ = defaultApplyEvents(initialState, events$);
+    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
 
-    result$.subscribe((update: AgentState) => {
+    result$.subscribe((update: AgentStateMutation) => {
       expect(update.state).toEqual({
         count: 1,
         text: "world",
@@ -78,9 +65,9 @@ describe("defaultApplyEvents - State Patching", () => {
 
     const events$ = of(stateDelta);
     // Cast to any to bypass strict type checking
-    const result$ = defaultApplyEvents(initialState as any, events$);
+    const result$ = defaultApplyEvents(initialState as any, events$, FAKE_AGENT, []);
 
-    result$.subscribe((update: AgentState) => {
+    result$.subscribe((update: AgentStateMutation) => {
       expect(update.state).toEqual({
         user: {
           name: "John",
@@ -115,9 +102,9 @@ describe("defaultApplyEvents - State Patching", () => {
 
     const events$ = of(stateDelta);
     // Cast to any to bypass strict type checking
-    const result$ = defaultApplyEvents(initialState as any, events$);
+    const result$ = defaultApplyEvents(initialState as any, events$, FAKE_AGENT, []);
 
-    result$.subscribe((update: AgentState) => {
+    result$.subscribe((update: AgentStateMutation) => {
       expect(update.state).toEqual({
         items: ["x", "b", "c", "d"],
       });
@@ -150,10 +137,10 @@ describe("defaultApplyEvents - State Patching", () => {
 
     const events$ = of(...stateDeltas);
     // Cast to any to bypass strict type checking
-    const result$ = defaultApplyEvents(initialState as any, events$);
+    const result$ = defaultApplyEvents(initialState as any, events$, FAKE_AGENT, []);
 
     let updateCount = 0;
-    result$.subscribe((update: AgentState) => {
+    result$.subscribe((update: AgentStateMutation) => {
       updateCount++;
       if (updateCount === 2) {
         expect(update.state).toEqual({
@@ -189,11 +176,11 @@ describe("defaultApplyEvents - State Patching", () => {
 
     const events$ = of(stateDelta);
     // Cast to any to bypass strict type checking
-    const result$ = defaultApplyEvents(initialState as any, events$);
+    const result$ = defaultApplyEvents(initialState as any, events$, FAKE_AGENT, []);
 
     let updateCount = 0;
     result$.subscribe({
-      next: (update: AgentState) => {
+      next: (update: AgentStateMutation) => {
         updateCount++;
       },
       complete: () => {
