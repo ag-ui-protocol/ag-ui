@@ -131,7 +131,8 @@ func (e *SecureFileExecutor) validatePath(path string) error {
 		if err != nil {
 			continue
 		}
-		if strings.HasPrefix(cleanPath, absAllowed) {
+		rel, err := filepath.Rel(absAllowed, cleanPath)
+		if err == nil && !strings.HasPrefix(rel, "..") {
 			return nil
 		}
 	}
