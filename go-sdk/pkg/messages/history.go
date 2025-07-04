@@ -7,6 +7,16 @@ import (
 	"time"
 )
 
+const (
+	// BaseMessageOverhead represents the estimated memory overhead per message
+	// This includes Go's internal structures like slice headers, map entries, etc.
+	BaseMessageOverhead = 256
+	
+	// IndexOverhead is the additional memory cost when indexing is enabled
+	// This includes the map entry overhead for the message index
+	IndexOverhead = 64
+)
+
 // HistoryOptions configures the message history behavior
 type HistoryOptions struct {
 	MaxMessages      int           // Maximum number of messages to store
@@ -436,11 +446,11 @@ func (h *History) calculateMessageSize(msg Message) (int64, error) {
 	
 	// Add overhead for Go's internal structures (approximate)
 	// This includes slice headers, map entries, string headers, etc.
-	overhead := int64(256) // Base overhead per message
+	overhead := int64(BaseMessageOverhead)
 	
 	// Add index overhead if indexing is enabled
 	if h.options.EnableIndexing {
-		overhead += int64(len(msg.GetID())) + 64 // String + map entry
+		overhead += int64(len(msg.GetID())) + IndexOverhead // String + map entry
 	}
 	
 	return int64(len(data)) + overhead, nil

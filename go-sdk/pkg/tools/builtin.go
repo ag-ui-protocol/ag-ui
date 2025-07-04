@@ -13,17 +13,51 @@ import (
 	"time"
 )
 
+// BuiltinToolsOptions configures how built-in tools are registered
+type BuiltinToolsOptions struct {
+	// SecureMode enables security restrictions on file and HTTP operations
+	SecureMode bool
+	
+	// FileOptions configures file operation security (used when SecureMode is true)
+	FileOptions *SecureFileOptions
+	
+	// HTTPOptions configures HTTP operation security (used when SecureMode is true)
+	HTTPOptions *SecureHTTPOptions
+}
+
 // RegisterBuiltinTools registers all built-in tools to the given registry.
 func RegisterBuiltinTools(registry *Registry) error {
-	tools := []*Tool{
-		NewReadFileTool(),
-		NewWriteFileTool(),
-		NewHTTPGetTool(),
-		NewHTTPPostTool(),
-		NewJSONParseTool(),
-		NewJSONFormatTool(),
-		NewBase64EncodeTool(),
-		NewBase64DecodeTool(),
+	return RegisterBuiltinToolsWithOptions(registry, nil)
+}
+
+// RegisterBuiltinToolsWithOptions registers built-in tools with custom options
+func RegisterBuiltinToolsWithOptions(registry *Registry, options *BuiltinToolsOptions) error {
+	var tools []*Tool
+	
+	if options != nil && options.SecureMode {
+		// Register secure versions
+		tools = []*Tool{
+			NewSecureReadFileTool(options.FileOptions),
+			NewSecureWriteFileTool(options.FileOptions),
+			NewSecureHTTPGetTool(options.HTTPOptions),
+			NewSecureHTTPPostTool(options.HTTPOptions),
+			NewJSONParseTool(),
+			NewJSONFormatTool(),
+			NewBase64EncodeTool(),
+			NewBase64DecodeTool(),
+		}
+	} else {
+		// Register standard versions
+		tools = []*Tool{
+			NewReadFileTool(),
+			NewWriteFileTool(),
+			NewHTTPGetTool(),
+			NewHTTPPostTool(),
+			NewJSONParseTool(),
+			NewJSONFormatTool(),
+			NewBase64EncodeTool(),
+			NewBase64DecodeTool(),
+		}
 	}
 
 	for _, tool := range tools {

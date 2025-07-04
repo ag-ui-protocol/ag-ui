@@ -337,7 +337,18 @@ func (r *Registry) matchesFilter(tool *Tool, filter *ToolFilter) bool {
 		}
 	}
 
-	// TODO: Add version constraint matching when version parsing is implemented
+	// Check version constraint
+	if filter.Version != "" {
+		matches, err := matchesVersionConstraint(tool.Version, filter.Version)
+		if err != nil {
+			// Log error but don't fail the match - treat as no constraint
+			// In production, you might want to handle this differently
+			return true
+		}
+		if !matches {
+			return false
+		}
+	}
 
 	return true
 }
