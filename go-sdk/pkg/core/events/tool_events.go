@@ -144,7 +144,7 @@ func (e *ToolCallArgsEvent) Validate() error {
 	}
 
 	if e.Delta == "" {
-		return fmt.Errorf("ToolCallArgsEvent validation failed: delta field must not be empty")
+		return fmt.Errorf("ToolCallArgsEvent validation failed: delta field is required")
 	}
 
 	return nil
