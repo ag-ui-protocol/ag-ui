@@ -287,51 +287,24 @@ func (m *SystemMessage) Validate() error {
 
 // ToolMessage represents a tool execution result
 type ToolMessage struct {
-	ID         string           `json:"id"`
-	Role       MessageRole      `json:"role"`
-	Content    string           `json:"content"`
-	ToolCallID string           `json:"toolCallId"`
-	Metadata   *MessageMetadata `json:"metadata,omitempty"`
+	BaseMessage
+	ToolCallID string `json:"toolCallId"`
 }
 
 // NewToolMessage creates a new tool message
 func NewToolMessage(content string, toolCallID string) *ToolMessage {
 	msg := &ToolMessage{
-		ID:         uuid.New().String(),
-		Role:       RoleTool,
-		Content:    content,
-		ToolCallID: toolCallID,
-		Metadata: &MessageMetadata{
-			Timestamp: time.Now(),
+		BaseMessage: BaseMessage{
+			Role:    RoleTool,
+			Content: &content,
 		},
+		ToolCallID: toolCallID,
 	}
+	msg.ensureID()
+	msg.ensureMetadata()
 	return msg
 }
 
-// GetID returns the message ID
-func (m *ToolMessage) GetID() string {
-	return m.ID
-}
-
-// GetRole returns the message role
-func (m *ToolMessage) GetRole() MessageRole {
-	return m.Role
-}
-
-// GetContent returns the message content
-func (m *ToolMessage) GetContent() *string {
-	return &m.Content
-}
-
-// GetName returns the message name (always nil for tool messages)
-func (m *ToolMessage) GetName() *string {
-	return nil
-}
-
-// GetMetadata returns the message metadata
-func (m *ToolMessage) GetMetadata() *MessageMetadata {
-	return m.Metadata
-}
 
 // Accept implements the Visitable interface
 func (m *ToolMessage) Accept(v MessageVisitor) error {
@@ -343,7 +316,7 @@ func (m *ToolMessage) Validate() error {
 	if err := m.Role.Validate(); err != nil {
 		return err
 	}
-	if m.Content == "" {
+	if m.Content == nil || *m.Content == "" {
 		return fmt.Errorf("tool message content is required")
 	}
 	if m.ToolCallID == "" {
@@ -352,10 +325,6 @@ func (m *ToolMessage) Validate() error {
 	return nil
 }
 
-// ToJSON serializes the message to JSON
-func (m *ToolMessage) ToJSON() ([]byte, error) {
-	return json.Marshal(m)
-}
 
 // DeveloperMessage represents a developer/debug message
 type DeveloperMessage struct {
@@ -406,16 +375,9 @@ func (ml MessageList) Validate() error {
 
 // ToJSON serializes the message list to JSON
 func (ml MessageList) ToJSON() ([]byte, error) {
-	// We need to handle the polymorphic nature of messages
-	var rawMessages []json.RawMessage
-	for _, msg := range ml {
-		data, err := msg.ToJSON()
-		if err != nil {
-			return nil, err
-		}
-		rawMessages = append(rawMessages, data)
-	}
-	return json.Marshal(rawMessages)
+	// Marshal the entire MessageList in one operation
+	// The json package will call MarshalJSON on each message automatically
+	return json.Marshal(ml)
 }
 
 // ConversationOptions represents options for creating a conversation

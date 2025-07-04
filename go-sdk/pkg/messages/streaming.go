@@ -3,6 +3,7 @@ package messages
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -46,7 +47,7 @@ type MessageStream interface {
 type StreamBuilder struct {
 	mu              sync.Mutex
 	currentMessage  Message
-	contentBuffer   string
+	contentBuffer   strings.Builder
 	toolCallBuffers map[int]*ToolCall
 	completed       bool
 }

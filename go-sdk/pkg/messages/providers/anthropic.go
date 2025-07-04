@@ -186,7 +186,7 @@ func (c *AnthropicConverter) convertToAnthropic(msg messages.Message) (Anthropic
 		anthropicMsg.Content = append(anthropicMsg.Content, AnthropicContent{
 			Type:      "tool_result",
 			ToolUseID: &m.ToolCallID,
-			Content:   &m.Content,
+			Content:   m.Content,
 		})
 		
 	case *messages.DeveloperMessage:

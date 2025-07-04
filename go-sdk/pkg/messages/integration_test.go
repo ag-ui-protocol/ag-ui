@@ -80,7 +80,7 @@ func TestCompleteMessageFlow(t *testing.T) {
 		
 		assert.IsType(t, &messages.ToolMessage{}, roundTrip[3])
 		toolRoundTrip := roundTrip[3].(*messages.ToolMessage)
-		assert.Equal(t, "The weather in San Francisco is 18°C and sunny.", toolRoundTrip.Content)
+		assert.Equal(t, "The weather in San Francisco is 18°C and sunny.", *toolRoundTrip.GetContent())
 		assert.Equal(t, "call_123", toolRoundTrip.ToolCallID)
 		
 		assert.IsType(t, &messages.AssistantMessage{}, roundTrip[4])

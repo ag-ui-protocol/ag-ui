@@ -34,8 +34,7 @@ func ToEventMessage(msg Message) (*events.Message, error) {
 	case *ToolMessage:
 		eventMsg.ToolCallID = &m.ToolCallID
 		// Tool messages have required content, so we need to ensure it's set
-		content := m.Content
-		eventMsg.Content = &content
+		eventMsg.Content = m.Content
 	}
 
 	return eventMsg, nil

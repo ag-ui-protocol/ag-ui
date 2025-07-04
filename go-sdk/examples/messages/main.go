@@ -13,7 +13,7 @@ import (
 
 func main() {
 	fmt.Println("AG-UI Go SDK - Messages Example")
-	fmt.Println("================================\n")
+	fmt.Println("================================")
 
 	// Demonstrate basic message creation
 	demonstrateMessageCreation()
@@ -87,7 +87,7 @@ func demonstrateToolCalls() {
 		"call_weather_sf_123",
 	)
 	fmt.Printf("Tool Result:\n  Tool Call ID: %s\n  Content: %s\n\n",
-		toolResult.ToolCallID, toolResult.Content)
+		toolResult.ToolCallID, *toolResult.GetContent())
 }
 
 func demonstrateProviderConversion() {

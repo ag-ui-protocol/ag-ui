@@ -141,8 +141,12 @@ func TestToolMessage(t *testing.T) {
 			t.Errorf("Expected role %s, got %s", RoleTool, msg.Role)
 		}
 
-		if msg.Content != "Weather: Sunny, 72°F" {
-			t.Errorf("Expected content 'Weather: Sunny, 72°F', got %s", msg.Content)
+		if msg.Content == nil || *msg.Content != "Weather: Sunny, 72°F" {
+			if msg.Content == nil {
+				t.Errorf("Expected content 'Weather: Sunny, 72°F', got nil")
+			} else {
+				t.Errorf("Expected content 'Weather: Sunny, 72°F', got %s", *msg.Content)
+			}
 		}
 
 		if msg.ToolCallID != "call_123" {
@@ -157,7 +161,9 @@ func TestToolMessage(t *testing.T) {
 	t.Run("Tool message requires content and toolCallId", func(t *testing.T) {
 		// Missing content
 		msg1 := &ToolMessage{
-			Role:       RoleTool,
+			BaseMessage: BaseMessage{
+				Role: RoleTool,
+			},
 			ToolCallID: "call_123",
 		}
 
@@ -166,9 +172,12 @@ func TestToolMessage(t *testing.T) {
 		}
 
 		// Missing toolCallId
+		content := "Result"
 		msg2 := &ToolMessage{
-			Role:    RoleTool,
-			Content: "Result",
+			BaseMessage: BaseMessage{
+				Role:    RoleTool,
+				Content: &content,
+			},
 		}
 
 		if err := msg2.Validate(); err == nil {
