@@ -2,7 +2,7 @@
 
 This document summarizes the fixes made in response to Copilot's review of PR #4.
 
-## Issues Fixed
+## Round 1 Issues Fixed
 
 ### 1. Serialization Safety (High Priority)
 **Issue:** `protobufToJsonPatchOperationType` silently defaulted unknown types to "add"
@@ -28,6 +28,20 @@ This document summarizes the fixes made in response to Copilot's review of PR #4
 - Call `event.Validate()` when AllowEmptyIDs is false (eliminating duplication)
 - Only validate non-ID fields when AllowEmptyIDs is true
 **File:** `go-sdk/pkg/core/events/validation.go:172-291`
+
+## Round 2 Issues Fixed
+
+### 5. Event Type Validation Performance (Medium Priority)
+**Issue:** `isValidEventType` used a switch statement instead of O(1) map lookup
+**Fix:** 
+- Created `validEventTypes` map for constant-time lookups
+- Simplified function to `return validEventTypes[eventType]`
+**File:** `go-sdk/pkg/core/events/events.go:37-54,144`
+
+### 6. EventBuilder Early Validation (Medium Priority)
+**Issue:** EventBuilder allowed calling Build() without setting event type, resulting in late runtime error
+**Fix:** Added early validation in Build() method with descriptive error message
+**File:** `go-sdk/pkg/core/events/builder.go:326-328`
 
 ## Additional Fixes
 

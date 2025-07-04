@@ -322,6 +322,11 @@ func (b *EventBuilder) AddMessage(id, role, content string) *EventBuilder {
 
 // Build constructs the final event
 func (b *EventBuilder) Build() (Event, error) {
+	// Validate event type is set early to provide immediate feedback
+	if b.eventType == "" {
+		return nil, fmt.Errorf("event type not set: use one of the builder methods (e.g., RunStarted(), TextMessageStart()) to set the event type before calling Build()")
+	}
+
 	// Apply auto-generation if enabled
 	if b.autoGenerateIDs {
 		b.applyAutoGeneration()

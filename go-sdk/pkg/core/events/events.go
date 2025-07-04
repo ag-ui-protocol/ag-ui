@@ -33,6 +33,26 @@ const (
 	EventTypeUnknown            EventType = "UNKNOWN"
 )
 
+// validEventTypes is a map for O(1) lookup of valid event types
+var validEventTypes = map[EventType]bool{
+	EventTypeTextMessageStart:   true,
+	EventTypeTextMessageContent: true,
+	EventTypeTextMessageEnd:     true,
+	EventTypeToolCallStart:      true,
+	EventTypeToolCallArgs:       true,
+	EventTypeToolCallEnd:        true,
+	EventTypeStateSnapshot:      true,
+	EventTypeStateDelta:         true,
+	EventTypeMessagesSnapshot:   true,
+	EventTypeRaw:                true,
+	EventTypeCustom:             true,
+	EventTypeRunStarted:         true,
+	EventTypeRunFinished:        true,
+	EventTypeRunError:           true,
+	EventTypeStepStarted:        true,
+	EventTypeStepFinished:       true,
+}
+
 // Event defines the common interface for all AG-UI events
 type Event interface {
 	// Type returns the event type
@@ -121,16 +141,7 @@ func (b *BaseEvent) ToProtobufBase() *generated.BaseEvent {
 
 // isValidEventType checks if the given event type is valid
 func isValidEventType(eventType EventType) bool {
-	switch eventType {
-	case EventTypeTextMessageStart, EventTypeTextMessageContent, EventTypeTextMessageEnd,
-		EventTypeToolCallStart, EventTypeToolCallArgs, EventTypeToolCallEnd,
-		EventTypeStateSnapshot, EventTypeStateDelta, EventTypeMessagesSnapshot,
-		EventTypeRaw, EventTypeCustom, EventTypeRunStarted, EventTypeRunFinished,
-		EventTypeRunError, EventTypeStepStarted, EventTypeStepFinished:
-		return true
-	default:
-		return false
-	}
+	return validEventTypes[eventType]
 }
 
 // eventTypeToProtobuf converts EventType to protobuf EventType
