@@ -41,7 +41,7 @@ func TestValidatorPermissiveMode(t *testing.T) {
 				Message:   "",
 			},
 			wantError: true,
-			errorMsg:  "RunErrorEvent: message is required",
+			errorMsg:  "RunErrorEvent validation failed: message field is required",
 		},
 		// Step events
 		{
@@ -51,7 +51,7 @@ func TestValidatorPermissiveMode(t *testing.T) {
 				StepName:  "",
 			},
 			wantError: true,
-			errorMsg:  "StepStartedEvent: stepName is required",
+			errorMsg:  "StepStartedEvent validation failed: stepName field is required",
 		},
 		{
 			name: "StepFinishedEvent with empty stepName",
@@ -60,7 +60,7 @@ func TestValidatorPermissiveMode(t *testing.T) {
 				StepName:  "",
 			},
 			wantError: true,
-			errorMsg:  "StepFinishedEvent: stepName is required",
+			errorMsg:  "StepFinishedEvent validation failed: stepName field is required",
 		},
 		// Message events
 		{
@@ -71,7 +71,7 @@ func TestValidatorPermissiveMode(t *testing.T) {
 				Delta:     "",
 			},
 			wantError: true,
-			errorMsg:  "TextMessageContentEvent: delta is required",
+			errorMsg:  "TextMessageContentEvent validation failed: delta field is required",
 		},
 		{
 			name: "TextMessageEndEvent with empty messageId",
@@ -90,7 +90,7 @@ func TestValidatorPermissiveMode(t *testing.T) {
 				Delta:      "",
 			},
 			wantError: true,
-			errorMsg:  "ToolCallArgsEvent: delta is required",
+			errorMsg:  "ToolCallArgsEvent validation failed: delta field is required",
 		},
 		{
 			name: "ToolCallEndEvent with empty toolCallId",
@@ -108,7 +108,7 @@ func TestValidatorPermissiveMode(t *testing.T) {
 				Snapshot:  nil,
 			},
 			wantError: true,
-			errorMsg:  "StateSnapshotEvent: snapshot is required",
+			errorMsg:  "StateSnapshotEvent validation failed: snapshot field is required",
 		},
 		{
 			name: "StateDeltaEvent with empty delta",
@@ -117,7 +117,7 @@ func TestValidatorPermissiveMode(t *testing.T) {
 				Delta:     []JSONPatchOperation{},
 			},
 			wantError: true,
-			errorMsg:  "StateDeltaEvent: delta must contain at least one operation",
+			errorMsg:  "StateDeltaEvent validation failed: delta field must contain at least one operation",
 		},
 		{
 			name: "MessagesSnapshotEvent with invalid message",
@@ -131,7 +131,7 @@ func TestValidatorPermissiveMode(t *testing.T) {
 				},
 			},
 			wantError: true,
-			errorMsg:  "MessagesSnapshotEvent: message[0].role is required",
+			errorMsg:  "MessagesSnapshotEvent validation failed: message[0].role field is required",
 		},
 		// Custom events
 		{
@@ -141,7 +141,7 @@ func TestValidatorPermissiveMode(t *testing.T) {
 				Event:     nil,
 			},
 			wantError: true,
-			errorMsg:  "RawEvent: event is required",
+			errorMsg:  "RawEvent validation failed: event field is required",
 		},
 		{
 			name: "CustomEvent with empty name",
@@ -150,7 +150,7 @@ func TestValidatorPermissiveMode(t *testing.T) {
 				Name:      "",
 			},
 			wantError: true,
-			errorMsg:  "CustomEvent: name is required",
+			errorMsg:  "CustomEvent validation failed: name field is required",
 		},
 	}
 

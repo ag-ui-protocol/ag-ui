@@ -170,120 +170,124 @@ func (v *Validator) validateCustom(ctx context.Context, event Event) error {
 
 // validateMinimalFields performs minimal field validation
 func (v *Validator) validateMinimalFields(event Event) error {
+	// If AllowEmptyIDs is false, we can just use the event's built-in validation
+	if !v.config.AllowEmptyIDs {
+		return event.Validate()
+	}
+
+	// When AllowEmptyIDs is true, we need to do selective validation
+	// that skips ID checks but validates other required fields
 	switch event.Type() {
-	case EventTypeRunStarted:
-		if runEvent, ok := event.(*RunStartedEvent); ok {
-			if !v.config.AllowEmptyIDs && (runEvent.ThreadID == "" || runEvent.RunID == "") {
-				return fmt.Errorf("RunStartedEvent: threadId and runId are required")
-			}
-		}
-	case EventTypeRunFinished:
-		if runEvent, ok := event.(*RunFinishedEvent); ok {
-			if !v.config.AllowEmptyIDs && (runEvent.ThreadID == "" || runEvent.RunID == "") {
-				return fmt.Errorf("RunFinishedEvent: threadId and runId are required")
-			}
-		}
+	case EventTypeRunStarted, EventTypeRunFinished:
+		// These events only validate IDs in their Validate methods,
+		// so when AllowEmptyIDs is true, we just validate the base event
+		return event.GetBaseEvent().Validate()
+		
 	case EventTypeRunError:
 		if errorEvent, ok := event.(*RunErrorEvent); ok {
 			if errorEvent.Message == "" {
-				return fmt.Errorf("RunErrorEvent: message is required")
+				return fmt.Errorf("RunErrorEvent validation failed: message field is required")
 			}
 		}
+		return event.GetBaseEvent().Validate()
+		
 	case EventTypeStepStarted:
 		if stepEvent, ok := event.(*StepStartedEvent); ok {
 			if stepEvent.StepName == "" {
-				return fmt.Errorf("StepStartedEvent: stepName is required")
+				return fmt.Errorf("StepStartedEvent validation failed: stepName field is required")
 			}
 		}
+		return event.GetBaseEvent().Validate()
+		
 	case EventTypeStepFinished:
 		if stepEvent, ok := event.(*StepFinishedEvent); ok {
 			if stepEvent.StepName == "" {
-				return fmt.Errorf("StepFinishedEvent: stepName is required")
+				return fmt.Errorf("StepFinishedEvent validation failed: stepName field is required")
 			}
 		}
-	case EventTypeTextMessageStart:
-		if msgEvent, ok := event.(*TextMessageStartEvent); ok {
-			if !v.config.AllowEmptyIDs && msgEvent.MessageID == "" {
-				return fmt.Errorf("TextMessageStartEvent: messageId is required")
-			}
-		}
+		return event.GetBaseEvent().Validate()
+		
+	case EventTypeTextMessageStart, EventTypeTextMessageEnd:
+		// These events only validate IDs in their Validate methods
+		return event.GetBaseEvent().Validate()
+		
 	case EventTypeTextMessageContent:
 		if msgEvent, ok := event.(*TextMessageContentEvent); ok {
-			if !v.config.AllowEmptyIDs && msgEvent.MessageID == "" {
-				return fmt.Errorf("TextMessageContentEvent: messageId is required")
-			}
 			if msgEvent.Delta == "" {
-				return fmt.Errorf("TextMessageContentEvent: delta is required")
+				return fmt.Errorf("TextMessageContentEvent validation failed: delta field is required")
 			}
 		}
-	case EventTypeTextMessageEnd:
-		if msgEvent, ok := event.(*TextMessageEndEvent); ok {
-			if !v.config.AllowEmptyIDs && msgEvent.MessageID == "" {
-				return fmt.Errorf("TextMessageEndEvent: messageId is required")
-			}
-		}
+		return event.GetBaseEvent().Validate()
+		
 	case EventTypeToolCallStart:
 		if toolEvent, ok := event.(*ToolCallStartEvent); ok {
-			if !v.config.AllowEmptyIDs && toolEvent.ToolCallID == "" {
-				return fmt.Errorf("ToolCallStartEvent: toolCallId is required")
-			}
 			if toolEvent.ToolCallName == "" {
-				return fmt.Errorf("ToolCallStartEvent: toolCallName is required")
+				return fmt.Errorf("ToolCallStartEvent validation failed: toolCallName field is required")
 			}
 		}
+		return event.GetBaseEvent().Validate()
+		
 	case EventTypeToolCallArgs:
 		if toolEvent, ok := event.(*ToolCallArgsEvent); ok {
-			if !v.config.AllowEmptyIDs && toolEvent.ToolCallID == "" {
-				return fmt.Errorf("ToolCallArgsEvent: toolCallId is required")
-			}
 			if toolEvent.Delta == "" {
-				return fmt.Errorf("ToolCallArgsEvent: delta is required")
+				return fmt.Errorf("ToolCallArgsEvent validation failed: delta field is required")
 			}
 		}
+		return event.GetBaseEvent().Validate()
+		
 	case EventTypeToolCallEnd:
-		if toolEvent, ok := event.(*ToolCallEndEvent); ok {
-			if !v.config.AllowEmptyIDs && toolEvent.ToolCallID == "" {
-				return fmt.Errorf("ToolCallEndEvent: toolCallId is required")
-			}
-		}
+		// This event only validates IDs in its Validate method
+		return event.GetBaseEvent().Validate()
+		
 	case EventTypeStateSnapshot:
 		if stateEvent, ok := event.(*StateSnapshotEvent); ok {
 			if stateEvent.Snapshot == nil {
-				return fmt.Errorf("StateSnapshotEvent: snapshot is required")
+				return fmt.Errorf("StateSnapshotEvent validation failed: snapshot field is required")
 			}
 		}
+		return event.GetBaseEvent().Validate()
+		
 	case EventTypeStateDelta:
 		if deltaEvent, ok := event.(*StateDeltaEvent); ok {
 			if len(deltaEvent.Delta) == 0 {
-				return fmt.Errorf("StateDeltaEvent: delta must contain at least one operation")
+				return fmt.Errorf("StateDeltaEvent validation failed: delta field must contain at least one operation")
 			}
+			// Note: We don't call the full Validate here because it would validate
+			// each operation, which is more than minimal validation
 		}
+		return event.GetBaseEvent().Validate()
+		
 	case EventTypeMessagesSnapshot:
 		if msgEvent, ok := event.(*MessagesSnapshotEvent); ok {
-			// Messages field can be empty, but each message needs validation
+			// Only validate non-ID fields for each message
 			for i, msg := range msgEvent.Messages {
-				if !v.config.AllowEmptyIDs && msg.ID == "" {
-					return fmt.Errorf("MessagesSnapshotEvent: message[%d].id is required", i)
-				}
 				if msg.Role == "" {
-					return fmt.Errorf("MessagesSnapshotEvent: message[%d].role is required", i)
+					return fmt.Errorf("MessagesSnapshotEvent validation failed: message[%d].role field is required", i)
 				}
 			}
 		}
+		return event.GetBaseEvent().Validate()
+		
 	case EventTypeRaw:
 		if rawEvent, ok := event.(*RawEvent); ok {
 			if rawEvent.Event == nil {
-				return fmt.Errorf("RawEvent: event is required")
+				return fmt.Errorf("RawEvent validation failed: event field is required")
 			}
 		}
+		return event.GetBaseEvent().Validate()
+		
 	case EventTypeCustom:
 		if customEvent, ok := event.(*CustomEvent); ok {
 			if customEvent.Name == "" {
-				return fmt.Errorf("CustomEvent: name is required")
+				return fmt.Errorf("CustomEvent validation failed: name field is required")
 			}
 		}
+		return event.GetBaseEvent().Validate()
+		
+	default:
+		// For any other event types, just validate the base event
+		return event.GetBaseEvent().Validate()
 	}
-	return nil
 }
 
 // Global validator instance

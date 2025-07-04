@@ -131,9 +131,12 @@ func EventFromProtobufBytes(data []byte) (Event, error) {
 }
 
 // Helper functions to convert protobuf events to Go events
-func protobufToBaseEvent(pbBase *generated.BaseEvent) (*BaseEvent, error) {
+func protobufToBaseEvent(pbBase *generated.BaseEvent) *BaseEvent {
 	if pbBase == nil {
-		return nil, fmt.Errorf("protobuf base event is nil")
+		// Return a base event with unknown type that will fail validation
+		return &BaseEvent{
+			EventType: EventTypeUnknown,
+		}
 	}
 
 	base := &BaseEvent{
@@ -299,7 +302,8 @@ func protobufToJsonPatchOperationType(pbOp generated.JsonPatchOperationType) str
 	case generated.JsonPatchOperationType_TEST:
 		return "test"
 	default:
-		return "add" // Default fallback
+		// Return an invalid operation type that will be caught during validation
+		return fmt.Sprintf("unknown_%d", pbOp)
 	}
 }
 

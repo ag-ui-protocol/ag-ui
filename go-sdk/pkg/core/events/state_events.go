@@ -167,8 +167,13 @@ func (e *StateDeltaEvent) ToProtobuf() (*generated.Event, error) {
 	// Convert JSON patch operations to protobuf
 	var pbOps []*generated.JsonPatchOperation
 	for _, op := range e.Delta {
+		pbOpType, err := stringToJsonPatchOperationType(op.Op)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert patch operation type: %w", err)
+		}
+		
 		pbOp := &generated.JsonPatchOperation{
-			Op:   stringToJsonPatchOperationType(op.Op),
+			Op:   pbOpType,
 			Path: op.Path,
 		}
 

@@ -28,6 +28,9 @@ const (
 	EventTypeRunError           EventType = "RUN_ERROR"
 	EventTypeStepStarted        EventType = "STEP_STARTED"
 	EventTypeStepFinished       EventType = "STEP_FINISHED"
+	
+	// EventTypeUnknown represents an unrecognized event type
+	EventTypeUnknown            EventType = "UNKNOWN"
 )
 
 // Event defines the common interface for all AG-UI events
@@ -166,7 +169,9 @@ func eventTypeToProtobuf(eventType EventType) generated.EventType {
 	case EventTypeStepFinished:
 		return generated.EventType_STEP_FINISHED
 	default:
-		return generated.EventType_TEXT_MESSAGE_START // Default fallback
+		// For unknown types, we still need to return a valid protobuf enum value
+		// The validation will catch this when the event is processed
+		return generated.EventType(-1) // Invalid enum value
 	}
 }
 
@@ -206,7 +211,8 @@ func protobufToEventType(pbType generated.EventType) EventType {
 	case generated.EventType_STEP_FINISHED:
 		return EventTypeStepFinished
 	default:
-		return EventTypeTextMessageStart // Default fallback
+		// Return unknown type for unrecognized protobuf event types
+		return EventTypeUnknown
 	}
 }
 
