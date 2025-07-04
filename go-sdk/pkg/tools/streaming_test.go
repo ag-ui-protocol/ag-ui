@@ -235,6 +235,24 @@ func TestStreamingToolHelper(t *testing.T) {
 		assert.Nil(t, chunks)
 	})
 
+	t.Run("StreamJSON_InvalidChunkSize", func(t *testing.T) {
+		helper := NewStreamingToolHelper()
+		ctx := context.Background()
+		data := map[string]string{"test": "data"}
+		
+		// Test zero chunkSize
+		chunks, err := helper.StreamJSON(ctx, data, 0)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "chunkSize must be positive, got 0")
+		assert.Nil(t, chunks)
+		
+		// Test negative chunkSize
+		chunks, err = helper.StreamJSON(ctx, data, -10)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "chunkSize must be positive, got -10")
+		assert.Nil(t, chunks)
+	})
+
 	t.Run("StreamJSON_ContextCancellation", func(t *testing.T) {
 		helper := NewStreamingToolHelper()
 		ctx, cancel := context.WithCancel(context.Background())
@@ -297,6 +315,25 @@ func TestStreamingToolHelper(t *testing.T) {
 		
 		assert.True(t, complete)
 		assert.Equal(t, data, string(result))
+	})
+
+	t.Run("StreamReader_InvalidChunkSize", func(t *testing.T) {
+		helper := NewStreamingToolHelper()
+		ctx := context.Background()
+		reader := strings.NewReader("test data")
+		
+		// Test zero chunkSize
+		chunks, err := helper.StreamReader(ctx, reader, 0)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "chunkSize must be positive, got 0")
+		assert.Nil(t, chunks)
+		
+		// Test negative chunkSize
+		reader = strings.NewReader("test data") // New reader since previous one was consumed
+		chunks, err = helper.StreamReader(ctx, reader, -10)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "chunkSize must be positive, got -10")
+		assert.Nil(t, chunks)
 	})
 
 	t.Run("StreamReader_Error", func(t *testing.T) {

@@ -98,6 +98,11 @@ func NewStreamingToolHelper() *StreamingToolHelper {
 
 // StreamJSON streams a large JSON object in chunks.
 func (h *StreamingToolHelper) StreamJSON(ctx context.Context, data interface{}, chunkSize int) (<-chan *ToolStreamChunk, error) {
+	// Validate chunkSize
+	if chunkSize <= 0 {
+		return nil, fmt.Errorf("chunkSize must be positive, got %d", chunkSize)
+	}
+
 	// Marshal the data to JSON
 	jsonData, err := json.Marshal(data)
 	if err != nil {
@@ -143,6 +148,11 @@ func (h *StreamingToolHelper) StreamJSON(ctx context.Context, data interface{}, 
 
 // StreamReader streams data from an io.Reader.
 func (h *StreamingToolHelper) StreamReader(ctx context.Context, reader io.Reader, chunkSize int) (<-chan *ToolStreamChunk, error) {
+	// Validate chunkSize
+	if chunkSize <= 0 {
+		return nil, fmt.Errorf("chunkSize must be positive, got %d", chunkSize)
+	}
+
 	out := make(chan *ToolStreamChunk)
 
 	go func() {
