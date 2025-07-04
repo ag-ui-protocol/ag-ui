@@ -65,19 +65,21 @@ func (sc *StreamingContext) Close() error {
 
 // sendChunk sends a chunk to the stream.
 func (sc *StreamingContext) sendChunk(chunkType string, data interface{}) error {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
+	var chunk *ToolStreamChunk
 
+	sc.mu.Lock()
 	if sc.closed {
+		sc.mu.Unlock()
 		return fmt.Errorf("streaming context is closed")
 	}
 
-	chunk := &ToolStreamChunk{
+	chunk = &ToolStreamChunk{
 		Type:  chunkType,
 		Data:  data,
 		Index: sc.index,
 	}
 	sc.index++
+	sc.mu.Unlock()
 
 	select {
 	case sc.chunks <- chunk:
