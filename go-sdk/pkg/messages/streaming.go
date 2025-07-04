@@ -76,9 +76,16 @@ func NewStreamBuilder(role MessageRole) (*StreamBuilder, error) {
 	}
 	
 	// Ensure message has ID and metadata
-	base := msg.(*AssistantMessage).BaseMessage
-	base.ensureID()
-	base.ensureMetadata()
+	switch m := msg.(type) {
+	case *AssistantMessage:
+		m.BaseMessage.ensureID()
+		m.BaseMessage.ensureMetadata()
+	case *UserMessage:
+		m.BaseMessage.ensureID()
+		m.BaseMessage.ensureMetadata()
+	default:
+		return nil, fmt.Errorf("unsupported message type: %T", msg)
+	}
 	
 	return &StreamBuilder{
 		currentMessage:  msg,
