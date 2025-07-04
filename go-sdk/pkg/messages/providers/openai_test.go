@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/ag-ui/go-sdk/pkg/messages"

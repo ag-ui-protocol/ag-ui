@@ -35,7 +35,7 @@ func DefaultValidationOptions() ValidationOptions {
 // Validator validates messages according to configured rules
 type Validator struct {
 	options ValidationOptions
-	
+
 	// Patterns for content sanitization
 	scriptPattern *regexp.Regexp
 	htmlPattern   *regexp.Regexp
@@ -47,7 +47,7 @@ func NewValidator(options ...ValidationOptions) *Validator {
 	if len(options) > 0 {
 		opts = options[0]
 	}
-	
+
 	return &Validator{
 		options:       opts,
 		scriptPattern: regexp.MustCompile(`(?i)<script[^>]*>.*?</script>`),
@@ -60,23 +60,23 @@ func (v *Validator) ValidateMessage(msg Message) error {
 	if msg == nil {
 		return fmt.Errorf("message is nil")
 	}
-	
+
 	// Validate role
 	if v.options.StrictRoleCheck {
 		if err := msg.GetRole().Validate(); err != nil {
 			return fmt.Errorf("invalid role: %w", err)
 		}
 	}
-	
+
 	// Validate ID
 	if msg.GetID() == "" {
 		return fmt.Errorf("message ID is required")
 	}
-	
+
 	// Validate content
 	if content := msg.GetContent(); content != nil {
 		if err := v.validateContent(*content); err != nil {
-			return fmt.Errorf("content validation failed: %w", err)
+			return err
 		}
 	} else if !v.options.AllowEmptyContent {
 		// Check if message type requires content
@@ -84,23 +84,38 @@ func (v *Validator) ValidateMessage(msg Message) error {
 		case *AssistantMessage:
 			// Assistant messages can have only tool calls
 			if len(m.ToolCalls) == 0 {
-				return fmt.Errorf("assistant message must have content or tool calls")
+				return NewValidationError("assistant message must have content or tool calls",
+					ValidationViolation{
+						Field:   "content",
+						Message: "content or tool calls required",
+						Value:   nil,
+					})
 			}
 		case *UserMessage, *SystemMessage, *DeveloperMessage:
-			return fmt.Errorf("%s message requires content", msg.GetRole())
+			return NewValidationError(fmt.Sprintf("%s message requires content", msg.GetRole()),
+				ValidationViolation{
+					Field:   "content", 
+					Message: "content required",
+					Value:   nil,
+				})
 		case *ToolMessage:
 			// Tool messages always require content
-			return fmt.Errorf("tool message requires content")
+			return NewValidationError("tool message requires content",
+				ValidationViolation{
+					Field:   "content",
+					Message: "content required", 
+					Value:   nil,
+				})
 		}
 	}
-	
+
 	// Validate name
 	if name := msg.GetName(); name != nil {
 		if err := v.validateName(*name); err != nil {
 			return fmt.Errorf("name validation failed: %w", err)
 		}
 	}
-	
+
 	// Validate specific message types
 	switch m := msg.(type) {
 	case *AssistantMessage:
@@ -112,7 +127,7 @@ func (v *Validator) ValidateMessage(msg Message) error {
 			return err
 		}
 	}
-	
+
 	return nil
 }
 
@@ -120,21 +135,31 @@ func (v *Validator) ValidateMessage(msg Message) error {
 func (v *Validator) validateContent(content string) error {
 	// Check length
 	if len(content) > v.options.MaxContentLength {
-		return fmt.Errorf("content exceeds maximum length of %d characters", v.options.MaxContentLength)
+		return ErrContentTooLong(len(content), v.options.MaxContentLength)
 	}
-	
+
 	// Check for valid UTF-8
 	if !utf8.ValidString(content) {
-		return fmt.Errorf("content contains invalid UTF-8")
+		return NewValidationError("content contains invalid UTF-8",
+			ValidationViolation{
+				Field:   "content",
+				Message: "invalid UTF-8 encoding",
+				Value:   nil,
+			})
 	}
-	
+
 	// Check for control characters (except newlines and tabs)
 	for _, r := range content {
 		if r < 32 && r != '\n' && r != '\t' && r != '\r' {
-			return fmt.Errorf("content contains invalid control character: %d", r)
+			return NewValidationError(fmt.Sprintf("content contains invalid control character: %d", r),
+				ValidationViolation{
+					Field:   "content",
+					Message: "invalid control character",
+					Value:   r,
+				})
 		}
 	}
-	
+
 	return nil
 }
 
@@ -143,18 +168,18 @@ func (v *Validator) validateName(name string) error {
 	if len(name) == 0 {
 		return fmt.Errorf("name cannot be empty")
 	}
-	
+
 	if len(name) > v.options.MaxNameLength {
 		return fmt.Errorf("name exceeds maximum length of %d characters", v.options.MaxNameLength)
 	}
-	
+
 	// Name should contain only alphanumeric characters, underscores, and hyphens
 	for _, r := range name {
 		if !isValidNameChar(r) {
 			return fmt.Errorf("name contains invalid character: %c", r)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -170,17 +195,17 @@ func isValidNameChar(r rune) bool {
 func (v *Validator) validateAssistantMessage(msg *AssistantMessage) error {
 	// Validate tool calls
 	if len(msg.ToolCalls) > v.options.MaxToolCalls {
-		return fmt.Errorf("number of tool calls (%d) exceeds maximum of %d", 
+		return fmt.Errorf("number of tool calls (%d) exceeds maximum of %d",
 			len(msg.ToolCalls), v.options.MaxToolCalls)
 	}
-	
+
 	// Validate each tool call
 	for i, tc := range msg.ToolCalls {
 		if err := v.validateToolCall(tc); err != nil {
 			return fmt.Errorf("invalid tool call at index %d: %w", i, err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -189,25 +214,25 @@ func (v *Validator) validateToolCall(tc ToolCall) error {
 	if tc.ID == "" {
 		return fmt.Errorf("tool call ID is required")
 	}
-	
+
 	if tc.Type != "function" {
 		return fmt.Errorf("tool call type must be 'function', got '%s'", tc.Type)
 	}
-	
+
 	if tc.Function.Name == "" {
 		return fmt.Errorf("function name is required")
 	}
-	
+
 	// Validate function name
 	if err := v.validateName(tc.Function.Name); err != nil {
 		return fmt.Errorf("invalid function name: %w", err)
 	}
-	
+
 	// Validate arguments length
 	if len(tc.Function.Arguments) > v.options.MaxArgumentsLength {
 		return fmt.Errorf("function arguments exceed maximum length of %d", v.options.MaxArgumentsLength)
 	}
-	
+
 	// Validate arguments as JSON
 	if tc.Function.Arguments != "" {
 		var args interface{}
@@ -215,7 +240,7 @@ func (v *Validator) validateToolCall(tc ToolCall) error {
 			return fmt.Errorf("function arguments must be valid JSON: %w", err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -224,12 +249,12 @@ func (v *Validator) validateToolMessage(msg *ToolMessage) error {
 	if msg.ToolCallID == "" {
 		return fmt.Errorf("tool call ID is required")
 	}
-	
+
 	// Validate content is not empty
 	if msg.Content == "" {
 		return fmt.Errorf("tool message content cannot be empty")
 	}
-	
+
 	return v.validateContent(msg.Content)
 }
 
@@ -238,56 +263,58 @@ func (v *Validator) ValidateMessageList(messages MessageList) error {
 	if len(messages) == 0 {
 		return nil
 	}
-	
+
 	// Track tool call IDs to ensure they're referenced properly
 	toolCallIDs := make(map[string]bool)
-	
+
 	for i, msg := range messages {
 		// Validate individual message
 		if err := v.ValidateMessage(msg); err != nil {
 			return fmt.Errorf("invalid message at index %d: %w", i, err)
 		}
-		
+
 		// Track tool calls from assistant messages
 		if assistantMsg, ok := msg.(*AssistantMessage); ok {
 			for _, tc := range assistantMsg.ToolCalls {
 				toolCallIDs[tc.ID] = true
 			}
 		}
-		
+
 		// Validate tool messages reference valid tool calls
 		if toolMsg, ok := msg.(*ToolMessage); ok {
 			if !toolCallIDs[toolMsg.ToolCallID] {
-				return fmt.Errorf("tool message at index %d references unknown tool call ID: %s", 
+				return fmt.Errorf("tool message at index %d references unknown tool call ID: %s",
 					i, toolMsg.ToolCallID)
 			}
 		}
 	}
-	
+
 	return nil
 }
 
 // Sanitizer sanitizes message content
 type Sanitizer struct {
-	options SanitizationOptions
+	options       SanitizationOptions
+	scriptPattern *regexp.Regexp
+	htmlPattern   *regexp.Regexp
 }
 
 // SanitizationOptions configures content sanitization
 type SanitizationOptions struct {
-	RemoveHTML        bool
-	RemoveScripts     bool
-	TrimWhitespace    bool
-	NormalizeNewlines bool
+	RemoveHTML             bool
+	RemoveScripts          bool
+	TrimWhitespace         bool
+	NormalizeNewlines      bool
 	MaxConsecutiveNewlines int
 }
 
 // DefaultSanitizationOptions returns default sanitization options
 func DefaultSanitizationOptions() SanitizationOptions {
 	return SanitizationOptions{
-		RemoveHTML:        true,
-		RemoveScripts:     true,
-		TrimWhitespace:    true,
-		NormalizeNewlines: true,
+		RemoveHTML:             true,
+		RemoveScripts:          true,
+		TrimWhitespace:         true,
+		NormalizeNewlines:      true,
 		MaxConsecutiveNewlines: 3,
 	}
 }
@@ -298,10 +325,20 @@ func NewSanitizer(options ...SanitizationOptions) *Sanitizer {
 	if len(options) > 0 {
 		opts = options[0]
 	}
-	
-	return &Sanitizer{
+
+	s := &Sanitizer{
 		options: opts,
 	}
+
+	// Pre-compile regex patterns if needed
+	if opts.RemoveScripts {
+		s.scriptPattern = regexp.MustCompile(`(?i)<script[^>]*>.*?</script>`)
+	}
+	if opts.RemoveHTML {
+		s.htmlPattern = regexp.MustCompile(`<[^>]+>`)
+	}
+
+	return s
 }
 
 // SanitizeMessage sanitizes a message in place
@@ -309,7 +346,7 @@ func (s *Sanitizer) SanitizeMessage(msg Message) error {
 	// Sanitize content if present
 	if content := msg.GetContent(); content != nil {
 		sanitized := s.SanitizeContent(*content)
-		
+
 		// Update the message content based on type
 		switch m := msg.(type) {
 		case *UserMessage:
@@ -324,56 +361,54 @@ func (s *Sanitizer) SanitizeMessage(msg Message) error {
 			m.Content = sanitized
 		}
 	}
-	
+
 	// Sanitize tool calls for assistant messages
 	if assistantMsg, ok := msg.(*AssistantMessage); ok {
-		for i := range assistantMsg.ToolCalls {
+		for range assistantMsg.ToolCalls {
 			// Function names don't need sanitization, but arguments might
 			// However, arguments should remain as valid JSON, so we skip sanitization
 		}
 	}
-	
+
 	return nil
 }
 
 // SanitizeContent sanitizes text content
 func (s *Sanitizer) SanitizeContent(content string) string {
 	result := content
-	
+
 	// Remove scripts
-	if s.options.RemoveScripts {
-		scriptPattern := regexp.MustCompile(`(?i)<script[^>]*>.*?</script>`)
-		result = scriptPattern.ReplaceAllString(result, "")
+	if s.options.RemoveScripts && s.scriptPattern != nil {
+		result = s.scriptPattern.ReplaceAllString(result, "")
 	}
-	
+
 	// Remove HTML tags
-	if s.options.RemoveHTML {
-		htmlPattern := regexp.MustCompile(`<[^>]+>`)
-		result = htmlPattern.ReplaceAllString(result, "")
+	if s.options.RemoveHTML && s.htmlPattern != nil {
+		result = s.htmlPattern.ReplaceAllString(result, "")
 	}
-	
+
 	// Normalize newlines
 	if s.options.NormalizeNewlines {
 		// Replace various newline formats with \n
 		result = strings.ReplaceAll(result, "\r\n", "\n")
 		result = strings.ReplaceAll(result, "\r", "\n")
-		
+
 		// Limit consecutive newlines
 		if s.options.MaxConsecutiveNewlines > 0 {
 			pattern := strings.Repeat("\n", s.options.MaxConsecutiveNewlines+1)
 			replacement := strings.Repeat("\n", s.options.MaxConsecutiveNewlines)
-			
+
 			for strings.Contains(result, pattern) {
 				result = strings.ReplaceAll(result, pattern, replacement)
 			}
 		}
 	}
-	
+
 	// Trim whitespace
 	if s.options.TrimWhitespace {
 		result = strings.TrimSpace(result)
 	}
-	
+
 	return result
 }
 
@@ -394,13 +429,13 @@ func ValidateAndSanitize(msg Message, validationOpts ValidationOptions, sanitiza
 	if err := sanitizer.SanitizeMessage(msg); err != nil {
 		return fmt.Errorf("sanitization failed: %w", err)
 	}
-	
+
 	// Then validate
 	validator := NewValidator(validationOpts)
 	if err := validator.ValidateMessage(msg); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -409,18 +444,18 @@ func ValidateConversationFlow(messages MessageList) error {
 	if len(messages) == 0 {
 		return nil
 	}
-	
+
 	// Check for logical flow patterns
 	for i := 0; i < len(messages)-1; i++ {
 		current := messages[i]
 		next := messages[i+1]
-		
+
 		// Tool messages should follow assistant messages with tool calls
 		if next.GetRole() == RoleTool {
 			if current.GetRole() != RoleAssistant {
 				return fmt.Errorf("tool message at index %d must follow an assistant message", i+1)
 			}
-			
+
 			// Verify the assistant message has tool calls
 			assistantMsg, ok := current.(*AssistantMessage)
 			if !ok || len(assistantMsg.ToolCalls) == 0 {
@@ -428,6 +463,6 @@ func ValidateConversationFlow(messages MessageList) error {
 			}
 		}
 	}
-	
+
 	return nil
 }

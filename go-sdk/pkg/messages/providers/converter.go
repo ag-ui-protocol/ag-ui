@@ -10,13 +10,13 @@ import (
 type Converter interface {
 	// ToProviderFormat converts AG-UI messages to provider-specific format
 	ToProviderFormat(messages.MessageList) (interface{}, error)
-	
+
 	// FromProviderFormat converts provider-specific format to AG-UI messages
 	FromProviderFormat(interface{}) (messages.MessageList, error)
-	
+
 	// GetProviderName returns the name of the provider
 	GetProviderName() string
-	
+
 	// SupportsStreaming indicates if the provider supports streaming
 	SupportsStreaming() bool
 }
@@ -78,13 +78,13 @@ func Get(providerName string) (Converter, error) {
 type ConversionOptions struct {
 	// MaxTokens limits the total tokens in the conversation
 	MaxTokens int
-	
+
 	// TruncateStrategy defines how to handle token limits
 	TruncateStrategy TruncateStrategy
-	
+
 	// IncludeSystemMessages indicates whether to include system messages
 	IncludeSystemMessages bool
-	
+
 	// MergeConsecutiveMessages indicates whether to merge consecutive messages from the same role
 	MergeConsecutiveMessages bool
 }
@@ -95,10 +95,10 @@ type TruncateStrategy int
 const (
 	// TruncateOldest removes the oldest messages first
 	TruncateOldest TruncateStrategy = iota
-	
+
 	// TruncateMiddle removes messages from the middle of the conversation
 	TruncateMiddle
-	
+
 	// TruncateSystemFirst removes system messages before user/assistant messages
 	TruncateSystemFirst
 )
@@ -124,44 +124,44 @@ func (c *BaseConverter) SetOptions(options ConversionOptions) {
 }
 
 // PreprocessMessages applies common preprocessing to messages
-func (c *BaseConverter) PreprocessMessages(messages messages.MessageList) messages.MessageList {
-	processed := make(messages.MessageList, 0, len(messages))
-	
+func (c *BaseConverter) PreprocessMessages(msgList messages.MessageList) messages.MessageList {
+	processed := make(messages.MessageList, 0, len(msgList))
+
 	// Filter system messages if needed
-	for _, msg := range messages {
+	for _, msg := range msgList {
 		if msg.GetRole() == messages.RoleSystem && !c.options.IncludeSystemMessages {
 			continue
 		}
 		processed = append(processed, msg)
 	}
-	
+
 	// Merge consecutive messages if enabled
 	if c.options.MergeConsecutiveMessages {
 		processed = c.mergeConsecutiveMessages(processed)
 	}
-	
+
 	return processed
 }
 
 // mergeConsecutiveMessages merges consecutive messages from the same role
-func (c *BaseConverter) mergeConsecutiveMessages(messages messages.MessageList) messages.MessageList {
-	if len(messages) <= 1 {
-		return messages
+func (c *BaseConverter) mergeConsecutiveMessages(msgList messages.MessageList) messages.MessageList {
+	if len(msgList) <= 1 {
+		return msgList
 	}
-	
-	merged := make(messages.MessageList, 0, len(messages))
-	current := messages[0]
-	
-	for i := 1; i < len(messages); i++ {
-		next := messages[i]
-		
+
+	merged := make(messages.MessageList, 0, len(msgList))
+	current := msgList[0]
+
+	for i := 1; i < len(msgList); i++ {
+		next := msgList[i]
+
 		// Check if we can merge
-		if current.GetRole() == next.GetRole() && 
-		   current.GetRole() != messages.RoleTool && // Don't merge tool messages
-		   current.GetContent() != nil && next.GetContent() != nil {
+		if current.GetRole() == next.GetRole() &&
+			current.GetRole() != messages.RoleTool && // Don't merge tool messages
+			current.GetContent() != nil && next.GetContent() != nil {
 			// Merge the content
 			mergedContent := *current.GetContent() + "\n\n" + *next.GetContent()
-			
+
 			// Create a new message with merged content
 			switch current.GetRole() {
 			case messages.RoleUser:
@@ -179,53 +179,74 @@ func (c *BaseConverter) mergeConsecutiveMessages(messages messages.MessageList) 
 			current = next
 		}
 	}
-	
+
 	// Don't forget the last message
 	merged = append(merged, current)
-	
+
 	return merged
 }
 
+// ConversionValidationOptions provides options for message validation during conversion
+type ConversionValidationOptions struct {
+	AllowStandaloneToolMessages bool
+}
+
 // ValidateMessages validates that messages are in a valid format for conversion
-func ValidateMessages(messages messages.MessageList) error {
-	if len(messages) == 0 {
-		return fmt.Errorf("message list is empty")
+func ValidateMessages(msgList messages.MessageList, opts ...ConversionValidationOptions) error {
+	if len(msgList) == 0 {
+		return messages.ErrEmptyMessageList()
 	}
-	
+
+	// Apply default options
+	options := ConversionValidationOptions{
+		AllowStandaloneToolMessages: false,
+	}
+	if len(opts) > 0 {
+		options = opts[0]
+	}
+
 	// Validate each message
-	if err := messages.Validate(); err != nil {
+	if err := msgList.Validate(); err != nil {
 		return err
 	}
-	
+
 	// Additional validation rules
-	// 1. Tool messages must follow assistant messages with tool calls
+	// 1. Tool messages must follow assistant messages with tool calls (unless allowed standalone)
 	var lastAssistantWithTools *messages.AssistantMessage
-	
-	for i, msg := range messages {
+
+	for i, msg := range msgList {
 		switch m := msg.(type) {
 		case *messages.ToolMessage:
-			if lastAssistantWithTools == nil {
-				return fmt.Errorf("tool message at index %d has no preceding assistant message with tool calls", i)
+			if !options.AllowStandaloneToolMessages && lastAssistantWithTools == nil {
+				return messages.NewValidationError(
+					fmt.Sprintf("tool message at index %d has no preceding assistant message with tool calls", i),
+					messages.ValidationViolation{
+						Field:   "toolMessage",
+						Message: "requires preceding assistant message with tool calls",
+						Value:   i,
+					})
 			}
-			
-			// Verify the tool call ID exists
-			found := false
-			for _, tc := range lastAssistantWithTools.ToolCalls {
-				if tc.ID == m.ToolCallID {
-					found = true
-					break
+
+			// Verify the tool call ID exists (only if we have a preceding assistant message)
+			if lastAssistantWithTools != nil {
+				found := false
+				for _, tc := range lastAssistantWithTools.ToolCalls {
+					if tc.ID == m.ToolCallID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					return messages.ErrMissingToolCallReference(m.ToolCallID, i)
 				}
 			}
-			if !found {
-				return fmt.Errorf("tool message at index %d references unknown tool call ID: %s", i, m.ToolCallID)
-			}
-			
+
 		case *messages.AssistantMessage:
 			if len(m.ToolCalls) > 0 {
 				lastAssistantWithTools = m
 			}
 		}
 	}
-	
+
 	return nil
 }

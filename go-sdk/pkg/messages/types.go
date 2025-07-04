@@ -164,6 +164,11 @@ func NewUserMessage(content string) *UserMessage {
 	return msg
 }
 
+// Accept implements the Visitable interface
+func (m *UserMessage) Accept(v MessageVisitor) error {
+	return v.VisitUser(m)
+}
+
 // Validate validates the user message
 func (m *UserMessage) Validate() error {
 	if err := m.Role.Validate(); err != nil {
@@ -207,6 +212,11 @@ func NewAssistantMessageWithTools(toolCalls []ToolCall) *AssistantMessage {
 	return msg
 }
 
+// Accept implements the Visitable interface
+func (m *AssistantMessage) Accept(v MessageVisitor) error {
+	return v.VisitAssistant(m)
+}
+
 // Validate validates the assistant message
 func (m *AssistantMessage) Validate() error {
 	if err := m.Role.Validate(); err != nil {
@@ -231,6 +241,11 @@ func (m *AssistantMessage) Validate() error {
 	return nil
 }
 
+// ToJSON serializes the assistant message to JSON
+func (m *AssistantMessage) ToJSON() ([]byte, error) {
+	return json.Marshal(m)
+}
+
 // SystemMessage represents a system-level message
 type SystemMessage struct {
 	BaseMessage
@@ -247,6 +262,11 @@ func NewSystemMessage(content string) *SystemMessage {
 	msg.ensureID()
 	msg.ensureMetadata()
 	return msg
+}
+
+// Accept implements the Visitable interface
+func (m *SystemMessage) Accept(v MessageVisitor) error {
+	return v.VisitSystem(m)
 }
 
 // Validate validates the system message
@@ -308,6 +328,11 @@ func (m *ToolMessage) GetMetadata() *MessageMetadata {
 	return m.Metadata
 }
 
+// Accept implements the Visitable interface
+func (m *ToolMessage) Accept(v MessageVisitor) error {
+	return v.VisitTool(m)
+}
+
 // Validate validates the tool message
 func (m *ToolMessage) Validate() error {
 	if err := m.Role.Validate(); err != nil {
@@ -343,6 +368,11 @@ func NewDeveloperMessage(content string) *DeveloperMessage {
 	msg.ensureID()
 	msg.ensureMetadata()
 	return msg
+}
+
+// Accept implements the Visitable interface
+func (m *DeveloperMessage) Accept(v MessageVisitor) error {
+	return v.VisitDeveloper(m)
 }
 
 // Validate validates the developer message
@@ -385,8 +415,8 @@ func (ml MessageList) ToJSON() ([]byte, error) {
 
 // ConversationOptions represents options for creating a conversation
 type ConversationOptions struct {
-	MaxMessages      int
-	MaxTokens        int
+	MaxMessages            int
+	MaxTokens              int
 	PreserveSystemMessages bool
 }
 
@@ -400,13 +430,13 @@ type Conversation struct {
 // NewConversation creates a new conversation
 func NewConversation(options ...ConversationOptions) *Conversation {
 	opts := ConversationOptions{
-		MaxMessages:      1000,
+		MaxMessages:            1000,
 		PreserveSystemMessages: true,
 	}
 	if len(options) > 0 {
 		opts = options[0]
 	}
-	
+
 	return &Conversation{
 		ID:       uuid.New().String(),
 		Messages: make(MessageList, 0),
@@ -419,14 +449,14 @@ func (c *Conversation) AddMessage(msg Message) error {
 	if err := msg.Validate(); err != nil {
 		return fmt.Errorf("invalid message: %w", err)
 	}
-	
+
 	c.Messages = append(c.Messages, msg)
-	
+
 	// Apply message limits if needed
 	if c.Options.MaxMessages > 0 && len(c.Messages) > c.Options.MaxMessages {
 		c.pruneMessages()
 	}
-	
+
 	return nil
 }
 
@@ -438,11 +468,11 @@ func (c *Conversation) pruneMessages() {
 		c.Messages = c.Messages[startIdx:]
 		return
 	}
-	
+
 	// Complex case: preserve system messages
 	var systemMessages []Message
 	var otherMessages []Message
-	
+
 	for _, msg := range c.Messages {
 		if msg.GetRole() == RoleSystem {
 			systemMessages = append(systemMessages, msg)
@@ -450,19 +480,19 @@ func (c *Conversation) pruneMessages() {
 			otherMessages = append(otherMessages, msg)
 		}
 	}
-	
+
 	// Calculate how many non-system messages we can keep
 	nonSystemSlots := c.Options.MaxMessages - len(systemMessages)
 	if nonSystemSlots < 0 {
 		nonSystemSlots = 0
 	}
-	
+
 	// Keep the most recent non-system messages
 	if len(otherMessages) > nonSystemSlots {
 		startIdx := len(otherMessages) - nonSystemSlots
 		otherMessages = otherMessages[startIdx:]
 	}
-	
+
 	// Rebuild the message list
 	c.Messages = make(MessageList, 0, len(systemMessages)+len(otherMessages))
 	c.Messages = append(c.Messages, systemMessages...)

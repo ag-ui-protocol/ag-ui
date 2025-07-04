@@ -158,7 +158,12 @@ func TestValidator(t *testing.T) {
 
 	t.Run("Validate empty content handling", func(t *testing.T) {
 		v := NewValidator(ValidationOptions{
-			AllowEmptyContent: false,
+			AllowEmptyContent:  false,
+			MaxToolCalls:       100, // Ensure we allow tool calls
+			MaxNameLength:      256, // Ensure we allow names
+			MaxContentLength:   1000000,
+			MaxArgumentsLength: 100000,
+			StrictRoleCheck:    true,
 		})
 
 		// User message without content should fail
@@ -303,7 +308,7 @@ func TestSanitizer(t *testing.T) {
 
 	t.Run("Sanitize message", func(t *testing.T) {
 		msg := NewUserMessage("<p>Hello <script>alert('xss')</script>world!</p>")
-		
+
 		if err := s.SanitizeMessage(msg); err != nil {
 			t.Errorf("Failed to sanitize message: %v", err)
 		}

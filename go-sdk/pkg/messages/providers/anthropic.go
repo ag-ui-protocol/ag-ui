@@ -3,9 +3,29 @@ package providers
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
+	"sync"
 
 	"github.com/ag-ui/go-sdk/pkg/messages"
 )
+
+// streamingStatePool provides a pool of reusable streaming states
+var streamingStatePool = sync.Pool{
+	New: func() interface{} {
+		return NewAnthropicStreamingState()
+	},
+}
+
+// GetStreamingState retrieves a streaming state from the pool
+func GetStreamingState() *AnthropicStreamingState {
+	return streamingStatePool.Get().(*AnthropicStreamingState)
+}
+
+// PutStreamingState returns a streaming state to the pool after cleanup
+func PutStreamingState(state *AnthropicStreamingState) {
+	state.Reset()
+	streamingStatePool.Put(state)
+}
 
 // AnthropicMessage represents a message in Anthropic format
 type AnthropicMessage struct {
@@ -38,13 +58,23 @@ type AnthropicRequest struct {
 // AnthropicConverter converts messages to/from Anthropic format
 type AnthropicConverter struct {
 	*BaseConverter
+	validationOptions ConversionValidationOptions
 }
 
 // NewAnthropicConverter creates a new Anthropic converter
 func NewAnthropicConverter() *AnthropicConverter {
 	return &AnthropicConverter{
 		BaseConverter: NewBaseConverter(),
+		validationOptions: ConversionValidationOptions{
+			AllowStandaloneToolMessages: false,
+		},
 	}
+}
+
+// WithValidationOptions sets validation options for the converter
+func (c *AnthropicConverter) WithValidationOptions(opts ConversionValidationOptions) *AnthropicConverter {
+	c.validationOptions = opts
+	return c
 }
 
 // GetProviderName returns the provider name
@@ -59,8 +89,8 @@ func (c *AnthropicConverter) SupportsStreaming() bool {
 
 // ToProviderFormat converts AG-UI messages to Anthropic format
 func (c *AnthropicConverter) ToProviderFormat(msgs messages.MessageList) (interface{}, error) {
-	// Validate messages
-	if err := ValidateMessages(msgs); err != nil {
+	// Validate messages with configured options
+	if err := ValidateMessages(msgs, c.validationOptions); err != nil {
 		return nil, fmt.Errorf("message validation failed: %w", err)
 	}
 	
@@ -162,14 +192,20 @@ func (c *AnthropicConverter) convertToAnthropic(msg messages.Message) (Anthropic
 	case *messages.DeveloperMessage:
 		// Convert developer messages to assistant messages with a prefix
 		anthropicMsg.Role = "assistant"
-		devContent := "[Developer Message] " + *m.GetContent()
+		content := m.GetContent()
+		if content == nil {
+			return AnthropicMessage{}, messages.NewInvalidInputError("content", nil, 
+				"developer message content cannot be nil")
+		}
+		devContent := "[Developer Message] " + *content
 		anthropicMsg.Content = append(anthropicMsg.Content, AnthropicContent{
 			Type: "text",
 			Text: &devContent,
 		})
 		
 	default:
-		return AnthropicMessage{}, fmt.Errorf("unsupported message type for Anthropic: %T", msg)
+		return AnthropicMessage{}, messages.NewConversionError("AG-UI", "Anthropic", 
+			fmt.Sprintf("%T", msg), "unsupported message type")
 	}
 	
 	return anthropicMsg, nil
@@ -258,8 +294,9 @@ func (c *AnthropicConverter) convertFromAnthropic(anthropicMsg AnthropicMessage)
 		}
 		
 	case "assistant":
-		var textContent string
+		var builder strings.Builder
 		var toolCalls []messages.ToolCall
+		isDeveloperMessage := false
 		
 		for _, content := range anthropicMsg.Content {
 			switch content.Type {
@@ -271,13 +308,14 @@ func (c *AnthropicConverter) convertFromAnthropic(anthropicMsg AnthropicMessage)
 						devContent := (*content.Text)[19:]
 						msg := messages.NewDeveloperMessage(devContent)
 						result = append(result, msg)
+						isDeveloperMessage = true
 						continue
 					}
 					
-					if textContent != "" {
-						textContent += "\n"
+					if builder.Len() > 0 {
+						builder.WriteString("\n")
 					}
-					textContent += *content.Text
+					builder.WriteString(*content.Text)
 				}
 				
 			case "tool_use":
@@ -301,16 +339,19 @@ func (c *AnthropicConverter) convertFromAnthropic(anthropicMsg AnthropicMessage)
 			}
 		}
 		
-		// Create assistant message
-		if len(toolCalls) > 0 {
-			msg := messages.NewAssistantMessageWithTools(toolCalls)
-			if textContent != "" {
-				msg.Content = &textContent
+		// Create assistant message only if not a developer message
+		if !isDeveloperMessage {
+			textContent := builder.String()
+			if len(toolCalls) > 0 {
+				msg := messages.NewAssistantMessageWithTools(toolCalls)
+				if textContent != "" {
+					msg.Content = &textContent
+				}
+				result = append(result, msg)
+			} else if textContent != "" {
+				msg := messages.NewAssistantMessage(textContent)
+				result = append(result, msg)
 			}
-			result = append(result, msg)
-		} else if textContent != "" {
-			msg := messages.NewAssistantMessage(textContent)
-			result = append(result, msg)
 		}
 		
 	default:
@@ -350,6 +391,25 @@ func NewAnthropicStreamingState() *AnthropicStreamingState {
 		ToolCalls:  make(map[int]*messages.ToolCall),
 		ToolInputs: make(map[int]string),
 	}
+}
+
+// Reset clears the streaming state for reuse
+func (s *AnthropicStreamingState) Reset() {
+	s.CurrentMessage = nil
+	s.ContentBuffer = ""
+	// Clear maps and recreate to release memory
+	s.ToolCalls = make(map[int]*messages.ToolCall)
+	s.ToolInputs = make(map[int]string)
+}
+
+// Cleanup releases resources held by the streaming state
+func (s *AnthropicStreamingState) Cleanup() {
+	s.Reset()
+}
+
+// Size returns the current size of the streaming state (number of tool calls + inputs)
+func (s *AnthropicStreamingState) Size() int {
+	return len(s.ToolCalls) + len(s.ToolInputs)
 }
 
 // ProcessStreamEvent processes an Anthropic streaming event
@@ -396,10 +456,8 @@ func (c *AnthropicConverter) ProcessStreamEvent(state *AnthropicStreamingState, 
 	case "content_block_stop":
 		// Finalize any pending tool calls
 		state.CurrentMessage.ToolCalls = make([]messages.ToolCall, 0, len(state.ToolCalls))
-		for i := 0; i < len(state.ToolCalls); i++ {
-			if tc, exists := state.ToolCalls[i]; exists {
-				state.CurrentMessage.ToolCalls = append(state.CurrentMessage.ToolCalls, *tc)
-			}
+		for _, tc := range state.ToolCalls {
+			state.CurrentMessage.ToolCalls = append(state.CurrentMessage.ToolCalls, *tc)
 		}
 	}
 	

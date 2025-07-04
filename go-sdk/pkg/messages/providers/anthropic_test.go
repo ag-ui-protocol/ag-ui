@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/ag-ui/go-sdk/pkg/messages"
@@ -89,11 +88,16 @@ func TestAnthropicConverter(t *testing.T) {
 	})
 
 	t.Run("Convert tool message to tool_result", func(t *testing.T) {
+		// Create a converter that allows standalone tool messages for testing
+		testConverter := NewAnthropicConverter().WithValidationOptions(ConversionValidationOptions{
+			AllowStandaloneToolMessages: true,
+		})
+		
 		msgs := messages.MessageList{
 			messages.NewToolMessage("The weather in San Francisco is 18°C and sunny.", "toolu_abc123"),
 		}
 
-		result, err := converter.ToProviderFormat(msgs)
+		result, err := testConverter.ToProviderFormat(msgs)
 		if err != nil {
 			t.Fatalf("Failed to convert messages: %v", err)
 		}
@@ -323,7 +327,7 @@ func TestAnthropicConverter(t *testing.T) {
 				Input:     stringPtr(`{"location":`),
 			},
 		}
-		msg3, err := converter.ProcessStreamEvent(state, event3)
+		_, err = converter.ProcessStreamEvent(state, event3)
 		if err != nil {
 			t.Fatalf("Failed to process event: %v", err)
 		}
@@ -337,7 +341,7 @@ func TestAnthropicConverter(t *testing.T) {
 				Input: stringPtr(`"NYC"}`),
 			},
 		}
-		msg4, err := converter.ProcessStreamEvent(state, event4)
+		_, err = converter.ProcessStreamEvent(state, event4)
 		if err != nil {
 			t.Fatalf("Failed to process event: %v", err)
 		}
