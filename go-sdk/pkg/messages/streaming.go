@@ -102,10 +102,10 @@ func (sb *StreamBuilder) AddContent(delta string) error {
 		return fmt.Errorf("cannot add content to completed message")
 	}
 	
-	sb.contentBuffer += delta
+	sb.contentBuffer.WriteString(delta)
 	
 	// Update the message content
-	content := sb.contentBuffer
+	content := sb.contentBuffer.String()
 	switch msg := sb.currentMessage.(type) {
 	case *AssistantMessage:
 		msg.Content = &content
