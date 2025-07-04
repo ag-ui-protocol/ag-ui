@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,26 +70,12 @@ func (e *SecureFileExecutor) Execute(ctx context.Context, params map[string]inte
 		return nil, fmt.Errorf("path parameter is required")
 	}
 	
-	// Validate path
-	if err := e.validatePath(path); err != nil {
-		return &ToolExecutionResult{
-			Success: false,
-			Error:   fmt.Sprintf("path validation failed: %v", err),
-		}, nil
-	}
-	
-	// For read operations, check file size
+	// Use atomic operations based on operation type to prevent TOCTOU race conditions
 	if e.isReadOperation() {
-		if err := e.checkFileSize(path); err != nil {
-			return &ToolExecutionResult{
-				Success: false,
-				Error:   fmt.Sprintf("file size check failed: %v", err),
-			}, nil
-		}
+		return e.executeAtomicRead(ctx, path)
+	} else {
+		return e.executeAtomicWrite(ctx, params)
 	}
-	
-	// Execute the underlying operation
-	return e.executor.Execute(ctx, params)
 }
 
 // validatePath checks if the path is allowed based on security options
@@ -159,6 +146,31 @@ func (e *SecureFileExecutor) checkFileSize(path string) error {
 	return nil
 }
 
+// validateFileDescriptor performs security validation on an open file descriptor
+// This helps prevent TOCTOU race conditions by validating after opening
+func (e *SecureFileExecutor) validateFileDescriptor(file *os.File) error {
+	stat, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("cannot stat file descriptor: %w", err)
+	}
+	
+	// Check file size limit
+	if stat.Size() > e.options.MaxFileSize {
+		return fmt.Errorf("file size %d exceeds maximum allowed size of %d bytes", 
+			stat.Size(), e.options.MaxFileSize)
+	}
+	
+	// Check that it's a regular file (not a device, pipe, etc.)
+	if !stat.Mode().IsRegular() {
+		return fmt.Errorf("access denied: not a regular file")
+	}
+	
+	// For additional security, we could check ownership, permissions, etc.
+	// but this provides basic protection against special files
+	
+	return nil
+}
+
 // isReadOperation checks if this executor is for a read operation
 func (e *SecureFileExecutor) isReadOperation() bool {
 	return e.operationType == "read"
@@ -187,4 +199,149 @@ func NewSecureWriteFileTool(options *SecureFileOptions) *Tool {
 	baseTool := NewWriteFileTool()
 	baseTool.Executor = NewSecureFileExecutor(&writeFileExecutor{}, options, "write")
 	return baseTool
+}
+
+// executeAtomicRead performs atomic read operation to prevent TOCTOU race conditions
+func (e *SecureFileExecutor) executeAtomicRead(ctx context.Context, path string) (*ToolExecutionResult, error) {
+	// First validate the path
+	if err := e.validatePath(path); err != nil {
+		return &ToolExecutionResult{
+			Success: false,
+			Error:   fmt.Sprintf("path validation failed: %v", err),
+		}, nil
+	}
+	
+	// Open the file
+	file, err := os.Open(path)
+	if err != nil {
+		return &ToolExecutionResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to open file: %v", err),
+		}, nil
+	}
+	defer file.Close()
+	
+	// Validate the opened file descriptor to prevent TOCTOU attacks
+	if err := e.validateFileDescriptor(file); err != nil {
+		return &ToolExecutionResult{
+			Success: false,
+			Error:   fmt.Sprintf("file validation failed: %v", err),
+		}, nil
+	}
+	
+	// Read the file content with size limit
+	const maxReadSize = 100 * 1024 * 1024 // 100MB limit
+	limitedReader := io.LimitReader(file, maxReadSize)
+	data, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return &ToolExecutionResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to read file: %v", err),
+		}, nil
+	}
+	
+	return &ToolExecutionResult{
+		Success: true,
+		Data: map[string]interface{}{
+			"content": string(data),
+			"size":    len(data),
+		},
+	}, nil
+}
+
+// executeAtomicWrite performs atomic write operation to prevent TOCTOU race conditions
+func (e *SecureFileExecutor) executeAtomicWrite(ctx context.Context, params map[string]interface{}) (*ToolExecutionResult, error) {
+	path, ok := params["path"].(string)
+	if !ok {
+		return nil, fmt.Errorf("path parameter is required")
+	}
+	
+	content, ok := params["content"].(string)
+	if !ok {
+		return nil, fmt.Errorf("content parameter is required")
+	}
+	
+	mode, _ := params["mode"].(string)
+	if mode == "" {
+		mode = "write"
+	}
+	
+	// First validate the path
+	if err := e.validatePath(path); err != nil {
+		return &ToolExecutionResult{
+			Success: false,
+			Error:   fmt.Sprintf("path validation failed: %v", err),
+		}, nil
+	}
+	
+	// Validate parent directory path
+	dir := filepath.Dir(path)
+	if err := e.validatePath(dir); err != nil {
+		return &ToolExecutionResult{
+			Success: false,
+			Error:   fmt.Sprintf("parent directory access denied: %v", err),
+		}, nil
+	}
+	
+	// Create directory if needed
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return &ToolExecutionResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to create directory: %v", err),
+		}, nil
+	}
+	
+	// Choose the appropriate file opening mode
+	var flags int
+	switch mode {
+	case "append":
+		flags = os.O_APPEND | os.O_CREATE | os.O_WRONLY
+	default: // "write" or default
+		flags = os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+	}
+	
+	// Open the file atomically
+	file, err := os.OpenFile(path, flags, 0644)
+	if err != nil {
+		return &ToolExecutionResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to open file for writing: %v", err),
+		}, nil
+	}
+	defer file.Close()
+	
+	// For existing files (append mode), validate the file descriptor
+	if mode == "append" {
+		if err := e.validateFileDescriptor(file); err != nil {
+			return &ToolExecutionResult{
+				Success: false,
+				Error:   fmt.Sprintf("file validation failed: %v", err),
+			}, nil
+		}
+	}
+	
+	// Write the data
+	_, err = file.WriteString(content)
+	if err != nil {
+		return &ToolExecutionResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to write to file: %v", err),
+		}, nil
+	}
+	
+	// Sync to ensure data is written
+	if err := file.Sync(); err != nil {
+		return &ToolExecutionResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to sync file: %v", err),
+		}, nil
+	}
+	
+	return &ToolExecutionResult{
+		Success: true,
+		Data: map[string]interface{}{
+			"path":         path,
+			"bytes_written": len(content),
+		},
+	}, nil
 }

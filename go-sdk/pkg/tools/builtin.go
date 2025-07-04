@@ -302,13 +302,15 @@ func (e *httpGetExecutor) Execute(ctx context.Context, params map[string]interfa
 		timeout = int(t)
 	}
 
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: time.Duration(timeout) * time.Second,
-	}
+	// Create context with timeout that respects parameter timeout
+	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	defer cancel()
+
+	// Create HTTP client with no timeout - rely entirely on context
+	client := &http.Client{}
 
 	// Create request
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(requestCtx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -332,8 +334,10 @@ func (e *httpGetExecutor) Execute(ctx context.Context, params map[string]interfa
 	}
 	defer resp.Body.Close()
 
-	// Read response
-	body, err := io.ReadAll(resp.Body)
+	// Read response with memory bounds
+	const maxResponseSize = 100 * 1024 * 1024 // 100MB limit
+	limitedReader := io.LimitReader(resp.Body, maxResponseSize)
+	body, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -418,13 +422,15 @@ func (e *httpPostExecutor) Execute(ctx context.Context, params map[string]interf
 		timeout = int(t)
 	}
 
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: time.Duration(timeout) * time.Second,
-	}
+	// Create context with timeout that respects parameter timeout
+	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	defer cancel()
+
+	// Create HTTP client with no timeout - rely entirely on context
+	client := &http.Client{}
 
 	// Create request
-	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(body))
+	req, err := http.NewRequestWithContext(requestCtx, "POST", url, strings.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -451,8 +457,10 @@ func (e *httpPostExecutor) Execute(ctx context.Context, params map[string]interf
 	}
 	defer resp.Body.Close()
 
-	// Read response
-	respBody, err := io.ReadAll(resp.Body)
+	// Read response with memory bounds
+	const maxResponseSize = 100 * 1024 * 1024 // 100MB limit
+	limitedReader := io.LimitReader(resp.Body, maxResponseSize)
+	respBody, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
