@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Interactive logging configuration for ADK middleware."""
 
 import sys

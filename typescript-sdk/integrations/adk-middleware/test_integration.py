@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Integration test for ADK middleware without requiring API calls."""
 
 import asyncio

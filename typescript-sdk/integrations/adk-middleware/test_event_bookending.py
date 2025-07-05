@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Test that text message events are properly bookended with START/END."""
 
 import asyncio

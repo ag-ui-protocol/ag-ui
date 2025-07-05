@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Example of configuring and registering Google ADK agents."""
 
 import os

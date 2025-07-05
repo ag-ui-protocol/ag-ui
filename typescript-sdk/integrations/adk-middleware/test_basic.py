@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Basic test to verify ADK setup works."""
 
 import os

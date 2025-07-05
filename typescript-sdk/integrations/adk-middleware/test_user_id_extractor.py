@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Test user_id_extractor functionality."""
 
 from ag_ui.core import RunAgentInput, UserMessage

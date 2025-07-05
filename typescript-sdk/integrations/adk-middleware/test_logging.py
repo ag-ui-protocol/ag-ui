@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Test logging output with programmatic log capture and assertions."""
 
 import asyncio

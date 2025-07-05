@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Test concurrent session handling to ensure no event interference."""
 
 import asyncio

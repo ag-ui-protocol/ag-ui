@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Test session cleanup functionality to ensure no subscriptable errors."""
 
 import asyncio

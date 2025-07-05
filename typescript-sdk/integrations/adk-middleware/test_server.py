@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Test server for ADK middleware with AG-UI client."""
 
 import sys

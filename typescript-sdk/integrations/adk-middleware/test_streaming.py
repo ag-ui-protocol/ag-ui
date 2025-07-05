@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Test the new streaming behavior with finish_reason detection."""
 
 import asyncio

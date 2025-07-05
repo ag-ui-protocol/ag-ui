@@ -23,7 +23,7 @@ echo "Added python-sdk to PYTHONPATH: ${PYTHON_SDK_PATH}"
 # Create virtual environment if it doesn't exist
 if [ ! -d "venv" ]; then
     echo "Creating virtual environment..."
-    python3 -m venv venv
+    python -m venv venv
 fi
 
 # Activate virtual environment

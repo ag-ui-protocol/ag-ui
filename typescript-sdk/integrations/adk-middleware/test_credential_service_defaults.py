@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Test that InMemoryCredentialService defaults work correctly."""
 
 def test_credential_service_import():

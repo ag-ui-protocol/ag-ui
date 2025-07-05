@@ -27,7 +27,7 @@ chmod +x setup_dev.sh
 
 ```bash
 # Create virtual environment
-python3 -m venv venv
+python -m venv venv
 source venv/bin/activate
 
 # Install python-sdk (from the monorepo)

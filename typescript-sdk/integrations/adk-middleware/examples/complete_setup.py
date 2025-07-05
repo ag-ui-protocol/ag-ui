@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Complete setup example for ADK middleware with AG-UI."""
 
 import sys

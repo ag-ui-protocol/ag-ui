@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Test runner for ADK middleware - runs all working tests."""
 
 import subprocess

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Test TextMessageContentEvent creation."""
 
 from pathlib import Path
