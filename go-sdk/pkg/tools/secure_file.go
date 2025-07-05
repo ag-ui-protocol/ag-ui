@@ -310,14 +310,12 @@ func (e *SecureFileExecutor) executeAtomicWrite(ctx context.Context, params map[
 	}
 	defer file.Close()
 	
-	// For existing files (append mode), validate the file descriptor
-	if mode == "append" {
-		if err := e.validateFileDescriptor(file); err != nil {
-			return &ToolExecutionResult{
-				Success: false,
-				Error:   fmt.Sprintf("file validation failed: %v", err),
-			}, nil
-		}
+	// Validate the file descriptor for security
+	if err := e.validateFileDescriptor(file); err != nil {
+		return &ToolExecutionResult{
+			Success: false,
+			Error:   fmt.Sprintf("file validation failed: %v", err),
+		}, nil
 	}
 	
 	// Write the data
