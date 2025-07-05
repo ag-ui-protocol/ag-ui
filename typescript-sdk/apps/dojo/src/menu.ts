@@ -46,6 +46,18 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
     ],
   },
   {
+    id: "langgraph-fastapi",
+    name: "LangGraph FastAPI",
+    features: [
+      "agentic_chat",
+      "human_in_the_loop",
+      "agentic_generative_ui",
+      "tool_based_generative_ui",
+      "predictive_state_updates",
+      "shared_state",
+    ],
+  },
+  {
     id: "agno",
     name: "Agno",
     features: ["agentic_chat"],

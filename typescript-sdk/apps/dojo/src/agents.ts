@@ -10,6 +10,7 @@ import { LangGraphAgent } from "@ag-ui/langgraph";
 import { AgnoAgent } from "@ag-ui/agno";
 import { LlamaIndexAgent } from "@ag-ui/llamaindex";
 import { CrewAIAgent } from "@ag-ui/crewai";
+import { HttpAgent } from "@ag-ui/client";
 
 export const agentsIntegrations: AgentIntegrationConfig[] = [
   {
@@ -100,6 +101,31 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         tool_based_generative_ui: new LangGraphAgent({
           deploymentUrl: "http://localhost:2024",
           graphId: "tool_based_generative_ui",
+        }),
+      };
+    },
+  },
+  {
+    id: "langgraph-fastapi",
+    agents: async () => {
+      return {
+        agentic_chat: new HttpAgent({
+          url: "http://localhost:8000/agent/agentic_chat",
+        }),
+        agentic_generative_ui: new HttpAgent({
+          url: "http://localhost:8000/agent/agentic_generative_ui",
+        }),
+        human_in_the_loop: new HttpAgent({
+          url: "http://localhost:8000/agent/human_in_the_loop",
+        }),
+        predictive_state_updates: new HttpAgent({
+          url: "http://localhost:8000/agent/predictive_state_updates",
+        }),
+        shared_state: new HttpAgent({
+          url: "http://localhost:8000/agent/shared_state",
+        }),
+        tool_based_generative_ui: new HttpAgent({
+          url: "http://localhost:8000/agent/tool_based_generative_ui",
         }),
       };
     },
