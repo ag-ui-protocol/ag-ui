@@ -53,6 +53,12 @@ export const featureConfig: FeatureConfig[] = [
     description: "Use collaboration to edit a document in real time with your Copilot",
     tags: ["State", "Streaming", "Tools"],
   }),
+  createFeatureConfig({
+    id: "gomoku",
+    name: "Gomoku",
+    description: "A game of Gomoku",
+    tags: ["Game", "Gomoku"],
+  }),
 ];
 
 export default featureConfig;
