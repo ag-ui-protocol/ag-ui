@@ -8,7 +8,7 @@ This Python middleware enables Google ADK agents to be used with the AG-UI Proto
 - ✅ Automatic session management with configurable timeouts
 - ✅ Support for multiple agents with centralized registry
 - ✅ State synchronization between protocols
-- ✅ Tool/function calling support
+- ❌ Tool/function calling support (coming soon)
 - ✅ Streaming responses with SSE
 - ✅ Multi-user support with session isolation
 - ✅ Comprehensive service integration (artifact, memory, credential)
@@ -29,9 +29,6 @@ chmod +x setup_dev.sh
 # Create virtual environment
 python -m venv venv
 source venv/bin/activate
-
-# Install python-sdk (from the monorepo)
-pip install ../../../../python-sdk/
 
 # Install this package in editable mode
 pip install -e .
@@ -62,7 +59,7 @@ registry = AgentRegistry.get_instance()
 registry.set_default_agent(my_agent)
 
 # 3. Create the middleware
-agent = ADKAgent(user_id="user123")
+agent = ADKAgent(app_name="my_app", user_id="user123")
 
 # 4. Use directly with AG-UI RunAgentInput
 async for event in agent.run(input_data):
@@ -78,7 +75,7 @@ from google.adk import LlmAgent
 # Set up agent and registry (same as above)
 registry = AgentRegistry.get_instance()
 registry.set_default_agent(my_agent)
-agent = ADKAgent(user_id="user123")
+agent = ADKAgent(app_name="my_app", user_id="user123")
 
 # Create FastAPI app
 app = FastAPI()
@@ -181,7 +178,7 @@ async def main():
         LlmAgent(name="assistant", model="gemini-2.0-flash")
     )
     
-    agent = ADKAgent(user_id="demo")
+    agent = ADKAgent(app_name="demo_app", user_id="demo")
     
     # Create input
     input = RunAgentInput(
@@ -216,6 +213,7 @@ registry.register_agent("creative", creative_agent)
 
 # The middleware uses the default agent from the registry
 agent = ADKAgent(
+    app_name="demo_app",
     user_id="demo"  # Or use user_id_extractor for dynamic extraction
 )
 ```
@@ -227,8 +225,6 @@ The middleware translates between AG-UI and ADK event formats:
 | AG-UI Event | ADK Event | Description |
 |-------------|-----------|-------------|
 | TEXT_MESSAGE_* | Event with content.parts[].text | Text messages |
-| TOOL_CALL_* | Event with function_call | Function calls |
-| STATE_DELTA | Event with actions.state_delta | State changes |
 | RUN_STARTED/FINISHED | Runner lifecycle | Execution flow |
 
 ## Architecture
@@ -244,16 +240,6 @@ BaseEvent[] <──────── translate events <────────
 ```
 
 ## Advanced Features
-
-### State Management
-- Automatic state synchronization between protocols
-- Support for app:, user:, and temp: state prefixes
-- JSON Patch format for state deltas
-
-### Tool Integration
-- Automatic tool discovery and registration
-- Function call/response translation
-- Long-running tool support
 
 ### Multi-User Support
 - Session isolation per user
