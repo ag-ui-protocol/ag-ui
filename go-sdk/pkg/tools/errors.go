@@ -20,8 +20,8 @@ var (
 	// ErrExecutionTimeout indicates tool execution exceeded timeout
 	ErrExecutionTimeout = errors.New("execution timeout")
 
-	// ErrExecutionCancelled indicates tool execution was cancelled
-	ErrExecutionCancelled = errors.New("execution cancelled")
+	// ErrExecutionCanceled indicates tool execution was canceled
+	ErrExecutionCanceled = errors.New("execution canceled")
 
 	// ErrRateLimitExceeded indicates rate limit was exceeded
 	ErrRateLimitExceeded = errors.New("rate limit exceeded")
@@ -141,7 +141,7 @@ func (e *ToolError) Is(target error) bool {
 		return e.Type == ErrorTypeValidation
 	case ErrExecutionTimeout:
 		return e.Type == ErrorTypeTimeout
-	case ErrExecutionCancelled:
+	case ErrExecutionCanceled:
 		return e.Type == ErrorTypeCancellation
 	case ErrRateLimitExceeded:
 		return e.Type == ErrorTypeRateLimit
@@ -292,7 +292,7 @@ func (h *ErrorHandler) wrapError(err error, toolID string) *ToolError {
 			WithCause(err)
 
 	case errors.Is(err, context.Canceled):
-		return NewToolError(ErrorTypeCancellation, "CANCELLED", "execution was cancelled").
+		return NewToolError(ErrorTypeCancellation, "CANCELED", "execution was canceled").
 			WithToolID(toolID).
 			WithCause(err)
 
@@ -353,7 +353,7 @@ func (b *ValidationErrorBuilder) Build(toolID string) *ToolError {
 
 	// Add field errors as details
 	if len(b.fields) > 0 {
-		err.WithDetail("field_errors", b.fields)
+		_ = err.WithDetail("field_errors", b.fields) // Chainable method, result not needed
 	}
 
 	return err

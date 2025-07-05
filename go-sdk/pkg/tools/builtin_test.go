@@ -1,4 +1,4 @@
-package tools
+package tools_test
 
 import (
 	"context"
@@ -12,13 +12,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ag-ui/go-sdk/pkg/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRegisterBuiltinTools(t *testing.T) {
-	registry := NewRegistry()
-	err := RegisterBuiltinTools(registry)
+	registry := tools.NewRegistry()
+	err := tools.RegisterBuiltinTools(registry)
 	require.NoError(t, err)
 
 	// Check that all builtin tools are registered
@@ -41,7 +42,7 @@ func TestRegisterBuiltinTools(t *testing.T) {
 }
 
 func TestReadFileTool(t *testing.T) {
-	tool := NewReadFileTool()
+	tool := tools.NewReadFileTool()
 	assert.Equal(t, "builtin.read_file", tool.ID)
 	assert.Equal(t, "read_file", tool.Name)
 
@@ -99,7 +100,7 @@ func TestReadFileTool(t *testing.T) {
 }
 
 func TestWriteFileTool(t *testing.T) {
-	tool := NewWriteFileTool()
+	tool := tools.NewWriteFileTool()
 	assert.Equal(t, "builtin.write_file", tool.ID)
 	assert.Equal(t, "write_file", tool.Name)
 
@@ -147,7 +148,7 @@ func TestWriteFileTool(t *testing.T) {
 
 	t.Run("append mode", func(t *testing.T) {
 		testFile := filepath.Join(tmpDir, "append.txt")
-		
+
 		// Write initial content
 		params := map[string]interface{}{
 			"path":    testFile,
@@ -222,23 +223,23 @@ func TestWriteFileTool(t *testing.T) {
 }
 
 func TestHTTPGetTool(t *testing.T) {
-	tool := NewHTTPGetTool()
+	tool := tools.NewHTTPGetTool()
 	assert.Equal(t, "builtin.http_get", tool.ID)
 	assert.Equal(t, "http_get", tool.Name)
 
 	// Create test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		
+
 		// Echo headers back
 		for key, values := range r.Header {
 			if strings.HasPrefix(key, "X-Test-") {
 				w.Header().Set(key, values[0])
 			}
 		}
-		
+
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Response body"))
+		_, _ = w.Write([]byte("Response body")) // Ignore error in test server
 	}))
 	defer server.Close()
 
@@ -304,20 +305,20 @@ func TestHTTPGetTool(t *testing.T) {
 }
 
 func TestHTTPPostTool(t *testing.T) {
-	tool := NewHTTPPostTool()
+	tool := tools.NewHTTPPostTool()
 	assert.Equal(t, "builtin.http_post", tool.ID)
 	assert.Equal(t, "http_post", tool.Name)
 
 	// Create test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		
+
 		// Read and echo body
 		body, _ := io.ReadAll(r.Body)
-		
+
 		w.Header().Set("Content-Type", r.Header.Get("Content-Type"))
 		w.WriteHeader(http.StatusCreated)
-		w.Write(body)
+		_, _ = w.Write(body) // Ignore error in test server
 	}))
 	defer server.Close()
 
@@ -381,7 +382,7 @@ func TestHTTPPostTool(t *testing.T) {
 }
 
 func TestJSONParseTool(t *testing.T) {
-	tool := NewJSONParseTool()
+	tool := tools.NewJSONParseTool()
 	assert.Equal(t, "builtin.json_parse", tool.ID)
 	assert.Equal(t, "json_parse", tool.Name)
 
@@ -440,7 +441,7 @@ func TestJSONParseTool(t *testing.T) {
 }
 
 func TestJSONFormatTool(t *testing.T) {
-	tool := NewJSONFormatTool()
+	tool := tools.NewJSONFormatTool()
 	assert.Equal(t, "builtin.json_format", tool.ID)
 	assert.Equal(t, "json_format", tool.Name)
 
@@ -504,7 +505,7 @@ func TestJSONFormatTool(t *testing.T) {
 }
 
 func TestBase64EncodeTool(t *testing.T) {
-	tool := NewBase64EncodeTool()
+	tool := tools.NewBase64EncodeTool()
 	assert.Equal(t, "builtin.base64_encode", tool.ID)
 	assert.Equal(t, "base64_encode", tool.Name)
 
@@ -542,7 +543,7 @@ func TestBase64EncodeTool(t *testing.T) {
 }
 
 func TestBase64DecodeTool(t *testing.T) {
-	tool := NewBase64DecodeTool()
+	tool := tools.NewBase64DecodeTool()
 	assert.Equal(t, "builtin.base64_decode", tool.ID)
 	assert.Equal(t, "base64_decode", tool.Name)
 
@@ -592,15 +593,15 @@ func TestBase64DecodeTool(t *testing.T) {
 
 func TestBuiltinToolSchemas(t *testing.T) {
 	// Test that all builtin tools have valid schemas
-	tools := []*Tool{
-		NewReadFileTool(),
-		NewWriteFileTool(),
-		NewHTTPGetTool(),
-		NewHTTPPostTool(),
-		NewJSONParseTool(),
-		NewJSONFormatTool(),
-		NewBase64EncodeTool(),
-		NewBase64DecodeTool(),
+	tools := []*tools.Tool{
+		tools.NewReadFileTool(),
+		tools.NewWriteFileTool(),
+		tools.NewHTTPGetTool(),
+		tools.NewHTTPPostTool(),
+		tools.NewJSONParseTool(),
+		tools.NewJSONFormatTool(),
+		tools.NewBase64EncodeTool(),
+		tools.NewBase64DecodeTool(),
 	}
 
 	for _, tool := range tools {

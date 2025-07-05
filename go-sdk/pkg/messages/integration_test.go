@@ -17,11 +17,11 @@ func TestCompleteMessageFlow(t *testing.T) {
 		
 		// Add system message
 		sysMsg := messages.NewSystemMessage("You are a helpful assistant.")
-		conversation.AddMessage(sysMsg)
+		_ = conversation.AddMessage(sysMsg) // Ignore error in test
 		
 		// Add user message
 		userMsg := messages.NewUserMessage("What's the weather like?")
-		conversation.AddMessage(userMsg)
+		_ = conversation.AddMessage(userMsg) // Ignore error in test
 		
 		// Add assistant message with tool calls
 		toolCalls := []messages.ToolCall{
@@ -36,15 +36,15 @@ func TestCompleteMessageFlow(t *testing.T) {
 		}
 		assistantMsg := messages.NewAssistantMessageWithTools(toolCalls)
 		assistantMsg.Content = stringPtr("Let me check the weather for you.")
-		conversation.AddMessage(assistantMsg)
+		_ = conversation.AddMessage(assistantMsg) // Ignore error in test
 		
 		// Add tool response
 		toolMsg := messages.NewToolMessage("The weather in San Francisco is 18°C and sunny.", "call_123")
-		conversation.AddMessage(toolMsg)
+		_ = conversation.AddMessage(toolMsg) // Ignore error in test
 		
 		// Add final assistant response
 		finalMsg := messages.NewAssistantMessage("The weather in San Francisco is currently 18°C and sunny. It's a beautiful day!")
-		conversation.AddMessage(finalMsg)
+		_ = conversation.AddMessage(finalMsg) // Ignore error in test
 		
 		// Convert to OpenAI format
 		converter := providers.NewOpenAIConverter()
@@ -93,16 +93,16 @@ func TestCompleteMessageFlow(t *testing.T) {
 		conversation := messages.NewConversation()
 		
 		// Add system message
-		conversation.AddMessage(messages.NewSystemMessage("You are Claude, an AI assistant."))
+		_ = conversation.AddMessage(messages.NewSystemMessage("You are Claude, an AI assistant.")) // Ignore error in test
 		
 		// Add user message
-		conversation.AddMessage(messages.NewUserMessage("Hello!"))
+		_ = conversation.AddMessage(messages.NewUserMessage("Hello!")) // Ignore error in test
 		
 		// Add developer message
-		conversation.AddMessage(messages.NewDeveloperMessage("Debug: Processing greeting"))
+		_ = conversation.AddMessage(messages.NewDeveloperMessage("Debug: Processing greeting")) // Ignore error in test
 		
 		// Add assistant response
-		conversation.AddMessage(messages.NewAssistantMessage("Hello! How can I help you today?"))
+		_ = conversation.AddMessage(messages.NewAssistantMessage("Hello! How can I help you today?")) // Ignore error in test
 		
 		// Convert to Anthropic format
 		converter := providers.NewAnthropicConverter()
@@ -145,7 +145,7 @@ func TestValidationAndSanitizationFlow(t *testing.T) {
 		
 		// Add message with HTML content
 		userMsg := messages.NewUserMessage("<script>alert('xss')</script>Hello <b>world</b>!")
-		conversation.AddMessage(userMsg)
+		_ = conversation.AddMessage(userMsg) // Ignore error in test
 		
 		// Create validator and sanitizer
 		validator := messages.NewValidator(messages.ValidationOptions{
@@ -291,12 +291,12 @@ func TestMessageHistory(t *testing.T) {
 		
 		// Create and add conversations
 		conv1 := messages.NewConversation()
-		conv1.AddMessage(messages.NewUserMessage("Hello"))
-		conv1.AddMessage(messages.NewAssistantMessage("Hi there!"))
+		_ = conv1.AddMessage(messages.NewUserMessage("Hello")) // Ignore error in test
+		_ = conv1.AddMessage(messages.NewAssistantMessage("Hi there!")) // Ignore error in test
 		
 		conv2 := messages.NewConversation()
-		conv2.AddMessage(messages.NewUserMessage("How are you?"))
-		conv2.AddMessage(messages.NewAssistantMessage("I'm doing well, thanks!"))
+		_ = conv2.AddMessage(messages.NewUserMessage("How are you?")) // Ignore error in test
+		_ = conv2.AddMessage(messages.NewAssistantMessage("I'm doing well, thanks!")) // Ignore error in test
 		
 		// Add all messages to history
 		allMessages := append(conv1.Messages, conv2.Messages...)

@@ -200,8 +200,8 @@ type ToolCapabilities struct {
 	// Async indicates if the tool supports asynchronous execution
 	Async bool `json:"async"`
 
-	// Cancellable indicates if the tool execution can be cancelled
-	Cancellable bool `json:"cancellable"`
+	// Cancelable indicates if the tool execution can be canceled
+	Cancelable bool `json:"cancelable"`
 
 	// Retryable indicates if the tool supports automatic retry on failure
 	Retryable bool `json:"retryable"`
@@ -409,13 +409,13 @@ func (t *Tool) Clone() *Tool {
 
 	if t.Capabilities != nil {
 		clone.Capabilities = &ToolCapabilities{
-			Streaming:   t.Capabilities.Streaming,
-			Async:       t.Capabilities.Async,
-			Cancellable: t.Capabilities.Cancellable,
-			Retryable:   t.Capabilities.Retryable,
-			Cacheable:   t.Capabilities.Cacheable,
-			RateLimit:   t.Capabilities.RateLimit,
-			Timeout:     t.Capabilities.Timeout,
+			Streaming:  t.Capabilities.Streaming,
+			Async:      t.Capabilities.Async,
+			Cancelable: t.Capabilities.Cancelable,
+			Retryable:  t.Capabilities.Retryable,
+			Cacheable:  t.Capabilities.Cacheable,
+			RateLimit:  t.Capabilities.RateLimit,
+			Timeout:    t.Capabilities.Timeout,
 		}
 	}
 

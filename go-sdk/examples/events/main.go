@@ -408,7 +408,7 @@ func demonstrateCustomEvents() {
 		log.Printf("Custom event JSON serialization failed: %v", err)
 	} else {
 		var prettyJSON map[string]any
-		json.Unmarshal(jsonData, &prettyJSON)
+		_ = json.Unmarshal(jsonData, &prettyJSON) // Ignore error for pretty printing
 		prettyData, _ := json.MarshalIndent(prettyJSON, "", "  ")
 		fmt.Printf("Custom event JSON:\n%s\n", string(prettyData))
 	}

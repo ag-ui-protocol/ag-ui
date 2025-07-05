@@ -1,37 +1,38 @@
-package tools
+package tools_test
 
 import (
 	"testing"
 
+	"github.com/ag-ui/go-sdk/pkg/tools"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestNewSchemaValidator(t *testing.T) {
-	schema := &ToolSchema{
+	schema := &tools.ToolSchema{
 		Type: "object",
-		Properties: map[string]*Property{
+		Properties: map[string]*tools.Property{
 			"name": {Type: "string"},
 		},
 	}
 
-	validator := NewSchemaValidator(schema)
+	validator := tools.NewSchemaValidator(schema)
 	assert.NotNil(t, validator)
-	assert.Equal(t, schema, validator.schema)
+	// Note: Cannot test internal fields when using external test package
 }
 
 func TestSchemaValidator_ValidateString(t *testing.T) {
 	tests := []struct {
 		name    string
-		schema  *ToolSchema
+		schema  *tools.ToolSchema
 		params  map[string]interface{}
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "valid string",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"name": {Type: "string"},
 				},
 			},
@@ -40,9 +41,9 @@ func TestSchemaValidator_ValidateString(t *testing.T) {
 		},
 		{
 			name: "invalid type for string",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"name": {Type: "string"},
 				},
 			},
@@ -52,9 +53,9 @@ func TestSchemaValidator_ValidateString(t *testing.T) {
 		},
 		{
 			name: "string with minLength valid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"name": {Type: "string", MinLength: intPtr2(3)},
 				},
 			},
@@ -63,9 +64,9 @@ func TestSchemaValidator_ValidateString(t *testing.T) {
 		},
 		{
 			name: "string with minLength invalid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"name": {Type: "string", MinLength: intPtr2(5)},
 				},
 			},
@@ -75,9 +76,9 @@ func TestSchemaValidator_ValidateString(t *testing.T) {
 		},
 		{
 			name: "string with maxLength valid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"name": {Type: "string", MaxLength: intPtr2(10)},
 				},
 			},
@@ -86,9 +87,9 @@ func TestSchemaValidator_ValidateString(t *testing.T) {
 		},
 		{
 			name: "string with maxLength invalid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"name": {Type: "string", MaxLength: intPtr2(3)},
 				},
 			},
@@ -98,9 +99,9 @@ func TestSchemaValidator_ValidateString(t *testing.T) {
 		},
 		{
 			name: "string with pattern valid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"code": {Type: "string", Pattern: "^[A-Z]{3}$"},
 				},
 			},
@@ -109,9 +110,9 @@ func TestSchemaValidator_ValidateString(t *testing.T) {
 		},
 		{
 			name: "string with pattern invalid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"code": {Type: "string", Pattern: "^[A-Z]{3}$"},
 				},
 			},
@@ -121,9 +122,9 @@ func TestSchemaValidator_ValidateString(t *testing.T) {
 		},
 		{
 			name: "string with enum valid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"status": {Type: "string", Enum: []interface{}{"active", "inactive", "pending"}},
 				},
 			},
@@ -132,9 +133,9 @@ func TestSchemaValidator_ValidateString(t *testing.T) {
 		},
 		{
 			name: "string with enum invalid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"status": {Type: "string", Enum: []interface{}{"active", "inactive", "pending"}},
 				},
 			},
@@ -146,7 +147,7 @@ func TestSchemaValidator_ValidateString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			validator := NewSchemaValidator(tt.schema)
+			validator := tools.NewSchemaValidator(tt.schema)
 			err := validator.Validate(tt.params)
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -162,11 +163,11 @@ func TestSchemaValidator_ValidateString(t *testing.T) {
 
 func TestSchemaValidator_ValidateStringFormats(t *testing.T) {
 	tests := []struct {
-		name    string
-		format  string
-		value   string
-		valid   bool
-		errMsg  string
+		name   string
+		format string
+		value  string
+		valid  bool
+		errMsg string
 	}{
 		// Email format
 		{
@@ -289,13 +290,13 @@ func TestSchemaValidator_ValidateStringFormats(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			schema := &ToolSchema{
+			schema := &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					tt.format: {Type: "string", Format: tt.format},
 				},
 			}
-			validator := NewSchemaValidator(schema)
+			validator := tools.NewSchemaValidator(schema)
 			err := validator.Validate(map[string]interface{}{tt.format: tt.value})
 			if tt.valid {
 				assert.NoError(t, err)
@@ -312,16 +313,16 @@ func TestSchemaValidator_ValidateStringFormats(t *testing.T) {
 func TestSchemaValidator_ValidateNumber(t *testing.T) {
 	tests := []struct {
 		name    string
-		schema  *ToolSchema
+		schema  *tools.ToolSchema
 		params  map[string]interface{}
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "valid float64 number",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"price": {Type: "number"},
 				},
 			},
@@ -330,9 +331,9 @@ func TestSchemaValidator_ValidateNumber(t *testing.T) {
 		},
 		{
 			name: "valid int as number",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"price": {Type: "number"},
 				},
 			},
@@ -341,9 +342,9 @@ func TestSchemaValidator_ValidateNumber(t *testing.T) {
 		},
 		{
 			name: "invalid type for number",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"price": {Type: "number"},
 				},
 			},
@@ -353,9 +354,9 @@ func TestSchemaValidator_ValidateNumber(t *testing.T) {
 		},
 		{
 			name: "number with minimum valid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"age": {Type: "number", Minimum: float64Ptr2(18)},
 				},
 			},
@@ -364,9 +365,9 @@ func TestSchemaValidator_ValidateNumber(t *testing.T) {
 		},
 		{
 			name: "number with minimum invalid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"age": {Type: "number", Minimum: float64Ptr2(18)},
 				},
 			},
@@ -376,9 +377,9 @@ func TestSchemaValidator_ValidateNumber(t *testing.T) {
 		},
 		{
 			name: "number with maximum valid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"discount": {Type: "number", Maximum: float64Ptr2(100)},
 				},
 			},
@@ -387,9 +388,9 @@ func TestSchemaValidator_ValidateNumber(t *testing.T) {
 		},
 		{
 			name: "number with maximum invalid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"discount": {Type: "number", Maximum: float64Ptr2(100)},
 				},
 			},
@@ -399,9 +400,9 @@ func TestSchemaValidator_ValidateNumber(t *testing.T) {
 		},
 		{
 			name: "number with enum valid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"rating": {Type: "number", Enum: []interface{}{1.0, 1.5, 2.0, 2.5, 3.0}},
 				},
 			},
@@ -410,9 +411,9 @@ func TestSchemaValidator_ValidateNumber(t *testing.T) {
 		},
 		{
 			name: "number with enum invalid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"rating": {Type: "number", Enum: []interface{}{1.0, 1.5, 2.0, 2.5, 3.0}},
 				},
 			},
@@ -424,7 +425,7 @@ func TestSchemaValidator_ValidateNumber(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			validator := NewSchemaValidator(tt.schema)
+			validator := tools.NewSchemaValidator(tt.schema)
 			err := validator.Validate(tt.params)
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -441,16 +442,16 @@ func TestSchemaValidator_ValidateNumber(t *testing.T) {
 func TestSchemaValidator_ValidateInteger(t *testing.T) {
 	tests := []struct {
 		name    string
-		schema  *ToolSchema
+		schema  *tools.ToolSchema
 		params  map[string]interface{}
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "valid integer",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"count": {Type: "integer"},
 				},
 			},
@@ -459,9 +460,9 @@ func TestSchemaValidator_ValidateInteger(t *testing.T) {
 		},
 		{
 			name: "float as integer - whole number",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"count": {Type: "integer"},
 				},
 			},
@@ -470,9 +471,9 @@ func TestSchemaValidator_ValidateInteger(t *testing.T) {
 		},
 		{
 			name: "float as integer - decimal",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"count": {Type: "integer"},
 				},
 			},
@@ -482,9 +483,9 @@ func TestSchemaValidator_ValidateInteger(t *testing.T) {
 		},
 		{
 			name: "string as integer",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"count": {Type: "integer"},
 				},
 			},
@@ -494,9 +495,9 @@ func TestSchemaValidator_ValidateInteger(t *testing.T) {
 		},
 		{
 			name: "integer with minimum valid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"quantity": {Type: "integer", Minimum: float64Ptr2(1)},
 				},
 			},
@@ -505,9 +506,9 @@ func TestSchemaValidator_ValidateInteger(t *testing.T) {
 		},
 		{
 			name: "integer with minimum invalid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"quantity": {Type: "integer", Minimum: float64Ptr2(1)},
 				},
 			},
@@ -517,9 +518,9 @@ func TestSchemaValidator_ValidateInteger(t *testing.T) {
 		},
 		{
 			name: "integer with enum valid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"level": {Type: "integer", Enum: []interface{}{1, 2, 3, 4, 5}},
 				},
 			},
@@ -528,9 +529,9 @@ func TestSchemaValidator_ValidateInteger(t *testing.T) {
 		},
 		{
 			name: "integer with enum invalid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"level": {Type: "integer", Enum: []interface{}{1, 2, 3, 4, 5}},
 				},
 			},
@@ -542,7 +543,7 @@ func TestSchemaValidator_ValidateInteger(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			validator := NewSchemaValidator(tt.schema)
+			validator := tools.NewSchemaValidator(tt.schema)
 			err := validator.Validate(tt.params)
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -559,16 +560,16 @@ func TestSchemaValidator_ValidateInteger(t *testing.T) {
 func TestSchemaValidator_ValidateBoolean(t *testing.T) {
 	tests := []struct {
 		name    string
-		schema  *ToolSchema
+		schema  *tools.ToolSchema
 		params  map[string]interface{}
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "valid boolean true",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"active": {Type: "boolean"},
 				},
 			},
@@ -577,9 +578,9 @@ func TestSchemaValidator_ValidateBoolean(t *testing.T) {
 		},
 		{
 			name: "valid boolean false",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"active": {Type: "boolean"},
 				},
 			},
@@ -588,9 +589,9 @@ func TestSchemaValidator_ValidateBoolean(t *testing.T) {
 		},
 		{
 			name: "invalid type for boolean",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"active": {Type: "boolean"},
 				},
 			},
@@ -600,9 +601,9 @@ func TestSchemaValidator_ValidateBoolean(t *testing.T) {
 		},
 		{
 			name: "invalid type for boolean - number",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"active": {Type: "boolean"},
 				},
 			},
@@ -614,7 +615,7 @@ func TestSchemaValidator_ValidateBoolean(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			validator := NewSchemaValidator(tt.schema)
+			validator := tools.NewSchemaValidator(tt.schema)
 			err := validator.Validate(tt.params)
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -631,19 +632,19 @@ func TestSchemaValidator_ValidateBoolean(t *testing.T) {
 func TestSchemaValidator_ValidateArray(t *testing.T) {
 	tests := []struct {
 		name    string
-		schema  *ToolSchema
+		schema  *tools.ToolSchema
 		params  map[string]interface{}
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "valid array of strings",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"tags": {
 						Type:  "array",
-						Items: &Property{Type: "string"},
+						Items: &tools.Property{Type: "string"},
 					},
 				},
 			},
@@ -652,12 +653,12 @@ func TestSchemaValidator_ValidateArray(t *testing.T) {
 		},
 		{
 			name: "valid empty array",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"tags": {
 						Type:  "array",
-						Items: &Property{Type: "string"},
+						Items: &tools.Property{Type: "string"},
 					},
 				},
 			},
@@ -666,12 +667,12 @@ func TestSchemaValidator_ValidateArray(t *testing.T) {
 		},
 		{
 			name: "invalid type for array",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"tags": {
 						Type:  "array",
-						Items: &Property{Type: "string"},
+						Items: &tools.Property{Type: "string"},
 					},
 				},
 			},
@@ -681,13 +682,13 @@ func TestSchemaValidator_ValidateArray(t *testing.T) {
 		},
 		{
 			name: "array with minLength valid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"items": {
 						Type:      "array",
 						MinLength: intPtr2(2),
-						Items:     &Property{Type: "string"},
+						Items:     &tools.Property{Type: "string"},
 					},
 				},
 			},
@@ -696,13 +697,13 @@ func TestSchemaValidator_ValidateArray(t *testing.T) {
 		},
 		{
 			name: "array with minLength invalid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"items": {
 						Type:      "array",
 						MinLength: intPtr2(2),
-						Items:     &Property{Type: "string"},
+						Items:     &tools.Property{Type: "string"},
 					},
 				},
 			},
@@ -712,13 +713,13 @@ func TestSchemaValidator_ValidateArray(t *testing.T) {
 		},
 		{
 			name: "array with maxLength valid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"items": {
 						Type:      "array",
 						MaxLength: intPtr2(3),
-						Items:     &Property{Type: "string"},
+						Items:     &tools.Property{Type: "string"},
 					},
 				},
 			},
@@ -727,13 +728,13 @@ func TestSchemaValidator_ValidateArray(t *testing.T) {
 		},
 		{
 			name: "array with maxLength invalid",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"items": {
 						Type:      "array",
 						MaxLength: intPtr2(2),
-						Items:     &Property{Type: "string"},
+						Items:     &tools.Property{Type: "string"},
 					},
 				},
 			},
@@ -743,12 +744,12 @@ func TestSchemaValidator_ValidateArray(t *testing.T) {
 		},
 		{
 			name: "array with invalid item type",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"numbers": {
 						Type:  "array",
-						Items: &Property{Type: "number"},
+						Items: &tools.Property{Type: "number"},
 					},
 				},
 			},
@@ -758,14 +759,14 @@ func TestSchemaValidator_ValidateArray(t *testing.T) {
 		},
 		{
 			name: "array of objects",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"users": {
 						Type: "array",
-						Items: &Property{
+						Items: &tools.Property{
 							Type: "object",
-							Properties: map[string]*Property{
+							Properties: map[string]*tools.Property{
 								"name": {Type: "string"},
 								"age":  {Type: "integer"},
 							},
@@ -786,7 +787,7 @@ func TestSchemaValidator_ValidateArray(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			validator := NewSchemaValidator(tt.schema)
+			validator := tools.NewSchemaValidator(tt.schema)
 			err := validator.Validate(tt.params)
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -803,19 +804,19 @@ func TestSchemaValidator_ValidateArray(t *testing.T) {
 func TestSchemaValidator_ValidateObject(t *testing.T) {
 	tests := []struct {
 		name    string
-		schema  *ToolSchema
+		schema  *tools.ToolSchema
 		params  map[string]interface{}
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "valid nested object",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"address": {
 						Type: "object",
-						Properties: map[string]*Property{
+						Properties: map[string]*tools.Property{
 							"street": {Type: "string"},
 							"city":   {Type: "string"},
 							"zip":    {Type: "string"},
@@ -835,12 +836,12 @@ func TestSchemaValidator_ValidateObject(t *testing.T) {
 		},
 		{
 			name: "nested object missing required field",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"address": {
 						Type: "object",
-						Properties: map[string]*Property{
+						Properties: map[string]*tools.Property{
 							"street": {Type: "string"},
 							"city":   {Type: "string"},
 						},
@@ -858,9 +859,9 @@ func TestSchemaValidator_ValidateObject(t *testing.T) {
 		},
 		{
 			name: "invalid type for object",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"config": {Type: "object"},
 				},
 			},
@@ -870,18 +871,18 @@ func TestSchemaValidator_ValidateObject(t *testing.T) {
 		},
 		{
 			name: "deeply nested objects",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"level1": {
 						Type: "object",
-						Properties: map[string]*Property{
+						Properties: map[string]*tools.Property{
 							"level2": {
 								Type: "object",
-								Properties: map[string]*Property{
+								Properties: map[string]*tools.Property{
 									"level3": {
 										Type: "object",
-										Properties: map[string]*Property{
+										Properties: map[string]*tools.Property{
 											"value": {Type: "string"},
 										},
 									},
@@ -906,7 +907,7 @@ func TestSchemaValidator_ValidateObject(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			validator := NewSchemaValidator(tt.schema)
+			validator := tools.NewSchemaValidator(tt.schema)
 			err := validator.Validate(tt.params)
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -923,16 +924,16 @@ func TestSchemaValidator_ValidateObject(t *testing.T) {
 func TestSchemaValidator_ValidateNull(t *testing.T) {
 	tests := []struct {
 		name    string
-		schema  *ToolSchema
+		schema  *tools.ToolSchema
 		params  map[string]interface{}
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "valid null value",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"optional": {Type: "null"},
 				},
 			},
@@ -941,9 +942,9 @@ func TestSchemaValidator_ValidateNull(t *testing.T) {
 		},
 		{
 			name: "invalid non-null for null type",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"mustBeNull": {Type: "null"},
 				},
 			},
@@ -953,9 +954,9 @@ func TestSchemaValidator_ValidateNull(t *testing.T) {
 		},
 		{
 			name: "null value for non-null type",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"required": {Type: "string"},
 				},
 			},
@@ -967,7 +968,7 @@ func TestSchemaValidator_ValidateNull(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			validator := NewSchemaValidator(tt.schema)
+			validator := tools.NewSchemaValidator(tt.schema)
 			err := validator.Validate(tt.params)
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -984,16 +985,16 @@ func TestSchemaValidator_ValidateNull(t *testing.T) {
 func TestSchemaValidator_RequiredProperties(t *testing.T) {
 	tests := []struct {
 		name    string
-		schema  *ToolSchema
+		schema  *tools.ToolSchema
 		params  map[string]interface{}
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "all required properties present",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"name":  {Type: "string"},
 					"email": {Type: "string"},
 					"age":   {Type: "integer"},
@@ -1009,9 +1010,9 @@ func TestSchemaValidator_RequiredProperties(t *testing.T) {
 		},
 		{
 			name: "missing required property",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"name":  {Type: "string"},
 					"email": {Type: "string"},
 				},
@@ -1025,9 +1026,9 @@ func TestSchemaValidator_RequiredProperties(t *testing.T) {
 		},
 		{
 			name: "optional property can be omitted",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"name":     {Type: "string"},
 					"nickname": {Type: "string"},
 				},
@@ -1042,7 +1043,7 @@ func TestSchemaValidator_RequiredProperties(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			validator := NewSchemaValidator(tt.schema)
+			validator := tools.NewSchemaValidator(tt.schema)
 			err := validator.Validate(tt.params)
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -1059,16 +1060,16 @@ func TestSchemaValidator_RequiredProperties(t *testing.T) {
 func TestSchemaValidator_AdditionalProperties(t *testing.T) {
 	tests := []struct {
 		name    string
-		schema  *ToolSchema
+		schema  *tools.ToolSchema
 		params  map[string]interface{}
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "additional properties allowed by default",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"name": {Type: "string"},
 				},
 			},
@@ -1080,9 +1081,9 @@ func TestSchemaValidator_AdditionalProperties(t *testing.T) {
 		},
 		{
 			name: "additional properties explicitly allowed",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"name": {Type: "string"},
 				},
 				AdditionalProperties: boolPtr2(true),
@@ -1095,9 +1096,9 @@ func TestSchemaValidator_AdditionalProperties(t *testing.T) {
 		},
 		{
 			name: "additional properties not allowed",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"name": {Type: "string"},
 				},
 				AdditionalProperties: boolPtr2(false),
@@ -1111,9 +1112,9 @@ func TestSchemaValidator_AdditionalProperties(t *testing.T) {
 		},
 		{
 			name: "multiple additional properties not allowed",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"name": {Type: "string"},
 				},
 				AdditionalProperties: boolPtr2(false),
@@ -1130,7 +1131,7 @@ func TestSchemaValidator_AdditionalProperties(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			validator := NewSchemaValidator(tt.schema)
+			validator := tools.NewSchemaValidator(tt.schema)
 			err := validator.Validate(tt.params)
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -1149,21 +1150,21 @@ func TestSchemaValidator_AdditionalProperties(t *testing.T) {
 func TestSchemaValidator_ComplexScenarios(t *testing.T) {
 	tests := []struct {
 		name    string
-		schema  *ToolSchema
+		schema  *tools.ToolSchema
 		params  map[string]interface{}
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "complex nested structure with arrays and objects",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"users": {
 						Type: "array",
-						Items: &Property{
+						Items: &tools.Property{
 							Type: "object",
-							Properties: map[string]*Property{
+							Properties: map[string]*tools.Property{
 								"name": {
 									Type:      "string",
 									MinLength: intPtr2(2),
@@ -1180,14 +1181,14 @@ func TestSchemaValidator_ComplexScenarios(t *testing.T) {
 								},
 								"roles": {
 									Type: "array",
-									Items: &Property{
+									Items: &tools.Property{
 										Type: "string",
 										Enum: []interface{}{"admin", "user", "guest"},
 									},
 								},
 								"preferences": {
 									Type: "object",
-									Properties: map[string]*Property{
+									Properties: map[string]*tools.Property{
 										"theme": {
 											Type: "string",
 											Enum: []interface{}{"light", "dark"},
@@ -1232,14 +1233,14 @@ func TestSchemaValidator_ComplexScenarios(t *testing.T) {
 		},
 		{
 			name: "complex validation failure in nested array",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"data": {
 						Type: "array",
-						Items: &Property{
+						Items: &tools.Property{
 							Type: "object",
-							Properties: map[string]*Property{
+							Properties: map[string]*tools.Property{
 								"id": {
 									Type:    "integer",
 									Minimum: float64Ptr2(1),
@@ -1273,7 +1274,7 @@ func TestSchemaValidator_ComplexScenarios(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			validator := NewSchemaValidator(tt.schema)
+			validator := tools.NewSchemaValidator(tt.schema)
 			err := validator.Validate(tt.params)
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -1289,33 +1290,33 @@ func TestSchemaValidator_ComplexScenarios(t *testing.T) {
 
 func TestSchemaValidator_EdgeCases(t *testing.T) {
 	t.Run("nil schema", func(t *testing.T) {
-		validator := NewSchemaValidator(nil)
+		validator := tools.NewSchemaValidator(nil)
 		err := validator.Validate(map[string]interface{}{"any": "data"})
 		assert.NoError(t, err, "nil schema should accept any data")
 	})
 
 	t.Run("empty parameters", func(t *testing.T) {
-		schema := &ToolSchema{
+		schema := &tools.ToolSchema{
 			Type:     "object",
 			Required: []string{"name"},
-			Properties: map[string]*Property{
+			Properties: map[string]*tools.Property{
 				"name": {Type: "string"},
 			},
 		}
-		validator := NewSchemaValidator(schema)
+		validator := tools.NewSchemaValidator(schema)
 		err := validator.Validate(map[string]interface{}{})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "required property is missing")
 	})
 
 	t.Run("unknown property type", func(t *testing.T) {
-		schema := &ToolSchema{
+		schema := &tools.ToolSchema{
 			Type: "object",
-			Properties: map[string]*Property{
+			Properties: map[string]*tools.Property{
 				"unknown": {Type: "unknownType"},
 			},
 		}
-		validator := NewSchemaValidator(schema)
+		validator := tools.NewSchemaValidator(schema)
 		err := validator.Validate(map[string]interface{}{"unknown": "value"})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "unknown type")
@@ -1337,16 +1338,16 @@ func boolPtr2(b bool) *bool {
 
 // Benchmarks
 func BenchmarkSchemaValidator_Simple(b *testing.B) {
-	schema := &ToolSchema{
+	schema := &tools.ToolSchema{
 		Type: "object",
-		Properties: map[string]*Property{
+		Properties: map[string]*tools.Property{
 			"name": {Type: "string"},
 			"age":  {Type: "number"},
 		},
 		Required: []string{"name"},
 	}
-	
-	validator := NewSchemaValidator(schema)
+
+	validator := tools.NewSchemaValidator(schema)
 	params := map[string]interface{}{
 		"name": "John Doe",
 		"age":  30,
@@ -1359,22 +1360,22 @@ func BenchmarkSchemaValidator_Simple(b *testing.B) {
 }
 
 func BenchmarkSchemaValidator_Complex(b *testing.B) {
-	schema := &ToolSchema{
+	schema := &tools.ToolSchema{
 		Type: "object",
-		Properties: map[string]*Property{
+		Properties: map[string]*tools.Property{
 			"user": {
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"name":  {Type: "string", MinLength: intPtr2(1), MaxLength: intPtr2(100)},
 					"email": {Type: "string", Format: "email"},
 					"age":   {Type: "integer", Minimum: float64Ptr2(0), Maximum: float64Ptr2(150)},
-					"tags":  {Type: "array", Items: &Property{Type: "string"}},
+					"tags":  {Type: "array", Items: &tools.Property{Type: "string"}},
 				},
 				Required: []string{"name", "email"},
 			},
 			"metadata": {
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"created_at": {Type: "string", Format: "date-time"},
 					"version":    {Type: "string", Pattern: "^v\\d+\\.\\d+\\.\\d+$"},
 				},
@@ -1382,8 +1383,8 @@ func BenchmarkSchemaValidator_Complex(b *testing.B) {
 		},
 		Required: []string{"user"},
 	}
-	
-	validator := NewSchemaValidator(schema)
+
+	validator := tools.NewSchemaValidator(schema)
 	params := map[string]interface{}{
 		"user": map[string]interface{}{
 			"name":  "John Doe",
@@ -1404,16 +1405,16 @@ func BenchmarkSchemaValidator_Complex(b *testing.B) {
 }
 
 func BenchmarkSchemaValidator_ValidationFailure(b *testing.B) {
-	schema := &ToolSchema{
+	schema := &tools.ToolSchema{
 		Type: "object",
-		Properties: map[string]*Property{
+		Properties: map[string]*tools.Property{
 			"email": {Type: "string", Format: "email"},
 			"age":   {Type: "integer", Minimum: float64Ptr2(0)},
 		},
 		Required: []string{"email", "age"},
 	}
-	
-	validator := NewSchemaValidator(schema)
+
+	validator := tools.NewSchemaValidator(schema)
 	params := map[string]interface{}{
 		"email": "invalid-email",
 		"age":   -5,

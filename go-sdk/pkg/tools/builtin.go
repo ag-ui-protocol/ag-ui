@@ -17,10 +17,10 @@ import (
 type BuiltinToolsOptions struct {
 	// SecureMode enables security restrictions on file and HTTP operations
 	SecureMode bool
-	
+
 	// FileOptions configures file operation security (used when SecureMode is true)
 	FileOptions *SecureFileOptions
-	
+
 	// HTTPOptions configures HTTP operation security (used when SecureMode is true)
 	HTTPOptions *SecureHTTPOptions
 }
@@ -33,7 +33,7 @@ func RegisterBuiltinTools(registry *Registry) error {
 // RegisterBuiltinToolsWithOptions registers built-in tools with custom options
 func RegisterBuiltinToolsWithOptions(registry *Registry, options *BuiltinToolsOptions) error {
 	var tools []*Tool
-	
+
 	if options != nil && options.SecureMode {
 		// Register secure versions
 		tools = []*Tool{
@@ -224,11 +224,14 @@ func (e *writeFileExecutor) Execute(ctx context.Context, params map[string]inter
 	// Write file
 	var err error
 	if mode == "append" {
-		file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		var file *os.File
+		file, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return nil, fmt.Errorf("failed to open file: %w", err)
 		}
-		defer file.Close()
+		defer func() {
+			_ = file.Close() // Ignore close error on cleanup
+		}()
 		_, err = file.Write(data)
 	} else {
 		err = os.WriteFile(path, data, 0644)
@@ -243,8 +246,8 @@ func (e *writeFileExecutor) Execute(ctx context.Context, params map[string]inter
 
 	return &ToolExecutionResult{
 		Success: true,
-		Data:    map[string]interface{}{
-			"path":         path,
+		Data: map[string]interface{}{
+			"path":          path,
 			"bytes_written": len(data),
 		},
 	}, nil
@@ -332,7 +335,9 @@ func (e *httpGetExecutor) Execute(ctx context.Context, params map[string]interfa
 			Error:   err.Error(),
 		}, nil
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close() // Ignore close error on cleanup
+	}()
 
 	// Read response with memory bounds
 	const maxResponseSize = 100 * 1024 * 1024 // 100MB limit
@@ -350,7 +355,7 @@ func (e *httpGetExecutor) Execute(ctx context.Context, params map[string]interfa
 			"body":        string(body),
 		},
 		Metadata: map[string]interface{}{
-			"url":           url,
+			"url":            url,
 			"content_length": len(body),
 		},
 	}, nil
@@ -455,7 +460,9 @@ func (e *httpPostExecutor) Execute(ctx context.Context, params map[string]interf
 			Error:   err.Error(),
 		}, nil
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close() // Ignore close error on cleanup
+	}()
 
 	// Read response with memory bounds
 	const maxResponseSize = 100 * 1024 * 1024 // 100MB limit
@@ -473,7 +480,7 @@ func (e *httpPostExecutor) Execute(ctx context.Context, params map[string]interf
 			"body":        string(respBody),
 		},
 		Metadata: map[string]interface{}{
-			"url":           url,
+			"url":            url,
 			"content_length": len(respBody),
 		},
 	}, nil

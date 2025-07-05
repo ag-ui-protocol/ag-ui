@@ -313,7 +313,7 @@ func (r *Registry) matchesFilter(tool *Tool, filter *ToolFilter) bool {
 		if caps.Async && !toolCaps.Async {
 			return false
 		}
-		if caps.Cancellable && !toolCaps.Cancellable {
+		if caps.Cancelable && !toolCaps.Cancelable {
 			return false
 		}
 		if caps.Retryable && !toolCaps.Retryable {

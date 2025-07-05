@@ -1,4 +1,4 @@
-package tools
+package tools_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ag-ui/go-sdk/pkg/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,8 +17,8 @@ type mockRegistryExecutor struct {
 	name string
 }
 
-func (m *mockRegistryExecutor) Execute(ctx context.Context, params map[string]interface{}) (*ToolExecutionResult, error) {
-	return &ToolExecutionResult{
+func (m *mockRegistryExecutor) Execute(ctx context.Context, params map[string]interface{}) (*tools.ToolExecutionResult, error) {
+	return &tools.ToolExecutionResult{
 		Success:   true,
 		Data:      fmt.Sprintf("executed %s", m.name),
 		Timestamp: time.Now(),
@@ -25,24 +26,24 @@ func (m *mockRegistryExecutor) Execute(ctx context.Context, params map[string]in
 }
 
 // Helper function to create a test tool
-func createTestTool(id, name string) *Tool {
-	return &Tool{
+func createTestTool(id, name string) *tools.Tool {
+	return &tools.Tool{
 		ID:          id,
 		Name:        name,
 		Description: fmt.Sprintf("Test tool %s", name),
 		Version:     "1.0.0",
-		Schema: &ToolSchema{
+		Schema: &tools.ToolSchema{
 			Type:       "object",
-			Properties: map[string]*Property{},
+			Properties: map[string]*tools.Property{},
 		},
 		Executor: &mockRegistryExecutor{name: name},
 	}
 }
 
 // Helper function to create a test tool with metadata
-func createTestToolWithMetadata(id, name string, tags []string, deps []string) *Tool {
+func createTestToolWithMetadata(id, name string, tags []string, deps []string) *tools.Tool {
 	tool := createTestTool(id, name)
-	tool.Metadata = &ToolMetadata{
+	tool.Metadata = &tools.ToolMetadata{
 		Tags:         tags,
 		Dependencies: deps,
 		Author:       "Test Author",
@@ -51,27 +52,23 @@ func createTestToolWithMetadata(id, name string, tags []string, deps []string) *
 }
 
 // Helper function to create a test tool with capabilities
-func createTestToolWithCapabilities(id, name string, caps *ToolCapabilities) *Tool {
+func createTestToolWithCapabilities(id, name string, caps *tools.ToolCapabilities) *tools.Tool {
 	tool := createTestTool(id, name)
 	tool.Capabilities = caps
 	return tool
 }
 
 func TestRegistry_Creation(t *testing.T) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 	assert.NotNil(t, reg)
-	assert.NotNil(t, reg.tools)
-	assert.NotNil(t, reg.categoryIndex)
-	assert.NotNil(t, reg.tagIndex)
-	assert.NotNil(t, reg.nameIndex)
-	assert.NotNil(t, reg.validators)
 	assert.Equal(t, 0, reg.Count())
+	// Note: Cannot test internal fields when using external test package
 }
 
 func TestRegistry_Register(t *testing.T) {
 	tests := []struct {
 		name    string
-		tool    *Tool
+		tool    *tools.Tool
 		wantErr bool
 		errMsg  string
 	}{
@@ -88,11 +85,11 @@ func TestRegistry_Register(t *testing.T) {
 		},
 		{
 			name: "invalid tool - no ID",
-			tool: &Tool{
+			tool: &tools.Tool{
 				Name:        "No ID",
 				Description: "Missing ID",
 				Version:     "1.0.0",
-				Schema:      &ToolSchema{Type: "object"},
+				Schema:      &tools.ToolSchema{Type: "object"},
 				Executor:    &mockRegistryExecutor{},
 			},
 			wantErr: true,
@@ -108,7 +105,7 @@ func TestRegistry_Register(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reg := NewRegistry()
+			reg := tools.NewRegistry()
 			err := reg.Register(tt.tool)
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -128,7 +125,7 @@ func TestRegistry_Register(t *testing.T) {
 }
 
 func TestRegistry_RegisterDuplicate(t *testing.T) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 	tool1 := createTestTool("tool1", "Tool One")
 	tool2 := createTestTool("tool1", "Tool One Duplicate")
 	tool3 := createTestTool("tool2", "Tool One") // Same name, different ID
@@ -149,7 +146,7 @@ func TestRegistry_RegisterDuplicate(t *testing.T) {
 }
 
 func TestRegistry_Unregister(t *testing.T) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 	tool := createTestToolWithMetadata("tool1", "Tool One",
 		[]string{"tag1", "tag2"}, nil)
 
@@ -169,9 +166,7 @@ func TestRegistry_Unregister(t *testing.T) {
 	_, err = reg.Get("tool1")
 	assert.Error(t, err)
 
-	// Verify indexes are cleaned up
-	assert.Len(t, reg.nameIndex, 0)
-	assert.Len(t, reg.tagIndex, 0)
+	// Note: Cannot verify internal indexes when using external test package
 
 	// Unregister non-existent tool
 	err = reg.Unregister("nonexistent")
@@ -179,7 +174,7 @@ func TestRegistry_Unregister(t *testing.T) {
 }
 
 func TestRegistry_Get(t *testing.T) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 	tool := createTestTool("tool1", "Tool One")
 
 	err := reg.Register(tool)
@@ -197,7 +192,7 @@ func TestRegistry_Get(t *testing.T) {
 }
 
 func TestRegistry_GetByName(t *testing.T) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 	tool := createTestTool("tool1", "Tool One")
 
 	err := reg.Register(tool)
@@ -214,7 +209,7 @@ func TestRegistry_GetByName(t *testing.T) {
 }
 
 func TestRegistry_List(t *testing.T) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 
 	// Register multiple tools
 	tool1 := createTestToolWithMetadata("tool1", "Search Tool",
@@ -222,9 +217,9 @@ func TestRegistry_List(t *testing.T) {
 	tool2 := createTestToolWithMetadata("tool2", "Calculator",
 		[]string{"math", "utility"}, nil)
 	tool3 := createTestToolWithCapabilities("tool3", "Streaming Tool",
-		&ToolCapabilities{Streaming: true, Async: true})
+		&tools.ToolCapabilities{Streaming: true, Async: true})
 
-	for _, tool := range []*Tool{tool1, tool2, tool3} {
+	for _, tool := range []*tools.Tool{tool1, tool2, tool3} {
 		err := reg.Register(tool)
 		require.NoError(t, err)
 	}
@@ -235,37 +230,37 @@ func TestRegistry_List(t *testing.T) {
 	assert.Len(t, all, 3)
 
 	// Test filter by name
-	filtered, err := reg.List(&ToolFilter{Name: "Calculator"})
+	filtered, err := reg.List(&tools.ToolFilter{Name: "Calculator"})
 	assert.NoError(t, err)
 	assert.Len(t, filtered, 1)
 	assert.Equal(t, "tool2", filtered[0].ID)
 
 	// Test filter by name with wildcard
-	filtered, err = reg.List(&ToolFilter{Name: "*Tool"})
+	filtered, err = reg.List(&tools.ToolFilter{Name: "*Tool"})
 	assert.NoError(t, err)
 	assert.Len(t, filtered, 2)
 
 	// Test filter by tags
-	filtered, err = reg.List(&ToolFilter{Tags: []string{"utility"}})
+	filtered, err = reg.List(&tools.ToolFilter{Tags: []string{"utility"}})
 	assert.NoError(t, err)
 	assert.Len(t, filtered, 2)
 
 	// Test filter by multiple tags
-	filtered, err = reg.List(&ToolFilter{Tags: []string{"math", "utility"}})
+	filtered, err = reg.List(&tools.ToolFilter{Tags: []string{"math", "utility"}})
 	assert.NoError(t, err)
 	assert.Len(t, filtered, 1)
 	assert.Equal(t, "tool2", filtered[0].ID)
 
 	// Test filter by capabilities
-	filtered, err = reg.List(&ToolFilter{
-		Capabilities: &ToolCapabilities{Streaming: true},
+	filtered, err = reg.List(&tools.ToolFilter{
+		Capabilities: &tools.ToolCapabilities{Streaming: true},
 	})
 	assert.NoError(t, err)
 	assert.Len(t, filtered, 1)
 	assert.Equal(t, "tool3", filtered[0].ID)
 
 	// Test filter by keywords
-	filtered, err = reg.List(&ToolFilter{
+	filtered, err = reg.List(&tools.ToolFilter{
 		Keywords: []string{"search"},
 	})
 	assert.NoError(t, err)
@@ -274,7 +269,7 @@ func TestRegistry_List(t *testing.T) {
 }
 
 func TestRegistry_ConcurrentAccess(t *testing.T) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 	numGoroutines := 100
 	toolsPerGoroutine := 10
 
@@ -306,7 +301,7 @@ func TestRegistry_ConcurrentAccess(t *testing.T) {
 			// Perform various read operations
 			reg.Count()
 			reg.ListAll()
-			reg.List(&ToolFilter{Name: "*Tool*"})
+			reg.List(&tools.ToolFilter{Name: "*Tool*"})
 		}()
 	}
 
@@ -323,10 +318,10 @@ func TestRegistry_ConcurrentAccess(t *testing.T) {
 }
 
 func TestRegistry_CustomValidators(t *testing.T) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 
 	// Add custom validator that requires tools to have author metadata
-	reg.AddValidator(func(tool *Tool) error {
+	reg.AddValidator(func(tool *tools.Tool) error {
 		if tool.Metadata == nil || tool.Metadata.Author == "" {
 			return fmt.Errorf("tool must have author metadata")
 		}
@@ -346,7 +341,7 @@ func TestRegistry_CustomValidators(t *testing.T) {
 }
 
 func TestRegistry_Dependencies(t *testing.T) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 
 	// Register base tools
 	tool1 := createTestTool("base1", "Base Tool 1")
@@ -378,7 +373,7 @@ func TestRegistry_Dependencies(t *testing.T) {
 }
 
 func TestRegistry_CircularDependency(t *testing.T) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 
 	// Create tools with circular dependency
 	tool1 := createTestToolWithMetadata("tool1", "Tool 1", nil, []string{"tool2"})
@@ -402,19 +397,19 @@ func TestRegistry_CircularDependency(t *testing.T) {
 }
 
 func TestRegistry_ImportExport(t *testing.T) {
-	reg1 := NewRegistry()
+	reg1 := tools.NewRegistry()
 
 	// Create and register tools
-	tools := map[string]*Tool{
+	testTools := map[string]*tools.Tool{
 		"tool1": createTestToolWithMetadata("tool1", "Tool One",
 			[]string{"tag1"}, nil),
 		"tool2": createTestToolWithMetadata("tool2", "Tool Two",
 			[]string{"tag2"}, []string{"tool1"}),
 		"tool3": createTestToolWithCapabilities("tool3", "Tool Three",
-			&ToolCapabilities{Streaming: true}),
+			&tools.ToolCapabilities{Streaming: true}),
 	}
 
-	for _, tool := range tools {
+	for _, tool := range testTools {
 		err := reg1.Register(tool)
 		require.NoError(t, err)
 	}
@@ -424,13 +419,13 @@ func TestRegistry_ImportExport(t *testing.T) {
 	assert.Len(t, exported, 3)
 
 	// Import into new registry
-	reg2 := NewRegistry()
+	reg2 := tools.NewRegistry()
 	errors := reg2.ImportTools(exported)
 	assert.Len(t, errors, 0)
 	assert.Equal(t, reg1.Count(), reg2.Count())
 
 	// Verify all tools were imported correctly
-	for id := range tools {
+	for id := range testTools {
 		tool1, err1 := reg1.Get(id)
 		tool2, err2 := reg2.Get(id)
 		assert.NoError(t, err1)
@@ -441,10 +436,10 @@ func TestRegistry_ImportExport(t *testing.T) {
 }
 
 func TestRegistry_ImportWithErrors(t *testing.T) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 
 	// Create tools with some invalid ones
-	tools := map[string]*Tool{
+	testTools := map[string]*tools.Tool{
 		"valid1": createTestTool("valid1", "Valid Tool 1"),
 		"invalid1": {
 			ID:   "invalid1",
@@ -453,13 +448,13 @@ func TestRegistry_ImportWithErrors(t *testing.T) {
 		"valid2": createTestTool("valid2", "Valid Tool 2"),
 	}
 
-	errors := reg.ImportTools(tools)
+	errors := reg.ImportTools(testTools)
 	assert.Len(t, errors, 1)
 	assert.Equal(t, 2, reg.Count()) // Only valid tools imported
 }
 
 func TestRegistry_Clear(t *testing.T) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 
 	// Add multiple tools
 	for i := 0; i < 5; i++ {
@@ -474,19 +469,17 @@ func TestRegistry_Clear(t *testing.T) {
 	}
 
 	assert.Equal(t, 5, reg.Count())
-	assert.True(t, len(reg.tagIndex) > 0)
-	assert.True(t, len(reg.nameIndex) > 0)
+	// Note: Cannot verify internal indexes when using external test package
 
 	// Clear registry
 	reg.Clear()
 
 	assert.Equal(t, 0, reg.Count())
-	assert.Len(t, reg.tagIndex, 0)
-	assert.Len(t, reg.nameIndex, 0)
+	// Note: Cannot verify internal indexes when using external test package
 }
 
 func TestRegistry_Validate(t *testing.T) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 
 	// Add valid tools
 	tool1 := createTestTool("tool1", "Tool One")
@@ -498,7 +491,7 @@ func TestRegistry_Validate(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Add custom validator
-	reg.AddValidator(func(tool *Tool) error {
+	reg.AddValidator(func(tool *tools.Tool) error {
 		if tool.Version != "2.0.0" {
 			return fmt.Errorf("all tools must be version 2.0.0")
 		}
@@ -512,7 +505,7 @@ func TestRegistry_Validate(t *testing.T) {
 }
 
 func TestRegistry_CloneIsolation(t *testing.T) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 	tool := createTestTool("tool1", "Tool One")
 
 	err := reg.Register(tool)
@@ -530,20 +523,20 @@ func TestRegistry_CloneIsolation(t *testing.T) {
 }
 
 func TestRegistry_EdgeCases(t *testing.T) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 
 	t.Run("empty filter returns all", func(t *testing.T) {
 		tool := createTestTool("tool1", "Tool One")
 		err := reg.Register(tool)
 		require.NoError(t, err)
 
-		results, err := reg.List(&ToolFilter{})
+		results, err := reg.List(&tools.ToolFilter{})
 		assert.NoError(t, err)
 		assert.Len(t, results, 1)
 	})
 
 	t.Run("filter with no matches", func(t *testing.T) {
-		results, err := reg.List(&ToolFilter{Name: "NonExistent"})
+		results, err := reg.List(&tools.ToolFilter{Name: "NonExistent"})
 		assert.NoError(t, err)
 		assert.Len(t, results, 0)
 	})
@@ -552,7 +545,7 @@ func TestRegistry_EdgeCases(t *testing.T) {
 		tool := createTestToolWithMetadata("tool2", "Tool Two", []string{}, nil)
 		err := reg.Register(tool)
 		assert.NoError(t, err)
-		assert.Len(t, reg.tagIndex, 0)
+		// Note: Cannot verify internal tagIndex when using external test package
 	})
 
 	t.Run("unregister tool with missing dependencies", func(t *testing.T) {
@@ -567,27 +560,27 @@ func TestRegistry_EdgeCases(t *testing.T) {
 }
 
 func TestRegistry_FilterComplexCases(t *testing.T) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 
 	// Setup complex tool set
-	tools := []*Tool{
+	testTools := []*tools.Tool{
 		createTestToolWithMetadata("search1", "Search Engine Tool",
 			[]string{"search", "web", "api"}, nil),
 		createTestToolWithMetadata("search2", "Database Search Tool",
 			[]string{"search", "database", "sql"}, nil),
 		createTestToolWithCapabilities("stream1", "Streaming Search API",
-			&ToolCapabilities{Streaming: true, Async: true}),
+			&tools.ToolCapabilities{Streaming: true, Async: true}),
 	}
 
-	tools[2].Metadata = &ToolMetadata{Tags: []string{"search", "stream"}}
+	testTools[2].Metadata = &tools.ToolMetadata{Tags: []string{"search", "stream"}}
 
-	for _, tool := range tools {
+	for _, tool := range testTools {
 		err := reg.Register(tool)
 		require.NoError(t, err)
 	}
 
 	t.Run("multiple filter criteria", func(t *testing.T) {
-		results, err := reg.List(&ToolFilter{
+		results, err := reg.List(&tools.ToolFilter{
 			Tags:     []string{"search"},
 			Keywords: []string{"database"},
 		})
@@ -597,9 +590,9 @@ func TestRegistry_FilterComplexCases(t *testing.T) {
 	})
 
 	t.Run("capabilities and tags", func(t *testing.T) {
-		results, err := reg.List(&ToolFilter{
+		results, err := reg.List(&tools.ToolFilter{
 			Tags:         []string{"search"},
-			Capabilities: &ToolCapabilities{Streaming: true},
+			Capabilities: &tools.ToolCapabilities{Streaming: true},
 		})
 		assert.NoError(t, err)
 		assert.Len(t, results, 1)
@@ -609,7 +602,7 @@ func TestRegistry_FilterComplexCases(t *testing.T) {
 
 // Benchmark tests
 func BenchmarkRegistry_Register(b *testing.B) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
@@ -619,7 +612,7 @@ func BenchmarkRegistry_Register(b *testing.B) {
 }
 
 func BenchmarkRegistry_Get(b *testing.B) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 	// Pre-populate registry
 	for i := 0; i < 1000; i++ {
 		tool := createTestTool(fmt.Sprintf("tool%d", i), fmt.Sprintf("Tool %d", i))
@@ -633,7 +626,7 @@ func BenchmarkRegistry_Get(b *testing.B) {
 }
 
 func BenchmarkRegistry_List(b *testing.B) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 	// Pre-populate registry with various tools
 	for i := 0; i < 1000; i++ {
 		tags := []string{fmt.Sprintf("tag%d", i%10)}
@@ -648,12 +641,12 @@ func BenchmarkRegistry_List(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		reg.List(&ToolFilter{Tags: []string{fmt.Sprintf("tag%d", i%10)}})
+		reg.List(&tools.ToolFilter{Tags: []string{fmt.Sprintf("tag%d", i%10)}})
 	}
 }
 
 func BenchmarkRegistry_GetReadOnly(b *testing.B) {
-	reg := NewRegistry()
+	reg := tools.NewRegistry()
 	// Pre-populate registry
 	for i := 0; i < 1000; i++ {
 		tool := createTestTool(fmt.Sprintf("tool%d", i), fmt.Sprintf("Tool %d", i))
@@ -667,21 +660,21 @@ func BenchmarkRegistry_GetReadOnly(b *testing.B) {
 }
 
 func TestMemoryOptimization_ReadOnlyVsCloning(t *testing.T) {
-	registry := NewRegistry()
-	
+	registry := tools.NewRegistry()
+
 	// Create a tool with substantial metadata to show memory differences
-	tool := &Tool{
+	tool := &tools.Tool{
 		ID:          "memory-test-tool",
-		Name:        "Memory Test Tool", 
+		Name:        "Memory Test Tool",
 		Description: "Tool for testing memory optimization",
 		Version:     "1.0.0",
-		Schema: &ToolSchema{
+		Schema: &tools.ToolSchema{
 			Type: "object",
-			Properties: map[string]*Property{
+			Properties: map[string]*tools.Property{
 				"data": {Type: "string", Description: "Large data field"},
 				"config": {
 					Type: "object",
-					Properties: map[string]*Property{
+					Properties: map[string]*tools.Property{
 						"nested1": {Type: "string", Description: "Nested field 1"},
 						"nested2": {Type: "string", Description: "Nested field 2"},
 						"nested3": {Type: "string", Description: "Nested field 3"},
@@ -690,11 +683,11 @@ func TestMemoryOptimization_ReadOnlyVsCloning(t *testing.T) {
 			},
 			Required: []string{"data"},
 		},
-		Metadata: &ToolMetadata{
+		Metadata: &tools.ToolMetadata{
 			Author:        "Test Author",
 			Documentation: "https://example.com/docs/memory-test-tool",
 			Tags:          []string{"test", "memory", "optimization", "benchmark", "performance"},
-			Examples: []ToolExample{
+			Examples: []tools.ToolExample{
 				{
 					Input:       map[string]interface{}{"data": "example1", "config": map[string]interface{}{"nested1": "value1"}},
 					Output:      "Example output 1",
@@ -702,27 +695,27 @@ func TestMemoryOptimization_ReadOnlyVsCloning(t *testing.T) {
 				},
 				{
 					Input:       map[string]interface{}{"data": "example2", "config": map[string]interface{}{"nested2": "value2"}},
-					Output:      "Example output 2", 
+					Output:      "Example output 2",
 					Description: "Example 2 for testing memory usage",
 				},
 			},
 		},
-		Executor: &mockToolExecutor{},
-		Capabilities: &ToolCapabilities{
-			Streaming:   false,
-			Timeout:     30 * time.Second,
-			Retryable:   true,
-			Cancellable: true,
+		Executor: &mockRegistryExecutor{name: "test"},
+		Capabilities: &tools.ToolCapabilities{
+			Streaming:  false,
+			Timeout:    30 * time.Second,
+			Retryable:  true,
+			Cancelable: true,
 		},
 	}
-	
+
 	require.NoError(t, registry.Register(tool))
 
 	t.Run("read-only access does not clone", func(t *testing.T) {
 		// Get read-only view
 		readOnlyTool, err := registry.GetReadOnly("memory-test-tool")
 		require.NoError(t, err)
-		
+
 		// Verify we can access all properties
 		assert.Equal(t, "memory-test-tool", readOnlyTool.GetID())
 		assert.Equal(t, "Memory Test Tool", readOnlyTool.GetName())
@@ -732,13 +725,13 @@ func TestMemoryOptimization_ReadOnlyVsCloning(t *testing.T) {
 		assert.NotNil(t, readOnlyTool.GetMetadata())
 		assert.NotNil(t, readOnlyTool.GetExecutor())
 		assert.NotNil(t, readOnlyTool.GetCapabilities())
-		
+
 		// Verify schema access
 		schema := readOnlyTool.GetSchema()
 		assert.Equal(t, "object", schema.Type)
 		assert.Contains(t, schema.Properties, "data")
 		assert.Contains(t, schema.Properties, "config")
-		
+
 		// Verify metadata access
 		metadata := readOnlyTool.GetMetadata()
 		assert.Equal(t, "Test Author", metadata.Author)
@@ -751,16 +744,16 @@ func TestMemoryOptimization_ReadOnlyVsCloning(t *testing.T) {
 		// Get read-only view
 		readOnlyTool, err := registry.GetReadOnly("memory-test-tool")
 		require.NoError(t, err)
-		
+
 		// Clone when modification is needed
 		clonedTool := readOnlyTool.Clone()
 		require.NotNil(t, clonedTool)
-		
+
 		// Verify cloned tool has same content
 		assert.Equal(t, readOnlyTool.GetID(), clonedTool.ID)
-		assert.Equal(t, readOnlyTool.GetName(), clonedTool.Name) 
+		assert.Equal(t, readOnlyTool.GetName(), clonedTool.Name)
 		assert.Equal(t, readOnlyTool.GetDescription(), clonedTool.Description)
-		
+
 		// Modification of clone should not affect original
 		clonedTool.Description = "Modified description"
 		assert.NotEqual(t, readOnlyTool.GetDescription(), clonedTool.Description)

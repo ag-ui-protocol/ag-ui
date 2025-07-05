@@ -340,7 +340,7 @@ func (v *SchemaValidator) validateFormat(format, value, path string) error {
 		if !isValidUUID(value) {
 			return newValidationError(path, fmt.Sprintf("%q is not a valid UUID", value))
 		}
-	// Add more format validators as needed
+		// Add more format validators as needed
 	}
 	return nil
 }

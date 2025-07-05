@@ -354,7 +354,7 @@ func TestConversation(t *testing.T) {
 		})
 
 		// Add system message
-		conv.AddMessage(NewSystemMessage("System prompt"))
+		_ = conv.AddMessage(NewSystemMessage("System prompt")) // Ignore error in test
 
 		// Add more user messages than limit
 		for i := 0; i < 5; i++ {

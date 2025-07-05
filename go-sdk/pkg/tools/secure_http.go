@@ -3,10 +3,10 @@ package tools
 import (
 	"context"
 	"fmt"
+	"golang.org/x/net/idna"
 	"net"
 	"net/url"
 	"strings"
-	"golang.org/x/net/idna"
 )
 
 // SecureHTTPOptions defines security options for HTTP operations
@@ -14,17 +14,17 @@ type SecureHTTPOptions struct {
 	// AllowedHosts defines hosts that are allowed for HTTP requests
 	// If empty, all hosts are allowed except those in DenyHosts
 	AllowedHosts []string
-	
+
 	// DenyHosts defines hosts that are explicitly denied
 	// Takes precedence over AllowedHosts
 	DenyHosts []string
-	
+
 	// AllowPrivateNetworks determines if requests to private IP ranges are allowed
 	AllowPrivateNetworks bool
-	
+
 	// AllowedSchemes defines allowed URL schemes (default: https, http)
 	AllowedSchemes []string
-	
+
 	// MaxRedirects defines the maximum number of redirects to follow
 	MaxRedirects int
 }
@@ -67,7 +67,7 @@ func (e *SecureHTTPExecutor) Execute(ctx context.Context, params map[string]inte
 	if !ok {
 		return nil, fmt.Errorf("url parameter is required")
 	}
-	
+
 	// Validate URL
 	if err := e.validateURL(urlStr); err != nil {
 		return &ToolExecutionResult{
@@ -75,7 +75,7 @@ func (e *SecureHTTPExecutor) Execute(ctx context.Context, params map[string]inte
 			Error:   fmt.Sprintf("URL validation failed: %v", err),
 		}, nil
 	}
-	
+
 	// Execute the underlying operation
 	return e.executor.Execute(ctx, params)
 }
@@ -86,25 +86,25 @@ func (e *SecureHTTPExecutor) validateURL(urlStr string) error {
 	if err != nil {
 		return fmt.Errorf("invalid URL format: %w", err)
 	}
-	
+
 	// Check scheme
 	if !e.isSchemeAllowed(parsedURL.Scheme) {
 		return fmt.Errorf("scheme %q is not allowed", parsedURL.Scheme)
 	}
-	
+
 	// Extract hostname
 	hostname := parsedURL.Hostname()
 	if hostname == "" {
 		return fmt.Errorf("URL must have a valid hostname")
 	}
-	
+
 	// Check deny list first
 	for _, denyHost := range e.options.DenyHosts {
 		if strings.EqualFold(hostname, denyHost) {
 			return fmt.Errorf("host %q is explicitly denied", hostname)
 		}
 	}
-	
+
 	// Check if it's an IP address
 	if ip := net.ParseIP(hostname); ip != nil {
 		if err := e.validateIPAddress(ip); err != nil {
@@ -116,15 +116,15 @@ func (e *SecureHTTPExecutor) validateURL(urlStr string) error {
 			return err
 		}
 	}
-	
+
 	// Check allowed hosts if specified
 	if len(e.options.AllowedHosts) > 0 {
 		allowed := false
 		normalizedHostname := e.normalizeHostname(hostname)
 		for _, allowedHost := range e.options.AllowedHosts {
 			normalizedAllowed := e.normalizeHostname(allowedHost)
-			if normalizedHostname == normalizedAllowed || 
-			   strings.HasSuffix(normalizedHostname, "."+normalizedAllowed) {
+			if normalizedHostname == normalizedAllowed ||
+				strings.HasSuffix(normalizedHostname, "."+normalizedAllowed) {
 				allowed = true
 				break
 			}
@@ -133,7 +133,7 @@ func (e *SecureHTTPExecutor) validateURL(urlStr string) error {
 			return fmt.Errorf("host %q is not in allowed hosts list", hostname)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -170,14 +170,14 @@ func (e *SecureHTTPExecutor) validateHostname(hostname string) error {
 	if err != nil {
 		return fmt.Errorf("cannot resolve hostname: %w", err)
 	}
-	
+
 	// Check each resolved IP
 	for _, ip := range ips {
 		if err := e.validateIPAddress(ip); err != nil {
 			return fmt.Errorf("hostname %q resolves to restricted IP: %w", hostname, err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -190,7 +190,7 @@ func isPrivateIP(ip net.IP) bool {
 		"fc00::/7",
 		"fe80::/10",
 	}
-	
+
 	for _, cidr := range privateRanges {
 		_, network, err := net.ParseCIDR(cidr)
 		if err != nil {
@@ -200,7 +200,7 @@ func isPrivateIP(ip net.IP) bool {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -208,14 +208,14 @@ func isPrivateIP(ip net.IP) bool {
 func (e *SecureHTTPExecutor) normalizeHostname(hostname string) string {
 	// Convert to lowercase
 	hostname = strings.ToLower(hostname)
-	
+
 	// Handle internationalized domain names (IDN)
 	normalized, err := idna.ToASCII(hostname)
 	if err != nil {
 		// If IDN conversion fails, return the lowercase original
 		return hostname
 	}
-	
+
 	return normalized
 }
 

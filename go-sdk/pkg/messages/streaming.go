@@ -231,7 +231,9 @@ func (sp *StreamProcessor) OnError(fn func(error)) *StreamProcessor {
 
 // Process processes a message stream
 func (sp *StreamProcessor) Process(ctx context.Context, stream MessageStream) error {
-	defer stream.Close()
+	defer func() {
+		_ = stream.Close() // Ignore close error on cleanup
+	}()
 	
 	for {
 		event, err := stream.Next(ctx)

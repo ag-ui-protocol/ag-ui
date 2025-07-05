@@ -84,7 +84,7 @@ func TestHistoryMemoryLimits(t *testing.T) {
 		// Add some messages
 		for i := 0; i < 5; i++ {
 			msg := NewUserMessage("Test message " + string(rune('A'+i)))
-			history.Add(msg)
+			_ = history.Add(msg) // Ignore error in test
 		}
 
 		assert.Greater(t, history.CurrentMemoryBytes(), int64(0))

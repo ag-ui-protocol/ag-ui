@@ -69,7 +69,7 @@ func (s *Server) ListenAndServe() error {
 func (s *Server) handleAGUI(w http.ResponseWriter, r *http.Request) {
 	// TODO: Implement protocol handling, event routing, and response generation
 	w.WriteHeader(http.StatusNotImplemented)
-	w.Write([]byte("AG-UI protocol handler not implemented"))
+	_, _ = w.Write([]byte("AG-UI protocol handler not implemented")) // Ignore error on response write
 }
 
 // Shutdown gracefully shuts down the server.

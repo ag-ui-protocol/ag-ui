@@ -1,4 +1,4 @@
-package tools
+package tools_test
 
 import (
 	"context"
@@ -7,17 +7,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ag-ui/go-sdk/pkg/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // Mock executor for testing
 type mockExecutor struct {
-	result *ToolExecutionResult
+	result *tools.ToolExecutionResult
 	err    error
 }
 
-func (m *mockExecutor) Execute(ctx context.Context, params map[string]interface{}) (*ToolExecutionResult, error) {
+func (m *mockExecutor) Execute(ctx context.Context, params map[string]interface{}) (*tools.ToolExecutionResult, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -44,24 +45,24 @@ func toolTestBoolPtr(b bool) *bool {
 func TestTool_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
-		tool    *Tool
+		tool    *tools.Tool
 		wantErr string
 	}{
 		{
 			name:    "missing ID",
-			tool:    &Tool{},
+			tool:    &tools.Tool{},
 			wantErr: "tool ID is required",
 		},
 		{
 			name: "missing name",
-			tool: &Tool{
+			tool: &tools.Tool{
 				ID: "test-tool",
 			},
 			wantErr: "tool name is required",
 		},
 		{
 			name: "missing description",
-			tool: &Tool{
+			tool: &tools.Tool{
 				ID:   "test-tool",
 				Name: "Test Tool",
 			},
@@ -69,7 +70,7 @@ func TestTool_Validate(t *testing.T) {
 		},
 		{
 			name: "missing version",
-			tool: &Tool{
+			tool: &tools.Tool{
 				ID:          "test-tool",
 				Name:        "Test Tool",
 				Description: "A test tool",
@@ -78,7 +79,7 @@ func TestTool_Validate(t *testing.T) {
 		},
 		{
 			name: "missing schema",
-			tool: &Tool{
+			tool: &tools.Tool{
 				ID:          "test-tool",
 				Name:        "Test Tool",
 				Description: "A test tool",
@@ -88,59 +89,59 @@ func TestTool_Validate(t *testing.T) {
 		},
 		{
 			name: "missing executor",
-			tool: &Tool{
+			tool: &tools.Tool{
 				ID:          "test-tool",
 				Name:        "Test Tool",
 				Description: "A test tool",
 				Version:     "1.0.0",
-				Schema:      &ToolSchema{Type: "object"},
+				Schema:      &tools.ToolSchema{Type: "object"},
 			},
 			wantErr: "tool executor is required",
 		},
 		{
 			name: "invalid schema",
-			tool: &Tool{
+			tool: &tools.Tool{
 				ID:          "test-tool",
 				Name:        "Test Tool",
 				Description: "A test tool",
 				Version:     "1.0.0",
-				Schema:      &ToolSchema{Type: "invalid"},
+				Schema:      &tools.ToolSchema{Type: "invalid"},
 				Executor:    &mockExecutor{},
 			},
 			wantErr: "invalid schema: schema type must be 'object', got \"invalid\"",
 		},
 		{
 			name: "valid tool",
-			tool: &Tool{
+			tool: &tools.Tool{
 				ID:          "test-tool",
 				Name:        "Test Tool",
 				Description: "A test tool",
 				Version:     "1.0.0",
-				Schema:      &ToolSchema{Type: "object"},
+				Schema:      &tools.ToolSchema{Type: "object"},
 				Executor:    &mockExecutor{},
 			},
 			wantErr: "",
 		},
 		{
 			name: "valid tool with all fields",
-			tool: &Tool{
+			tool: &tools.Tool{
 				ID:          "test-tool",
 				Name:        "Test Tool",
 				Description: "A test tool",
 				Version:     "1.0.0",
-				Schema: &ToolSchema{
+				Schema: &tools.ToolSchema{
 					Type: "object",
-					Properties: map[string]*Property{
+					Properties: map[string]*tools.Property{
 						"param1": {Type: "string"},
 					},
 					Required: []string{"param1"},
 				},
 				Executor: &mockExecutor{},
-				Metadata: &ToolMetadata{
+				Metadata: &tools.ToolMetadata{
 					Author: "Test Author",
 					Tags:   []string{"test", "example"},
 				},
-				Capabilities: &ToolCapabilities{
+				Capabilities: &tools.ToolCapabilities{
 					Streaming: true,
 					Async:     false,
 				},
@@ -164,28 +165,28 @@ func TestTool_Validate(t *testing.T) {
 func TestToolSchema_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
-		schema  *ToolSchema
+		schema  *tools.ToolSchema
 		wantErr string
 	}{
 		{
 			name: "invalid type",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "array",
 			},
 			wantErr: "schema type must be 'object', got \"array\"",
 		},
 		{
 			name: "valid empty schema",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
 			},
 			wantErr: "",
 		},
 		{
 			name: "invalid property",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"invalid": {Type: "unknown"},
 				},
 			},
@@ -193,7 +194,7 @@ func TestToolSchema_Validate(t *testing.T) {
 		},
 		{
 			name: "required property not defined",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type:     "object",
 				Required: []string{"missing"},
 			},
@@ -201,9 +202,9 @@ func TestToolSchema_Validate(t *testing.T) {
 		},
 		{
 			name: "valid schema with properties",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"name":    {Type: "string"},
 					"age":     {Type: "integer"},
 					"active":  {Type: "boolean"},
@@ -217,12 +218,12 @@ func TestToolSchema_Validate(t *testing.T) {
 		},
 		{
 			name: "nested object validation",
-			schema: &ToolSchema{
+			schema: &tools.ToolSchema{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"user": {
 						Type: "object",
-						Properties: map[string]*Property{
+						Properties: map[string]*tools.Property{
 							"invalid": {Type: "invalid_type"},
 						},
 					},
@@ -247,55 +248,55 @@ func TestToolSchema_Validate(t *testing.T) {
 func TestProperty_Validate(t *testing.T) {
 	tests := []struct {
 		name     string
-		property *Property
+		property *tools.Property
 		wantErr  string
 	}{
 		// Type validation
 		{
 			name:     "valid string type",
-			property: &Property{Type: "string"},
+			property: &tools.Property{Type: "string"},
 			wantErr:  "",
 		},
 		{
 			name:     "valid number type",
-			property: &Property{Type: "number"},
+			property: &tools.Property{Type: "number"},
 			wantErr:  "",
 		},
 		{
 			name:     "valid integer type",
-			property: &Property{Type: "integer"},
+			property: &tools.Property{Type: "integer"},
 			wantErr:  "",
 		},
 		{
 			name:     "valid boolean type",
-			property: &Property{Type: "boolean"},
+			property: &tools.Property{Type: "boolean"},
 			wantErr:  "",
 		},
 		{
 			name:     "valid array type",
-			property: &Property{Type: "array"},
+			property: &tools.Property{Type: "array"},
 			wantErr:  "",
 		},
 		{
 			name:     "valid object type",
-			property: &Property{Type: "object"},
+			property: &tools.Property{Type: "object"},
 			wantErr:  "",
 		},
 		{
 			name:     "valid null type",
-			property: &Property{Type: "null"},
+			property: &tools.Property{Type: "null"},
 			wantErr:  "",
 		},
 		{
 			name:     "invalid type",
-			property: &Property{Type: "invalid"},
+			property: &tools.Property{Type: "invalid"},
 			wantErr:  "invalid type \"invalid\"",
 		},
 
 		// String property validation
 		{
 			name: "string with constraints",
-			property: &Property{
+			property: &tools.Property{
 				Type:        "string",
 				Description: "Email address",
 				Format:      "email",
@@ -307,7 +308,7 @@ func TestProperty_Validate(t *testing.T) {
 		},
 		{
 			name: "string with enum",
-			property: &Property{
+			property: &tools.Property{
 				Type: "string",
 				Enum: []interface{}{"small", "medium", "large"},
 			},
@@ -317,7 +318,7 @@ func TestProperty_Validate(t *testing.T) {
 		// Number property validation
 		{
 			name: "number with constraints",
-			property: &Property{
+			property: &tools.Property{
 				Type:    "number",
 				Minimum: floatPtr(0.0),
 				Maximum: floatPtr(100.0),
@@ -328,16 +329,16 @@ func TestProperty_Validate(t *testing.T) {
 		// Array property validation
 		{
 			name: "array without items",
-			property: &Property{
+			property: &tools.Property{
 				Type: "array",
 			},
 			wantErr: "",
 		},
 		{
 			name: "array with valid items",
-			property: &Property{
+			property: &tools.Property{
 				Type: "array",
-				Items: &Property{
+				Items: &tools.Property{
 					Type: "string",
 				},
 			},
@@ -345,9 +346,9 @@ func TestProperty_Validate(t *testing.T) {
 		},
 		{
 			name: "array with invalid items",
-			property: &Property{
+			property: &tools.Property{
 				Type: "array",
-				Items: &Property{
+				Items: &tools.Property{
 					Type: "invalid",
 				},
 			},
@@ -357,16 +358,16 @@ func TestProperty_Validate(t *testing.T) {
 		// Object property validation
 		{
 			name: "object without properties",
-			property: &Property{
+			property: &tools.Property{
 				Type: "object",
 			},
 			wantErr: "",
 		},
 		{
 			name: "object with valid properties",
-			property: &Property{
+			property: &tools.Property{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"name": {Type: "string"},
 					"age":  {Type: "integer"},
 				},
@@ -376,9 +377,9 @@ func TestProperty_Validate(t *testing.T) {
 		},
 		{
 			name: "object with invalid nested property",
-			property: &Property{
+			property: &tools.Property{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"invalid": {Type: "unknown"},
 				},
 			},
@@ -388,18 +389,18 @@ func TestProperty_Validate(t *testing.T) {
 		// Complex nested validation
 		{
 			name: "deeply nested valid structure",
-			property: &Property{
+			property: &tools.Property{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"users": {
 						Type: "array",
-						Items: &Property{
+						Items: &tools.Property{
 							Type: "object",
-							Properties: map[string]*Property{
+							Properties: map[string]*tools.Property{
 								"name": {Type: "string"},
 								"tags": {
 									Type: "array",
-									Items: &Property{
+									Items: &tools.Property{
 										Type: "string",
 									},
 								},
@@ -425,14 +426,14 @@ func TestProperty_Validate(t *testing.T) {
 }
 
 func TestTool_Clone(t *testing.T) {
-	original := &Tool{
+	original := &tools.Tool{
 		ID:          "test-tool",
 		Name:        "Test Tool",
 		Description: "A test tool",
 		Version:     "1.0.0",
-		Schema: &ToolSchema{
+		Schema: &tools.ToolSchema{
 			Type: "object",
-			Properties: map[string]*Property{
+			Properties: map[string]*tools.Property{
 				"param1": {
 					Type:      "string",
 					MinLength: toolTestIntPtr(1),
@@ -440,7 +441,7 @@ func TestTool_Clone(t *testing.T) {
 				},
 				"param2": {
 					Type: "array",
-					Items: &Property{
+					Items: &tools.Property{
 						Type: "integer",
 					},
 				},
@@ -450,11 +451,11 @@ func TestTool_Clone(t *testing.T) {
 			Description:          "Test schema",
 		},
 		Executor: &mockExecutor{},
-		Metadata: &ToolMetadata{
+		Metadata: &tools.ToolMetadata{
 			Author:        "Test Author",
 			License:       "MIT",
 			Documentation: "https://example.com/docs",
-			Examples: []ToolExample{
+			Examples: []tools.ToolExample{
 				{
 					Name:        "Example 1",
 					Description: "Test example",
@@ -466,14 +467,14 @@ func TestTool_Clone(t *testing.T) {
 			Dependencies: []string{"dep1", "dep2"},
 			Custom:       map[string]interface{}{"key1": "value1"},
 		},
-		Capabilities: &ToolCapabilities{
-			Streaming:   true,
-			Async:       false,
-			Cancellable: true,
-			Retryable:   true,
-			Cacheable:   false,
-			RateLimit:   100,
-			Timeout:     5 * time.Second,
+		Capabilities: &tools.ToolCapabilities{
+			Streaming:  true,
+			Async:      false,
+			Cancelable: true,
+			Retryable:  true,
+			Cacheable:  false,
+			RateLimit:  100,
+			Timeout:    5 * time.Second,
 		},
 	}
 
@@ -543,12 +544,12 @@ func TestTool_Clone(t *testing.T) {
 }
 
 func TestTool_Clone_NilFields(t *testing.T) {
-	original := &Tool{
+	original := &tools.Tool{
 		ID:          "test-tool",
 		Name:        "Test Tool",
 		Description: "A test tool",
 		Version:     "1.0.0",
-		Schema:      &ToolSchema{Type: "object"},
+		Schema:      &tools.ToolSchema{Type: "object"},
 		Executor:    &mockExecutor{},
 		// Metadata and Capabilities are nil
 	}
@@ -561,9 +562,9 @@ func TestTool_Clone_NilFields(t *testing.T) {
 }
 
 func TestToolSchema_Clone(t *testing.T) {
-	original := &ToolSchema{
+	original := &tools.ToolSchema{
 		Type: "object",
-		Properties: map[string]*Property{
+		Properties: map[string]*tools.Property{
 			"prop1": {
 				Type:      "string",
 				MinLength: toolTestIntPtr(5),
@@ -595,7 +596,7 @@ func TestToolSchema_Clone(t *testing.T) {
 }
 
 func TestProperty_Clone(t *testing.T) {
-	original := &Property{
+	original := &tools.Property{
 		Type:        "string",
 		Description: "Test property",
 		Format:      "email",
@@ -606,10 +607,10 @@ func TestProperty_Clone(t *testing.T) {
 		MinLength:   toolTestIntPtr(1),
 		MaxLength:   toolTestIntPtr(50),
 		Pattern:     "^[a-z]+$",
-		Items: &Property{
+		Items: &tools.Property{
 			Type: "integer",
 		},
-		Properties: map[string]*Property{
+		Properties: map[string]*tools.Property{
 			"nested": {Type: "boolean"},
 		},
 		Required: []string{"nested"},
@@ -647,11 +648,11 @@ func TestProperty_Clone(t *testing.T) {
 }
 
 func TestToolMetadata_Clone(t *testing.T) {
-	original := &ToolMetadata{
+	original := &tools.ToolMetadata{
 		Author:        "Test Author",
 		License:       "MIT",
 		Documentation: "https://example.com/docs",
-		Examples: []ToolExample{
+		Examples: []tools.ToolExample{
 			{
 				Name:        "Example 1",
 				Description: "Test example",
@@ -704,22 +705,22 @@ func TestToolMetadata_Clone(t *testing.T) {
 }
 
 func TestTool_MarshalJSON(t *testing.T) {
-	tool := &Tool{
+	tool := &tools.Tool{
 		ID:          "test-tool",
 		Name:        "Test Tool",
 		Description: "A test tool",
 		Version:     "1.0.0",
-		Schema: &ToolSchema{
+		Schema: &tools.ToolSchema{
 			Type: "object",
-			Properties: map[string]*Property{
+			Properties: map[string]*tools.Property{
 				"input": {Type: "string"},
 			},
 		},
 		Executor: &mockExecutor{},
-		Metadata: &ToolMetadata{
+		Metadata: &tools.ToolMetadata{
 			Author: "Test Author",
 		},
-		Capabilities: &ToolCapabilities{
+		Capabilities: &tools.ToolCapabilities{
 			Streaming: true,
 		},
 	}
@@ -742,42 +743,11 @@ func TestTool_MarshalJSON(t *testing.T) {
 	assert.NotNil(t, result["capabilities"])
 
 	// Verify executor type is included
-	assert.Equal(t, "*tools.mockExecutor", result["executor"])
-}
-
-func TestCloneMap(t *testing.T) {
-	original := map[string]interface{}{
-		"key1": "value1",
-		"key2": 42,
-		"key3": true,
-		"key4": []string{"a", "b"},
-	}
-
-	clone := cloneMap(original)
-
-	// Verify it's a different map (can't compare map addresses directly)
-	// Modify clone to ensure it's a different map
-	clone["test"] = "value"
-	_, hasTest := original["test"]
-	assert.False(t, hasTest, "Original should not have test key")
-
-	// Remove test key before comparing
-	delete(clone, "test")
-	// Verify contents are equal
-	assert.Equal(t, original, clone)
-
-	// Verify it's a shallow copy (slice is same underlying array)
-	// Can't use assert.Same with slices as they're not pointers
-	originalSlice := original["key4"].([]string)
-	cloneSlice := clone["key4"].([]string)
-	assert.Equal(t, fmt.Sprintf("%p", originalSlice), fmt.Sprintf("%p", cloneSlice))
-
-	// Test nil map
-	assert.Nil(t, cloneMap(nil))
+	assert.Equal(t, "*tools_test.mockExecutor", result["executor"])
 }
 
 func TestToolExecutionResult(t *testing.T) {
-	result := &ToolExecutionResult{
+	result := &tools.ToolExecutionResult{
 		Success: true,
 		Data:    map[string]interface{}{"result": "test"},
 		Error:   "",
@@ -792,7 +762,7 @@ func TestToolExecutionResult(t *testing.T) {
 	data, err := json.Marshal(result)
 	require.NoError(t, err)
 
-	var unmarshaled ToolExecutionResult
+	var unmarshaled tools.ToolExecutionResult
 	err = json.Unmarshal(data, &unmarshaled)
 	require.NoError(t, err)
 
@@ -801,7 +771,7 @@ func TestToolExecutionResult(t *testing.T) {
 }
 
 func TestToolStreamChunk(t *testing.T) {
-	chunk := &ToolStreamChunk{
+	chunk := &tools.ToolStreamChunk{
 		Type:      "data",
 		Data:      map[string]interface{}{"content": "streaming data"},
 		Index:     1,
@@ -812,7 +782,7 @@ func TestToolStreamChunk(t *testing.T) {
 	data, err := json.Marshal(chunk)
 	require.NoError(t, err)
 
-	var unmarshaled ToolStreamChunk
+	var unmarshaled tools.ToolStreamChunk
 	err = json.Unmarshal(data, &unmarshaled)
 	require.NoError(t, err)
 
@@ -821,11 +791,11 @@ func TestToolStreamChunk(t *testing.T) {
 }
 
 func TestToolFilter(t *testing.T) {
-	filter := &ToolFilter{
+	filter := &tools.ToolFilter{
 		Name:     "test*",
 		Tags:     []string{"tag1", "tag2"},
 		Category: "testing",
-		Capabilities: &ToolCapabilities{
+		Capabilities: &tools.ToolCapabilities{
 			Streaming: true,
 			Async:     true,
 		},
@@ -847,23 +817,23 @@ func TestToolFilter(t *testing.T) {
 func TestProperty_Validate_EdgeCases(t *testing.T) {
 	tests := []struct {
 		name     string
-		property *Property
+		property *tools.Property
 		wantErr  string
 	}{
 		{
 			name: "empty type",
-			property: &Property{
+			property: &tools.Property{
 				Type: "",
 			},
 			wantErr: "invalid type \"\"",
 		},
 		{
 			name: "array with nested array",
-			property: &Property{
+			property: &tools.Property{
 				Type: "array",
-				Items: &Property{
+				Items: &tools.Property{
 					Type: "array",
-					Items: &Property{
+					Items: &tools.Property{
 						Type: "string",
 					},
 				},
@@ -872,15 +842,15 @@ func TestProperty_Validate_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "object with nested objects",
-			property: &Property{
+			property: &tools.Property{
 				Type: "object",
-				Properties: map[string]*Property{
+				Properties: map[string]*tools.Property{
 					"level1": {
 						Type: "object",
-						Properties: map[string]*Property{
+						Properties: map[string]*tools.Property{
 							"level2": {
 								Type: "object",
-								Properties: map[string]*Property{
+								Properties: map[string]*tools.Property{
 									"level3": {Type: "string"},
 								},
 							},
@@ -892,7 +862,7 @@ func TestProperty_Validate_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "property with all constraints",
-			property: &Property{
+			property: &tools.Property{
 				Type:        "string",
 				Description: "Complex property",
 				Format:      "email",
@@ -919,21 +889,21 @@ func TestProperty_Validate_EdgeCases(t *testing.T) {
 }
 
 func TestToolCapabilities_Timeout(t *testing.T) {
-	caps := &ToolCapabilities{
-		Streaming:   true,
-		Async:       true,
-		Cancellable: true,
-		Retryable:   true,
-		Cacheable:   true,
-		RateLimit:   60,
-		Timeout:     30 * time.Second,
+	caps := &tools.ToolCapabilities{
+		Streaming:  true,
+		Async:      true,
+		Cancelable: true,
+		Retryable:  true,
+		Cacheable:  true,
+		RateLimit:  60,
+		Timeout:    30 * time.Second,
 	}
 
 	// Test JSON marshaling of Duration
 	data, err := json.Marshal(caps)
 	require.NoError(t, err)
 
-	var unmarshaled ToolCapabilities
+	var unmarshaled tools.ToolCapabilities
 	err = json.Unmarshal(data, &unmarshaled)
 	require.NoError(t, err)
 
@@ -943,7 +913,7 @@ func TestToolCapabilities_Timeout(t *testing.T) {
 }
 
 func TestToolExample(t *testing.T) {
-	example := ToolExample{
+	example := tools.ToolExample{
 		Name:        "Example Test",
 		Description: "Testing tool example",
 		Input: map[string]interface{}{
@@ -960,7 +930,7 @@ func TestToolExample(t *testing.T) {
 	data, err := json.Marshal(example)
 	require.NoError(t, err)
 
-	var unmarshaled ToolExample
+	var unmarshaled tools.ToolExample
 	err = json.Unmarshal(data, &unmarshaled)
 	require.NoError(t, err)
 
@@ -971,14 +941,14 @@ func TestToolExample(t *testing.T) {
 
 // Benchmarks
 func BenchmarkTool_Validate(b *testing.B) {
-	tool := &Tool{
+	tool := &tools.Tool{
 		ID:          "test-tool",
 		Name:        "Test Tool",
 		Description: "A test tool",
 		Version:     "1.0.0",
-		Schema: &ToolSchema{
+		Schema: &tools.ToolSchema{
 			Type: "object",
-			Properties: map[string]*Property{
+			Properties: map[string]*tools.Property{
 				"param1": {Type: "string"},
 				"param2": {Type: "integer"},
 				"param3": {Type: "boolean"},
@@ -995,14 +965,14 @@ func BenchmarkTool_Validate(b *testing.B) {
 }
 
 func BenchmarkTool_Clone(b *testing.B) {
-	tool := &Tool{
+	tool := &tools.Tool{
 		ID:          "test-tool",
 		Name:        "Test Tool",
 		Description: "A test tool",
 		Version:     "1.0.0",
-		Schema: &ToolSchema{
+		Schema: &tools.ToolSchema{
 			Type: "object",
-			Properties: map[string]*Property{
+			Properties: map[string]*tools.Property{
 				"param1": {
 					Type:      "string",
 					MinLength: toolTestIntPtr(1),
@@ -1010,7 +980,7 @@ func BenchmarkTool_Clone(b *testing.B) {
 				},
 				"param2": {
 					Type: "array",
-					Items: &Property{
+					Items: &tools.Property{
 						Type: "integer",
 					},
 				},
@@ -1018,11 +988,11 @@ func BenchmarkTool_Clone(b *testing.B) {
 			Required: []string{"param1"},
 		},
 		Executor: &mockExecutor{},
-		Metadata: &ToolMetadata{
+		Metadata: &tools.ToolMetadata{
 			Author: "Test Author",
 			Tags:   []string{"test", "benchmark"},
 		},
-		Capabilities: &ToolCapabilities{
+		Capabilities: &tools.ToolCapabilities{
 			Streaming: true,
 			Async:     false,
 		},
@@ -1035,14 +1005,14 @@ func BenchmarkTool_Clone(b *testing.B) {
 }
 
 func BenchmarkTool_MarshalJSON(b *testing.B) {
-	tool := &Tool{
+	tool := &tools.Tool{
 		ID:          "test-tool",
 		Name:        "Test Tool",
 		Description: "A test tool",
 		Version:     "1.0.0",
-		Schema: &ToolSchema{
+		Schema: &tools.ToolSchema{
 			Type: "object",
-			Properties: map[string]*Property{
+			Properties: map[string]*tools.Property{
 				"param1": {Type: "string"},
 			},
 		},

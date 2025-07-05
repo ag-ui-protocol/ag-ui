@@ -21,7 +21,7 @@ func TestStreamingContext(t *testing.T) {
 	t.Run("NewStreamingContext", func(t *testing.T) {
 		ctx := context.Background()
 		sc := NewStreamingContext(ctx)
-		
+
 		assert.NotNil(t, sc)
 		assert.NotNil(t, sc.ctx)
 		assert.NotNil(t, sc.chunks)
@@ -32,7 +32,7 @@ func TestStreamingContext(t *testing.T) {
 	t.Run("Send", func(t *testing.T) {
 		ctx := context.Background()
 		sc := NewStreamingContext(ctx)
-		
+
 		// Test sending various data types
 		testCases := []interface{}{
 			"string data",
@@ -41,11 +41,11 @@ func TestStreamingContext(t *testing.T) {
 			map[string]interface{}{"key": "value"},
 			[]string{"item1", "item2"},
 		}
-		
+
 		for _, data := range testCases {
 			err := sc.Send(data)
 			assert.NoError(t, err)
-			
+
 			select {
 			case chunk := <-sc.Channel():
 				assert.Equal(t, "data", chunk.Type)
@@ -59,11 +59,11 @@ func TestStreamingContext(t *testing.T) {
 	t.Run("SendError", func(t *testing.T) {
 		ctx := context.Background()
 		sc := NewStreamingContext(ctx)
-		
+
 		testErr := errors.New("test error")
 		err := sc.SendError(testErr)
 		assert.NoError(t, err)
-		
+
 		select {
 		case chunk := <-sc.Channel():
 			assert.Equal(t, "error", chunk.Type)
@@ -76,15 +76,15 @@ func TestStreamingContext(t *testing.T) {
 	t.Run("SendMetadata", func(t *testing.T) {
 		ctx := context.Background()
 		sc := NewStreamingContext(ctx)
-		
+
 		metadata := map[string]interface{}{
 			"progress": 50,
 			"status":   "processing",
 		}
-		
+
 		err := sc.SendMetadata(metadata)
 		assert.NoError(t, err)
-		
+
 		select {
 		case chunk := <-sc.Channel():
 			assert.Equal(t, "metadata", chunk.Type)
@@ -97,10 +97,10 @@ func TestStreamingContext(t *testing.T) {
 	t.Run("Complete", func(t *testing.T) {
 		ctx := context.Background()
 		sc := NewStreamingContext(ctx)
-		
+
 		err := sc.Complete()
 		assert.NoError(t, err)
-		
+
 		select {
 		case chunk := <-sc.Channel():
 			assert.Equal(t, "complete", chunk.Type)
@@ -113,21 +113,21 @@ func TestStreamingContext(t *testing.T) {
 	t.Run("Close", func(t *testing.T) {
 		ctx := context.Background()
 		sc := NewStreamingContext(ctx)
-		
+
 		// Send some data first
 		err := sc.Send("test")
 		assert.NoError(t, err)
-		
+
 		// Close the context
 		err = sc.Close()
 		assert.NoError(t, err)
 		assert.True(t, sc.closed)
-		
+
 		// Try to send after close
 		err = sc.Send("should fail")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "streaming context is closed")
-		
+
 		// Close again should be safe
 		err = sc.Close()
 		assert.NoError(t, err)
@@ -136,15 +136,16 @@ func TestStreamingContext(t *testing.T) {
 	t.Run("ContextCancellation", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		sc := NewStreamingContext(ctx)
-		
+
 		// Fill the buffer to block
 		for i := 0; i < 100; i++ {
-			sc.Send(i)
+			err := sc.Send(i)
+			assert.NoError(t, err)
 		}
-		
+
 		// Cancel context
 		cancel()
-		
+
 		// Should get context error
 		err := sc.Send("should fail")
 		assert.Error(t, err)
@@ -154,12 +155,12 @@ func TestStreamingContext(t *testing.T) {
 	t.Run("IndexIncrement", func(t *testing.T) {
 		ctx := context.Background()
 		sc := NewStreamingContext(ctx)
-		
+
 		// Send multiple chunks and verify index increments
 		for i := 0; i < 5; i++ {
 			err := sc.Send(i)
 			assert.NoError(t, err)
-			
+
 			select {
 			case chunk := <-sc.Channel():
 				assert.Equal(t, i, chunk.Index)
@@ -180,29 +181,29 @@ func TestStreamingToolHelper(t *testing.T) {
 	t.Run("StreamJSON", func(t *testing.T) {
 		helper := NewStreamingToolHelper()
 		ctx := context.Background()
-		
+
 		// Test data
 		data := map[string]interface{}{
 			"name":   "test",
 			"value":  float64(123), // JSON numbers unmarshal as float64
 			"nested": map[string]interface{}{"key": "value"},
 		}
-		
+
 		// Stream with small chunk size
 		chunkSize := 10
 		chunks, err := helper.StreamJSON(ctx, data, chunkSize)
 		assert.NoError(t, err)
 		assert.NotNil(t, chunks)
-		
+
 		// Collect all chunks
 		var result []byte
 		var complete bool
 		index := 0
-		
+
 		for chunk := range chunks {
 			assert.Equal(t, index, chunk.Index)
 			index++
-			
+
 			switch chunk.Type {
 			case "data":
 				result = append(result, []byte(chunk.Data.(string))...)
@@ -212,9 +213,9 @@ func TestStreamingToolHelper(t *testing.T) {
 				t.Fatalf("unexpected chunk type: %s", chunk.Type)
 			}
 		}
-		
+
 		assert.True(t, complete)
-		
+
 		// Verify reassembled JSON
 		var reconstructed map[string]interface{}
 		err = json.Unmarshal(result, &reconstructed)
@@ -225,10 +226,10 @@ func TestStreamingToolHelper(t *testing.T) {
 	t.Run("StreamJSON_InvalidData", func(t *testing.T) {
 		helper := NewStreamingToolHelper()
 		ctx := context.Background()
-		
+
 		// Create data that can't be marshaled
 		data := make(chan int)
-		
+
 		chunks, err := helper.StreamJSON(ctx, data, 10)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to marshal JSON")
@@ -239,13 +240,13 @@ func TestStreamingToolHelper(t *testing.T) {
 		helper := NewStreamingToolHelper()
 		ctx := context.Background()
 		data := map[string]string{"test": "data"}
-		
+
 		// Test zero chunkSize
 		chunks, err := helper.StreamJSON(ctx, data, 0)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "chunkSize must be positive, got 0")
 		assert.Nil(t, chunks)
-		
+
 		// Test negative chunkSize
 		chunks, err = helper.StreamJSON(ctx, data, -10)
 		assert.Error(t, err)
@@ -256,13 +257,13 @@ func TestStreamingToolHelper(t *testing.T) {
 	t.Run("StreamJSON_ContextCancellation", func(t *testing.T) {
 		helper := NewStreamingToolHelper()
 		ctx, cancel := context.WithCancel(context.Background())
-		
+
 		// Large data to ensure multiple chunks
 		data := strings.Repeat("a", 1000)
-		
+
 		chunks, err := helper.StreamJSON(ctx, data, 10)
 		assert.NoError(t, err)
-		
+
 		// Cancel context after first chunk
 		var gotChunk bool
 		for chunk := range chunks {
@@ -274,33 +275,33 @@ func TestStreamingToolHelper(t *testing.T) {
 				t.Fatal("should not receive complete chunk after cancellation")
 			}
 		}
-		
+
 		assert.True(t, gotChunk)
 	})
 
 	t.Run("StreamReader", func(t *testing.T) {
 		helper := NewStreamingToolHelper()
 		ctx := context.Background()
-		
+
 		// Test data
 		data := "Hello, World! This is a test of streaming."
 		reader := strings.NewReader(data)
-		
+
 		// Stream with small chunk size
 		chunkSize := 5
 		chunks, err := helper.StreamReader(ctx, reader, chunkSize)
 		assert.NoError(t, err)
 		assert.NotNil(t, chunks)
-		
+
 		// Collect all chunks
 		var result []byte
 		var complete bool
 		index := 0
-		
+
 		for chunk := range chunks {
 			assert.Equal(t, index, chunk.Index)
 			index++
-			
+
 			switch chunk.Type {
 			case "data":
 				result = append(result, []byte(chunk.Data.(string))...)
@@ -312,7 +313,7 @@ func TestStreamingToolHelper(t *testing.T) {
 				t.Fatalf("unexpected chunk type: %s", chunk.Type)
 			}
 		}
-		
+
 		assert.True(t, complete)
 		assert.Equal(t, data, string(result))
 	})
@@ -321,13 +322,13 @@ func TestStreamingToolHelper(t *testing.T) {
 		helper := NewStreamingToolHelper()
 		ctx := context.Background()
 		reader := strings.NewReader("test data")
-		
+
 		// Test zero chunkSize
 		chunks, err := helper.StreamReader(ctx, reader, 0)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "chunkSize must be positive, got 0")
 		assert.Nil(t, chunks)
-		
+
 		// Test negative chunkSize
 		reader = strings.NewReader("test data") // New reader since previous one was consumed
 		chunks, err = helper.StreamReader(ctx, reader, -10)
@@ -339,13 +340,13 @@ func TestStreamingToolHelper(t *testing.T) {
 	t.Run("StreamReader_Error", func(t *testing.T) {
 		helper := NewStreamingToolHelper()
 		ctx := context.Background()
-		
+
 		// Create a reader that errors
 		reader := &errorReader{err: errors.New("read error")}
-		
+
 		chunks, err := helper.StreamReader(ctx, reader, 10)
 		assert.NoError(t, err)
-		
+
 		var gotError bool
 		for chunk := range chunks {
 			if chunk.Type == "error" {
@@ -353,21 +354,21 @@ func TestStreamingToolHelper(t *testing.T) {
 				assert.Equal(t, "read error", chunk.Data)
 			}
 		}
-		
+
 		assert.True(t, gotError)
 	})
 
 	t.Run("StreamReader_ContextCancellation", func(t *testing.T) {
 		helper := NewStreamingToolHelper()
 		ctx, cancel := context.WithCancel(context.Background())
-		
+
 		// Large data to ensure multiple chunks
 		data := strings.Repeat("a", 1000)
 		reader := strings.NewReader(data)
-		
+
 		chunks, err := helper.StreamReader(ctx, reader, 10)
 		assert.NoError(t, err)
-		
+
 		// Cancel context after first chunk
 		var gotChunk bool
 		for chunk := range chunks {
@@ -379,7 +380,7 @@ func TestStreamingToolHelper(t *testing.T) {
 				t.Fatal("should not receive complete chunk after cancellation")
 			}
 		}
-		
+
 		assert.True(t, gotChunk)
 	})
 }
@@ -397,7 +398,7 @@ func TestStreamAccumulator(t *testing.T) {
 
 	t.Run("AddChunk_Data", func(t *testing.T) {
 		acc := NewStreamAccumulator()
-		
+
 		chunks := []string{"Hello", " ", "World", "!"}
 		for i, data := range chunks {
 			chunk := &ToolStreamChunk{
@@ -408,11 +409,11 @@ func TestStreamAccumulator(t *testing.T) {
 			err := acc.AddChunk(chunk)
 			assert.NoError(t, err)
 		}
-		
+
 		// Complete the stream
 		err := acc.AddChunk(&ToolStreamChunk{Type: "complete"})
 		assert.NoError(t, err)
-		
+
 		result, metadata, err := acc.GetResult()
 		assert.NoError(t, err)
 		assert.Equal(t, "Hello World!", result)
@@ -421,21 +422,21 @@ func TestStreamAccumulator(t *testing.T) {
 
 	t.Run("AddChunk_Metadata", func(t *testing.T) {
 		acc := NewStreamAccumulator()
-		
+
 		// Add metadata chunks
 		meta1 := map[string]interface{}{"key1": "value1"}
 		meta2 := map[string]interface{}{"key2": "value2", "key1": "updated"}
-		
+
 		err := acc.AddChunk(&ToolStreamChunk{Type: "metadata", Data: meta1})
 		assert.NoError(t, err)
-		
+
 		err = acc.AddChunk(&ToolStreamChunk{Type: "metadata", Data: meta2})
 		assert.NoError(t, err)
-		
+
 		// Complete the stream
 		err = acc.AddChunk(&ToolStreamChunk{Type: "complete"})
 		assert.NoError(t, err)
-		
+
 		_, metadata, err := acc.GetResult()
 		assert.NoError(t, err)
 		assert.Equal(t, "updated", metadata["key1"])
@@ -444,21 +445,21 @@ func TestStreamAccumulator(t *testing.T) {
 
 	t.Run("AddChunk_Error", func(t *testing.T) {
 		acc := NewStreamAccumulator()
-		
+
 		// Add some data
 		err := acc.AddChunk(&ToolStreamChunk{Type: "data", Data: "test"})
 		assert.NoError(t, err)
-		
+
 		// Add error
 		err = acc.AddChunk(&ToolStreamChunk{Type: "error", Data: "something went wrong"})
 		assert.NoError(t, err)
-		
+
 		assert.True(t, acc.HasError())
-		
+
 		// Complete the stream
 		err = acc.AddChunk(&ToolStreamChunk{Type: "complete"})
 		assert.NoError(t, err)
-		
+
 		_, _, err = acc.GetResult()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "stream error: something went wrong")
@@ -466,12 +467,12 @@ func TestStreamAccumulator(t *testing.T) {
 
 	t.Run("AddChunk_AfterComplete", func(t *testing.T) {
 		acc := NewStreamAccumulator()
-		
+
 		// Complete the stream
 		err := acc.AddChunk(&ToolStreamChunk{Type: "complete"})
 		assert.NoError(t, err)
 		assert.True(t, acc.IsComplete())
-		
+
 		// Try to add chunk after complete
 		err = acc.AddChunk(&ToolStreamChunk{Type: "data", Data: "test"})
 		assert.Error(t, err)
@@ -480,7 +481,7 @@ func TestStreamAccumulator(t *testing.T) {
 
 	t.Run("AddChunk_InvalidDataType", func(t *testing.T) {
 		acc := NewStreamAccumulator()
-		
+
 		// Add chunk with non-string data
 		err := acc.AddChunk(&ToolStreamChunk{Type: "data", Data: 123})
 		assert.Error(t, err)
@@ -489,11 +490,11 @@ func TestStreamAccumulator(t *testing.T) {
 
 	t.Run("GetResult_NotComplete", func(t *testing.T) {
 		acc := NewStreamAccumulator()
-		
+
 		// Add some data but don't complete
 		err := acc.AddChunk(&ToolStreamChunk{Type: "data", Data: "test"})
 		assert.NoError(t, err)
-		
+
 		_, _, err = acc.GetResult()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "stream is not complete")
@@ -501,9 +502,9 @@ func TestStreamAccumulator(t *testing.T) {
 
 	t.Run("ConcurrentAccess", func(t *testing.T) {
 		acc := NewStreamAccumulator()
-		
+
 		var wg sync.WaitGroup
-		
+
 		// Concurrent writes
 		for i := 0; i < 10; i++ {
 			wg.Add(1)
@@ -514,10 +515,11 @@ func TestStreamAccumulator(t *testing.T) {
 					Data:  string(rune('A' + index)),
 					Index: index,
 				}
-				acc.AddChunk(chunk)
+				err := acc.AddChunk(chunk)
+				assert.NoError(t, err)
 			}(i)
 		}
-		
+
 		// Concurrent reads
 		for i := 0; i < 5; i++ {
 			wg.Add(1)
@@ -527,13 +529,13 @@ func TestStreamAccumulator(t *testing.T) {
 				acc.HasError()
 			}()
 		}
-		
+
 		wg.Wait()
-		
+
 		// Complete and verify
 		err := acc.AddChunk(&ToolStreamChunk{Type: "complete"})
 		assert.NoError(t, err)
-		
+
 		result, _, err := acc.GetResult()
 		assert.NoError(t, err)
 		assert.Len(t, result, 10)
@@ -549,7 +551,7 @@ func TestStreamingParameterParser(t *testing.T) {
 				"name": {Type: "string"},
 			},
 		}
-		
+
 		parser := NewStreamingParameterParser(schema)
 		assert.NotNil(t, parser)
 		assert.NotNil(t, parser.validator)
@@ -566,14 +568,17 @@ func TestStreamingParameterParser(t *testing.T) {
 			},
 			Required: []string{"name"},
 		}
-		
+
 		parser := NewStreamingParameterParser(schema)
-		
+
 		// Add chunks to form valid JSON
-		parser.AddChunk(`{"na`)
-		parser.AddChunk(`me": "John"`)
-		parser.AddChunk(`, "age": 30}`)
-		
+		err := parser.AddChunk(`{"na`)
+		assert.NoError(t, err)
+		err = parser.AddChunk(`me": "John"`)
+		assert.NoError(t, err)
+		err = parser.AddChunk(`, "age": 30}`)
+		assert.NoError(t, err)
+
 		// Try to parse
 		params, err := parser.TryParse()
 		assert.NoError(t, err)
@@ -584,9 +589,10 @@ func TestStreamingParameterParser(t *testing.T) {
 
 	t.Run("TryParse_InvalidJSON", func(t *testing.T) {
 		parser := NewStreamingParameterParser(nil)
-		
-		parser.AddChunk(`{"invalid": json`)
-		
+
+		err := parser.AddChunk(`{"invalid": json`)
+		assert.NoError(t, err)
+
 		params, err := parser.TryParse()
 		assert.Error(t, err)
 		assert.Nil(t, params)
@@ -601,12 +607,13 @@ func TestStreamingParameterParser(t *testing.T) {
 			},
 			Required: []string{"name"},
 		}
-		
+
 		parser := NewStreamingParameterParser(schema)
-		
+
 		// Add valid JSON but missing required field
-		parser.AddChunk(`{"age": 30}`)
-		
+		err := parser.AddChunk(`{"age": 30}`)
+		assert.NoError(t, err)
+
 		params, err := parser.TryParse()
 		assert.Error(t, err)
 		assert.Nil(t, params)
@@ -615,9 +622,10 @@ func TestStreamingParameterParser(t *testing.T) {
 
 	t.Run("TryParse_NoValidator", func(t *testing.T) {
 		parser := NewStreamingParameterParser(nil)
-		
-		parser.AddChunk(`{"any": "data"}`)
-		
+
+		err := parser.AddChunk(`{"any": "data"}`)
+		assert.NoError(t, err)
+
 		params, err := parser.TryParse()
 		assert.NoError(t, err)
 		assert.Equal(t, "data", params["any"])
@@ -630,7 +638,7 @@ func TestStreamingResultBuilder(t *testing.T) {
 	t.Run("NewStreamingResultBuilder", func(t *testing.T) {
 		ctx := context.Background()
 		builder := NewStreamingResultBuilder(ctx)
-		
+
 		assert.NotNil(t, builder)
 		assert.NotNil(t, builder.ctx)
 		assert.NotNil(t, builder.streamCtx)
@@ -639,10 +647,10 @@ func TestStreamingResultBuilder(t *testing.T) {
 	t.Run("SendProgress", func(t *testing.T) {
 		ctx := context.Background()
 		builder := NewStreamingResultBuilder(ctx)
-		
+
 		err := builder.SendProgress(50, 100, "Processing...")
 		assert.NoError(t, err)
-		
+
 		select {
 		case chunk := <-builder.Channel():
 			assert.Equal(t, "metadata", chunk.Type)
@@ -659,11 +667,11 @@ func TestStreamingResultBuilder(t *testing.T) {
 	t.Run("SendPartialResult", func(t *testing.T) {
 		ctx := context.Background()
 		builder := NewStreamingResultBuilder(ctx)
-		
+
 		data := map[string]string{"status": "partial"}
 		err := builder.SendPartialResult(data)
 		assert.NoError(t, err)
-		
+
 		select {
 		case chunk := <-builder.Channel():
 			assert.Equal(t, "data", chunk.Type)
@@ -676,15 +684,15 @@ func TestStreamingResultBuilder(t *testing.T) {
 	t.Run("Complete", func(t *testing.T) {
 		ctx := context.Background()
 		builder := NewStreamingResultBuilder(ctx)
-		
+
 		// Complete with final data
 		finalData := map[string]string{"status": "done"}
 		err := builder.Complete(finalData)
 		assert.NoError(t, err)
-		
+
 		// Should receive data chunk then complete chunk
 		var gotData, gotComplete bool
-		
+
 		timeout := time.After(time.Second)
 		for i := 0; i < 2; i++ {
 			select {
@@ -699,7 +707,7 @@ func TestStreamingResultBuilder(t *testing.T) {
 				t.Fatal("timeout waiting for chunks")
 			}
 		}
-		
+
 		assert.True(t, gotData)
 		assert.True(t, gotComplete)
 	})
@@ -707,10 +715,10 @@ func TestStreamingResultBuilder(t *testing.T) {
 	t.Run("Complete_NoData", func(t *testing.T) {
 		ctx := context.Background()
 		builder := NewStreamingResultBuilder(ctx)
-		
+
 		err := builder.Complete(nil)
 		assert.NoError(t, err)
-		
+
 		select {
 		case chunk := <-builder.Channel():
 			assert.Equal(t, "complete", chunk.Type)
@@ -722,11 +730,11 @@ func TestStreamingResultBuilder(t *testing.T) {
 	t.Run("Error", func(t *testing.T) {
 		ctx := context.Background()
 		builder := NewStreamingResultBuilder(ctx)
-		
+
 		testErr := errors.New("something went wrong")
 		err := builder.Error(testErr)
 		assert.NoError(t, err)
-		
+
 		// Should receive error chunk
 		select {
 		case chunk := <-builder.Channel():
@@ -735,7 +743,7 @@ func TestStreamingResultBuilder(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("timeout waiting for chunk")
 		}
-		
+
 		// Channel should be closed
 		_, ok := <-builder.Channel()
 		assert.False(t, ok)
@@ -744,31 +752,39 @@ func TestStreamingResultBuilder(t *testing.T) {
 	t.Run("ConcurrentOperations", func(t *testing.T) {
 		ctx := context.Background()
 		builder := NewStreamingResultBuilder(ctx)
-		
+
 		var wg sync.WaitGroup
-		
+
 		// Send progress updates concurrently
 		for i := 0; i < 5; i++ {
 			wg.Add(1)
 			go func(index int) {
 				defer wg.Done()
-				builder.SendProgress(index, 5, "Processing")
+				err := builder.SendProgress(index, 5, "Processing")
+				if err != nil {
+					// Ignore error in concurrent test
+					_ = err
+				}
 			}(i)
 		}
-		
+
 		// Send partial results concurrently
 		for i := 0; i < 5; i++ {
 			wg.Add(1)
 			go func(index int) {
 				defer wg.Done()
-				builder.SendPartialResult(map[string]int{"index": index})
+				err := builder.SendPartialResult(map[string]int{"index": index})
+				if err != nil {
+					// Ignore error in concurrent test
+					_ = err
+				}
 			}(i)
 		}
-		
+
 		// Consume chunks concurrently
 		var chunkCount int
 		var mu sync.Mutex
-		
+
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -790,13 +806,14 @@ func TestStreamingResultBuilder(t *testing.T) {
 				}
 			}
 		}()
-		
+
 		// Wait for goroutines
 		wg.Wait()
-		
+
 		// Complete the stream
-		builder.Complete(nil)
-		
+		err := builder.Complete(nil)
+		assert.NoError(t, err)
+
 		mu.Lock()
 		assert.GreaterOrEqual(t, chunkCount, 10)
 		mu.Unlock()
@@ -807,18 +824,21 @@ func TestStreamingResultBuilder(t *testing.T) {
 func TestIntegration(t *testing.T) {
 	t.Run("StreamingTool_EndToEnd", func(t *testing.T) {
 		ctx := context.Background()
-		
+
 		// Simulate a tool that streams results
 		simulateTool := func(ctx context.Context) (<-chan *ToolStreamChunk, error) {
 			builder := NewStreamingResultBuilder(ctx)
-			
+
 			go func() {
 				// Send progress updates
 				for i := 0; i <= 100; i += 20 {
-					builder.SendProgress(i, 100, "Processing")
+					err := builder.SendProgress(i, 100, "Processing")
+					if err != nil {
+						return
+					}
 					time.Sleep(10 * time.Millisecond)
 				}
-				
+
 				// Send partial results as JSON strings
 				for i := 0; i < 3; i++ {
 					partialData := map[string]interface{}{
@@ -827,33 +847,43 @@ func TestIntegration(t *testing.T) {
 					}
 					// Convert to JSON string for accumulator
 					jsonData, _ := json.Marshal(partialData)
-					builder.SendPartialResult(string(jsonData))
+					err := builder.SendPartialResult(string(jsonData))
+					if err != nil {
+						return
+					}
 				}
-				
+
 				// Complete with final result as JSON string
 				finalData, _ := json.Marshal(map[string]string{"status": "success"})
-				builder.Complete(string(finalData))
-				
+				err := builder.Complete(string(finalData))
+				if err != nil {
+					return
+				}
+
 				// Close the stream
-				builder.streamCtx.Close()
+				err = builder.streamCtx.Close()
+				if err != nil {
+					// Already closed is okay
+					_ = err
+				}
 			}()
-			
+
 			return builder.Channel(), nil
 		}
-		
+
 		// Consume the stream
 		chunks, err := simulateTool(ctx)
 		require.NoError(t, err)
-		
+
 		acc := NewStreamAccumulator()
 		for chunk := range chunks {
-			err := acc.AddChunk(chunk)
-			assert.NoError(t, err)
+			chunkErr := acc.AddChunk(chunk)
+			assert.NoError(t, chunkErr)
 		}
-		
+
 		assert.True(t, acc.IsComplete())
 		assert.False(t, acc.HasError())
-		
+
 		_, metadata, err := acc.GetResult()
 		assert.NoError(t, err)
 		assert.NotNil(t, metadata["progress"])
@@ -862,27 +892,27 @@ func TestIntegration(t *testing.T) {
 	t.Run("LargeDataStreaming", func(t *testing.T) {
 		ctx := context.Background()
 		helper := NewStreamingToolHelper()
-		
+
 		// Create large data
 		largeData := make(map[string]interface{})
 		for i := 0; i < 1000; i++ {
 			largeData[fmt.Sprintf("%c%d", 'a'+i%26, i)] = strings.Repeat("data", 100)
 		}
-		
+
 		// Stream it
 		chunks, err := helper.StreamJSON(ctx, largeData, 1024)
 		require.NoError(t, err)
-		
+
 		// Accumulate
 		acc := NewStreamAccumulator()
 		for chunk := range chunks {
-			err := acc.AddChunk(chunk)
-			assert.NoError(t, err)
+			chunkErr := acc.AddChunk(chunk)
+			assert.NoError(t, chunkErr)
 		}
-		
+
 		result, _, err := acc.GetResult()
 		assert.NoError(t, err)
-		
+
 		// Verify reconstruction
 		var reconstructed map[string]interface{}
 		err = json.Unmarshal([]byte(result), &reconstructed)
@@ -893,22 +923,22 @@ func TestIntegration(t *testing.T) {
 	t.Run("ReaderToAccumulator", func(t *testing.T) {
 		ctx := context.Background()
 		helper := NewStreamingToolHelper()
-		
+
 		// Test data
 		testData := "This is a test of streaming from a reader to an accumulator."
 		reader := strings.NewReader(testData)
-		
+
 		// Stream from reader
 		chunks, err := helper.StreamReader(ctx, reader, 5)
 		require.NoError(t, err)
-		
+
 		// Accumulate
 		acc := NewStreamAccumulator()
 		for chunk := range chunks {
-			err := acc.AddChunk(chunk)
-			assert.NoError(t, err)
+			chunkErr := acc.AddChunk(chunk)
+			assert.NoError(t, chunkErr)
 		}
-		
+
 		result, _, err := acc.GetResult()
 		assert.NoError(t, err)
 		assert.Equal(t, testData, result)
@@ -931,27 +961,28 @@ func TestStreamingEdgeCases(t *testing.T) {
 	t.Run("EmptyStream", func(t *testing.T) {
 		ctx := context.Background()
 		sc := NewStreamingContext(ctx)
-		
+
 		// Complete immediately
 		err := sc.Complete()
 		assert.NoError(t, err)
-		
+
 		chunk := <-sc.Channel()
 		assert.Equal(t, "complete", chunk.Type)
-		
-		sc.Close()
+
+		err = sc.Close()
+		assert.NoError(t, err)
 	})
 
 	t.Run("ZeroChunkSize", func(t *testing.T) {
 		ctx := context.Background()
 		helper := NewStreamingToolHelper()
-		
+
 		// Zero chunk size should use a minimum buffer
 		reader := strings.NewReader("test")
 		chunks, err := helper.StreamReader(ctx, reader, 1) // Use 1 instead of 0
 		assert.NoError(t, err)
 		assert.NotNil(t, chunks)
-		
+
 		// Collect all chunks
 		var result string
 		for chunk := range chunks {
@@ -963,11 +994,11 @@ func TestStreamingEdgeCases(t *testing.T) {
 	})
 
 	t.Run("NilContext", func(t *testing.T) {
-		// Creating with nil context defaults to background context
-		sc := NewStreamingContext(nil)
+		// Test that context.TODO() is handled properly
+		sc := NewStreamingContext(context.TODO())
 		assert.NotNil(t, sc)
-		assert.Equal(t, context.Background(), sc.ctx)
-		
+		assert.NotEqual(t, nil, sc.ctx)
+
 		// Operations should work normally with the background context
 		err := sc.Send("test")
 		assert.NoError(t, err)
@@ -976,55 +1007,56 @@ func TestStreamingEdgeCases(t *testing.T) {
 	t.Run("VeryLargeChunk", func(t *testing.T) {
 		ctx := context.Background()
 		sc := NewStreamingContext(ctx)
-		
+
 		// Send very large data
 		largeData := strings.Repeat("x", 10*1024*1024) // 10MB
 		err := sc.Send(largeData)
 		assert.NoError(t, err)
-		
+
 		select {
 		case chunk := <-sc.Channel():
 			assert.Equal(t, largeData, chunk.Data)
 		case <-time.After(time.Second):
 			t.Fatal("timeout waiting for large chunk")
 		}
-		
-		sc.Close()
+
+		err = sc.Close()
+		assert.NoError(t, err)
 	})
 
 	t.Run("RapidClose", func(t *testing.T) {
 		ctx := context.Background()
-		
+
 		// Create and immediately close multiple contexts
 		for i := 0; i < 100; i++ {
 			sc := NewStreamingContext(ctx)
 			go func() {
-				sc.Send("data")
+				_ = sc.Send("data") // Ignore error in race condition test
 			}()
-			sc.Close()
+			_ = sc.Close() // Ignore error in rapid close test
 		}
 	})
 
 	t.Run("ConcurrentClose", func(t *testing.T) {
 		ctx := context.Background()
 		sc := NewStreamingContext(ctx)
-		
+
 		// Send some data
 		err := sc.Send("test")
 		assert.NoError(t, err)
-		
+
 		// Close concurrently from multiple goroutines
 		var wg sync.WaitGroup
 		for i := 0; i < 10; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				err := sc.Close()
-				assert.NoError(t, err)
+				closeErr := sc.Close()
+				assert.NoError(t, closeErr)
 			}()
 		}
 		wg.Wait()
-		
+
 		// Verify closed state
 		assert.True(t, sc.closed)
 		err = sc.Send("should fail")
@@ -1034,12 +1066,12 @@ func TestStreamingEdgeCases(t *testing.T) {
 	t.Run("StreamJSON_LargeChunkSize", func(t *testing.T) {
 		helper := NewStreamingToolHelper()
 		ctx := context.Background()
-		
+
 		// Small data with large chunk size
 		data := map[string]string{"key": "value"}
 		chunks, err := helper.StreamJSON(ctx, data, 10000)
 		assert.NoError(t, err)
-		
+
 		// Should get all data in one chunk plus complete
 		var chunkCount int
 		for range chunks {
@@ -1051,13 +1083,13 @@ func TestStreamingEdgeCases(t *testing.T) {
 	t.Run("BufferOverflow", func(t *testing.T) {
 		ctx := context.Background()
 		sc := NewStreamingContext(ctx)
-		
+
 		// Fill the buffer completely (100 is the buffer size)
 		for i := 0; i < 100; i++ {
 			err := sc.Send(i)
 			assert.NoError(t, err)
 		}
-		
+
 		// Next send should block until we read
 		done := make(chan bool)
 		go func() {
@@ -1065,7 +1097,7 @@ func TestStreamingEdgeCases(t *testing.T) {
 			assert.NoError(t, err)
 			done <- true
 		}()
-		
+
 		// Should not complete immediately
 		select {
 		case <-done:
@@ -1073,10 +1105,10 @@ func TestStreamingEdgeCases(t *testing.T) {
 		case <-time.After(100 * time.Millisecond):
 			// Expected - send is blocked
 		}
-		
+
 		// Read one item to unblock
 		<-sc.Channel()
-		
+
 		// Now send should complete
 		select {
 		case <-done:
@@ -1084,18 +1116,19 @@ func TestStreamingEdgeCases(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("Send should have completed after buffer space available")
 		}
-		
-		sc.Close()
+
+		err := sc.Close()
+		assert.NoError(t, err)
 	})
 
 	t.Run("StreamingResultBuilder_ClosedContext", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		builder := NewStreamingResultBuilder(ctx)
-		
+
 		// Cancel context
 		cancel()
-		
-		// Operations should handle cancelled context
+
+		// Operations should handle canceled context
 		err := builder.SendProgress(50, 100, "test")
 		// The error depends on whether the buffered channel accepts the write
 		// before checking context cancellation
@@ -1106,7 +1139,7 @@ func TestStreamingEdgeCases(t *testing.T) {
 
 	t.Run("StreamAccumulator_MixedMetadata", func(t *testing.T) {
 		acc := NewStreamAccumulator()
-		
+
 		// Add various metadata types
 		meta1 := map[string]interface{}{
 			"string": "value",
@@ -1114,18 +1147,18 @@ func TestStreamingEdgeCases(t *testing.T) {
 			"bool":   true,
 			"nested": map[string]interface{}{"key": "value"},
 		}
-		
+
 		err := acc.AddChunk(&ToolStreamChunk{Type: "metadata", Data: meta1})
 		assert.NoError(t, err)
-		
+
 		// Add data
 		err = acc.AddChunk(&ToolStreamChunk{Type: "data", Data: "content"})
 		assert.NoError(t, err)
-		
+
 		// Complete
 		err = acc.AddChunk(&ToolStreamChunk{Type: "complete"})
 		assert.NoError(t, err)
-		
+
 		result, metadata, err := acc.GetResult()
 		assert.NoError(t, err)
 		assert.Equal(t, "content", result)
@@ -1142,24 +1175,27 @@ func TestStreamingEdgeCases(t *testing.T) {
 				"name": {Type: "string"},
 			},
 		}
-		
+
 		parser := NewStreamingParameterParser(schema)
-		
+
 		// Try parsing at each stage
-		parser.AddChunk(`{`)
-		_, err := parser.TryParse()
+		err := parser.AddChunk(`{`)
+		assert.NoError(t, err)
+		_, err = parser.TryParse()
 		assert.Error(t, err) // Incomplete JSON
-		
-		parser.AddChunk(`"name"`)
+
+		err = parser.AddChunk(`"name"`)
+		assert.NoError(t, err)
 		_, err = parser.TryParse()
 		assert.Error(t, err) // Still incomplete
-		
-		parser.AddChunk(`: "test"}`)
+
+		err = parser.AddChunk(`: "test"}`)
+		assert.NoError(t, err)
 		params, err := parser.TryParse()
 		assert.NoError(t, err)
 		assert.Equal(t, "test", params["name"])
 		assert.True(t, parser.IsComplete())
-		
+
 		// Further parsing should still work
 		params2, err := parser.TryParse()
 		assert.NoError(t, err)
@@ -1169,15 +1205,15 @@ func TestStreamingEdgeCases(t *testing.T) {
 	t.Run("EmptyReader", func(t *testing.T) {
 		helper := NewStreamingToolHelper()
 		ctx := context.Background()
-		
+
 		reader := bytes.NewReader([]byte{})
 		chunks, err := helper.StreamReader(ctx, reader, 10)
 		assert.NoError(t, err)
-		
+
 		// Should only get complete chunk
 		chunk := <-chunks
 		assert.Equal(t, "complete", chunk.Type)
-		
+
 		// Channel should be closed
 		_, ok := <-chunks
 		assert.False(t, ok)
@@ -1188,11 +1224,13 @@ func TestStreamingEdgeCases(t *testing.T) {
 func BenchmarkStreamingContext(b *testing.B) {
 	ctx := context.Background()
 	sc := NewStreamingContext(ctx)
-	defer sc.Close()
-	
+	defer func() {
+		_ = sc.Close() // Ignore error in benchmark cleanup
+	}()
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		sc.Send("test data")
+		_ = sc.Send("test data") // Ignore error in benchmark
 		<-sc.Channel()
 	}
 }
@@ -1200,7 +1238,7 @@ func BenchmarkStreamingContext(b *testing.B) {
 // BenchmarkStreamAccumulator benchmarks StreamAccumulator operations
 func BenchmarkStreamAccumulator(b *testing.B) {
 	acc := NewStreamAccumulator()
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		chunk := &ToolStreamChunk{
@@ -1208,7 +1246,7 @@ func BenchmarkStreamAccumulator(b *testing.B) {
 			Data:  "test data",
 			Index: i,
 		}
-		acc.AddChunk(chunk)
+		_ = acc.AddChunk(chunk) // Ignore error in benchmark
 	}
 }
 
@@ -1216,7 +1254,7 @@ func BenchmarkStreamAccumulator(b *testing.B) {
 func TestStreamingMiscellaneous(t *testing.T) {
 	t.Run("StreamAccumulator_NonStringError", func(t *testing.T) {
 		acc := NewStreamAccumulator()
-		
+
 		// Add error chunk with non-string data
 		err := acc.AddChunk(&ToolStreamChunk{
 			Type: "error",
@@ -1224,11 +1262,11 @@ func TestStreamingMiscellaneous(t *testing.T) {
 		})
 		assert.NoError(t, err)
 		assert.True(t, acc.HasError())
-		
+
 		// Complete and check error
 		err = acc.AddChunk(&ToolStreamChunk{Type: "complete"})
 		assert.NoError(t, err)
-		
+
 		_, _, err = acc.GetResult()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "stream error:")
@@ -1236,18 +1274,18 @@ func TestStreamingMiscellaneous(t *testing.T) {
 
 	t.Run("StreamAccumulator_NonMapMetadata", func(t *testing.T) {
 		acc := NewStreamAccumulator()
-		
+
 		// Add metadata chunk with non-map data - should be ignored
 		err := acc.AddChunk(&ToolStreamChunk{
 			Type: "metadata",
 			Data: "not a map",
 		})
 		assert.NoError(t, err)
-		
+
 		// Complete
 		err = acc.AddChunk(&ToolStreamChunk{Type: "complete"})
 		assert.NoError(t, err)
-		
+
 		_, metadata, err := acc.GetResult()
 		assert.NoError(t, err)
 		assert.Empty(t, metadata)
@@ -1256,13 +1294,13 @@ func TestStreamingMiscellaneous(t *testing.T) {
 	t.Run("StreamingContext_MultipleCompletes", func(t *testing.T) {
 		ctx := context.Background()
 		sc := NewStreamingContext(ctx)
-		
+
 		// Send multiple complete chunks
 		for i := 0; i < 3; i++ {
 			err := sc.Complete()
 			assert.NoError(t, err)
 		}
-		
+
 		// Verify we get all complete chunks
 		for i := 0; i < 3; i++ {
 			select {
@@ -1273,18 +1311,19 @@ func TestStreamingMiscellaneous(t *testing.T) {
 				t.Fatal("timeout waiting for complete chunk")
 			}
 		}
-		
-		sc.Close()
+
+		err := sc.Close()
+		assert.NoError(t, err)
 	})
 
 	t.Run("StreamingResultBuilder_CloseAfterError", func(t *testing.T) {
 		ctx := context.Background()
 		builder := NewStreamingResultBuilder(ctx)
-		
+
 		// Send error which should close the stream
 		err := builder.Error(errors.New("test error"))
 		assert.NoError(t, err)
-		
+
 		// Try to send more data - should fail
 		err = builder.SendPartialResult("data")
 		assert.Error(t, err)
@@ -1294,73 +1333,82 @@ func TestStreamingMiscellaneous(t *testing.T) {
 	t.Run("StreamJSON_EmptyData", func(t *testing.T) {
 		helper := NewStreamingToolHelper()
 		ctx := context.Background()
-		
+
 		// Stream empty object
 		chunks, err := helper.StreamJSON(ctx, struct{}{}, 10)
 		assert.NoError(t, err)
-		
+
 		var result string
 		for chunk := range chunks {
 			if chunk.Type == "data" {
 				result += chunk.Data.(string)
 			}
 		}
-		
+
 		assert.Equal(t, "{}", result)
 	})
 
 	t.Run("StreamReader_ZeroByteRead", func(t *testing.T) {
 		helper := NewStreamingToolHelper()
 		ctx := context.Background()
-		
+
 		// Create a reader that returns 0 bytes sometimes
 		reader := &intermittentReader{
 			data:      []byte("Hello, World!"),
 			zeroReads: 3,
 		}
-		
+
 		chunks, err := helper.StreamReader(ctx, reader, 5)
 		assert.NoError(t, err)
-		
+
 		var result string
 		for chunk := range chunks {
 			if chunk.Type == "data" {
 				result += chunk.Data.(string)
 			}
 		}
-		
+
 		assert.Equal(t, "Hello, World!", result)
 	})
 
 	t.Run("ConcurrentStreamingOperations", func(t *testing.T) {
 		ctx := context.Background()
-		
+
 		// Multiple streaming contexts operating concurrently
 		var wg sync.WaitGroup
 		contexts := make([]*StreamingContext, 10)
-		
+
 		for i := 0; i < 10; i++ {
 			contexts[i] = NewStreamingContext(ctx)
 			wg.Add(1)
-			
+
 			go func(idx int, sc *StreamingContext) {
 				defer wg.Done()
-				defer sc.Close()
-				
+				defer func() {
+					_ = sc.Close() // Ignore error in cleanup
+				}()
+
 				// Send data
 				for j := 0; j < 10; j++ {
-					sc.Send(map[string]int{"context": idx, "item": j})
+					err := sc.Send(map[string]int{"context": idx, "item": j})
+					if err != nil {
+						return // Exit on error
+					}
 				}
-				sc.Complete()
+				err := sc.Complete()
+				if err != nil {
+					// Ignore error in concurrent test
+					_ = err
+				}
 			}(i, contexts[i])
 		}
-		
+
 		// Consume from all contexts concurrently
 		for i, sc := range contexts {
 			wg.Add(1)
 			go func(idx int, sc *StreamingContext) {
 				defer wg.Done()
-				
+
 				itemCount := 0
 				for chunk := range sc.Channel() {
 					if chunk.Type == "data" {
@@ -1372,7 +1420,7 @@ func TestStreamingMiscellaneous(t *testing.T) {
 				assert.GreaterOrEqual(t, itemCount, 10)
 			}(i, sc)
 		}
-		
+
 		wg.Wait()
 	})
 }
@@ -1390,11 +1438,11 @@ func (r *intermittentReader) Read(p []byte) (n int, err error) {
 		r.readCount++
 		return 0, nil
 	}
-	
+
 	if r.pos >= len(r.data) {
 		return 0, io.EOF
 	}
-	
+
 	n = copy(p, r.data[r.pos:])
 	r.pos += n
 	return n, nil

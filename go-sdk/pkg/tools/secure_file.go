@@ -14,15 +14,15 @@ type SecureFileOptions struct {
 	// AllowedPaths defines paths that are allowed for file operations
 	// If empty, all paths are allowed (not recommended for production)
 	AllowedPaths []string
-	
+
 	// MaxFileSize is the maximum allowed file size in bytes
 	// Default is 100MB
 	MaxFileSize int64
-	
+
 	// DenyPaths defines paths that are explicitly denied
 	// Takes precedence over AllowedPaths
 	DenyPaths []string
-	
+
 	// AllowSymlinks determines if symbolic links can be followed
 	AllowSymlinks bool
 }
@@ -69,7 +69,7 @@ func (e *SecureFileExecutor) Execute(ctx context.Context, params map[string]inte
 	if !ok {
 		return nil, fmt.Errorf("path parameter is required")
 	}
-	
+
 	// Use atomic operations based on operation type to prevent TOCTOU race conditions
 	if e.isReadOperation() {
 		return e.executeAtomicRead(ctx, path)
@@ -85,7 +85,7 @@ func (e *SecureFileExecutor) validatePath(path string) error {
 	if err != nil {
 		return fmt.Errorf("invalid path format: %w", err)
 	}
-	
+
 	// Expand home directory in deny paths
 	for _, denyPath := range e.options.DenyPaths {
 		expandedDeny := expandPath(denyPath)
@@ -97,7 +97,7 @@ func (e *SecureFileExecutor) validatePath(path string) error {
 			return fmt.Errorf("access denied: path is in restricted directory")
 		}
 	}
-	
+
 	// Check symbolic links if not allowed
 	if !e.options.AllowSymlinks {
 		realPath, err := filepath.EvalSymlinks(cleanPath)
@@ -105,12 +105,12 @@ func (e *SecureFileExecutor) validatePath(path string) error {
 			return fmt.Errorf("symbolic links are not allowed")
 		}
 	}
-	
+
 	// If no allowed paths are specified, allow all (except denied)
 	if len(e.options.AllowedPaths) == 0 {
 		return nil
 	}
-	
+
 	// Check if path is within allowed paths
 	for _, allowedPath := range e.options.AllowedPaths {
 		expandedAllow := expandPath(allowedPath)
@@ -123,7 +123,7 @@ func (e *SecureFileExecutor) validatePath(path string) error {
 			return nil
 		}
 	}
-	
+
 	return fmt.Errorf("access denied: path is not in allowed directories")
 }
 
@@ -137,12 +137,12 @@ func (e *SecureFileExecutor) checkFileSize(path string) error {
 		}
 		return fmt.Errorf("cannot stat file: %w", err)
 	}
-	
+
 	if info.Size() > e.options.MaxFileSize {
-		return fmt.Errorf("file size %d exceeds maximum allowed size of %d bytes", 
+		return fmt.Errorf("file size %d exceeds maximum allowed size of %d bytes",
 			info.Size(), e.options.MaxFileSize)
 	}
-	
+
 	return nil
 }
 
@@ -153,21 +153,21 @@ func (e *SecureFileExecutor) validateFileDescriptor(file *os.File) error {
 	if err != nil {
 		return fmt.Errorf("cannot stat file descriptor: %w", err)
 	}
-	
+
 	// Check file size limit
 	if stat.Size() > e.options.MaxFileSize {
-		return fmt.Errorf("file size %d exceeds maximum allowed size of %d bytes", 
+		return fmt.Errorf("file size %d exceeds maximum allowed size of %d bytes",
 			stat.Size(), e.options.MaxFileSize)
 	}
-	
+
 	// Check that it's a regular file (not a device, pipe, etc.)
 	if !stat.Mode().IsRegular() {
 		return fmt.Errorf("access denied: not a regular file")
 	}
-	
+
 	// For additional security, we could check ownership, permissions, etc.
 	// but this provides basic protection against special files
-	
+
 	return nil
 }
 
@@ -210,7 +210,7 @@ func (e *SecureFileExecutor) executeAtomicRead(ctx context.Context, path string)
 			Error:   fmt.Sprintf("path validation failed: %v", err),
 		}, nil
 	}
-	
+
 	// Open the file
 	file, err := os.Open(path)
 	if err != nil {
@@ -220,15 +220,15 @@ func (e *SecureFileExecutor) executeAtomicRead(ctx context.Context, path string)
 		}, nil
 	}
 	defer file.Close()
-	
+
 	// Validate the opened file descriptor to prevent TOCTOU attacks
-	if err := e.validateFileDescriptor(file); err != nil {
+	if validationErr := e.validateFileDescriptor(file); validationErr != nil {
 		return &ToolExecutionResult{
 			Success: false,
-			Error:   fmt.Sprintf("file validation failed: %v", err),
+			Error:   fmt.Sprintf("file validation failed: %v", validationErr),
 		}, nil
 	}
-	
+
 	// Read the file content with size limit
 	const maxReadSize = 100 * 1024 * 1024 // 100MB limit
 	limitedReader := io.LimitReader(file, maxReadSize)
@@ -239,7 +239,7 @@ func (e *SecureFileExecutor) executeAtomicRead(ctx context.Context, path string)
 			Error:   fmt.Sprintf("failed to read file: %v", err),
 		}, nil
 	}
-	
+
 	return &ToolExecutionResult{
 		Success: true,
 		Data: map[string]interface{}{
@@ -255,17 +255,17 @@ func (e *SecureFileExecutor) executeAtomicWrite(ctx context.Context, params map[
 	if !ok {
 		return nil, fmt.Errorf("path parameter is required")
 	}
-	
+
 	content, ok := params["content"].(string)
 	if !ok {
 		return nil, fmt.Errorf("content parameter is required")
 	}
-	
+
 	mode, _ := params["mode"].(string)
 	if mode == "" {
 		mode = "write"
 	}
-	
+
 	// First validate the path
 	if err := e.validatePath(path); err != nil {
 		return &ToolExecutionResult{
@@ -273,7 +273,7 @@ func (e *SecureFileExecutor) executeAtomicWrite(ctx context.Context, params map[
 			Error:   fmt.Sprintf("path validation failed: %v", err),
 		}, nil
 	}
-	
+
 	// Validate parent directory path
 	dir := filepath.Dir(path)
 	if err := e.validatePath(dir); err != nil {
@@ -282,7 +282,7 @@ func (e *SecureFileExecutor) executeAtomicWrite(ctx context.Context, params map[
 			Error:   fmt.Sprintf("parent directory access denied: %v", err),
 		}, nil
 	}
-	
+
 	// Create directory if needed
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return &ToolExecutionResult{
@@ -290,7 +290,7 @@ func (e *SecureFileExecutor) executeAtomicWrite(ctx context.Context, params map[
 			Error:   fmt.Sprintf("failed to create directory: %v", err),
 		}, nil
 	}
-	
+
 	// Choose the appropriate file opening mode
 	var flags int
 	switch mode {
@@ -299,7 +299,7 @@ func (e *SecureFileExecutor) executeAtomicWrite(ctx context.Context, params map[
 	default: // "write" or default
 		flags = os.O_CREATE | os.O_WRONLY | os.O_TRUNC
 	}
-	
+
 	// Open the file atomically
 	file, err := os.OpenFile(path, flags, 0644)
 	if err != nil {
@@ -309,15 +309,15 @@ func (e *SecureFileExecutor) executeAtomicWrite(ctx context.Context, params map[
 		}, nil
 	}
 	defer file.Close()
-	
+
 	// Validate the file descriptor for security
-	if err := e.validateFileDescriptor(file); err != nil {
+	if validationErr := e.validateFileDescriptor(file); validationErr != nil {
 		return &ToolExecutionResult{
 			Success: false,
-			Error:   fmt.Sprintf("file validation failed: %v", err),
+			Error:   fmt.Sprintf("file validation failed: %v", validationErr),
 		}, nil
 	}
-	
+
 	// Write the data
 	_, err = file.WriteString(content)
 	if err != nil {
@@ -326,7 +326,7 @@ func (e *SecureFileExecutor) executeAtomicWrite(ctx context.Context, params map[
 			Error:   fmt.Sprintf("failed to write to file: %v", err),
 		}, nil
 	}
-	
+
 	// Sync to ensure data is written
 	if err := file.Sync(); err != nil {
 		return &ToolExecutionResult{
@@ -334,11 +334,11 @@ func (e *SecureFileExecutor) executeAtomicWrite(ctx context.Context, params map[
 			Error:   fmt.Sprintf("failed to sync file: %v", err),
 		}, nil
 	}
-	
+
 	return &ToolExecutionResult{
 		Success: true,
 		Data: map[string]interface{}{
-			"path":         path,
+			"path":          path,
 			"bytes_written": len(content),
 		},
 	}, nil

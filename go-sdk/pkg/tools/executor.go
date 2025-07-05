@@ -14,7 +14,7 @@ type ExecutionEngine struct {
 	registry *Registry
 
 	// Configuration
-	maxConcurrent int
+	maxConcurrent  int
 	defaultTimeout time.Duration
 
 	// Execution tracking
@@ -42,20 +42,20 @@ type executionState struct {
 
 // ExecutionMetrics tracks tool execution statistics.
 type ExecutionMetrics struct {
-	mu               sync.RWMutex
-	totalExecutions  int64
-	successCount     int64
-	errorCount       int64
-	totalDuration    time.Duration
-	toolMetrics      map[string]*ToolMetrics
+	mu              sync.RWMutex
+	totalExecutions int64
+	successCount    int64
+	errorCount      int64
+	totalDuration   time.Duration
+	toolMetrics     map[string]*ToolMetrics
 }
 
 // ToolMetrics tracks statistics for a specific tool.
 type ToolMetrics struct {
-	Executions    int64
-	Successes     int64
-	Errors        int64
-	TotalDuration time.Duration
+	Executions      int64
+	Successes       int64
+	Errors          int64
+	TotalDuration   time.Duration
 	AverageDuration time.Duration
 }
 
@@ -124,26 +124,26 @@ func (e *ExecutionEngine) Execute(ctx context.Context, toolID string, params map
 
 	// Check rate limits
 	if e.rateLimiter != nil {
-		if err := e.rateLimiter.Wait(ctx, toolID); err != nil {
-			return nil, fmt.Errorf("rate limit exceeded: %w", err)
+		if rateLimitErr := e.rateLimiter.Wait(ctx, toolID); rateLimitErr != nil {
+			return nil, fmt.Errorf("rate limit exceeded: %w", rateLimitErr)
 		}
 	}
 
 	// Check concurrency limits
-	if err := e.checkConcurrencyLimit(ctx); err != nil {
-		return nil, err
+	if concurrencyErr := e.checkConcurrencyLimit(ctx); concurrencyErr != nil {
+		return nil, concurrencyErr
 	}
 
 	// Validate parameters
 	validator := NewSchemaValidator(toolView.GetSchema())
-	if err := validator.Validate(params); err != nil {
-		return nil, fmt.Errorf("parameter validation failed: %w", err)
+	if validationErr := validator.Validate(params); validationErr != nil {
+		return nil, fmt.Errorf("parameter validation failed: %w", validationErr)
 	}
 
 	// Run before-execute hooks
 	for _, hook := range e.beforeExecute {
-		if err := hook(ctx, toolID, params); err != nil {
-			return nil, fmt.Errorf("pre-execution hook failed: %w", err)
+		if hookErr := hook(ctx, toolID, params); hookErr != nil {
+			return nil, fmt.Errorf("pre-execution hook failed: %w", hookErr)
 		}
 	}
 
@@ -219,20 +219,20 @@ func (e *ExecutionEngine) ExecuteStream(ctx context.Context, toolID string, para
 
 	// Validate parameters
 	validator := NewSchemaValidator(toolView.GetSchema())
-	if err := validator.Validate(params); err != nil {
-		return nil, fmt.Errorf("parameter validation failed: %w", err)
+	if validationErr := validator.Validate(params); validationErr != nil {
+		return nil, fmt.Errorf("parameter validation failed: %w", validationErr)
 	}
 
 	// Check rate limits
 	if e.rateLimiter != nil {
-		if err := e.rateLimiter.Wait(ctx, toolID); err != nil {
-			return nil, fmt.Errorf("rate limit exceeded: %w", err)
+		if rateLimitErr := e.rateLimiter.Wait(ctx, toolID); rateLimitErr != nil {
+			return nil, fmt.Errorf("rate limit exceeded: %w", rateLimitErr)
 		}
 	}
 
 	// Check concurrency limits
-	if err := e.checkConcurrencyLimit(ctx); err != nil {
-		return nil, err
+	if concurrencyErr := e.checkConcurrencyLimit(ctx); concurrencyErr != nil {
+		return nil, concurrencyErr
 	}
 
 	// Set up execution context with timeout
@@ -272,7 +272,7 @@ func (e *ExecutionEngine) ExecuteStream(ctx context.Context, toolID string, para
 					hasError = true
 				}
 			case <-execCtx.Done():
-				// Context cancelled, stop streaming
+				// Context canceled, stop streaming
 				return
 			}
 		}

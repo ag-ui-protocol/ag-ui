@@ -7,7 +7,7 @@ import (
 
 // OpenAITool represents a tool in OpenAI's function calling format.
 type OpenAITool struct {
-	Type     string              `json:"type"`
+	Type     string             `json:"type"`
 	Function OpenAIToolFunction `json:"function"`
 }
 
@@ -20,9 +20,9 @@ type OpenAIToolFunction struct {
 
 // OpenAIToolCall represents a tool call in OpenAI format.
 type OpenAIToolCall struct {
-	ID       string                  `json:"id"`
-	Type     string                  `json:"type"`
-	Function OpenAIFunctionCall      `json:"function"`
+	ID       string             `json:"id"`
+	Type     string             `json:"type"`
+	Function OpenAIFunctionCall `json:"function"`
 }
 
 // OpenAIFunctionCall represents a function call in OpenAI format.

@@ -154,7 +154,18 @@ func (v *Validator) validatePermissive(ctx context.Context, event Event) error {
 	}
 
 	// Apply minimal field validation based on event type
-	return v.validateMinimalFields(event)
+	if err := v.validateMinimalFields(event); err != nil {
+		return err
+	}
+
+	// Apply custom validators for consistency with strict mode
+	for _, validator := range v.config.CustomValidators {
+		if err := validator(ctx, event); err != nil {
+			return fmt.Errorf("custom validation failed: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // validateCustom applies custom validation rules

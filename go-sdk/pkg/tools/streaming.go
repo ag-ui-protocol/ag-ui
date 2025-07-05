@@ -111,7 +111,7 @@ func (h *StreamingToolHelper) StreamJSON(ctx context.Context, data interface{}, 
 	if chunkSize <= 0 {
 		return nil, fmt.Errorf("chunkSize must be positive, got %d", chunkSize)
 	}
-	
+
 	// Enforce maximum chunk size to prevent memory exhaustion
 	const maxChunkSize = 10 * 1024 * 1024 // 10MB
 	if chunkSize > maxChunkSize {
@@ -123,7 +123,7 @@ func (h *StreamingToolHelper) StreamJSON(ctx context.Context, data interface{}, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
 	}
-	
+
 	// Enforce maximum total data size to prevent memory exhaustion
 	const maxDataSize = 100 * 1024 * 1024 // 100MB
 	if len(jsonData) > maxDataSize {
@@ -153,7 +153,7 @@ func (h *StreamingToolHelper) StreamJSON(ctx context.Context, data interface{}, 
 			select {
 			case out <- chunk:
 			case <-ctx.Done():
-				// Context cancelled, exit immediately
+				// Context canceled, exit immediately
 				return
 			}
 		}
@@ -165,7 +165,7 @@ func (h *StreamingToolHelper) StreamJSON(ctx context.Context, data interface{}, 
 			Index: index,
 		}:
 		case <-ctx.Done():
-			// Context cancelled, exit immediately
+			// Context canceled, exit immediately
 			return
 		}
 	}()
@@ -179,7 +179,7 @@ func (h *StreamingToolHelper) StreamReader(ctx context.Context, reader io.Reader
 	if chunkSize <= 0 {
 		return nil, fmt.Errorf("chunkSize must be positive, got %d", chunkSize)
 	}
-	
+
 	// Enforce maximum chunk size to prevent memory exhaustion
 	const maxChunkSize = 10 * 1024 * 1024 // 10MB
 	if chunkSize > maxChunkSize {
@@ -220,7 +220,7 @@ func (h *StreamingToolHelper) StreamReader(ctx context.Context, reader io.Reader
 					}
 					return
 				}
-				
+
 				chunk := &ToolStreamChunk{
 					Type:  "data",
 					Data:  string(buffer[:n]),
@@ -267,17 +267,17 @@ func (h *StreamingToolHelper) StreamReader(ctx context.Context, reader io.Reader
 
 // StreamAccumulator accumulates streaming chunks back into complete data.
 type StreamAccumulator struct {
-	mu         sync.Mutex
-	chunks     []string
-	metadata   map[string]interface{}
-	hasError   bool
-	errorMsg   string
-	complete   bool
+	mu       sync.Mutex
+	chunks   []string
+	metadata map[string]interface{}
+	hasError bool
+	errorMsg string
+	complete bool
 	// Memory bounds
-	maxChunks      int   // Maximum number of chunks
-	maxTotalSize   int64 // Maximum total size in bytes
-	currentSize    int64 // Current total size
-	maxChunkSize   int   // Maximum size per chunk
+	maxChunks    int   // Maximum number of chunks
+	maxTotalSize int64 // Maximum total size in bytes
+	currentSize  int64 // Current total size
+	maxChunkSize int   // Maximum size per chunk
 }
 
 // NewStreamAccumulator creates a new stream accumulator.
@@ -288,11 +288,11 @@ func NewStreamAccumulator() *StreamAccumulator {
 // NewStreamAccumulatorWithLimits creates a new stream accumulator with memory limits.
 func NewStreamAccumulatorWithLimits(maxChunks int, maxTotalSize int64, maxChunkSize int) *StreamAccumulator {
 	return &StreamAccumulator{
-		chunks:      []string{},
-		maxChunks:   maxChunks,
+		chunks:       []string{},
+		maxChunks:    maxChunks,
 		maxTotalSize: maxTotalSize,
 		maxChunkSize: maxChunkSize,
-		metadata: make(map[string]interface{}),
+		metadata:     make(map[string]interface{}),
 	}
 }
 
@@ -312,16 +312,16 @@ func (sa *StreamAccumulator) AddChunk(chunk *ToolStreamChunk) error {
 			if len(sa.chunks) >= sa.maxChunks {
 				return fmt.Errorf("chunk count limit exceeded: %d chunks", sa.maxChunks)
 			}
-			
+
 			chunkSize := int64(len(str))
 			if int(chunkSize) > sa.maxChunkSize {
 				return fmt.Errorf("chunk size %d exceeds limit %d", chunkSize, sa.maxChunkSize)
 			}
-			
+
 			if sa.currentSize+chunkSize > sa.maxTotalSize {
 				return fmt.Errorf("total size limit exceeded: %d + %d > %d", sa.currentSize, chunkSize, sa.maxTotalSize)
 			}
-			
+
 			sa.chunks = append(sa.chunks, str)
 			sa.currentSize += chunkSize
 		} else {
@@ -385,9 +385,9 @@ func (sa *StreamAccumulator) HasError() bool {
 
 // StreamingParameterParser helps parse streaming tool parameters.
 type StreamingParameterParser struct {
-	buffer       string
-	complete     bool
-	validator    *SchemaValidator
+	buffer    string
+	complete  bool
+	validator *SchemaValidator
 	// Memory bounds
 	maxBufferSize int // Maximum buffer size in bytes
 }
@@ -412,7 +412,7 @@ func (spp *StreamingParameterParser) AddChunk(chunk string) error {
 	if newSize > spp.maxBufferSize {
 		return fmt.Errorf("buffer size limit exceeded: %d + %d > %d", len(spp.buffer), len(chunk), spp.maxBufferSize)
 	}
-	
+
 	spp.buffer += chunk
 	return nil
 }
@@ -444,7 +444,6 @@ func (spp *StreamingParameterParser) IsComplete() bool {
 type StreamingResultBuilder struct {
 	ctx       context.Context
 	streamCtx *StreamingContext
-	done      chan struct{}
 	mu        sync.Mutex
 	closed    bool
 }
@@ -454,7 +453,6 @@ func NewStreamingResultBuilder(ctx context.Context) *StreamingResultBuilder {
 	return &StreamingResultBuilder{
 		ctx:       ctx,
 		streamCtx: NewStreamingContext(ctx),
-		done:      make(chan struct{}),
 	}
 }
 
@@ -486,8 +484,8 @@ func (srb *StreamingResultBuilder) Complete(finalData interface{}) error {
 
 // Error sends an error and closes the stream.
 func (srb *StreamingResultBuilder) Error(err error) error {
-	if err := srb.streamCtx.SendError(err); err != nil {
-		return err
+	if sendErr := srb.streamCtx.SendError(err); sendErr != nil {
+		return sendErr
 	}
 	return srb.streamCtx.Close()
 }
@@ -501,10 +499,9 @@ func (srb *StreamingResultBuilder) Channel() <-chan *ToolStreamChunk {
 func (srb *StreamingResultBuilder) Close() error {
 	srb.mu.Lock()
 	defer srb.mu.Unlock()
-	
+
 	if !srb.closed {
 		srb.closed = true
-		close(srb.done)
 		return srb.streamCtx.Close()
 	}
 	return nil
