@@ -84,34 +84,19 @@ def test_default_extractor():
     # No static user_id or custom extractor
     agent = ADKAgent(app_name="test_app")
     
-    # Test extraction from state
-    test_input_state = RunAgentInput(
-        thread_id="test_thread",
-        run_id="test_run",
-        messages=[UserMessage(id="1", role="user", content="Test")],
-        context=[],
-        state={"user_id": "state_user"},
-        tools=[],
-        forwarded_props={}
-    )
-    
-    user_id = agent._get_user_id(test_input_state)
-    print(f"   User ID from state: {user_id}")
-    assert user_id == "state_user", f"Expected 'state_user', got '{user_id}'"
-    
-    # Test fallback to thread-based user
-    test_input_fallback = RunAgentInput(
+    # Test default behavior - should use thread_id
+    test_input = RunAgentInput(
         thread_id="test_thread_xyz",
         run_id="test_run",
         messages=[UserMessage(id="1", role="user", content="Test")],
         context=[],
-        state={},
+        state={"user_id": "state_user"},  # This should be ignored now
         tools=[],
         forwarded_props={}
     )
     
-    user_id = agent._get_user_id(test_input_fallback)
-    print(f"   User ID fallback: {user_id}")
+    user_id = agent._get_user_id(test_input)
+    print(f"   User ID (default): {user_id}")
     assert user_id == "thread_user_test_thread_xyz", f"Expected 'thread_user_test_thread_xyz', got '{user_id}'"
     
     print("✅ Default user extraction works correctly")

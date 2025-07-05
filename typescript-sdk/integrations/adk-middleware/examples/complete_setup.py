@@ -82,28 +82,34 @@ async def setup_and_run():
     # Step 4: Configure ADK middleware
     print("⚙️ Configuring ADK middleware...")
     
-    # Option A: Static user ID (simple testing)
+    # Option A: Static app name and user ID (simple testing)
+    # adk_agent = ADKAgent(
+    #     app_name="demo_app",
+    #     user_id="demo_user",
+    #     use_in_memory_services=True
+    # )
+    
+    # Option B: Dynamic extraction from context (recommended)
+    def extract_user_id(input_data):
+        """Extract user ID from context."""
+        for ctx in input_data.context:
+            if ctx.description == "user":
+                return ctx.value
+        return f"anonymous_{input_data.thread_id}"
+    
+    def extract_app_name(input_data):
+        """Extract app name from context."""
+        for ctx in input_data.context:
+            if ctx.description == "app":
+                return ctx.value
+        return "default_app"
+    
     adk_agent = ADKAgent(
-        app_name="demo_app",
-        user_id="demo_user",
+        app_name_extractor=extract_app_name,
+        user_id_extractor=extract_user_id,
         use_in_memory_services=True
         # Uses default session manager with 20 min timeout, auto cleanup enabled
     )
-    
-    # Option B: Dynamic user ID extraction
-    # def extract_user_id(input_data):
-    #     # Extract from context, state, or headers
-    #     for ctx in input_data.context:
-    #         if ctx.description == "user_id":
-    #             return ctx.value
-    #     return f"user_{input_data.thread_id}"
-    # 
-    # adk_agent = ADKAgent(
-    #     app_name="demo_app",
-    #     user_id_extractor=extract_user_id,
-    #     use_in_memory_services=True
-    #     # Uses default session manager with 20 min timeout, auto cleanup enabled
-    # )
 
     
     # Step 5: Create FastAPI app
@@ -184,7 +190,10 @@ async def setup_and_run():
     print('    "thread_id": "test-123",')
     print('    "run_id": "run-456",')
     print('    "messages": [{"role": "user", "content": "Hello! What can you do?"}],')
-    print('    "context": []')
+    print('    "context": [')
+    print('      {"description": "user", "value": "john_doe"},')
+    print('      {"description": "app", "value": "my_app_v1"}')
+    print('    ]')
     print('  }\'')
     
     # Run with uvicorn

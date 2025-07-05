@@ -20,6 +20,7 @@ TESTS = [
     "test_session_cleanup.py",
     "test_session_deletion.py",
     "test_user_id_extractor.py",
+    "test_app_name_extractor.py",
     "test_endpoint_error_handling.py"
     # Note: test_server.py is excluded (starts web server, not automated test)
 ]

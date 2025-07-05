@@ -110,20 +110,31 @@ def create_agent(agent_id: str) -> BaseAgent:
 registry.set_agent_factory(create_agent)
 ```
 
-### User Identification
+### App and User Identification
 
 ```python
-# Static user ID (single-user apps)
-agent = ADKAgent(user_id="static_user")
+# Static app name and user ID (single-tenant apps)
+agent = ADKAgent(app_name="my_app", user_id="static_user")
 
-# Dynamic user extraction
+# Dynamic extraction from context (recommended for multi-tenant)
+def extract_app(input: RunAgentInput) -> str:
+    # Extract from context
+    for ctx in input.context:
+        if ctx.description == "app":
+            return ctx.value
+    return "default_app"
+
 def extract_user(input: RunAgentInput) -> str:
-    # Extract from state or other sources
-    if hasattr(input.state, 'get') and input.state.get("user_id"):
-        return input.state["user_id"]
-    return "anonymous"
+    # Extract from context
+    for ctx in input.context:
+        if ctx.description == "user":
+            return ctx.value
+    return f"anonymous_{input.thread_id}"
 
-agent = ADKAgent(user_id_extractor=extract_user)
+agent = ADKAgent(
+    app_name_extractor=extract_app,
+    user_id_extractor=extract_user
+)
 ```
 
 ### Session Management

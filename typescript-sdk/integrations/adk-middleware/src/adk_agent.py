@@ -41,7 +41,10 @@ class ADKAgent:
     
     def __init__(
         self,
-        app_name: str,
+        # App identification
+        app_name: Optional[str] = None,
+        app_name_extractor: Optional[Callable[[RunAgentInput], str]] = None,
+        
         # User identification
         user_id: Optional[str] = None,
         user_id_extractor: Optional[Callable[[RunAgentInput], str]] = None,
@@ -58,7 +61,8 @@ class ADKAgent:
         """Initialize the ADKAgent.
         
         Args:
-            app_name: Application name (used as app_name in ADK Runner)
+            app_name: Static application name for all requests
+            app_name_extractor: Function to extract app name dynamically from input
             user_id: Static user ID for all requests
             user_id_extractor: Function to extract user ID dynamically from input
             artifact_service: File/artifact storage service
@@ -67,10 +71,16 @@ class ADKAgent:
             run_config_factory: Function to create RunConfig per request
             use_in_memory_services: Use in-memory implementations for unspecified services
         """
+        if app_name and app_name_extractor:
+            raise ValueError("Cannot specify both 'app_name' and 'app_name_extractor'")
+        
+        # app_name, app_name_extractor, or neither (use agent name as default)
+        
         if user_id and user_id_extractor:
             raise ValueError("Cannot specify both 'user_id' and 'user_id_extractor'")
         
-        self._app_name = app_name
+        self._static_app_name = app_name
+        self._app_name_extractor = app_name_extractor
         self._static_user_id = user_id
         self._user_id_extractor = user_id_extractor
         self._run_config_factory = run_config_factory or self._default_run_config
@@ -110,6 +120,27 @@ class ADKAgent:
         # Cleanup is managed by the session manager
         # Will start when first async operation runs
     
+    def _get_app_name(self, input: RunAgentInput) -> str:
+        """Resolve app name with clear precedence."""
+        if self._static_app_name:
+            return self._static_app_name
+        elif self._app_name_extractor:
+            return self._app_name_extractor(input)
+        else:
+            return self._default_app_extractor(input)
+    
+    def _default_app_extractor(self, input: RunAgentInput) -> str:
+        """Default app extraction logic - use agent name from registry."""
+        # Get the agent from registry and use its name as app name
+        try:
+            agent_id = self._get_agent_id()
+            registry = AgentRegistry.get_instance()
+            adk_agent = registry.get_agent(agent_id)
+            return adk_agent.name
+        except Exception as e:
+            logger.warning(f"Could not get agent name for app_name, using default: {e}")
+            return "default_app"
+    
     def _get_user_id(self, input: RunAgentInput) -> str:
         """Resolve user ID with clear precedence."""
         if self._static_user_id:
@@ -121,11 +152,7 @@ class ADKAgent:
     
     def _default_user_extractor(self, input: RunAgentInput) -> str:
         """Default user extraction logic."""
-        # Check state for user_id
-        if hasattr(input.state, 'get') and input.state.get("user_id"):
-            return input.state["user_id"]
-        
-        # Use thread_id as a last resort (assumes thread per user)
+        # Use thread_id as default (assumes thread per user)
         return f"thread_user_{input.thread_id}"
     
     def _default_run_config(self, input: RunAgentInput) -> ADKRunConfig:
@@ -139,13 +166,13 @@ class ADKAgent:
         """Get the agent ID - always uses default agent from registry."""
         return "default"
     
-    def _get_or_create_runner(self, agent_id: str, adk_agent: ADKBaseAgent, user_id: str) -> Runner:
+    def _get_or_create_runner(self, agent_id: str, adk_agent: ADKBaseAgent, user_id: str, app_name: str) -> Runner:
         """Get existing runner or create a new one."""
         runner_key = f"{agent_id}:{user_id}"
         
         if runner_key not in self._runners:
             self._runners[runner_key] = Runner(
-                app_name=self._app_name,  # Use the app_name from constructor
+                app_name=app_name,  # Use the resolved app_name
                 agent=adk_agent,
                 session_service=self._session_manager._session_service,
                 artifact_service=self._artifact_service,
@@ -175,10 +202,11 @@ class ADKAgent:
             # Extract necessary information
             agent_id = self._get_agent_id()
             user_id = self._get_user_id(input)
+            app_name = self._get_app_name(input)
             session_key = f"{agent_id}:{user_id}:{input.thread_id}"
             
             # Track session activity
-            self._session_manager.track_activity(session_key, self._app_name, user_id, input.thread_id)
+            self._session_manager.track_activity(session_key, app_name, user_id, input.thread_id)
             
             # Session management is handled by SessionLifecycleManager
             
@@ -187,13 +215,13 @@ class ADKAgent:
             adk_agent = registry.get_agent(agent_id)
             
             # Get or create runner
-            runner = self._get_or_create_runner(agent_id, adk_agent, user_id)
+            runner = self._get_or_create_runner(agent_id, adk_agent, user_id, app_name)
             
             # Create RunConfig
             run_config = self._run_config_factory(input)
             
             # Ensure session exists
-            await self._ensure_session_exists(self._app_name, user_id, input.thread_id, input.state)
+            await self._ensure_session_exists(app_name, user_id, input.thread_id, input.state)
             
             # Create a fresh event translator for this session (thread-safe)
             event_translator = EventTranslator()

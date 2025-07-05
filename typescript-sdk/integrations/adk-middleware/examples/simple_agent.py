@@ -34,10 +34,9 @@ async def main():
     registry.set_default_agent(simple_adk_agent)
     
     # Step 3: Create the middleware agent
+    # Note: app_name will default to the agent name ("assistant")
     agent = ADKAgent(
-        app_name="demo_app",
         user_id="demo_user",  # Static user for this example
-        session_timeout_seconds=300,  # 5 minute timeout for demo
     )
     
     # Step 4: Create a sample input
@@ -119,9 +118,8 @@ async def advanced_example():
         return "anonymous"
     
     agent = ADKAgent(
-        app_name="research_app",
         user_id_extractor=extract_user_from_context,
-        max_sessions_per_user=3,  # Limit concurrent sessions
+        # app_name will default to the agent name ("research_assistant")
     )
     
     # Simulate a conversation with history
