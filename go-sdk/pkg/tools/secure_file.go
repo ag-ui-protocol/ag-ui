@@ -93,7 +93,8 @@ func (e *SecureFileExecutor) validatePath(path string) error {
 		if err != nil {
 			continue // Skip invalid deny paths
 		}
-		if strings.HasPrefix(cleanPath, absDeny) {
+		rel, err := filepath.Rel(absDeny, cleanPath)
+		if err == nil && !strings.HasPrefix(rel, "..") {
 			return fmt.Errorf("access denied: path is in restricted directory")
 		}
 	}

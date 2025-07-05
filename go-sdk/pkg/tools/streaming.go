@@ -85,13 +85,12 @@ func (sc *StreamingContext) sendChunk(chunkType string, data interface{}) error 
 		Index: sc.index,
 	}
 	sc.index++
+	sc.mu.Unlock()
 
 	select {
 	case sc.chunks <- chunk:
-		sc.mu.Unlock()
 		return nil
 	case <-sc.ctx.Done():
-		sc.mu.Unlock()
 		return sc.ctx.Err()
 	}
 }
@@ -325,7 +324,7 @@ func (sa *StreamAccumulator) AddChunk(chunk *ToolStreamChunk) error {
 			sa.chunks = append(sa.chunks, str)
 			sa.currentSize += chunkSize
 		} else {
-			return fmt.Errorf("data chunk must contain string data")
+			return fmt.Errorf("data chunk must contain string data, got: %v", fmt.Sprint(chunk.Data))
 		}
 
 	case "metadata":

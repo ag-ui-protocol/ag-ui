@@ -81,17 +81,16 @@ func (v *semverVersion) compare(other *semverVersion) int {
 // versionOperator represents a version constraint operator
 type versionOperator struct {
 	symbol string
-	length int
 }
 
 // Known version operators ordered by length (longest first)
 var versionOperators = []versionOperator{
-	{">=", 2},
-	{"<=", 2},
-	{">", 1},
-	{"<", 1},
-	{"^", 1},
-	{"~", 1},
+	{">="},
+	{"<="},
+	{">"},
+	{"<"},
+	{"^"},
+	{"~"},
 }
 
 // matchesVersionConstraint checks if a version matches a constraint
@@ -130,7 +129,7 @@ func matchesVersionConstraint(version, constraint string) (bool, error) {
 func parseConstraintOperator(constraint string) (string, string) {
 	for _, op := range versionOperators {
 		if strings.HasPrefix(constraint, op.symbol) {
-			return op.symbol, constraint[op.length:]
+			return op.symbol, constraint[len(op.symbol):]
 		}
 	}
 	// Default to exact match
