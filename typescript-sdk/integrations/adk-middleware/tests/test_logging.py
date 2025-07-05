@@ -7,9 +7,9 @@ import io
 from unittest.mock import MagicMock
 
 from ag_ui.core import RunAgentInput, UserMessage
-from src.adk_agent import ADKAgent
-from src.agent_registry import AgentRegistry
-from src.logging_config import get_component_logger, configure_logging
+from adk_agent import ADKAgent
+from agent_registry import AgentRegistry
+from logging_config import get_component_logger, configure_logging
 from google.adk.agents import Agent
 
 
@@ -249,7 +249,7 @@ async def test_endpoint_logging():
     configure_logging(endpoint='INFO')
     
     # Test endpoint logging by importing and checking logger
-    from src.endpoint import logger as endpoint_logger
+    from endpoint import logger as endpoint_logger
     
     # Capture endpoint logs
     with LogCapture('endpoint', logging.INFO) as log_capture:

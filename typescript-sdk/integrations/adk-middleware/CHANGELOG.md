@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **NEW**: Default `app_name` behavior using agent name from registry when not explicitly specified
 - **NEW**: Added `app_name` as required first parameter to `ADKAgent` constructor for clarity
 - **NEW**: Comprehensive logging system with component-specific loggers (adk_agent, event_translator, endpoint)
 - **NEW**: Configurable logging levels per component via `logging_config.py`
@@ -25,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **NEW**: Test infrastructure with `run_tests.py` and comprehensive test coverage
 
 ### Changed
+- **BREAKING**: `app_name` and `app_name_extractor` parameters are now optional - defaults to using agent name from registry
 - **BREAKING**: `ADKAgent` constructor now requires `app_name` as first parameter
 - **BREAKING**: Removed `session_service`, `session_timeout_seconds`, `cleanup_interval_seconds`, `max_sessions_per_user`, and `auto_cleanup` parameters from `ADKAgent` constructor (now managed by singleton session manager)
 - **BREAKING**: Renamed `agent_id` parameter to `app_name` throughout session management for consistency
@@ -50,8 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed event bookending to ensure messages have proper START/END boundaries
 
 ### Enhanced
+- **Usability**: Simplified agent creation - no longer need to specify app_name in most cases
 - **Performance**: Session management now uses singleton pattern for better resource utilization
-- **Reliability**: Added comprehensive test suite with 14 automated tests (100% pass rate)
+- **Reliability**: Added comprehensive test suite with 15 automated tests (100% pass rate)
 - **Observability**: Implemented structured logging with configurable levels per component
 - **Error Handling**: Proper error propagation with specific error types and user-friendly messages
 - **Development**: Complete development environment with virtual environment and proper dependency management

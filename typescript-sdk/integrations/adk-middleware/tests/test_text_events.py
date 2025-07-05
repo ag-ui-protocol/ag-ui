@@ -7,8 +7,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from ag_ui.core import RunAgentInput, UserMessage
-from src.adk_agent import ADKAgent
-from src.agent_registry import AgentRegistry
+from adk_agent import ADKAgent
+from agent_registry import AgentRegistry
 from google.adk.agents import Agent
 
 

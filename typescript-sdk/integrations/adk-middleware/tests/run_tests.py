@@ -3,6 +3,7 @@
 
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 # List of all working test files (automated tests only)
@@ -31,11 +32,25 @@ def run_test(test_file):
     print(f"🧪 Running {test_file}")
     print('='*60)
     
+    # Get parent directory to run tests from
+    parent_dir = Path(__file__).parent.parent
+    test_path = Path(__file__).parent / test_file
+    
     try:
-        result = subprocess.run([sys.executable, test_file], 
+        # Set PYTHONPATH to include src directory
+        env = os.environ.copy()
+        src_dir = parent_dir / "src"
+        if "PYTHONPATH" in env:
+            env["PYTHONPATH"] = f"{src_dir}:{env['PYTHONPATH']}"
+        else:
+            env["PYTHONPATH"] = str(src_dir)
+        
+        result = subprocess.run([sys.executable, str(test_path)], 
                               capture_output=False, 
                               text=True,
-                              timeout=30)
+                              timeout=30,
+                              cwd=str(parent_dir),
+                              env=env)  # Run from parent directory with PYTHONPATH
         
         if result.returncode == 0:
             print(f"✅ {test_file} PASSED")
@@ -62,7 +77,8 @@ def main():
     results = {}
     
     for test_file in TESTS:
-        if Path(test_file).exists():
+        test_path = Path(__file__).parent / test_file
+        if test_path.exists():
             success = run_test(test_file)
             results[test_file] = success
             if success:

@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.endpoint import add_adk_fastapi_endpoint
-from src.adk_agent import ADKAgent
+from endpoint import add_adk_fastapi_endpoint
+from adk_agent import ADKAgent
 from ag_ui.core import RunAgentInput, UserMessage, RunErrorEvent, EventType
 
 
@@ -52,7 +52,7 @@ async def test_encoding_error_handling():
     }
     
     # Mock the encoder to simulate encoding failure
-    with patch('src.endpoint.EventEncoder') as mock_encoder_class:
+    with patch('endpoint.EventEncoder') as mock_encoder_class:
         mock_encoder = MagicMock()
         mock_encoder.encode.side_effect = Exception("Encoding failed!")
         mock_encoder.get_content_type.return_value = "text/event-stream"
@@ -265,7 +265,7 @@ async def test_nested_encoding_error_handling():
     }
     
     # Mock the encoder to fail on ALL encoding attempts (including error events)
-    with patch('src.endpoint.EventEncoder') as mock_encoder_class:
+    with patch('endpoint.EventEncoder') as mock_encoder_class:
         mock_encoder = MagicMock()
         mock_encoder.encode.side_effect = Exception("All encoding failed!")
         mock_encoder.get_content_type.return_value = "text/event-stream"
