@@ -4,14 +4,13 @@ This Python middleware enables Google ADK agents to be used with the AG-UI Proto
 
 ## Features
 
-- ✅ Full event translation between AG-UI and ADK
+- ⚠️ Full event translation between AG-UI and ADK (partial - full support coming soon)
 - ✅ Automatic session management with configurable timeouts
 - ✅ Support for multiple agents with centralized registry
-- ✅ State synchronization between protocols
+- ❌ State synchronization between protocols (coming soon)
 - ❌ Tool/function calling support (coming soon)
 - ✅ Streaming responses with SSE
 - ✅ Multi-user support with session isolation
-- ✅ Comprehensive service integration (artifact, memory, credential)
 
 ## Installation
 
