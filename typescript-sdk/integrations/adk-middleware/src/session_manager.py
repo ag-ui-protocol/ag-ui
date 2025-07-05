@@ -101,7 +101,11 @@ class SessionLifecycleManager:
         if cls._instance is not None:
             instance = cls._instance
             if hasattr(instance, '_cleanup_task') and instance._cleanup_task:
-                instance._cleanup_task.cancel()
+                try:
+                    instance._cleanup_task.cancel()
+                except RuntimeError:
+                    # Event loop may be closed in pytest - ignore
+                    pass
         cls._instance = None
         cls._initialized = False
     

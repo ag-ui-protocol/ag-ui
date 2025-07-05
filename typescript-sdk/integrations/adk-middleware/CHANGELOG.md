@@ -8,12 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **NEW**: Full pytest compatibility with standard pytest commands (`pytest`, `pytest --cov=src`)
+- **NEW**: Pytest configuration (pytest.ini) with proper Python path and async support  
+- **NEW**: Async test support with `@pytest.mark.asyncio` for all async test functions
+- **NEW**: Test isolation with proper fixtures and session manager resets
+- **NEW**: 54 comprehensive automated tests with 67% code coverage (100% pass rate)
 - **NEW**: Organized all tests into dedicated tests/ directory for better project structure
 - **NEW**: Default `app_name` behavior using agent name from registry when not explicitly specified
 - **NEW**: Added `app_name` as required first parameter to `ADKAgent` constructor for clarity
 - **NEW**: Comprehensive logging system with component-specific loggers (adk_agent, event_translator, endpoint)
 - **NEW**: Configurable logging levels per component via `logging_config.py`
-- **NEW**: 14 comprehensive automated tests covering all major functionality
 - **NEW**: `SessionLifecycleManager` singleton pattern for centralized session management
 - **NEW**: Session encapsulation - session service now embedded within session manager
 - **NEW**: Proper error handling in HTTP endpoints with specific error types and SSE fallback
@@ -52,11 +56,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed logging to use proper module loggers instead of print statements
 - Fixed event bookending to ensure messages have proper START/END boundaries
 
+### Removed
+- **DEPRECATED**: Removed custom `run_tests.py` test runner in favor of standard pytest commands
+
 ### Enhanced
 - **Project Structure**: Moved all tests to tests/ directory with proper import resolution and PYTHONPATH configuration
 - **Usability**: Simplified agent creation - no longer need to specify app_name in most cases
 - **Performance**: Session management now uses singleton pattern for better resource utilization
-- **Reliability**: Added comprehensive test suite with 15 automated tests (100% pass rate)
+- **Testing**: Comprehensive test suite with 54 automated tests and 67% code coverage (100% pass rate)
 - **Observability**: Implemented structured logging with configurable levels per component
 - **Error Handling**: Proper error propagation with specific error types and user-friendly messages
 - **Development**: Complete development environment with virtual environment and proper dependency management

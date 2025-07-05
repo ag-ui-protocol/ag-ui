@@ -5,6 +5,7 @@ import os
 import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock
+import pytest
 
 from ag_ui.core import RunAgentInput, UserMessage
 from adk_agent import ADKAgent
@@ -318,6 +319,21 @@ async def test_edge_cases():
     return result1 and result2 and not result3 and not result4
 
 
+@pytest.mark.asyncio
+async def test_text_message_events():
+    """Test that we get proper message events with correct START/CONTENT/END patterns."""
+    result = await test_message_events()
+    assert result, "Text message events test failed"
+
+
+@pytest.mark.asyncio 
+async def test_message_event_edge_cases():
+    """Test edge cases for message event patterns."""
+    result = await test_edge_cases()
+    assert result, "Message event edge cases test failed"
+
+
+# Keep the standalone script functionality for backwards compatibility
 async def main():
     """Run all text message event tests."""
     print("🚀 Testing Text Message Event Patterns")

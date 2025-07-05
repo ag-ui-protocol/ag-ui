@@ -6,13 +6,12 @@ import pytest
 import asyncio
 from unittest.mock import Mock, MagicMock, AsyncMock, patch
 
-from adk_agent import ADKAgent
-from agent_registry import AgentRegistry
+from adk_middleware import ADKAgent, AgentRegistry
 from ag_ui.core import (
     RunAgentInput, EventType, UserMessage, Context,
     RunStartedEvent, RunFinishedEvent, TextMessageChunkEvent
 )
-from google.adk.agents import Agent
+from google.adk import LlmAgent
 
 
 class TestADKAgent:
@@ -21,8 +20,9 @@ class TestADKAgent:
     @pytest.fixture
     def mock_agent(self):
         """Create a mock ADK agent."""
-        agent = Mock(spec=Agent)
+        agent = Mock(spec=LlmAgent)
         agent.name = "test_agent"
+        agent.model = "test-model"
         return agent
     
     @pytest.fixture
@@ -33,30 +33,13 @@ class TestADKAgent:
         registry.set_default_agent(mock_agent)
         return registry
     
-    @pytest.fixture(autouse=True)
-    def reset_session_manager(self):
-        """Reset session manager before each test."""
-        from session_manager import SessionLifecycleManager
-        try:
-            SessionLifecycleManager.reset_instance()
-        except RuntimeError:
-            # Event loop may be closed - ignore
-            pass
-        yield
-        # Cleanup after test
-        try:
-            SessionLifecycleManager.reset_instance()
-        except RuntimeError:
-            # Event loop may be closed - ignore
-            pass
-
     @pytest.fixture
     def adk_agent(self):
         """Create an ADKAgent instance."""
         return ADKAgent(
-            app_name="test_app",
             user_id="test_user",
-            use_in_memory_services=True
+            session_timeout_seconds=60,
+            auto_cleanup=False  # Disable for tests
         )
     
     @pytest.fixture
@@ -84,8 +67,8 @@ class TestADKAgent:
     async def test_agent_initialization(self, adk_agent):
         """Test ADKAgent initialization."""
         assert adk_agent._static_user_id == "test_user"
-        assert adk_agent._static_app_name == "test_app"
-        assert adk_agent._session_manager is not None
+        assert adk_agent._session_manager._session_timeout == 60
+        assert adk_agent._cleanup_task is None  # auto_cleanup=False
     
     @pytest.mark.asyncio
     async def test_user_extraction(self, adk_agent, sample_input):
@@ -97,14 +80,20 @@ class TestADKAgent:
         def custom_extractor(input):
             return "custom_user"
         
-        adk_agent_custom = ADKAgent(app_name="test_app", user_id_extractor=custom_extractor)
+        adk_agent_custom = ADKAgent(user_id_extractor=custom_extractor)
         assert adk_agent_custom._get_user_id(sample_input) == "custom_user"
     
     @pytest.mark.asyncio
-    async def test_agent_id_default(self, adk_agent, sample_input):
-        """Test agent ID is always default."""
-        # Should always return default
-        assert adk_agent._get_agent_id() == "default"
+    async def test_agent_id_extraction(self, adk_agent, sample_input):
+        """Test agent ID extraction from input."""
+        # Default case
+        assert adk_agent._extract_agent_id(sample_input) == "default"
+        
+        # From context
+        sample_input.context.append(
+            Context(description="agent_id", value="specific_agent")
+        )
+        assert adk_agent._extract_agent_id(sample_input) == "specific_agent"
     
     @pytest.mark.asyncio
     async def test_run_basic_flow(self, adk_agent, sample_input, registry, mock_agent):
@@ -153,6 +142,11 @@ class TestADKAgent:
         )
         
         assert session_mgr.get_session_count() == 1
+        assert session_mgr.get_session_count("user1") == 1
+        
+        # Test session limits
+        session_mgr._max_sessions_per_user = 2
+        assert not session_mgr.should_create_new_session("user1")
         
         # Add another session
         session_mgr.track_activity(
@@ -161,7 +155,7 @@ class TestADKAgent:
             "user1",
             "session2"
         )
-        assert session_mgr.get_session_count() == 2
+        assert session_mgr.should_create_new_session("user1")
     
     @pytest.mark.asyncio
     async def test_error_handling(self, adk_agent, sample_input):
