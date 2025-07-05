@@ -13,28 +13,28 @@ var (
 	// Improved script pattern - more efficient and less prone to backtracking
 	// Uses atomic groups and possessive quantifiers where possible
 	scriptPattern = regexp.MustCompile(`(?i)<script(?:\s[^>]*)?>[\s\S]*?</script>`)
-	
+
 	// Improved HTML pattern - simplified to avoid nested quantifiers
 	// Matches opening and closing tags more efficiently
 	htmlPattern = regexp.MustCompile(`</?[a-zA-Z][^>]*>`)
-	
+
 	// TODO: Consider using a proper HTML sanitization library like bluemonday
 	// instead of regex-based sanitization for better security and performance.
 	// Regex-based HTML sanitization is inherently limited and can miss edge cases.
 )
 
 // ValidationOptions configures message validation behavior
-// 
+//
 // Note: The deprecated MaxContentLength and MaxArgumentsLength fields have been removed.
 // Please use MaxContentBytes and MaxArgumentsBytes instead for more accurate byte-based
 // size validation.
 type ValidationOptions struct {
-	MaxContentBytes    int   // Maximum content size in bytes (default: 1MB)
-	MaxNameLength      int
-	MaxToolCalls       int
-	MaxArgumentsBytes  int   // Maximum arguments size in bytes
-	AllowEmptyContent  bool
-	StrictRoleCheck    bool
+	MaxContentBytes   int // Maximum content size in bytes (default: 1MB)
+	MaxNameLength     int
+	MaxToolCalls      int
+	MaxArgumentsBytes int // Maximum arguments size in bytes
+	AllowEmptyContent bool
+	StrictRoleCheck   bool
 	// NOTE: SanitizeContent has been removed. Use ValidateAndSanitize() or
 	// the Sanitizer type directly for content sanitization.
 }
@@ -42,12 +42,12 @@ type ValidationOptions struct {
 // DefaultValidationOptions returns default validation options
 func DefaultValidationOptions() ValidationOptions {
 	return ValidationOptions{
-		MaxContentBytes:    1 * 1024 * 1024, // 1MB per message
-		MaxNameLength:      256,
-		MaxToolCalls:       100,
-		MaxArgumentsBytes:  100 * 1024,      // 100KB
-		AllowEmptyContent:  false,
-		StrictRoleCheck:    true,
+		MaxContentBytes:   1 * 1024 * 1024, // 1MB per message
+		MaxNameLength:     256,
+		MaxToolCalls:      100,
+		MaxArgumentsBytes: 100 * 1024, // 100KB
+		AllowEmptyContent: false,
+		StrictRoleCheck:   true,
 	}
 }
 
@@ -113,7 +113,7 @@ func (v *Validator) ValidateMessage(msg Message) error {
 		case *UserMessage, *SystemMessage, *DeveloperMessage:
 			return NewValidationError(fmt.Sprintf("%s message requires content", msg.GetRole()),
 				ValidationViolation{
-					Field:   "content", 
+					Field:   "content",
 					Message: "content required",
 					Value:   nil,
 				})
@@ -122,7 +122,7 @@ func (v *Validator) ValidateMessage(msg Message) error {
 			return NewValidationError("tool message requires content",
 				ValidationViolation{
 					Field:   "content",
-					Message: "content required", 
+					Message: "content required",
 					Value:   nil,
 				})
 		}
@@ -155,7 +155,7 @@ func (v *Validator) validateContent(content string) error {
 	// Check byte size to prevent Unicode expansion attacks
 	contentBytes := []byte(content)
 	byteSize := len(contentBytes)
-	
+
 	if v.options.MaxContentBytes > 0 && byteSize > v.options.MaxContentBytes {
 		return NewValidationError(fmt.Sprintf("content exceeds maximum byte size: %d > %d", byteSize, v.options.MaxContentBytes),
 			ValidationViolation{
@@ -258,7 +258,7 @@ func (v *Validator) validateToolCall(tc ToolCall) error {
 	// Validate arguments byte size
 	argBytes := []byte(tc.Function.Arguments)
 	byteSize := len(argBytes)
-	
+
 	if v.options.MaxArgumentsBytes > 0 && byteSize > v.options.MaxArgumentsBytes {
 		return fmt.Errorf("function arguments exceed maximum byte size: %d > %d", byteSize, v.options.MaxArgumentsBytes)
 	}

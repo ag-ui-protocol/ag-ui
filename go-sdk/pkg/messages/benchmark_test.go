@@ -10,19 +10,18 @@ import (
 	"sync"
 	"testing"
 	"time"
-
 )
 
 // Benchmark constants
 const (
-	smallMessageSize  = 100       // 100 bytes
-	mediumMessageSize = 10000     // 10KB
-	largeMessageSize  = 1000000   // 1MB
-	
-	smallConvSize   = 10
-	mediumConvSize  = 100
-	largeConvSize   = 1000
-	xlargeConvSize  = 10000
+	smallMessageSize  = 100     // 100 bytes
+	mediumMessageSize = 10000   // 10KB
+	largeMessageSize  = 1000000 // 1MB
+
+	smallConvSize  = 10
+	mediumConvSize = 100
+	largeConvSize  = 1000
+	xlargeConvSize = 10000
 )
 
 // Helper functions to generate test data
@@ -48,7 +47,7 @@ func generateToolCall(index int) ToolCall {
 
 func generateMessages(count int, contentSize int) MessageList {
 	messages := make(MessageList, 0, count)
-	
+
 	for i := 0; i < count; i++ {
 		switch i % 5 {
 		case 0:
@@ -59,7 +58,7 @@ func generateMessages(count int, contentSize int) MessageList {
 			messages = append(messages, NewSystemMessage(generateContent(contentSize)))
 		case 3:
 			// Assistant with tool calls
-			toolCalls := []ToolCall{generateToolCall(i), generateToolCall(i+1)}
+			toolCalls := []ToolCall{generateToolCall(i), generateToolCall(i + 1)}
 			msg := NewAssistantMessageWithTools(toolCalls)
 			content := generateContent(contentSize)
 			msg.Content = &content
@@ -68,7 +67,7 @@ func generateMessages(count int, contentSize int) MessageList {
 			messages = append(messages, NewToolMessage(generateContent(contentSize), fmt.Sprintf("call_%d", i-1)))
 		}
 	}
-	
+
 	return messages
 }
 
@@ -82,25 +81,25 @@ func BenchmarkMessageCreation(b *testing.B) {
 		{"Medium", mediumMessageSize},
 		{"Large", largeMessageSize},
 	}
-	
+
 	for _, size := range sizes {
 		b.Run(size.name, func(b *testing.B) {
 			content := generateContent(size.size)
-			
+
 			b.Run("UserMessage", func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
 					_ = NewUserMessage(content)
 				}
 			})
-			
+
 			b.Run("AssistantMessage", func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
 					_ = NewAssistantMessage(content)
 				}
 			})
-			
+
 			b.Run("AssistantMessageWithTools", func(b *testing.B) {
 				toolCalls := []ToolCall{generateToolCall(1), generateToolCall(2)}
 				b.ReportAllocs()
@@ -108,21 +107,21 @@ func BenchmarkMessageCreation(b *testing.B) {
 					_ = NewAssistantMessageWithTools(toolCalls)
 				}
 			})
-			
+
 			b.Run("SystemMessage", func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
 					_ = NewSystemMessage(content)
 				}
 			})
-			
+
 			b.Run("ToolMessage", func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
 					_ = NewToolMessage(content, "call_123")
 				}
 			})
-			
+
 			b.Run("DeveloperMessage", func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
@@ -137,7 +136,7 @@ func BenchmarkMessageCreation(b *testing.B) {
 func BenchmarkValidation(b *testing.B) {
 	validator := NewValidator(DefaultValidationOptions())
 	sanitizer := NewSanitizer(DefaultSanitizationOptions())
-	
+
 	sizes := []struct {
 		name string
 		size int
@@ -146,10 +145,10 @@ func BenchmarkValidation(b *testing.B) {
 		{"Medium", mediumMessageSize},
 		{"Large", largeMessageSize},
 	}
-	
+
 	for _, size := range sizes {
 		messages := generateMessages(10, size.size)
-		
+
 		b.Run(fmt.Sprintf("Validate_%s", size.name), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
@@ -158,7 +157,7 @@ func BenchmarkValidation(b *testing.B) {
 				}
 			}
 		})
-		
+
 		b.Run(fmt.Sprintf("Sanitize_%s", size.name), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
@@ -167,7 +166,7 @@ func BenchmarkValidation(b *testing.B) {
 				}
 			}
 		})
-		
+
 		b.Run(fmt.Sprintf("ValidateAndSanitize_%s", size.name), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
@@ -177,7 +176,7 @@ func BenchmarkValidation(b *testing.B) {
 			}
 		})
 	}
-	
+
 	// Benchmark validation of message lists
 	b.Run("ValidateMessageList", func(b *testing.B) {
 		lists := []struct {
@@ -188,7 +187,7 @@ func BenchmarkValidation(b *testing.B) {
 			{"Medium", mediumConvSize},
 			{"Large", largeConvSize},
 		}
-		
+
 		for _, list := range lists {
 			messages := generateMessages(list.size, mediumMessageSize)
 			b.Run(list.name, func(b *testing.B) {
@@ -211,19 +210,19 @@ func BenchmarkSerialization(b *testing.B) {
 		{"Medium", mediumMessageSize},
 		{"Large", largeMessageSize},
 	}
-	
+
 	for _, size := range sizes {
 		msg := NewAssistantMessage(generateContent(size.size))
-		
+
 		b.Run(fmt.Sprintf("ToJSON_%s", size.name), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				_, _ = msg.ToJSON()
 			}
 		})
-		
+
 		jsonData, _ := msg.ToJSON()
-		
+
 		b.Run(fmt.Sprintf("FromJSON_%s", size.name), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
@@ -232,7 +231,7 @@ func BenchmarkSerialization(b *testing.B) {
 			}
 		})
 	}
-	
+
 	// Benchmark message list serialization
 	b.Run("MessageList", func(b *testing.B) {
 		lists := []struct {
@@ -243,10 +242,10 @@ func BenchmarkSerialization(b *testing.B) {
 			{"Medium", mediumConvSize},
 			{"Large", largeConvSize},
 		}
-		
+
 		for _, list := range lists {
 			messages := generateMessages(list.size, mediumMessageSize)
-			
+
 			b.Run(fmt.Sprintf("ToJSON_%s", list.name), func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
@@ -273,23 +272,23 @@ func BenchmarkHistory(b *testing.B) {
 			{"Medium_MediumMsg", 1000, mediumMessageSize},
 			{"Large_LargeMsg", 10000, largeMessageSize},
 		}
-		
+
 		for _, size := range sizes {
 			b.Run(size.name, func(b *testing.B) {
 				history := NewHistory(HistoryOptions{
 					MaxMessages:    size.historySize * 2,
 					EnableIndexing: true,
 				})
-				
+
 				// Pre-populate history
 				for i := 0; i < size.historySize; i++ {
 					msg := NewUserMessage(generateContent(size.msgSize))
 					_ = history.Add(msg)
 				}
-				
+
 				b.ResetTimer()
 				b.ReportAllocs()
-				
+
 				for i := 0; i < b.N; i++ {
 					msg := NewUserMessage(generateContent(size.msgSize))
 					_ = history.Add(msg)
@@ -297,15 +296,15 @@ func BenchmarkHistory(b *testing.B) {
 			})
 		}
 	})
-	
+
 	b.Run("AddBatch", func(b *testing.B) {
 		batchSizes := []int{10, 100, 1000}
-		
+
 		for _, batchSize := range batchSizes {
 			b.Run(fmt.Sprintf("Batch_%d", batchSize), func(b *testing.B) {
 				history := NewHistory()
 				messages := generateMessages(batchSize, mediumMessageSize)
-				
+
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
 					_ = history.AddBatch(messages)
@@ -314,19 +313,19 @@ func BenchmarkHistory(b *testing.B) {
 			})
 		}
 	})
-	
+
 	b.Run("Search", func(b *testing.B) {
 		historySizes := []int{100, 1000, 10000}
-		
+
 		for _, histSize := range historySizes {
 			history := NewHistory(HistoryOptions{EnableIndexing: true})
-			
+
 			// Populate history
 			for i := 0; i < histSize; i++ {
 				msg := NewUserMessage(fmt.Sprintf("Message %d with searchable content", i))
 				_ = history.Add(msg)
 			}
-			
+
 			b.Run(fmt.Sprintf("History_%d", histSize), func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
@@ -338,34 +337,34 @@ func BenchmarkHistory(b *testing.B) {
 			})
 		}
 	})
-	
+
 	b.Run("GetByRole", func(b *testing.B) {
 		history := NewHistory()
 		messages := generateMessages(1000, mediumMessageSize)
 		_ = history.AddBatch(messages)
-		
+
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			_ = history.GetByRole(RoleUser)
 		}
 	})
-	
+
 	b.Run("Compaction", func(b *testing.B) {
 		history := NewHistory(HistoryOptions{
 			MaxMessages:      1000,
 			CompactThreshold: 500,
 			EnableIndexing:   true,
 		})
-		
+
 		// Pre-populate to trigger compaction
 		for i := 0; i < 2000; i++ {
 			msg := NewUserMessage(generateContent(mediumMessageSize))
 			_ = history.Add(msg)
 		}
-		
+
 		b.ResetTimer()
 		b.ReportAllocs()
-		
+
 		for i := 0; i < b.N; i++ {
 			// Force compaction by adding messages beyond threshold
 			for j := 0; j < 100; j++ {
@@ -382,23 +381,23 @@ func BenchmarkStreaming(b *testing.B) {
 		b.Run("AddContent", func(b *testing.B) {
 			builder, _ := NewStreamBuilder(RoleAssistant)
 			content := generateContent(100)
-			
+
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				_ = builder.AddContent(content)
 			}
 		})
-		
+
 		b.Run("AddToolCall", func(b *testing.B) {
 			builder, _ := NewStreamBuilder(RoleAssistant)
 			toolCall := generateToolCall(1)
-			
+
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				_ = builder.AddToolCall(i%10, toolCall)
 			}
 		})
-		
+
 		b.Run("Complete", func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
@@ -406,18 +405,18 @@ func BenchmarkStreaming(b *testing.B) {
 				builder, _ := NewStreamBuilder(RoleAssistant)
 				_ = builder.AddContent(generateContent(mediumMessageSize))
 				b.StartTimer()
-				
+
 				_, _ = builder.Complete()
 			}
 		})
 	})
-	
+
 	b.Run("StreamProcessor", func(b *testing.B) {
 		// Create a mock stream
 		stream := &mockMessageStream{
 			events: generateStreamEvents(100),
 		}
-		
+
 		processor := NewStreamProcessor().
 			OnDelta(func(msg Message, delta *Delta) error {
 				return nil
@@ -425,13 +424,13 @@ func BenchmarkStreaming(b *testing.B) {
 			OnComplete(func(msg Message) error {
 				return nil
 			})
-		
+
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			b.StopTimer()
 			stream.reset()
 			b.StartTimer()
-			
+
 			_ = processor.Process(context.Background(), stream)
 		}
 	})
@@ -447,43 +446,43 @@ func BenchmarkMemoryUsage(b *testing.B) {
 			{"1K_Messages", 1000},
 			{"10K_Messages", 10000},
 		}
-		
+
 		for _, convSize := range convSizes {
 			b.Run(convSize.name, func(b *testing.B) {
 				b.ReportAllocs()
-				
+
 				var m runtime.MemStats
 				runtime.ReadMemStats(&m)
 				startMem := m.Alloc
-				
+
 				conversation := NewConversation(ConversationOptions{
 					MaxMessages: convSize.size * 2,
 				})
-				
+
 				for i := 0; i < convSize.size; i++ {
 					msg := NewUserMessage(generateContent(mediumMessageSize))
 					_ = conversation.AddMessage(msg)
 				}
-				
+
 				runtime.ReadMemStats(&m)
 				endMem := m.Alloc
-				
+
 				b.ReportMetric(float64(endMem-startMem)/1024/1024, "MB")
 			})
 		}
 	})
-	
+
 	b.Run("HistoryMemoryLimit", func(b *testing.B) {
 		history := NewHistory(HistoryOptions{
 			MaxMemoryBytes: 10 * 1024 * 1024, // 10MB limit
 			EnableIndexing: true,
 		})
-		
+
 		messageCount := 0
 		totalSize := int64(0)
-		
+
 		b.ReportAllocs()
-		
+
 		// Keep adding messages until we hit the memory limit
 		for totalSize < 10*1024*1024 {
 			msg := NewUserMessage(generateContent(mediumMessageSize))
@@ -493,7 +492,7 @@ func BenchmarkMemoryUsage(b *testing.B) {
 			messageCount++
 			totalSize = history.CurrentMemoryBytes()
 		}
-		
+
 		b.ReportMetric(float64(messageCount), "messages")
 		b.ReportMetric(float64(totalSize)/1024/1024, "MB")
 	})
@@ -506,13 +505,13 @@ func BenchmarkConcurrent(b *testing.B) {
 			MaxMessages:    10000,
 			EnableIndexing: true,
 		})
-		
+
 		// Pre-populate
 		for i := 0; i < 1000; i++ {
 			msg := NewUserMessage(generateContent(mediumMessageSize))
 			_ = history.Add(msg)
 		}
-		
+
 		b.Run("ConcurrentReads", func(b *testing.B) {
 			b.ReportAllocs()
 			b.RunParallel(func(pb *testing.PB) {
@@ -523,7 +522,7 @@ func BenchmarkConcurrent(b *testing.B) {
 				}
 			})
 		})
-		
+
 		b.Run("ConcurrentWrites", func(b *testing.B) {
 			b.ReportAllocs()
 			b.RunParallel(func(pb *testing.PB) {
@@ -533,12 +532,12 @@ func BenchmarkConcurrent(b *testing.B) {
 				}
 			})
 		})
-		
+
 		b.Run("MixedReadWrite", func(b *testing.B) {
 			b.ReportAllocs()
-			
+
 			var wg sync.WaitGroup
-			
+
 			// Start readers
 			for i := 0; i < 4; i++ {
 				wg.Add(1)
@@ -550,7 +549,7 @@ func BenchmarkConcurrent(b *testing.B) {
 					}
 				}()
 			}
-			
+
 			// Start writers
 			for i := 0; i < 2; i++ {
 				wg.Add(1)
@@ -562,14 +561,14 @@ func BenchmarkConcurrent(b *testing.B) {
 					}
 				}()
 			}
-			
+
 			wg.Wait()
 		})
 	})
-	
+
 	b.Run("ThreadedHistory", func(b *testing.B) {
 		threadedHistory := NewThreadedHistory()
-		
+
 		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			threadID := fmt.Sprintf("thread_%d", rand.Intn(10))
@@ -580,11 +579,11 @@ func BenchmarkConcurrent(b *testing.B) {
 			}
 		})
 	})
-	
+
 	b.Run("Validation", func(b *testing.B) {
 		validator := NewValidator(DefaultValidationOptions())
 		messages := generateMessages(100, mediumMessageSize)
-		
+
 		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
@@ -598,7 +597,7 @@ func BenchmarkConcurrent(b *testing.B) {
 // Benchmark: Visitor Pattern Performance
 func BenchmarkVisitorPattern(b *testing.B) {
 	messages := generateMessages(1000, mediumMessageSize)
-	
+
 	visitor := &benchmarkVisitor{
 		userCount:      0,
 		assistantCount: 0,
@@ -606,7 +605,7 @@ func BenchmarkVisitorPattern(b *testing.B) {
 		toolCount:      0,
 		developerCount: 0,
 	}
-	
+
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		visitor.reset()
@@ -629,11 +628,11 @@ type mockMessageStream struct {
 func (m *mockMessageStream) Next(ctx context.Context) (*StreamEvent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if m.index >= len(m.events) {
 		return nil, nil
 	}
-	
+
 	event := m.events[m.index]
 	m.index++
 	return event, nil
@@ -651,25 +650,25 @@ func (m *mockMessageStream) reset() {
 
 func generateStreamEvents(count int) []*StreamEvent {
 	events := make([]*StreamEvent, 0, count*3) // start, deltas, complete
-	
+
 	msg := NewAssistantMessage("")
 	events = append(events, &StreamEvent{
 		Type:      StreamEventStart,
 		Message:   msg,
 		Timestamp: time.Now(),
 	})
-	
+
 	// Generate content deltas
 	content := generateContent(mediumMessageSize)
 	chunkSize := len(content) / count
-	
+
 	for i := 0; i < count; i++ {
 		start := i * chunkSize
 		end := start + chunkSize
 		if end > len(content) {
 			end = len(content)
 		}
-		
+
 		delta := content[start:end]
 		events = append(events, &StreamEvent{
 			Type:    StreamEventDelta,
@@ -680,13 +679,13 @@ func generateStreamEvents(count int) []*StreamEvent {
 			Timestamp: time.Now(),
 		})
 	}
-	
+
 	events = append(events, &StreamEvent{
 		Type:      StreamEventComplete,
 		Message:   msg,
 		Timestamp: time.Now(),
 	})
-	
+
 	return events
 }
 
@@ -734,13 +733,13 @@ func (v *benchmarkVisitor) VisitDeveloper(msg *DeveloperMessage) error {
 // Benchmark: Comparative operations (before/after optimizations)
 func BenchmarkOptimizations(b *testing.B) {
 	// These benchmarks compare different implementation approaches
-	
+
 	b.Run("StringConcatenation", func(b *testing.B) {
 		parts := make([]string, 100)
 		for i := range parts {
 			parts[i] = generateContent(100)
 		}
-		
+
 		b.Run("PlusOperator", func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
@@ -751,7 +750,7 @@ func BenchmarkOptimizations(b *testing.B) {
 				_ = result
 			}
 		})
-		
+
 		b.Run("StringBuilder", func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
@@ -762,7 +761,7 @@ func BenchmarkOptimizations(b *testing.B) {
 				_ = builder.String()
 			}
 		})
-		
+
 		b.Run("StringsJoin", func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
@@ -770,10 +769,10 @@ func BenchmarkOptimizations(b *testing.B) {
 			}
 		})
 	})
-	
+
 	b.Run("MessageStorage", func(b *testing.B) {
 		messages := generateMessages(1000, mediumMessageSize)
-		
+
 		b.Run("SliceAppend", func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
@@ -783,7 +782,7 @@ func BenchmarkOptimizations(b *testing.B) {
 				}
 			}
 		})
-		
+
 		b.Run("PreallocatedSlice", func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
@@ -794,10 +793,10 @@ func BenchmarkOptimizations(b *testing.B) {
 			}
 		})
 	})
-	
+
 	b.Run("Validation", func(b *testing.B) {
 		content := generateContent(largeMessageSize)
-		
+
 		b.Run("RegexValidation", func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
@@ -806,7 +805,7 @@ func BenchmarkOptimizations(b *testing.B) {
 				_ = htmlPattern.MatchString(content)
 			}
 		})
-		
+
 		b.Run("ByteValidation", func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {

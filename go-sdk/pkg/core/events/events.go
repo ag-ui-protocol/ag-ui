@@ -28,9 +28,9 @@ const (
 	EventTypeRunError           EventType = "RUN_ERROR"
 	EventTypeStepStarted        EventType = "STEP_STARTED"
 	EventTypeStepFinished       EventType = "STEP_FINISHED"
-	
+
 	// EventTypeUnknown represents an unrecognized event type
-	EventTypeUnknown            EventType = "UNKNOWN"
+	EventTypeUnknown EventType = "UNKNOWN"
 )
 
 // validEventTypes is a map for O(1) lookup of valid event types

@@ -29,19 +29,19 @@ func PutStreamingState(state *AnthropicStreamingState) {
 
 // AnthropicMessage represents a message in Anthropic format
 type AnthropicMessage struct {
-	Role    string                `json:"role"`
-	Content []AnthropicContent    `json:"content"`
+	Role    string             `json:"role"`
+	Content []AnthropicContent `json:"content"`
 }
 
 // AnthropicContent represents content in Anthropic format
 type AnthropicContent struct {
-	Type     string                 `json:"type"`
-	Text     *string                `json:"text,omitempty"`
-	ID       *string                `json:"id,omitempty"`
-	Name     *string                `json:"name,omitempty"`
-	Input    map[string]interface{} `json:"input,omitempty"`
-	ToolUseID *string               `json:"tool_use_id,omitempty"`
-	Content  *string                `json:"content,omitempty"`
+	Type      string                 `json:"type"`
+	Text      *string                `json:"text,omitempty"`
+	ID        *string                `json:"id,omitempty"`
+	Name      *string                `json:"name,omitempty"`
+	Input     map[string]interface{} `json:"input,omitempty"`
+	ToolUseID *string                `json:"tool_use_id,omitempty"`
+	Content   *string                `json:"content,omitempty"`
 }
 
 // AnthropicSystemPrompt represents the system prompt in Anthropic format
@@ -93,14 +93,14 @@ func (c *AnthropicConverter) ToProviderFormat(msgs messages.MessageList) (interf
 	if err := ValidateMessages(msgs, c.validationOptions); err != nil {
 		return nil, fmt.Errorf("message validation failed: %w", err)
 	}
-	
+
 	// Preprocess messages
 	processed := c.PreprocessMessages(msgs)
-	
+
 	// Separate system messages from conversation messages
 	var systemPrompt string
 	var conversationMessages messages.MessageList
-	
+
 	for _, msg := range processed {
 		if msg.GetRole() == messages.RoleSystem {
 			// Anthropic uses a single system prompt, so concatenate system messages
@@ -114,10 +114,10 @@ func (c *AnthropicConverter) ToProviderFormat(msgs messages.MessageList) (interf
 			conversationMessages = append(conversationMessages, msg)
 		}
 	}
-	
+
 	// Convert conversation messages to Anthropic format
 	anthropicMessages := make([]AnthropicMessage, 0, len(conversationMessages))
-	
+
 	for _, msg := range conversationMessages {
 		anthropicMsg, err := c.convertToAnthropic(msg)
 		if err != nil {
@@ -125,13 +125,13 @@ func (c *AnthropicConverter) ToProviderFormat(msgs messages.MessageList) (interf
 		}
 		anthropicMessages = append(anthropicMessages, anthropicMsg)
 	}
-	
+
 	// Create the request structure
 	request := AnthropicRequest{
 		System:   systemPrompt,
 		Messages: anthropicMessages,
 	}
-	
+
 	return request, nil
 }
 
@@ -141,7 +141,7 @@ func (c *AnthropicConverter) convertToAnthropic(msg messages.Message) (Anthropic
 		Role:    c.mapRole(msg.GetRole()),
 		Content: []AnthropicContent{},
 	}
-	
+
 	// Handle specific message types
 	switch m := msg.(type) {
 	case *messages.UserMessage:
@@ -151,7 +151,7 @@ func (c *AnthropicConverter) convertToAnthropic(msg messages.Message) (Anthropic
 				Text: content,
 			})
 		}
-		
+
 	case *messages.AssistantMessage:
 		// Add text content if present
 		if content := m.GetContent(); content != nil {
@@ -160,7 +160,7 @@ func (c *AnthropicConverter) convertToAnthropic(msg messages.Message) (Anthropic
 				Text: content,
 			})
 		}
-		
+
 		// Add tool uses if present
 		for _, tc := range m.ToolCalls {
 			// Parse arguments as JSON
@@ -171,7 +171,7 @@ func (c *AnthropicConverter) convertToAnthropic(msg messages.Message) (Anthropic
 					"arguments": tc.Function.Arguments,
 				}
 			}
-			
+
 			anthropicMsg.Content = append(anthropicMsg.Content, AnthropicContent{
 				Type:  "tool_use",
 				ID:    &tc.ID,
@@ -179,7 +179,7 @@ func (c *AnthropicConverter) convertToAnthropic(msg messages.Message) (Anthropic
 				Input: input,
 			})
 		}
-		
+
 	case *messages.ToolMessage:
 		// Anthropic uses "user" role for tool results
 		anthropicMsg.Role = "user"
@@ -188,13 +188,13 @@ func (c *AnthropicConverter) convertToAnthropic(msg messages.Message) (Anthropic
 			ToolUseID: &m.ToolCallID,
 			Content:   m.Content,
 		})
-		
+
 	case *messages.DeveloperMessage:
 		// Convert developer messages to assistant messages with a prefix
 		anthropicMsg.Role = "assistant"
 		content := m.GetContent()
 		if content == nil {
-			return AnthropicMessage{}, messages.NewInvalidInputError("content", nil, 
+			return AnthropicMessage{}, messages.NewInvalidInputError("content", nil,
 				"developer message content cannot be nil")
 		}
 		devContent := "[Developer Message] " + *content
@@ -202,12 +202,12 @@ func (c *AnthropicConverter) convertToAnthropic(msg messages.Message) (Anthropic
 			Type: "text",
 			Text: &devContent,
 		})
-		
+
 	default:
-		return AnthropicMessage{}, messages.NewConversionError("AG-UI", "Anthropic", 
+		return AnthropicMessage{}, messages.NewConversionError("AG-UI", "Anthropic",
 			fmt.Sprintf("%T", msg), "unsupported message type")
 	}
-	
+
 	return anthropicMsg, nil
 }
 
@@ -231,7 +231,7 @@ func (c *AnthropicConverter) mapRole(role messages.MessageRole) string {
 func (c *AnthropicConverter) FromProviderFormat(data interface{}) (messages.MessageList, error) {
 	// Type assertion for different possible formats
 	var anthropicRequest AnthropicRequest
-	
+
 	switch v := data.(type) {
 	case AnthropicRequest:
 		anthropicRequest = v
@@ -249,15 +249,15 @@ func (c *AnthropicConverter) FromProviderFormat(data interface{}) (messages.Mess
 	default:
 		return nil, fmt.Errorf("invalid data format: expected AnthropicRequest, []AnthropicMessage, or JSON bytes")
 	}
-	
+
 	// Convert to AG-UI messages
 	agMessages := make(messages.MessageList, 0)
-	
+
 	// Add system message if present
 	if anthropicRequest.System != "" {
 		agMessages = append(agMessages, messages.NewSystemMessage(anthropicRequest.System))
 	}
-	
+
 	// Convert conversation messages
 	for _, anthropicMsg := range anthropicRequest.Messages {
 		convertedMsgs, err := c.convertFromAnthropic(anthropicMsg)
@@ -266,14 +266,14 @@ func (c *AnthropicConverter) FromProviderFormat(data interface{}) (messages.Mess
 		}
 		agMessages = append(agMessages, convertedMsgs...)
 	}
-	
+
 	return agMessages, nil
 }
 
 // convertFromAnthropic converts a single Anthropic message to AG-UI format
 func (c *AnthropicConverter) convertFromAnthropic(anthropicMsg AnthropicMessage) (messages.MessageList, error) {
 	result := make(messages.MessageList, 0)
-	
+
 	switch anthropicMsg.Role {
 	case "user":
 		// Check if this is a tool result or regular user message
@@ -284,7 +284,7 @@ func (c *AnthropicConverter) convertFromAnthropic(anthropicMsg AnthropicMessage)
 					msg := messages.NewUserMessage(*content.Text)
 					result = append(result, msg)
 				}
-				
+
 			case "tool_result":
 				if content.ToolUseID != nil && content.Content != nil {
 					msg := messages.NewToolMessage(*content.Content, *content.ToolUseID)
@@ -292,12 +292,12 @@ func (c *AnthropicConverter) convertFromAnthropic(anthropicMsg AnthropicMessage)
 				}
 			}
 		}
-		
+
 	case "assistant":
 		var builder strings.Builder
 		var toolCalls []messages.ToolCall
 		isDeveloperMessage := false
-		
+
 		for _, content := range anthropicMsg.Content {
 			switch content.Type {
 			case "text":
@@ -312,13 +312,13 @@ func (c *AnthropicConverter) convertFromAnthropic(anthropicMsg AnthropicMessage)
 						// Skip adding to builder since this is a developer message
 						continue
 					}
-					
+
 					if builder.Len() > 0 {
 						builder.WriteString("\n")
 					}
 					builder.WriteString(*content.Text)
 				}
-				
+
 			case "tool_use":
 				if content.ID != nil && content.Name != nil {
 					// Convert input back to JSON string
@@ -326,7 +326,7 @@ func (c *AnthropicConverter) convertFromAnthropic(anthropicMsg AnthropicMessage)
 					if err != nil {
 						return nil, fmt.Errorf("failed to marshal tool input: %w", err)
 					}
-					
+
 					toolCall := messages.ToolCall{
 						ID:   *content.ID,
 						Type: "function",
@@ -339,7 +339,7 @@ func (c *AnthropicConverter) convertFromAnthropic(anthropicMsg AnthropicMessage)
 				}
 			}
 		}
-		
+
 		// Create assistant message only if not a developer message
 		if !isDeveloperMessage {
 			textContent := builder.String()
@@ -354,11 +354,11 @@ func (c *AnthropicConverter) convertFromAnthropic(anthropicMsg AnthropicMessage)
 				result = append(result, msg)
 			}
 		}
-		
+
 	default:
 		return nil, fmt.Errorf("unknown Anthropic message role: %s", anthropicMsg.Role)
 	}
-	
+
 	return result, nil
 }
 
@@ -371,11 +371,11 @@ type AnthropicStreamEvent struct {
 
 // AnthropicDelta represents a delta update in streaming
 type AnthropicDelta struct {
-	Type      *string                `json:"type,omitempty"`
-	Text      *string                `json:"text,omitempty"`
-	ToolUseID *string                `json:"id,omitempty"`
-	Name      *string                `json:"name,omitempty"`
-	Input     *string                `json:"input,omitempty"`
+	Type      *string `json:"type,omitempty"`
+	Text      *string `json:"text,omitempty"`
+	ToolUseID *string `json:"id,omitempty"`
+	Name      *string `json:"name,omitempty"`
+	Input     *string `json:"input,omitempty"`
 }
 
 // AnthropicStreamingState maintains state for streaming message reconstruction
@@ -423,7 +423,7 @@ func (c *AnthropicConverter) ProcessStreamEvent(state *AnthropicStreamingState, 
 			},
 		}
 	}
-	
+
 	switch event.Type {
 	case "content_block_delta":
 		if event.Delta != nil && event.Index != nil {
@@ -440,7 +440,7 @@ func (c *AnthropicConverter) ProcessStreamEvent(state *AnthropicStreamingState, 
 					state.ToolCalls[*event.Index] = tc
 					state.ToolInputs[*event.Index] = ""
 				}
-				
+
 				if event.Delta.ToolUseID != nil {
 					tc.ID = *event.Delta.ToolUseID
 				}
@@ -453,7 +453,7 @@ func (c *AnthropicConverter) ProcessStreamEvent(state *AnthropicStreamingState, 
 				}
 			}
 		}
-		
+
 	case "content_block_stop":
 		// Finalize any pending tool calls
 		state.CurrentMessage.ToolCalls = make([]messages.ToolCall, 0, len(state.ToolCalls))
@@ -461,7 +461,7 @@ func (c *AnthropicConverter) ProcessStreamEvent(state *AnthropicStreamingState, 
 			state.CurrentMessage.ToolCalls = append(state.CurrentMessage.ToolCalls, *tc)
 		}
 	}
-	
+
 	return state.CurrentMessage, nil
 }
 

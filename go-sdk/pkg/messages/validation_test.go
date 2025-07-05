@@ -158,12 +158,12 @@ func TestValidator(t *testing.T) {
 
 	t.Run("Validate empty content handling", func(t *testing.T) {
 		v := NewValidator(ValidationOptions{
-			AllowEmptyContent:  false,
-			MaxToolCalls:       100, // Ensure we allow tool calls
-			MaxNameLength:      256, // Ensure we allow names
-			MaxContentBytes:    1000000,
-			MaxArgumentsBytes:  100000,
-			StrictRoleCheck:    true,
+			AllowEmptyContent: false,
+			MaxToolCalls:      100, // Ensure we allow tool calls
+			MaxNameLength:     256, // Ensure we allow names
+			MaxContentBytes:   1000000,
+			MaxArgumentsBytes: 100000,
+			StrictRoleCheck:   true,
 		})
 
 		// User message without content should fail

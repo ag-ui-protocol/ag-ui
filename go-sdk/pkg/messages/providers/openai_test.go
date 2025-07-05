@@ -83,7 +83,7 @@ func TestOpenAIConverter(t *testing.T) {
 		testConverter := NewOpenAIConverter().WithValidationOptions(ConversionValidationOptions{
 			AllowStandaloneToolMessages: true,
 		})
-		
+
 		msgs := messages.MessageList{
 			messages.NewToolMessage("The weather in San Francisco is 18°C and sunny.", "call_abc123"),
 		}

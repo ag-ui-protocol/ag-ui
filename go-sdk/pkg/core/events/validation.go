@@ -193,7 +193,7 @@ func (v *Validator) validateMinimalFields(event Event) error {
 		// These events only validate IDs in their Validate methods,
 		// so when AllowEmptyIDs is true, we just validate the base event
 		return event.GetBaseEvent().Validate()
-		
+
 	case EventTypeRunError:
 		if errorEvent, ok := event.(*RunErrorEvent); ok {
 			if errorEvent.Message == "" {
@@ -201,7 +201,7 @@ func (v *Validator) validateMinimalFields(event Event) error {
 			}
 		}
 		return event.GetBaseEvent().Validate()
-		
+
 	case EventTypeStepStarted:
 		if stepEvent, ok := event.(*StepStartedEvent); ok {
 			if stepEvent.StepName == "" {
@@ -209,7 +209,7 @@ func (v *Validator) validateMinimalFields(event Event) error {
 			}
 		}
 		return event.GetBaseEvent().Validate()
-		
+
 	case EventTypeStepFinished:
 		if stepEvent, ok := event.(*StepFinishedEvent); ok {
 			if stepEvent.StepName == "" {
@@ -217,11 +217,11 @@ func (v *Validator) validateMinimalFields(event Event) error {
 			}
 		}
 		return event.GetBaseEvent().Validate()
-		
+
 	case EventTypeTextMessageStart, EventTypeTextMessageEnd:
 		// These events only validate IDs in their Validate methods
 		return event.GetBaseEvent().Validate()
-		
+
 	case EventTypeTextMessageContent:
 		if msgEvent, ok := event.(*TextMessageContentEvent); ok {
 			if msgEvent.Delta == "" {
@@ -229,7 +229,7 @@ func (v *Validator) validateMinimalFields(event Event) error {
 			}
 		}
 		return event.GetBaseEvent().Validate()
-		
+
 	case EventTypeToolCallStart:
 		if toolEvent, ok := event.(*ToolCallStartEvent); ok {
 			if toolEvent.ToolCallName == "" {
@@ -237,7 +237,7 @@ func (v *Validator) validateMinimalFields(event Event) error {
 			}
 		}
 		return event.GetBaseEvent().Validate()
-		
+
 	case EventTypeToolCallArgs:
 		if toolEvent, ok := event.(*ToolCallArgsEvent); ok {
 			if toolEvent.Delta == "" {
@@ -245,11 +245,11 @@ func (v *Validator) validateMinimalFields(event Event) error {
 			}
 		}
 		return event.GetBaseEvent().Validate()
-		
+
 	case EventTypeToolCallEnd:
 		// This event only validates IDs in its Validate method
 		return event.GetBaseEvent().Validate()
-		
+
 	case EventTypeStateSnapshot:
 		if stateEvent, ok := event.(*StateSnapshotEvent); ok {
 			if stateEvent.Snapshot == nil {
@@ -257,7 +257,7 @@ func (v *Validator) validateMinimalFields(event Event) error {
 			}
 		}
 		return event.GetBaseEvent().Validate()
-		
+
 	case EventTypeStateDelta:
 		if deltaEvent, ok := event.(*StateDeltaEvent); ok {
 			if len(deltaEvent.Delta) == 0 {
@@ -267,7 +267,7 @@ func (v *Validator) validateMinimalFields(event Event) error {
 			// each operation, which is more than minimal validation
 		}
 		return event.GetBaseEvent().Validate()
-		
+
 	case EventTypeMessagesSnapshot:
 		if msgEvent, ok := event.(*MessagesSnapshotEvent); ok {
 			// Only validate non-ID fields for each message
@@ -278,7 +278,7 @@ func (v *Validator) validateMinimalFields(event Event) error {
 			}
 		}
 		return event.GetBaseEvent().Validate()
-		
+
 	case EventTypeRaw:
 		if rawEvent, ok := event.(*RawEvent); ok {
 			if rawEvent.Event == nil {
@@ -286,7 +286,7 @@ func (v *Validator) validateMinimalFields(event Event) error {
 			}
 		}
 		return event.GetBaseEvent().Validate()
-		
+
 	case EventTypeCustom:
 		if customEvent, ok := event.(*CustomEvent); ok {
 			if customEvent.Name == "" {
@@ -294,7 +294,7 @@ func (v *Validator) validateMinimalFields(event Event) error {
 			}
 		}
 		return event.GetBaseEvent().Validate()
-		
+
 	default:
 		// For any other event types, just validate the base event
 		return event.GetBaseEvent().Validate()

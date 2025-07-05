@@ -69,7 +69,7 @@ func TestNew(t *testing.T) {
 				verifyTestError(t, err, tt.errType, "BaseURL")
 				return
 			}
-			
+
 			if client == nil {
 				t.Error("New() returned nil client with no error")
 				return
@@ -212,13 +212,13 @@ func verifyTestError(t *testing.T, err error, expectedType any, expectedField st
 	if expectedType == nil {
 		return
 	}
-	
+
 	var configErr *core.ConfigError
 	if !errors.As(err, &configErr) {
 		t.Errorf("Expected error type %T, got %T", expectedType, err)
 		return
 	}
-	
+
 	if expectedField != "" && configErr.Field != expectedField {
 		t.Errorf("Expected error field %q, got %v", expectedField, configErr.Field)
 	}

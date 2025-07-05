@@ -9,18 +9,18 @@ import (
 
 // OpenAIMessage represents a message in OpenAI format
 type OpenAIMessage struct {
-	Role       string         `json:"role"`
-	Content    *string        `json:"content,omitempty"`
-	Name       *string        `json:"name,omitempty"`
+	Role       string           `json:"role"`
+	Content    *string          `json:"content,omitempty"`
+	Name       *string          `json:"name,omitempty"`
 	ToolCalls  []OpenAIToolCall `json:"tool_calls,omitempty"`
-	ToolCallID *string        `json:"tool_call_id,omitempty"`
+	ToolCallID *string          `json:"tool_call_id,omitempty"`
 }
 
 // OpenAIToolCall represents a tool call in OpenAI format
 type OpenAIToolCall struct {
-	ID       string                  `json:"id"`
-	Type     string                  `json:"type"`
-	Function OpenAIFunctionCall      `json:"function"`
+	ID       string             `json:"id"`
+	Type     string             `json:"type"`
+	Function OpenAIFunctionCall `json:"function"`
 }
 
 // OpenAIFunctionCall represents a function call in OpenAI format
@@ -67,13 +67,13 @@ func (c *OpenAIConverter) ToProviderFormat(msgs messages.MessageList) (interface
 	if err := ValidateMessages(msgs, c.validationOptions); err != nil {
 		return nil, fmt.Errorf("message validation failed: %w", err)
 	}
-	
+
 	// Preprocess messages
 	processed := c.PreprocessMessages(msgs)
-	
+
 	// Convert to OpenAI format
 	openAIMessages := make([]OpenAIMessage, 0, len(processed))
-	
+
 	for _, msg := range processed {
 		openAIMsg, err := c.convertToOpenAI(msg)
 		if err != nil {
@@ -81,7 +81,7 @@ func (c *OpenAIConverter) ToProviderFormat(msgs messages.MessageList) (interface
 		}
 		openAIMessages = append(openAIMessages, openAIMsg)
 	}
-	
+
 	return openAIMessages, nil
 }
 
@@ -92,7 +92,7 @@ func (c *OpenAIConverter) convertToOpenAI(msg messages.Message) (OpenAIMessage, 
 		Content: msg.GetContent(),
 		Name:    msg.GetName(),
 	}
-	
+
 	// Handle specific message types
 	switch m := msg.(type) {
 	case *messages.AssistantMessage:
@@ -110,12 +110,12 @@ func (c *OpenAIConverter) convertToOpenAI(msg messages.Message) (OpenAIMessage, 
 				openAIMsg.ToolCalls = append(openAIMsg.ToolCalls, openAITC)
 			}
 		}
-		
+
 	case *messages.ToolMessage:
 		openAIMsg.Role = "tool"
 		openAIMsg.Content = m.GetContent()
 		openAIMsg.ToolCallID = &m.ToolCallID
-		
+
 	case *messages.DeveloperMessage:
 		// OpenAI doesn't have a developer role, convert to system
 		openAIMsg.Role = "system"
@@ -124,7 +124,7 @@ func (c *OpenAIConverter) convertToOpenAI(msg messages.Message) (OpenAIMessage, 
 			openAIMsg.Name = &name
 		}
 	}
-	
+
 	return openAIMsg, nil
 }
 
@@ -138,15 +138,15 @@ func (c *OpenAIConverter) FromProviderFormat(data interface{}) (messages.Message
 		if !jsonOK {
 			return nil, fmt.Errorf("invalid data format: expected []OpenAIMessage or JSON bytes")
 		}
-		
+
 		if err := json.Unmarshal(jsonData, &openAIMessages); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal OpenAI messages: %w", err)
 		}
 	}
-	
+
 	// Convert to AG-UI messages
 	agMessages := make(messages.MessageList, 0, len(openAIMessages))
-	
+
 	for _, openAIMsg := range openAIMessages {
 		agMsg, err := c.convertFromOpenAI(openAIMsg)
 		if err != nil {
@@ -154,7 +154,7 @@ func (c *OpenAIConverter) FromProviderFormat(data interface{}) (messages.Message
 		}
 		agMessages = append(agMessages, agMsg)
 	}
-	
+
 	return agMessages, nil
 }
 
@@ -168,10 +168,10 @@ func (c *OpenAIConverter) convertFromOpenAI(openAIMsg OpenAIMessage) (messages.M
 		msg := messages.NewUserMessage(*openAIMsg.Content)
 		msg.Name = openAIMsg.Name
 		return msg, nil
-		
+
 	case "assistant":
 		var msg *messages.AssistantMessage
-		
+
 		if len(openAIMsg.ToolCalls) > 0 {
 			// Convert tool calls
 			toolCalls := make([]messages.ToolCall, 0, len(openAIMsg.ToolCalls))
@@ -194,26 +194,26 @@ func (c *OpenAIConverter) convertFromOpenAI(openAIMsg OpenAIMessage) (messages.M
 			}
 			msg = messages.NewAssistantMessage(*openAIMsg.Content)
 		}
-		
+
 		msg.Name = openAIMsg.Name
 		return msg, nil
-		
+
 	case "system":
 		if openAIMsg.Content == nil {
 			return nil, fmt.Errorf("system message missing content")
 		}
-		
+
 		// Check if this is a converted developer message
 		if openAIMsg.Name != nil && *openAIMsg.Name == "developer" {
 			msg := messages.NewDeveloperMessage(*openAIMsg.Content)
 			msg.Name = openAIMsg.Name
 			return msg, nil
 		}
-		
+
 		msg := messages.NewSystemMessage(*openAIMsg.Content)
 		msg.Name = openAIMsg.Name
 		return msg, nil
-		
+
 	case "tool":
 		if openAIMsg.Content == nil {
 			return nil, fmt.Errorf("tool message missing content")
@@ -222,7 +222,7 @@ func (c *OpenAIConverter) convertFromOpenAI(openAIMsg OpenAIMessage) (messages.M
 			return nil, fmt.Errorf("tool message missing tool_call_id")
 		}
 		return messages.NewToolMessage(*openAIMsg.Content, *openAIMsg.ToolCallID), nil
-		
+
 	default:
 		return nil, fmt.Errorf("unknown OpenAI message role: %s", openAIMsg.Role)
 	}
@@ -230,17 +230,17 @@ func (c *OpenAIConverter) convertFromOpenAI(openAIMsg OpenAIMessage) (messages.M
 
 // OpenAIStreamDelta represents a streaming delta update from OpenAI
 type OpenAIStreamDelta struct {
-	Role    *string               `json:"role,omitempty"`
-	Content *string               `json:"content,omitempty"`
+	Role      *string               `json:"role,omitempty"`
+	Content   *string               `json:"content,omitempty"`
 	ToolCalls []OpenAIToolCallDelta `json:"tool_calls,omitempty"`
 }
 
 // OpenAIToolCallDelta represents a tool call delta in streaming
 type OpenAIToolCallDelta struct {
-	Index    int                        `json:"index"`
-	ID       *string                    `json:"id,omitempty"`
-	Type     *string                    `json:"type,omitempty"`
-	Function *OpenAIFunctionCallDelta   `json:"function,omitempty"`
+	Index    int                      `json:"index"`
+	ID       *string                  `json:"id,omitempty"`
+	Type     *string                  `json:"type,omitempty"`
+	Function *OpenAIFunctionCallDelta `json:"function,omitempty"`
 }
 
 // OpenAIFunctionCallDelta represents a function call delta in streaming
@@ -274,14 +274,14 @@ func (c *OpenAIConverter) ProcessDelta(state *StreamingState, delta OpenAIStream
 		}
 		state.CurrentMessage.BaseMessage.ID = "" // Will be set by ensureID
 	}
-	
+
 	// Process content delta
 	if delta.Content != nil {
 		state.ContentBuffer += *delta.Content
 		content := state.ContentBuffer
 		state.CurrentMessage.Content = &content
 	}
-	
+
 	// Process tool call deltas
 	for _, tcDelta := range delta.ToolCalls {
 		tc, exists := state.ToolCalls[tcDelta.Index]
@@ -289,7 +289,7 @@ func (c *OpenAIConverter) ProcessDelta(state *StreamingState, delta OpenAIStream
 			tc = &messages.ToolCall{}
 			state.ToolCalls[tcDelta.Index] = tc
 		}
-		
+
 		if tcDelta.ID != nil {
 			tc.ID = *tcDelta.ID
 		}
@@ -305,7 +305,7 @@ func (c *OpenAIConverter) ProcessDelta(state *StreamingState, delta OpenAIStream
 			}
 		}
 	}
-	
+
 	// Update tool calls in message
 	state.CurrentMessage.ToolCalls = make([]messages.ToolCall, 0, len(state.ToolCalls))
 	for i := 0; i < len(state.ToolCalls); i++ {
@@ -313,7 +313,7 @@ func (c *OpenAIConverter) ProcessDelta(state *StreamingState, delta OpenAIStream
 			state.CurrentMessage.ToolCalls = append(state.CurrentMessage.ToolCalls, *tc)
 		}
 	}
-	
+
 	return state.CurrentMessage, nil
 }
 

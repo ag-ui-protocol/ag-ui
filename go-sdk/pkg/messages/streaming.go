@@ -29,8 +29,8 @@ const (
 
 // Delta represents incremental updates to a message
 type Delta struct {
-	Content      *string
-	ToolCalls    []ToolCall
+	Content       *string
+	ToolCalls     []ToolCall
 	ToolCallIndex int
 }
 
@@ -38,7 +38,7 @@ type Delta struct {
 type MessageStream interface {
 	// Next returns the next event in the stream
 	Next(ctx context.Context) (*StreamEvent, error)
-	
+
 	// Close closes the stream
 	Close() error
 }
@@ -57,7 +57,7 @@ func NewStreamBuilder(role MessageRole) (*StreamBuilder, error) {
 	if err := role.Validate(); err != nil {
 		return nil, err
 	}
-	
+
 	var msg Message
 	switch role {
 	case RoleAssistant:
@@ -75,7 +75,7 @@ func NewStreamBuilder(role MessageRole) (*StreamBuilder, error) {
 	default:
 		return nil, fmt.Errorf("streaming not supported for role: %s", role)
 	}
-	
+
 	// Ensure message has ID and metadata
 	switch m := msg.(type) {
 	case *AssistantMessage:
@@ -87,7 +87,7 @@ func NewStreamBuilder(role MessageRole) (*StreamBuilder, error) {
 	default:
 		return nil, fmt.Errorf("unsupported message type: %T", msg)
 	}
-	
+
 	return &StreamBuilder{
 		currentMessage:  msg,
 		toolCallBuffers: make(map[int]*ToolCall),
@@ -98,13 +98,13 @@ func NewStreamBuilder(role MessageRole) (*StreamBuilder, error) {
 func (sb *StreamBuilder) AddContent(delta string) error {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
-	
+
 	if sb.completed {
 		return fmt.Errorf("cannot add content to completed message")
 	}
-	
+
 	sb.contentBuffer.WriteString(delta)
-	
+
 	// Update the message content
 	content := sb.contentBuffer.String()
 	switch msg := sb.currentMessage.(type) {
@@ -115,7 +115,7 @@ func (sb *StreamBuilder) AddContent(delta string) error {
 	default:
 		return fmt.Errorf("unsupported message type for content: %T", msg)
 	}
-	
+
 	return nil
 }
 
@@ -123,24 +123,24 @@ func (sb *StreamBuilder) AddContent(delta string) error {
 func (sb *StreamBuilder) AddToolCall(index int, delta ToolCall) error {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
-	
+
 	if sb.completed {
 		return fmt.Errorf("cannot add tool call to completed message")
 	}
-	
+
 	// Only assistant messages support tool calls
 	assistantMsg, ok := sb.currentMessage.(*AssistantMessage)
 	if !ok {
 		return fmt.Errorf("tool calls only supported for assistant messages")
 	}
-	
+
 	// Get or create tool call buffer
 	tc, exists := sb.toolCallBuffers[index]
 	if !exists {
 		tc = &ToolCall{}
 		sb.toolCallBuffers[index] = tc
 	}
-	
+
 	// Update tool call fields
 	if delta.ID != "" {
 		tc.ID = delta.ID
@@ -154,7 +154,7 @@ func (sb *StreamBuilder) AddToolCall(index int, delta ToolCall) error {
 	if delta.Function.Arguments != "" {
 		tc.Function.Arguments += delta.Function.Arguments
 	}
-	
+
 	// Rebuild tool calls array
 	assistantMsg.ToolCalls = make([]ToolCall, 0, len(sb.toolCallBuffers))
 	for i := 0; i < len(sb.toolCallBuffers); i++ {
@@ -162,7 +162,7 @@ func (sb *StreamBuilder) AddToolCall(index int, delta ToolCall) error {
 			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, *tc)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -177,18 +177,18 @@ func (sb *StreamBuilder) GetMessage() Message {
 func (sb *StreamBuilder) Complete() (Message, error) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
-	
+
 	if sb.completed {
 		return nil, fmt.Errorf("message already completed")
 	}
-	
+
 	sb.completed = true
-	
+
 	// Validate the completed message
 	if err := sb.currentMessage.Validate(); err != nil {
 		return nil, fmt.Errorf("completed message is invalid: %w", err)
 	}
-	
+
 	return sb.currentMessage, nil
 }
 
@@ -234,7 +234,7 @@ func (sp *StreamProcessor) Process(ctx context.Context, stream MessageStream) er
 	defer func() {
 		_ = stream.Close() // Ignore close error on cleanup
 	}()
-	
+
 	for {
 		event, err := stream.Next(ctx)
 		if err != nil {
@@ -243,11 +243,11 @@ func (sp *StreamProcessor) Process(ctx context.Context, stream MessageStream) er
 			}
 			return err
 		}
-		
+
 		if event == nil {
 			break
 		}
-		
+
 		switch event.Type {
 		case StreamEventStart:
 			if sp.onStart != nil {
@@ -255,21 +255,21 @@ func (sp *StreamProcessor) Process(ctx context.Context, stream MessageStream) er
 					return err
 				}
 			}
-			
+
 		case StreamEventDelta:
 			if sp.onDelta != nil {
 				if err := sp.onDelta(event.Message, event.Delta); err != nil {
 					return err
 				}
 			}
-			
+
 		case StreamEventComplete:
 			if sp.onComplete != nil {
 				if err := sp.onComplete(event.Message); err != nil {
 					return err
 				}
 			}
-			
+
 		case StreamEventError:
 			if sp.onError != nil {
 				sp.onError(event.Error)
@@ -277,7 +277,7 @@ func (sp *StreamProcessor) Process(ctx context.Context, stream MessageStream) er
 			return event.Error
 		}
 	}
-	
+
 	return nil
 }
 
@@ -301,11 +301,11 @@ func NewBufferedStream(stream MessageStream, batchSize int) *BufferedStream {
 		flushChan: make(chan []*StreamEvent, 10),
 		closeChan: make(chan struct{}),
 	}
-	
+
 	// Start background goroutine to read from stream
 	bs.wg.Add(1)
 	go bs.readLoop()
-	
+
 	return bs
 }
 
@@ -313,7 +313,7 @@ func NewBufferedStream(stream MessageStream, batchSize int) *BufferedStream {
 func (bs *BufferedStream) readLoop() {
 	defer bs.wg.Done()
 	ctx := context.Background()
-	
+
 	for {
 		select {
 		case <-bs.closeChan:
@@ -331,12 +331,12 @@ func (bs *BufferedStream) readLoop() {
 				bs.flush()
 				return
 			}
-			
+
 			if event == nil {
 				bs.flush()
 				return
 			}
-			
+
 			bs.addEvent(event)
 		}
 	}
@@ -346,9 +346,9 @@ func (bs *BufferedStream) readLoop() {
 func (bs *BufferedStream) addEvent(event *StreamEvent) {
 	bs.bufferMu.Lock()
 	defer bs.bufferMu.Unlock()
-	
+
 	bs.buffer = append(bs.buffer, event)
-	
+
 	if len(bs.buffer) >= bs.batchSize {
 		bs.flushLocked()
 	}
@@ -366,11 +366,11 @@ func (bs *BufferedStream) flushLocked() {
 	if len(bs.buffer) == 0 {
 		return
 	}
-	
+
 	batch := make([]*StreamEvent, len(bs.buffer))
 	copy(batch, bs.buffer)
 	bs.buffer = bs.buffer[:0]
-	
+
 	select {
 	case bs.flushChan <- batch:
 	case <-bs.closeChan:
@@ -414,19 +414,19 @@ func NewStreamMerger(streams ...MessageStream) *StreamMerger {
 		streams: streams,
 		events:  make(chan *StreamEvent, len(streams)*10),
 	}
-	
+
 	// Start goroutines for each stream
 	for _, stream := range streams {
 		sm.wg.Add(1)
 		go sm.readStream(stream)
 	}
-	
+
 	// Start goroutine to close channel when all streams are done
 	go func() {
 		sm.wg.Wait()
 		close(sm.events)
 	}()
-	
+
 	return sm
 }
 
@@ -434,7 +434,7 @@ func NewStreamMerger(streams ...MessageStream) *StreamMerger {
 func (sm *StreamMerger) readStream(stream MessageStream) {
 	defer sm.wg.Done()
 	ctx := context.Background()
-	
+
 	for {
 		event, err := stream.Next(ctx)
 		if err != nil {
@@ -445,11 +445,11 @@ func (sm *StreamMerger) readStream(stream MessageStream) {
 			}
 			return
 		}
-		
+
 		if event == nil {
 			return
 		}
-		
+
 		sm.events <- event
 	}
 }
@@ -471,22 +471,22 @@ func (sm *StreamMerger) Next(ctx context.Context) (*StreamEvent, error) {
 func (sm *StreamMerger) Close() error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	
+
 	if sm.closed {
 		return nil
 	}
 	sm.closed = true
-	
+
 	var errs []error
 	for _, stream := range sm.streams {
 		if err := stream.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	
+
 	if len(errs) > 0 {
 		return fmt.Errorf("errors closing streams: %v", errs)
 	}
-	
+
 	return nil
 }

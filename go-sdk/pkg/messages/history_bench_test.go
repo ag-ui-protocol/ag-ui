@@ -67,7 +67,7 @@ func BenchmarkHistoryWithHighThroughput(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		// Simulate batch operations
 		_ = h.AddBatch(messages[:10]) // Ignore error in benchmark
-		
+
 		// Simulate some reads
 		h.GetLast(5)
 		h.Size()
