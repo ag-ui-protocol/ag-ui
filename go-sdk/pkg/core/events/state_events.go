@@ -171,7 +171,7 @@ func (e *StateDeltaEvent) ToProtobuf() (*generated.Event, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert patch operation type: %w", err)
 		}
-		
+
 		pbOp := &generated.JsonPatchOperation{
 			Op:   pbOpType,
 			Path: op.Path,

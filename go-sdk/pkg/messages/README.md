@@ -143,7 +143,7 @@ if err != nil {
 ```go
 // Configure validation options
 validator := messages.NewValidator(messages.ValidationOptions{
-    MaxContentLength:   100000,  // 100KB
+    MaxContentBytes:    100000,  // 100KB
     MaxNameLength:      256,
     MaxToolCalls:       50,
     AllowEmptyContent:  false,
@@ -250,10 +250,10 @@ fmt.Printf("Active threads: %v\n", threads)
 ```go
 // Create validator with strict limits
 strictValidator := messages.NewValidator(messages.ValidationOptions{
-    MaxContentLength:   5000,    // 5KB limit
+    MaxContentBytes:    5000,    // 5KB limit
     MaxNameLength:      50,      // Short names only
     MaxToolCalls:       5,       // Limit tool calls
-    MaxArgumentsLength: 1000,    // 1KB for function arguments
+    MaxArgumentsBytes:  1000,    // 1KB for function arguments
     AllowEmptyContent:  false,   // No empty messages
     StrictRoleCheck:    true,    // Enforce valid roles
 })

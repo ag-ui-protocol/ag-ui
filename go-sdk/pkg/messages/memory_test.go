@@ -43,7 +43,7 @@ func TestHistoryMemoryLimits(t *testing.T) {
 			}
 			successCount++
 		}
-		
+
 		// Should have added at least some messages
 		assert.Greater(t, successCount, 5)
 
@@ -84,7 +84,7 @@ func TestHistoryMemoryLimits(t *testing.T) {
 		// Add some messages
 		for i := 0; i < 5; i++ {
 			msg := NewUserMessage("Test message " + string(rune('A'+i)))
-			history.Add(msg)
+			_ = history.Add(msg) // Ignore error in test
 		}
 
 		assert.Greater(t, history.CurrentMemoryBytes(), int64(0))
@@ -122,11 +122,11 @@ func TestValidationByteSize(t *testing.T) {
 		// Unicode characters can take multiple bytes
 		// This string has 20 characters but takes more bytes
 		unicodeMsg := NewUserMessage("Hello 世界🌍 Test 测试 🚀")
-		
+
 		// Calculate actual byte size
 		content := unicodeMsg.GetContent()
 		byteSize := len([]byte(*content))
-		
+
 		// If it exceeds limit, should fail
 		if byteSize > 100 {
 			err := validator.ValidateMessage(unicodeMsg)
@@ -179,11 +179,11 @@ func TestValidationByteSize(t *testing.T) {
 func TestMessageSizeCalculation(t *testing.T) {
 	t.Run("Calculate message size", func(t *testing.T) {
 		msg := NewUserMessage("Hello, World!")
-		
+
 		size, err := CalculateMessageSize(msg)
 		require.NoError(t, err)
 		assert.Greater(t, size, int64(0))
-		
+
 		// Size should include the JSON structure overhead
 		assert.Greater(t, size, int64(len("Hello, World!")))
 	})

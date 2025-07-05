@@ -305,7 +305,6 @@ func NewToolMessage(content string, toolCallID string) *ToolMessage {
 	return msg
 }
 
-
 // Accept implements the Visitable interface
 func (m *ToolMessage) Accept(v MessageVisitor) error {
 	return v.VisitTool(m)
@@ -324,7 +323,6 @@ func (m *ToolMessage) Validate() error {
 	}
 	return nil
 }
-
 
 // DeveloperMessage represents a developer/debug message
 type DeveloperMessage struct {

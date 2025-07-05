@@ -51,6 +51,9 @@ func New(config Config) (*Client, error) {
 
 // SendEvent sends an event to the specified agent and returns the response.
 func (c *Client) SendEvent(ctx context.Context, agentName string, event any) (responses []any, err error) {
+	// TODO: Use ctx for request cancellation and timeout when transport layer is implemented
+	_ = ctx // Acknowledge ctx parameter is intentionally unused for now
+
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("SendEvent failed for agent %s: %w", agentName, err)
@@ -84,6 +87,9 @@ func (c *Client) SendEvent(ctx context.Context, agentName string, event any) (re
 
 // Stream opens a streaming connection to the specified agent.
 func (c *Client) Stream(ctx context.Context, agentName string) (eventChan <-chan any, err error) {
+	// TODO: Use ctx for connection cancellation and timeout when streaming is implemented
+	_ = ctx // Acknowledge ctx parameter is intentionally unused for now
+
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("Stream failed for agent %s: %w", agentName, err)

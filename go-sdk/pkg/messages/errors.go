@@ -69,7 +69,7 @@ func (e ValidationError) Error() string {
 	if len(e.Violations) == 0 {
 		return e.MessageError.Error()
 	}
-	
+
 	msg := fmt.Sprintf("%s error: %s", e.Type, e.Message)
 	for _, v := range e.Violations {
 		msg += fmt.Sprintf("\n  - %s: %s", v.Field, v.Message)
@@ -80,8 +80,8 @@ func (e ValidationError) Error() string {
 // ConversionError represents conversion failures between message formats
 type ConversionError struct {
 	MessageError
-	FromFormat string
-	ToFormat   string
+	FromFormat  string
+	ToFormat    string
 	MessageType string
 }
 
@@ -100,14 +100,14 @@ func NewConversionError(from, to string, messageType string, message string) *Co
 
 // Error implements the error interface
 func (e ConversionError) Error() string {
-	return fmt.Sprintf("conversion error from %s to %s for %s: %s", 
+	return fmt.Sprintf("conversion error from %s to %s for %s: %s",
 		e.FromFormat, e.ToFormat, e.MessageType, e.Message)
 }
 
 // StreamingError represents errors during streaming operations
 type StreamingError struct {
 	MessageError
-	EventType string
+	EventType  string
 	EventIndex int
 }
 
@@ -125,7 +125,7 @@ func NewStreamingError(eventType string, eventIndex int, message string) *Stream
 
 // Error implements the error interface
 func (e StreamingError) Error() string {
-	return fmt.Sprintf("streaming error for event %s at index %d: %s", 
+	return fmt.Sprintf("streaming error for event %s at index %d: %s",
 		e.EventType, e.EventIndex, e.Message)
 }
 
@@ -176,13 +176,13 @@ func ErrEmptyMessageList() error {
 
 // ErrInvalidMessageType returns an error for invalid message types
 func ErrInvalidMessageType(msgType interface{}) error {
-	return NewConversionError("", "", fmt.Sprintf("%T", msgType), 
+	return NewConversionError("", "", fmt.Sprintf("%T", msgType),
 		"unsupported message type")
 }
 
 // ErrInvalidRole returns an error for invalid message roles
 func ErrInvalidRole(role MessageRole) error {
-	return NewInvalidInputError("role", role, 
+	return NewInvalidInputError("role", role,
 		fmt.Sprintf("invalid message role: %s", role))
 }
 

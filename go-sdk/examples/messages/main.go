@@ -245,9 +245,9 @@ func demonstrateValidationAndSanitization() {
 
 	// Create validator
 	validator := messages.NewValidator(messages.ValidationOptions{
-		MaxContentLength: 1000,
-		MaxToolCalls:     10,
-		StrictRoleCheck:  true,
+		MaxContentBytes: 1000,
+		MaxToolCalls:    10,
+		StrictRoleCheck: true,
 	})
 
 	// Valid message

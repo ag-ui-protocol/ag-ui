@@ -7,6 +7,16 @@ import (
 	"time"
 )
 
+const (
+	// BaseMessageOverhead represents the estimated memory overhead per message
+	// This includes Go's internal structures like slice headers, map entries, etc.
+	BaseMessageOverhead = 256
+
+	// IndexOverhead is the additional memory cost when indexing is enabled
+	// This includes the map entry overhead for the message index
+	IndexOverhead = 64
+)
+
 // HistoryOptions configures the message history behavior
 type HistoryOptions struct {
 	MaxMessages      int           // Maximum number of messages to store
@@ -33,21 +43,21 @@ func DefaultHistoryOptions() HistoryOptions {
 // The History struct uses a circular buffer approach with lazy compaction to achieve
 // better than O(n) complexity for common operations:
 //
-// 1. Circular Buffer: Instead of shifting elements when removing from the front,
-//    we use head/tail pointers to track the active range. This makes removal O(1).
+//  1. Circular Buffer: Instead of shifting elements when removing from the front,
+//     we use head/tail pointers to track the active range. This makes removal O(1).
 //
-// 2. Lazy Compaction: We don't compact on every operation. Instead, we use
-//    heuristics (memory pressure, message count, time) to trigger compaction.
+//  2. Lazy Compaction: We don't compact on every operation. Instead, we use
+//     heuristics (memory pressure, message count, time) to trigger compaction.
 //
-// 3. Pre-calculated Sizes: Message sizes are calculated once and cached to avoid
-//    repeated JSON marshaling during memory limit checks.
+//  3. Pre-calculated Sizes: Message sizes are calculated once and cached to avoid
+//     repeated JSON marshaling during memory limit checks.
 //
-// 4. Time Index: Messages are indexed by time buckets (minutes) to enable
-//    efficient age-based pruning without scanning all messages.
+//  4. Time Index: Messages are indexed by time buckets (minutes) to enable
+//     efficient age-based pruning without scanning all messages.
 //
-// 5. Defragmentation: When the buffer becomes sparse (lots of unused space at
-//    the beginning), we defragment by moving active messages to the start.
-//    This operation is O(n) but happens rarely.
+//  5. Defragmentation: When the buffer becomes sparse (lots of unused space at
+//     the beginning), we defragment by moving active messages to the start.
+//     This operation is O(n) but happens rarely.
 //
 // Common operations complexity:
 // - Add: O(1) amortized (O(n) worst case during defragmentation)
@@ -59,19 +69,19 @@ type History struct {
 	messages []Message
 	index    map[string]int // Message ID to index mapping
 	options  HistoryOptions
-	
+
 	// Statistics
-	totalMessages     int64
-	compactionCount   int64
+	totalMessages      int64
+	compactionCount    int64
 	currentMemoryBytes int64 // Current memory usage in bytes
-	
+
 	// Optimization fields for efficient pruning
-	head              int                    // First valid message index (for circular buffer behavior)
-	tail              int                    // Last valid message index + 1
-	messageSizes      []int64                // Pre-calculated message sizes
-	timeIndex         map[int64][]int        // Timestamp (unix seconds) -> message indices
-	lastCompactTime   time.Time              // Last time compaction was run
-	pendingCompaction bool                   // Flag to indicate pending lazy compaction
+	head              int             // First valid message index (for circular buffer behavior)
+	tail              int             // Last valid message index + 1
+	messageSizes      []int64         // Pre-calculated message sizes
+	timeIndex         map[int64][]int // Timestamp (unix seconds) -> message indices
+	lastCompactTime   time.Time       // Last time compaction was run
+	pendingCompaction bool            // Flag to indicate pending lazy compaction
 }
 
 // NewHistory creates a new message history
@@ -80,13 +90,13 @@ func NewHistory(options ...HistoryOptions) *History {
 	if len(options) > 0 {
 		opts = options[0]
 	}
-	
+
 	// Pre-allocate with extra capacity to reduce reallocations
 	capacity := opts.MaxMessages
 	if capacity == 0 {
 		capacity = 1000
 	}
-	
+
 	return &History{
 		messages:        make([]Message, capacity),
 		messageSizes:    make([]int64, capacity),
@@ -104,36 +114,36 @@ func (h *History) Add(msg Message) error {
 	if msg == nil {
 		return fmt.Errorf("cannot add nil message")
 	}
-	
+
 	if err := msg.Validate(); err != nil {
 		return fmt.Errorf("invalid message: %w", err)
 	}
-	
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	
+
 	// Check if message already exists
 	if _, exists := h.index[msg.GetID()]; exists {
 		return fmt.Errorf("message with ID %s already exists", msg.GetID())
 	}
-	
+
 	// Calculate message size
 	msgSize, err := h.calculateMessageSize(msg)
 	if err != nil {
 		return fmt.Errorf("failed to calculate message size: %w", err)
 	}
-	
+
 	// Check if lazy compaction is needed based on various thresholds
 	if h.shouldCompact(msgSize) {
 		h.performLazyCompaction()
-		
+
 		// Check again after compaction
 		if h.options.MaxMemoryBytes > 0 && h.currentMemoryBytes+msgSize > h.options.MaxMemoryBytes {
 			return fmt.Errorf("adding message would exceed memory limit: current=%d, message=%d, limit=%d",
 				h.currentMemoryBytes, msgSize, h.options.MaxMemoryBytes)
 		}
 	}
-	
+
 	// After compaction, we might need to defragment if tail is at the end
 	// This ensures we have room for the new message
 	if h.tail >= len(h.messages) {
@@ -145,14 +155,14 @@ func (h *History) Add(msg Message) error {
 			h.growBuffer()
 		}
 	}
-	
+
 	// Ensure messageSizes array has same capacity
 	if h.tail >= len(h.messageSizes) {
 		newSizes := make([]int64, len(h.messages))
 		copy(newSizes, h.messageSizes)
 		h.messageSizes = newSizes
 	}
-	
+
 	// Add message using circular buffer approach
 	insertIdx := h.tail
 	h.messages[insertIdx] = msg
@@ -160,18 +170,18 @@ func (h *History) Add(msg Message) error {
 	h.tail++
 	h.totalMessages++
 	h.currentMemoryBytes += msgSize
-	
+
 	// Update indices
 	if h.options.EnableIndexing {
 		h.index[msg.GetID()] = insertIdx
 	}
-	
+
 	// Update time index for efficient age-based pruning
 	if meta := msg.GetMetadata(); meta != nil {
 		timeBucket := meta.Timestamp.Unix() / 60 // Group by minute
 		h.timeIndex[timeBucket] = append(h.timeIndex[timeBucket], insertIdx)
 	}
-	
+
 	return nil
 }
 
@@ -180,11 +190,11 @@ func (h *History) AddBatch(messages []Message) error {
 	if len(messages) == 0 {
 		return nil
 	}
-	
+
 	// Validate all messages first
 	msgSizes := make([]int64, len(messages))
 	var totalSize int64
-	
+
 	for i, msg := range messages {
 		if msg == nil {
 			return fmt.Errorf("nil message at index %d", i)
@@ -192,7 +202,7 @@ func (h *History) AddBatch(messages []Message) error {
 		if err := msg.Validate(); err != nil {
 			return fmt.Errorf("invalid message at index %d: %w", i, err)
 		}
-		
+
 		// Pre-calculate message sizes
 		msgSize, err := h.calculateMessageSize(msg)
 		if err != nil {
@@ -201,28 +211,28 @@ func (h *History) AddBatch(messages []Message) error {
 		msgSizes[i] = msgSize
 		totalSize += msgSize
 	}
-	
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	
+
 	// Check for duplicates
 	for _, msg := range messages {
 		if _, exists := h.index[msg.GetID()]; exists {
 			return fmt.Errorf("message with ID %s already exists", msg.GetID())
 		}
 	}
-	
+
 	// Check if compaction is needed
 	if h.shouldCompact(totalSize) {
 		h.performLazyCompaction()
-		
+
 		// Check again after compaction
 		if h.options.MaxMemoryBytes > 0 && h.currentMemoryBytes+totalSize > h.options.MaxMemoryBytes {
 			return fmt.Errorf("adding messages would exceed memory limit: current=%d, batch=%d, limit=%d",
 				h.currentMemoryBytes, totalSize, h.options.MaxMemoryBytes)
 		}
 	}
-	
+
 	// Ensure we have capacity for batch
 	neededCapacity := h.tail + len(messages)
 	if neededCapacity > len(h.messages) {
@@ -234,13 +244,13 @@ func (h *History) AddBatch(messages []Message) error {
 		if h.options.MaxMessages > 0 && newCapacity > h.options.MaxMessages {
 			newCapacity = h.options.MaxMessages + h.options.MaxMessages/10
 		}
-		
+
 		newMessages := make([]Message, newCapacity)
 		newSizes := make([]int64, newCapacity)
 		activeCount := h.tail - h.head
 		copy(newMessages, h.messages[h.head:h.tail])
 		copy(newSizes, h.messageSizes[h.head:h.tail])
-		
+
 		// Update indices after reallocation
 		if h.options.EnableIndexing {
 			for i := 0; i < activeCount; i++ {
@@ -249,35 +259,35 @@ func (h *History) AddBatch(messages []Message) error {
 				}
 			}
 		}
-		
+
 		h.messages = newMessages
 		h.messageSizes = newSizes
 		h.head = 0
 		h.tail = activeCount
 	}
-	
+
 	// Add all messages in batch
 	for i, msg := range messages {
 		insertIdx := h.tail + i
 		h.messages[insertIdx] = msg
 		h.messageSizes[insertIdx] = msgSizes[i]
-		
+
 		// Update indices
 		if h.options.EnableIndexing {
 			h.index[msg.GetID()] = insertIdx
 		}
-		
+
 		// Update time index
 		if meta := msg.GetMetadata(); meta != nil {
 			timeBucket := meta.Timestamp.Unix() / 60
 			h.timeIndex[timeBucket] = append(h.timeIndex[timeBucket], insertIdx)
 		}
 	}
-	
+
 	h.tail += len(messages)
 	h.totalMessages += int64(len(messages))
 	h.currentMemoryBytes += totalSize
-	
+
 	return nil
 }
 
@@ -285,17 +295,17 @@ func (h *History) AddBatch(messages []Message) error {
 func (h *History) Get(id string) (Message, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	idx, exists := h.index[id]
 	if !exists {
 		return nil, fmt.Errorf("message not found: %s", id)
 	}
-	
+
 	// Validate index is within active range
 	if idx < h.head || idx >= h.tail || h.messages[idx] == nil {
 		return nil, fmt.Errorf("invalid index for message: %s", id)
 	}
-	
+
 	return h.messages[idx], nil
 }
 
@@ -303,7 +313,7 @@ func (h *History) Get(id string) (Message, error) {
 func (h *History) GetAll() []Message {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	activeCount := h.tail - h.head
 	result := make([]Message, activeCount)
 	copy(result, h.messages[h.head:h.tail])
@@ -314,16 +324,16 @@ func (h *History) GetAll() []Message {
 func (h *History) GetRange(start, end int) ([]Message, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	activeCount := h.tail - h.head
 	if start < 0 || end > activeCount || start > end {
 		return nil, fmt.Errorf("invalid range [%d, %d) for history of size %d", start, end, activeCount)
 	}
-	
+
 	// Adjust indices to circular buffer
 	actualStart := h.head + start
 	actualEnd := h.head + end
-	
+
 	result := make([]Message, end-start)
 	copy(result, h.messages[actualStart:actualEnd])
 	return result, nil
@@ -333,16 +343,16 @@ func (h *History) GetRange(start, end int) ([]Message, error) {
 func (h *History) GetLast(n int) []Message {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	if n <= 0 {
 		return []Message{}
 	}
-	
+
 	activeCount := h.tail - h.head
 	if n > activeCount {
 		n = activeCount
 	}
-	
+
 	start := h.tail - n
 	result := make([]Message, n)
 	copy(result, h.messages[start:h.tail])
@@ -353,7 +363,7 @@ func (h *History) GetLast(n int) []Message {
 func (h *History) GetByRole(role MessageRole) []Message {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	var result []Message
 	for i := h.head; i < h.tail; i++ {
 		if h.messages[i] != nil && h.messages[i].GetRole() == role {
@@ -367,7 +377,7 @@ func (h *History) GetByRole(role MessageRole) []Message {
 func (h *History) GetAfter(timestamp time.Time) []Message {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	var result []Message
 	for i := h.head; i < h.tail; i++ {
 		if h.messages[i] != nil {
@@ -404,13 +414,13 @@ func (h *History) CompactionCount() int64 {
 func (h *History) Clear() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	
+
 	// Clear all messages in the active range
 	for i := h.head; i < h.tail; i++ {
 		h.messages[i] = nil
 		h.messageSizes[i] = 0
 	}
-	
+
 	h.head = 0
 	h.tail = 0
 	h.index = make(map[string]int)
@@ -433,16 +443,16 @@ func (h *History) calculateMessageSize(msg Message) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to marshal message: %w", err)
 	}
-	
+
 	// Add overhead for Go's internal structures (approximate)
 	// This includes slice headers, map entries, string headers, etc.
-	overhead := int64(256) // Base overhead per message
-	
+	overhead := int64(BaseMessageOverhead)
+
 	// Add index overhead if indexing is enabled
 	if h.options.EnableIndexing {
-		overhead += int64(len(msg.GetID())) + 64 // String + map entry
+		overhead += int64(len(msg.GetID())) + IndexOverhead // String + map entry
 	}
-	
+
 	return int64(len(data)) + overhead, nil
 }
 
@@ -453,22 +463,22 @@ func (h *History) shouldCompact(incomingSize int64) bool {
 	if h.options.MaxMemoryBytes > 0 && h.currentMemoryBytes+incomingSize > h.options.MaxMemoryBytes {
 		return true
 	}
-	
+
 	// Check message count threshold
 	if h.size() >= h.options.CompactThreshold {
 		return true
 	}
-	
+
 	// Check if enough time has passed for age-based cleanup (lazy check)
 	if h.options.MaxAge > 0 && time.Since(h.lastCompactTime) > h.options.MaxAge/10 {
 		h.pendingCompaction = true
 	}
-	
+
 	// Perform pending compaction if buffer is getting fragmented
 	if h.pendingCompaction && float64(h.tail-h.head) > float64(len(h.messages))*0.8 {
 		return true
 	}
-	
+
 	return false
 }
 
@@ -478,17 +488,17 @@ func (h *History) performLazyCompaction() {
 	h.compactionCount++
 	h.lastCompactTime = time.Now()
 	h.pendingCompaction = false
-	
+
 	var newHead int
 	cutoffTime := time.Now().Add(-h.options.MaxAge)
-	
+
 	// Phase 1: Find new head position based on age (O(log n) using time index)
 	if h.options.MaxAge > 0 {
 		newHead = h.findFirstValidMessageByTime(cutoffTime)
 	} else {
 		newHead = h.head
 	}
-	
+
 	// Phase 2: Apply message count limit (O(1))
 	// When we're at MaxMessages, we need to remove at least one to make room
 	if h.options.MaxMessages > 0 && h.size() >= h.options.MaxMessages {
@@ -498,21 +508,21 @@ func (h *History) performLazyCompaction() {
 			newHead = maxStart
 		}
 	}
-	
+
 	// Phase 3: Apply memory limit if needed (O(k) where k is messages to remove)
 	if h.options.MaxMemoryBytes > 0 {
 		newHead = h.adjustForMemoryLimit(newHead)
 	}
-	
+
 	// Phase 4: Check if defragmentation will be needed after removal
 	// We check this BEFORE updating head to make the right decision
 	shouldDefrag := h.shouldDefragment() || (newHead > h.head && h.tail >= len(h.messages)-1)
-	
+
 	// Phase 5: Update state and clean up (O(k) where k is removed messages)
 	if newHead > h.head {
 		h.removeMessagesBeforeIndex(newHead)
 	}
-	
+
 	// Phase 6: Defragment if needed (O(n) but rare)
 	if shouldDefrag {
 		h.defragmentBuffer()
@@ -524,19 +534,19 @@ func (h *History) performLazyCompaction() {
 // Complexity: O(log n) average case
 func (h *History) findFirstValidMessageByTime(cutoff time.Time) int {
 	cutoffBucket := cutoff.Unix() / 60
-	
+
 	// Clean old time index entries
 	for bucket := range h.timeIndex {
 		if bucket < cutoffBucket-1 {
 			delete(h.timeIndex, bucket)
 		}
 	}
-	
+
 	// If no messages, return head
 	if h.head >= h.tail {
 		return h.head
 	}
-	
+
 	// Linear scan for now to ensure correctness
 	// We can optimize this later if needed
 	for i := h.head; i < h.tail; i++ {
@@ -546,7 +556,7 @@ func (h *History) findFirstValidMessageByTime(cutoff time.Time) int {
 			}
 		}
 	}
-	
+
 	// All messages are too old
 	return h.tail
 }
@@ -557,7 +567,7 @@ func (h *History) adjustForMemoryLimit(startIdx int) int {
 	if h.currentMemoryBytes <= h.options.MaxMemoryBytes {
 		return startIdx
 	}
-	
+
 	// Calculate memory after removing messages before startIdx
 	var memoryAfterRemoval int64 = h.currentMemoryBytes
 	for i := h.head; i < startIdx; i++ {
@@ -565,7 +575,7 @@ func (h *History) adjustForMemoryLimit(startIdx int) int {
 			memoryAfterRemoval -= h.messageSizes[i]
 		}
 	}
-	
+
 	// Remove more messages if still over limit
 	currentIdx := startIdx
 	for currentIdx < h.tail && memoryAfterRemoval > h.options.MaxMemoryBytes {
@@ -574,7 +584,7 @@ func (h *History) adjustForMemoryLimit(startIdx int) int {
 		}
 		currentIdx++
 	}
-	
+
 	return currentIdx
 }
 
@@ -586,17 +596,17 @@ func (h *History) removeMessagesBeforeIndex(newHead int) {
 		if i < len(h.messageSizes) {
 			h.currentMemoryBytes -= h.messageSizes[i]
 		}
-		
+
 		// Remove from index
 		if h.messages[i] != nil && h.options.EnableIndexing {
 			delete(h.index, h.messages[i].GetID())
 		}
-		
+
 		// Clear the message to help GC
 		h.messages[i] = nil
 		h.messageSizes[i] = 0
 	}
-	
+
 	h.head = newHead
 }
 
@@ -619,20 +629,20 @@ func (h *History) defragmentBuffer() {
 		h.tail = 0
 		return
 	}
-	
+
 	// Copy active messages to the beginning
 	for i := 0; i < activeCount; i++ {
 		srcIdx := h.head + i
 		if srcIdx != i {
 			h.messages[i] = h.messages[srcIdx]
 			h.messageSizes[i] = h.messageSizes[srcIdx]
-			
+
 			// Clear old position
 			h.messages[srcIdx] = nil
 			h.messageSizes[srcIdx] = 0
 		}
 	}
-	
+
 	// Update indices only for active messages
 	if h.options.EnableIndexing {
 		for i := 0; i < activeCount; i++ {
@@ -641,7 +651,7 @@ func (h *History) defragmentBuffer() {
 			}
 		}
 	}
-	
+
 	h.head = 0
 	h.tail = activeCount
 }
@@ -652,15 +662,15 @@ func (h *History) growBuffer() {
 	if h.options.MaxMessages > 0 && newCapacity > h.options.MaxMessages {
 		newCapacity = h.options.MaxMessages + h.options.MaxMessages/10 // 10% overhead
 	}
-	
+
 	newMessages := make([]Message, newCapacity)
 	newSizes := make([]int64, newCapacity)
-	
+
 	// Copy active messages
 	activeCount := h.tail - h.head
 	copy(newMessages, h.messages[h.head:h.tail])
 	copy(newSizes, h.messageSizes[h.head:h.tail])
-	
+
 	// Update indices
 	if h.options.EnableIndexing {
 		for i := 0; i < activeCount; i++ {
@@ -669,7 +679,7 @@ func (h *History) growBuffer() {
 			}
 		}
 	}
-	
+
 	h.messages = newMessages
 	h.messageSizes = newSizes
 	h.head = 0
@@ -690,11 +700,11 @@ func (h *History) compact() {
 func (h *History) Snapshot() *HistorySnapshot {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	activeCount := h.tail - h.head
 	messages := make([]Message, activeCount)
 	copy(messages, h.messages[h.head:h.tail])
-	
+
 	return &HistorySnapshot{
 		Messages:        messages,
 		TotalMessages:   h.totalMessages,
@@ -729,30 +739,30 @@ type SearchOptions struct {
 func (h *History) Search(options SearchOptions) []Message {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	var results []Message
-	
+
 	// Optimize search range using time index if time filters are provided
 	startIdx := h.head
 	endIdx := h.tail
-	
+
 	if options.StartTime != nil {
 		// Use binary search to find start position
 		startIdx = h.findFirstValidMessageByTime(*options.StartTime)
 	}
-	
+
 	for i := startIdx; i < endIdx; i++ {
 		if h.messages[i] == nil {
 			continue
 		}
-		
+
 		msg := h.messages[i]
-		
+
 		// Check role filter
 		if options.Role != "" && msg.GetRole() != options.Role {
 			continue
 		}
-		
+
 		// Check time filters
 		if meta := msg.GetMetadata(); meta != nil {
 			if options.StartTime != nil && meta.Timestamp.Before(*options.StartTime) {
@@ -762,7 +772,7 @@ func (h *History) Search(options SearchOptions) []Message {
 				continue
 			}
 		}
-		
+
 		// Check text search
 		if options.Query != "" {
 			content := msg.GetContent()
@@ -770,15 +780,15 @@ func (h *History) Search(options SearchOptions) []Message {
 				continue
 			}
 		}
-		
+
 		results = append(results, msg)
-		
+
 		// Check max results
 		if options.MaxResults > 0 && len(results) >= options.MaxResults {
 			break
 		}
 	}
-	
+
 	return results
 }
 
@@ -790,7 +800,7 @@ func containsIgnoreCase(s, substr string) bool {
 	if len(s) < len(substr) {
 		return false
 	}
-	
+
 	// Simple case-insensitive search
 	// In production, consider using strings.ToLower or a more efficient algorithm
 	for i := 0; i <= len(s)-len(substr); i++ {
@@ -829,7 +839,7 @@ func NewThreadedHistory(options ...HistoryOptions) *ThreadedHistory {
 	if len(options) > 0 {
 		opts = options[0]
 	}
-	
+
 	return &ThreadedHistory{
 		threads: make(map[string]*History),
 		options: opts,
@@ -840,11 +850,11 @@ func NewThreadedHistory(options ...HistoryOptions) *ThreadedHistory {
 func (th *ThreadedHistory) GetThread(threadID string) *History {
 	th.mu.Lock()
 	defer th.mu.Unlock()
-	
+
 	if thread, exists := th.threads[threadID]; exists {
 		return thread
 	}
-	
+
 	thread := NewHistory(th.options)
 	th.threads[threadID] = thread
 	return thread
@@ -861,7 +871,7 @@ func (th *ThreadedHistory) DeleteThread(threadID string) {
 func (th *ThreadedHistory) ListThreads() []string {
 	th.mu.RLock()
 	defer th.mu.RUnlock()
-	
+
 	threads := make([]string, 0, len(th.threads))
 	for id := range th.threads {
 		threads = append(threads, id)

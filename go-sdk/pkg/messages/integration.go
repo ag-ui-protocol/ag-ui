@@ -125,7 +125,7 @@ func FromEventMessage(eventMsg *events.Message) (Message, error) {
 // ToEventMessageList converts a MessageList to a slice of events.Message
 func ToEventMessageList(msgs MessageList) ([]events.Message, error) {
 	eventMsgs := make([]events.Message, 0, len(msgs))
-	
+
 	for i, msg := range msgs {
 		eventMsg, err := ToEventMessage(msg)
 		if err != nil {
@@ -133,14 +133,14 @@ func ToEventMessageList(msgs MessageList) ([]events.Message, error) {
 		}
 		eventMsgs = append(eventMsgs, *eventMsg)
 	}
-	
+
 	return eventMsgs, nil
 }
 
 // FromEventMessageList converts a slice of events.Message to MessageList
 func FromEventMessageList(eventMsgs []events.Message) (MessageList, error) {
 	msgs := make(MessageList, 0, len(eventMsgs))
-	
+
 	for i, eventMsg := range eventMsgs {
 		msg, err := FromEventMessage(&eventMsg)
 		if err != nil {
@@ -148,7 +148,7 @@ func FromEventMessageList(eventMsgs []events.Message) (MessageList, error) {
 		}
 		msgs = append(msgs, msg)
 	}
-	
+
 	return msgs, nil
 }
 
@@ -158,7 +158,7 @@ func CreateMessagesSnapshotEvent(msgs MessageList) (*events.MessagesSnapshotEven
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert messages: %w", err)
 	}
-	
+
 	return events.NewMessagesSnapshotEvent(eventMsgs), nil
 }
 
@@ -167,6 +167,6 @@ func ExtractMessagesFromSnapshot(snapshot *events.MessagesSnapshotEvent) (Messag
 	if snapshot == nil {
 		return nil, fmt.Errorf("snapshot event is nil")
 	}
-	
+
 	return FromEventMessageList(snapshot.Messages)
 }

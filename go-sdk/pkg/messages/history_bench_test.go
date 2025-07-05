@@ -16,13 +16,13 @@ func BenchmarkHistoryAdd(b *testing.B) {
 	// Pre-populate with some messages
 	for i := 0; i < 1000; i++ {
 		msg := NewUserMessage("Initial message")
-		h.Add(msg)
+		_ = h.Add(msg) // Ignore error in benchmark
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		msg := NewUserMessage("Benchmark message")
-		h.Add(msg)
+		_ = h.Add(msg) // Ignore error in benchmark
 	}
 }
 
@@ -39,13 +39,13 @@ func BenchmarkHistoryCompaction(b *testing.B) {
 		// Fill to capacity
 		for j := 0; j < 1000; j++ {
 			msg := NewUserMessage("Message")
-			h.Add(msg)
+			_ = h.Add(msg) // Ignore error in benchmark setup
 		}
 
 		b.StartTimer()
 		// This should trigger compaction
 		msg := NewUserMessage("Trigger compaction")
-		h.Add(msg)
+		_ = h.Add(msg) // Ignore error in benchmark
 	}
 }
 
@@ -66,8 +66,8 @@ func BenchmarkHistoryWithHighThroughput(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Simulate batch operations
-		h.AddBatch(messages[:10])
-		
+		_ = h.AddBatch(messages[:10]) // Ignore error in benchmark
+
 		// Simulate some reads
 		h.GetLast(5)
 		h.Size()
@@ -87,7 +87,7 @@ func BenchmarkHistoryAgeBasedPruning(b *testing.B) {
 		// Add old messages
 		for j := 0; j < 1000; j++ {
 			msg := NewUserMessage("Old message")
-			h.Add(msg)
+			_ = h.Add(msg) // Ignore error in benchmark
 		}
 
 		// Wait for messages to age
@@ -97,7 +97,7 @@ func BenchmarkHistoryAgeBasedPruning(b *testing.B) {
 		// Add new messages that should trigger age-based compaction
 		for j := 0; j < 100; j++ {
 			msg := NewUserMessage("New message")
-			h.Add(msg)
+			_ = h.Add(msg) // Ignore error in benchmark
 		}
 	}
 }

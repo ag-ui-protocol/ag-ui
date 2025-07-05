@@ -10,10 +10,10 @@ import (
 )
 
 const (
-	smallConvSize   = 10
-	mediumConvSize  = 100
-	largeConvSize   = 1000
-	
+	smallConvSize  = 10
+	mediumConvSize = 100
+	largeConvSize  = 1000
+
 	smallMessageSize  = 100     // 100 bytes
 	mediumMessageSize = 10000   // 10KB
 	largeMessageSize  = 1000000 // 1MB
@@ -44,7 +44,7 @@ func generateToolCall(index int) messages.ToolCall {
 // Helper to generate messages
 func generateMessages(count int, contentSize int) messages.MessageList {
 	msgs := make(messages.MessageList, 0, count)
-	
+
 	for i := 0; i < count; i++ {
 		switch i % 5 {
 		case 0:
@@ -55,7 +55,7 @@ func generateMessages(count int, contentSize int) messages.MessageList {
 			msgs = append(msgs, messages.NewSystemMessage(generateContent(contentSize)))
 		case 3:
 			// Assistant with tool calls
-			toolCalls := []messages.ToolCall{generateToolCall(i), generateToolCall(i+1)}
+			toolCalls := []messages.ToolCall{generateToolCall(i), generateToolCall(i + 1)}
 			msg := messages.NewAssistantMessageWithTools(toolCalls)
 			content := generateContent(contentSize)
 			msg.Content = &content
@@ -64,7 +64,7 @@ func generateMessages(count int, contentSize int) messages.MessageList {
 			msgs = append(msgs, messages.NewToolMessage(generateContent(contentSize), fmt.Sprintf("call_%d", i-1)))
 		}
 	}
-	
+
 	return msgs
 }
 
@@ -72,7 +72,7 @@ func generateMessages(count int, contentSize int) messages.MessageList {
 func BenchmarkProviderConversions(b *testing.B) {
 	openAIConverter := NewOpenAIConverter()
 	anthropicConverter := NewAnthropicConverter()
-	
+
 	convSizes := []struct {
 		name string
 		size int
@@ -81,10 +81,10 @@ func BenchmarkProviderConversions(b *testing.B) {
 		{"Medium", mediumConvSize},
 		{"Large", largeConvSize},
 	}
-	
+
 	for _, convSize := range convSizes {
 		msgs := generateMessages(convSize.size, mediumMessageSize)
-		
+
 		b.Run(fmt.Sprintf("OpenAI_%s", convSize.name), func(b *testing.B) {
 			b.Run("ToProvider", func(b *testing.B) {
 				b.ReportAllocs()
@@ -92,11 +92,11 @@ func BenchmarkProviderConversions(b *testing.B) {
 					_, _ = openAIConverter.ToProviderFormat(msgs)
 				}
 			})
-			
+
 			// Convert once for the reverse benchmark
 			providerFormat, _ := openAIConverter.ToProviderFormat(msgs)
 			jsonData, _ := json.Marshal(providerFormat)
-			
+
 			b.Run("FromProvider", func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
@@ -104,7 +104,7 @@ func BenchmarkProviderConversions(b *testing.B) {
 				}
 			})
 		})
-		
+
 		b.Run(fmt.Sprintf("Anthropic_%s", convSize.name), func(b *testing.B) {
 			b.Run("ToProvider", func(b *testing.B) {
 				b.ReportAllocs()
@@ -112,11 +112,11 @@ func BenchmarkProviderConversions(b *testing.B) {
 					_, _ = anthropicConverter.ToProviderFormat(msgs)
 				}
 			})
-			
+
 			// Convert once for the reverse benchmark
 			providerFormat, _ := anthropicConverter.ToProviderFormat(msgs)
 			jsonData, _ := json.Marshal(providerFormat)
-			
+
 			b.Run("FromProvider", func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
@@ -131,19 +131,19 @@ func BenchmarkProviderConversions(b *testing.B) {
 func BenchmarkStreamingState(b *testing.B) {
 	b.Run("OpenAI", func(b *testing.B) {
 		converter := NewOpenAIConverter()
-		
+
 		b.Run("ProcessDelta", func(b *testing.B) {
 			state := NewStreamingState()
 			delta := OpenAIStreamDelta{
 				Content: benchStringPtr("Hello "),
 			}
-			
+
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				_, _ = converter.ProcessDelta(state, delta)
 			}
 		})
-		
+
 		b.Run("ProcessDeltaWithTools", func(b *testing.B) {
 			state := NewStreamingState()
 			delta := OpenAIStreamDelta{
@@ -159,14 +159,14 @@ func BenchmarkStreamingState(b *testing.B) {
 					},
 				},
 			}
-			
+
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				_, _ = converter.ProcessDelta(state, delta)
 			}
 		})
 	})
-	
+
 	// NOTE: Anthropic streaming is handled differently and doesn't have
 	// direct ProcessDelta methods like OpenAI
 }
@@ -176,7 +176,7 @@ func BenchmarkConverterValidation(b *testing.B) {
 	validationOpts := ConversionValidationOptions{
 		AllowStandaloneToolMessages: false,
 	}
-	
+
 	messageSets := []struct {
 		name string
 		msgs messages.MessageList
@@ -186,7 +186,7 @@ func BenchmarkConverterValidation(b *testing.B) {
 			generateMessages(10, smallMessageSize),
 		},
 		{
-			"Valid_Medium", 
+			"Valid_Medium",
 			generateMessages(100, mediumMessageSize),
 		},
 		{
@@ -194,7 +194,7 @@ func BenchmarkConverterValidation(b *testing.B) {
 			generateMessages(1000, largeMessageSize),
 		},
 	}
-	
+
 	for _, set := range messageSets {
 		b.Run(set.name, func(b *testing.B) {
 			b.ReportAllocs()
@@ -209,18 +209,18 @@ func BenchmarkConverterValidation(b *testing.B) {
 func BenchmarkRegistry(b *testing.B) {
 	// Create a new registry for benchmarking
 	registry := NewRegistry()
-	
+
 	// Register some converters
 	_ = registry.Register(NewOpenAIConverter())
 	_ = registry.Register(NewAnthropicConverter())
-	
+
 	b.Run("Get", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			_, _ = registry.Get("openai")
 		}
 	})
-	
+
 	b.Run("ListProviders", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
@@ -233,14 +233,14 @@ func BenchmarkRegistry(b *testing.B) {
 func BenchmarkBaseConverter(b *testing.B) {
 	conv := NewBaseConverter()
 	msgs := generateMessages(100, mediumMessageSize)
-	
+
 	b.Run("PreprocessMessages", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			_ = conv.PreprocessMessages(msgs)
 		}
 	})
-	
+
 	// Add more base converter benchmarks here if needed
 }
 

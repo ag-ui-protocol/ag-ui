@@ -324,7 +324,8 @@ func (b *EventBuilder) AddMessage(id, role, content string) *EventBuilder {
 func (b *EventBuilder) Build() (Event, error) {
 	// Validate event type is set early to provide immediate feedback
 	if b.eventType == "" {
-		return nil, fmt.Errorf("event type not set: use one of the builder methods (e.g., RunStarted(), TextMessageStart()) to set the event type before calling Build()")
+		return nil, fmt.Errorf("event type not set: use one of the builder methods " +
+			"(e.g., RunStarted(), TextMessageStart()) to set the event type before calling Build()")
 	}
 
 	// Apply auto-generation if enabled
@@ -339,47 +340,7 @@ func (b *EventBuilder) Build() (Event, error) {
 	}
 
 	// Build the appropriate event type
-	var event Event
-	var err error
-
-	switch b.eventType {
-	case EventTypeRunStarted:
-		event, err = b.buildRunStartedEvent()
-	case EventTypeRunFinished:
-		event, err = b.buildRunFinishedEvent()
-	case EventTypeRunError:
-		event, err = b.buildRunErrorEvent()
-	case EventTypeStepStarted:
-		event, err = b.buildStepStartedEvent()
-	case EventTypeStepFinished:
-		event, err = b.buildStepFinishedEvent()
-	case EventTypeTextMessageStart:
-		event, err = b.buildTextMessageStartEvent()
-	case EventTypeTextMessageContent:
-		event, err = b.buildTextMessageContentEvent()
-	case EventTypeTextMessageEnd:
-		event, err = b.buildTextMessageEndEvent()
-	case EventTypeToolCallStart:
-		event, err = b.buildToolCallStartEvent()
-	case EventTypeToolCallArgs:
-		event, err = b.buildToolCallArgsEvent()
-	case EventTypeToolCallEnd:
-		event, err = b.buildToolCallEndEvent()
-	case EventTypeStateSnapshot:
-		event, err = b.buildStateSnapshotEvent()
-	case EventTypeStateDelta:
-		event, err = b.buildStateDeltaEvent()
-	case EventTypeMessagesSnapshot:
-		event, err = b.buildMessagesSnapshotEvent()
-	case EventTypeRaw:
-		event, err = b.buildRawEvent()
-	case EventTypeCustom:
-		event, err = b.buildCustomEvent()
-	default:
-		return nil, fmt.Errorf("unknown event type: %s", b.eventType)
-	}
-
-	// Check for build errors
+	event, err := b.buildEventByType()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build event: %w", err)
 	}
@@ -392,27 +353,111 @@ func (b *EventBuilder) Build() (Event, error) {
 	return event, nil
 }
 
+// buildEventByType builds the appropriate event based on the event type
+func (b *EventBuilder) buildEventByType() (Event, error) {
+	switch b.eventType {
+	case EventTypeRunStarted:
+		return b.buildRunStartedEvent()
+	case EventTypeRunFinished:
+		return b.buildRunFinishedEvent()
+	case EventTypeRunError:
+		return b.buildRunErrorEvent()
+	case EventTypeStepStarted:
+		return b.buildStepStartedEvent()
+	case EventTypeStepFinished:
+		return b.buildStepFinishedEvent()
+	case EventTypeTextMessageStart:
+		return b.buildTextMessageStartEvent()
+	case EventTypeTextMessageContent:
+		return b.buildTextMessageContentEvent()
+	case EventTypeTextMessageEnd:
+		return b.buildTextMessageEndEvent()
+	case EventTypeToolCallStart:
+		return b.buildToolCallStartEvent()
+	case EventTypeToolCallArgs:
+		return b.buildToolCallArgsEvent()
+	case EventTypeToolCallEnd:
+		return b.buildToolCallEndEvent()
+	case EventTypeStateSnapshot:
+		return b.buildStateSnapshotEvent()
+	case EventTypeStateDelta:
+		return b.buildStateDeltaEvent()
+	case EventTypeMessagesSnapshot:
+		return b.buildMessagesSnapshotEvent()
+	case EventTypeRaw:
+		return b.buildRawEvent()
+	case EventTypeCustom:
+		return b.buildCustomEvent()
+	default:
+		return nil, fmt.Errorf("unknown event type: %s", b.eventType)
+	}
+}
+
 // applyAutoGeneration generates IDs for empty fields
 func (b *EventBuilder) applyAutoGeneration() {
-	if b.threadID == "" && (b.eventType == EventTypeRunStarted || b.eventType == EventTypeRunFinished) {
+	b.generateThreadIDIfNeeded()
+	b.generateRunIDIfNeeded()
+	b.generateMessageIDIfNeeded()
+	b.generateToolCallIDIfNeeded()
+	b.generateStepNameIfNeeded()
+}
+
+// generateThreadIDIfNeeded generates thread ID for events that need it
+func (b *EventBuilder) generateThreadIDIfNeeded() {
+	if b.threadID != "" {
+		return
+	}
+	if b.eventType == EventTypeRunStarted || b.eventType == EventTypeRunFinished {
 		b.threadID = GenerateThreadID()
 	}
-	if b.runID == "" && (b.eventType == EventTypeRunStarted || b.eventType == EventTypeRunFinished || b.eventType == EventTypeRunError) {
+}
+
+// generateRunIDIfNeeded generates run ID for events that need it
+func (b *EventBuilder) generateRunIDIfNeeded() {
+	if b.runID != "" {
+		return
+	}
+	switch b.eventType {
+	case EventTypeRunStarted, EventTypeRunFinished, EventTypeRunError:
 		b.runID = GenerateRunID()
 	}
-	if b.messageID == "" && (b.eventType == EventTypeTextMessageStart || b.eventType == EventTypeTextMessageContent || b.eventType == EventTypeTextMessageEnd) {
+}
+
+// generateMessageIDIfNeeded generates message ID for events that need it
+func (b *EventBuilder) generateMessageIDIfNeeded() {
+	if b.messageID != "" {
+		return
+	}
+	switch b.eventType {
+	case EventTypeTextMessageStart, EventTypeTextMessageContent, EventTypeTextMessageEnd:
 		b.messageID = GenerateMessageID()
 	}
-	if b.toolCallID == "" && (b.eventType == EventTypeToolCallStart || b.eventType == EventTypeToolCallArgs || b.eventType == EventTypeToolCallEnd) {
+}
+
+// generateToolCallIDIfNeeded generates tool call ID for events that need it
+func (b *EventBuilder) generateToolCallIDIfNeeded() {
+	if b.toolCallID != "" {
+		return
+	}
+	switch b.eventType {
+	case EventTypeToolCallStart, EventTypeToolCallArgs, EventTypeToolCallEnd:
 		b.toolCallID = GenerateToolCallID()
 	}
-	if b.stepName == "" && (b.eventType == EventTypeStepStarted || b.eventType == EventTypeStepFinished) {
+}
+
+// generateStepNameIfNeeded generates step name for events that need it
+func (b *EventBuilder) generateStepNameIfNeeded() {
+	if b.stepName != "" {
+		return
+	}
+	if b.eventType == EventTypeStepStarted || b.eventType == EventTypeStepFinished {
 		b.stepName = GenerateStepID()
 	}
 }
 
 // Build methods for each event type
 
+//nolint:unparam // Error return is kept for future extensibility and API consistency
 func (b *EventBuilder) buildRunStartedEvent() (*RunStartedEvent, error) {
 	event := &RunStartedEvent{
 		BaseEvent: &BaseEvent{
@@ -422,9 +467,11 @@ func (b *EventBuilder) buildRunStartedEvent() (*RunStartedEvent, error) {
 		ThreadID: b.threadID,
 		RunID:    b.runID,
 	}
+	// Error return is kept for future extensibility (e.g., field validation)
 	return event, nil
 }
 
+//nolint:unparam // Error return is kept for future extensibility and API consistency
 func (b *EventBuilder) buildRunFinishedEvent() (*RunFinishedEvent, error) {
 	event := &RunFinishedEvent{
 		BaseEvent: &BaseEvent{
@@ -434,9 +481,11 @@ func (b *EventBuilder) buildRunFinishedEvent() (*RunFinishedEvent, error) {
 		ThreadID: b.threadID,
 		RunID:    b.runID,
 	}
+	// Error return is kept for future extensibility (e.g., field validation)
 	return event, nil
 }
 
+//nolint:unparam // Error return is kept for future extensibility and API consistency
 func (b *EventBuilder) buildRunErrorEvent() (*RunErrorEvent, error) {
 	event := &RunErrorEvent{
 		BaseEvent: &BaseEvent{
@@ -447,9 +496,11 @@ func (b *EventBuilder) buildRunErrorEvent() (*RunErrorEvent, error) {
 		Code:    b.errorCode,
 		RunID:   b.runID,
 	}
+	// Error return is kept for future extensibility (e.g., field validation)
 	return event, nil
 }
 
+//nolint:unparam // Error return is kept for future extensibility and API consistency
 func (b *EventBuilder) buildStepStartedEvent() (*StepStartedEvent, error) {
 	event := &StepStartedEvent{
 		BaseEvent: &BaseEvent{
@@ -458,9 +509,11 @@ func (b *EventBuilder) buildStepStartedEvent() (*StepStartedEvent, error) {
 		},
 		StepName: b.stepName,
 	}
+	// Error return is kept for future extensibility (e.g., field validation)
 	return event, nil
 }
 
+//nolint:unparam // Error return is kept for future extensibility and API consistency
 func (b *EventBuilder) buildStepFinishedEvent() (*StepFinishedEvent, error) {
 	event := &StepFinishedEvent{
 		BaseEvent: &BaseEvent{
@@ -469,9 +522,11 @@ func (b *EventBuilder) buildStepFinishedEvent() (*StepFinishedEvent, error) {
 		},
 		StepName: b.stepName,
 	}
+	// Error return is kept for future extensibility (e.g., field validation)
 	return event, nil
 }
 
+//nolint:unparam // Error return is kept for future extensibility and API consistency
 func (b *EventBuilder) buildTextMessageStartEvent() (*TextMessageStartEvent, error) {
 	event := &TextMessageStartEvent{
 		BaseEvent: &BaseEvent{
@@ -481,9 +536,11 @@ func (b *EventBuilder) buildTextMessageStartEvent() (*TextMessageStartEvent, err
 		MessageID: b.messageID,
 		Role:      b.role,
 	}
+	// Error return is kept for future extensibility (e.g., field validation)
 	return event, nil
 }
 
+//nolint:unparam // Error return is kept for future extensibility and API consistency
 func (b *EventBuilder) buildTextMessageContentEvent() (*TextMessageContentEvent, error) {
 	event := &TextMessageContentEvent{
 		BaseEvent: &BaseEvent{
@@ -493,9 +550,11 @@ func (b *EventBuilder) buildTextMessageContentEvent() (*TextMessageContentEvent,
 		MessageID: b.messageID,
 		Delta:     b.delta,
 	}
+	// Error return is kept for future extensibility (e.g., field validation)
 	return event, nil
 }
 
+//nolint:unparam // Error return is kept for future extensibility and API consistency
 func (b *EventBuilder) buildTextMessageEndEvent() (*TextMessageEndEvent, error) {
 	event := &TextMessageEndEvent{
 		BaseEvent: &BaseEvent{
@@ -504,9 +563,11 @@ func (b *EventBuilder) buildTextMessageEndEvent() (*TextMessageEndEvent, error) 
 		},
 		MessageID: b.messageID,
 	}
+	// Error return is kept for future extensibility (e.g., field validation)
 	return event, nil
 }
 
+//nolint:unparam // Error return is kept for future extensibility and API consistency
 func (b *EventBuilder) buildToolCallStartEvent() (*ToolCallStartEvent, error) {
 	event := &ToolCallStartEvent{
 		BaseEvent: &BaseEvent{
@@ -517,9 +578,11 @@ func (b *EventBuilder) buildToolCallStartEvent() (*ToolCallStartEvent, error) {
 		ToolCallName:    b.toolCallName,
 		ParentMessageID: b.parentMessageID,
 	}
+	// Error return is kept for future extensibility (e.g., field validation)
 	return event, nil
 }
 
+//nolint:unparam // Error return is kept for future extensibility and API consistency
 func (b *EventBuilder) buildToolCallArgsEvent() (*ToolCallArgsEvent, error) {
 	event := &ToolCallArgsEvent{
 		BaseEvent: &BaseEvent{
@@ -529,9 +592,11 @@ func (b *EventBuilder) buildToolCallArgsEvent() (*ToolCallArgsEvent, error) {
 		ToolCallID: b.toolCallID,
 		Delta:      b.delta,
 	}
+	// Error return is kept for future extensibility (e.g., field validation)
 	return event, nil
 }
 
+//nolint:unparam // Error return is kept for future extensibility and API consistency
 func (b *EventBuilder) buildToolCallEndEvent() (*ToolCallEndEvent, error) {
 	event := &ToolCallEndEvent{
 		BaseEvent: &BaseEvent{
@@ -540,9 +605,11 @@ func (b *EventBuilder) buildToolCallEndEvent() (*ToolCallEndEvent, error) {
 		},
 		ToolCallID: b.toolCallID,
 	}
+	// Error return is kept for future extensibility (e.g., field validation)
 	return event, nil
 }
 
+//nolint:unparam // Error return is kept for future extensibility and API consistency
 func (b *EventBuilder) buildStateSnapshotEvent() (*StateSnapshotEvent, error) {
 	event := &StateSnapshotEvent{
 		BaseEvent: &BaseEvent{
@@ -551,9 +618,11 @@ func (b *EventBuilder) buildStateSnapshotEvent() (*StateSnapshotEvent, error) {
 		},
 		Snapshot: b.snapshot,
 	}
+	// Error return is kept for future extensibility (e.g., field validation)
 	return event, nil
 }
 
+//nolint:unparam // Error return is kept for future extensibility and API consistency
 func (b *EventBuilder) buildStateDeltaEvent() (*StateDeltaEvent, error) {
 	event := &StateDeltaEvent{
 		BaseEvent: &BaseEvent{
@@ -562,9 +631,11 @@ func (b *EventBuilder) buildStateDeltaEvent() (*StateDeltaEvent, error) {
 		},
 		Delta: b.deltaOps,
 	}
+	// Error return is kept for future extensibility (e.g., field validation)
 	return event, nil
 }
 
+//nolint:unparam // Error return is kept for future extensibility and API consistency
 func (b *EventBuilder) buildMessagesSnapshotEvent() (*MessagesSnapshotEvent, error) {
 	event := &MessagesSnapshotEvent{
 		BaseEvent: &BaseEvent{
@@ -573,9 +644,11 @@ func (b *EventBuilder) buildMessagesSnapshotEvent() (*MessagesSnapshotEvent, err
 		},
 		Messages: b.messages,
 	}
+	// Error return is kept for future extensibility (e.g., field validation)
 	return event, nil
 }
 
+//nolint:unparam // Error return is kept for future extensibility and API consistency
 func (b *EventBuilder) buildRawEvent() (*RawEvent, error) {
 	event := &RawEvent{
 		BaseEvent: &BaseEvent{
@@ -585,9 +658,11 @@ func (b *EventBuilder) buildRawEvent() (*RawEvent, error) {
 		Event:  b.rawEvent,
 		Source: b.rawSource,
 	}
+	// Error return is kept for future extensibility (e.g., field validation)
 	return event, nil
 }
 
+//nolint:unparam // Error return is kept for future extensibility and API consistency
 func (b *EventBuilder) buildCustomEvent() (*CustomEvent, error) {
 	event := &CustomEvent{
 		BaseEvent: &BaseEvent{
@@ -597,5 +672,6 @@ func (b *EventBuilder) buildCustomEvent() (*CustomEvent, error) {
 		Name:  b.customName,
 		Value: b.customValue,
 	}
+	// Error return is kept for future extensibility (e.g., field validation)
 	return event, nil
 }

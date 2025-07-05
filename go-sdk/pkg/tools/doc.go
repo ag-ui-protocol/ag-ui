@@ -1,20 +1,59 @@
-// Package tools provides tool system and execution framework for AI agents.
+// Package tools provides a comprehensive tool system for the AG-UI protocol.
 //
-// This package implements the tool calling capabilities that allow AI agents
-// to execute external functions and interact with systems beyond the chat
-// interface. Tools can be registered, validated, and executed in a secure
-// sandboxed environment.
+// The tools package implements a flexible and extensible framework for defining,
+// registering, and executing tools within AG-UI agents. It includes:
 //
-// Example usage:
+// - JSON Schema-based tool definition and validation
+// - Dynamic tool registry with discovery capabilities
+// - Concurrent execution engine with timeout and cancellation support
+// - Streaming support for large tool arguments and results
+// - AI provider integration for OpenAI and Anthropic formats
+// - Built-in tools for common operations
 //
-//	import "github.com/ag-ui/go-sdk/pkg/tools"
+// # Tool Definition
 //
-//	// Define a tool
-//	calculator := tools.NewTool("calculator", func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-//		// Tool implementation
-//		return result, nil
+// Tools are defined using the Tool struct, which includes metadata, parameter
+// schema, and an executor implementation:
+//
+//	tool := &Tool{
+//		Name:        "weather",
+//		Description: "Get current weather for a location",
+//		Version:     "1.0.0",
+//		Schema: &ToolSchema{
+//			Type: "object",
+//			Properties: map[string]*Property{
+//				"location": {
+//					Type:        "string",
+//					Description: "City name or coordinates",
+//				},
+//			},
+//			Required: []string{"location"},
+//		},
+//		Executor: weatherExecutor,
+//	}
+//
+// # Tool Registration
+//
+// Tools are managed through a central registry that supports dynamic
+// registration and discovery:
+//
+//	registry := NewRegistry()
+//	err := registry.Register(tool)
+//
+// # Tool Execution
+//
+// Tools are executed through the execution engine, which handles validation,
+// timeout management, and result formatting:
+//
+//	engine := NewExecutionEngine(registry)
+//	result, err := engine.Execute(ctx, "weather", map[string]interface{}{
+//		"location": "San Francisco",
 //	})
 //
-//	// Register with agent
-//	agent.RegisterTool(calculator)
+// # AI Provider Integration
+//
+// The package provides converters for major AI provider tool formats:
+//
+//	openAITool := ConvertToOpenAITool(tool)
+//	anthropicTool := ConvertToAnthropicTool(tool)
 package tools

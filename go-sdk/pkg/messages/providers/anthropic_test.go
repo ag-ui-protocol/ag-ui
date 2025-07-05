@@ -92,7 +92,7 @@ func TestAnthropicConverter(t *testing.T) {
 		testConverter := NewAnthropicConverter().WithValidationOptions(ConversionValidationOptions{
 			AllowStandaloneToolMessages: true,
 		})
-		
+
 		msgs := messages.MessageList{
 			messages.NewToolMessage("The weather in San Francisco is 18°C and sunny.", "toolu_abc123"),
 		}

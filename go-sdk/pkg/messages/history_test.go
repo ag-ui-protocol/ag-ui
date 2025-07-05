@@ -424,11 +424,11 @@ func TestThreadedHistory(t *testing.T) {
 
 		// Get/create thread 1
 		thread1 := th.GetThread("thread1")
-		thread1.Add(NewUserMessage("Thread 1 message"))
+		_ = thread1.Add(NewUserMessage("Thread 1 message")) // Ignore error in test
 
 		// Get/create thread 2
 		thread2 := th.GetThread("thread2")
-		thread2.Add(NewUserMessage("Thread 2 message"))
+		_ = thread2.Add(NewUserMessage("Thread 2 message")) // Ignore error in test
 
 		// Verify threads are separate
 		if thread1.Size() != 1 {
@@ -469,7 +469,7 @@ func TestThreadedHistory(t *testing.T) {
 
 		// Add messages up to limit
 		for i := 0; i < 15; i++ {
-			thread.Add(NewUserMessage("Message " + string(rune('0'+i))))
+			_ = thread.Add(NewUserMessage("Message " + string(rune('0'+i)))) // Ignore error in test
 		}
 
 		// Should be limited by options

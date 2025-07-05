@@ -13,6 +13,9 @@
 package internal
 
 import (
+	// Testing Dependencies
+	_ "github.com/stretchr/testify/assert" // Enhanced test assertions
+
 	// Core Runtime Dependencies - to be used in transport and state management
 	_ "github.com/evanphx/json-patch/v5" // JSON Patch operations
 	_ "github.com/google/uuid"           // UUID generation for events
@@ -26,7 +29,4 @@ import (
 	// Protocol and Communication Dependencies
 	_ "google.golang.org/grpc"           // gRPC transport (optional)
 	_ "google.golang.org/protobuf/proto" // Protobuf serialization (in use)
-
-	// Testing Dependencies
-	_ "github.com/stretchr/testify/assert" // Enhanced test assertions
 )

@@ -131,9 +131,9 @@ Comprehensive validation and content sanitization:
 
 	// Configure validation
 	validator := messages.NewValidator(messages.ValidationOptions{
-	    MaxContentLength:   100000,
-	    MaxToolCalls:       50,
-	    StrictRoleCheck:    true,
+	    MaxContentBytes:   100000,
+	    MaxToolCalls:      50,
+	    StrictRoleCheck:   true,
 	})
 
 	// Validate message list
