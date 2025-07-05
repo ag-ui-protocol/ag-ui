@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **NEW**: Organized all tests into dedicated tests/ directory for better project structure
 - **NEW**: Default `app_name` behavior using agent name from registry when not explicitly specified
 - **NEW**: Added `app_name` as required first parameter to `ADKAgent` constructor for clarity
 - **NEW**: Comprehensive logging system with component-specific loggers (adk_agent, event_translator, endpoint)
@@ -52,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed event bookending to ensure messages have proper START/END boundaries
 
 ### Enhanced
+- **Project Structure**: Moved all tests to tests/ directory with proper import resolution and PYTHONPATH configuration
 - **Usability**: Simplified agent creation - no longer need to specify app_name in most cases
 - **Performance**: Session management now uses singleton pattern for better resource utilization
 - **Reliability**: Added comprehensive test suite with 15 automated tests (100% pass rate)
