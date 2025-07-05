@@ -7,6 +7,18 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
     features: ["agentic_chat"],
   },
   {
+    id: "pydantic-ai",
+    name: "Pydantic AI",
+    features: [
+      "agentic_chat",
+      "human_in_the_loop",
+      "agentic_generative_ui",
+      "tool_based_generative_ui",
+      "shared_state",
+      "predictive_state_updates",
+    ],
+  },
+  {
     id: "server-starter",
     name: "Server Starter",
     features: ["agentic_chat"],
