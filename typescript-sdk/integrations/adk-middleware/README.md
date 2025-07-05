@@ -26,13 +26,18 @@ chmod +x setup_dev.sh
 ### Manual Setup
 
 ```bash
-# Set PYTHONPATH to include python-sdk
-export PYTHONPATH="../../../../python-sdk:${PYTHONPATH}"
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
 
-# Install dependencies
-pip install -r requirements.txt
+# Install python-sdk (from the monorepo)
+pip install ../../../../python-sdk/
+
+# Install this package in editable mode
 pip install -e .
 ```
+
+This installs the ADK middleware in editable mode for development.
 
 ## Directory Structure Note
 
@@ -113,9 +118,9 @@ agent = ADKAgent(user_id="static_user")
 
 # Dynamic user extraction
 def extract_user(input: RunAgentInput) -> str:
-    for ctx in input.context:
-        if ctx.description == "user_id":
-            return ctx.value
+    # Extract from state or other sources
+    if hasattr(input.state, 'get') and input.state.get("user_id"):
+        return input.state["user_id"]
     return "anonymous"
 
 agent = ADKAgent(user_id_extractor=extract_user)
@@ -198,9 +203,9 @@ registry.register_agent("general", general_agent)
 registry.register_agent("technical", technical_agent)
 registry.register_agent("creative", creative_agent)
 
-# The middleware will route to the correct agent based on context
+# The middleware uses the default agent from the registry
 agent = ADKAgent(
-    user_id_extractor=lambda input: input.context[0].value
+    user_id="demo"  # Or use user_id_extractor for dynamic extraction
 )
 ```
 

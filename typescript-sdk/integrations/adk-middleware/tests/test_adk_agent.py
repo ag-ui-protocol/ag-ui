@@ -37,6 +37,7 @@ class TestADKAgent:
     def adk_agent(self):
         """Create an ADKAgent instance."""
         return ADKAgent(
+            app_name="test_app",
             user_id="test_user",
             session_timeout_seconds=60,
             auto_cleanup=False  # Disable for tests
@@ -80,20 +81,14 @@ class TestADKAgent:
         def custom_extractor(input):
             return "custom_user"
         
-        adk_agent_custom = ADKAgent(user_id_extractor=custom_extractor)
+        adk_agent_custom = ADKAgent(app_name="test_app", user_id_extractor=custom_extractor)
         assert adk_agent_custom._get_user_id(sample_input) == "custom_user"
     
     @pytest.mark.asyncio
-    async def test_agent_id_extraction(self, adk_agent, sample_input):
-        """Test agent ID extraction from input."""
-        # Default case
-        assert adk_agent._extract_agent_id(sample_input) == "default"
-        
-        # From context
-        sample_input.context.append(
-            Context(description="agent_id", value="specific_agent")
-        )
-        assert adk_agent._extract_agent_id(sample_input) == "specific_agent"
+    async def test_agent_id_default(self, adk_agent, sample_input):
+        """Test agent ID is always default."""
+        # Should always return default
+        assert adk_agent._get_agent_id() == "default"
     
     @pytest.mark.asyncio
     async def test_run_basic_flow(self, adk_agent, sample_input, registry, mock_agent):

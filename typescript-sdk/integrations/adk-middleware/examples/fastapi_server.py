@@ -31,6 +31,7 @@ try:
     
     # Create ADK middleware agent
     adk_agent = ADKAgent(
+        app_name="demo_app",
         user_id="demo_user",
         session_timeout_seconds=3600,
         use_in_memory_services=True

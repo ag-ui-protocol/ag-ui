@@ -1,4 +1,4 @@
-# src/agent_registry.py
+    # src/agent_registry.py
 
 """Singleton registry for mapping AG-UI agent IDs to ADK agents."""
 

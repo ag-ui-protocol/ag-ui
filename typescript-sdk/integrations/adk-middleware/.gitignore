@@ -27,6 +27,7 @@ env/
 ENV/
 env.bak/
 venv.bak/
+test_env/
 
 # IDE
 .vscode/
@@ -74,3 +75,10 @@ dmypy.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Development scripts and temp files
+set_pythonpath.sh
+simple_test_server.py
+
+# External project directories
+ADK_Middleware/

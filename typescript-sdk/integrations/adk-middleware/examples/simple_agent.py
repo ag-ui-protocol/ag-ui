@@ -35,6 +35,7 @@ async def main():
     
     # Step 3: Create the middleware agent
     agent = ADKAgent(
+        app_name="demo_app",
         user_id="demo_user",  # Static user for this example
         session_timeout_seconds=300,  # 5 minute timeout for demo
     )
@@ -88,7 +89,7 @@ def handle_event(event: BaseEvent):
         print(event.delta, end="", flush=True)
     elif event_type == "TEXT_MESSAGE_END":
         print()  # New line after message
-    elif event_type == "TEXT_MESSAGE_CHUNK":
+    elif event_type == "TEXT_MESSAGE_CONTENT":
         print(f"💬 Assistant: {event.delta}")
     else:
         print(f"📋 Event: {event_type}")
@@ -118,6 +119,7 @@ async def advanced_example():
         return "anonymous"
     
     agent = ADKAgent(
+        app_name="research_app",
         user_id_extractor=extract_user_from_context,
         max_sessions_per_user=3,  # Limit concurrent sessions
     )

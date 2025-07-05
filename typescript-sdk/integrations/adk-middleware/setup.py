@@ -35,7 +35,7 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=[
-        f"ag-ui @ file://{python_sdk_path}",  # Local dependency
+        "ag-ui-protocol>=0.1.7",  # Now properly installed
         "google-adk>=0.1.0",
         "pydantic>=2.0",
         "asyncio",

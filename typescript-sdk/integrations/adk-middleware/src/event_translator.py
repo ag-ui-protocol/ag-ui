@@ -3,13 +3,11 @@
 """Event translator for converting ADK events to AG-UI protocol events."""
 
 from typing import AsyncGenerator, Optional, Dict, Any
-import logging
 import uuid
 
 from ag_ui.core import (
     BaseEvent, EventType,
     TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent,
-    TextMessageChunkEvent,
     ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent,
     ToolCallChunkEvent,
     StateSnapshotEvent, StateDeltaEvent,
@@ -19,8 +17,9 @@ from ag_ui.core import (
 )
 
 from google.adk.events import Event as ADKEvent
+from logging_config import get_component_logger
 
-logger = logging.getLogger(__name__)
+logger = get_component_logger('event_translator')
 
 
 class EventTranslator:
@@ -32,9 +31,11 @@ class EventTranslator:
     
     def __init__(self):
         """Initialize the event translator."""
-        # Track message IDs for streaming sequences
-        self._active_messages: Dict[str, str] = {}  # ADK event ID -> AG-UI message ID
+        # Track tool call IDs for consistency 
         self._active_tool_calls: Dict[str, str] = {}  # Tool call ID -> Tool call ID (for consistency)
+        # Track streaming message state
+        self._streaming_message_id: Optional[str] = None  # Current streaming message ID
+        self._is_streaming: bool = False  # Whether we're currently streaming a message
     
     async def translate(
         self, 
@@ -53,34 +54,54 @@ class EventTranslator:
             One or more AG-UI protocol events
         """
         try:
+            # Check ADK streaming state using proper methods
+            is_partial = getattr(adk_event, 'partial', False)
+            turn_complete = getattr(adk_event, 'turn_complete', False)
+            
+            # Check if this is the final response (contains complete message - skip to avoid duplication)
+            is_final_response = False
+            if hasattr(adk_event, 'is_final_response') and callable(adk_event.is_final_response):
+                is_final_response = adk_event.is_final_response()
+            elif hasattr(adk_event, 'is_final_response'):
+                is_final_response = adk_event.is_final_response
+            
+            # Determine action based on ADK streaming pattern
+            should_send_end = turn_complete and not is_partial
+            
+            logger.info(f"📥 ADK Event: partial={is_partial}, turn_complete={turn_complete}, "
+                       f"is_final_response={is_final_response}, should_send_end={should_send_end}")
+            
             # Skip user events (already in the conversation)
-            if adk_event.author == "user":
+            if hasattr(adk_event, 'author') and adk_event.author == "user":
+                logger.debug("Skipping user event")
                 return
             
             # Handle text content
-            if adk_event.content and adk_event.content.parts:
+            if adk_event.content and hasattr(adk_event.content, 'parts') and adk_event.content.parts:
                 async for event in self._translate_text_content(
                     adk_event, thread_id, run_id
                 ):
                     yield event
             
             # Handle function calls
-            function_calls = adk_event.get_function_calls()
-            if function_calls:
-                async for event in self._translate_function_calls(
-                    adk_event, function_calls, thread_id, run_id
-                ):
-                    yield event
+            if hasattr(adk_event, 'get_function_calls'):
+                function_calls = adk_event.get_function_calls()
+                if function_calls:
+                    async for event in self._translate_function_calls(
+                        adk_event, function_calls, thread_id, run_id
+                    ):
+                        yield event
             
             # Handle function responses
-            function_responses = adk_event.get_function_responses()
-            if function_responses:
-                # Function responses are typically handled by the agent internally
-                # We don't need to emit them as AG-UI events
-                pass
+            if hasattr(adk_event, 'get_function_responses'):
+                function_responses = adk_event.get_function_responses()
+                if function_responses:
+                    # Function responses are typically handled by the agent internally
+                    # We don't need to emit them as AG-UI events
+                    pass
             
             # Handle state changes
-            if adk_event.actions and adk_event.actions.state_delta:
+            if hasattr(adk_event, 'actions') and adk_event.actions and hasattr(adk_event.actions, 'state_delta') and adk_event.actions.state_delta:
                 yield self._create_state_delta_event(
                     adk_event.actions.state_delta, thread_id, run_id
                 )
@@ -122,52 +143,84 @@ class EventTranslator:
         if not text_parts:
             return
         
-        # Determine if this is a streaming event or complete message
-        is_streaming = adk_event.partial
         
-        if is_streaming:
-            # Handle streaming sequence
-            if adk_event.id not in self._active_messages:
-                # Start of a new message
-                message_id = str(uuid.uuid4())
-                self._active_messages[adk_event.id] = message_id
-                
-                yield TextMessageStartEvent(
-                    type=EventType.TEXT_MESSAGE_START,
-                    message_id=message_id,
-                    role="assistant"
-                )
-            else:
-                message_id = self._active_messages[adk_event.id]
+        # Use proper ADK streaming detection (handle None values)
+        is_partial = getattr(adk_event, 'partial', False)
+        turn_complete = getattr(adk_event, 'turn_complete', False)
+        
+        # Check if this is the final response (complete message - skip to avoid duplication)
+        is_final_response = False
+        if hasattr(adk_event, 'is_final_response') and callable(adk_event.is_final_response):
+            is_final_response = adk_event.is_final_response()
+        elif hasattr(adk_event, 'is_final_response'):
+            is_final_response = adk_event.is_final_response
+        
+        # Handle None values: if is_final_response=True, it means streaming should end
+        should_send_end = is_final_response and not is_partial
+        
+        logger.info(f"📥 Text event - partial={is_partial}, turn_complete={turn_complete}, "
+                   f"is_final_response={is_final_response}, should_send_end={should_send_end}, "
+                   f"currently_streaming={self._is_streaming}")
+        
+        # Skip final response events to avoid duplicate content, but send END if streaming
+        if is_final_response:
+            logger.info("⏭️ Skipping final response event (content already streamed)")
             
-            # Emit content
-            for text in text_parts:
-                if text:  # Don't emit empty content
-                    yield TextMessageContentEvent(
-                        type=EventType.TEXT_MESSAGE_CONTENT,
-                        message_id=message_id,
-                        delta=text
-                    )
-            
-            # Check if this is the final chunk
-            if not adk_event.partial or adk_event.is_final_response():
-                yield TextMessageEndEvent(
+            # If we're currently streaming, this final response means we should end the stream
+            if self._is_streaming and self._streaming_message_id:
+                end_event = TextMessageEndEvent(
                     type=EventType.TEXT_MESSAGE_END,
-                    message_id=message_id
+                    message_id=self._streaming_message_id
                 )
-                # Clean up tracking
-                self._active_messages.pop(adk_event.id, None)
-        else:
-            # Complete message - emit as a single chunk event
-            message_id = str(uuid.uuid4())
-            combined_text = "\n".join(text_parts)
+                logger.info(f"📤 TEXT_MESSAGE_END (from final response): {end_event.model_dump_json()}")
+                yield end_event
+                
+                # Reset streaming state
+                self._streaming_message_id = None
+                self._is_streaming = False
+                logger.info("🏁 Streaming completed via final response")
             
-            yield TextMessageChunkEvent(
-                type=EventType.TEXT_MESSAGE_CHUNK,
-                message_id=message_id,
-                role="assistant",
+            return
+        
+        combined_text = "".join(text_parts)  # Don't add newlines for streaming
+        
+        # Handle streaming logic
+        if not self._is_streaming:
+            # Start of new message - emit START event
+            self._streaming_message_id = str(uuid.uuid4())
+            self._is_streaming = True
+            
+            start_event = TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START,
+                message_id=self._streaming_message_id,
+                role="assistant"
+            )
+            logger.info(f"📤 TEXT_MESSAGE_START: {start_event.model_dump_json()}")
+            yield start_event
+        
+        # Always emit content (unless empty)
+        if combined_text:
+            content_event = TextMessageContentEvent(
+                type=EventType.TEXT_MESSAGE_CONTENT,
+                message_id=self._streaming_message_id,
                 delta=combined_text
             )
+            logger.info(f"📤 TEXT_MESSAGE_CONTENT: {content_event.model_dump_json()}")
+            yield content_event
+        
+        # If turn is complete and not partial, emit END event
+        if should_send_end:
+            end_event = TextMessageEndEvent(
+                type=EventType.TEXT_MESSAGE_END,
+                message_id=self._streaming_message_id
+            )
+            logger.info(f"📤 TEXT_MESSAGE_END: {end_event.model_dump_json()}")
+            yield end_event
+            
+            # Reset streaming state
+            self._streaming_message_id = None
+            self._is_streaming = False
+            logger.info("🏁 Streaming completed, state reset")
     
     async def _translate_function_calls(
         self,
@@ -187,7 +240,8 @@ class EventTranslator:
         Yields:
             Tool call events (START, ARGS, END)
         """
-        parent_message_id = self._active_messages.get(adk_event.id)
+        # Since we're not tracking streaming messages, use None for parent message
+        parent_message_id = None
         
         for func_call in function_calls:
             tool_call_id = getattr(func_call, 'id', str(uuid.uuid4()))
@@ -255,12 +309,36 @@ class EventTranslator:
             delta=patches
         )
     
+    async def force_close_streaming_message(self) -> AsyncGenerator[BaseEvent, None]:
+        """Force close any open streaming message.
+        
+        This should be called before ending a run to ensure proper message termination.
+        
+        Yields:
+            TEXT_MESSAGE_END event if there was an open streaming message
+        """
+        if self._is_streaming and self._streaming_message_id:
+            logger.warning(f"🚨 Force-closing unterminated streaming message: {self._streaming_message_id}")
+            
+            end_event = TextMessageEndEvent(
+                type=EventType.TEXT_MESSAGE_END,
+                message_id=self._streaming_message_id
+            )
+            logger.info(f"📤 TEXT_MESSAGE_END (forced): {end_event.model_dump_json()}")
+            yield end_event
+            
+            # Reset streaming state
+            self._streaming_message_id = None
+            self._is_streaming = False
+            logger.info("🔄 Streaming state reset after force-close")
+
     def reset(self):
         """Reset the translator state.
         
         This should be called between different conversation runs
         to ensure clean state.
         """
-        self._active_messages.clear()
         self._active_tool_calls.clear()
-        logger.debug("Reset EventTranslator state")
+        self._streaming_message_id = None
+        self._is_streaming = False
+        logger.debug("Reset EventTranslator state (including streaming state)")
