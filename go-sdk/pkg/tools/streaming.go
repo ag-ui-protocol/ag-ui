@@ -85,12 +85,13 @@ func (sc *StreamingContext) sendChunk(chunkType string, data interface{}) error 
 		Index: sc.index,
 	}
 	sc.index++
-	sc.mu.Unlock()
 
 	select {
 	case sc.chunks <- chunk:
+		sc.mu.Unlock()
 		return nil
 	case <-sc.ctx.Done():
+		sc.mu.Unlock()
 		return sc.ctx.Err()
 	}
 }
