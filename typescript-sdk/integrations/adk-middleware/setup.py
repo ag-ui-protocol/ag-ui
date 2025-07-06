@@ -39,12 +39,14 @@ setup(
         "google-adk>=0.1.0",
         "pydantic>=2.0",
         "asyncio",
-        "pytest>=7.0",
-        "pytest-asyncio>=0.21",
-        "pytest-cov>=4.0",
+        "fastapi>=0.100.0",
+        "uvicorn>=0.27.0",
     ],
     extras_require={
         "dev": [
+            "pytest>=7.0",
+            "pytest-asyncio>=0.21",
+            "pytest-cov>=4.0",
             "black>=23.0",
             "isort>=5.12",
             "flake8>=6.0",

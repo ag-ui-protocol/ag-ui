@@ -31,6 +31,11 @@ source venv/bin/activate
 
 # Install this package in editable mode
 pip install -e .
+
+# For development (includes testing and linting tools)
+pip install -e ".[dev]"
+# OR
+pip install -r requirements-dev.txt
 ```
 
 This installs the ADK middleware in editable mode for development.
@@ -44,12 +49,11 @@ Although this is a Python integration, it lives in `typescript-sdk/integrations/
 ### Option 1: Direct Usage
 ```python
 from adk_middleware import ADKAgent, AgentRegistry
-from google.adk import LlmAgent
+from google.adk.agents import Agent
 
 # 1. Create your ADK agent
-my_agent = LlmAgent(
+my_agent = Agent(
     name="assistant",
-    model="gemini-2.0",
     instruction="You are a helpful assistant."
 )
 
@@ -69,7 +73,7 @@ async for event in agent.run(input_data):
 ```python
 from fastapi import FastAPI
 from adk_middleware import ADKAgent, AgentRegistry, add_adk_fastapi_endpoint
-from google.adk import LlmAgent
+from google.adk.agents import Agent
 
 # Set up agent and registry (same as above)
 registry = AgentRegistry.get_instance()
@@ -101,7 +105,7 @@ registry.register_agent("coder", coding_agent)
 
 # Option 3: Dynamic agent creation
 def create_agent(agent_id: str) -> BaseAgent:
-    return LlmAgent(name=agent_id, model="gemini-2.0")
+    return Agent(name=agent_id, instruction="You are a helpful assistant.")
 
 registry.set_agent_factory(create_agent)
 ```
@@ -135,24 +139,36 @@ agent = ADKAgent(
 
 ### Session Management
 
+Session management is handled automatically by the singleton `SessionLifecycleManager`. The middleware uses sensible defaults, but you can configure session behavior if needed by accessing the session manager directly:
+
 ```python
+from session_manager import SessionLifecycleManager
+
+# Session management is automatic, but you can access the manager if needed
+session_mgr = SessionLifecycleManager.get_instance()
+
+# Create your ADK agent normally
 agent = ADKAgent(
-    session_timeout_seconds=3600,      # 1 hour timeout
-    cleanup_interval_seconds=300,      # 5 minute cleanup cycles
-    max_sessions_per_user=10,         # Limit concurrent sessions
-    auto_cleanup=True                 # Enable automatic cleanup
+    app_name="my_app",
+    user_id="user123",
+    use_in_memory_services=True
 )
 ```
 
 ### Service Configuration
 
 ```python
-# Development (in-memory services)
-agent = ADKAgent(use_in_memory_services=True)
+# Development (in-memory services) - Default
+agent = ADKAgent(
+    app_name="my_app",
+    user_id="user123",
+    use_in_memory_services=True  # Default behavior
+)
 
 # Production with custom services
 agent = ADKAgent(
-    session_service=CloudSessionService(),
+    app_name="my_app", 
+    user_id="user123",
     artifact_service=GCSArtifactService(),
     memory_service=VertexAIMemoryService(),
     credential_service=SecretManagerService(),
@@ -167,14 +183,14 @@ agent = ADKAgent(
 ```python
 import asyncio
 from adk_middleware import ADKAgent, AgentRegistry
-from google.adk import LlmAgent
+from google.adk.agents import Agent
 from ag_ui.core import RunAgentInput, UserMessage
 
 async def main():
     # Setup
     registry = AgentRegistry.get_instance()
     registry.set_default_agent(
-        LlmAgent(name="assistant", model="gemini-2.0-flash")
+        Agent(name="assistant", instruction="You are a helpful assistant.")
     )
     
     agent = ADKAgent(app_name="demo_app", user_id="demo")
