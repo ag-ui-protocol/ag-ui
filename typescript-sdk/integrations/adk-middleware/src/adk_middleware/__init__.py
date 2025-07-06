@@ -5,9 +5,9 @@
 This middleware enables Google ADK agents to be used with the AG-UI protocol.
 """
 
-from adk_agent import ADKAgent
-from agent_registry import AgentRegistry
-from endpoint import add_adk_fastapi_endpoint, create_adk_app
+from .adk_agent import ADKAgent
+from .agent_registry import AgentRegistry
+from .endpoint import add_adk_fastapi_endpoint, create_adk_app
 
 __all__ = ['ADKAgent', 'AgentRegistry', 'add_adk_fastapi_endpoint', 'create_adk_app']
 

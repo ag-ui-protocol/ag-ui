@@ -24,9 +24,9 @@ from google.adk.auth.credential_service.base_credential_service import BaseCrede
 from google.adk.auth.credential_service.in_memory_credential_service import InMemoryCredentialService
 from google.genai import types
 
-from agent_registry import AgentRegistry
-from event_translator import EventTranslator
-from session_manager import SessionManager
+from .agent_registry import AgentRegistry
+from .event_translator import EventTranslator
+from .session_manager import SessionManager
 
 import logging
 logger = logging.getLogger(__name__)
@@ -43,6 +43,7 @@ class ADKAgent:
         self,
         # App identification
         app_name: Optional[str] = None,
+        session_timeout_seconds: Optional[int] = 1200,
         app_name_extractor: Optional[Callable[[RunAgentInput], str]] = None,
         
         # User identification
@@ -110,7 +111,7 @@ class ADKAgent:
         self._session_manager = SessionManager.get_instance(
             session_service=session_service,
             memory_service=memory_service,  # Pass memory service for automatic session memory
-            session_timeout_seconds=1200,  # 20 minutes default
+            session_timeout_seconds=session_timeout_seconds,  # 20 minutes default
             cleanup_interval_seconds=300,  # 5 minutes default
             max_sessions_per_user=None,    # No limit by default
             auto_cleanup=True              # Enable by default

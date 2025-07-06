@@ -11,10 +11,12 @@ from fastapi import FastAPI
 
 # These imports will work once google.adk is available
 try:
-    from src.adk_agent import ADKAgent
-    from src.agent_registry import AgentRegistry
-    from src.endpoint import add_adk_fastapi_endpoint
-    from google.adk import LlmAgent
+    # from src.adk_agent import ADKAgent
+    # from src.agent_registry import AgentRegistry
+    # from src.endpoint import add_adk_fastapi_endpoint
+
+    from adk_middleware import ADKAgent, AgentRegistry, add_adk_fastapi_endpoint
+    from google.adk.agents import LlmAgent
     
     # Set up the agent registry
     registry = AgentRegistry.get_instance()
