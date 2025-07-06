@@ -1,6 +1,6 @@
 # 🔧 ADK Middleware Logging Configuration
 
-The ADK middleware now supports granular logging control for different components. By default, most verbose logging is disabled for a cleaner experience.
+The ADK middleware uses standard Python logging. By default, most verbose logging is disabled for a cleaner experience.
 
 ## Quick Start
 
@@ -11,37 +11,37 @@ The ADK middleware now supports granular logging control for different component
 ```
 
 ### 🔍 Debug Specific Components
-```bash
-# Debug streaming events
-ADK_LOG_EVENT_TRANSLATOR=DEBUG ./quickstart.sh
 
-# Debug HTTP responses  
-ADK_LOG_ENDPOINT=DEBUG ./quickstart.sh
+Add this to your script or setup code:
 
-# Debug both streaming and HTTP
-ADK_LOG_EVENT_TRANSLATOR=DEBUG ADK_LOG_ENDPOINT=DEBUG ./quickstart.sh
+```python
+import logging
+
+# Debug session management
+logging.getLogger('session_manager').setLevel(logging.DEBUG)
+
+# Debug event translation
+logging.getLogger('event_translator').setLevel(logging.DEBUG)
+
+# Debug HTTP endpoint responses
+logging.getLogger('endpoint').setLevel(logging.DEBUG)
+
+# Debug main agent logic
+logging.getLogger('adk_agent').setLevel(logging.DEBUG)
 ```
 
 ### 🐛 Debug Everything
-```bash
-ADK_LOG_EVENT_TRANSLATOR=DEBUG \
-ADK_LOG_ENDPOINT=DEBUG \
-ADK_LOG_RAW_RESPONSE=DEBUG \
-ADK_LOG_LLM_RESPONSE=DEBUG \
-./quickstart.sh
+```python
+import logging
+
+# Set root logger to DEBUG
+logging.getLogger().setLevel(logging.DEBUG)
+
+# Or configure specific components
+components = ['adk_agent', 'event_translator', 'endpoint', 'session_manager', 'agent_registry']
+for component in components:
+    logging.getLogger(component).setLevel(logging.DEBUG)
 ```
-
-## Interactive Configuration
-
-```bash
-python configure_logging.py
-```
-
-This provides a menu-driven interface to:
-- View current logging levels
-- Set individual component levels
-- Use quick configurations (streaming debug, quiet mode, etc.)
-- Enable/disable specific components
 
 ## Available Components
 
@@ -49,69 +49,63 @@ This provides a menu-driven interface to:
 |-----------|-------------|---------------|
 | `event_translator` | Event conversion logic | WARNING |
 | `endpoint` | HTTP endpoint responses | WARNING |
-| `raw_response` | Raw ADK responses | WARNING |
-| `llm_response` | LLM response processing | WARNING |
 | `adk_agent` | Main agent logic | INFO |
 | `session_manager` | Session management | WARNING |
 | `agent_registry` | Agent registration | WARNING |
 
-## Environment Variables
-
-Set these before running the server:
-
-```bash
-export ADK_LOG_EVENT_TRANSLATOR=DEBUG    # Show event translation details
-export ADK_LOG_ENDPOINT=DEBUG           # Show HTTP response details
-export ADK_LOG_RAW_RESPONSE=DEBUG       # Show raw ADK responses
-export ADK_LOG_LLM_RESPONSE=DEBUG       # Show LLM processing
-export ADK_LOG_ADK_AGENT=INFO           # Main agent info (default)
-export ADK_LOG_SESSION_MANAGER=WARNING  # Session lifecycle (default)
-export ADK_LOG_AGENT_REGISTRY=WARNING   # Agent registration (default)
-```
-
 ## Python API
 
+### Setting Individual Component Levels
 ```python
-from src.logging_config import configure_logging
+import logging
 
 # Enable specific debugging
-configure_logging(
-    event_translator='DEBUG',
-    endpoint='DEBUG'
-)
+logging.getLogger('event_translator').setLevel(logging.DEBUG)
+logging.getLogger('endpoint').setLevel(logging.DEBUG)
 
 # Quiet mode
-configure_logging(
-    event_translator='ERROR',
-    endpoint='ERROR',
-    raw_response='ERROR'
+logging.getLogger('event_translator').setLevel(logging.ERROR)
+logging.getLogger('endpoint').setLevel(logging.ERROR)
+```
+
+### Global Configuration
+```python
+import logging
+
+# Configure basic logging format
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+# Set component-specific levels
+logging.getLogger('session_manager').setLevel(logging.DEBUG)
 ```
 
 ## Common Use Cases
 
 ### 🔍 Debugging Streaming Issues
-```bash
-ADK_LOG_EVENT_TRANSLATOR=DEBUG ./quickstart.sh
+```python
+logging.getLogger('event_translator').setLevel(logging.DEBUG)
 ```
 Shows: partial events, turn_complete, is_final_response, TEXT_MESSAGE_* events
 
 ### 🌐 Debugging Client Connection Issues  
-```bash
-ADK_LOG_ENDPOINT=DEBUG ./quickstart.sh
+```python
+logging.getLogger('endpoint').setLevel(logging.DEBUG)
 ```
 Shows: HTTP responses, SSE data being sent to clients
 
-### 📡 Debugging ADK Integration
-```bash
-ADK_LOG_RAW_RESPONSE=DEBUG ./quickstart.sh
+### 📊 Debugging Session Management
+```python
+logging.getLogger('session_manager').setLevel(logging.DEBUG)
 ```
-Shows: Raw responses from Google ADK API
+Shows: Session creation, deletion, cleanup, memory operations
 
 ### 🔇 Production Mode
-```bash
+```python
 # Default behavior - only errors and main agent info
-./quickstart.sh
+# No additional configuration needed
 ```
 
 ## Log Levels
@@ -120,3 +114,29 @@ Shows: Raw responses from Google ADK API
 - **INFO**: Important operational information  
 - **WARNING**: Warnings and recoverable issues (default for most components)
 - **ERROR**: Only errors and critical issues
+
+## Environment-Based Configuration
+
+You can also set logging levels via environment variables by modifying your startup script:
+
+```python
+import os
+import logging
+
+# Check environment variables for log levels
+components = {
+    'adk_agent': os.getenv('LOG_ADK_AGENT', 'INFO'),
+    'event_translator': os.getenv('LOG_EVENT_TRANSLATOR', 'WARNING'),
+    'endpoint': os.getenv('LOG_ENDPOINT', 'WARNING'),
+    'session_manager': os.getenv('LOG_SESSION_MANAGER', 'WARNING'),
+    'agent_registry': os.getenv('LOG_AGENT_REGISTRY', 'WARNING')
+}
+
+for component, level in components.items():
+    logging.getLogger(component).setLevel(getattr(logging, level.upper()))
+```
+
+Then use:
+```bash
+LOG_SESSION_MANAGER=DEBUG ./quickstart.sh
+```

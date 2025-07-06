@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2025-07-06
+
+### Changed
+- **SIMPLIFIED**: Converted from custom component logger system to standard Python logging
+- **IMPROVED**: Logging configuration now uses Python's built-in `logging.getLogger()` pattern
+- **STREAMLINED**: Removed proprietary `logging_config.py` module and related complexity
+- **STANDARDIZED**: All modules now follow Python community best practices for logging
+- **UPDATED**: Documentation (LOGGING.md) with standard Python logging examples
+
+### Removed
+- Custom `logging_config.py` module (replaced with standard Python logging)
+- `configure_logging.py` interactive tool (no longer needed)
+- `test_logging.py` (testing standard Python logging is unnecessary)
+
 ## [0.2.0] - 2025-07-06
 
 ### Added

@@ -17,9 +17,9 @@ from ag_ui.core import (
 )
 
 from google.adk.events import Event as ADKEvent
-from logging_config import get_component_logger
 
-logger = get_component_logger('event_translator')
+import logging
+logger = logging.getLogger(__name__)
 
 
 class EventTranslator:

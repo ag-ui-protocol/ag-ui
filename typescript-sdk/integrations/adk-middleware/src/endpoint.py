@@ -7,9 +7,9 @@ from fastapi.responses import StreamingResponse
 from ag_ui.core import RunAgentInput
 from ag_ui.encoder import EventEncoder
 from adk_agent import ADKAgent
-from logging_config import get_component_logger
 
-logger = get_component_logger('endpoint')
+import logging
+logger = logging.getLogger(__name__)
 
 
 def add_adk_fastapi_endpoint(app: FastAPI, agent: ADKAgent, path: str = "/"):

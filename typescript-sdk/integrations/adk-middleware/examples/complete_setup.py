@@ -17,15 +17,13 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-# Configure component-specific logging (can be overridden with env vars)
-from logging_config import configure_logging
-configure_logging(
-    adk_agent='INFO',           # Keep main agent info
-    event_translator='WARNING', # Quiet by default
-    endpoint='WARNING',         # Quiet by default  
-    raw_response='WARNING',     # Quiet by default
-    llm_response='WARNING'      # Quiet by default
-)
+# Configure component-specific logging levels using standard Python logging
+# Can be overridden with PYTHONPATH or programmatically
+logging.getLogger('adk_agent').setLevel(logging.INFO)
+logging.getLogger('event_translator').setLevel(logging.WARNING)
+logging.getLogger('endpoint').setLevel(logging.WARNING)
+logging.getLogger('session_manager').setLevel(logging.WARNING)
+logging.getLogger('agent_registry').setLevel(logging.WARNING)
 
 from adk_agent import ADKAgent
 from agent_registry import AgentRegistry
@@ -179,9 +177,10 @@ async def setup_and_run():
     print("📚 API documentation: http://localhost:8000/docs")
     print("🔍 Health check: http://localhost:8000/health")
     print("\n🔧 Logging Control:")
-    print("   python configure_logging.py  # Interactive logging config")
-    print("   ADK_LOG_EVENT_TRANSLATOR=DEBUG ./quickstart.sh  # Debug streaming")
-    print("   ADK_LOG_ENDPOINT=DEBUG ./quickstart.sh          # Debug HTTP responses")
+    print("   # Set logging level for specific components:")
+    print("   logging.getLogger('event_translator').setLevel(logging.DEBUG)")
+    print("   logging.getLogger('endpoint').setLevel(logging.DEBUG)")
+    print("   logging.getLogger('session_manager').setLevel(logging.DEBUG)")
     print("\n🧪 Test with curl:")
     print('curl -X POST http://localhost:8000/chat \\')
     print('  -H "Content-Type: application/json" \\')

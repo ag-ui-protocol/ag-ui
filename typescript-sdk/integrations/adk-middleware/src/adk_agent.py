@@ -27,9 +27,9 @@ from google.genai import types
 from agent_registry import AgentRegistry
 from event_translator import EventTranslator
 from session_manager import SessionManager
-from logging_config import get_component_logger
 
-logger = get_component_logger('adk_agent')
+import logging
+logger = logging.getLogger(__name__)
 
 
 class ADKAgent:
