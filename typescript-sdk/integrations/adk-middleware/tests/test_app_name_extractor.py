@@ -158,7 +158,7 @@ async def test_combined_extractors():
         for ctx in input_data.context:
             if ctx.description == "app":
                 return ctx.value
-        return "default_app"
+        return "AG-UI ADK Agent"
     
     def extract_user(input_data):
         for ctx in input_data.context:

@@ -6,6 +6,7 @@ This Python middleware enables Google ADK agents to be used with the AG-UI Proto
 
 - ⚠️ Full event translation between AG-UI and ADK (partial - full support coming soon)
 - ✅ Automatic session management with configurable timeouts
+- ✅ Automatic session memory option - expired sessions automatically preserved in ADK memory service
 - ✅ Support for multiple agents with centralized registry
 - ❌ State synchronization between protocols (coming soon)
 - ❌ Tool/function calling support (coming soon)
@@ -170,11 +171,37 @@ agent = ADKAgent(
     app_name="my_app", 
     user_id="user123",
     artifact_service=GCSArtifactService(),
-    memory_service=VertexAIMemoryService(),
+    memory_service=VertexAIMemoryService(),  # Enables automatic session memory!
     credential_service=SecretManagerService(),
     use_in_memory_services=False
 )
 ```
+
+### Automatic Session Memory
+
+When you provide a `memory_service`, the middleware automatically preserves expired sessions in ADK's memory service before deletion. This enables powerful conversation history and context retrieval features.
+
+```python
+from google.adk.memory import VertexAIMemoryService
+
+# Enable automatic session memory
+agent = ADKAgent(
+    app_name="my_app",
+    user_id="user123", 
+    memory_service=VertexAIMemoryService(),  # Sessions auto-saved here on expiration
+    use_in_memory_services=False
+)
+
+# Now when sessions expire (default 20 minutes), they're automatically:
+# 1. Added to memory via memory_service.add_session_to_memory()
+# 2. Then deleted from active session storage
+# 3. Available for retrieval and context in future conversations
+```
+
+**Benefits:**
+- **Zero-config**: Works automatically when a memory service is provided
+- **Comprehensive**: Applies to all session deletions (timeout, user limits, manual)
+- **Performance**: Preserves conversation history without manual intervention
 
 ## Examples
 

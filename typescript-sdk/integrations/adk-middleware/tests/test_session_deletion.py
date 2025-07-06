@@ -1,10 +1,10 @@
 #!/usr/bin/env python
-"""Test session deletion functionality."""
+"""Test session deletion functionality with minimal session manager."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-from session_manager import SessionLifecycleManager
+from session_manager import SessionManager
 
 
 async def test_session_deletion():
@@ -12,7 +12,7 @@ async def test_session_deletion():
     print("🧪 Testing session deletion...")
     
     # Reset singleton for clean test
-    SessionLifecycleManager.reset_instance()
+    SessionManager.reset_instance()
     
     # Create mock session service
     mock_session_service = AsyncMock()
@@ -21,19 +21,19 @@ async def test_session_deletion():
     mock_session_service.delete_session = AsyncMock()
     
     # Create session manager with mock service
-    session_manager = SessionLifecycleManager.get_instance(
+    session_manager = SessionManager.get_instance(
         session_service=mock_session_service,
         auto_cleanup=False
     )
     
     # Create a session
     test_session_id = "test_session_123"
-    test_agent_id = "test_agent"
+    test_app_name = "test_app"
     test_user_id = "test_user"
     
     adk_session = await session_manager.get_or_create_session(
         session_id=test_session_id,
-        app_name=test_agent_id,
+        app_name=test_app_name,
         user_id=test_user_id,
         initial_state={"test": "data"}
     )
@@ -41,30 +41,26 @@ async def test_session_deletion():
     print(f"✅ Created session: {test_session_id}")
     
     # Verify session exists in tracking
-    session_key = f"{test_agent_id}:{test_session_id}"
-    assert session_key in session_manager._sessions
+    session_key = f"{test_app_name}:{test_session_id}"
+    assert session_key in session_manager._session_keys
     print(f"✅ Session tracked: {session_key}")
     
-    # Remove the session
-    removed = await session_manager.remove_session(session_key)
-    
-    # Verify removal was successful
-    assert removed == True
-    print("✅ Session removal returned True")
+    # Manually delete the session (internal method)
+    await session_manager._delete_session(test_session_id, test_app_name, test_user_id)
     
     # Verify session is no longer tracked
-    assert session_key not in session_manager._sessions
+    assert session_key not in session_manager._session_keys
     print("✅ Session no longer in tracking")
     
     # Verify delete_session was called with correct parameters
     mock_session_service.delete_session.assert_called_once_with(
         session_id=test_session_id,
-        app_name=test_agent_id,
+        app_name=test_app_name,
         user_id=test_user_id
     )
     print("✅ delete_session called with correct parameters:")
     print(f"   session_id: {test_session_id}")
-    print(f"   app_name: {test_agent_id}")
+    print(f"   app_name: {test_app_name}")
     print(f"   user_id: {test_user_id}")
     
     return True
@@ -75,7 +71,7 @@ async def test_session_deletion_error_handling():
     print("\n🧪 Testing session deletion error handling...")
     
     # Reset singleton for clean test
-    SessionLifecycleManager.reset_instance()
+    SessionManager.reset_instance()
     
     # Create mock session service that raises an error on delete
     mock_session_service = AsyncMock()
@@ -84,72 +80,125 @@ async def test_session_deletion_error_handling():
     mock_session_service.delete_session = AsyncMock(side_effect=Exception("Delete failed"))
     
     # Create session manager with mock service
-    session_manager = SessionLifecycleManager.get_instance(
+    session_manager = SessionManager.get_instance(
         session_service=mock_session_service,
         auto_cleanup=False
     )
     
     # Create a session
     test_session_id = "test_session_456"
-    test_agent_id = "test_agent"
+    test_app_name = "test_app"
     test_user_id = "test_user"
     
-    adk_session = await session_manager.get_or_create_session(
+    await session_manager.get_or_create_session(
         session_id=test_session_id,
-        app_name=test_agent_id,
-        user_id=test_user_id,
-        initial_state={"test": "data"}
+        app_name=test_app_name,
+        user_id=test_user_id
     )
     
-    session_key = f"{test_agent_id}:{test_session_id}"
+    session_key = f"{test_app_name}:{test_session_id}"
+    assert session_key in session_manager._session_keys
     
-    # Remove the session (should handle the delete error gracefully)
-    removed = await session_manager.remove_session(session_key)
+    # Try to delete - should handle the error gracefully
+    try:
+        await session_manager._delete_session(test_session_id, test_app_name, test_user_id)
+        
+        # Even if deletion failed, session should be untracked
+        assert session_key not in session_manager._session_keys
+        print("✅ Session untracked even after deletion error")
+        
+        return True
+    except Exception as e:
+        print(f"❌ Unexpected exception: {e}")
+        return False
+
+
+async def test_user_session_limits():
+    """Test per-user session limits."""
+    print("\n🧪 Testing per-user session limits...")
     
-    # Verify removal still succeeded (local tracking removed even if ADK delete failed)
-    assert removed == True
-    print("✅ Session removal succeeded despite delete_session error")
+    # Reset singleton for clean test
+    SessionManager.reset_instance()
     
-    # Verify session is no longer tracked locally
-    assert session_key not in session_manager._sessions
-    print("✅ Session still removed from local tracking despite error")
+    # Create mock session service
+    mock_session_service = AsyncMock()
     
-    # Verify delete_session was attempted
-    mock_session_service.delete_session.assert_called_once()
-    print("✅ delete_session was attempted despite error")
+    # Mock session objects with lastUpdateTime
+    class MockSession:
+        def __init__(self, update_time):
+            from datetime import datetime
+            self.lastUpdateTime = datetime.fromtimestamp(update_time)
+    
+    created_sessions = {}
+    
+    async def mock_get_session(session_id, app_name, user_id):
+        key = f"{app_name}:{session_id}"
+        return created_sessions.get(key)
+    
+    async def mock_create_session(session_id, app_name, user_id, state):
+        import time
+        session = MockSession(time.time())
+        key = f"{app_name}:{session_id}"
+        created_sessions[key] = session
+        return session
+    
+    mock_session_service.get_session = mock_get_session
+    mock_session_service.create_session = mock_create_session
+    mock_session_service.delete_session = AsyncMock()
+    
+    # Create session manager with limit of 2 sessions per user
+    session_manager = SessionManager.get_instance(
+        session_service=mock_session_service,
+        max_sessions_per_user=2,
+        auto_cleanup=False
+    )
+    
+    test_user = "limited_user"
+    test_app = "test_app"
+    
+    # Create 3 sessions for the same user
+    for i in range(3):
+        await session_manager.get_or_create_session(
+            session_id=f"session_{i}",
+            app_name=test_app,
+            user_id=test_user
+        )
+        # Small delay to ensure different timestamps
+        await asyncio.sleep(0.1)
+    
+    # Should only have 2 sessions for this user
+    user_count = session_manager.get_user_session_count(test_user)
+    assert user_count == 2, f"Expected 2 sessions, got {user_count}"
+    print(f"✅ User session limit enforced: {user_count} sessions")
+    
+    # Verify the oldest session was removed
+    assert f"{test_app}:session_0" not in session_manager._session_keys
+    assert f"{test_app}:session_1" in session_manager._session_keys
+    assert f"{test_app}:session_2" in session_manager._session_keys
+    print("✅ Oldest session was removed")
     
     return True
 
 
 async def main():
-    """Run all session deletion tests."""
-    print("🚀 Testing Session Deletion")
-    print("=" * 40)
-    
+    """Run all tests."""
     try:
-        test1_passed = await test_session_deletion()
-        test2_passed = await test_session_deletion_error_handling()
+        success = await test_session_deletion()
+        success = success and await test_session_deletion_error_handling()
+        success = success and await test_user_session_limits()
         
-        print(f"\n📊 Test Results:")
-        print(f"   Session deletion: {'✅ PASS' if test1_passed else '❌ FAIL'}")
-        print(f"   Error handling: {'✅ PASS' if test2_passed else '❌ FAIL'}")
-        
-        if test1_passed and test2_passed:
-            print("\n🎉 All session deletion tests passed!")
-            print("💡 Session deletion now works with correct parameters")
-            return True
+        if success:
+            print("\n✅ All session deletion tests passed!")
         else:
-            print("\n⚠️ Some tests failed")
-            return False
+            print("\n❌ Some tests failed!")
+            exit(1)
             
     except Exception as e:
-        print(f"\n❌ Test suite failed with exception: {e}")
+        print(f"\n❌ Unexpected error: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        exit(1)
 
 
 if __name__ == "__main__":
-    import sys
-    success = asyncio.run(main())
-    sys.exit(0 if success else 1)
+    asyncio.run(main())

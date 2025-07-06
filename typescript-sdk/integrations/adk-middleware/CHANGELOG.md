@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-07-06
+
 ### Added
+- **NEW**: Automatic session memory option - expired sessions automatically preserved in ADK memory service
+- **NEW**: Optional `memory_service` parameter in `SessionManager` for seamless session history preservation  
+- **NEW**: 7 comprehensive unit tests for session memory functionality (61 total tests, up from 54)
+- **NEW**: Updated default app name to "AG-UI ADK Agent" for better branding
+
+### Changed
+- **PERFORMANCE**: Enhanced session management to better leverage ADK's native session capabilities
+
+### Added (Previous Release Features)
 - **NEW**: Full pytest compatibility with standard pytest commands (`pytest`, `pytest --cov=src`)
 - **NEW**: Pytest configuration (pytest.ini) with proper Python path and async support  
 - **NEW**: Async test support with `@pytest.mark.asyncio` for all async test functions

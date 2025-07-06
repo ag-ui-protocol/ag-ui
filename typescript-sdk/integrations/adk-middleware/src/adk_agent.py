@@ -26,7 +26,7 @@ from google.genai import types
 
 from agent_registry import AgentRegistry
 from event_translator import EventTranslator
-from session_manager import SessionLifecycleManager
+from session_manager import SessionManager
 from logging_config import get_component_logger
 
 logger = get_component_logger('adk_agent')
@@ -66,7 +66,7 @@ class ADKAgent:
             user_id: Static user ID for all requests
             user_id_extractor: Function to extract user ID dynamically from input
             artifact_service: File/artifact storage service
-            memory_service: Conversation memory and search service
+            memory_service: Conversation memory and search service (also enables automatic session memory)
             credential_service: Authentication credential storage
             run_config_factory: Function to create RunConfig per request
             use_in_memory_services: Use in-memory implementations for unspecified services
@@ -107,8 +107,9 @@ class ADKAgent:
             # For production, you would inject the real session service here
             session_service = InMemorySessionService()  # TODO: Make this configurable
             
-        self._session_manager = SessionLifecycleManager.get_instance(
+        self._session_manager = SessionManager.get_instance(
             session_service=session_service,
+            memory_service=memory_service,  # Pass memory service for automatic session memory
             session_timeout_seconds=1200,  # 20 minutes default
             cleanup_interval_seconds=300,  # 5 minutes default
             max_sessions_per_user=None,    # No limit by default
@@ -139,7 +140,7 @@ class ADKAgent:
             return adk_agent.name
         except Exception as e:
             logger.warning(f"Could not get agent name for app_name, using default: {e}")
-            return "default_app"
+            return "AG-UI ADK Agent"
     
     def _get_user_id(self, input: RunAgentInput) -> str:
         """Resolve user ID with clear precedence."""
@@ -203,12 +204,8 @@ class ADKAgent:
             agent_id = self._get_agent_id()
             user_id = self._get_user_id(input)
             app_name = self._get_app_name(input)
-            session_key = f"{agent_id}:{user_id}:{input.thread_id}"
             
-            # Track session activity
-            self._session_manager.track_activity(session_key, app_name, user_id, input.thread_id)
-            
-            # Session management is handled by SessionLifecycleManager
+            # Session management is handled by SessionManager
             
             # Get the ADK agent from registry
             registry = AgentRegistry.get_instance()
@@ -298,7 +295,7 @@ class ADKAgent:
     async def close(self):
         """Clean up resources."""
         # Stop session manager cleanup task
-        self._session_manager.stop_cleanup_task()
+        await self._session_manager.stop_cleanup_task()
         
         # Close all runners
         for runner in self._runners.values():

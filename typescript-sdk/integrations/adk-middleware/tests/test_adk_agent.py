@@ -36,16 +36,16 @@ class TestADKAgent:
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):
         """Reset session manager before each test."""
-        from session_manager import SessionLifecycleManager
+        from session_manager import SessionManager
         try:
-            SessionLifecycleManager.reset_instance()
+            SessionManager.reset_instance()
         except RuntimeError:
             # Event loop may be closed - ignore
             pass
         yield
         # Cleanup after test
         try:
-            SessionLifecycleManager.reset_instance()
+            SessionManager.reset_instance()
         except RuntimeError:
             # Event loop may be closed - ignore
             pass
@@ -144,22 +144,20 @@ class TestADKAgent:
         """Test session lifecycle management."""
         session_mgr = adk_agent._session_manager
         
-        # Track a session
-        session_mgr.track_activity(
-            "agent1:user1:session1",
-            "agent1",
-            "user1",
-            "session1"
+        # Create a session through get_or_create_session
+        await session_mgr.get_or_create_session(
+            session_id="session1",
+            app_name="agent1",
+            user_id="user1"
         )
         
         assert session_mgr.get_session_count() == 1
         
         # Add another session
-        session_mgr.track_activity(
-            "agent1:user1:session2",
-            "agent1",
-            "user1",
-            "session2"
+        await session_mgr.get_or_create_session(
+            session_id="session2",
+            app_name="agent1",
+            user_id="user1"
         )
         assert session_mgr.get_session_count() == 2
     
