@@ -177,8 +177,8 @@ class SessionManager:
                     app_name=app_name,
                     user_id=user_id
                 )
-                if session and hasattr(session, 'lastUpdateTime'):
-                    update_time = session.lastUpdateTime.timestamp()
+                if session and hasattr(session, 'last_update_time'):
+                    update_time = session.last_update_time.timestamp()
                     if update_time < oldest_time:
                         oldest_time = update_time
                         oldest_key = session_key

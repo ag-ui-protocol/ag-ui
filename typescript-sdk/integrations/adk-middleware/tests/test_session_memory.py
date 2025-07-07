@@ -39,7 +39,7 @@ class TestSessionMemory:
     def mock_session(self):
         """Create a mock ADK session object."""
         session = MagicMock()
-        session.lastUpdateTime = datetime.fromtimestamp(time.time())
+        session.last_update_time = datetime.fromtimestamp(time.time())
         session.state = {"test": "data"}
         session.id = "test_session"
         return session
@@ -153,7 +153,7 @@ class TestSessionMemory:
         
         # Create an expired session
         old_session = MagicMock()
-        old_session.lastUpdateTime = datetime.fromtimestamp(time.time() - 10)  # 10 seconds ago
+        old_session.last_update_time = datetime.fromtimestamp(time.time() - 10)  # 10 seconds ago
         
         # Track a session manually for testing
         manager._track_session("test_app:test_session", "test_user")
@@ -184,7 +184,7 @@ class TestSessionMemory:
         
         # Create an old session that will be removed
         old_session = MagicMock()
-        old_session.lastUpdateTime = datetime.fromtimestamp(time.time() - 60)  # 1 minute ago
+        old_session.last_update_time = datetime.fromtimestamp(time.time() - 60)  # 1 minute ago
         
         # Mock initial session creation and retrieval
         mock_session_service.get_session.return_value = None
