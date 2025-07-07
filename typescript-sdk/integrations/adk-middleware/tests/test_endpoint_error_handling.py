@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from endpoint import add_adk_fastapi_endpoint
-from adk_agent import ADKAgent
+
+from adk_middleware import ADKAgent, add_adk_fastapi_endpoint
 from ag_ui.core import RunAgentInput, UserMessage, RunErrorEvent, EventType
 
 

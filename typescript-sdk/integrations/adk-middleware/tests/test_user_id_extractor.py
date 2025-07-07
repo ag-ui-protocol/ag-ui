@@ -2,7 +2,8 @@
 """Test user_id_extractor functionality."""
 
 from ag_ui.core import RunAgentInput, UserMessage
-from adk_agent import ADKAgent
+from adk_middleware import ADKAgent
+
 
 
 def test_static_user_id():

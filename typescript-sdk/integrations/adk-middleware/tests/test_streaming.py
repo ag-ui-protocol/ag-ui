@@ -5,7 +5,9 @@ import asyncio
 import logging
 from pathlib import Path
 
-from event_translator import EventTranslator
+
+from adk_middleware import EventTranslator
+
 from unittest.mock import MagicMock
 
 # Set up logging

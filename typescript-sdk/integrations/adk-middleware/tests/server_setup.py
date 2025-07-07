@@ -9,9 +9,8 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from adk_agent import ADKAgent
-from agent_registry import AgentRegistry
-from endpoint import add_adk_fastapi_endpoint
+
+from adk_middleware import ADKAgent, AgentRegistry, add_adk_fastapi_endpoint
 
 # Import your ADK agent - adjust based on what you have
 from google.adk.agents import Agent

@@ -8,8 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from ag_ui.core import RunAgentInput, UserMessage
-from adk_agent import ADKAgent
-from agent_registry import AgentRegistry
+from adk_middleware import ADKAgent, AgentRegistry
 from google.adk.agents import Agent
 
 

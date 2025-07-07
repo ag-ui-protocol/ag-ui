@@ -6,8 +6,8 @@ import pytest
 import asyncio
 from unittest.mock import Mock, MagicMock, AsyncMock, patch
 
-from adk_agent import ADKAgent
-from agent_registry import AgentRegistry
+
+from adk_middleware import ADKAgent, AgentRegistry
 from ag_ui.core import (
     RunAgentInput, EventType, UserMessage, Context,
     RunStartedEvent, RunFinishedEvent, TextMessageChunkEvent

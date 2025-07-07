@@ -5,7 +5,7 @@ import asyncio
 from pathlib import Path
 
 from ag_ui.core import EventType
-from event_translator import EventTranslator
+from adk_middleware import EventTranslator
 from unittest.mock import MagicMock
 
 async def test_text_event_bookending():
