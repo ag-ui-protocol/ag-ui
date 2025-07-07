@@ -1,26 +1,23 @@
 [tool.poetry]
 name = "ag-ui-langgraph"
-version = "0.0.1"
+version = "0.0.1-alpha.6"
 description = ""
 authors = ["Ran Shem Tov <ran@copilotkit.ai>"]
 readme = "README.md"
 exclude = [
-    "ag_ui_langgraph/dojo.py",
     "ag_ui_langgraph/examples/**",
 ]
 
 [tool.poetry.dependencies]
 python = "<3.14,>=3.10"
 ag-ui-protocol = "==0.1.7"
-python-dotenv = "^1.0.0"
-fastapi = "^0.115.12"
-uvicorn = "^0.34.3"
-langchain = ">=0.1.0"
-langchain-core = ">=0.1.5"
-langchain-community = ">=0.0.1"
-langchain-experimental = ">=0.0.11"
-langchain-openai = ">=0.0.1"
-langgraph = "^0.3.25"
+fastapi = { version = "^0.115.12", optional = true }
+langchain = ">=0.3.0"
+langchain-core = ">=0.3.0"
+langgraph = ">=0.3.25,<=0.5.0"
+
+[tool.poetry.extras]
+fastapi = ["fastapi"]
 
 [build-system]
 requires = ["poetry-core"]

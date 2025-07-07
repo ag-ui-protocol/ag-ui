@@ -81,8 +81,9 @@ GENERATE_RECIPE_TOOL = {
                             "description": "The cooking time of the recipe"
                         },
                         "ingredients": {
-                            "type": "string",
-                            "description": "Entire list of ingredients for the recipe, including the new ingredients and the ones that are already in the recipe: The name + the actual emoji (not emoji code like '\x1f35e', but the actual emoji like 🥕) and amount. Like so: 🥕 Carrots (250g)"
+                            "type": "array",
+                            "items": {"icon": "string", "name": "string", "amount": "string"},
+                            "description": "Entire list of ingredients for the recipe, including the new ingredients and the ones that are already in the recipe: Icon: the actual emoji (not emoji code like '\x1f35e', but the actual emoji like 🥕), name and amount. Like so: 🥕 Carrots (250g)"
                         },
                         "instructions": {
                             "type": "array",
@@ -198,7 +199,7 @@ async def chat_node(state: Dict[str, Any], config: RunnableConfig):
 
     # Update messages with the response
     messages = state["messages"] + [response]
-    
+
     # Handle tool calls
     if hasattr(response, "tool_calls") and response.tool_calls:
         tool_call = response.tool_calls[0]

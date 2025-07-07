@@ -5,14 +5,13 @@ from fastapi import FastAPI
 from dotenv import load_dotenv
 load_dotenv()
 
-from .endpoint import add_langgraph_fastapi_endpoint
-from .agent import LangGraphAgent
-from .examples.human_in_the_loop import human_in_the_loop_graph
-from .examples.predictive_state_updates import predictive_state_updates_graph
-from .examples.shared_state import shared_state_graph
-from .examples.tool_based_generative_ui import tool_based_generative_ui_graph
-from .examples.agentic_chat import agentic_chat_graph
-from .examples.agentic_generative_ui import graph
+from ag_ui_langgraph import LangGraphAgent, add_langgraph_fastapi_endpoint
+from .human_in_the_loop import human_in_the_loop_graph
+from .predictive_state_updates import predictive_state_updates_graph
+from .shared_state import shared_state_graph
+from .tool_based_generative_ui import tool_based_generative_ui_graph
+from .agentic_chat import agentic_chat_graph
+from .agentic_generative_ui import graph
 
 app = FastAPI(title="LangGraph Dojo Example Server")
 
@@ -90,7 +89,7 @@ def main():
     """Run the uvicorn server."""
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run(
-        "ag_ui_langgraph.dojo:app",
+        "agents.dojo:app",
         host="0.0.0.0",
         port=port,
         reload=True

@@ -2,9 +2,7 @@ import uuid
 import json
 from typing import Optional, List, Any, Union, AsyncGenerator, Generator
 
-from fastapi.responses import StreamingResponse
-
-from langgraph.graph.graph import CompiledGraph
+from langgraph.graph.state import CompiledStateGraph
 from langchain.schema import BaseMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig, ensure_config
 from langchain_core.messages import HumanMessage
@@ -78,13 +76,14 @@ ProcessedEvents = Union[
 ]
 
 class LangGraphAgent:
-    def __init__(self, *, name: str, graph: CompiledGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None):
+    def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None):
         self.name = name
         self.description = description
         self.graph = graph
         self.config = config or {}
         self.messages_in_process: MessagesInProgressRecord = {}
         self.active_run: Optional[RunMetadata] = None
+        self.constant_schema_keys = ['messages', 'tools']
 
     def _dispatch_event(self, event: ProcessedEvents) -> str:
         return event  # Fallback if no encoder
@@ -352,7 +351,6 @@ class LangGraphAgent:
         }
 
     def get_schema_keys(self, config) -> SchemaKeys:
-        CONSTANT_KEYS = ['messages']
         try:
             input_schema = self.graph.get_input_jsonschema(config)
             output_schema = self.graph.get_output_jsonschema(config)
@@ -363,14 +361,14 @@ class LangGraphAgent:
             config_schema_keys = list(config_schema["properties"].keys()) if "properties" in config_schema else []
 
             return {
-                "input": [*input_schema_keys, *CONSTANT_KEYS],
-                "output": [*output_schema_keys, *CONSTANT_KEYS],
+                "input": [*input_schema_keys, *self.constant_schema_keys],
+                "output": [*output_schema_keys, *self.constant_schema_keys],
                 "config": config_schema_keys,
             }
         except Exception:
             return {
-                "input": CONSTANT_KEYS,
-                "output": CONSTANT_KEYS,
+                "input": self.constant_schema_keys,
+                "output": self.constant_schema_keys,
                 "config": [],
             }
 

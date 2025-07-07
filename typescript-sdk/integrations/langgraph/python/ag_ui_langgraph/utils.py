@@ -156,15 +156,7 @@ def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
                 index=data.get("index", 0)
             )
 
-    try:
-        parsed = json.loads(content)
-        return LangGraphReasoning(
-            type=parsed.get("type", "text"),
-            text=parsed.get("text", ""),
-            index=parsed.get("index", 0)
-        )
-    except json.JSONDecodeError:
-        return None
+    return None
 
 def resolve_message_content(content: Any) -> str | None:
     if not content:
