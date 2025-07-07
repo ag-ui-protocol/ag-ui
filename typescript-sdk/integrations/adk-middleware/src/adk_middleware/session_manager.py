@@ -178,7 +178,7 @@ class SessionManager:
                     user_id=user_id
                 )
                 if session and hasattr(session, 'last_update_time'):
-                    update_time = session.last_update_time.timestamp()
+                    update_time = session.last_update_time
                     if update_time < oldest_time:
                         oldest_time = update_time
                         oldest_key = session_key
@@ -273,7 +273,7 @@ class SessionManager:
                 )
                 
                 if session and hasattr(session, 'last_update_time'):
-                    age = current_time - session.last_update_time.timestamp()
+                    age = current_time - session.last_update_time
                     if age > self._timeout:
                         await self._delete_session(session_id, app_name, user_id)
                         expired_count += 1
