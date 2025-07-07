@@ -5,7 +5,7 @@ import asyncio
 from pathlib import Path
 
 from ag_ui.core import RunAgentInput, UserMessage, EventType
-from adk_middleware import ADKAgent, AgentRegistry, add_adk_fastapi_endpoint
+from adk_middleware import ADKAgent, AgentRegistry, EventTranslator
 from google.adk.agents import Agent
 from unittest.mock import MagicMock, AsyncMock
 
@@ -134,7 +134,6 @@ async def test_event_translator_isolation():
     """Test that EventTranslator instances don't share state."""
     print("\n🧪 Testing EventTranslator isolation...")
     
-    from event_translator import EventTranslator
     
     # Create two separate translators
     translator1 = EventTranslator()

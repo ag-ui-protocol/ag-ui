@@ -7,7 +7,7 @@ import asyncio
 from unittest.mock import Mock, MagicMock, AsyncMock, patch
 
 
-from adk_middleware import ADKAgent, AgentRegistry
+from adk_middleware import ADKAgent, AgentRegistry,SessionManager
 from ag_ui.core import (
     RunAgentInput, EventType, UserMessage, Context,
     RunStartedEvent, RunFinishedEvent, TextMessageChunkEvent
@@ -36,7 +36,6 @@ class TestADKAgent:
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):
         """Reset session manager before each test."""
-        from session_manager import SessionManager
         try:
             SessionManager.reset_instance()
         except RuntimeError:

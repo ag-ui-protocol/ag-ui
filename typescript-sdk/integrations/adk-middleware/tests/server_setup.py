@@ -32,8 +32,8 @@ registry = AgentRegistry.get_instance()
 
 # Create a simple test agent
 test_agent = Agent(
-    name="test-assistant",
-    instructions="You are a helpful AI assistant for testing the ADK middleware."
+    name="test_assistant",
+    instruction="You are a helpful AI assistant for testing the ADK middleware."
 )
 
 # Register the agent

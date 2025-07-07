@@ -52,7 +52,7 @@ async def test_encoding_error_handling():
     }
     
     # Mock the encoder to simulate encoding failure
-    with patch('endpoint.EventEncoder') as mock_encoder_class:
+    with patch('adk_middleware.endpoint.EventEncoder') as mock_encoder_class:
         mock_encoder = MagicMock()
         mock_encoder.encode.side_effect = Exception("Encoding failed!")
         mock_encoder.get_content_type.return_value = "text/event-stream"
@@ -265,7 +265,7 @@ async def test_nested_encoding_error_handling():
     }
     
     # Mock the encoder to fail on ALL encoding attempts (including error events)
-    with patch('endpoint.EventEncoder') as mock_encoder_class:
+    with patch('adk_middleware.endpoint.EventEncoder') as mock_encoder_class:
         mock_encoder = MagicMock()
         mock_encoder.encode.side_effect = Exception("All encoding failed!")
         mock_encoder.get_content_type.return_value = "text/event-stream"
@@ -299,6 +299,95 @@ async def test_nested_encoding_error_handling():
                 return False
 
 
+# Alternative approach if the exact module path is unknown
+async def test_encoding_error_handling_alternative():
+    """Test encoding error handling with alternative patching approach."""
+    print("\n🧪 Testing encoding error handling (alternative approach)...")
+    
+    # Create a mock ADK agent
+    mock_agent = AsyncMock(spec=ADKAgent)
+    
+    # Create a mock event that will cause encoding issues
+    mock_event = MagicMock()
+    mock_event.type = EventType.RUN_STARTED
+    mock_event.thread_id = "test"
+    mock_event.run_id = "test"
+    
+    # Mock the agent to yield the problematic event
+    async def mock_run(input_data):
+        yield mock_event
+    
+    mock_agent.run = mock_run
+    
+    # Create FastAPI app with endpoint
+    app = FastAPI()
+    add_adk_fastapi_endpoint(app, mock_agent, path="/test")
+    
+    # Create test input
+    test_input = {
+        "thread_id": "test_thread",
+        "run_id": "test_run", 
+        "messages": [
+            {
+                "id": "msg1",
+                "role": "user",
+                "content": "Test message"
+            }
+        ],
+        "context": [],
+        "state": {},
+        "tools": [],
+        "forwarded_props": {}
+    }
+    
+    # Test multiple possible patch locations
+    patch_locations = [
+        'adk_middleware.endpoint.EventEncoder',
+        'adk_middleware.EventEncoder',
+        'endpoint.EventEncoder'
+    ]
+    
+    for patch_location in patch_locations:
+        try:
+            with patch(patch_location) as mock_encoder_class:
+                mock_encoder = MagicMock()
+                mock_encoder.encode.side_effect = Exception("Encoding failed!")
+                mock_encoder.get_content_type.return_value = "text/event-stream"
+                mock_encoder_class.return_value = mock_encoder
+                
+                # Test the endpoint
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/test",
+                        json=test_input,
+                        headers={"Accept": "text/event-stream"}
+                    )
+                    
+                    print(f"📊 Response status: {response.status_code}")
+                    
+                    if response.status_code == 200:
+                        # Read the response content
+                        content = response.text
+                        print(f"📄 Response content preview: {content[:100]}...")
+                        
+                        # Check if error handling worked
+                        if "Event encoding failed" in content or "ENCODING_ERROR" in content:
+                            print(f"✅ Encoding error properly handled with patch location: {patch_location}")
+                            return True
+                        else:
+                            print(f"⚠️ Error handling may not be working with patch location: {patch_location}")
+                            continue
+                    else:
+                        print(f"❌ Unexpected status code: {response.status_code}")
+                        continue
+        except ImportError:
+            print(f"⚠️ Could not patch {patch_location}, trying next location...")
+            continue
+    
+    print("❌ Could not find correct patch location for EventEncoder")
+    return False
+
+
 async def main():
     """Run error handling tests."""
     print("🚀 Testing Endpoint Error Handling Improvements")
@@ -308,7 +397,8 @@ async def main():
         test_encoding_error_handling,
         test_agent_error_handling, 
         test_successful_event_handling,
-        test_nested_encoding_error_handling
+        test_nested_encoding_error_handling,
+        test_encoding_error_handling_alternative
     ]
     
     results = []
@@ -329,7 +419,8 @@ async def main():
         "Encoding error handling",
         "Agent error handling", 
         "Successful event handling",
-        "Nested encoding error handling"
+        "Nested encoding error handling",
+        "Encoding error handling (alternative)"
     ]
     
     for i, (name, result) in enumerate(zip(test_names, results), 1):
