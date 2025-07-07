@@ -42,3 +42,5 @@ packages/proto/src/generated
 
 # LangGraph API
 **/**/.langgraph_api
+
+venv
