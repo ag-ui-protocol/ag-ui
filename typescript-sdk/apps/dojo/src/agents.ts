@@ -29,6 +29,14 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     },
   },
   {
+    id: "adk-middleware",
+    agents: async () => {
+      return {
+        agentic_chat: new ServerStarterAgent({ url: "http://localhost:8000/chat" }),
+      };
+    },
+  },
+  {
     id: "server-starter-all-features",
     agents: async () => {
       return {

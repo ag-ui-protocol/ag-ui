@@ -25,10 +25,10 @@ logging.getLogger('endpoint').setLevel(logging.WARNING)
 logging.getLogger('session_manager').setLevel(logging.WARNING)
 logging.getLogger('agent_registry').setLevel(logging.WARNING)
 
-from adk_agent import ADKAgent
-from agent_registry import AgentRegistry
-from endpoint import add_adk_fastapi_endpoint
-
+# from adk_agent import ADKAgent
+# from agent_registry import AgentRegistry
+# from endpoint import add_adk_fastapi_endpoint
+from adk_middleware import ADKAgent, AgentRegistry, add_adk_fastapi_endpoint
 # Import Google ADK components
 from google.adk.agents import Agent
 import os

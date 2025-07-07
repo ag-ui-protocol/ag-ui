@@ -4,8 +4,7 @@
 import pytest
 from google.adk.agents import Agent
 from google.adk import Runner
-from adk_agent import ADKAgent
-from agent_registry import AgentRegistry
+from adk_middleware import ADKAgent, AgentRegistry
 
 
 def test_google_adk_imports():

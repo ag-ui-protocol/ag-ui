@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from agent_registry import AgentRegistry
+# from agent_registry import AgentRegistry
+from adk_middleware import AgentRegistry
 from google.adk.agents import Agent
 from google.adk.tools import Tool
 from google.genai import types

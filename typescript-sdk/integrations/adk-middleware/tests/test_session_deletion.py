@@ -4,8 +4,8 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-from session_manager import SessionManager
 
+from adk_middleware import SessionManager
 
 async def test_session_deletion():
     """Test that session deletion calls delete_session with correct parameters."""

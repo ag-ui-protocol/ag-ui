@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from ag_ui.core import RunAgentInput
 from ag_ui.encoder import EventEncoder
-from adk_agent import ADKAgent
+from .adk_agent import ADKAgent
 
 import logging
 logger = logging.getLogger(__name__)

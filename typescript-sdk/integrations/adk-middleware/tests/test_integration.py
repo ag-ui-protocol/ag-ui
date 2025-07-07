@@ -5,8 +5,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from ag_ui.core import RunAgentInput, UserMessage, EventType
-from adk_agent import ADKAgent
-from agent_registry import AgentRegistry
+from adk_middleware import ADKAgent, AgentRegistry
 
 async def test_session_creation_logic():
     """Test session creation logic with mocked ADK agent."""

@@ -7,9 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime
 import time
 
-from session_manager import SessionManager
 
-
+from adk_middleware import SessionManager
 class TestSessionMemory:
     """Test cases for automatic session memory functionality."""
     

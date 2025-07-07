@@ -4,9 +4,7 @@
 import asyncio
 import time
 
-from adk_agent import ADKAgent
-from agent_registry import AgentRegistry
-from session_manager import SessionManager
+from adk_middleware import ADKAgent, AgentRegistry, SessionManager
 from google.adk.agents import Agent
 from ag_ui.core import RunAgentInput, UserMessage, EventType
 

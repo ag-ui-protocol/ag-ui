@@ -11,7 +11,7 @@ import logging
 from typing import AsyncGenerator
 
 from adk_middleware import ADKAgent, AgentRegistry
-from google.adk import LlmAgent
+from google.adk.agents import LlmAgent
 from ag_ui.core import RunAgentInput, BaseEvent, Message, UserMessage, Context
 
 # Set up logging
