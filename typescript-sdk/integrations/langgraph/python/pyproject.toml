@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ag-ui-langgraph"
-version = "0.0.1-alpha.6"
+version = "0.0.1"
 description = ""
 authors = ["Ran Shem Tov <ran@copilotkit.ai>"]
 readme = "README.md"
