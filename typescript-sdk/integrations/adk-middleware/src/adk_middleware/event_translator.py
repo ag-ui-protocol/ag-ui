@@ -84,13 +84,13 @@ class EventTranslator:
                     yield event
             
             # Handle function calls
+            # NOTE: We don't emit TOOL_CALL events here because ClientProxyTool will emit them
+            # when the tool is actually executed. This avoids duplicate tool call events.
             if hasattr(adk_event, 'get_function_calls'):
                 function_calls = adk_event.get_function_calls()
                 if function_calls:
-                    async for event in self._translate_function_calls(
-                        adk_event, function_calls, thread_id, run_id
-                    ):
-                        yield event
+                    logger.debug(f"ADK function calls detected: {len(function_calls)} calls")
+                    # Just log for debugging, don't emit events
             
             # Handle function responses
             if hasattr(adk_event, 'get_function_responses'):
