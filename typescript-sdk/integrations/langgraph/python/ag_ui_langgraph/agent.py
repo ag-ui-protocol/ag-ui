@@ -160,7 +160,7 @@ class LangGraphAgent:
             if event["event"] == "updates":
                 continue
 
-            current_node_name = event.get("name")
+            current_node_name = event.get("metadata", {}).get("langgraph_node")
             event_type = event.get("event")
             self.active_run["id"] = event.get("run_id")
 
