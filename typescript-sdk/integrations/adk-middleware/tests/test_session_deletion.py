@@ -126,8 +126,7 @@ async def test_user_session_limits():
     # Mock session objects with last_update_time
     class MockSession:
         def __init__(self, update_time):
-            from datetime import datetime
-            self.last_update_time = datetime.fromtimestamp(update_time)
+            self.last_update_time = update_time
     
     created_sessions = {}
     
