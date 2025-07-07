@@ -32,6 +32,8 @@ def get_stream_payload_input(
     return input_payload
 
 def stringify_if_needed(item: Any) -> str:
+    if item is None:
+        return ''
     if isinstance(item, str):
         return item
     return json.dumps(item)
@@ -60,6 +62,12 @@ def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]
                     )
                     for tc in message.tool_calls
                 ]
+
+            print('-')
+            print(1, message.content)
+            print(2, resolve_message_content(message.content))
+            print(3, stringify_if_needed(resolve_message_content(message.content)))
+            print('-')
             agui_messages.append(AGUIAssistantMessage(
                 id=str(message.id),
                 role="assistant",
