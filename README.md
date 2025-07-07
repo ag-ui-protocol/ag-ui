@@ -17,9 +17,9 @@ npx create-ag-ui-app my-agent-app
 ```
 <h3>Building AG-UI Integrations (new frameworks):</h3>
 
-- [Build new integrations (Quickstart)]()
-- [Book a call to discuss an AG-UI integration with a new framework]()
-- [Join the Discord Community]()
+- [Build new integrations (Quickstart)](https://go.copilotkit.ai/agui-contribute)
+- [Book a call to discuss an AG-UI integration with a new framework](https://calendly.com/markus-copilotkit/ag-ui)
+- [Join the Discord Community](https://discord.gg/Jd3FzfdJa8)
 
 ## What is AG-UI?
 
