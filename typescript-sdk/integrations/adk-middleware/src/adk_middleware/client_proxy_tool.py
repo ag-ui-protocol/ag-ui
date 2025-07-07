@@ -102,7 +102,23 @@ class ClientProxyTool(BaseTool):
             asyncio.TimeoutError: If tool execution times out
             Exception: If tool execution fails
         """
-        tool_call_id = str(uuid.uuid4())
+        # Try to get the function call ID from ADK tool context
+        tool_call_id = None
+        if tool_context and hasattr(tool_context, 'function_call_id'):
+            potential_id = tool_context.function_call_id
+            if isinstance(potential_id, str) and potential_id:
+                tool_call_id = potential_id
+        elif tool_context and hasattr(tool_context, 'id'):
+            potential_id = tool_context.id
+            if isinstance(potential_id, str) and potential_id:
+                tool_call_id = potential_id
+        
+        # Fallback to UUID if we can't get the ADK ID
+        if not tool_call_id:
+            tool_call_id = str(uuid.uuid4())
+            logger.debug(f"No function call ID from ADK context, using generated UUID: {tool_call_id}")
+        else:
+            logger.info(f"Using ADK function call ID: {tool_call_id}")
         
         logger.info(f"Executing client proxy tool '{self.name}' with id {tool_call_id}")
         

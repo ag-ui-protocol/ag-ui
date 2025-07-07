@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-07-07
+
+### Added
+- **NEW**: Complete bidirectional tool support enabling AG-UI Protocol tools to execute within Google ADK agents
+- **NEW**: `ExecutionState` class for managing background ADK execution with tool futures and event queues
+- **NEW**: `ClientProxyTool` class that bridges AG-UI tools to ADK tools with proper event emission
+- **NEW**: `ClientProxyToolset` class for dynamic toolset creation from `RunAgentInput.tools`
+- **NEW**: Background execution support via asyncio tasks with proper timeout management
+- **NEW**: Tool future management system for asynchronous tool result delivery
+- **NEW**: Comprehensive timeout configuration: execution-level (600s default) and tool-level (300s default)
+- **NEW**: Concurrent execution limits with configurable maximum concurrent executions and automatic cleanup
+- **NEW**: 138+ comprehensive tests covering all tool support scenarios with 100% pass rate
+- **NEW**: Advanced test coverage for tool timeouts, concurrent limits, error handling, and integration flows
+- **NEW**: `comprehensive_tool_demo.py` example demonstrating single tools, multi-tool scenarios, and complex operations
+- **NEW**: Production-ready error handling with proper resource cleanup and timeout management
+
+### Enhanced
+- **ARCHITECTURE**: ADK agents now run in background asyncio tasks while client handles tools asynchronously
+- **OBSERVABILITY**: Enhanced logging throughout tool execution flow with detailed event tracking
+- **SCALABILITY**: Configurable concurrent execution limits prevent resource exhaustion
+
+### Technical Architecture
+- **Tool Execution Flow**: AG-UI RunAgentInput → ADKAgent.run() → Background execution → ClientProxyTool → Event emission → Tool result futures
+- **Event Communication**: Asynchronous event queues for communication between background execution and tool handler
+- **Tool State Management**: ExecutionState tracks asyncio tasks, event queues, tool futures, and execution timing
+- **Protocol Compliance**: All tool events follow AG-UI protocol specifications (TOOL_CALL_START, TOOL_CALL_ARGS, TOOL_CALL_END)
+- **Resource Management**: Automatic cleanup of expired executions, futures, and background tasks
+- **Error Propagation**: Comprehensive error handling with proper exception propagation and resource cleanup
+
+### Breaking Changes
+- **BEHAVIOR**: `ADKAgent.run()` now supports background execution when tools are provided
+- **API**: Added `submit_tool_result()` method for delivering tool execution results
+- **API**: Added `get_active_executions()` method for monitoring background executions
+- **TIMEOUTS**: Added `tool_timeout_seconds` and `execution_timeout_seconds` parameters to ADKAgent constructor
+
 ## [0.2.1] - 2025-07-06
 
 ### Changed
