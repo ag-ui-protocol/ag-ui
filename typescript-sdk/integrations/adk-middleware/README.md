@@ -140,13 +140,13 @@ agent = ADKAgent(
 
 ### Session Management
 
-Session management is handled automatically by the singleton `SessionLifecycleManager`. The middleware uses sensible defaults, but you can configure session behavior if needed by accessing the session manager directly:
+Session management is handled automatically by the singleton `SessionManager`. The middleware uses sensible defaults, but you can configure session behavior if needed by accessing the session manager directly:
 
 ```python
-from session_manager import SessionLifecycleManager
+from adk_middleware.session_manager import SessionManager
 
 # Session management is automatic, but you can access the manager if needed
-session_mgr = SessionLifecycleManager.get_instance()
+session_mgr = SessionManager.get_instance()
 
 # Create your ADK agent normally
 agent = ADKAgent(
@@ -295,7 +295,7 @@ BaseEvent[] <──────── translate events <────────
 pytest
 
 # With coverage
-pytest --cov=adk_middleware
+pytest --cov=src/adk_middleware
 
 # Specific test file
 pytest tests/test_adk_agent.py

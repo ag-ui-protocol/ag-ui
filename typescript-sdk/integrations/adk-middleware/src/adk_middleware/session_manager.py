@@ -272,8 +272,8 @@ class SessionManager:
                     user_id=user_id
                 )
                 
-                if session and hasattr(session, 'lastUpdateTime'):
-                    age = current_time - session.lastUpdateTime.timestamp()
+                if session and hasattr(session, 'last_update_time'):
+                    age = current_time - session.last_update_time.timestamp()
                     if age > self._timeout:
                         await self._delete_session(session_id, app_name, user_id)
                         expired_count += 1

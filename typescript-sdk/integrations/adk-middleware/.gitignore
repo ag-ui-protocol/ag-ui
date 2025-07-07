@@ -81,3 +81,6 @@ set_pythonpath.sh
 simple_test_server.py
 
 # External project directories
+
+# Local documentation
+CLAUDE.md
