@@ -15,13 +15,14 @@
     "lint": "eslint \"src/**/*.ts*\"",
     "clean": "rm -rf .turbo && rm -rf node_modules && rm -rf dist",
     "test": "jest",
-    "generate": "mkdir -p ./src/generated && protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=./src/generated --ts_proto_opt=esModuleInterop=true,outputJsonMethods=false,outputClientImpl=false -I ./src/proto ./src/proto/*.proto",
+    "generate": "mkdir -p ./src/generated && npx protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=./src/generated --ts_proto_opt=esModuleInterop=true,outputJsonMethods=false,outputClientImpl=false -I ./src/proto ./src/proto/*.proto",
     "link:global": "pnpm link --global",
     "unlink:global": "pnpm unlink --global"
   },
   "dependencies": {
     "@ag-ui/core": "workspace:*",
-    "@bufbuild/protobuf": "^2.2.5"
+    "@bufbuild/protobuf": "^2.2.5",
+    "@protobuf-ts/protoc": "^2.11.1"
   },
   "devDependencies": {
     "@jest/globals": "^29.7.0",

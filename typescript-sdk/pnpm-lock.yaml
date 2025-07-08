@@ -704,6 +704,9 @@ importers:
       '@bufbuild/protobuf':
         specifier: ^2.2.5
         version: 2.4.0
+      '@protobuf-ts/protoc':
+        specifier: ^2.11.1
+        version: 2.11.1
     devDependencies:
       '@jest/globals':
         specifier: ^29.7.0
@@ -3651,6 +3654,10 @@ packages:
 
   '@popperjs/core@2.11.8':
     resolution: {integrity: sha512-P1st0aksCrn9sGZhp8GMYwBnQsbvAWsZAX44oXNNvLHGqAOcoVxmjZiohstwQ7SqKnbR47akdNi+uleWD8+g6A==}
+
+  '@protobuf-ts/protoc@2.11.1':
+    resolution: {integrity: sha512-mUZJaV0daGO6HUX90o/atzQ6A7bbN2RSuHtdwo8SSF2Qoe3zHwa4IHyCN1evftTeHfLmdz+45qo47sL+5P8nyg==}
+    hasBin: true
 
   '@protobufjs/aspromise@1.1.2':
     resolution: {integrity: sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ==}
@@ -14512,6 +14519,8 @@ snapshots:
     optional: true
 
   '@popperjs/core@2.11.8': {}
+
+  '@protobuf-ts/protoc@2.11.1': {}
 
   '@protobufjs/aspromise@1.1.2': {}
 
