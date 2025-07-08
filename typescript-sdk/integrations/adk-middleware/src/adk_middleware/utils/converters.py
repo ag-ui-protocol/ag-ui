@@ -8,7 +8,7 @@ import logging
 
 from ag_ui.core import (
     Message, UserMessage, AssistantMessage, SystemMessage, ToolMessage,
-    ToolCall
+    ToolCall, FunctionCall
 )
 from google.adk.events import Event as ADKEvent
 from google.genai import types
@@ -127,10 +127,10 @@ def convert_adk_event_to_ag_ui_message(event: ADKEvent) -> Optional[Message]:
                     tool_calls.append(ToolCall(
                         id=getattr(part.function_call, 'id', event.id),
                         type="function",
-                        function={
-                            "name": part.function_call.name,
-                            "arguments": json.dumps(part.function_call.args) if hasattr(part.function_call, 'args') else "{}"
-                        }
+                        function=FunctionCall(
+                            name=part.function_call.name,
+                            arguments=json.dumps(part.function_call.args) if hasattr(part.function_call, 'args') else "{}"
+                        )
                     ))
             
             return AssistantMessage(
