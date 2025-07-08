@@ -31,7 +31,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   {
     id: "mastra-agent-local",
     name: "Mastra Agent (Local)",
-    features: ["agentic_chat"],
+    features: ["agentic_chat", "shared_state"],
   },
   {
     id: "vercel-ai-sdk",

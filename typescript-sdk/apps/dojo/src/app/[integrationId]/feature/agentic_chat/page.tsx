@@ -29,15 +29,6 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
 const Chat = () => {
   const [background, setBackground] = useState<string>("--copilot-kit-background-color");
 
-  const { state: agentState, setState: setAgentState } = useCoAgent({
-    name: "agentic_chat",
-    // initialState: {
-    //   firstName: "Markus",
-    // },
-  });
-
-  console.log(agentState);
-
   useCopilotAction({
     name: "lookup_weather",
     description: "Lookup the weather for a given city",
