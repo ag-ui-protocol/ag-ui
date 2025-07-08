@@ -26,7 +26,8 @@ from .utils import (
     get_stream_payload_input,
     langchain_messages_to_agui,
     resolve_reasoning_content,
-    resolve_message_content
+    resolve_message_content,
+    camel_to_snake
 )
 
 from ag_ui.core import (
@@ -88,8 +89,13 @@ class LangGraphAgent:
     def _dispatch_event(self, event: ProcessedEvents) -> str:
         return event  # Fallback if no encoder
 
-    async def run(self, input_data: RunAgentInput) -> AsyncGenerator[str, None]:
-        async for event_str in self._handle_stream_events(input_data):
+    async def run(self, input: RunAgentInput) -> AsyncGenerator[str, None]:
+        forwarded_props = {}
+        if hasattr(input, "forwarded_props") and input.forwarded_props:
+            forwarded_props = {
+                camel_to_snake(k): v for k, v in input.forwarded_props.items()
+            }
+        async for event_str in self._handle_stream_events(input.copy(update={"forwarded_props": forwarded_props})):
             yield event_str
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[str, None]:
@@ -304,7 +310,7 @@ class LangGraphAgent:
                 state=state,
                 schema_keys=self.active_run["schema_keys"],
             )
-            stream_input = {**forwarded_props, **payload_input}
+            stream_input = {**forwarded_props, **payload_input} if payload_input else None
 
         return {
             "stream": self.graph.astream_events(stream_input, config, version="v2"),

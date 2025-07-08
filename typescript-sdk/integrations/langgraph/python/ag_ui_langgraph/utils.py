@@ -1,4 +1,5 @@
 import json
+import re
 from typing import List, Any, Dict, Union
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
@@ -173,3 +174,6 @@ def resolve_message_content(content: Any) -> str | None:
         return content_text
 
     return None
+
+def camel_to_snake(name):
+    return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
