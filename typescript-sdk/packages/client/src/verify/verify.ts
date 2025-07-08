@@ -14,8 +14,8 @@ export const verifyEvents =
     let firstEventReceived = false;
     // Track active steps
     let activeSteps = new Map<string, boolean>(); // Map of step name -> active status
-    let activeThinkingStep = false
-    let activeThinkingStepMessage = false
+    let activeThinkingStep = false;
+    let activeThinkingStepMessage = false;
 
     return source$.pipe(
       // Process each event through our state machine
@@ -244,7 +244,7 @@ export const verifyEvents =
 
           // Step flow
           case EventType.STEP_STARTED: {
-            const stepName = (event as any).name;
+            const stepName = (event as any).stepName;
             if (activeSteps.has(stepName)) {
               return throwError(
                 () => new AGUIError(`Step "${stepName}" is already active for 'STEP_STARTED'`),
@@ -255,7 +255,7 @@ export const verifyEvents =
           }
 
           case EventType.STEP_FINISHED: {
-            const stepName = (event as any).name;
+            const stepName = (event as any).stepName;
             if (!activeSteps.has(stepName)) {
               return throwError(
                 () =>
