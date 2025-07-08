@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Enhanced
+- **TESTING**: Improved test coverage to 94% overall with comprehensive unit tests for previously untested modules
+
 ## [0.3.2] - 2025-07-08
 
 ### Added
