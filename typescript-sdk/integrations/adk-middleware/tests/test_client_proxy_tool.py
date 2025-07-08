@@ -60,7 +60,8 @@ class TestClientProxyTool:
             ag_ui_tool=sample_tool_definition,
             event_queue=mock_event_queue,
             tool_futures=tool_futures,
-            timeout_seconds=60
+            timeout_seconds=60,
+            is_long_running = False
         )
     
     def test_initialization(self, proxy_tool, sample_tool_definition, mock_event_queue, tool_futures):
@@ -96,7 +97,8 @@ class TestClientProxyTool:
         proxy_tool = ClientProxyTool(
             ag_ui_tool=invalid_tool,
             event_queue=mock_event_queue,
-            tool_futures=tool_futures
+            tool_futures=tool_futures,
+            is_long_running = False
         )
         
         declaration = proxy_tool._get_declaration()
@@ -169,6 +171,7 @@ class TestClientProxyTool:
             ag_ui_tool=proxy_tool.ag_ui_tool,
             event_queue=mock_event_queue,
             tool_futures=tool_futures,
+            is_long_running = False,
             timeout_seconds=0.01  # 10ms timeout
         )
         
