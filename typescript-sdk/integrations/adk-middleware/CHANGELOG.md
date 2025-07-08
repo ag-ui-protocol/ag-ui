@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2025-07-08
+
+### Added
+- **NEW**: Tool-based generative UI demo for ADK in dojo application
+- **NEW**: Multiple ADK agent support via `add_adk_fastapi_endpoint()` with proper agent_id handling
+- **NEW**: Human-in-the-loop (HITL) support for long-running tools - `ClientProxyTool` with `is_long_running=True` no longer waits for tool responses
+- **NEW**: Comprehensive test coverage for `is_long_running` functionality in `ClientProxyTool`
+- **NEW**: `test_client_proxy_tool_long_running_no_timeout()` - verifies long-running tools ignore timeout settings
+- **NEW**: `test_client_proxy_tool_long_running_vs_regular_timeout_behavior()` - compares timeout behavior between regular and long-running tools
+- **NEW**: `test_client_proxy_tool_long_running_cleanup_on_error()` - ensures proper cleanup on event emission errors
+- **NEW**: `test_client_proxy_tool_long_running_multiple_concurrent()` - tests multiple concurrent long-running tools
+- **NEW**: `test_client_proxy_tool_long_running_event_emission_sequence()` - validates correct event emission order
+- **NEW**: `test_client_proxy_tool_is_long_running_property()` - tests property access and default values
+
+### Fixed
+- **CRITICAL**: Fixed `agent_id` handling in `ADKAgent` wrapper to support multiple ADK agents properly
+- **BEHAVIOR**: Disabled automatic tool response waiting in `ClientProxyTool` when `is_long_running=True` for HITL workflows
+
+### Enhanced
+- **ARCHITECTURE**: Long-running tools now properly support human-in-the-loop patterns where responses are provided by users
+- **SCALABILITY**: Multiple ADK agents can now be deployed simultaneously with proper isolation
+- **TESTING**: Enhanced test suite with 6 additional test cases specifically covering long-running tool behavior
+
+### Technical Architecture
+- **HITL Support**: Long-running tools emit events and return immediately without waiting for tool execution completion
+- **Multi-Agent**: Proper agent_id management enables multiple ADK agents in single FastAPI application
+- **Tool Response Flow**: Regular tools wait for responses, long-running tools delegate response handling to external systems
+- **Event Emission**: All tools maintain proper AG-UI protocol compliance regardless of execution mode
+
 ## [0.3.0] - 2025-07-07
 
 ### Added

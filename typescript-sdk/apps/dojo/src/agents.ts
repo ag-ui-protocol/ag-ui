@@ -33,6 +33,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new ServerStarterAgent({ url: "http://localhost:8000/chat" }),
+        tool_based_generative_ui: new ServerStarterAgent({ url: "http://localhost:8000/adk-tool-based-generative-ui" }),
       };
     },
   },

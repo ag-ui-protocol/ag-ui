@@ -220,6 +220,7 @@ class TestToolErrorHandling:
             ag_ui_tool=sample_tool,
             event_queue=event_queue,
             tool_futures=tool_futures,
+            is_long_running = False,
             timeout_seconds=0.001  # 1ms timeout
         )
         
