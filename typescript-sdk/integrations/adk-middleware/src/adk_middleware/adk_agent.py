@@ -561,7 +561,7 @@ class ADKAgent:
                 new_message=new_message,
                 run_config=run_config
             ):
-                print('adk_event==>',adk_event)
+
                 # Translate and emit events
                 async for ag_ui_event in event_translator.translate(
                     adk_event,
@@ -570,7 +570,7 @@ class ADKAgent:
                 ):
                     
                     await event_queue.put(ag_ui_event)
-            print('----------adk events completed---------')
+
             # Force close any streaming messages
             async for ag_ui_event in event_translator.force_close_streaming_message():
                 await event_queue.put(ag_ui_event)
