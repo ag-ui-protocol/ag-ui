@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2025-07-08
+
+### Added
+- **NEW**: Hybrid tool execution model bridging AG-UI's stateless runs with ADK's stateful execution
+- **NEW**: Per-tool execution mode configuration via `tool_long_running_config` parameter in `ClientProxyToolset`
+- **NEW**: Mixed execution mode support - combine long-running and blocking tools in the same toolset
+- **NEW**: Execution resumption functionality using `ToolMessage` for paused executions
+- **NEW**: 13 comprehensive execution resumption tests covering hybrid model core functionality
+- **NEW**: 13 integration tests for complete hybrid flow with minimal mocking
+- **NEW**: Comprehensive documentation for hybrid tool execution model in README.md and CLAUDE.md
+- **NEW**: `test_toolset_mixed_execution_modes()` - validates per-tool configuration functionality
+
+### Enhanced
+- **ARCHITECTURE**: `ClientProxyToolset` now supports per-tool `is_long_running` configuration
+- **TESTING**: Expanded test suite to 185 tests with comprehensive coverage of both execution modes
+- **DOCUMENTATION**: Added detailed hybrid execution flow examples and technical implementation guides
+- **FLEXIBILITY**: Tools can now be individually configured for different execution behaviors within the same toolset
+
+### Fixed
+- **BEHAVIOR**: Improved timeout behavior for mixed execution modes
+- **INTEGRATION**: Enhanced integration test reliability for complex tool scenarios
+- **RESOURCE MANAGEMENT**: Better cleanup of tool futures and execution state across execution modes
+
+### Technical Architecture
+- **Hybrid Model**: Solves architecture mismatch between AG-UI's stateless runs and ADK's stateful execution
+- **Tool Futures**: Enhanced `asyncio.Future` management for execution resumption across runs
+- **Per-Tool Config**: `Dict[str, bool]` mapping enables granular control over tool execution modes
+- **Execution State**: Improved tracking of paused executions and tool result resolution
+- **Event Flow**: Maintains proper AG-UI protocol compliance during execution pause/resume cycles
+
+### Breaking Changes
+- **API**: `ClientProxyToolset` constructor now accepts `tool_long_running_config` parameter
+- **BEHAVIOR**: Default tool execution mode remains `is_long_running=True` for backward compatibility
+
 ## [0.3.1] - 2025-07-08
 
 ### Added

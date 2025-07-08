@@ -367,8 +367,8 @@ class TestToolErrorHandling:
         assert True  # If we get here, close didn't crash
     
     @pytest.mark.asyncio
-    async def test_event_queue_error_during_tool_call(self, sample_tool):
-        """Test error handling when event queue operations fail."""
+    async def test_event_queue_error_during_tool_call_long_running(self, sample_tool):
+        """Test error handling when event queue operations fail (long-running tool)."""
         # Create a mock event queue that fails
         event_queue = AsyncMock()
         event_queue.put.side_effect = Exception("Queue operation failed")
@@ -379,7 +379,34 @@ class TestToolErrorHandling:
             ag_ui_tool=sample_tool,
             event_queue=event_queue,
             tool_futures=tool_futures,
-            timeout_seconds=1
+            timeout_seconds=1,
+            is_long_running=True
+        )
+        
+        args = {"action": "test"}
+        mock_context = MagicMock()
+        
+        # Should handle queue errors gracefully
+        with pytest.raises(Exception) as exc_info:
+            await proxy_tool.run_async(args=args, tool_context=mock_context)
+        
+        assert "Queue operation failed" in str(exc_info.value)
+    
+    @pytest.mark.asyncio
+    async def test_event_queue_error_during_tool_call_blocking(self, sample_tool):
+        """Test error handling when event queue operations fail (blocking tool)."""
+        # Create a mock event queue that fails
+        event_queue = AsyncMock()
+        event_queue.put.side_effect = Exception("Queue operation failed")
+        
+        tool_futures = {}
+        
+        proxy_tool = ClientProxyTool(
+            ag_ui_tool=sample_tool,
+            event_queue=event_queue,
+            tool_futures=tool_futures,
+            timeout_seconds=1,
+            is_long_running=False
         )
         
         args = {"action": "test"}

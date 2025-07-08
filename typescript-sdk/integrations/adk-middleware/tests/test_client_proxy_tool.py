@@ -205,8 +205,17 @@ class TestClientProxyTool:
         assert len(tool_futures) == 0
     
     @pytest.mark.asyncio
-    async def test_run_async_future_exception(self, proxy_tool, mock_event_queue, tool_futures):
-        """Test tool execution when future gets an exception."""
+    async def test_run_async_future_exception_blocking(self, mock_event_queue, tool_futures, sample_tool_definition):
+        """Test tool execution when future gets an exception (blocking tool)."""
+        # Create blocking tool explicitly
+        blocking_tool = ClientProxyTool(
+            ag_ui_tool=sample_tool_definition,
+            event_queue=mock_event_queue,
+            tool_futures=tool_futures,
+            timeout_seconds=60,
+            is_long_running=False
+        )
+        
         args = {"operation": "divide", "a": 5, "b": 0}
         mock_context = MagicMock()
         
@@ -216,7 +225,7 @@ class TestClientProxyTool:
             
             # Start the tool execution
             execution_task = asyncio.create_task(
-                proxy_tool.run_async(args=args, tool_context=mock_context)
+                blocking_tool.run_async(args=args, tool_context=mock_context)
             )
             
             # Wait for future to be created
@@ -233,8 +242,52 @@ class TestClientProxyTool:
             assert "Division by zero" in str(exc_info.value)
     
     @pytest.mark.asyncio
-    async def test_run_async_cancellation(self, proxy_tool, mock_event_queue, tool_futures):
-        """Test tool execution cancellation."""
+    async def test_run_async_future_exception_long_running(self, mock_event_queue, tool_futures, sample_tool_definition):
+        """Test tool execution when future gets an exception (long-running tool)."""
+        # Create long-running tool explicitly
+        long_running_tool = ClientProxyTool(
+            ag_ui_tool=sample_tool_definition,
+            event_queue=mock_event_queue,
+            tool_futures=tool_futures,
+            timeout_seconds=60,
+            is_long_running=True
+        )
+        
+        args = {"operation": "divide", "a": 5, "b": 0}
+        mock_context = MagicMock()
+        
+        with patch('uuid.uuid4') as mock_uuid:
+            mock_uuid.return_value = MagicMock()
+            mock_uuid.return_value.__str__ = MagicMock(return_value="test-uuid-789")
+            
+            # Start the tool execution
+            result = await long_running_tool.run_async(args=args, tool_context=mock_context)
+            
+            # Long-running tool should return None immediately, not wait for future
+            assert result is None
+            
+            # Future should still be created but tool doesn't wait for it
+            assert "test-uuid-789" in tool_futures
+            future = tool_futures["test-uuid-789"]
+            assert isinstance(future, asyncio.Future)
+            assert not future.done()
+            
+            # Even if we set exception later, the tool has already returned
+            future.set_exception(ValueError("Division by zero"))
+            assert future.exception() is not None
+    
+    @pytest.mark.asyncio
+    async def test_run_async_cancellation_blocking(self, mock_event_queue, tool_futures, sample_tool_definition):
+        """Test tool execution cancellation (blocking tool)."""
+        # Create blocking tool explicitly
+        blocking_tool = ClientProxyTool(
+            ag_ui_tool=sample_tool_definition,
+            event_queue=mock_event_queue,
+            tool_futures=tool_futures,
+            timeout_seconds=60,
+            is_long_running=False
+        )
+        
         args = {"operation": "multiply", "a": 7, "b": 6}
         mock_context = MagicMock()
         
@@ -244,7 +297,7 @@ class TestClientProxyTool:
             
             # Start the tool execution
             execution_task = asyncio.create_task(
-                proxy_tool.run_async(args=args, tool_context=mock_context)
+                blocking_tool.run_async(args=args, tool_context=mock_context)
             )
             
             # Wait for future to be created
@@ -261,6 +314,40 @@ class TestClientProxyTool:
             assert len(tool_futures) == 1
             future = tool_futures["test-uuid-789"]
             assert future.cancelled()
+    
+    @pytest.mark.asyncio
+    async def test_run_async_cancellation_long_running(self, mock_event_queue, tool_futures, sample_tool_definition):
+        """Test tool execution cancellation (long-running tool)."""
+        # Create long-running tool explicitly
+        long_running_tool = ClientProxyTool(
+            ag_ui_tool=sample_tool_definition,
+            event_queue=mock_event_queue,
+            tool_futures=tool_futures,
+            timeout_seconds=60,
+            is_long_running=True
+        )
+        
+        args = {"operation": "multiply", "a": 7, "b": 6}
+        mock_context = MagicMock()
+        
+        with patch('uuid.uuid4') as mock_uuid:
+            mock_uuid.return_value = MagicMock()
+            mock_uuid.return_value.__str__ = MagicMock(return_value="test-uuid-456")
+            
+            # Start the tool execution - this should complete immediately
+            result = await long_running_tool.run_async(args=args, tool_context=mock_context)
+            
+            # Long-running tool should return None immediately
+            assert result is None
+            
+            # Future should be created but tool doesn't wait for it
+            assert "test-uuid-456" in tool_futures
+            future = tool_futures["test-uuid-456"]
+            assert isinstance(future, asyncio.Future)
+            assert not future.done()  # Still pending since no result was provided
+            
+            # Since the tool returned immediately, there's no waiting to cancel
+            # But the future still exists for the client to resolve later
     
     def test_string_representation(self, proxy_tool):
         """Test __repr__ method."""

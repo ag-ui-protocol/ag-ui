@@ -205,15 +205,112 @@ agent = ADKAgent(
 
 ## Tool Support
 
-The middleware provides complete bidirectional tool support, enabling AG-UI Protocol tools to execute within Google ADK agents through an advanced asynchronous architecture.
+The middleware provides complete bidirectional tool support, enabling AG-UI Protocol tools to execute within Google ADK agents through an advanced **hybrid execution model** that bridges AG-UI's stateless runs with ADK's stateful execution.
 
-### Key Features
+### Hybrid Execution Model
+
+The middleware implements a sophisticated hybrid execution model that solves the fundamental architecture mismatch between AG-UI and ADK:
+
+- **AG-UI Protocol**: Stateless run-based model where each interaction is a separate `RunAgentInput`
+- **ADK Agents**: Stateful execution model with continuous conversation context
+- **Hybrid Solution**: Paused executions that resume across multiple AG-UI runs
+
+#### Key Features
 
 - **Background Execution**: ADK agents run in asyncio tasks while client handles tools concurrently
+- **Execution Resumption**: Paused executions resume when tool results are provided via `ToolMessage`
+- **Fire-and-Forget Tools**: Long-running tools return immediately for Human-in-the-Loop workflows
+- **Blocking Tools**: Regular tools wait for results with configurable timeouts
+- **Mixed Execution Modes**: Per-tool configuration for different execution behaviors in the same toolset
 - **Asynchronous Communication**: Queue-based communication prevents deadlocks
 - **Comprehensive Timeouts**: Both execution-level (600s default) and tool-level (300s default) timeouts
 - **Concurrent Limits**: Configurable maximum concurrent executions with automatic cleanup
 - **Production Ready**: Robust error handling and resource management
+
+#### Execution Flow
+
+```
+1. Initial AG-UI Run → ADK Agent starts execution
+2. ADK Agent requests tool use → Execution pauses, creates tool futures
+3. Tool events emitted → Client receives tool call information
+4. Client executes tools → Results prepared asynchronously
+5. Subsequent AG-UI Run with ToolMessage → Tool futures resolved
+6. ADK Agent execution resumes → Continues with tool results
+7. Final response → Execution completes
+```
+
+### Tool Execution Modes
+
+The middleware supports two distinct execution modes that can be configured per tool:
+
+#### Long-Running Tools (Default: `is_long_running=True`)
+**Perfect for Human-in-the-Loop (HITL) workflows**
+
+- **Fire-and-forget pattern**: Returns `None` immediately without waiting
+- **No timeout applied**: Execution continues until tool result is provided
+- **Ideal for**: User approval workflows, document review, manual input collection
+- **ADK Pattern**: Established pattern where tools pause execution for human interaction
+
+```python
+# Long-running tool example
+approval_tool = Tool(
+    name="request_approval",
+    description="Request human approval for sensitive operations",
+    parameters={"type": "object", "properties": {"action": {"type": "string"}}}
+)
+
+# Tool execution returns immediately
+result = await proxy_tool.run_async(args, context)  # Returns None immediately
+# Client provides result via ToolMessage in subsequent run
+```
+
+#### Blocking Tools (`is_long_running=False`)
+**For immediate results with timeout protection**
+
+- **Blocking pattern**: Waits for tool result with configurable timeout
+- **Timeout applied**: Default 300 seconds, configurable per tool
+- **Ideal for**: API calls, calculations, data retrieval
+- **Error handling**: TimeoutError raised if no result within timeout
+
+```python
+# Blocking tool example  
+calculator_tool = Tool(
+    name="calculate",
+    description="Perform mathematical calculations",
+    parameters={"type": "object", "properties": {"expression": {"type": "string"}}}
+)
+
+# Tool execution waits for result
+result = await proxy_tool.run_async(args, context)  # Waits and returns result
+```
+
+### Per-Tool Configuration
+
+The `ClientProxyToolset` supports mixed execution modes within the same toolset:
+
+```python
+from adk_middleware.client_proxy_toolset import ClientProxyToolset
+
+# Create toolset with mixed execution modes
+toolset = ClientProxyToolset(
+    ag_ui_tools=[approval_tool, calculator_tool, weather_tool],
+    event_queue=event_queue,
+    tool_futures=tool_futures,
+    is_long_running=True,  # Default for all tools
+    tool_long_running_config={
+        "calculate": False,      # Override: calculator should be blocking
+        "weather": False,        # Override: weather should be blocking  
+        # approval_tool uses default (True - long-running)
+    }
+)
+```
+
+#### Configuration Options
+
+- **`is_long_running`**: Default execution mode for all tools in the toolset
+- **`tool_long_running_config`**: Dict mapping tool names to specific `is_long_running` values
+- **Per-tool overrides**: Specific tools can override the default behavior
+- **Flexible mixing**: Same toolset can contain both long-running and blocking tools
 
 ### Tool Configuration
 
@@ -222,176 +319,171 @@ from adk_middleware import ADKAgent, AgentRegistry
 from google.adk.agents import LlmAgent
 from ag_ui.core import RunAgentInput, UserMessage, Tool
 
-# 1. Create practical business tools using AG-UI Tool schema
+# 1. Create tools with different execution patterns
+# Long-running tool for human approval (default behavior)
 task_approval_tool = Tool(
-    name="generate_task_steps",
-    description="Generate a list of task steps for user approval",
+    name="request_approval",
+    description="Request human approval for task execution",
     parameters={
         "type": "object",
         "properties": {
-            "steps": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "description": {"type": "string", "description": "Step description"},
-                        "status": {
-                            "type": "string", 
-                            "enum": ["enabled", "disabled", "executing"],
-                            "description": "Step status"
-                        }
-                    },
-                    "required": ["description", "status"]
-                }
-            }
+            "task": {"type": "string", "description": "Task requiring approval"},
+            "risk_level": {"type": "string", "enum": ["low", "medium", "high"]}
         },
-        "required": ["steps"]
+        "required": ["task"]
     }
 )
 
-document_generator_tool = Tool(
-    name="generate_document",
-    description="Generate structured documents with approval workflow",
+# Blocking tool for immediate calculation
+calculator_tool = Tool(
+    name="calculate",
+    description="Perform mathematical calculations",
     parameters={
         "type": "object",
         "properties": {
-            "title": {"type": "string", "description": "Document title"},
-            "sections": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "heading": {"type": "string"},
-                        "content": {"type": "string"}
-                    }
-                }
-            },
-            "format": {"type": "string", "enum": ["markdown", "html", "plain"]}
+            "expression": {"type": "string", "description": "Mathematical expression"}
         },
-        "required": ["title", "sections"]
+        "required": ["expression"]
     }
 )
 
-# 2. Set up ADK agent with tool timeouts
+# Blocking tool for API calls
+weather_tool = Tool(
+    name="get_weather",
+    description="Get current weather information",
+    parameters={
+        "type": "object",
+        "properties": {
+            "location": {"type": "string", "description": "City name"}
+        },
+        "required": ["location"]
+    }
+)
+
+# 2. Set up ADK agent with hybrid tool support
 agent = LlmAgent(
-    name="task_manager_assistant",
+    name="hybrid_assistant",
     model="gemini-2.0-flash",
-    instruction="""You are a helpful task management assistant. When users request task planning,
-    use the generate_task_steps tool to create structured task lists for their approval.
-    For document creation, use the generate_document tool with proper formatting."""
+    instruction="""You are a helpful assistant that can request approvals and perform calculations.
+    Use request_approval for sensitive operations that need human review.
+    Use calculate for math operations and get_weather for weather information."""
 )
 
 registry = AgentRegistry.get_instance()
 registry.set_default_agent(agent)
 
-# 3. Create middleware with tool timeout configuration
+# 3. Create middleware with hybrid execution configuration
 adk_agent = ADKAgent(
     user_id="user123",
-    tool_timeout_seconds=60,       # Individual tool timeout 
-    execution_timeout_seconds=300  # Overall execution timeout
+    tool_timeout_seconds=60,       # Timeout for blocking tools only
+    execution_timeout_seconds=300, # Overall execution timeout
+    # Mixed execution modes configured at toolset level
 )
 
-# 4. Include tools in RunAgentInput
+# 4. Include tools in RunAgentInput - execution modes configured automatically
 user_input = RunAgentInput(
     thread_id="thread_123",
     run_id="run_456",
     messages=[UserMessage(
         id="1", 
         role="user", 
-        content="Help me plan a project to redesign our company website"
+        content="Calculate 15 * 8 and then request approval for the result"
     )],
-    tools=[task_approval_tool, document_generator_tool],
+    tools=[task_approval_tool, calculator_tool, weather_tool],
     context=[],
     state={},
     forwarded_props={}
 )
 ```
 
-### Tool Execution Flow
+### Hybrid Execution Flow
+
+The hybrid model enables seamless execution across multiple AG-UI runs:
 
 ```python
-async def handle_task_management_workflow():
-    """Example showing human-in-the-loop task management."""
+async def demonstrate_hybrid_execution():
+    """Example showing hybrid execution with mixed tool types."""
     
-    tool_events = asyncio.Queue()
+    # Step 1: Initial run - starts execution with mixed tools
+    print("🚀 Starting hybrid execution...")
     
-    async def agent_execution_task():
-        """Background agent execution."""
-        async for event in adk_agent.run(user_input):
-            if event.type == "TOOL_CALL_START":
-                print(f"🔧 Tool call: {event.tool_call_name}")
-            elif event.type == "TEXT_MESSAGE_CONTENT":
-                print(f"💬 Assistant: {event.delta}", end="", flush=True)
+    initial_events = []
+    async for event in adk_agent.run(user_input):
+        initial_events.append(event)
+        
+        if event.type == "TOOL_CALL_START":
+            print(f"🔧 Tool call: {event.tool_call_name} (ID: {event.tool_call_id})")
+        elif event.type == "TEXT_MESSAGE_CONTENT":
+            print(f"💬 Assistant: {event.delta}", end="", flush=True)
     
-    async def tool_handler_task():
-        """Handle tool execution with human approval."""
-        while True:
-            tool_info = await tool_events.get()
-            if tool_info is None:
-                break
+    print("\n📊 Initial execution completed - tools awaiting results")
+    
+    # Step 2: Handle tool results based on execution mode
+    tool_results = []
+    
+    # Extract tool calls from events
+    for event in initial_events:
+        if event.type == "TOOL_CALL_START":
+            tool_call_id = event.tool_call_id
+            tool_name = event.tool_call_name
+            
+            if tool_name == "calculate":
+                # Blocking tool - would have completed immediately
+                result = {"result": 120, "expression": "15 * 8"}
+                tool_results.append((tool_call_id, result))
                 
-            tool_call_id = tool_info["tool_call_id"]
-            tool_name = tool_info["tool_name"] 
-            args = tool_info["args"]
-            
-            if tool_name == "generate_task_steps":
-                # Simulate human-in-the-loop approval
-                result = await handle_task_approval(args)
-            elif tool_name == "generate_document":
-                # Simulate document generation with review
-                result = await handle_document_generation(args)
-            else:
-                result = {"error": f"Unknown tool: {tool_name}"}
-            
-            # Submit result back to agent
-            success = await adk_agent.submit_tool_result(tool_call_id, result)
-            print(f"✅ Tool result submitted: {success}")
+            elif tool_name == "request_approval":
+                # Long-running tool - requires human interaction
+                result = await handle_human_approval(tool_call_id)
+                tool_results.append((tool_call_id, result))
     
-    # Run both tasks concurrently
-    await asyncio.gather(
-        asyncio.create_task(agent_execution_task()),
-        asyncio.create_task(tool_handler_task())
-    )
+    # Step 3: Submit tool results and resume execution
+    if tool_results:
+        print(f"\n🔄 Resuming execution with {len(tool_results)} tool results...")
+        
+        # Create ToolMessage entries for resumption
+        tool_messages = []
+        for tool_call_id, result in tool_results:
+            tool_messages.append(
+                ToolMessage(
+                    id=f"tool_{tool_call_id}",
+                    role="tool",
+                    content=json.dumps(result),
+                    tool_call_id=tool_call_id
+                )
+            )
+        
+        # Resume execution with tool results
+        resume_input = RunAgentInput(
+            thread_id=user_input.thread_id,
+            run_id=f"{user_input.run_id}_resume",
+            messages=tool_messages,
+            tools=[],  # No new tools needed
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+        
+        # Continue execution with results
+        async for event in adk_agent.run(resume_input):
+            if event.type == "TEXT_MESSAGE_CONTENT":
+                print(f"💬 Assistant: {event.delta}", end="", flush=True)
+            elif event.type == "RUN_FINISHED":
+                print(f"\n✅ Execution completed successfully!")
 
-async def handle_task_approval(args):
-    """Simulate human approval workflow for task steps."""
-    steps = args.get("steps", [])
+async def handle_human_approval(tool_call_id):
+    """Simulate human approval workflow for long-running tools."""
+    print(f"\n👤 Human approval requested for call {tool_call_id}")
+    print("⏳ Waiting for human input...")
     
-    print("\n📋 Task Steps Generated - Awaiting Approval:")
-    for i, step in enumerate(steps):
-        status_icon = "✅" if step["status"] == "enabled" else "❌"
-        print(f"  {i+1}. {status_icon} {step['description']}")
-    
-    # In a real implementation, this would wait for user interaction
-    # Here we simulate approval after a brief delay
-    await asyncio.sleep(1)
+    # Simulate user interaction delay
+    await asyncio.sleep(2)
     
     return {
         "approved": True,
-        "selected_steps": [step for step in steps if step["status"] == "enabled"],
-        "message": "Task steps approved by user"
-    }
-
-async def handle_document_generation(args):
-    """Simulate document generation with review."""
-    title = args.get("title", "Untitled Document")
-    sections = args.get("sections", [])
-    format_type = args.get("format", "markdown")
-    
-    print(f"\n📄 Document Generated: {title}")
-    print(f"   Format: {format_type}")
-    print(f"   Sections: {len(sections)}")
-    
-    # Simulate document creation processing
-    await asyncio.sleep(0.5)
-    
-    return {
-        "document_id": f"doc_{int(time.time())}",
-        "title": title,
-        "sections_count": len(sections),
-        "format": format_type,
-        "status": "generated",
-        "review_required": True
+        "approver": "user123",
+        "timestamp": time.time(),
+        "comments": "Approved after review"
     }
 ```
 
@@ -421,14 +513,78 @@ ui_generation_tools = [
 ]
 ```
 
-### Complete Tool Example
+### Real-World Example: Tool-Based Generative UI
 
-See `examples/comprehensive_tool_demo.py` for a complete working example that demonstrates:
-- Single tool usage with realistic business scenarios
-- Multi-tool workflows with human approval steps  
-- Complex document generation and review processes
-- Error handling and timeout management
-- Proper asynchronous patterns for production use
+The `examples/tool_based_generative_ui/` directory contains an example that integrates with the existing haiku app in the Dojo, demonstrating how to use the hybrid execution model for generative UI applications:
+
+#### Haiku Generator with Image Selection
+```python
+# Tool for generating haiku with complementary images
+haiku_tool = Tool(
+    name="generate_haiku",
+    description="Generate a traditional Japanese haiku with selected images",
+    parameters={
+        "type": "object",
+        "properties": {
+            "japanese_haiku": {
+                "type": "string",
+                "description": "Traditional 5-7-5 syllable haiku in Japanese"
+            },
+            "english_translation": {
+                "type": "string", 
+                "description": "Poetic English translation"
+            },
+            "selected_images": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Exactly 3 image filenames that complement the haiku"
+            },
+            "theme": {
+                "type": "string",
+                "description": "Theme or mood of the haiku"
+            }
+        },
+        "required": ["japanese_haiku", "english_translation", "selected_images"]
+    }
+)
+```
+
+#### Key Features Demonstrated
+- **ADK Agent Integration**: ADK agent creates haiku with structured output
+- **Structured Tool Output**: Tool returns JSON with haiku, translation, and image selections
+- **Generative UI**: Client can dynamically render UI based on tool results
+
+#### Usage Pattern
+```python
+# 1. User generates request
+# 2. ADK agent analyzes request and calls generate_haiku tool
+# 3. Tool returns structured data with haiku and image selections
+# 4. Client renders UI with haiku text and selected images
+# 5. User can request variations or different themes
+```
+
+This example showcases the hybrid model for applications where:
+- **AI agents** generate structured content
+- **Dynamic UI** adapts based on tool output
+- **Interactive workflows** allow refinement and iteration
+- **Rich media** combines text, images, and user interface elements
+
+### Complete Tool Examples
+
+See the `examples/` directory for comprehensive working examples:
+
+- **`comprehensive_tool_demo.py`**: Complete business workflow example
+  - Single tool usage with realistic scenarios
+  - Multi-tool workflows with human approval steps  
+  - Complex document generation and review processes
+  - Error handling and timeout management
+  - Proper asynchronous patterns for production use
+
+- **`tool_based_generative_ui/`**: Generative UI example integrating with Dojo
+  - Structured output for UI generation
+  - Dynamic UI rendering based on tool results
+  - Interactive workflows with user refinement
+  - Real-world application patterns
 
 ## Examples
 

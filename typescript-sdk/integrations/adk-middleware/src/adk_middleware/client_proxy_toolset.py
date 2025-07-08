@@ -28,7 +28,9 @@ class ClientProxyToolset(BaseToolset):
         ag_ui_tools: List[AGUITool],
         event_queue: asyncio.Queue,
         tool_futures: Dict[str, asyncio.Future],
-        tool_timeout_seconds: int = 300
+        tool_timeout_seconds: int = 300,
+        is_long_running: bool = True,
+        tool_long_running_config: Optional[Dict[str, bool]] = None
     ):
         """Initialize the client proxy toolset.
         
@@ -37,17 +39,24 @@ class ClientProxyToolset(BaseToolset):
             event_queue: Queue to emit AG-UI events
             tool_futures: Dictionary to store tool execution futures
             tool_timeout_seconds: Timeout for individual tool execution
+            is_long_running: Default long-running mode for all tools
+            tool_long_running_config: Optional per-tool long-running configuration.
+                                    Maps tool names to is_long_running values.
+                                    Overrides default for specific tools.
+                                    Example: {"calculator": False, "email": True}
         """
         super().__init__()
         self.ag_ui_tools = ag_ui_tools
         self.event_queue = event_queue
         self.tool_futures = tool_futures
         self.tool_timeout_seconds = tool_timeout_seconds
+        self.is_long_running = is_long_running
+        self.tool_long_running_config = tool_long_running_config or {}
         
         # Cache of created proxy tools
         self._proxy_tools: Optional[List[BaseTool]] = None
         
-        logger.info(f"Initialized ClientProxyToolset with {len(ag_ui_tools)} tools")
+        logger.info(f"Initialized ClientProxyToolset with {len(ag_ui_tools)} tools, default is_long_running={is_long_running}")
     
     async def get_tools(
         self,
@@ -70,14 +79,22 @@ class ClientProxyToolset(BaseToolset):
             
             for ag_ui_tool in self.ag_ui_tools:
                 try:
+                    # Determine is_long_running for this specific tool
+                    # Check if tool has specific config, otherwise use default
+                    tool_is_long_running = self.tool_long_running_config.get(
+                        ag_ui_tool.name, 
+                        self.is_long_running
+                    )
+                    
                     proxy_tool = ClientProxyTool(
                         ag_ui_tool=ag_ui_tool,
                         event_queue=self.event_queue,
                         tool_futures=self.tool_futures,
-                        timeout_seconds=self.tool_timeout_seconds
+                        timeout_seconds=self.tool_timeout_seconds,
+                        is_long_running=tool_is_long_running
                     )
                     self._proxy_tools.append(proxy_tool)
-                    logger.debug(f"Created proxy tool for '{ag_ui_tool.name}'")
+                    logger.debug(f"Created proxy tool for '{ag_ui_tool.name}' (is_long_running={tool_is_long_running})")
                     
                 except Exception as e:
                     logger.error(f"Failed to create proxy tool for '{ag_ui_tool.name}': {e}")
@@ -107,4 +124,7 @@ class ClientProxyToolset(BaseToolset):
     def __repr__(self) -> str:
         """String representation of the toolset."""
         tool_names = [tool.name for tool in self.ag_ui_tools]
-        return f"ClientProxyToolset(tools={tool_names})"
+        config_summary = f"default_long_running={self.is_long_running}"
+        if self.tool_long_running_config:
+            config_summary += f", overrides={self.tool_long_running_config}"
+        return f"ClientProxyToolset(tools={tool_names}, {config_summary})"
