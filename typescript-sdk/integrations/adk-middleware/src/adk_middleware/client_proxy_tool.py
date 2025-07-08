@@ -33,7 +33,8 @@ class ClientProxyTool(BaseTool):
         ag_ui_tool: AGUITool,
         event_queue: asyncio.Queue,
         tool_futures: Dict[str, asyncio.Future],
-        timeout_seconds: int = 300  # 5 minute default timeout
+        timeout_seconds: int = 300,  # 5 minute default timeout
+        is_long_running=True
     ):
         """Initialize the client proxy tool.
         
@@ -42,18 +43,20 @@ class ClientProxyTool(BaseTool):
             event_queue: Queue to emit AG-UI events
             tool_futures: Dictionary to store tool execution futures
             timeout_seconds: Timeout for tool execution
+            is_long_running: If True, no timeout is applied
         """
         # Initialize BaseTool with name and description
         super().__init__(
             name=ag_ui_tool.name,
             description=ag_ui_tool.description,
-            is_long_running=False  # Could be made configurable
+            is_long_running=is_long_running  # Could be made configurable
         )
         
         self.ag_ui_tool = ag_ui_tool
         self.event_queue = event_queue
         self.tool_futures = tool_futures
         self.timeout_seconds = timeout_seconds
+        self.is_long_running = is_long_running
     
     def _get_declaration(self) -> Optional[types.FunctionDeclaration]:
         """Convert AG-UI tool parameters to ADK FunctionDeclaration.
@@ -89,7 +92,7 @@ class ClientProxyTool(BaseTool):
         3. Emits TOOL_CALL_ARGS event with the arguments
         4. Emits TOOL_CALL_END event
         5. Creates a Future and waits for the result
-        6. Returns the result or raises timeout error
+        6. Returns the result or raises timeout error (unless is_long_running is True)
         
         Args:
             args: The arguments for the tool call
@@ -99,7 +102,7 @@ class ClientProxyTool(BaseTool):
             The result from the client-side tool execution
             
         Raises:
-            asyncio.TimeoutError: If tool execution times out
+            asyncio.TimeoutError: If tool execution times out (when is_long_running is False)
             Exception: If tool execution fails
         """
         # Try to get the function call ID from ADK tool context
@@ -156,12 +159,19 @@ class ClientProxyTool(BaseTool):
             future = asyncio.Future()
             self.tool_futures[tool_call_id] = future
             
-            # Wait for the result with timeout
+            # Wait for the result with conditional timeout
             try:
-                result = await asyncio.wait_for(
-                    future, 
-                    timeout=self.timeout_seconds
-                )
+                result = None
+                if self.is_long_running:
+                    # No timeout for long-running tools
+                    logger.info(f"Tool '{self.name}' is long-running, waiting indefinitely")
+                else:
+                    # Apply timeout for regular tools
+                    result = await asyncio.wait_for(
+                        future, 
+                        timeout=self.timeout_seconds
+                    )
+                
                 logger.info(f"Tool '{self.name}' completed successfully")
                 return result
                 
@@ -182,4 +192,4 @@ class ClientProxyTool(BaseTool):
     
     def __repr__(self) -> str:
         """String representation of the proxy tool."""
-        return f"ClientProxyTool(name='{self.name}', description='{self.description}')"
+        return f"ClientProxyTool(name='{self.name}', description='{self.description}', is_long_running={self.is_long_running})"

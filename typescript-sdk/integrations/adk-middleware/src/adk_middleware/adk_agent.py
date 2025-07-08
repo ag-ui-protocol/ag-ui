@@ -203,7 +203,7 @@ class ADKAgent:
         
         return self._runners[runner_key]
     
-    async def run(self, input: RunAgentInput) -> AsyncGenerator[BaseEvent, None]:
+    async def run(self, input: RunAgentInput, agent_id = None) -> AsyncGenerator[BaseEvent, None]:
         """Run the ADK agent with tool support.
         
         Enhanced to handle both new requests and tool result submissions.
@@ -223,7 +223,7 @@ class ADKAgent:
                 yield event
         else:
             # Start new execution
-            async for event in self._start_new_execution(input):
+            async for event in self._start_new_execution(input,agent_id):
                 yield event
     
     async def _ensure_session_exists(self, app_name: str, user_id: str, session_id: str, initial_state: dict):
@@ -383,7 +383,8 @@ class ADKAgent:
     
     async def _start_new_execution(
         self, 
-        input: RunAgentInput
+        input: RunAgentInput,
+        agent_id = None
     ) -> AsyncGenerator[BaseEvent, None]:
         """Start a new ADK execution with tool support.
         
@@ -413,7 +414,7 @@ class ADKAgent:
                         )
             
             # Start background execution
-            execution = await self._start_background_execution(input)
+            execution = await self._start_background_execution(input,agent_id)
             
             # Store execution
             async with self._execution_lock:
@@ -447,7 +448,8 @@ class ADKAgent:
     
     async def _start_background_execution(
         self, 
-        input: RunAgentInput
+        input: RunAgentInput,
+        agent_id = None
     ) -> ExecutionState:
         """Start ADK execution in background with tool support.
         
@@ -459,9 +461,8 @@ class ADKAgent:
         """
         event_queue = asyncio.Queue()
         tool_futures = {}
-        
         # Extract necessary information
-        agent_id = self._get_agent_id()
+        agent_id = agent_id or self._get_agent_id()
         user_id = self._get_user_id(input)
         app_name = self._get_app_name(input)
         
@@ -560,14 +561,16 @@ class ADKAgent:
                 new_message=new_message,
                 run_config=run_config
             ):
+                print('adk_event==>',adk_event)
                 # Translate and emit events
                 async for ag_ui_event in event_translator.translate(
                     adk_event,
                     input.thread_id,
                     input.run_id
                 ):
+                    
                     await event_queue.put(ag_ui_event)
-            
+            print('----------adk events completed---------')
             # Force close any streaming messages
             async for ag_ui_event in event_translator.force_close_streaming_message():
                 await event_queue.put(ag_ui_event)
