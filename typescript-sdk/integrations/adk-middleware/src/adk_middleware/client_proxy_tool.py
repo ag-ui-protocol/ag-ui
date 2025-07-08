@@ -164,7 +164,7 @@ class ClientProxyTool(BaseTool):
                 result = None
                 if self.is_long_running:
                     # No timeout for long-running tools
-                    logger.info(f"Tool '{self.name}' is long-running, waiting indefinitely")
+                    logger.info(f"Tool '{self.name}' is long-running, return immediately per ADK patterns")
                 else:
                     # Apply timeout for regular tools
                     result = await asyncio.wait_for(
