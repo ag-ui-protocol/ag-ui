@@ -1,3 +1,5 @@
+import "server-only";
+
 import { AgentIntegrationConfig } from "./types/integration";
 import { MiddlewareStarterAgent } from "@ag-ui/middleware-starter";
 import { ServerStarterAgent } from "@ag-ui/server-starter";
@@ -10,6 +12,7 @@ import { LangGraphAgent } from "@ag-ui/langgraph";
 import { AgnoAgent } from "@ag-ui/agno";
 import { LlamaIndexAgent } from "@ag-ui/llamaindex";
 import { CrewAIAgent } from "@ag-ui/crewai";
+import { mastra } from "./mastra";
 
 export const agentsIntegrations: AgentIntegrationConfig[] = [
   {
@@ -63,6 +66,12 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
       return MastraAgent.getRemoteAgents({
         mastraClient,
       });
+    },
+  },
+  {
+    id: "mastra-agent-local",
+    agents: async () => {
+      return MastraAgent.getLocalAgents({ mastra });
     },
   },
   {
