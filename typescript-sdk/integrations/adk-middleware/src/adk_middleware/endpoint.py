@@ -36,7 +36,6 @@ def add_adk_fastapi_endpoint(app: FastAPI, agent: ADKAgent, path: str = "/"):
             try:
                 async for event in agent.run(input_data, agent_id):
                     try:
-                        print('agui event==>',event)
                         encoded = encoder.encode(event)
                         logger.info(f"🌐 HTTP Response: {encoded}")
                         yield encoded
