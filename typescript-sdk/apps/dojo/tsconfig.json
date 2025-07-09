@@ -19,7 +19,9 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*", "../../packages/client/src/*"],
+      "@ag-ui/client": ["../../packages/client/src"],
+      "@ag-ui/client/*": ["../../packages/client/src/*"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
