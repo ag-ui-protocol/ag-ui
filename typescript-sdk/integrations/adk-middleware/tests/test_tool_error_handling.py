@@ -224,7 +224,7 @@ class TestToolErrorHandling:
             timeout_seconds=0.001  # 1ms timeout
         )
         
-        args = {"action": "slow_action"}
+        args = {"action": "slow_action", "data": "test_data"}
         mock_context = MagicMock()
         
         # Should timeout quickly
@@ -383,7 +383,7 @@ class TestToolErrorHandling:
             is_long_running=True
         )
         
-        args = {"action": "test"}
+        args = {"action": "test", "data": "test_data"}
         mock_context = MagicMock()
         
         # Should handle queue errors gracefully
@@ -409,7 +409,7 @@ class TestToolErrorHandling:
             is_long_running=False
         )
         
-        args = {"action": "test"}
+        args = {"action": "test", "data": "test_data"}
         mock_context = MagicMock()
         
         # Should handle queue errors gracefully

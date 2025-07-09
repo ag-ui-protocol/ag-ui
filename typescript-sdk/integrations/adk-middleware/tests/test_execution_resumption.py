@@ -363,6 +363,10 @@ class TestExecutionResumption:
         event_queue = asyncio.Queue()
         tool_futures = {}
         
+        # Add a future for the tool call to make it a blocking result
+        future = asyncio.Future()
+        tool_futures["calc_001"] = future
+        
         execution = ExecutionState(
             task=mock_task,
             thread_id="test_thread",

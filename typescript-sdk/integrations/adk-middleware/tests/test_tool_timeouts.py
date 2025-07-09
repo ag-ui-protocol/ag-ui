@@ -150,14 +150,14 @@ class TestToolTimeouts:
             await asyncio.sleep(0.005)
             
             # Future should exist initially
-            assert "timeout-test" in tool_futures
+            assert "adk-timeout-test" in tool_futures
             
             # Wait for timeout
             with pytest.raises(TimeoutError):
                 await task
             
             # Future should be cleaned up after timeout
-            assert "timeout-test" not in tool_futures
+            assert "adk-timeout-test" not in tool_futures
     
     @pytest.mark.asyncio
     async def test_client_proxy_tool_timeout_vs_completion_race(self, sample_tool, mock_event_queue, tool_futures):
@@ -174,7 +174,7 @@ class TestToolTimeouts:
             mock_uuid.return_value = MagicMock()
             mock_uuid.return_value.__str__ = MagicMock(return_value="race-test")
             
-            args = {"test": "data"}
+            args = {"delay": 1}
             mock_context = MagicMock()
             
             # Start the execution
@@ -182,11 +182,11 @@ class TestToolTimeouts:
                 proxy_tool.run_async(args=args, tool_context=mock_context)
             )
             
-            # Wait for future to be created
+            # Wait for future to be created  
             await asyncio.sleep(0.01)
             
             # Complete the future before timeout
-            future = tool_futures["race-test"]
+            future = tool_futures["adk-race-test"]
             future.set_result({"success": True})
             
             # Should complete successfully, not timeout
@@ -382,7 +382,7 @@ class TestToolTimeouts:
                 timeout_seconds=timeout
             )
             
-            args = {"test": f"timeout_{timeout}"}
+            args = {"delay": 5}
             mock_context = MagicMock()
             
             start_time = time.time()
@@ -420,7 +420,7 @@ class TestToolTimeouts:
         tasks = []
         for i, tool in enumerate(tools):
             task = asyncio.create_task(
-                tool.run_async(args={"test": f"tool_{i}"}, tool_context=MagicMock())
+                tool.run_async(args={"delay": 5}, tool_context=MagicMock())
             )
             tasks.append(task)
         
@@ -461,7 +461,7 @@ class TestToolTimeouts:
             await asyncio.sleep(0.02)  # Wait longer than the timeout
             
             # Future should exist and task should be done (remember tool is still in pending state)
-            assert "long-running-test" in tool_futures
+            assert "adk-long-running-test" in tool_futures
             assert task.done()
             
 
@@ -502,7 +502,7 @@ class TestToolTimeouts:
             
             mock_uuid.side_effect = side_effect
             
-            args = {"test": "data"}
+            args = {"delay": 5}
             mock_context = MagicMock()
             
             # Start both tools
@@ -548,7 +548,7 @@ class TestToolTimeouts:
             is_long_running=True
         )
         
-        args = {"test": "data"}
+        args = {"delay": 5}
         mock_context = MagicMock()
         
         # Should raise the event queue error and clean up
@@ -594,7 +594,7 @@ class TestToolTimeouts:
             tasks = []
             for i, tool in enumerate(tools):
                 task = asyncio.create_task(
-                    tool.run_async(args={"tool_id": i}, tool_context=MagicMock())
+                    tool.run_async(args={"delay": 5}, tool_context=MagicMock())
                 )
                 tasks.append(task)
             
@@ -628,7 +628,7 @@ class TestToolTimeouts:
             mock_uuid.return_value = MagicMock()
             mock_uuid.return_value.__str__ = MagicMock(return_value="event-test")
             
-            args = {"param1": "value1", "param2": 42}
+            args = {"delay": 5}
             mock_context = MagicMock()
             
             # Start the execution
@@ -653,17 +653,17 @@ class TestToolTimeouts:
             
             # Check event types and order
             assert events[0].type == EventType.TOOL_CALL_START
-            assert events[0].tool_call_id == "event-test"
+            assert events[0].tool_call_id == "adk-event-test"
             assert events[0].tool_call_name == sample_tool.name
             
             assert events[1].type == EventType.TOOL_CALL_ARGS
-            assert events[1].tool_call_id == "event-test"
+            assert events[1].tool_call_id == "adk-event-test"
             # Check that args were properly JSON serialized
             import json
             assert json.loads(events[1].delta) == args
             
             assert events[2].type == EventType.TOOL_CALL_END
-            assert events[2].tool_call_id == "event-test"
+            assert events[2].tool_call_id == "adk-event-test"
             
 
 
@@ -716,7 +716,7 @@ class TestToolTimeouts:
             mock_uuid.return_value = MagicMock()
             mock_uuid.return_value.__str__ = MagicMock(return_value="wait-test")
             
-            args = {"test": "wait"}
+            args = {"delay": 5}
             mock_context = MagicMock()
             
             start_time = asyncio.get_event_loop().time()

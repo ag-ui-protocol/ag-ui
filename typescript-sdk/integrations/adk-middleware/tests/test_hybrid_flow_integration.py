@@ -166,8 +166,9 @@ class TestHybridFlowIntegration:
         # Execute long-running tool
         result = await long_running_tool.run_async(args=args, tool_context=mock_context)
         
-        # Should return None immediately (fire-and-forget)
-        assert result is None
+        # Should return tool call ID immediately (fire-and-forget)
+        assert result is not None
+        assert result.startswith("adk-")
         
         # Should have created events
         assert event_queue.qsize() >= 3  # start, args, end events
@@ -212,8 +213,9 @@ class TestHybridFlowIntegration:
             tool_context=MagicMock()
         )
         
-        # For long-running tools (default), should return None
-        assert calc_result is None
+        # For long-running tools (default), should return tool call ID
+        assert calc_result is not None
+        assert calc_result.startswith("adk-")
         
         # Execute second tool (weather) 
         weather_tool_proxy = tools[1]  # Should be ClientProxyTool for weather
@@ -222,8 +224,9 @@ class TestHybridFlowIntegration:
             tool_context=MagicMock()
         )
         
-        # Should also return None for long-running
-        assert weather_result is None
+        # Should also return tool call ID for long-running
+        assert weather_result is not None
+        assert weather_result.startswith("adk-")
         
         # Should have two pending futures
         assert len(tool_futures) == 2
@@ -337,8 +340,10 @@ class TestHybridFlowIntegration:
         result1 = await task1
         result2 = await task2
         
-        assert result1 is None
-        assert result2 is None
+        assert result1 is not None
+        assert result1.startswith("adk-")
+        assert result2 is not None
+        assert result2.startswith("adk-")
         
         # Should have separate futures
         assert len(tool_futures1) == 1
@@ -542,8 +547,9 @@ class TestHybridFlowIntegration:
             tool_context=mock_context
         )
         
-        # Should return None (long-running default)
-        assert result is None
+        # Should return tool call ID (long-running default)
+        assert result is not None
+        assert result.startswith("adk-")
         
         # Should have pending future
         assert len(tool_futures) == 1
@@ -653,8 +659,9 @@ class TestHybridFlowIntegration:
             tool_context=mock_context
         )
         
-        # Should return None immediately
-        assert long_running_result is None
+        # Should return tool call ID immediately
+        assert long_running_result is not None
+        assert long_running_result.startswith("adk-")
         assert len(long_running_futures) == 1
         
         # Execute blocking tool
@@ -719,8 +726,9 @@ class TestHybridFlowIntegration:
             tool_context=mock_context
         )
         
-        # Should return None (long-running behavior)
-        assert result is None
+        # Should return tool call ID (long-running behavior)
+        assert result is not None
+        assert result.startswith("adk-")
         
         # Should have created a future
         assert len(tool_futures) == 1
@@ -824,8 +832,9 @@ class TestHybridFlowIntegration:
             tool_context=mock_context
         )
         
-        # Weather tool should return None immediately (long-running)
-        assert weather_result is None
+        # Weather tool should return tool call ID immediately (long-running)
+        assert weather_result is not None
+        assert weather_result.startswith("adk-")
         assert len(tool_futures) == 1  # Weather future created
         
         # Test calculator tool (blocking) - needs to be resolved
@@ -887,7 +896,8 @@ class TestHybridFlowIntegration:
             args={"operation": "add", "a": 1, "b": 1},
             tool_context=MagicMock()
         )
-        assert result is None  # Long-running returns None
+        assert result is not None  # Long-running returns tool call ID
+        assert result.startswith("adk-")
         
         # Test blocking toolset with short timeout (should actually timeout)
         blocking_queue = asyncio.Queue()

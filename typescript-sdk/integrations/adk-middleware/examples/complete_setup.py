@@ -19,11 +19,11 @@ logging.basicConfig(
 
 # Configure component-specific logging levels using standard Python logging
 # Can be overridden with PYTHONPATH or programmatically
-logging.getLogger('adk_agent').setLevel(logging.INFO)
+logging.getLogger('adk_agent').setLevel(logging.DEBUG)
 logging.getLogger('event_translator').setLevel(logging.WARNING)
-logging.getLogger('endpoint').setLevel(logging.WARNING)
+logging.getLogger('endpoint').setLevel(logging.DEBUG)  # Changed to INFO for debugging
 logging.getLogger('session_manager').setLevel(logging.WARNING)
-logging.getLogger('agent_registry').setLevel(logging.WARNING)
+logging.getLogger('agent_registry').setLevel(logging.DEBUG)  # Changed to INFO for debugging
 
 # from adk_agent import ADKAgent
 # from agent_registry import AgentRegistry
@@ -73,8 +73,25 @@ async def setup_and_run():
     # Register with specific IDs that AG-UI clients can reference
     registry.register_agent("assistant", assistant)
     
+    # Try to import and register haiku generator agent
+    print("🎋 Attempting to import haiku generator agent...")
+    try:
+        from tool_based_generative_ui.agent import haiku_generator_agent
+        print(f"   ✅ Successfully imported haiku_generator_agent")
+        print(f"   Type: {type(haiku_generator_agent)}")
+        print(f"   Name: {getattr(haiku_generator_agent, 'name', 'NO NAME')}")
+        registry.register_agent('adk-tool-based-generative-ui', haiku_generator_agent)
+        print(f"   ✅ Registered as 'adk-tool-based-generative-ui'")
+    except Exception as e:
+        print(f"   ❌ Failed to import haiku_generator_agent: {e}")
+    
     # Set default agent
     registry.set_default_agent(assistant)
+    
+    # List all registered agents
+    print("\n📋 Currently registered agents:")
+    for agent_id in registry.list_registered_agents():
+        print(f"   - {agent_id}")
     
     
     # Step 4: Configure ADK middleware
@@ -131,6 +148,10 @@ async def setup_and_run():
     # Main chat endpoint
     add_adk_fastapi_endpoint(app, adk_agent, path="/chat")
     
+    # Add haiku generator endpoint
+    add_adk_fastapi_endpoint(app, adk_agent, path="/adk-tool-based-generative-ui")
+    print("   ✅ Added endpoint: /adk-tool-based-generative-ui")
+    
     # Agent-specific endpoints (optional)
     # This allows clients to specify which agent to use via the URL
     # add_adk_fastapi_endpoint(app, adk_agent, path="/agents/assistant")
@@ -138,15 +159,17 @@ async def setup_and_run():
     
     @app.get("/")
     async def root():
+        registry = AgentRegistry.get_instance()
         return {
             "service": "ADK-AG-UI Integration",
             "version": "0.1.0",
             "agents": {
                 "default": "assistant",
-                "available": ["assistant"]
+                "available": registry.list_registered_agents()
             },
             "endpoints": {
                 "chat": "/chat",
+                "adk-tool-based-generative-ui": "/adk-tool-based-generative-ui",
                 "docs": "/docs",
                 "health": "/health"
             }
@@ -196,7 +219,7 @@ async def setup_and_run():
     print('  }\'')
     
     # Run with uvicorn
-    config = uvicorn.Config(app, host="0.0.0.0", port=3000, log_level="info")
+    config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
     server = uvicorn.Server(config)
     await server.serve()
 

@@ -30,7 +30,8 @@ class ClientProxyToolset(BaseToolset):
         tool_futures: Dict[str, asyncio.Future],
         tool_timeout_seconds: int = 300,
         is_long_running: bool = True,
-        tool_long_running_config: Optional[Dict[str, bool]] = None
+        tool_long_running_config: Optional[Dict[str, bool]] = None,
+        tool_names: Optional[Dict[str, str]] = None
     ):
         """Initialize the client proxy toolset.
         
@@ -44,6 +45,7 @@ class ClientProxyToolset(BaseToolset):
                                     Maps tool names to is_long_running values.
                                     Overrides default for specific tools.
                                     Example: {"calculator": False, "email": True}
+            tool_names: Optional dict to store tool names for long-running tools
         """
         super().__init__()
         self.ag_ui_tools = ag_ui_tools
@@ -52,6 +54,7 @@ class ClientProxyToolset(BaseToolset):
         self.tool_timeout_seconds = tool_timeout_seconds
         self.is_long_running = is_long_running
         self.tool_long_running_config = tool_long_running_config or {}
+        self.tool_names = tool_names
         
         # Cache of created proxy tools
         self._proxy_tools: Optional[List[BaseTool]] = None
@@ -91,7 +94,8 @@ class ClientProxyToolset(BaseToolset):
                         event_queue=self.event_queue,
                         tool_futures=self.tool_futures,
                         timeout_seconds=self.tool_timeout_seconds,
-                        is_long_running=tool_is_long_running
+                        is_long_running=tool_is_long_running,
+                        tool_names=self.tool_names
                     )
                     self._proxy_tools.append(proxy_tool)
                     logger.debug(f"Created proxy tool for '{ag_ui_tool.name}' (is_long_running={tool_is_long_running})")
@@ -110,10 +114,13 @@ class ClientProxyToolset(BaseToolset):
         logger.info("Closing ClientProxyToolset")
         
         # Cancel any pending tool futures
+        logger.debug(f"TOOLSET DEBUG: Checking {len(self.tool_futures)} tool futures for cancellation")
         for tool_call_id, future in self.tool_futures.items():
             if not future.done():
-                logger.warning(f"Cancelling pending tool execution: {tool_call_id}")
+                logger.warning(f"TOOLSET DEBUG: Cancelling pending tool execution: {tool_call_id}")
                 future.cancel()
+            else:
+                logger.debug(f"TOOLSET DEBUG: Tool future {tool_call_id} already done")
         
         # Clear the futures dict
         self.tool_futures.clear()

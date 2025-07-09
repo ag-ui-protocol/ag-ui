@@ -28,6 +28,29 @@ def add_adk_fastapi_endpoint(app: FastAPI, agent: ADKAgent, path: str = "/"):
         # Get the accept header from the request
         accept_header = request.headers.get("accept")
         agent_id = path.lstrip('/')
+        
+        logger.debug(f"DEBUG: Endpoint called with path: {path}")
+        logger.debug(f"DEBUG: Extracted agent_id: {agent_id}")
+        logger.debug(f"DEBUG: Request thread_id: {input_data.thread_id}")
+        
+        # Enhanced debug logging for endpoint input
+        print(f"🔍 ENDPOINT DEBUG: Received request on path: {path}")
+        print(f"🔍 ENDPOINT DEBUG: agent_id: {agent_id}")
+        print(f"🔍 ENDPOINT DEBUG: thread_id: {input_data.thread_id}")
+        print(f"🔍 ENDPOINT DEBUG: run_id: {input_data.run_id}")
+        print(f"🔍 ENDPOINT DEBUG: {len(input_data.messages)} messages in input")
+        print(f"🔍 ENDPOINT DEBUG: Tools provided: {len(input_data.tools) if input_data.tools else 0}")
+        
+        # Debug: Show message types and roles
+        for i, msg in enumerate(input_data.messages):
+            msg_role = getattr(msg, 'role', 'NO_ROLE')
+            msg_type = type(msg).__name__
+            msg_content = getattr(msg, 'content', 'NO_CONTENT')
+            msg_content_preview = repr(msg_content)[:50] if msg_content else 'None'
+            print(f"🔍 ENDPOINT DEBUG: Message {i}: {msg_type} - role={msg_role}, content={msg_content_preview}")
+            if hasattr(msg, 'tool_call_id'):
+                print(f"🔍 ENDPOINT DEBUG: Message {i}: tool_call_id={msg.tool_call_id}")
+        
         # Create an event encoder to properly format SSE events
         encoder = EventEncoder(accept=accept_header)
         

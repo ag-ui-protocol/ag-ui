@@ -212,6 +212,7 @@ class TestToolResultFlow:
         # Create a mock execution state
         mock_execution = MagicMock()
         mock_execution.resolve_tool_result.return_value = True
+        mock_execution.tool_futures = {"call_1": AsyncMock()}  # Add the tool future
         mock_event_queue = AsyncMock()
         
         # Add mock execution to active executions
@@ -257,6 +258,7 @@ class TestToolResultFlow:
         # Create a mock execution that fails to resolve
         mock_execution = MagicMock()
         mock_execution.resolve_tool_result.return_value = False  # Resolution fails
+        mock_execution.tool_futures = {"unknown_call": AsyncMock()}  # Add the tool future
         
         async with adk_middleware._execution_lock:
             adk_middleware._active_executions[thread_id] = mock_execution
@@ -293,6 +295,7 @@ class TestToolResultFlow:
         thread_id = "test_thread"
         
         mock_execution = MagicMock()
+        mock_execution.tool_futures = {"call_1": AsyncMock()}  # Add the tool future
         async with adk_middleware._execution_lock:
             adk_middleware._active_executions[thread_id] = mock_execution
         
@@ -324,6 +327,7 @@ class TestToolResultFlow:
         
         mock_execution = MagicMock()
         mock_execution.resolve_tool_result.return_value = True
+        mock_execution.tool_futures = {"call_1": AsyncMock(), "call_2": AsyncMock()}  # Add both tool futures
         
         async with adk_middleware._execution_lock:
             adk_middleware._active_executions[thread_id] = mock_execution

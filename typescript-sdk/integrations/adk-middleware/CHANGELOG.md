@@ -7,8 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **MAJOR**: Refactored tool behavior to align with ADK standards - long-running tools now return tool call IDs instead of None
+- **ARCHITECTURE**: Updated hybrid tool execution model to properly handle tool call ID management and validation
+- **BEHAVIOR**: Long-running tools now return `adk-{uuid}` tool call IDs immediately for fire-and-forget execution pattern
+
+### Fixed
+- **CRITICAL**: Fixed tool call ID mismatch detection to properly warn when tool results are submitted for non-existent tool calls
+- **TESTING**: Fixed all failing hybrid flow integration tests to expect tool call IDs from long-running tools
+- **TESTING**: Updated 326 tests to align with new ADK-compliant tool behavior (all tests now pass)
+- **VALIDATION**: Enhanced tool result submission logic to properly categorize blocking vs long-running tool results
+- **ERROR HANDLING**: Improved warning messages for tool call ID validation failures
+
 ### Enhanced
 - **TESTING**: Improved test coverage to 94% overall with comprehensive unit tests for previously untested modules
+- **COMPLIANCE**: Tool execution now fully compliant with ADK behavioral expectations
+- **OBSERVABILITY**: Enhanced logging for tool call ID tracking and validation throughout execution flow
+
+### Technical Architecture Changes
+- **Tool Return Values**: Long-running tools return `adk-{uuid}` tool call IDs instead of None for proper ADK compliance
+- **Tool Validation**: Enhanced tool result submission logic with proper categorization of blocking vs long-running results
+- **Warning System**: Improved tool call ID mismatch detection when active executions have pending tools but submitted tool call ID is not found
+- **Test Alignment**: Updated all hybrid flow integration tests to validate correct tool call ID return patterns
+
+### Technical Notes
+- **DEBUG**: Extensive debug logging messages remain in place throughout the codebase for ongoing development and troubleshooting
+- **FUTURE**: Debug messages will be removed in a future cleanup release once development stabilizes
 
 ## [0.3.2] - 2025-07-08
 
