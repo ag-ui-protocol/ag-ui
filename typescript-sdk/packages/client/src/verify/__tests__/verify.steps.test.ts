@@ -53,7 +53,7 @@ describe("verifyEvents steps", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     // Verify only events before the error were processed
-    expect(events.length).toBe(3);
+    expect(events.length).toBe(2);
     expect(events[1].type).toBe(EventType.STEP_STARTED);
   });
 
@@ -68,7 +68,7 @@ describe("verifyEvents steps", () => {
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
         expect(err.message).toContain(
-          `Cannot send 'STEP_FINISHED' for step "undefined" that was not started`,
+          `Cannot send 'STEP_FINISHED' for step "test-step" that was not started`,
         );
         subscription.unsubscribe();
       },
@@ -106,7 +106,7 @@ describe("verifyEvents steps", () => {
       next: (event) => events.push(event),
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain(`Step "undefined" is already active for 'STEP_STARTED'`);
+        expect(err.message).toContain(`Step "test-step" is already active for 'STEP_STARTED'`);
         subscription.unsubscribe();
       },
     });
