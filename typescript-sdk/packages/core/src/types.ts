@@ -39,9 +39,7 @@ export const UserMessageSchema = BaseMessageSchema.extend({
   content: z.string(),
 });
 
-export const ToolMessageSchema = z.object({
-  id: z.string(),
-  content: z.string(),
+export const ToolMessageSchema = BaseMessageSchema.extend({
   role: z.literal("tool"),
   toolCallId: z.string(),
 });
@@ -70,20 +68,20 @@ export const ContextSchema = z.object({
 export const ToolSchema = z.object({
   name: z.string(),
   description: z.string(),
-  parameters: z.any(), // JSON Schema for the tool parameters
+  parameters: z.any(), // Should be a JSON Schema object
 });
 
 export const RunAgentInputSchema = z.object({
   threadId: z.string(),
   runId: z.string(),
-  state: z.any(),
+  state: z.any(), // Arbitrary state object
   messages: z.array(MessageSchema),
   tools: z.array(ToolSchema),
   context: z.array(ContextSchema),
-  forwardedProps: z.any(),
+  forwardedProps: z.any(), // Arbitrary object for forwarding additional properties
 });
 
-export const StateSchema = z.any();
+export const StateSchema = z.any(); // Arbitrary state object
 
 export type ToolCall = z.infer<typeof ToolCallSchema>;
 export type FunctionCall = z.infer<typeof FunctionCallSchema>;
@@ -100,7 +98,11 @@ export type State = z.infer<typeof StateSchema>;
 export type Role = z.infer<typeof RoleSchema>;
 
 export class AGUIError extends Error {
-  constructor(message: string) {
+  code?: string;
+
+  constructor(message: string, code?: string) {
     super(message);
+    this.name = "AGUIError";
+    this.code = code;
   }
 }
