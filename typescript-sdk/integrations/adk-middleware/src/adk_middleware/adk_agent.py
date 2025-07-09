@@ -216,15 +216,17 @@ class ADKAgent:
         """
         thread_id = input.thread_id
         
+        # In ADK We will always send tool response in subsequent request with tha same session id so there is no need for this 
         # Check if this is a tool result submission
-        if self._is_tool_result_submission(input):
-            # Handle tool results for existing execution
-            async for event in self._handle_tool_result_submission(input):
-                yield event
-        else:
+        # if self._is_tool_result_submission(input):
+        #     # Handle tool results for existing execution
+        #     async for event in self._handle_tool_result_submission(input):
+        #         yield event
+        # else:
             # Start new execution
-            async for event in self._start_new_execution(input,agent_id):
-                yield event
+
+        async for event in self._start_new_execution(input,agent_id):
+            yield event
     
     async def _ensure_session_exists(self, app_name: str, user_id: str, session_id: str, initial_state: dict):
         """Ensure a session exists, creating it if necessary via session manager."""
@@ -287,32 +289,45 @@ class ADKAgent:
         """
         thread_id = input.thread_id
         
+        # Extract tool results first to check if this might be a LongRunningTool result
+        tool_results = self._extract_tool_results(input)
+        is_standalone_tool_result = False
+        
+        # Find execution state for handling the tool results
         async with self._execution_lock:
             execution = self._active_executions.get(thread_id)
+            
             if not execution:
-                logger.error(f"No active execution found for thread {thread_id}")
-                yield RunErrorEvent(
-                    type=EventType.RUN_ERROR,
-                    message="No active execution found for tool result",
-                    code="NO_ACTIVE_EXECUTION"
-                )
-                return
-        
-        try:
-            # Extract tool results
-            tool_results = self._extract_tool_results(input)
-            
-            # Resolve futures for each tool result
-            for tool_msg in tool_results:
-                tool_call_id = tool_msg.tool_call_id
-                result = json.loads(tool_msg.content)
+                logger.info(f"No active execution found for thread {thread_id} - might be from LongRunningTool")
                 
-                if not execution.resolve_tool_result(tool_call_id, result):
-                    logger.warning(f"No pending tool found for ID {tool_call_id}")
+                # Check if this is possibly a result from a LongRunningTool
+                # For LongRunningTools, we don't check for an active execution
+                if tool_results:
+                    is_standalone_tool_result = True
+                else:
+                    logger.error(f"No active execution found and no tool results present for thread {thread_id}")
+                    yield RunErrorEvent(
+                        type=EventType.RUN_ERROR,
+                        message="No active execution found for tool result",
+                        code="NO_ACTIVE_EXECUTION"
+                    )
+                    return
+        
+        try:                
             
-            # Continue streaming events from the execution
-            async for event in self._stream_events(execution):
-                yield event
+            if not is_standalone_tool_result:
+                # Normal execution with active state - resolve futures
+                # Resolve futures for each tool result
+                for tool_msg in tool_results:
+                    tool_call_id = tool_msg['message'].tool_call_id
+                    result = json.loads(tool_msg["message"].content)
+                    
+                    if not execution.resolve_tool_result(tool_call_id, result):
+                        logger.warning(f"No pending tool found for ID {tool_call_id}")
+                
+                # Continue streaming events from the execution
+                async for event in self._stream_events(execution):
+                    yield event
                 
         except Exception as e:
             logger.error(f"Error handling tool results: {e}", exc_info=True)
@@ -322,20 +337,34 @@ class ADKAgent:
                 code="TOOL_RESULT_ERROR"
             )
     
-    def _extract_tool_results(self, input: RunAgentInput) -> List[ToolMessage]:
-        """Extract tool messages from input.
+    def _extract_tool_results(self, input: RunAgentInput) -> List[Dict]:
+        """Extract tool messages with their names from input.
         
         Args:
             input: The run input
             
         Returns:
-            List of tool messages
+            List of dicts containing tool name and message
         """
-        tool_messages = []
+        tool_results = []
+        
+        # Create a mapping of tool_call_id to tool name
+        tool_call_map = {}
+        for message in input.messages:
+            if hasattr(message, 'tool_calls') and message.tool_calls:
+                for tool_call in message.tool_calls:
+                    tool_call_map[tool_call.id] = tool_call.function.name
+        
+        # Extract tool messages with their names
         for message in input.messages:
             if hasattr(message, 'role') and message.role == "tool":
-                tool_messages.append(message)
-        return tool_messages
+                tool_name = tool_call_map.get(message.tool_call_id, "unknown")
+                tool_results.append({
+                    'tool_name': tool_name,
+                    'message': message
+                })
+        
+        return tool_results
     
     async def _stream_events(
         self, 
@@ -549,8 +578,25 @@ class ADKAgent:
             )
             
             # Convert messages
+            # only use this new_message if there is no tool response from the user
             new_message = await self._convert_latest_message(input)
             
+            # if there is a tool response submission by the user then we need to only pass the tool response to the adk runner
+            if self._is_tool_result_submission(input):
+                tool_results = self._extract_tool_results(input)
+                parts = []
+                for tool_msg in tool_results:
+                    tool_call_id = tool_msg['message'].tool_call_id
+                    result = json.loads(tool_msg['message'].content)
+                    updated_function_response_part = types.Part(
+                    function_response=types.FunctionResponse(
+                        id= tool_call_id,
+                        name=tool_msg["tool_name"], 
+                        response=result,
+                    )
+                )
+                    parts.append(updated_function_response_part)
+                new_message=new_message=types.Content(parts= parts , role='user')
             # Create event translator
             event_translator = EventTranslator()
             

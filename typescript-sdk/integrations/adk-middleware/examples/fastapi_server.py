@@ -9,6 +9,7 @@ Note: Requires google.adk to be installed and configured.
 import uvicorn
 from fastapi import FastAPI
 from tool_based_generative_ui.agent import haiku_generator_agent
+from human_in_the_loop.agent import human_in_loop_agent
 
 # These imports will work once google.adk is available
 try:
@@ -32,6 +33,7 @@ try:
     # Register the agent
     registry.set_default_agent(sample_agent)
     registry.register_agent('adk-tool-based-generative-ui', haiku_generator_agent)
+    registry.register_agent('adk-human-in-loop-agent', human_in_loop_agent)
     # Create ADK middleware agent
     adk_agent = ADKAgent(
         app_name="demo_app",
@@ -47,12 +49,20 @@ try:
         use_in_memory_services=True
     )
     
+    adk_human_in_loop_agent = ADKAgent(
+        app_name="demo_app",
+        user_id="demo_user",
+        session_timeout_seconds=3600,
+        use_in_memory_services=True
+    )
+    
     # Create FastAPI app
     app = FastAPI(title="ADK Middleware Demo")
     
     # Add the ADK endpoint
     add_adk_fastapi_endpoint(app, adk_agent, path="/chat")
     add_adk_fastapi_endpoint(app, adk_agent_haiku_generator, path="/adk-tool-based-generative-ui")
+    add_adk_fastapi_endpoint(app, adk_human_in_loop_agent, path="/adk-human-in-loop-agent")
     
     @app.get("/")
     async def root():

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **CRITICAL**: Fixed handling of results from long-running tools where no active execution exists
+- **BEHAVIOR**: Added standalone tool result mode to properly process long-running tool results
+
 ### Enhanced
 - **TESTING**: Improved test coverage to 94% overall with comprehensive unit tests for previously untested modules
 
