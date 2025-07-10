@@ -21,6 +21,7 @@
                 "group": "Quickstart",
                 "pages": [
                   "quickstart/applications",
+                  "quickstart/clients",
                   {
                     "group": "Build integrations",
                     "pages": [

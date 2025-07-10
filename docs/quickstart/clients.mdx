@@ -1,5 +1,5 @@
 ---
-title: "Client"
+title: "Build clients"
 description:
   "Build a conversational CLI agent from scratch using AG-UI and Mastra"
 ---
@@ -127,7 +127,7 @@ pnpm add @ag-ui/client @ag-ui/core @ag-ui/mastra
 pnpm add @mastra/core @mastra/memory @mastra/libsql
 
 # AI SDK and utilities
-pnpm add @ai-sdk/openai
+pnpm add @ai-sdk/openai zod@^3.25
 ```
 
 ## Step 3 – Create your agent
@@ -304,14 +304,6 @@ Let's break down what happens when you send a message:
 Now that you have a working chat interface, let's add some real-world
 capabilities by creating tools. We'll start with a weather tool.
 
-### Install additional dependencies
-
-First, install the packages we need for tools:
-
-```bash
-pnpm add zod
-```
-
 ### Create your first tool
 
 Let's create a weather tool that your agent can use. Create the directory
@@ -445,36 +437,15 @@ function getWeatherCondition(code: number): string {
 Now let's update our agent to use the weather tool. Update `src/agent.ts`:
 
 ```typescript
-import { openai } from "@ai-sdk/openai"
-import { Agent } from "@mastra/core/agent"
-import { MastraAgent } from "@ag-ui/mastra"
-import { Memory } from "@mastra/memory"
-import { LibSQLStore } from "@mastra/libsql"
-import { weatherTool } from "./tools/weather.tool"
+import { weatherTool } from "./tools/weather.tool" // <--- Import the tool
 
 export const agent = new MastraAgent({
   agent: new Agent({
-    name: "AG-UI Assistant",
-    instructions: `
-      You are a helpful AI assistant with weather capabilities.
+    // ...
 
-      When helping users get weather details:
-      - Always ask for a location if none is provided
-      - If the location name isn't in English, translate it to English
-      - For locations with multiple parts (e.g. "New York, NY"), use the most specific part
-      - Include relevant details like temperature, humidity, wind conditions
-      - Keep responses conversational and informative
-      - Always use the weatherTool to fetch current weather data
+    tools: { weatherTool }, // <--- Add the tool to the agent
 
-      For other questions, be friendly and helpful!
-    `,
-    model: openai("gpt-4o"),
-    tools: { weatherTool },
-    memory: new Memory({
-      storage: new LibSQLStore({
-        url: "file:./assistant.db",
-      }),
-    }),
+    // ...
   }),
   threadId: "main-conversation",
 })
@@ -486,21 +457,27 @@ Update your CLI interface in `src/index.ts` to handle tool events:
 
 ```typescript
 // Add these new event handlers to your agent.runAgent call:
-              onToolCallStartEvent({ event }) {
-                console.log(`🔧 Using ${event.toolCallName}...`)
-              },
-              onToolCallArgsEvent({ event }) {
-                // Show tool arguments being built (optional)
-                process.stdout.write(event.delta)
-              },
-              onToolCallEndEvent() {
-                console.log("")
-              },
-              onToolCallResultEvent({ event }) {
-                if (event.content) {
-                  console.log("✅ Tool completed successfully")
-                }
-              },
+await agent.runAgent(
+  {}, // No additional configuration needed
+  {
+    // ... existing event handlers ...
+
+    onToolCallStartEvent({ event }) {
+      console.log("🔧 Tool call:", event.toolCallName)
+    },
+    onToolCallArgsEvent({ event }) {
+      process.stdout.write(event.delta)
+    },
+    onToolCallEndEvent() {
+      console.log("")
+    },
+    onToolCallResultEvent({ event }) {
+      if (event.content) {
+        console.log("🔍 Tool call result:", event.content)
+      }
+    },
+  }
+)
 ```
 
 ### Test your weather tool
@@ -610,7 +587,7 @@ me the weather website".
 
 ## Step 9 – Deploy your client
 
-### Build for production
+### Building your client
 
 Create a production build:
 
