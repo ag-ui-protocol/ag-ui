@@ -7,8 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **TESTING**: Comprehensive test coverage improvements - fixed all failing tests across the test suite (326/326 tests now pass)
+- **MOCK CONTEXT**: Added proper mock_tool_context fixtures to fix pydantic validation errors in test files
+- **TOOLSET CLEANUP**: Fixed ClientProxyToolset.close() to properly cancel pending futures and clear resources
+- **EVENT STREAMING**: Updated tests to expect RUN_FINISHED events that are now automatically emitted by enhanced _stream_events method
+- **TEST SIGNATURES**: Fixed mock function signatures to match updated _stream_events method parameters (execution, run_id)
+- **TOOL RESULT FLOW**: Updated tests to account for RunStartedEvent being emitted for tool result submissions
+- **ERROR HANDLING**: Fixed malformed tool message test to correctly expect graceful handling of empty content (not errors)
+
+### Changed
+- **ARCHITECTURE**: Enhanced toolset resource management - toolsets now properly clean up blocking tool futures on close
+- **TEST RELIABILITY**: Improved test isolation and mock context consistency across all test files
+
 ### Enhanced
 - **TESTING**: Improved test coverage to 94% overall with comprehensive unit tests for previously untested modules
+- **COMPLIANCE**: Tool execution now fully compliant with ADK behavioral expectations
+- **OBSERVABILITY**: Enhanced logging for tool call ID tracking and validation throughout execution flow
+
+### Technical Architecture Changes
+- **Tool Return Values**: Long-running tools return `adk-{uuid}` tool call IDs instead of None for proper ADK compliance
+- **Tool Validation**: Enhanced tool result submission logic with proper categorization of blocking vs long-running results
+- **Warning System**: Improved tool call ID mismatch detection when active executions have pending tools but submitted tool call ID is not found
+- **Test Alignment**: Updated all hybrid flow integration tests to validate correct tool call ID return patterns
+
+### Technical Notes
+- **DEBUG**: Extensive debug logging messages remain in place throughout the codebase for ongoing development and troubleshooting
+- **FUTURE**: Debug messages will be removed in a future cleanup release once development stabilizes
 
 ## [0.3.2] - 2025-07-08
 

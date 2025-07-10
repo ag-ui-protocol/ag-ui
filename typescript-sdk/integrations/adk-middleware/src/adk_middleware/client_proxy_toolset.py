@@ -30,7 +30,8 @@ class ClientProxyToolset(BaseToolset):
         tool_futures: Dict[str, asyncio.Future],
         tool_timeout_seconds: int = 300,
         is_long_running: bool = True,
-        tool_long_running_config: Optional[Dict[str, bool]] = None
+        tool_long_running_config: Optional[Dict[str, bool]] = None,
+        tool_names: Optional[Dict[str, str]] = None
     ):
         """Initialize the client proxy toolset.
         
@@ -44,6 +45,7 @@ class ClientProxyToolset(BaseToolset):
                                     Maps tool names to is_long_running values.
                                     Overrides default for specific tools.
                                     Example: {"calculator": False, "email": True}
+            tool_names: Optional dict to store tool names for long-running tools
         """
         super().__init__()
         self.ag_ui_tools = ag_ui_tools
@@ -52,6 +54,7 @@ class ClientProxyToolset(BaseToolset):
         self.tool_timeout_seconds = tool_timeout_seconds
         self.is_long_running = is_long_running
         self.tool_long_running_config = tool_long_running_config or {}
+        self.tool_names = tool_names
         
         # Cache of created proxy tools
         self._proxy_tools: Optional[List[BaseTool]] = None
@@ -91,7 +94,8 @@ class ClientProxyToolset(BaseToolset):
                         event_queue=self.event_queue,
                         tool_futures=self.tool_futures,
                         timeout_seconds=self.tool_timeout_seconds,
-                        is_long_running=tool_is_long_running
+                        is_long_running=tool_is_long_running,
+                        tool_names=self.tool_names
                     )
                     self._proxy_tools.append(proxy_tool)
                     logger.debug(f"Created proxy tool for '{ag_ui_tool.name}' (is_long_running={tool_is_long_running})")
@@ -105,18 +109,27 @@ class ClientProxyToolset(BaseToolset):
     async def close(self) -> None:
         """Clean up resources held by the toolset.
         
-        This cancels any pending tool executions.
+        Cancels any pending tool futures and clears the toolset cache.
+        This is called when execution completes to ensure proper cleanup.
+        
+        Note: Long-running tools don't create futures (fire-and-forget), so this
+        only affects blocking tools that may still be waiting for results.
         """
         logger.info("Closing ClientProxyToolset")
         
-        # Cancel any pending tool futures
-        for tool_call_id, future in self.tool_futures.items():
+        # Cancel any pending futures (blocking tools that didn't complete)
+        pending_count = 0
+        for tool_call_id, future in list(self.tool_futures.items()):
             if not future.done():
-                logger.warning(f"Cancelling pending tool execution: {tool_call_id}")
+                logger.debug(f"Cancelling pending tool future during close: {tool_call_id}")
                 future.cancel()
+                pending_count += 1
         
-        # Clear the futures dict
+        # Clear the futures dictionary
         self.tool_futures.clear()
+        
+        if pending_count > 0:
+            logger.debug(f"Cancelled {pending_count} pending tool futures during toolset close")
         
         # Clear cached tools
         self._proxy_tools = None

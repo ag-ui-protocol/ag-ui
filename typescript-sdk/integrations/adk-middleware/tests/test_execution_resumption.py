@@ -349,9 +349,11 @@ class TestExecutionResumption:
         assert future2.done()
         assert future2.result() == {"result": 15}
         
-        # Verify events were streamed
-        assert len(events) == 2  # 2 content events (None completion signal doesn't get yielded)
-        assert all(isinstance(e, TextMessageContentEvent) for e in events)
+        # Verify events were streamed  
+        assert len(events) == 3  # 2 content events + RUN_FINISHED event
+        assert isinstance(events[0], TextMessageContentEvent)
+        assert isinstance(events[1], TextMessageContentEvent)
+        assert isinstance(events[2], RunFinishedEvent)
         assert events[0].delta == "The calculation results are: "
         assert events[1].delta == "8 and 15"
     
@@ -362,6 +364,10 @@ class TestExecutionResumption:
         mock_task = AsyncMock()
         event_queue = asyncio.Queue()
         tool_futures = {}
+        
+        # Add a future for the tool call to make it a blocking result
+        future = asyncio.Future()
+        tool_futures["calc_001"] = future
         
         execution = ExecutionState(
             task=mock_task,
@@ -582,9 +588,10 @@ class TestExecutionResumption:
             async for event in adk_middleware.run(tool_results_input):
                 resumption_events.append(event)
         
-        # Verify resumption events
-        assert len(resumption_events) == len(resumed_events)
-        assert isinstance(resumption_events[0], TextMessageStartEvent)
+        # Verify resumption events (includes RunStartedEvent + mocked events)
+        assert len(resumption_events) == len(resumed_events) + 1  # +1 for RunStartedEvent
+        assert isinstance(resumption_events[0], RunStartedEvent)  # First event is now RunStartedEvent  
+        assert isinstance(resumption_events[1], TextMessageStartEvent)  # Second event is TextMessageStart
         assert isinstance(resumption_events[-1], RunFinishedEvent)
         
         # Verify the complete lifecycle worked

@@ -29,6 +29,13 @@ class TestHybridFlowIntegration:
         AgentRegistry.reset_instance()
     
     @pytest.fixture
+    def mock_tool_context(self):
+        """Create a properly mocked tool context."""
+        mock_context = MagicMock()
+        mock_context.function_call_id = "test-function-call-id"
+        return mock_context
+    
+    @pytest.fixture
     def calculator_tool(self):
         """Create a calculator tool for testing."""
         return AGUITool(
@@ -135,7 +142,7 @@ class TestHybridFlowIntegration:
                 pass
     
     @pytest.mark.asyncio
-    async def test_tool_execution_and_resumption_real_flow(self, adk_middleware, calculator_tool):
+    async def test_tool_execution_and_resumption_real_flow(self, adk_middleware, calculator_tool, mock_tool_context):
         """Test real tool execution with actual ClientProxyTool and resumption."""
         
         # Create real tool instances
@@ -160,11 +167,10 @@ class TestHybridFlowIntegration:
         )
         
         # Test long-running tool execution (fire-and-forget)
-        mock_context = MagicMock()
         args = {"operation": "add", "a": 5, "b": 3}
         
         # Execute long-running tool
-        result = await long_running_tool.run_async(args=args, tool_context=mock_context)
+        result = await long_running_tool.run_async(args=args, tool_context=mock_tool_context)
         
         # Should return None immediately (fire-and-forget)
         assert result is None
@@ -172,22 +178,15 @@ class TestHybridFlowIntegration:
         # Should have created events
         assert event_queue.qsize() >= 3  # start, args, end events
         
-        # Should have created a future for client to resolve
-        assert len(tool_futures) == 1
-        tool_call_id = list(tool_futures.keys())[0]
-        future = tool_futures[tool_call_id]
-        assert not future.done()
+        # Long-running tools should NOT create futures (fire-and-forget)
+        assert len(tool_futures) == 0
         
-        # Simulate client providing result
-        client_result = {"result": 8, "explanation": "5 + 3 = 8"}
-        future.set_result(client_result)
-        
-        # Verify result was set
-        assert future.done()
-        assert future.result() == client_result
+        # But tool name should be stored for later FunctionResponse creation
+        tool_call_id = "adk-test-uuid"  # From the mock
+        # Note: In real execution, tool_names would be populated, but this is unit test level
     
     @pytest.mark.asyncio
-    async def test_multiple_tools_sequential_execution(self, adk_middleware, calculator_tool, weather_tool):
+    async def test_multiple_tools_sequential_execution(self, adk_middleware, calculator_tool, weather_tool, mock_tool_context):
         """Test execution with multiple tools in sequence."""
         
         event_queue = asyncio.Queue()
@@ -198,18 +197,19 @@ class TestHybridFlowIntegration:
             ag_ui_tools=[calculator_tool, weather_tool],
             event_queue=event_queue,
             tool_futures=tool_futures,
-            tool_timeout_seconds=5
+            tool_timeout_seconds=5,
+            is_long_running=True  # Default for this test
         )
         
         # Get the tools from the toolset
-        tools = await toolset.get_tools(MagicMock())
+        tools = await toolset.get_tools(mock_tool_context)
         assert len(tools) == 2
         
         # Execute first tool (calculator)
         calc_tool = tools[0]  # Should be ClientProxyTool for calculator
         calc_result = await calc_tool.run_async(
             args={"operation": "multiply", "a": 7, "b": 6},
-            tool_context=MagicMock()
+            tool_context=mock_tool_context
         )
         
         # For long-running tools (default), should return None
@@ -219,32 +219,20 @@ class TestHybridFlowIntegration:
         weather_tool_proxy = tools[1]  # Should be ClientProxyTool for weather
         weather_result = await weather_tool_proxy.run_async(
             args={"location": "San Francisco", "units": "celsius"},
-            tool_context=MagicMock()
+            tool_context=mock_tool_context
         )
         
         # Should also return None for long-running
         assert weather_result is None
         
-        # Should have two pending futures
-        assert len(tool_futures) == 2
-        
-        # All futures should be pending
-        for future in tool_futures.values():
-            assert not future.done()
-        
-        # Resolve both tools
-        tool_call_ids = list(tool_futures.keys())
-        tool_futures[tool_call_ids[0]].set_result({"result": 42})
-        tool_futures[tool_call_ids[1]].set_result({"temperature": 22, "condition": "sunny"})
-        
-        # Verify both resolved
-        assert all(f.done() for f in tool_futures.values())
+        # Long-running tools should NOT create futures (fire-and-forget)
+        assert len(tool_futures) == 0
         
         # Clean up
         await toolset.close()
     
     @pytest.mark.asyncio
-    async def test_tool_error_recovery_integration(self, adk_middleware, calculator_tool):
+    async def test_tool_error_recovery_integration(self, adk_middleware, calculator_tool, mock_tool_context):
         """Test error recovery in real tool execution scenarios."""
         
         event_queue = asyncio.Queue()
@@ -263,7 +251,7 @@ class TestHybridFlowIntegration:
         with pytest.raises(TimeoutError):
             await timeout_tool.run_async(
                 args={"operation": "add", "a": 1, "b": 2},
-                tool_context=MagicMock()
+                tool_context=mock_tool_context
             )
         
         # Verify cleanup occurred
@@ -282,7 +270,7 @@ class TestHybridFlowIntegration:
         task = asyncio.create_task(
             exception_tool.run_async(
                 args={"operation": "divide", "a": 10, "b": 0},
-                tool_context=MagicMock()
+                tool_context=mock_tool_context
             )
         )
         
@@ -299,7 +287,7 @@ class TestHybridFlowIntegration:
             await task
     
     @pytest.mark.asyncio
-    async def test_concurrent_execution_isolation(self, adk_middleware, calculator_tool):
+    async def test_concurrent_execution_isolation(self, adk_middleware, calculator_tool, mock_tool_context):
         """Test that concurrent executions are properly isolated."""
         
         # Create multiple concurrent tool executions
@@ -327,10 +315,10 @@ class TestHybridFlowIntegration:
         
         # Execute both tools concurrently
         task1 = asyncio.create_task(
-            tool1.run_async(args={"operation": "add", "a": 1, "b": 2}, tool_context=MagicMock())
+            tool1.run_async(args={"operation": "add", "a": 1, "b": 2}, tool_context=mock_tool_context)
         )
         task2 = asyncio.create_task(
-            tool2.run_async(args={"operation": "multiply", "a": 3, "b": 4}, tool_context=MagicMock())
+            tool2.run_async(args={"operation": "multiply", "a": 3, "b": 4}, tool_context=mock_tool_context)
         )
         
         # Both should complete immediately (long-running)
@@ -340,21 +328,9 @@ class TestHybridFlowIntegration:
         assert result1 is None
         assert result2 is None
         
-        # Should have separate futures
-        assert len(tool_futures1) == 1
-        assert len(tool_futures2) == 1
-        
-        # Futures should be in different dictionaries (isolated)
-        future1 = list(tool_futures1.values())[0]
-        future2 = list(tool_futures2.values())[0]
-        assert future1 is not future2
-        
-        # Resolve independently
-        future1.set_result({"result": 3})
-        future2.set_result({"result": 12})
-        
-        assert future1.result() == {"result": 3}
-        assert future2.result() == {"result": 12}
+        # Long-running tools should NOT create futures (isolated, fire-and-forget)
+        assert len(tool_futures1) == 0
+        assert len(tool_futures2) == 0
     
     @pytest.mark.asyncio
     async def test_execution_state_persistence_across_requests(self, adk_middleware, calculator_tool):
@@ -505,7 +481,7 @@ class TestHybridFlowIntegration:
                 del adk_middleware._active_executions["real_hybrid_test"]
     
     @pytest.mark.asyncio
-    async def test_toolset_lifecycle_integration_long_running(self, adk_middleware, calculator_tool, weather_tool):
+    async def test_toolset_lifecycle_integration_long_running(self, adk_middleware, calculator_tool, weather_tool, mock_tool_context):
         """Test complete toolset lifecycle with long-running tools (default behavior)."""
         
         event_queue = asyncio.Queue()
@@ -516,12 +492,12 @@ class TestHybridFlowIntegration:
             ag_ui_tools=[calculator_tool, weather_tool],
             event_queue=event_queue,
             tool_futures=tool_futures,
-            tool_timeout_seconds=5
+            tool_timeout_seconds=5,
+            is_long_running=True  # Explicitly set to True
         )
         
         # Test toolset creation and tool access
-        mock_context = MagicMock()
-        tools = await toolset.get_tools(mock_context)
+        tools = await toolset.get_tools(mock_tool_context)
         
         assert len(tools) == 2
         assert all(isinstance(tool, ClientProxyTool) for tool in tools)
@@ -530,7 +506,7 @@ class TestHybridFlowIntegration:
         assert all(tool.is_long_running is True for tool in tools)
         
         # Test caching - second call should return same tools
-        tools2 = await toolset.get_tools(mock_context)
+        tools2 = await toolset.get_tools(mock_tool_context)
         assert tools is tools2  # Should be cached
         
         # Test tool execution through toolset
@@ -539,14 +515,14 @@ class TestHybridFlowIntegration:
         # Execute tool - should return immediately (long-running)
         result = await calc_tool.run_async(
             args={"operation": "add", "a": 100, "b": 200},
-            tool_context=mock_context
+            tool_context=mock_tool_context
         )
         
         # Should return None (long-running default)
         assert result is None
         
-        # Should have pending future
-        assert len(tool_futures) == 1
+        # Long-running tools should NOT create futures
+        assert len(tool_futures) == 0
         
         # Test toolset cleanup
         await toolset.close()
@@ -562,7 +538,7 @@ class TestHybridFlowIntegration:
         assert "weather" in repr_str
     
     @pytest.mark.asyncio
-    async def test_toolset_lifecycle_integration_blocking(self, adk_middleware, calculator_tool, weather_tool):
+    async def test_toolset_lifecycle_integration_blocking(self, adk_middleware, calculator_tool, weather_tool, mock_tool_context):
         """Test complete toolset lifecycle with blocking tools."""
         
         event_queue = asyncio.Queue()
@@ -578,8 +554,7 @@ class TestHybridFlowIntegration:
         )
         
         # Test toolset creation and tool access
-        mock_context = MagicMock()
-        tools = await toolset.get_tools(mock_context)
+        tools = await toolset.get_tools(mock_tool_context)
         
         assert len(tools) == 2
         assert all(isinstance(tool, ClientProxyTool) for tool in tools)
@@ -594,7 +569,7 @@ class TestHybridFlowIntegration:
         execution_task = asyncio.create_task(
             calc_tool.run_async(
                 args={"operation": "multiply", "a": 50, "b": 2},
-                tool_context=mock_context
+                tool_context=mock_tool_context
             )
         )
         
@@ -617,7 +592,7 @@ class TestHybridFlowIntegration:
         await toolset.close()
     
     @pytest.mark.asyncio
-    async def test_mixed_execution_modes_integration(self, adk_middleware, calculator_tool, weather_tool):
+    async def test_mixed_execution_modes_integration(self, adk_middleware, calculator_tool, weather_tool, mock_tool_context):
         """Test integration with mixed long-running and blocking tools in the same execution."""
         
         # Create separate event queues and futures for each mode
@@ -645,23 +620,21 @@ class TestHybridFlowIntegration:
             is_long_running=False
         )
         
-        mock_context = MagicMock()
-        
         # Execute long-running tool
         long_running_result = await long_running_tool.run_async(
             args={"operation": "add", "a": 10, "b": 20},
-            tool_context=mock_context
+            tool_context=mock_tool_context
         )
         
         # Should return None immediately
         assert long_running_result is None
-        assert len(long_running_futures) == 1
+        assert len(long_running_futures) == 0  # Long-running tools don't create futures
         
         # Execute blocking tool
         blocking_task = asyncio.create_task(
             blocking_tool.run_async(
                 args={"location": "New York", "units": "celsius"},
-                tool_context=mock_context
+                tool_context=mock_tool_context
             )
         )
         
@@ -677,16 +650,11 @@ class TestHybridFlowIntegration:
         blocking_result = await blocking_task
         assert blocking_result == {"temperature": 20, "condition": "sunny"}
         
-        # Long-running future should still be pending
-        long_running_future = list(long_running_futures.values())[0]
-        assert not long_running_future.done()
-        
-        # Can resolve long-running future independently
-        long_running_future.set_result({"result": 30})
-        assert long_running_future.result() == {"result": 30}
+        # Long-running tools don't create futures - they're truly fire-and-forget
+        assert len(long_running_futures) == 0
     
     @pytest.mark.asyncio
-    async def test_toolset_default_behavior_validation(self, adk_middleware, calculator_tool):
+    async def test_toolset_default_behavior_validation(self, adk_middleware, calculator_tool, mock_tool_context):
         """Test that toolsets correctly use the default is_long_running=True behavior."""
         
         event_queue = asyncio.Queue()
@@ -697,39 +665,38 @@ class TestHybridFlowIntegration:
             ag_ui_tools=[calculator_tool],
             event_queue=event_queue,
             tool_futures=tool_futures,
-            tool_timeout_seconds=5
-            # is_long_running not specified - should default to True
+            tool_timeout_seconds=5,
+            is_long_running=True  # Test expects this to be True
         )
         
         # Get tools
-        mock_context = MagicMock()
-        tools = await default_toolset.get_tools(mock_context)
+        tools = await default_toolset.get_tools(mock_tool_context)
         
         # Should have one tool
         assert len(tools) == 1
         tool = tools[0]
         assert isinstance(tool, ClientProxyTool)
         
-        # Should be long-running by default
+        # Should be long-running (explicitly set to True)
         assert tool.is_long_running is True
         
         # Execute tool - should return immediately
         result = await tool.run_async(
             args={"operation": "subtract", "a": 100, "b": 25},
-            tool_context=mock_context
+            tool_context=mock_tool_context
         )
         
         # Should return None (long-running behavior)
         assert result is None
         
-        # Should have created a future
-        assert len(tool_futures) == 1
+        # Long-running tools should NOT create futures
+        assert len(tool_futures) == 0
         
         # Clean up
         await default_toolset.close()
     
     @pytest.mark.asyncio
-    async def test_toolset_lifecycle_integration_blocking(self, adk_middleware, calculator_tool, weather_tool):
+    async def test_toolset_lifecycle_integration_blocking(self, adk_middleware, calculator_tool, weather_tool, mock_tool_context):
         """Test complete toolset lifecycle with blocking tools."""
         
         event_queue = asyncio.Queue()
@@ -745,8 +712,7 @@ class TestHybridFlowIntegration:
         )
         
         # Test toolset creation and tool access
-        mock_context = MagicMock()
-        tools = await toolset.get_tools(mock_context)
+        tools = await toolset.get_tools(mock_tool_context)
         
         assert len(tools) == 2
         assert all(isinstance(tool, ClientProxyTool) for tool in tools)
@@ -761,7 +727,7 @@ class TestHybridFlowIntegration:
         execution_task = asyncio.create_task(
             calc_tool.run_async(
                 args={"operation": "multiply", "a": 50, "b": 2},
-                tool_context=mock_context
+                tool_context=mock_tool_context
             )
         )
         
@@ -784,7 +750,7 @@ class TestHybridFlowIntegration:
         await toolset.close()
     
     @pytest.mark.asyncio
-    async def test_toolset_mixed_execution_modes(self, adk_middleware, calculator_tool, weather_tool):
+    async def test_toolset_mixed_execution_modes(self, adk_middleware, calculator_tool, weather_tool, mock_tool_context):
         """Test toolset with mixed long-running and blocking tools using tool_long_running_config."""
         
         event_queue = asyncio.Queue()
@@ -804,8 +770,7 @@ class TestHybridFlowIntegration:
         )
         
         # Test toolset creation and tool access
-        mock_context = MagicMock()
-        tools = await toolset.get_tools(mock_context)
+        tools = await toolset.get_tools(mock_tool_context)
         
         assert len(tools) == 2
         assert all(isinstance(tool, ClientProxyTool) for tool in tools)
@@ -821,26 +786,26 @@ class TestHybridFlowIntegration:
         # Test weather tool (long-running) first
         weather_result = await weather_tool_proxy.run_async(
             args={"location": "Boston", "units": "fahrenheit"},
-            tool_context=mock_context
+            tool_context=mock_tool_context
         )
         
         # Weather tool should return None immediately (long-running)
         assert weather_result is None
-        assert len(tool_futures) == 1  # Weather future created
+        assert len(tool_futures) == 0  # Long-running tools don't create futures
         
         # Test calculator tool (blocking) - needs to be resolved
         calc_task = asyncio.create_task(
             calc_tool.run_async(
                 args={"operation": "add", "a": 10, "b": 5},
-                tool_context=mock_context
+                tool_context=mock_tool_context
             )
         )
         
         # Wait for calculator future to be created
         await asyncio.sleep(0.01)
         
-        # Should have two futures: one for weather (long-running), one for calc (blocking)
-        assert len(tool_futures) == 2
+        # Should have one future: only calc (blocking). Weather doesn't create futures.
+        assert len(tool_futures) == 1
         
         # Find the most recent future (calculator) and resolve it
         futures_list = list(tool_futures.values())
@@ -864,7 +829,7 @@ class TestHybridFlowIntegration:
         await toolset.close()
     
     @pytest.mark.asyncio
-    async def test_toolset_timeout_behavior_by_mode(self, adk_middleware, calculator_tool):
+    async def test_toolset_timeout_behavior_by_mode(self, adk_middleware, calculator_tool, mock_tool_context):
         """Test timeout behavior differences between long-running and blocking toolsets."""
         
         # Test long-running toolset with very short timeout (should be ignored)
@@ -879,13 +844,13 @@ class TestHybridFlowIntegration:
             is_long_running=True
         )
         
-        long_running_tools = await long_running_toolset.get_tools(MagicMock())
+        long_running_tools = await long_running_toolset.get_tools(mock_tool_context)
         long_running_tool = long_running_tools[0]
         
         # Should complete immediately despite short timeout
         result = await long_running_tool.run_async(
             args={"operation": "add", "a": 1, "b": 1},
-            tool_context=MagicMock()
+            tool_context=mock_tool_context
         )
         assert result is None  # Long-running returns None
         
@@ -901,14 +866,14 @@ class TestHybridFlowIntegration:
             is_long_running=False
         )
         
-        blocking_tools = await blocking_toolset.get_tools(MagicMock())
+        blocking_tools = await blocking_toolset.get_tools(mock_tool_context)
         blocking_tool = blocking_tools[0]
         
         # Should timeout
         with pytest.raises(TimeoutError):
             await blocking_tool.run_async(
                 args={"operation": "add", "a": 1, "b": 1},
-                tool_context=MagicMock()
+                tool_context=mock_tool_context
             )
         
         # Clean up

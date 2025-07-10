@@ -6,9 +6,31 @@ This example shows how to use the ADK middleware with FastAPI.
 Note: Requires google.adk to be installed and configured.
 """
 
+import logging
 import uvicorn
 from fastapi import FastAPI
-from tool_based_generative_ui.agent import haiku_generator_agent
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# Also ensure the adk_middleware loggers are set to DEBUG level for comprehensive logging
+logging.getLogger('adk_middleware').setLevel(logging.DEBUG)
+logging.getLogger('adk_middleware.endpoint').setLevel(logging.DEBUG)
+logging.getLogger('adk_middleware.adk_agent').setLevel(logging.DEBUG)
+logging.getLogger('adk_middleware.agent_registry').setLevel(logging.DEBUG)
+
+print("DEBUG: Starting FastAPI server imports...")
+
+try:
+    from tool_based_generative_ui.agent import haiku_generator_agent
+    print("DEBUG: Successfully imported haiku_generator_agent")
+except Exception as e:
+    print(f"DEBUG: ERROR importing haiku_generator_agent: {e}")
+    print("DEBUG: Setting haiku_generator_agent to None")
+    haiku_generator_agent = None
 
 # These imports will work once google.adk is available
 try:
@@ -30,8 +52,32 @@ try:
     )
     
     # Register the agent
+    print("DEBUG: Registering default agent...")
     registry.set_default_agent(sample_agent)
-    registry.register_agent('adk-tool-based-generative-ui', haiku_generator_agent)
+    
+    if haiku_generator_agent is not None:
+        print("DEBUG: Attempting to register haiku_generator_agent...")
+        print(f"DEBUG: haiku_generator_agent type: {type(haiku_generator_agent)}")
+        print(f"DEBUG: haiku_generator_agent name: {getattr(haiku_generator_agent, 'name', 'NO NAME')}")
+        print(f"DEBUG: haiku_generator_agent has tools: {hasattr(haiku_generator_agent, 'tools')}")
+        if hasattr(haiku_generator_agent, 'tools'):
+            print(f"DEBUG: haiku_generator_agent tools: {haiku_generator_agent.tools}")
+        registry.register_agent('adk-tool-based-generative-ui', haiku_generator_agent)
+        print("DEBUG: Successfully registered haiku_generator_agent")
+    else:
+        print("DEBUG: WARNING - haiku_generator_agent is None, skipping registration")
+    
+    # Verify registration
+    print("\nDEBUG: Listing all registered agents:")
+    for agent_id in registry.list_registered_agents():
+        print(f"  - {agent_id}")
+    
+    print("\nDEBUG: Testing agent retrieval:")
+    try:
+        test_agent = registry.get_agent('adk-tool-based-generative-ui')
+        print(f"  - Successfully retrieved agent: {test_agent}")
+    except Exception as e:
+        print(f"  - ERROR retrieving agent: {e}")
     # Create ADK middleware agent
     adk_agent = ADKAgent(
         app_name="demo_app",

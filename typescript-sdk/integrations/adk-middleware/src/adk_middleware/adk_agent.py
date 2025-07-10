@@ -216,12 +216,27 @@ class ADKAgent:
         """
         thread_id = input.thread_id
         
+        # Enhanced debug logging for run entry
+        print(f"🔍 RUN ENTRY: thread_id={thread_id}, run_id={input.run_id}")
+        print(f"🔍 RUN ENTRY: {len(input.messages)} messages in input")
+        print(f"🔍 RUN ENTRY: Tools provided: {len(input.tools) if input.tools else 0}")
+        
         # Check if this is a tool result submission
         if self._is_tool_result_submission(input):
+            print(f"🔍 RUN ENTRY: Detected as tool result submission")
+            
+            # Send RUN_STARTED event (required by AG-UI protocol)
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=input.thread_id,
+                run_id=input.run_id
+            )
+            
             # Handle tool results for existing execution
             async for event in self._handle_tool_result_submission(input):
                 yield event
         else:
+            print(f"🔍 RUN ENTRY: Detected as new execution")
             # Start new execution
             async for event in self._start_new_execution(input,agent_id):
                 yield event
@@ -243,17 +258,81 @@ class ADKAgent:
             raise
 
     async def _convert_latest_message(self, input: RunAgentInput) -> Optional[types.Content]:
-        """Convert the latest user message to ADK Content format."""
+        """Convert the latest AG-UI message to ADK Content format.
+        
+        Handles both regular user messages and tool result messages for long-running tools.
+        """
         if not input.messages:
             return None
         
-        # Get the latest user message
-        for message in reversed(input.messages):
-            if message.role == "user" and message.content:
-                return types.Content(
-                    role="user",
-                    parts=[types.Part(text=message.content)]
-                )
+        # Get the latest message
+        latest_message = input.messages[-1]
+        
+        # Debug output that will definitely show
+        print(f"🔍 CONVERT DEBUG: Converting latest message - role: {getattr(latest_message, 'role', 'NO_ROLE')}")
+        print(f"🔍 CONVERT DEBUG: Message type: {type(latest_message)}")
+        print(f"🔍 CONVERT DEBUG: Total messages: {len(input.messages)}")
+        print(f"🔍 CONVERT DEBUG: Thread ID: {input.thread_id}")
+        if hasattr(latest_message, 'content'):
+            print(f"🔍 CONVERT DEBUG: Content: {repr(latest_message.content)}")
+        if hasattr(latest_message, 'tool_call_id'):
+            print(f"🔍 CONVERT DEBUG: Tool call ID: {latest_message.tool_call_id}")
+        
+        # Debug: Show ALL messages in the input
+        print(f"🔍 ALL MESSAGES DEBUG: Showing all {len(input.messages)} messages:")
+        for i, msg in enumerate(input.messages):
+            msg_role = getattr(msg, 'role', 'NO_ROLE')
+            msg_type = type(msg).__name__
+            msg_content = getattr(msg, 'content', 'NO_CONTENT')
+            msg_content_preview = repr(msg_content)[:100] if msg_content else 'None'
+            print(f"🔍   Message {i}: {msg_type} - role={msg_role}, content={msg_content_preview}")
+            if hasattr(msg, 'tool_call_id'):
+                print(f"🔍   Message {i}: tool_call_id={msg.tool_call_id}")
+        
+        # Handle tool messages (for long-running tool results)
+        if hasattr(latest_message, 'role') and latest_message.role == "tool":
+            # Debug logging
+            logger.debug(f"Processing tool message: {latest_message}")
+            logger.debug(f"Tool message content: {repr(latest_message.content)}")
+            logger.debug(f"Tool message type: {type(latest_message)}")
+            
+            # Convert ToolMessage to FunctionResponse content
+            if latest_message.content is None or latest_message.content == "":
+                # Handle empty/null content
+                content = None
+            elif isinstance(latest_message.content, str):
+                # Try to parse JSON content
+                try:
+                    content = json.loads(latest_message.content)
+                except json.JSONDecodeError:
+                    # If JSON parsing fails, use the string as-is
+                    content = latest_message.content
+            else:
+                # Content is already parsed (dict, etc.)
+                content = latest_message.content
+            
+            # Get the resolved tool name if available
+            tool_name = latest_message.tool_call_id  # fallback to tool_call_id
+            if hasattr(input, '_resolved_tool_name') and input._resolved_tool_name:
+                tool_name = input._resolved_tool_name
+            
+            return types.Content(
+                role="user",  # Tool results are sent as user messages to ADK
+                parts=[types.Part(
+                    function_response=types.FunctionResponse(
+                        id=latest_message.tool_call_id,
+                        name=tool_name,  # Use resolved tool name
+                        response=content
+                    )
+                )]
+            )
+        
+        # Handle regular user messages
+        elif hasattr(latest_message, 'role') and latest_message.role == "user" and latest_message.content:
+            return types.Content(
+                role="user",
+                parts=[types.Part(text=latest_message.content)]
+            )
         
         return None
     
@@ -268,59 +347,153 @@ class ADKAgent:
             True if the last message is a tool result
         """
         if not input.messages:
+            print(f"🔍 TOOL_RESULT_CHECK: No messages in input")
             return False
         
         last_message = input.messages[-1]
-        return hasattr(last_message, 'role') and last_message.role == "tool"
+        is_tool_result = hasattr(last_message, 'role') and last_message.role == "tool"
+        print(f"🔍 TOOL_RESULT_CHECK: Last message role: {getattr(last_message, 'role', 'NO_ROLE')}")
+        print(f"🔍 TOOL_RESULT_CHECK: Is tool result submission: {is_tool_result}")
+        return is_tool_result
     
     async def _handle_tool_result_submission(
         self, 
         input: RunAgentInput
     ) -> AsyncGenerator[BaseEvent, None]:
-        """Handle tool result submission for existing execution.
+        """Handle tool result submission for blocking or long-running tools.
+        
+        For blocking tools (future exists): Resolve the future and continue execution
+        For long-running tools (no future): Start a new run with FunctionResponse
         
         Args:
             input: The run input containing tool results
             
         Yields:
-            AG-UI events from continued execution
+            AG-UI events from continued or new execution
         """
         thread_id = input.thread_id
         
+        # Extract tool results
+        tool_results = self._extract_tool_results(input)
+        if not tool_results:
+            logger.error("No tool results found in input")
+            yield RunErrorEvent(
+                type=EventType.RUN_ERROR,
+                message="No tool results found",
+                code="NO_TOOL_RESULTS"
+            )
+            return
+        
+        # Check if we have an active execution with pending futures
+        execution = None
         async with self._execution_lock:
             execution = self._active_executions.get(thread_id)
-            if not execution:
-                logger.error(f"No active execution found for thread {thread_id}")
+            
+        # Separate tool results into blocking (have futures) and long-running (no futures)
+        blocking_results = []
+        long_running_results = []
+        
+        for tool_msg in tool_results:
+            tool_call_id = tool_msg.tool_call_id
+            
+            # Check if this tool has a pending future
+            if execution and tool_call_id in execution.tool_futures:
+                blocking_results.append(tool_msg)
+            elif execution and execution.tool_futures:
+                # We have an active execution with pending tools, but this tool_call_id is not found
+                # This should be treated as an error, not a long-running result
+                logger.warning(f"No pending tool found for ID {tool_call_id}")
+                long_running_results.append(tool_msg)  # Still add to long_running for processing
+            else:
+                long_running_results.append(tool_msg)
+        
+        logger.debug(f"TOOL DEBUG: {len(blocking_results)} blocking results, {len(long_running_results)} long-running results")
+        
+        # Handle blocking tool results (resolve futures)
+        if blocking_results and execution:
+            try:
+                for tool_msg in blocking_results:
+                    tool_call_id = tool_msg.tool_call_id
+                    
+                    # Handle tool result content properly
+                    if tool_msg.content is None or tool_msg.content == "":
+                        # Handle empty/null content
+                        result = None
+                    elif isinstance(tool_msg.content, str):
+                        # Try to parse JSON content
+                        try:
+                            result = json.loads(tool_msg.content)
+                        except json.JSONDecodeError as json_error:
+                            logger.error(f"Invalid JSON in tool result for {tool_call_id}: {json_error}")
+                            yield RunErrorEvent(
+                                type=EventType.RUN_ERROR,
+                                message=f"Invalid JSON in tool result: {str(json_error)}",
+                                code="TOOL_RESULT_ERROR"
+                            )
+                            return
+                    else:
+                        # Content is already parsed (dict, etc.)
+                        result = tool_msg.content
+                    
+                    logger.debug(f"TOOL DEBUG: Resolving blocking tool result for {tool_call_id}")
+                    if not execution.resolve_tool_result(tool_call_id, result):
+                        logger.warning(f"TOOL DEBUG: Failed to resolve tool future for {tool_call_id}")
+                    else:
+                        logger.debug(f"TOOL DEBUG: Successfully resolved tool result for {tool_call_id}")
+                
+                # Continue streaming events from the existing execution
+                if not long_running_results:  # Only stream if we don't have long-running results to process
+                    async for event in self._stream_events(execution, input.run_id):
+                        yield event
+                        
+            except Exception as e:
+                logger.error(f"Error handling blocking tool results: {e}", exc_info=True)
                 yield RunErrorEvent(
                     type=EventType.RUN_ERROR,
-                    message="No active execution found for tool result",
-                    code="NO_ACTIVE_EXECUTION"
+                    message=str(e),
+                    code="BLOCKING_TOOL_ERROR"
                 )
                 return
         
-        try:
-            # Extract tool results
-            tool_results = self._extract_tool_results(input)
+        # Handle long-running tool results (start new run)
+        if long_running_results:
+            # Check if we have no active execution - this means all tool results are orphaned
+            if not execution:
+                logger.error(f"No active execution found for thread {thread_id} with tool results")
+                yield RunErrorEvent(
+                    type=EventType.RUN_ERROR,
+                    message="No active execution found for tool results",
+                    code="NO_ACTIVE_EXECUTION"
+                )
+                return
             
-            # Resolve futures for each tool result
-            for tool_msg in tool_results:
-                tool_call_id = tool_msg.tool_call_id
-                result = json.loads(tool_msg.content)
+            try:
+                # Look up and resolve tool name for the long-running tool
+                resolved_tool_name = None
+                if execution and execution.tool_names:
+                    # Assume single tool result (typical case)
+                    tool_call_id = long_running_results[0].tool_call_id
+                    resolved_tool_name = execution.tool_names.get(tool_call_id)
+                    logger.debug(f"Resolved tool name for {tool_call_id}: {resolved_tool_name}")
+                    
+                    # Remove the tool name since we're processing it now
+                    execution.tool_names.pop(tool_call_id, None)
                 
-                if not execution.resolve_tool_result(tool_call_id, result):
-                    logger.warning(f"No pending tool found for ID {tool_call_id}")
-            
-            # Continue streaming events from the execution
-            async for event in self._stream_events(execution):
-                yield event
+                # Store the resolved tool name on the input for _convert_latest_message
+                input._resolved_tool_name = resolved_tool_name
                 
-        except Exception as e:
-            logger.error(f"Error handling tool results: {e}", exc_info=True)
-            yield RunErrorEvent(
-                type=EventType.RUN_ERROR,
-                message=str(e),
-                code="TOOL_RESULT_ERROR"
-            )
+                # Start a new execution - _convert_latest_message will handle the ToolMessage conversion
+                logger.info(f"Starting new run for long-running tool results on thread {thread_id}")
+                async for event in self._start_new_execution(input):
+                    yield event
+                    
+            except Exception as e:
+                logger.error(f"Error handling long-running tool results: {e}", exc_info=True)
+                yield RunErrorEvent(
+                    type=EventType.RUN_ERROR,
+                    message=str(e),
+                    code="LONG_RUNNING_TOOL_ERROR"
+                )
     
     def _extract_tool_results(self, input: RunAgentInput) -> List[ToolMessage]:
         """Extract tool messages from input.
@@ -339,16 +512,23 @@ class ADKAgent:
     
     async def _stream_events(
         self, 
-        execution: ExecutionState
+        execution: ExecutionState,
+        run_id: Optional[str] = None
     ) -> AsyncGenerator[BaseEvent, None]:
         """Stream events from execution queue.
         
+        Enhanced to detect tool events and emit RUN_FINISHED immediately after TOOL_CALL_END
+        to satisfy AG-UI protocol requirements.
+        
         Args:
             execution: The execution state
+            run_id: The run ID for the current request (optional)
             
         Yields:
             AG-UI events from the queue
         """
+        tool_call_active = False
+        
         while True:
             try:
                 # Wait for event with timeout
@@ -358,11 +538,35 @@ class ADKAgent:
                 )
                 
                 if event is None:
-                    # Execution complete
+                    # Execution complete - emit final RUN_FINISHED
+                    logger.debug(f"EXEC DEBUG: Marking execution complete for thread {execution.thread_id}")
                     execution.is_complete = True
+                    
+                    # Send final RUN_FINISHED event
+                    yield RunFinishedEvent(
+                        type=EventType.RUN_FINISHED,
+                        thread_id=execution.thread_id,
+                        run_id=run_id or execution.thread_id  # Use run_id if provided, otherwise thread_id
+                    )
                     break
                 
+                # Track tool call events
+                if event.type == EventType.TOOL_CALL_START:
+                    tool_call_active = True
+                    logger.debug(f"Tool call started: {event.tool_call_id}")
+                
                 yield event
+                
+                # Check if we just emitted TOOL_CALL_END
+                if event.type == EventType.TOOL_CALL_END:
+                    tool_call_active = False
+                    logger.debug(f"Tool call ended: {event.tool_call_id}")
+                    
+                    # Always stop streaming after tool events to send RUN_FINISHED
+                    # This satisfies the AG-UI protocol requirement
+                    logger.info("Tool call completed - stopping event stream to send RUN_FINISHED")
+                    execution.is_streaming_paused = True
+                    break
                 
             except asyncio.TimeoutError:
                 # Check if execution is stale
@@ -421,7 +625,7 @@ class ADKAgent:
                 self._active_executions[input.thread_id] = execution
             
             # Stream events
-            async for event in self._stream_events(execution):
+            async for event in self._stream_events(execution, input.run_id):
                 yield event
             
             # Emit RUN_FINISHED
@@ -443,8 +647,18 @@ class ADKAgent:
             async with self._execution_lock:
                 if input.thread_id in self._active_executions:
                     execution = self._active_executions[input.thread_id]
+                    logger.debug(f"EXEC DEBUG: Cleanup check for thread {input.thread_id}")
+                    logger.debug(f"EXEC DEBUG: execution.is_complete = {execution.is_complete}")
+                    logger.debug(f"EXEC DEBUG: execution.has_pending_tools() = {execution.has_pending_tools()}")
+                    logger.debug(f"EXEC DEBUG: pending tool futures: {list(execution.tool_futures.keys())}")
+                    
                     if execution.is_complete and not execution.has_pending_tools():
+                        logger.debug(f"EXEC DEBUG: Removing execution for thread {input.thread_id} - complete and no pending tools")
                         del self._active_executions[input.thread_id]
+                    else:
+                        logger.debug(f"EXEC DEBUG: Keeping execution for thread {input.thread_id} - {'incomplete' if not execution.is_complete else 'has pending tools'}")
+                else:
+                    logger.debug(f"EXEC DEBUG: Thread {input.thread_id} not in active executions")
     
     async def _start_background_execution(
         self, 
@@ -466,9 +680,28 @@ class ADKAgent:
         user_id = self._get_user_id(input)
         app_name = self._get_app_name(input)
         
+        logger.debug(f"DEBUG: Starting background execution with agent_id: {agent_id}")
+        
         # Get the ADK agent
         registry = AgentRegistry.get_instance()
-        adk_agent = registry.get_agent(agent_id)
+        
+        logger.debug(f"DEBUG: Available agents in registry: {registry.list_registered_agents()}")
+        logger.debug(f"DEBUG: Has default agent: {registry._default_agent is not None}")
+        
+        try:
+            adk_agent = registry.get_agent(agent_id)
+            logger.debug(f"DEBUG: Successfully retrieved agent: {adk_agent}")
+        except Exception as e:
+            logger.error(f"DEBUG: Failed to get agent '{agent_id}': {e}")
+            raise
+        
+        # Create execution state first to get tool_names reference
+        execution_state = ExecutionState(
+            task=None,  # Will be set after creating the task
+            thread_id=input.thread_id,
+            event_queue=event_queue,
+            tool_futures=tool_futures
+        )
         
         # Create dynamic toolset if tools provided
         toolset = None
@@ -477,7 +710,8 @@ class ADKAgent:
                 ag_ui_tools=input.tools,
                 event_queue=event_queue,
                 tool_futures=tool_futures,
-                tool_timeout_seconds=self._tool_timeout
+                tool_timeout_seconds=self._tool_timeout,
+                tool_names=execution_state.tool_names
             )
         
         # Create background task
@@ -492,12 +726,10 @@ class ADKAgent:
             )
         )
         
-        return ExecutionState(
-            task=task,
-            thread_id=input.thread_id,
-            event_queue=event_queue,
-            tool_futures=tool_futures
-        )
+        # Set the task on the execution state
+        execution_state.task = task
+        
+        return execution_state
     
     async def _run_adk_in_background(
         self,
@@ -554,6 +786,30 @@ class ADKAgent:
             # Create event translator
             event_translator = EventTranslator()
             
+            # Debug: Check session events before running ADK
+            try:
+                # Get session using the session manager's method
+                adk_session = await self._session_manager.get_or_create_session(
+                    session_id=input.thread_id,
+                    app_name=app_name,
+                    user_id=user_id,
+                    initial_state={}
+                )
+                if adk_session and hasattr(adk_session, 'events'):
+                    logger.debug(f"SESSION DEBUG: Found {len(adk_session.events)} events in session {input.thread_id}")
+                    for i, event in enumerate(adk_session.events[-5:]):  # Show last 5 events
+                        logger.debug(f"SESSION DEBUG: Event {i}: author={event.author}, content_parts={len(event.content.parts) if event.content else 0}")
+                        if event.content and event.content.parts:
+                            for j, part in enumerate(event.content.parts):
+                                if hasattr(part, 'function_call') and part.function_call:
+                                    logger.debug(f"SESSION DEBUG:   Part {j}: FunctionCall(id={part.function_call.id}, name={part.function_call.name})")
+                                elif hasattr(part, 'function_response') and part.function_response:
+                                    logger.debug(f"SESSION DEBUG:   Part {j}: FunctionResponse(id={part.function_response.id}, name={part.function_response.name})")
+                                elif hasattr(part, 'text') and part.text:
+                                    logger.debug(f"SESSION DEBUG:   Part {j}: Text('{part.text[:50]}...')")
+            except Exception as e:
+                logger.debug(f"SESSION DEBUG: Failed to get session: {e}")
+            
             # Run ADK agent
             async for adk_event in runner.run_async(
                 user_id=user_id,
@@ -576,6 +832,7 @@ class ADKAgent:
                 await event_queue.put(ag_ui_event)
             
             # Signal completion
+            logger.debug(f"EXEC DEBUG: Background execution completing for thread {input.thread_id}")
             await event_queue.put(None)
             
         except Exception as e:

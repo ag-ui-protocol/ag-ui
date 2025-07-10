@@ -39,8 +39,10 @@ class ExecutionState:
         self.thread_id = thread_id
         self.event_queue = event_queue
         self.tool_futures = tool_futures
+        self.tool_names = {}  # Separate dict for tool names
         self.start_time = time.time()
         self.is_complete = False
+        self.is_streaming_paused = False  # Used for blocking tools to pause event streaming
         
         logger.debug(f"Created execution state for thread {thread_id}")
     
@@ -59,9 +61,17 @@ class ExecutionState:
         """Check if there are pending tool executions.
         
         Returns:
-            True if any tool futures are not done
+            True if any tool futures are not done OR there are pending long-running tools
         """
-        return any(not future.done() for future in self.tool_futures.values())
+        return any(not future.done() for future in self.tool_futures.values()) or self.has_pending_long_running_tools()
+    
+    def has_pending_long_running_tools(self) -> bool:
+        """Check if there are pending long-running tool results.
+        
+        Returns:
+            True if there are tool names waiting for results
+        """
+        return bool(self.tool_names)
     
     def resolve_tool_result(self, tool_call_id: str, result: Any) -> bool:
         """Resolve a tool execution future with the provided result.
@@ -74,17 +84,24 @@ class ExecutionState:
             True if the future was found and resolved, False otherwise
         """
         future = self.tool_futures.get(tool_call_id)
+        logger.debug(f"FUTURE DEBUG: Looking for tool future {tool_call_id}")
+        logger.debug(f"FUTURE DEBUG: Available futures: {list(self.tool_futures.keys())}")
+        
         if future and not future.done():
             try:
+                logger.debug(f"FUTURE DEBUG: Setting result for {tool_call_id}")
                 future.set_result(result)
-                logger.debug(f"Resolved tool future for {tool_call_id}")
+                logger.debug(f"FUTURE DEBUG: Successfully resolved tool future for {tool_call_id}")
                 return True
             except Exception as e:
-                logger.error(f"Error resolving tool future {tool_call_id}: {e}")
+                logger.error(f"FUTURE DEBUG: Error resolving tool future {tool_call_id}: {e}")
                 future.set_exception(e)
                 return True
+        elif future and future.done():
+            logger.debug(f"FUTURE DEBUG: Tool future {tool_call_id} already done")
+            return False
         
-        logger.warning(f"No pending tool future found for {tool_call_id}")
+        logger.warning(f"FUTURE DEBUG: No pending tool future found for {tool_call_id}")
         return False
     
     async def cancel(self):
