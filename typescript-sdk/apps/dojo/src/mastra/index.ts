@@ -2,10 +2,24 @@ import { openai } from "@ai-sdk/openai";
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { LibSQLStore } from "@mastra/libsql";
+import { DynamoDBStore } from "@mastra/dynamodb";
+
 import { Mastra } from "@mastra/core";
 import { z } from "zod";
 
-// import { weatherTool } from "../tools/weather-tool";
+
+let storage: LibSQLStore | DynamoDBStore
+
+if (process.env.DYNAMODB_TABLE_NAME) {
+  storage = new DynamoDBStore({
+  name: "dynamodb", 
+  config: {
+    tableName: process.env.DYNAMODB_TABLE_NAME
+  },
+});
+} else {
+  storage = new LibSQLStore({ url: "file::memory:" });
+}
 
 export const mastra = new Mastra({
   agents: {
@@ -24,9 +38,8 @@ export const mastra = new Mastra({
         Use the weatherTool to fetch current weather data.
   `,
       model: openai("gpt-4o"),
-      // tools: { weatherTool },
       memory: new Memory({
-        storage: new LibSQLStore({ url: "file::memory:" }),
+        storage: storage,
         options: {
           workingMemory: {
             enabled: true,
@@ -53,7 +66,7 @@ export const mastra = new Mastra({
       `,
       model: openai("gpt-4o"),
       memory: new Memory({
-        storage: new LibSQLStore({ url: "file::memory:" }),
+        storage: storage,
         options: {
           workingMemory: {
             enabled: true,
