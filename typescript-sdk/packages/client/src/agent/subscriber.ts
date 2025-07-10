@@ -195,9 +195,7 @@ export async function runSubscribersWithMutation(
     } catch (error) {
       // Log subscriber errors but continue processing (silence during tests)
       const isTestEnvironment =
-        process.env.NODE_ENV === "test" ||
-        process.env.JEST_WORKER_ID !== undefined ||
-        typeof jest !== "undefined";
+        process.env.NODE_ENV === "test" || process.env.JEST_WORKER_ID !== undefined;
 
       if (!isTestEnvironment) {
         console.error("Subscriber error:", error);
