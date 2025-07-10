@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/mastra",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "license": "Elastic-2.0",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
