@@ -1,10 +1,11 @@
-import { AbstractAgent } from "./agent";
+import { AbstractAgent, RunAgentResult } from "./agent";
 import { runHttpRequest } from "@/run/http-request";
 import { HttpAgentConfig, RunAgentParameters } from "./types";
 import { RunAgentInput, BaseEvent } from "@ag-ui/core";
 import { structuredClone_ } from "@/utils";
 import { transformHttpEventStream } from "@/transform/http";
 import { Observable } from "rxjs";
+import { AgentSubscriber } from "./subscriber";
 
 interface RunHttpAgentConfig extends RunAgentParameters {
   abortController?: AbortController;
@@ -34,9 +35,12 @@ export class HttpAgent extends AbstractAgent {
     };
   }
 
-  public runAgent(parameters?: RunHttpAgentConfig) {
+  public runAgent(
+    parameters?: RunHttpAgentConfig,
+    subscriber?: AgentSubscriber,
+  ): Promise<RunAgentResult> {
     this.abortController = parameters?.abortController ?? new AbortController();
-    return super.runAgent(parameters);
+    return super.runAgent(parameters, subscriber);
   }
 
   abortRun() {
