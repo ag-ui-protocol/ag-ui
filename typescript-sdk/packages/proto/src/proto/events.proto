@@ -103,6 +103,7 @@ message RunFinishedEvent {
   BaseEvent base_event = 1;
   string thread_id = 2;
   string run_id = 3;
+  optional google.protobuf.Value result = 4;
 }
 
 message RunErrorEvent {

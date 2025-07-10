@@ -1,4 +1,4 @@
-export const structuredClone_ = (obj: any) => {
+export const structuredClone_ = <T>(obj: T): T => {
   if (typeof structuredClone === "function") {
     return structuredClone(obj);
   }
@@ -6,6 +6,6 @@ export const structuredClone_ = (obj: any) => {
   try {
     return JSON.parse(JSON.stringify(obj));
   } catch (err) {
-    return { ...obj };
+    return { ...obj } as T;
   }
 };

@@ -85,13 +85,15 @@ type RunFinishedEvent = BaseEvent & {
   type: EventType.RUN_FINISHED
   threadId: string
   runId: string
+  result?: any
 }
 ```
 
-| Property   | Type     | Description                   |
-| ---------- | -------- | ----------------------------- |
-| `threadId` | `string` | ID of the conversation thread |
-| `runId`    | `string` | ID of the agent run           |
+| Property   | Type             | Description                    |
+| ---------- | ---------------- | ------------------------------ |
+| `threadId` | `string`         | ID of the conversation thread  |
+| `runId`    | `string`         | ID of the agent run            |
+| `result`   | `any` (optional) | Result data from the agent run |
 
 ### RunErrorEvent
 
