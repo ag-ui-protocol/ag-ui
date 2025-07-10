@@ -225,7 +225,7 @@ class TestToolResultFlow:
             MagicMock(type=EventType.TEXT_MESSAGE_END)
         ]
         
-        async def mock_stream_events(execution):
+        async def mock_stream_events(execution, run_id=None):
             for event in mock_events:
                 yield event
         
@@ -264,7 +264,7 @@ class TestToolResultFlow:
             adk_middleware._active_executions[thread_id] = mock_execution
         
         # Mock _stream_events to return empty
-        async def mock_stream_events(execution):
+        async def mock_stream_events(execution, run_id=None):
             return
             yield  # Make it a generator
         
@@ -393,8 +393,11 @@ class TestToolResultFlow:
             async for event in adk_middleware.run(tool_result_input):
                 events.append(event)
             
-            assert len(events) == 1
-            assert events[0] == mock_events[0]
+            assert len(events) == 2  # RunStartedEvent + mock event
+            assert isinstance(events[0], RunStartedEvent)
+            assert events[0].thread_id == "thread_1"
+            assert events[0].run_id == "run_1"
+            assert events[1] == mock_events[0]
     
     @pytest.mark.asyncio
     async def test_new_execution_routing(self, adk_middleware, sample_tool):

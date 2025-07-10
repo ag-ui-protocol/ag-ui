@@ -109,21 +109,27 @@ class ClientProxyToolset(BaseToolset):
     async def close(self) -> None:
         """Clean up resources held by the toolset.
         
-        This cancels any pending tool executions.
+        Cancels any pending tool futures and clears the toolset cache.
+        This is called when execution completes to ensure proper cleanup.
+        
+        Note: Long-running tools don't create futures (fire-and-forget), so this
+        only affects blocking tools that may still be waiting for results.
         """
         logger.info("Closing ClientProxyToolset")
         
-        # Cancel any pending tool futures
-        logger.debug(f"TOOLSET DEBUG: Checking {len(self.tool_futures)} tool futures for cancellation")
-        for tool_call_id, future in self.tool_futures.items():
+        # Cancel any pending futures (blocking tools that didn't complete)
+        pending_count = 0
+        for tool_call_id, future in list(self.tool_futures.items()):
             if not future.done():
-                logger.warning(f"TOOLSET DEBUG: Cancelling pending tool execution: {tool_call_id}")
+                logger.debug(f"Cancelling pending tool future during close: {tool_call_id}")
                 future.cancel()
-            else:
-                logger.debug(f"TOOLSET DEBUG: Tool future {tool_call_id} already done")
+                pending_count += 1
         
-        # Clear the futures dict
+        # Clear the futures dictionary
         self.tool_futures.clear()
+        
+        if pending_count > 0:
+            logger.debug(f"Cancelled {pending_count} pending tool futures during toolset close")
         
         # Clear cached tools
         self._proxy_tools = None

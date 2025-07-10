@@ -114,13 +114,34 @@ def _create_dynamic_function(
         )
         parameters.append(param)
     
+    # Add tool_context parameter so ADK will pass it
+    tool_context_param = inspect.Parameter(
+        'tool_context',
+        inspect.Parameter.KEYWORD_ONLY,
+        default=None
+    )
+    parameters.append(tool_context_param)
+    
     # Create the signature
     sig = inspect.Signature(parameters)
     
-    async def proxy_function_impl(**kwargs) -> Any:
+    async def proxy_function_impl(tool_context=None, **kwargs) -> Any:
         """Proxy function that handles the AG-UI tool execution."""
-        # Generate a unique tool call ID
-        tool_call_id = f"adk-{uuid.uuid4()}"
+        # Debug: Check what's in tool_context
+        logger.debug(f"PROXY DEBUG: tool_context type: {type(tool_context)}")
+        logger.debug(f"PROXY DEBUG: tool_context value: {tool_context}")
+        if tool_context:
+            logger.debug(f"PROXY DEBUG: tool_context attributes: {dir(tool_context)}")
+            if hasattr(tool_context, 'function_call_id'):
+                logger.debug(f"PROXY DEBUG: function_call_id: {tool_context.function_call_id}")
+        
+        # Use the original function call ID from ADK, or generate one as fallback
+        if tool_context and hasattr(tool_context, 'function_call_id') and tool_context.function_call_id:
+            tool_call_id = tool_context.function_call_id
+            logger.debug(f"PROXY DEBUG: Using ADK function call ID: {tool_call_id}")
+        else:
+            tool_call_id = f"adk-{uuid.uuid4()}"
+            logger.debug(f"PROXY DEBUG: Generated new function call ID: {tool_call_id}")
         
         logger.info(f"Executing proxy function for '{ag_ui_tool.name}' with id {tool_call_id}")
         
@@ -151,21 +172,20 @@ def _create_dynamic_function(
             )
         )
         
-        # Create a Future to wait for the result
-        future = asyncio.Future()
-        tool_futures[tool_call_id] = future
-        
-        # Store tool name for long-running tools (needed for FunctionResponse later)
-        if is_long_running and tool_names is not None:
-            tool_names[tool_call_id] = ag_ui_tool.name
-        
         # Handle long-running vs blocking behavior
         if is_long_running:
-            # For long-running tools, return immediately with tool_call_id
-            logger.info(f"Long-running tool '{ag_ui_tool.name}' returning immediately with id {tool_call_id}")
-            return tool_call_id
+            # For long-running tools, don't create futures - they're fire-and-forget
+            # Store tool name for FunctionResponse creation when result arrives later
+            if tool_names is not None:
+                tool_names[tool_call_id] = ag_ui_tool.name
+            
+            logger.info(f"Long-running tool '{ag_ui_tool.name}' returning None (fire-and-forget)")
+            return None
         else:
-            # For blocking tools, wait for the result with timeout
+            # For blocking tools, create a future and wait for the result
+            future = asyncio.Future()
+            tool_futures[tool_call_id] = future
+            
             try:
                 result = await asyncio.wait_for(future, timeout=timeout_seconds)
                 logger.info(f"Blocking tool '{ag_ui_tool.name}' completed successfully")
@@ -190,7 +210,11 @@ def _create_dynamic_function(
         # Convert args and kwargs back to a kwargs dict for the implementation
         bound_args = sig.bind(*args, **kwargs)
         bound_args.apply_defaults()
-        return await proxy_function_impl(**bound_args.arguments)
+        
+        # Extract tool_context from bound arguments and pass it separately
+        tool_context = bound_args.arguments.pop('tool_context', None)
+        
+        return await proxy_function_impl(tool_context=tool_context, **bound_args.arguments)
     
     # Set the signature on the wrapper function
     proxy_function.__signature__ = sig
@@ -202,7 +226,7 @@ def create_client_proxy_tool(
     ag_ui_tool: AGUITool,
     event_queue: asyncio.Queue,
     tool_futures: Dict[str, asyncio.Future],
-    is_long_running: bool = True,
+    is_long_running: bool = False,
     timeout_seconds: float = 300.0,
     tool_names: Optional[Dict[str, str]] = None
 ) -> FunctionTool:

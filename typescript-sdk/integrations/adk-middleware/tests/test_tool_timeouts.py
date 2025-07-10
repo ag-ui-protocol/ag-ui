@@ -40,6 +40,13 @@ class TestToolTimeouts:
         """Create tool futures dictionary."""
         return {}
     
+    @pytest.fixture
+    def mock_tool_context(self):
+        """Create a properly mocked tool context."""
+        mock_context = MagicMock()
+        mock_context.function_call_id = "test-function-call-id"
+        return mock_context
+    
     def test_execution_state_is_stale_boundary_conditions(self):
         """Test ExecutionState staleness detection at boundary conditions."""
         # Create execution state
@@ -100,7 +107,7 @@ class TestToolTimeouts:
         assert execution.is_stale(-100) is True
     
     @pytest.mark.asyncio
-    async def test_client_proxy_tool_timeout_immediate(self, sample_tool, mock_event_queue, tool_futures):
+    async def test_client_proxy_tool_timeout_immediate(self, sample_tool, mock_event_queue, tool_futures, mock_tool_context):
         """Test ClientProxyTool with immediate timeout."""
         # Create tool with very short timeout
         proxy_tool = ClientProxyTool(
@@ -112,11 +119,10 @@ class TestToolTimeouts:
         )
         
         args = {"delay": 5}
-        mock_context = MagicMock()
         
         # Should timeout very quickly
         with pytest.raises(TimeoutError) as exc_info:
-            await proxy_tool.run_async(args=args, tool_context=mock_context)
+            await proxy_tool.run_async(args=args, tool_context=mock_tool_context)
         
         assert "timed out after 0.001 seconds" in str(exc_info.value)
         
@@ -124,7 +130,7 @@ class TestToolTimeouts:
         assert len(tool_futures) == 0
     
     @pytest.mark.asyncio
-    async def test_client_proxy_tool_timeout_cleanup(self, sample_tool, mock_event_queue, tool_futures):
+    async def test_client_proxy_tool_timeout_cleanup(self, sample_tool, mock_event_queue, tool_futures, mock_tool_context):
         """Test that ClientProxyTool properly cleans up on timeout."""
         proxy_tool = ClientProxyTool(
             ag_ui_tool=sample_tool,
@@ -139,28 +145,27 @@ class TestToolTimeouts:
             mock_uuid.return_value.__str__ = MagicMock(return_value="timeout-test")
             
             args = {"delay": 1}
-            mock_context = MagicMock()
             
             # Start the execution
             task = asyncio.create_task(
-                proxy_tool.run_async(args=args, tool_context=mock_context)
+                proxy_tool.run_async(args=args, tool_context=mock_tool_context)
             )
             
             # Wait for future to be created
             await asyncio.sleep(0.005)
             
             # Future should exist initially
-            assert "adk-timeout-test" in tool_futures
+            assert "test-function-call-id" in tool_futures
             
             # Wait for timeout
             with pytest.raises(TimeoutError):
                 await task
             
             # Future should be cleaned up after timeout
-            assert "adk-timeout-test" not in tool_futures
+            assert "test-function-call-id" not in tool_futures
     
     @pytest.mark.asyncio
-    async def test_client_proxy_tool_timeout_vs_completion_race(self, sample_tool, mock_event_queue, tool_futures):
+    async def test_client_proxy_tool_timeout_vs_completion_race(self, sample_tool, mock_event_queue, tool_futures, mock_tool_context):
         """Test race condition between timeout and completion."""
         proxy_tool = ClientProxyTool(
             ag_ui_tool=sample_tool,
@@ -175,18 +180,17 @@ class TestToolTimeouts:
             mock_uuid.return_value.__str__ = MagicMock(return_value="race-test")
             
             args = {"delay": 1}
-            mock_context = MagicMock()
             
             # Start the execution
             task = asyncio.create_task(
-                proxy_tool.run_async(args=args, tool_context=mock_context)
+                proxy_tool.run_async(args=args, tool_context=mock_tool_context)
             )
             
             # Wait for future to be created  
             await asyncio.sleep(0.01)
             
             # Complete the future before timeout
-            future = tool_futures["adk-race-test"]
+            future = tool_futures["test-function-call-id"]
             future.set_result({"success": True})
             
             # Should complete successfully, not timeout
@@ -282,8 +286,13 @@ class TestToolTimeouts:
         async for event in agent._stream_events(execution):
             events.append(event)
         
-        assert len(events) == 2  # Two real events, None is not yielded
+        assert len(events) == 3  # Two content events + RUN_FINISHED event
         assert execution.is_complete is True
+        
+        # Check that we got the expected events
+        assert events[0].type == EventType.TEXT_MESSAGE_CONTENT
+        assert events[1].type == EventType.TEXT_MESSAGE_END
+        assert events[2].type == EventType.RUN_FINISHED
     
     @pytest.mark.asyncio
     async def test_cleanup_stale_executions(self):
@@ -366,7 +375,7 @@ class TestToolTimeouts:
         assert len(tool_futures) == 0
     
     @pytest.mark.asyncio
-    async def test_multiple_timeout_scenarios(self, sample_tool, mock_event_queue):
+    async def test_multiple_timeout_scenarios(self, sample_tool, mock_event_queue, mock_tool_context):
         """Test multiple timeout scenarios in sequence."""
         tool_futures = {}
         
@@ -383,11 +392,10 @@ class TestToolTimeouts:
             )
             
             args = {"delay": 5}
-            mock_context = MagicMock()
             
             start_time = time.time()
             with pytest.raises(TimeoutError):
-                await proxy_tool.run_async(args=args, tool_context=mock_context)
+                await proxy_tool.run_async(args=args, tool_context=mock_tool_context)
             
             elapsed = time.time() - start_time
             
@@ -400,7 +408,7 @@ class TestToolTimeouts:
             assert len(tool_futures) == 0
     
     @pytest.mark.asyncio
-    async def test_concurrent_tool_timeouts(self, sample_tool, mock_event_queue):
+    async def test_concurrent_tool_timeouts(self, sample_tool, mock_event_queue, mock_tool_context):
         """Test multiple tools timing out concurrently."""
         tool_futures = {}
         
@@ -420,7 +428,7 @@ class TestToolTimeouts:
         tasks = []
         for i, tool in enumerate(tools):
             task = asyncio.create_task(
-                tool.run_async(args={"delay": 5}, tool_context=MagicMock())
+                tool.run_async(args={"delay": 5}, tool_context=mock_tool_context)
             )
             tasks.append(task)
         
@@ -435,7 +443,7 @@ class TestToolTimeouts:
 
 
     @pytest.mark.asyncio
-    async def test_client_proxy_tool_long_running_no_timeout(self, sample_tool, mock_event_queue, tool_futures):
+    async def test_client_proxy_tool_long_running_no_timeout(self, sample_tool, mock_event_queue, tool_futures, mock_tool_context):
         """Test ClientProxyTool with is_long_running=True does not timeout."""
         proxy_tool = ClientProxyTool(
             ag_ui_tool=sample_tool,
@@ -450,24 +458,23 @@ class TestToolTimeouts:
             mock_uuid.return_value.__str__ = MagicMock(return_value="long-running-test")
             
             args = {"delay": 5}
-            mock_context = MagicMock()
             
             # Start the execution
             task = asyncio.create_task(
-                proxy_tool.run_async(args=args, tool_context=mock_context)
+                proxy_tool.run_async(args=args, tool_context=mock_tool_context)
             )
             
             # Wait for future to be created
             await asyncio.sleep(0.02)  # Wait longer than the timeout
             
-            # Future should exist and task should be done (remember tool is still in pending state)
-            assert "adk-long-running-test" in tool_futures
+            # Long-running tools should NOT create futures (fire-and-forget)
+            assert len(tool_futures) == 0
             assert task.done()
             
 
 
     @pytest.mark.asyncio
-    async def test_client_proxy_tool_long_running_vs_regular_timeout_behavior(self, sample_tool, mock_event_queue):
+    async def test_client_proxy_tool_long_running_vs_regular_timeout_behavior(self, sample_tool, mock_event_queue, mock_tool_context):
         """Test that regular tools timeout while long-running tools don't."""
         tool_futures_regular = {}
         tool_futures_long = {}
@@ -503,23 +510,22 @@ class TestToolTimeouts:
             mock_uuid.side_effect = side_effect
             
             args = {"delay": 5}
-            mock_context = MagicMock()
             
             # Start both tools
             regular_task = asyncio.create_task(
-                regular_tool.run_async(args=args, tool_context=mock_context)
+                regular_tool.run_async(args=args, tool_context=mock_tool_context)
             )
             
             long_running_task = asyncio.create_task(
-                long_running_tool.run_async(args=args, tool_context=mock_context)
+                long_running_tool.run_async(args=args, tool_context=mock_tool_context)
             )
             
             # Wait for both futures to be created
             await asyncio.sleep(0.005)
             
-            # Both should have futures
+            # Only regular tool should have futures, long-running should not
             assert len(tool_futures_regular) == 1
-            assert len(tool_futures_long) == 1
+            assert len(tool_futures_long) == 0  # Long-running tools don't create futures
             
             # Wait past the timeout
             await asyncio.sleep(0.02)
@@ -534,7 +540,7 @@ class TestToolTimeouts:
 
 
     @pytest.mark.asyncio
-    async def test_client_proxy_tool_long_running_cleanup_on_error(self, sample_tool, tool_futures):
+    async def test_client_proxy_tool_long_running_cleanup_on_error(self, sample_tool, tool_futures, mock_tool_context):
         """Test that long-running tools clean up properly on event emission errors."""
         # Create a mock event queue that raises an exception
         mock_event_queue = AsyncMock()
@@ -549,11 +555,10 @@ class TestToolTimeouts:
         )
         
         args = {"delay": 5}
-        mock_context = MagicMock()
         
         # Should raise the event queue error and clean up
         with pytest.raises(RuntimeError) as exc_info:
-            await proxy_tool.run_async(args=args, tool_context=mock_context)
+            await proxy_tool.run_async(args=args, tool_context=mock_tool_context)
         
         assert str(exc_info.value) == "Event queue error"
         
@@ -563,7 +568,7 @@ class TestToolTimeouts:
 
 
     @pytest.mark.asyncio
-    async def test_client_proxy_tool_long_running_multiple_concurrent(self, sample_tool, mock_event_queue):
+    async def test_client_proxy_tool_long_running_multiple_concurrent(self, sample_tool, mock_event_queue, mock_tool_context):
         """Test multiple long-running tools executing concurrently."""
         tool_futures = {}
         
@@ -594,15 +599,15 @@ class TestToolTimeouts:
             tasks = []
             for i, tool in enumerate(tools):
                 task = asyncio.create_task(
-                    tool.run_async(args={"delay": 5}, tool_context=MagicMock())
+                    tool.run_async(args={"delay": 5}, tool_context=mock_tool_context)
                 )
                 tasks.append(task)
             
             # Wait for all futures to be created
             await asyncio.sleep(0.01)
             
-            # Should have 3 futures
-            assert len(tool_futures) == 3
+            # Long-running tools should NOT create futures
+            assert len(tool_futures) == 0
             
             # All should be done (no waiting for timeouts)
             for task in tasks:
@@ -611,7 +616,7 @@ class TestToolTimeouts:
 
 
     @pytest.mark.asyncio
-    async def test_client_proxy_tool_long_running_event_emission_sequence(self, sample_tool, tool_futures):
+    async def test_client_proxy_tool_long_running_event_emission_sequence(self, sample_tool, tool_futures, mock_tool_context):
         """Test that long-running tools emit events in correct sequence."""
         # Use a real queue to capture events
         event_queue = asyncio.Queue()
@@ -629,11 +634,10 @@ class TestToolTimeouts:
             mock_uuid.return_value.__str__ = MagicMock(return_value="event-test")
             
             args = {"delay": 5}
-            mock_context = MagicMock()
             
             # Start the execution
             task = asyncio.create_task(
-                proxy_tool.run_async(args=args, tool_context=mock_context)
+                proxy_tool.run_async(args=args, tool_context=mock_tool_context)
             )
             
             # Wait a bit for events to be emitted
@@ -653,22 +657,22 @@ class TestToolTimeouts:
             
             # Check event types and order
             assert events[0].type == EventType.TOOL_CALL_START
-            assert events[0].tool_call_id == "adk-event-test"
+            assert events[0].tool_call_id == "test-function-call-id"
             assert events[0].tool_call_name == sample_tool.name
             
             assert events[1].type == EventType.TOOL_CALL_ARGS
-            assert events[1].tool_call_id == "adk-event-test"
+            assert events[1].tool_call_id == "test-function-call-id"
             # Check that args were properly JSON serialized
             import json
             assert json.loads(events[1].delta) == args
             
             assert events[2].type == EventType.TOOL_CALL_END
-            assert events[2].tool_call_id == "adk-event-test"
+            assert events[2].tool_call_id == "test-function-call-id"
             
 
 
     @pytest.mark.asyncio
-    async def test_client_proxy_tool_is_long_running_property(self, sample_tool, mock_event_queue, tool_futures):
+    async def test_client_proxy_tool_is_long_running_property(self, sample_tool, mock_event_queue, tool_futures, mock_tool_context):
         """Test that is_long_running property is correctly set and accessible."""
         # Test with is_long_running=True
         long_running_tool = ClientProxyTool(
@@ -717,13 +721,12 @@ class TestToolTimeouts:
             mock_uuid.return_value.__str__ = MagicMock(return_value="wait-test")
             
             args = {"delay": 5}
-            mock_context = MagicMock()
             
             start_time = asyncio.get_event_loop().time()
             
             # Start the execution
             task = asyncio.create_task(
-                proxy_tool.run_async(args=args, tool_context=mock_context)
+                proxy_tool.run_async(args=args, tool_context=mock_tool_context)
             )
             
             # Wait much longer than the timeout setting

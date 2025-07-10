@@ -42,6 +42,7 @@ class ExecutionState:
         self.tool_names = {}  # Separate dict for tool names
         self.start_time = time.time()
         self.is_complete = False
+        self.is_streaming_paused = False  # Used for blocking tools to pause event streaming
         
         logger.debug(f"Created execution state for thread {thread_id}")
     
@@ -60,9 +61,17 @@ class ExecutionState:
         """Check if there are pending tool executions.
         
         Returns:
-            True if any tool futures are not done
+            True if any tool futures are not done OR there are pending long-running tools
         """
-        return any(not future.done() for future in self.tool_futures.values())
+        return any(not future.done() for future in self.tool_futures.values()) or self.has_pending_long_running_tools()
+    
+    def has_pending_long_running_tools(self) -> bool:
+        """Check if there are pending long-running tool results.
+        
+        Returns:
+            True if there are tool names waiting for results
+        """
+        return bool(self.tool_names)
     
     def resolve_tool_result(self, tool_call_id: str, result: Any) -> bool:
         """Resolve a tool execution future with the provided result.

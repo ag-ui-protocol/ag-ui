@@ -7,17 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- **MAJOR**: Refactored tool behavior to align with ADK standards - long-running tools now return tool call IDs instead of None
-- **ARCHITECTURE**: Updated hybrid tool execution model to properly handle tool call ID management and validation
-- **BEHAVIOR**: Long-running tools now return `adk-{uuid}` tool call IDs immediately for fire-and-forget execution pattern
-
 ### Fixed
-- **CRITICAL**: Fixed tool call ID mismatch detection to properly warn when tool results are submitted for non-existent tool calls
-- **TESTING**: Fixed all failing hybrid flow integration tests to expect tool call IDs from long-running tools
-- **TESTING**: Updated 326 tests to align with new ADK-compliant tool behavior (all tests now pass)
-- **VALIDATION**: Enhanced tool result submission logic to properly categorize blocking vs long-running tool results
-- **ERROR HANDLING**: Improved warning messages for tool call ID validation failures
+- **TESTING**: Comprehensive test coverage improvements - fixed all failing tests across the test suite (326/326 tests now pass)
+- **MOCK CONTEXT**: Added proper mock_tool_context fixtures to fix pydantic validation errors in test files
+- **TOOLSET CLEANUP**: Fixed ClientProxyToolset.close() to properly cancel pending futures and clear resources
+- **EVENT STREAMING**: Updated tests to expect RUN_FINISHED events that are now automatically emitted by enhanced _stream_events method
+- **TEST SIGNATURES**: Fixed mock function signatures to match updated _stream_events method parameters (execution, run_id)
+- **TOOL RESULT FLOW**: Updated tests to account for RunStartedEvent being emitted for tool result submissions
+- **ERROR HANDLING**: Fixed malformed tool message test to correctly expect graceful handling of empty content (not errors)
+
+### Changed
+- **ARCHITECTURE**: Enhanced toolset resource management - toolsets now properly clean up blocking tool futures on close
+- **TEST RELIABILITY**: Improved test isolation and mock context consistency across all test files
 
 ### Enhanced
 - **TESTING**: Improved test coverage to 94% overall with comprehensive unit tests for previously untested modules
