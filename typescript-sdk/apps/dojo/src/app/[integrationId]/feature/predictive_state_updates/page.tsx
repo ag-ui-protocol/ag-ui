@@ -128,23 +128,36 @@ const DocumentEditor = () => {
   }, [text]);
 
   useCopilotAction({
-    name: "confirm_changes",
-    renderAndWaitForResponse: ({ args, respond, status }) => (
-      <ConfirmChanges
-        args={args}
-        respond={respond}
-        status={status}
-        onReject={() => {
-          editor?.commands.setContent(fromMarkdown(currentDocument));
-          setAgentState({ document: currentDocument });
-        }}
-        onConfirm={() => {
-          editor?.commands.setContent(fromMarkdown(agentState?.document || ""));
-          setCurrentDocument(agentState?.document || "");
-          setAgentState({ document: agentState?.document || "" });
-        }}
-      />
-    ),
+    name: "write_document",
+    description: `Present the proposed changes to the user for review`,
+    parameters: [
+      {
+        name: "document",
+        type: "string",
+        description: "The full updated document in markdown format",
+      },
+    ],
+    renderAndWaitForResponse({ args, status, respond }) {
+      if (status === "executing") {
+        return (
+          <ConfirmChanges
+            args={args}
+            respond={respond}
+            status={status}
+            onReject={() => {
+              editor?.commands.setContent(fromMarkdown(currentDocument));
+              setAgentState({ document: currentDocument });
+            }}
+            onConfirm={() => {
+              editor?.commands.setContent(fromMarkdown(agentState?.document || ""));
+              setCurrentDocument(agentState?.document || "");
+              setAgentState({ document: agentState?.document || "" });
+            }}
+          />
+        );
+      }
+      return <></>;
+    },
   });
 
   return (
