@@ -185,16 +185,17 @@ export class A2AClientAgent extends AbstractAgent {
               observer.next(event);
             },
 
-            onToolCallPart(streamPart) {
-              const event: ToolCallChunkEvent = {
-                type: EventType.TOOL_CALL_CHUNK,
-                toolCallId: streamPart.toolCallId,
-                delta: JSON.stringify(streamPart.args),
-                toolCallName: streamPart.toolName,
-                parentMessageId: messageId,
-              };
-              observer.next(event);
-            },
+            // onToolCallPart(streamPart) {
+            //   const event: ToolCallChunkEvent = {
+            //     type: EventType.TOOL_CALL_CHUNK,
+            //     toolCallId: streamPart.toolCallId,
+            //     delta: JSON.stringify(streamPart.args),
+            //     toolCallName: streamPart.toolName,
+            //     parentMessageId: messageId,
+            //   };
+            //   console.log("[EVENT]", event);
+            //   observer.next(event);
+            // },
             onToolResultPart(streamPart) {
               const event: ToolCallResultEvent = {
                 messageId: randomUUID(),
@@ -223,7 +224,6 @@ export class A2AClientAgent extends AbstractAgent {
             runId: input.runId,
             message: error instanceof Error ? error.message : "Unknown error",
           } as RunErrorEvent);
-
           observer.error(error);
         }
       };
