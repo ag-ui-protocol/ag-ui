@@ -21,6 +21,7 @@
                 "group": "Quickstart",
                 "pages": [
                   "quickstart/applications",
+                  "quickstart/clients",
                   {
                     "group": "Build integrations",
                     "pages": [
@@ -68,7 +69,12 @@
               },
               {
                 "group": "@ag-ui/client",
-                "pages": ["sdk/js/client/overview"]
+                "pages": [
+                  "sdk/js/client/overview",
+                  "sdk/js/client/abstract-agent",
+                  "sdk/js/client/http-agent",
+                  "sdk/js/client/subscriber"
+                ]
               },
               "sdk/js/encoder",
               "sdk/js/proto"

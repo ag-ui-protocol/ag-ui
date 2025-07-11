@@ -2,7 +2,7 @@
 import React, { useState } from "react";
 import "@copilotkit/react-ui/styles.css";
 import "./style.css";
-import { CopilotKit, useCopilotAction, useCopilotChat } from "@copilotkit/react-core";
+import { CopilotKit, useCoAgent, useCopilotAction, useCopilotChat } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 
 interface AgenticChatProps {
@@ -28,34 +28,6 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
 
 const Chat = () => {
   const [background, setBackground] = useState<string>("--copilot-kit-background-color");
-
-  useCopilotAction({
-    name: "lookup_weather",
-    description: "Lookup the weather for a given city",
-    parameters: [
-      {
-        name: "city",
-        type: "string",
-        description: "The city to lookup the weather for",
-      },
-      {
-        name: "weather",
-        type: "string",
-        description: "The weather for the city",
-      },
-    ],
-    render: ({ status, args }) => {
-      return (
-        <div>
-          <div>
-            Looked up weather for {args.city}: {args.weather}
-          </div>
-          <div>Status: {status}</div>
-        </div>
-      );
-    },
-    followUp: false,
-  });
 
   useCopilotAction({
     name: "change_background",
