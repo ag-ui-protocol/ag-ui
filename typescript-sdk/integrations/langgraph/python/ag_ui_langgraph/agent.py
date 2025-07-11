@@ -108,14 +108,18 @@ class LangGraphAgent:
 
         messages = input.messages or []
         forwarded_props = input.forwarded_props
-        
+        node_name_input = forwarded_props.get('node_name', None) if forwarded_props else None
+
         self.active_run["manually_emitted_state"] = None
-        self.active_run["node_name"] = forwarded_props.get('node_name', None) if forwarded_props else None
+        self.active_run["node_name"] = node_name_input
+        if self.active_run["node_name"] == "__end__":
+            self.active_run["node_name"] = None
 
         config = ensure_config(self.config.copy() if self.config else {})
         config["configurable"] = {**(config.get('configurable', {})), "thread_id": thread_id}
 
         agent_state = await self.graph.aget_state(config)
+        self.active_run["mode"] = "continue" if thread_id and self.active_run.get("node_name") != "__end__" and self.active_run.get("node_name") else "start"
         prepared_stream_response = await self.prepare_stream(input=input, agent_state=agent_state, config=config)
 
         yield self._dispatch_event(
@@ -151,7 +155,7 @@ class LangGraphAgent:
             return
 
         should_exit = False
-        latest_state_values = state
+        current_graph_state = state
         async for event in stream:
             if event["event"] == "error":
                 yield self._dispatch_event(
@@ -159,16 +163,16 @@ class LangGraphAgent:
                 )
                 break
 
-            if event["event"] == "values":
-                latest_state_values = event["data"]
-                continue
-
-            if event["event"] == "updates":
-                continue
-
             current_node_name = event.get("metadata", {}).get("langgraph_node")
             event_type = event.get("event")
             self.active_run["id"] = event.get("run_id")
+            exiting_node = False
+
+            if event_type == "on_chain_end" and isinstance(
+                    event.get("data", {}).get("output"), dict
+            ):
+                current_graph_state.update(event["data"]["output"])
+                exiting_node = self.active_run["node_name"] == current_node_name
 
             should_exit = should_exit or (
                     event_type == "on_custom_event" and
@@ -176,23 +180,23 @@ class LangGraphAgent:
                 )
 
             if current_node_name and current_node_name != self.active_run.get("node_name"):
-                if self.active_run.get("node_name"):
+                if self.active_run["node_name"] and self.active_run["node_name"] != node_name_input:
                     yield self._dispatch_event(
                         StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=self.active_run["node_name"])
                     )
-                
-                if current_node_name:
-                    yield self._dispatch_event(
-                        StepStartedEvent(type=EventType.STEP_STARTED, step_name=current_node_name)
-                    )
-                    self.active_run["node_name"] = current_node_name
+                    self.active_run["node_name"] = None
 
-            updated_state = self.active_run.get("manually_emitted_state") or latest_state_values
+                yield self._dispatch_event(
+                    StepStartedEvent(type=EventType.STEP_STARTED, step_name=current_node_name)
+                )
+                self.active_run["node_name"] = current_node_name
+
+            updated_state = self.active_run.get("manually_emitted_state") or current_graph_state
             has_state_diff = updated_state != state
-
-            if has_state_diff and not self.get_message_in_progress(self.active_run["id"]):
+            if exiting_node or (has_state_diff and not self.get_message_in_progress(self.active_run["id"])):
                 state = updated_state
                 self.active_run["prev_node_name"] = self.active_run["node_name"]
+                current_graph_state.update(updated_state)
                 yield self._dispatch_event(
                     StateSnapshotEvent(
                         type=EventType.STATE_SNAPSHOT,
@@ -208,18 +212,17 @@ class LangGraphAgent:
             async for single_event in self._handle_single_event(event, state):
                 yield single_event
 
-        state_after_run = await self.graph.aget_state(config)
-        tasks = state_after_run.tasks
-        interrupts = tasks[0].interrupts if tasks and len(tasks) > 0 else []
+        state = await self.graph.aget_state(config)
 
-        if interrupts:
-            self.active_run["node_name"] = self.active_run["node_name"]
-        elif "writes" in state_after_run.metadata and state_after_run.metadata["writes"]:
-            self.active_run["node_name"] = list(state_after_run.metadata["writes"].keys())[0]
-        elif hasattr(state_after_run, "next") and state_after_run.next and state_after_run.next[0]:
-            self.active_run["node_name"] = state_after_run.next[0]
-        else:
-            self.active_run["node_name"] = "__end__"
+        tasks = state.tasks if len(state.tasks) > 0 else None
+        interrupts = tasks[0].interrupts if tasks else []
+
+        writes = state.metadata.get("writes", {}) or {}
+        node_name = self.active_run["node_name"] if interrupts else next(iter(writes), None)
+        next_nodes = state.next or ()
+        is_end_node = len(next_nodes) == 0 and not interrupts
+
+        node_name = "__end__" if is_end_node else node_name
 
         for interrupt in interrupts:
             yield self._dispatch_event(
@@ -231,25 +234,38 @@ class LangGraphAgent:
                 )
             )
 
-        yield self._dispatch_event(
-            StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(state_after_run.values))
-        )
-        
-        yield self._dispatch_event(
-            MessagesSnapshotEvent(
-                type=EventType.MESSAGES_SNAPSHOT,
-                messages=langchain_messages_to_agui(state_after_run.values.get("messages", [])),
-            )
-        )
-
-        if self.active_run.get("node_name"):
+        if self.active_run.get("node_name") != node_name:
             yield self._dispatch_event(
                 StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=self.active_run["node_name"])
             )
+            self.active_run["node_name"] = node_name
+            yield self._dispatch_event(
+                StepStartedEvent(type=EventType.STEP_STARTED, step_name=self.active_run["node_name"])
+            )
+
+        # if tasks is None:
+        yield self._dispatch_event(
+            StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=self.active_run["node_name"])
+        )
+        self.active_run["node_name"] = None
+
+        state_values = state.values if state.values else state
+        yield self._dispatch_event(
+            StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(state_values))
+        )
+
+        yield self._dispatch_event(
+            MessagesSnapshotEvent(
+                type=EventType.MESSAGES_SNAPSHOT,
+                messages=langchain_messages_to_agui(state_values.get("messages", [])),
+            )
+        )
 
         yield self._dispatch_event(
             RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
         )
+        self.active_run = None
+
 
     async def prepare_stream(self, input: RunAgentInput, agent_state: State, config: RunnableConfig):
         state_input = input.state or {}
@@ -259,7 +275,6 @@ class LangGraphAgent:
         thread_id = input.thread_id
 
         state_input["messages"] = agent_state.values.get("messages", [])
-        # TODO: validate if we need current graph state
         self.active_run["current_graph_state"] = agent_state.values
         langchain_messages = agui_messages_to_langchain(messages)
         state = self.langgraph_default_merge_state(state_input, langchain_messages, tools)
@@ -295,9 +310,7 @@ class LangGraphAgent:
                 "events_to_dispatch": events_to_dispatch,
             }
 
-        mode = "continue" if thread_id and self.active_run.get("node_name") != "__end__" and self.active_run.get("node_name") else "start"
-
-        if mode == "continue":
+        if self.active_run["mode"] == "continue":
             await self.graph.aupdate_state(config, state, as_node=self.active_run.get("node_name"))
 
         self.active_run["schema_keys"] = self.get_schema_keys(config)
@@ -306,7 +319,7 @@ class LangGraphAgent:
             stream_input = Command(resume=resume_input)
         else:
             payload_input = get_stream_payload_input(
-                mode=mode,
+                mode=self.active_run["mode"],
                 state=state,
                 schema_keys=self.active_run["schema_keys"],
             )
@@ -466,25 +479,22 @@ class LangGraphAgent:
                 )
 
             if is_tool_call_end_event:
-                resolved = self._dispatch_event(
+                yield self._dispatch_event(
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=current_stream["tool_call_id"], raw_event=event)
                 )
-                if resolved:
-                    self.messages_in_process[self.active_run["id"]] = None
-                yield resolved
+                self.messages_in_process[self.active_run["id"]] = None
                 return
 
+
             if is_message_end_event:
-                resolved = self._dispatch_event(
+                yield self._dispatch_event(
                     TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=current_stream["id"], raw_event=event)
                 )
-                if resolved:
-                    self.messages_in_process[self.active_run["id"]] = None
-                yield resolved
+                self.messages_in_process[self.active_run["id"]] = None
                 return
 
             if is_tool_call_start_event and should_emit_tool_calls:
-                resolved = self._dispatch_event(
+                yield self._dispatch_event(
                     ToolCallStartEvent(
                         type=EventType.TOOL_CALL_START,
                         tool_call_id=tool_call_data["id"],
@@ -493,12 +503,10 @@ class LangGraphAgent:
                         raw_event=event,
                     )
                 )
-                if resolved:
-                    self.set_message_in_progress(
-                        self.active_run["id"],
-                        MessageInProgress(id=event["data"]["chunk"].id, tool_call_id=tool_call_data["id"], tool_call_name=tool_call_data["name"])
-                    )
-                yield resolved
+                self.set_message_in_progress(
+                    self.active_run["id"],
+                    MessageInProgress(id=event["data"]["chunk"].id, tool_call_id=tool_call_data["id"], tool_call_name=tool_call_data["name"])
+                )
                 return
 
             if is_tool_call_args_event and should_emit_tool_calls:
@@ -672,3 +680,4 @@ class LangGraphAgent:
                 return history_list[idx - 1]  # return one snapshot *before* the one that includes the message
 
         raise ValueError("Message ID not found in history")
+
