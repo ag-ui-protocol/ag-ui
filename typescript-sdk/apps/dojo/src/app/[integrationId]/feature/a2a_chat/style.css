@@ -7,5 +7,17 @@
 }
 
 .copilotKitChat {
-  background-color: #fff !important;
+  background-color: transparent !important;
+}
+
+.copilotKitMessages {
+  background-color: transparent !important;
+}
+
+.copilotKitInputContainer {
+  background-color: transparent !important;
+}
+
+.poweredBy {
+  background-color: transparent !important;
 }
