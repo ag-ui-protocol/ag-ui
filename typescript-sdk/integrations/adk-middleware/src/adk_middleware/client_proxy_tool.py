@@ -6,10 +6,10 @@ import asyncio
 import json
 import uuid
 import inspect
-from typing import Dict, Any, Optional, Callable, List
+from typing import Any, Optional, List, Dict
 import logging
 
-from google.adk.tools import FunctionTool, LongRunningFunctionTool
+from google.adk.tools import BaseTool, LongRunningFunctionTool
 from google.genai import types
 from ag_ui.core import Tool as AGUITool, EventType
 from ag_ui.core import (
@@ -20,332 +20,83 @@ from ag_ui.core import (
 
 logger = logging.getLogger(__name__)
 
+# Set up debug logging
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
 
-def create_proxy_function(
-    ag_ui_tool: AGUITool,
-    event_queue: asyncio.Queue,
-    tool_futures: Dict[str, asyncio.Future],
-    timeout_seconds: float = 300.0,
-    is_long_running: bool = True,
-    tool_names: Optional[Dict[str, str]] = None
-) -> Callable:
-    """Create a proxy function that bridges AG-UI tools to ADK function calls.
-    
-    This function dynamically creates a function with the proper signature based on
-    the AG-UI tool's parameters, allowing the ADK FunctionTool to properly inspect
-    and validate the function signature.
-    
-    Args:
-        ag_ui_tool: The AG-UI tool specification
-        event_queue: Queue for emitting events back to the client
-        tool_futures: Dictionary to store tool execution futures
-        timeout_seconds: Timeout for tool execution (only applies to blocking tools)
-        is_long_running: If True, returns immediately with tool_call_id; if False, waits for result
-        tool_names: Optional dict to store tool names for long-running tools
-        
-    Returns:
-        A function that can be used with ADK FunctionTool or LongRunningFunctionTool
-    """
-    # Extract parameter names from AG-UI tool parameters
-    param_names = _extract_parameter_names(ag_ui_tool.parameters)
-    
-    # Create the function dynamically with proper signature
-    return _create_dynamic_function(
-        ag_ui_tool=ag_ui_tool,
-        param_names=param_names,
-        event_queue=event_queue,
-        tool_futures=tool_futures,
-        timeout_seconds=timeout_seconds,
-        is_long_running=is_long_running,
-        tool_names=tool_names
-    )
-
-
-def _extract_parameter_names(parameters: Dict[str, Any]) -> List[str]:
-    """Extract parameter names from AG-UI tool parameters (JSON Schema).
-    
-    Args:
-        parameters: The parameters dict from AG-UI tool
-        
-    Returns:
-        List of parameter names
-    """
-    if not isinstance(parameters, dict):
-        return []
-    
-    properties = parameters.get("properties", {})
-    if not isinstance(properties, dict):
-        return []
-    
-    return list(properties.keys())
-
-
-def _create_dynamic_function(
-    ag_ui_tool: AGUITool,
-    param_names: List[str],
-    event_queue: asyncio.Queue,
-    tool_futures: Dict[str, asyncio.Future],
-    timeout_seconds: float,
-    is_long_running: bool,
-    tool_names: Optional[Dict[str, str]] = None
-) -> Callable:
-    """Create a dynamic function with the specified parameter names.
-    
-    Args:
-        ag_ui_tool: The AG-UI tool specification
-        param_names: List of parameter names to include in function signature
-        event_queue: Queue for emitting events back to the client
-        tool_futures: Dictionary to store tool execution futures
-        timeout_seconds: Timeout for tool execution
-        is_long_running: Whether this is a long-running tool
-        tool_names: Optional dict to store tool names for long-running tools
-        
-    Returns:
-        Dynamically created async function
-    """
-    # Create parameters for the dynamic function signature
-    parameters = []
-    for param_name in param_names:
-        # Create parameters as keyword-only with no default (required)
-        param = inspect.Parameter(
-            param_name,
-            inspect.Parameter.KEYWORD_ONLY,
-            default=inspect.Parameter.empty
-        )
-        parameters.append(param)
-    
-    # Add tool_context parameter so ADK will pass it
-    tool_context_param = inspect.Parameter(
-        'tool_context',
-        inspect.Parameter.KEYWORD_ONLY,
-        default=None
-    )
-    parameters.append(tool_context_param)
-    
-    # Create the signature
-    sig = inspect.Signature(parameters)
-    
-    async def proxy_function_impl(tool_context=None, **kwargs) -> Any:
-        """Proxy function that handles the AG-UI tool execution."""
-        # Debug: Check what's in tool_context
-        logger.debug(f"PROXY DEBUG: tool_context type: {type(tool_context)}")
-        logger.debug(f"PROXY DEBUG: tool_context value: {tool_context}")
-        if tool_context:
-            logger.debug(f"PROXY DEBUG: tool_context attributes: {dir(tool_context)}")
-            if hasattr(tool_context, 'function_call_id'):
-                logger.debug(f"PROXY DEBUG: function_call_id: {tool_context.function_call_id}")
-        
-        # Use the original function call ID from ADK, or generate one as fallback
-        if tool_context and hasattr(tool_context, 'function_call_id') and tool_context.function_call_id:
-            tool_call_id = tool_context.function_call_id
-            logger.debug(f"PROXY DEBUG: Using ADK function call ID: {tool_call_id}")
-        else:
-            tool_call_id = f"adk-{uuid.uuid4()}"
-            logger.debug(f"PROXY DEBUG: Generated new function call ID: {tool_call_id}")
-        
-        logger.info(f"Executing proxy function for '{ag_ui_tool.name}' with id {tool_call_id}")
-        
-        # Emit TOOL_CALL_START event
-        await event_queue.put(
-            ToolCallStartEvent(
-                type=EventType.TOOL_CALL_START,
-                tool_call_id=tool_call_id,
-                tool_call_name=ag_ui_tool.name
-            )
-        )
-        
-        # Emit TOOL_CALL_ARGS event
-        args_json = json.dumps(kwargs)
-        await event_queue.put(
-            ToolCallArgsEvent(
-                type=EventType.TOOL_CALL_ARGS,
-                tool_call_id=tool_call_id,
-                delta=args_json
-            )
-        )
-        
-        # Emit TOOL_CALL_END event
-        await event_queue.put(
-            ToolCallEndEvent(
-                type=EventType.TOOL_CALL_END,
-                tool_call_id=tool_call_id
-            )
-        )
-        
-        # Handle long-running vs blocking behavior
-        if is_long_running:
-            # For long-running tools, don't create futures - they're fire-and-forget
-            # Store tool name for FunctionResponse creation when result arrives later
-            if tool_names is not None:
-                tool_names[tool_call_id] = ag_ui_tool.name
-            
-            logger.info(f"Long-running tool '{ag_ui_tool.name}' returning None (fire-and-forget)")
-            return None
-        else:
-            # For blocking tools, create a future and wait for the result
-            future = asyncio.Future()
-            tool_futures[tool_call_id] = future
-            
-            try:
-                result = await asyncio.wait_for(future, timeout=timeout_seconds)
-                logger.info(f"Blocking tool '{ag_ui_tool.name}' completed successfully")
-                return result
-            except asyncio.TimeoutError:
-                logger.error(f"Blocking tool '{ag_ui_tool.name}' timed out after {timeout_seconds}s")
-                # Clean up the future
-                tool_futures.pop(tool_call_id, None)
-                raise TimeoutError(
-                    f"Tool '{ag_ui_tool.name}' execution timed out after "
-                    f"{timeout_seconds} seconds"
-                )
-            except Exception as e:
-                logger.error(f"Blocking tool '{ag_ui_tool.name}' failed: {e}")
-                # Clean up the future
-                tool_futures.pop(tool_call_id, None)
-                raise
-    
-    # Create a wrapper function with the proper signature
-    async def proxy_function(*args, **kwargs):
-        """Wrapper function with proper signature for ADK inspection."""
-        # Convert args and kwargs back to a kwargs dict for the implementation
-        bound_args = sig.bind(*args, **kwargs)
-        bound_args.apply_defaults()
-        
-        # Extract tool_context from bound arguments and pass it separately
-        tool_context = bound_args.arguments.pop('tool_context', None)
-        
-        return await proxy_function_impl(tool_context=tool_context, **bound_args.arguments)
-    
-    # Set the signature on the wrapper function
-    proxy_function.__signature__ = sig
-    
-    return proxy_function
-
-
-def create_client_proxy_tool(
-    ag_ui_tool: AGUITool,
-    event_queue: asyncio.Queue,
-    tool_futures: Dict[str, asyncio.Future],
-    is_long_running: bool = False,
-    timeout_seconds: float = 300.0,
-    tool_names: Optional[Dict[str, str]] = None
-) -> FunctionTool:
-    """Create a client proxy tool using proper ADK tool classes.
-    
-    Args:
-        ag_ui_tool: The AG-UI tool specification
-        event_queue: Queue for emitting events back to the client
-        tool_futures: Dictionary to store tool execution futures
-        is_long_running: Whether this tool should be long-running
-        timeout_seconds: Timeout for tool execution
-        tool_names: Optional dict to store tool names for long-running tools
-        
-    Returns:
-        Either a FunctionTool or LongRunningFunctionTool (which extends FunctionTool)
-    """
-    proxy_function = create_proxy_function(
-        ag_ui_tool=ag_ui_tool,
-        event_queue=event_queue,
-        tool_futures=tool_futures,
-        timeout_seconds=timeout_seconds,
-        is_long_running=is_long_running,
-        tool_names=tool_names
-    )
-    
-    # Set the function metadata for ADK to extract
-    proxy_function.__name__ = ag_ui_tool.name
-    proxy_function.__doc__ = ag_ui_tool.description
-    
-    if is_long_running:
-        logger.info(f"Creating LongRunningFunctionTool for '{ag_ui_tool.name}'")
-        return LongRunningFunctionTool(proxy_function)
-    else:
-        logger.info(f"Creating FunctionTool for '{ag_ui_tool.name}'")
-        return FunctionTool(proxy_function)
-
-
-
-
-from google.adk.tools import BaseTool
 
 class ClientProxyTool(BaseTool):
-    """Proxy tool that bridges AG-UI tools to ADK tools.
+    """A proxy tool that bridges AG-UI protocol tools to ADK.
     
     This tool appears as a normal ADK tool to the agent, but when executed,
     it emits AG-UI protocol events and waits for the client to execute
     the actual tool and return results.
+    
+    Internally wraps LongRunningFunctionTool for proper ADK behavior.
     """
     
     def __init__(
         self,
         ag_ui_tool: AGUITool,
-        event_queue: asyncio.Queue,
-        tool_futures: Dict[str, asyncio.Future],
-        timeout_seconds: int = 300,  # 5 minute default timeout
-        is_long_running=True,
-        tool_names: Optional[Dict[str, str]] = None
+        event_queue: asyncio.Queue
     ):
         """Initialize the client proxy tool.
         
         Args:
             ag_ui_tool: The AG-UI tool definition
             event_queue: Queue to emit AG-UI events
-            tool_futures: Dictionary to store tool execution futures
-            timeout_seconds: Timeout for tool execution
-            is_long_running: If True, no timeout is applied
-            tool_names: Optional dict to store tool names for long-running tools
         """
-        # Initialize BaseTool parent class
+        # Initialize BaseTool with name and description
+        # All client-side tools are long-running for architectural simplicity
         super().__init__(
             name=ag_ui_tool.name,
             description=ag_ui_tool.description,
-            is_long_running=is_long_running
+            is_long_running=True
         )
         
         self.ag_ui_tool = ag_ui_tool
         self.event_queue = event_queue
-        self.tool_futures = tool_futures
-        self.timeout_seconds = timeout_seconds
         
-        # Create the proxy function and set its metadata
-        proxy_function = create_proxy_function(
-            ag_ui_tool=ag_ui_tool,
-            event_queue=event_queue,
-            tool_futures=tool_futures,
-            timeout_seconds=timeout_seconds,
-            is_long_running=is_long_running,
-            tool_names=tool_names
-        )
+        # Create dynamic function with proper parameter signatures for ADK inspection
+        # This allows ADK to extract parameters from user requests correctly
+        sig_params = []
         
-        # Set the function metadata for ADK to extract
-        proxy_function.__name__ = ag_ui_tool.name
-        proxy_function.__doc__ = ag_ui_tool.description
+        # Extract parameters from AG-UI tool schema
+        parameters = ag_ui_tool.parameters
+        if isinstance(parameters, dict) and 'properties' in parameters:
+            for param_name in parameters['properties'].keys():
+                # Create parameter with proper type annotation
+                sig_params.append(
+                    inspect.Parameter(
+                        param_name,
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                        annotation=Any
+                    )
+                )
         
-        # Create the wrapped ADK tool instance
-        if is_long_running:
-            self._wrapped_tool = LongRunningFunctionTool(proxy_function)
-        else:
-            self._wrapped_tool = FunctionTool(proxy_function)
-    
-    @property
-    def name(self) -> str:
-        """Get the tool name from the wrapped tool (uses FunctionTool's extraction logic)."""
-        return self._wrapped_tool.name
-    
-    @name.setter
-    def name(self, value: str):
-        """Setter for name - does nothing since name comes from wrapped tool."""
-        pass
-    
-    @property
-    def description(self) -> str:
-        """Get the tool description from the wrapped tool (uses FunctionTool's extraction logic)."""
-        return self._wrapped_tool.description
-    
-    @description.setter
-    def description(self, value: str):
-        """Setter for description - does nothing since description comes from wrapped tool."""
-        pass
+        # Create the async function that will be wrapped by LongRunningFunctionTool
+        async def proxy_tool_func(**kwargs) -> Any:
+            # Access the original args and tool_context that were stored in run_async
+            original_args = getattr(self, '_current_args', kwargs)
+            original_tool_context = getattr(self, '_current_tool_context', None)
+            return await self._execute_proxy_tool(original_args, original_tool_context)
+        
+        # Set the function name, docstring, and signature to match the AG-UI tool
+        proxy_tool_func.__name__ = ag_ui_tool.name
+        proxy_tool_func.__doc__ = ag_ui_tool.description
+        
+        # Create new signature with extracted parameters
+        if sig_params:
+            proxy_tool_func.__signature__ = inspect.Signature(sig_params)
+        
+        # Create the internal LongRunningFunctionTool for proper behavior
+        self._long_running_tool = LongRunningFunctionTool(proxy_tool_func)
     
     def _get_declaration(self) -> Optional[types.FunctionDeclaration]:
         """Create FunctionDeclaration from AG-UI tool parameters.
@@ -354,6 +105,9 @@ class ClientProxyTool(BaseTool):
         the ADK's automatic function calling has difficulty parsing our
         dynamically created function signature without proper type annotations.
         """
+        logger.debug(f"_get_declaration called for {self.name}")
+        logger.debug(f"AG-UI tool parameters: {self.ag_ui_tool.parameters}")
+        
         # Convert AG-UI parameters (JSON Schema) to ADK format
         parameters = self.ag_ui_tool.parameters
         
@@ -364,31 +118,91 @@ class ClientProxyTool(BaseTool):
         # Ensure it's a proper object schema
         if not isinstance(parameters, dict):
             parameters = {"type": "object", "properties": {}}
+            logger.warning(f"Tool {self.name} had non-dict parameters, using empty schema")
         
         # Create FunctionDeclaration
-        return types.FunctionDeclaration(
+        function_declaration = types.FunctionDeclaration(
             name=self.name,
             description=self.description,
             parameters=types.Schema.model_validate(parameters)
         )
+        logger.debug(f"Created FunctionDeclaration for {self.name}: {function_declaration}")
+        return function_declaration
     
     async def run_async(
         self, 
         *, 
-        args: Dict[str, Any], 
+        args: dict[str, Any], 
         tool_context: Any
     ) -> Any:
-        """Delegate to wrapped ADK tool, which will call our proxy_function with all the middleware logic.
+        """Execute the tool by delegating to the internal LongRunningFunctionTool.
         
         Args:
             args: The arguments for the tool call
             tool_context: The ADK tool context
             
         Returns:
-            The result from the client-side tool execution (via proxy_function)
+            None for long-running tools (client handles execution)
         """
-        return await self._wrapped_tool.run_async(args=args, tool_context=tool_context)
+        # Store args and context for proxy function access
+        self._current_args = args
+        self._current_tool_context = tool_context
+        
+        # Delegate to the wrapped long-running tool
+        return await self._long_running_tool.run_async(args=args, tool_context=tool_context)
+    
+    async def _execute_proxy_tool(self, args: Dict[str, Any], tool_context: Any) -> Any:
+        """Execute the proxy tool logic - emit events and return None.
+        
+        Args:
+            args: Tool arguments from ADK
+            tool_context: ADK tool context
+            
+        Returns:
+            None for long-running tools
+        """
+        logger.debug(f"🛠️  PROXY TOOL EXECUTION: {self.ag_ui_tool.name}")
+        logger.debug(f"🛠️  Arguments received: {args}")
+        
+        # Generate a unique tool call ID
+        tool_call_id = f"call_{uuid.uuid4().hex[:8]}"
+        
+        try:
+            # Emit TOOL_CALL_START event
+            start_event = ToolCallStartEvent(
+                type=EventType.TOOL_CALL_START,
+                tool_call_id=tool_call_id,
+                tool_call_name=self.ag_ui_tool.name
+            )
+            await self.event_queue.put(start_event)
+            logger.debug(f"🛠️  Emitted TOOL_CALL_START for {tool_call_id}")
+            
+            # Emit TOOL_CALL_ARGS event
+            args_json = json.dumps(args)
+            args_event = ToolCallArgsEvent(
+                type=EventType.TOOL_CALL_ARGS,
+                tool_call_id=tool_call_id,
+                delta=args_json
+            )
+            await self.event_queue.put(args_event)
+            logger.debug(f"🛠️  Emitted TOOL_CALL_ARGS for {tool_call_id}")
+            
+            # Emit TOOL_CALL_END event
+            end_event = ToolCallEndEvent(
+                type=EventType.TOOL_CALL_END,
+                tool_call_id=tool_call_id
+            )
+            await self.event_queue.put(end_event)
+            logger.debug(f"🛠️  Emitted TOOL_CALL_END for {tool_call_id}")
+            
+            # Return None for long-running tools - client handles the actual execution
+            logger.debug(f"🛠️  Returning None for long-running tool {tool_call_id}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"🛠️  Error in proxy tool execution for {tool_call_id}: {e}")
+            raise
     
     def __repr__(self) -> str:
         """String representation of the proxy tool."""
-        return f"ClientProxyTool(name='{self.name}', description='{self.description}', is_long_running={self.is_long_running})"
+        return f"ClientProxyTool(name='{self.name}', ag_ui_tool='{self.ag_ui_tool.name}')"
