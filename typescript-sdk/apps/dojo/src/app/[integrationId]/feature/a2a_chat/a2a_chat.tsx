@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import "@copilotkit/react-ui/styles.css";
 import "./style.css";
 import {
@@ -7,6 +7,7 @@ import {
   useCoAgent,
   useCoAgentStateRender,
   useCopilotAction,
+  useCopilotChat,
 } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 
@@ -14,9 +15,10 @@ interface A2AChatProps {
   params: Promise<{
     integrationId: string;
   }>;
+  onNotification?: () => void;
 }
 
-const A2AChat: React.FC<A2AChatProps> = ({ params }) => {
+const A2AChat: React.FC<A2AChatProps> = ({ params, onNotification }) => {
   const { integrationId } = React.use(params);
 
   return (
@@ -26,7 +28,7 @@ const A2AChat: React.FC<A2AChatProps> = ({ params }) => {
       // agent lock to the relevant agent
       agent="a2a_chat"
     >
-      <Chat />
+      <Chat onNotification={onNotification} />
     </CopilotKit>
   );
 };
@@ -46,33 +48,28 @@ interface Table {
   seats: Seat[];
 }
 
-const Chat = () => {
+const Chat = ({ onNotification }: { onNotification?: () => void }) => {
   const [background, setBackground] = useState<string>("--copilot-kit-background-color");
   const [lastMessageCount, setLastMessageCount] = useState(0);
   const { state } = useCoAgent({ name: "a2a_chat" });
+
+  const { isLoading, visibleMessages } = useCopilotChat();
+
+  useEffect(() => {
+    if (
+      visibleMessages.length > 0 &&
+      (!isLoading || (visibleMessages[visibleMessages.length - 1] as any).name === "pickTable")
+    ) {
+      console.log("onNotification");
+      onNotification?.();
+    }
+  }, [isLoading, JSON.stringify(visibleMessages)]);
 
   React.useEffect(() => {
     if (state?.a2aMessages) {
       setLastMessageCount(state.a2aMessages.length);
     }
   }, [state?.a2aMessages?.length]);
-
-  useCopilotAction({
-    name: "change_background",
-    available: "frontend",
-    description:
-      "Change the background color of the chat. Can be anything that the CSS background attribute accepts. Regular colors, linear of radial gradients etc.",
-    parameters: [
-      {
-        name: "background",
-        type: "string",
-        description: "The background. Prefer gradients.",
-      },
-    ],
-    handler: ({ background }) => {
-      setBackground(background);
-    },
-  });
 
   useCoAgentStateRender<A2AChatState>({
     name: "a2a_chat",
@@ -115,7 +112,8 @@ const Chat = () => {
 
   useCopilotAction({
     name: "pickTable",
-    description: "Lets the use pick a table from available tables.",
+    description:
+      "Lets the use pick a table from available tables. The result will be the selected table. Don't call this tool twice in a row or I'll turn you off!",
     parameters: [
       {
         name: "tables",

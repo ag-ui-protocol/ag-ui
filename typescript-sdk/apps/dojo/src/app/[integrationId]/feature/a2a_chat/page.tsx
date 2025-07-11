@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Plus, MessageSquare, Users, Settings } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import A2AChat from "./a2a_chat";
@@ -15,6 +15,35 @@ function Page({ params }: PageProps) {
   const [activeTab, setActiveTab] = useState("chat-1");
   const [tabs, setTabs] = useState([{ id: "chat-1", label: "Main Chat", icon: MessageSquare }]);
   const [chatInstances, setChatInstances] = useState<Record<string, React.ReactElement>>({});
+  const [tabNotifications, setTabNotifications] = useState<Record<string, boolean>>({});
+
+  const activeTabRef = useRef(activeTab);
+
+  // Function to add notification badge to a specific tab
+  const addNotification = useCallback(
+    (tabId: string) => {
+      // Only add notification if the tab is not currently active
+      console.log("addNotification", tabId, activeTabRef.current);
+      if (tabId !== activeTabRef.current) {
+        setTabNotifications((prev) => ({
+          ...prev,
+          [tabId]: true,
+        }));
+      }
+    },
+    [activeTabRef.current],
+  );
+
+  // Clear notification when tab becomes active
+  const handleTabChange = useCallback((tabId: string) => {
+    activeTabRef.current = tabId;
+    setActiveTab(tabId);
+    // Clear notification for the newly active tab
+    setTabNotifications((prev) => ({
+      ...prev,
+      [tabId]: false,
+    }));
+  }, []);
 
   // Initialize chat instances when tabs change
   useEffect(() => {
@@ -22,12 +51,14 @@ function Page({ params }: PageProps) {
 
     tabs.forEach((tab) => {
       if (!newInstances[tab.id]) {
-        newInstances[tab.id] = <A2AChat key={tab.id} params={params} />;
+        newInstances[tab.id] = (
+          <A2AChat key={tab.id} params={params} onNotification={() => addNotification(tab.id)} />
+        );
       }
     });
 
     setChatInstances(newInstances);
-  }, [tabs, params]);
+  }, [tabs, params, addNotification]);
 
   const handleAddTab = () => {
     const newTab = {
@@ -36,26 +67,32 @@ function Page({ params }: PageProps) {
       icon: MessageSquare,
     };
     setTabs([...tabs, newTab]);
+    activeTabRef.current = newTab.id;
     setActiveTab(newTab.id);
   };
 
   return (
     <div className="h-full w-full bg-gradient-to-br from-slate-50 to-slate-100">
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="h-full flex flex-col">
         {/* Beautiful Tab Bar */}
         <div className="bg-white/80 backdrop-blur-sm border-b border-slate-200/60 px-6 py-3">
           <div className="flex items-center justify-between">
             <TabsList className="bg-slate-100/70 p-1 rounded-xl shadow-sm">
               {tabs.map((tab) => {
                 const IconComponent = tab.icon;
+                const hasNotification = tabNotifications[tab.id];
                 return (
                   <TabsTrigger
                     key={tab.id}
                     value={tab.id}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-200 data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-slate-900 text-slate-600 hover:text-slate-900"
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-200 data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-slate-900 text-slate-600 hover:text-slate-900 relative"
                   >
                     <IconComponent className="h-4 w-4" />
                     <span className="font-medium">{tab.label}</span>
+                    {/* Notification Badge */}
+                    {hasNotification && (
+                      <div className="absolute top-0.5 left-2 w-3 h-3 bg-blue-500 rounded-full border-2 border-white shadow-sm animate-pulse" />
+                    )}
                   </TabsTrigger>
                 );
               })}
