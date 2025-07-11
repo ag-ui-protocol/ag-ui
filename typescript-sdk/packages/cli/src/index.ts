@@ -4,11 +4,7 @@ import inquirer from "inquirer";
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
-
-// Import giget with proper typing
-const { downloadTemplate } = require("giget") as {
-  downloadTemplate: (template: string, options: { dir: string; install: boolean }) => Promise<void>;
-};
+import { downloadTemplate } from "giget";
 
 const program = new Command();
 

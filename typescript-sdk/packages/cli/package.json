@@ -9,7 +9,7 @@
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
-  "bin": "./dist/index.js",
+  "bin": "./dist/index.mjs",
   "sideEffects": false,
   "files": [
     "dist/**"
@@ -27,7 +27,7 @@
     "@types/inquirer": "^9.0.8",
     "commander": "^12.1.0",
     "inquirer": "^12.6.3",
-    "giget": "^1.3.0"
+    "giget": "2.0.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
