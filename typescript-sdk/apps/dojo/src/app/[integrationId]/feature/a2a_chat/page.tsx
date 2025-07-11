@@ -13,10 +13,7 @@ interface PageProps {
 
 function Page({ params }: PageProps) {
   const [activeTab, setActiveTab] = useState("chat-1");
-  const [tabs, setTabs] = useState([
-    { id: "chat-1", label: "Main Chat", icon: MessageSquare },
-    { id: "chat-2", label: "Team Discussion", icon: Users },
-  ]);
+  const [tabs, setTabs] = useState([{ id: "chat-1", label: "Main Chat", icon: MessageSquare }]);
   const [chatInstances, setChatInstances] = useState<Record<string, React.ReactElement>>({});
 
   // Initialize chat instances when tabs change
