@@ -31,8 +31,7 @@
                     ]
                   }
                 ]
-              },
-              "integrations"
+              }
             ]
           },
           {
@@ -137,6 +136,12 @@
       "og:image": "https://raw.githubusercontent.com/ag-ui-protocol/docs/logo/light.png"
     },
     "indexing": "navigable"
+  },
+  "integrations": {
+    "posthog": {
+      "apiKey": "phc_XZdymVYjrph9Mi0xZYGNyCKexxgblXRR1jMENCtdz5Q",
+      "apiHost": "https://eu.posthog.com"
+    }
   },
   "footer": {
     "socials": {
