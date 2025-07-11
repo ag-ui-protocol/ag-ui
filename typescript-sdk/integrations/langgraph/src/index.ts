@@ -159,7 +159,11 @@ export class LangGraphAgent extends AbstractAgent {
     // Therefore, this value should either hold null, or the only edition of state that should be used.
     this.activeRun!.manuallyEmittedState = null;
 
-    this.activeRun!.nodeName = input.forwardedProps?.nodeName;
+    const nodeNameInput = forwardedProps?.nodeName;
+    this.activeRun!.nodeName = nodeNameInput;
+    if (this.activeRun!.nodeName === '__end__') {
+      this.activeRun!.nodeName = undefined;
+    }
 
     const threadId = inputThreadId ?? randomUUID();
 
@@ -176,6 +180,7 @@ export class LangGraphAgent extends AbstractAgent {
 
     state.messages = agentStateValues.messages;
     state = this.langGraphDefaultMergeState(state, aguiToLangChainMessage, tools);
+    const graphInfo = await this.client.assistants.getGraph(this.assistant.assistant_id);
 
     const mode =
       threadId && this.activeRun!.nodeName != "__end__" && this.activeRun!.nodeName
@@ -183,12 +188,12 @@ export class LangGraphAgent extends AbstractAgent {
         : "start";
 
     if (mode === "continue" && !forwardedProps?.command?.resume) {
+      const nodeBefore = graphInfo.edges.find(e => e.target === this.activeRun!.nodeName);
       await this.client.threads.updateState(threadId, {
         values: state,
-        asNode: this.activeRun!.nodeName,
+        asNode: nodeBefore?.source,
       });
     }
-
     this.activeRun!.schemaKeys = await this.getSchemaKeys();
 
     const payloadInput = getStreamPayloadInput({
@@ -196,8 +201,6 @@ export class LangGraphAgent extends AbstractAgent {
       state,
       schemaKeys: this.activeRun!.schemaKeys,
     });
-
-    const graphInfo = await this.client.assistants.getGraph(this.assistant.assistant_id);
 
     let payloadConfig: LangGraphConfig | undefined;
     const configsToMerge = [this.assistantConfig, forwardedProps?.config].filter(
@@ -244,6 +247,7 @@ export class LangGraphAgent extends AbstractAgent {
       });
       return subscriber.complete();
     }
+
     const streamResponse = this.client.runs.stream(threadId, this.assistant.assistant_id, payload);
 
     this.activeRun!.prevNodeName = null;
@@ -262,6 +266,7 @@ export class LangGraphAgent extends AbstractAgent {
         if (!payload.streamMode.includes(streamResponseChunk.event as StreamMode)) {
           continue;
         }
+
         // Force event type, as data is not properly defined on the LG side.
         type EventsChunkData = {
           __interrupt__?: any;
@@ -295,20 +300,11 @@ export class LangGraphAgent extends AbstractAgent {
         this.activeRun!.id = metadata.run_id;
 
         if (currentNodeName && currentNodeName !== this.activeRun!.nodeName) {
-          if (this.activeRun!.nodeName) {
-            this.dispatchEvent({
-              type: EventType.STEP_FINISHED,
-              stepName: this.activeRun!.nodeName,
-            });
+          if (this.activeRun!.nodeName && this.activeRun!.nodeName !== nodeNameInput) {
+            this.endStep()
           }
 
-          if (currentNodeName) {
-            this.dispatchEvent({
-              type: EventType.STEP_STARTED,
-              stepName: currentNodeName,
-            });
-            this.activeRun!.nodeName = currentNodeName;
-          }
+          this.startStep(currentNodeName)
         }
 
         shouldExit =
@@ -326,7 +322,7 @@ export class LangGraphAgent extends AbstractAgent {
         // we only want to update the node name under certain conditions
         // since we don't need any internal node names to be sent to the frontend
         if (graphInfo["nodes"].some((node) => node.id === currentNodeName)) {
-          this.activeRun!.nodeName = currentNodeName;
+            this.activeRun!.nodeName = currentNodeName
         }
 
         updatedState = this.activeRun!.manuallyEmittedState ?? latestStateValues;
@@ -362,10 +358,17 @@ export class LangGraphAgent extends AbstractAgent {
       }
 
       state = await this.client.threads.getState(threadId);
-      const interrupts = (state.tasks?.[0]?.interrupts ?? []) as Interrupt[];
-      this.activeRun!.nodeName = interrupts
-        ? this.activeRun!.nodeName
-        : Object.keys(state.metadata.writes)[0];
+      const tasks = state.tasks
+      const interrupts = (tasks?.[0]?.interrupts ?? []) as Interrupt[];
+      const isEndNode = state.next.length === 0
+      const writes = state.metadata.writes ?? {}
+
+      let newNodeName = this.activeRun!.nodeName!
+
+      if (!interrupts?.length) {
+        newNodeName = isEndNode ? '__end__' : (state.next[0] ?? Object.keys(writes)[0]);
+      }
+
 
       interrupts.forEach((interrupt) => {
         this.dispatchEvent({
@@ -377,6 +380,12 @@ export class LangGraphAgent extends AbstractAgent {
         });
       });
 
+      if (this.activeRun!.nodeName != newNodeName) {
+        this.endStep()
+        this.startStep(newNodeName)
+      }
+
+      this.endStep()
       this.dispatchEvent({
         type: EventType.STATE_SNAPSHOT,
         snapshot: this.getStateSnapshot(state.values),
@@ -385,17 +394,13 @@ export class LangGraphAgent extends AbstractAgent {
         type: EventType.MESSAGES_SNAPSHOT,
         messages: langchainMessagesToAgui(state.values.messages ?? []),
       });
-      if (this.activeRun!.nodeName) {
-        this.dispatchEvent({
-          type: EventType.STEP_FINISHED,
-          stepName: this.activeRun!.nodeName!,
-        });
-      }
+
       this.dispatchEvent({
         type: EventType.RUN_FINISHED,
         threadId,
         runId: this.activeRun!.id,
       });
+      this.activeRun = undefined;
       return subscriber.complete();
     } catch (e) {
       return subscriber.error(e);
@@ -833,6 +838,25 @@ export class LangGraphAgent extends AbstractAgent {
       messages: [...removedMessages, ...newMessages],
       tools: [...(state.tools ?? []), ...tools],
     };
+  }
+
+  startStep(nodeName: string) {
+    this.dispatchEvent({
+      type: EventType.STEP_STARTED,
+      stepName: nodeName,
+    });
+    this.activeRun!.nodeName = nodeName;
+  }
+
+  endStep() {
+    if (!this.activeRun!.nodeName) {
+      throw new Error("No active step to end");
+    }
+    this.dispatchEvent({
+      type: EventType.STEP_FINISHED,
+      stepName: this.activeRun!.nodeName!,
+    });
+    this.activeRun!.nodeName = undefined;
   }
 }
 
