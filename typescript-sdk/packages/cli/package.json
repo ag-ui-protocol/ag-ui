@@ -26,7 +26,8 @@
   "dependencies": {
     "@types/inquirer": "^9.0.8",
     "commander": "^12.1.0",
-    "inquirer": "^12.6.3"
+    "inquirer": "^12.6.3",
+    "giget": "^1.3.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

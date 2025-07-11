@@ -5,6 +5,11 @@ import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 
+// Import giget with proper typing
+const { downloadTemplate } = require("giget") as {
+  downloadTemplate: (template: string, options: { dir: string; install: boolean }) => Promise<void>;
+};
+
 const program = new Command();
 
 // Dark purple color
@@ -41,6 +46,7 @@ async function createProject() {
       message: "What client do you want to use?",
       choices: [
         "CopilotKit/Next.js",
+        "CLI client",
         new inquirer.Separator("Other clients coming soon (SMS, Whatsapp, Slack ...)"),
       ],
     },
@@ -49,6 +55,13 @@ async function createProject() {
   console.log(`\nSelected client: ${answers.client}`);
   console.log("Initializing your project...\n");
 
+  // Handle CLI client option
+  if (answers.client === "CLI client") {
+    await handleCliClient();
+    return;
+  }
+
+  // Continue with existing CopilotKit/Next.js logic
   const packageJsonPath = path.join(process.cwd(), "package.json");
   const packageJsonExists = fs.existsSync(packageJsonPath);
 
@@ -122,7 +135,7 @@ async function createProject() {
 
   // Run copilotkit init with framework flags
   console.log("\n🚀 Running CopilotKit initialization...\n");
-  
+
   const options = program.opts();
   const frameworkArgs = [];
 
@@ -154,6 +167,48 @@ async function createProject() {
   });
 }
 
+async function handleCliClient() {
+  console.log("🔧 Setting up CLI client...\n");
+
+  const projectName = await inquirer.prompt([
+    {
+      type: "input",
+      name: "name",
+      message: "What would you like to name your CLI project?",
+      default: "my-ag-ui-cli-app",
+      validate: (input) => {
+        if (!input.trim()) {
+          return "Project name cannot be empty";
+        }
+        if (!/^[a-zA-Z0-9-_]+$/.test(input)) {
+          return "Project name can only contain letters, numbers, hyphens, and underscores";
+        }
+        return true;
+      },
+    },
+  ]);
+
+  try {
+    console.log(`📥 Downloading CLI client template: ${projectName.name}\n`);
+
+    await downloadTemplate("gh:ag-ui-protocol/ag-ui/typescript-sdk/apps/client-cli-example", {
+      dir: projectName.name,
+      install: false,
+    });
+
+    console.log("✅ CLI client template downloaded successfully!");
+    console.log(`\n📁 Project created in: ${projectName.name}`);
+    console.log("\n🚀 Next steps:");
+    console.log(`   cd ${projectName.name}`);
+    console.log("   npm install");
+    console.log("   npm run dev");
+    console.log("\n💡 Check the README.md for more information on how to use your CLI client!");
+  } catch (error) {
+    console.log("❌ Failed to download CLI client template:", error);
+    process.exit(1);
+  }
+}
+
 program.name("create-ag-ui-app").description("AG-UI CLI").version("0.0.1-alpha.1");
 
 // Add framework flags
@@ -165,7 +220,6 @@ program
   .option("--ag2", "Use the AG2 framework")
   .option("--llamaindex", "Use the LlamaIndex framework")
   .option("--agno", "Use the Agno framework");
-
 
 program.action(async () => {
   await createProject();
