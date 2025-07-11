@@ -232,7 +232,7 @@ class TestToolResultFlow:
         assert len(events) == 1
         assert isinstance(events[0], RunErrorEvent)
         assert events[0].code == "NO_TOOL_RESULTS"
-        assert "Tool result submission without tool results" in events[0].message
+        assert "No tool results found in submission" in events[0].message
     
     @pytest.mark.asyncio
     async def test_handle_tool_result_submission_with_active_execution(self, adk_middleware):

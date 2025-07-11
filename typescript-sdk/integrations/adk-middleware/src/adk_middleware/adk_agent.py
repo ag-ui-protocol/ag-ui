@@ -413,28 +413,41 @@ class ADKAgent:
         # Extract tool results first 
         tool_results = await self._extract_tool_results(input)
         
+        if not tool_results:
+            logger.error(f"Tool result submission without tool results for thread {thread_id}")
+            yield RunErrorEvent(
+                type=EventType.RUN_ERROR,
+                message="No tool results found in submission",
+                code="NO_TOOL_RESULTS"
+            )
+            return
+        
         try:
+            # Check if tool result matches any pending tool calls for better debugging
+            for tool_result in tool_results:
+                tool_call_id = tool_result['message'].tool_call_id
+                has_pending = await self._has_pending_tool_calls(thread_id)
+                
+                if has_pending:
+                    # Could add more specific check here for the exact tool_call_id
+                    # but for now just log that we're processing a tool result while tools are pending
+                    logger.debug(f"Processing tool result {tool_call_id} for thread {thread_id} with pending tools")
+                else:
+                    # No pending tools - this could be a stale result or from a different session
+                    logger.warning(f"No pending tool calls found for tool result {tool_call_id} in thread {thread_id}")
+            
             # Since all tools are long-running, all tool results are standalone
             # and should start new executions with the tool results
-            if tool_results:
-                logger.info(f"Starting new execution for tool result in thread {thread_id}")
-                async for event in self._start_new_execution(input, "default"):
-                    yield event
-            else:
-                logger.error(f"Tool result submission without tool results for thread {thread_id}")
-                yield RunErrorEvent(
-                    type=EventType.RUN_ERROR,
-                    message="Tool result submission without tool results",
-                    code="NO_TOOL_RESULTS"
-                )
-                return
+            logger.info(f"Starting new execution for tool result in thread {thread_id}")
+            async for event in self._start_new_execution(input, "default"):
+                yield event
                 
         except Exception as e:
             logger.error(f"Error handling tool results: {e}", exc_info=True)
             yield RunErrorEvent(
                 type=EventType.RUN_ERROR,
-                message=str(e),
-                code="TOOL_RESULT_ERROR"
+                message=f"Failed to process tool results: {str(e)}",
+                code="TOOL_RESULT_PROCESSING_ERROR"
             )
     
     async def _extract_tool_results(self, input: RunAgentInput) -> List[Dict]:
@@ -786,10 +799,16 @@ class ADKAgent:
                             # Handle empty content as a success with empty result
                             result = {"success": True, "result": None}
                             logger.warning(f"Empty tool result content for tool call {tool_call_id}, using empty success result")
-                    except json.JSONDecodeError as e:
-                        # Handle invalid JSON by providing error result
-                        result = {"error": f"Invalid JSON in tool result: {str(e)}", "raw_content": content}
-                        logger.error(f"Invalid JSON in tool result for call {tool_call_id}: {e}")
+                    except json.JSONDecodeError as json_error:
+                        # Handle invalid JSON by providing detailed error result
+                        result = {
+                            "error": f"Invalid JSON in tool result: {str(json_error)}", 
+                            "raw_content": content,
+                            "error_type": "JSON_DECODE_ERROR",
+                            "line": getattr(json_error, 'lineno', None),
+                            "column": getattr(json_error, 'colno', None)
+                        }
+                        logger.error(f"Invalid JSON in tool result for call {tool_call_id}: {json_error} at line {getattr(json_error, 'lineno', '?')}, column {getattr(json_error, 'colno', '?')}")
                     
                     updated_function_response_part = types.Part(
                     function_response=types.FunctionResponse(

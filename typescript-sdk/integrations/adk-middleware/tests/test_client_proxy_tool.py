@@ -105,7 +105,7 @@ class TestClientProxyTool:
         # Mock UUID generation for predictable tool_call_id
         with patch('uuid.uuid4') as mock_uuid:
             mock_uuid.return_value = MagicMock()
-            mock_uuid.return_value.__str__ = MagicMock(return_value="test-uuid-123")
+            mock_uuid.return_value.hex = "abc123456789abcdef012345"  # Valid hex string
             
             # Execute the tool - should return None immediately (long-running)
             result = await proxy_tool.run_async(args=args, tool_context=mock_context)
@@ -119,19 +119,19 @@ class TestClientProxyTool:
             # Check TOOL_CALL_START event
             start_event = mock_event_queue.put.call_args_list[0][0][0]
             assert isinstance(start_event, ToolCallStartEvent)
-            assert start_event.tool_call_id == "test-uuid-123"
+            assert start_event.tool_call_id == "call_abc12345"  # call_ + first 8 hex chars
             assert start_event.tool_call_name == "test_calculator"
             
             # Check TOOL_CALL_ARGS event
             args_event = mock_event_queue.put.call_args_list[1][0][0]
             assert isinstance(args_event, ToolCallArgsEvent)
-            assert args_event.tool_call_id == "test-uuid-123"
+            assert args_event.tool_call_id == "call_abc12345"  # call_ + first 8 hex chars
             assert json.loads(args_event.delta) == args
             
             # Check TOOL_CALL_END event
             end_event = mock_event_queue.put.call_args_list[2][0][0]
             assert isinstance(end_event, ToolCallEndEvent)
-            assert end_event.tool_call_id == "test-uuid-123"
+            assert end_event.tool_call_id == "call_abc12345"  # call_ + first 8 hex chars
     
     
     @pytest.mark.asyncio
@@ -158,7 +158,9 @@ class TestClientProxyTool:
         
         assert "ClientProxyTool" in repr_str
         assert "test_calculator" in repr_str
-        assert "Performs basic arithmetic operations" in repr_str
+        # The repr shows the tool name, not the description
+        assert "name='test_calculator'" in repr_str
+        assert "ag_ui_tool='test_calculator'" in repr_str
     
     @pytest.mark.asyncio
     async def test_multiple_concurrent_executions(self, proxy_tool, mock_event_queue):

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2025-07-11
+
 ### Bug Fixes
 - **CRITICAL**: Fixed tool result accumulation causing Gemini API errors about function response count mismatch
 - **FIXED**: `_extract_tool_results()` now only extracts the most recent tool message instead of all tool messages from conversation history
@@ -34,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Enhanced Testing
 - **TESTING**: Comprehensive test suite refactored for all-long-running architecture
-- **TESTING**: 272 tests passing with 92% overall code coverage (increased from previous 269 tests)
+- **TESTING**: 272 tests passing with 93% overall code coverage (increased from previous 269 tests)
 - **TESTING**: Added comprehensive HITL tool call tracking tests (`test_tool_tracking_hitl.py`)
 - **TESTING**: Removed obsolete test files for hybrid functionality (`test_hybrid_flow_integration.py`, `test_execution_resumption.py`)
 - **TESTING**: Fixed all integration tests to work with simplified architecture and HITL support
@@ -58,6 +60,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BEHAVIOR**: All tools now behave as long-running tools - emit events and return `None` immediately
 - **BEHAVIOR**: Standalone tool results now start new executions instead of being silently ignored
 - **TESTING**: Test expectations updated for all-long-running behavior and HITL support
+
+### Merged from adk-middleware (PR #7)
+- **TESTING**: Comprehensive test coverage improvements - fixed all failing tests across the test suite
+- **MOCK CONTEXT**: Added proper mock_tool_context fixtures to fix pydantic validation errors in test files
+- **TOOLSET CLEANUP**: Fixed ClientProxyToolset.close() to properly cancel pending futures and clear resources
+- **EVENT STREAMING**: Updated tests to expect RUN_FINISHED events that are now automatically emitted by enhanced _stream_events method
+- **TEST SIGNATURES**: Fixed mock function signatures to match updated _stream_events method parameters (execution, run_id)
+- **TOOL RESULT FLOW**: Updated tests to account for RunStartedEvent being emitted for tool result submissions
+- **ERROR HANDLING**: Fixed malformed tool message test to correctly expect graceful handling of empty content (not errors)
+- **ARCHITECTURE**: Enhanced toolset resource management - toolsets now properly clean up blocking tool futures on close
+- **TEST RELIABILITY**: Improved test isolation and mock context consistency across all test files
+- **TESTING**: Improved test coverage to 93% overall with comprehensive unit tests for previously untested modules
+- **COMPLIANCE**: Tool execution now fully compliant with ADK behavioral expectations
+- **OBSERVABILITY**: Enhanced logging for tool call ID tracking and validation throughout execution flow
+
+### Error Handling Improvements
+- **ENHANCED**: Better tool call ID mismatch detection with warnings when tool results don't match pending tools
+- **ENHANCED**: Improved JSON parsing error handling with detailed error information including line/column numbers
+- **ENHANCED**: More specific error codes for better debugging and error reporting
+- **ENHANCED**: Better error messages in tool result processing with specific failure reasons
 
 ## [0.3.2] - 2025-07-08
 

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from ag_ui.core import Tool as AGUITool
 from adk_middleware.client_proxy_toolset import ClientProxyToolset
 from adk_middleware.client_proxy_tool import ClientProxyTool
+from google.adk.tools import FunctionTool, LongRunningFunctionTool
 
 
 class TestClientProxyToolset:

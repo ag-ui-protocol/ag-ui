@@ -31,7 +31,7 @@ if not logger.handlers:
 
 
 class ClientProxyTool(BaseTool):
-    """Proxy tool that bridges AG-UI tools to ADK tools.
+    """A proxy tool that bridges AG-UI protocol tools to ADK.
     
     This tool appears as a normal ADK tool to the agent, but when executed,
     it emits AG-UI protocol events and waits for the client to execute
@@ -99,16 +99,21 @@ class ClientProxyTool(BaseTool):
         self._long_running_tool = LongRunningFunctionTool(proxy_tool_func)
     
     def _get_declaration(self) -> Optional[types.FunctionDeclaration]:
-        """Convert AG-UI tool parameters to ADK FunctionDeclaration.
+        """Create FunctionDeclaration from AG-UI tool parameters.
         
-        Returns:
-            FunctionDeclaration for this tool
+        We override this instead of delegating to the wrapped tool because
+        the ADK's automatic function calling has difficulty parsing our
+        dynamically created function signature without proper type annotations.
         """
         logger.debug(f"_get_declaration called for {self.name}")
         logger.debug(f"AG-UI tool parameters: {self.ag_ui_tool.parameters}")
         
         # Convert AG-UI parameters (JSON Schema) to ADK format
         parameters = self.ag_ui_tool.parameters
+        
+        # Debug: Show the raw parameters
+        print(f"🔍 TOOL PARAMS DEBUG: Tool '{self.ag_ui_tool.name}' parameters: {parameters}")
+        print(f"🔍 TOOL PARAMS DEBUG: Parameters type: {type(parameters)}")
         
         # Ensure it's a proper object schema
         if not isinstance(parameters, dict):
@@ -137,111 +142,67 @@ class ClientProxyTool(BaseTool):
             tool_context: The ADK tool context
             
         Returns:
-            None (all client-side tools are long-running)
-            
-        Raises:
-            Exception: If event emission fails
+            None for long-running tools (client handles execution)
         """
-        # Store the context temporarily so the wrapped function can access it
+        # Store args and context for proxy function access
         self._current_args = args
         self._current_tool_context = tool_context
         
-        try:
-            # Delegate to the internal LongRunningFunctionTool for proper behavior
-            result = await self._long_running_tool.run_async(args=args, tool_context=tool_context)
-            return result
-        finally:
-            # Clean up the temporary context
-            self._current_args = None
-            self._current_tool_context = None
+        # Delegate to the wrapped long-running tool
+        return await self._long_running_tool.run_async(args=args, tool_context=tool_context)
     
-    async def _execute_proxy_tool(
-        self, 
-        args: dict[str, Any], 
-        tool_context: Any
-    ) -> Any:
-        """Execute the tool by emitting events for client-side handling.
-        
-        This method:
-        1. Generates a unique tool_call_id
-        2. Emits TOOL_CALL_START event
-        3. Emits TOOL_CALL_ARGS event with the arguments
-        4. Emits TOOL_CALL_END event
-        5. Returns None immediately (long-running behavior)
+    async def _execute_proxy_tool(self, args: Dict[str, Any], tool_context: Any) -> Any:
+        """Execute the proxy tool logic - emit events and return None.
         
         Args:
-            args: The arguments for the tool call
-            tool_context: The ADK tool context
+            args: Tool arguments from ADK
+            tool_context: ADK tool context
             
         Returns:
-            None (all client-side tools are long-running)
-            
-        Raises:
-            Exception: If event emission fails
+            None for long-running tools
         """
-        # Try to get the function call ID from ADK tool context
-        tool_call_id = None
-        if tool_context and hasattr(tool_context, 'function_call_id'):
-            potential_id = tool_context.function_call_id
-            if isinstance(potential_id, str) and potential_id:
-                tool_call_id = potential_id
-        elif tool_context and hasattr(tool_context, 'id'):
-            potential_id = tool_context.id
-            if isinstance(potential_id, str) and potential_id:
-                tool_call_id = potential_id
+        logger.debug(f"🛠️  PROXY TOOL EXECUTION: {self.ag_ui_tool.name}")
+        logger.debug(f"🛠️  Arguments received: {args}")
         
-        # Fallback to UUID if we can't get the ADK ID
-        if not tool_call_id:
-            tool_call_id = str(uuid.uuid4())
-            logger.debug(f"No function call ID from ADK context, using generated UUID: {tool_call_id}")
-        else:
-            logger.info(f"Using ADK function call ID: {tool_call_id}")
-        
-        logger.info(f"Executing client proxy tool '{self.name}' with id {tool_call_id}")
-        logger.debug(f"Tool arguments received: {args}")
+        # Generate a unique tool call ID
+        tool_call_id = f"call_{uuid.uuid4().hex[:8]}"
         
         try:
             # Emit TOOL_CALL_START event
             start_event = ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
                 tool_call_id=tool_call_id,
-                tool_call_name=self.name,
-                parent_message_id=None  # Could be enhanced to track message
+                tool_call_name=self.ag_ui_tool.name
             )
-            logger.debug(f"Emitting TOOL_CALL_START for {tool_call_id} (queue size before: {self.event_queue.qsize()}, queue ID: {id(self.event_queue)})")
             await self.event_queue.put(start_event)
-            logger.debug(f"TOOL_CALL_START queued for {tool_call_id} (queue size after: {self.event_queue.qsize()})")
+            logger.debug(f"🛠️  Emitted TOOL_CALL_START for {tool_call_id}")
             
             # Emit TOOL_CALL_ARGS event
-            # Convert args to JSON string for AG-UI protocol
             args_json = json.dumps(args)
             args_event = ToolCallArgsEvent(
                 type=EventType.TOOL_CALL_ARGS,
                 tool_call_id=tool_call_id,
                 delta=args_json
             )
-            logger.debug(f"Emitting TOOL_CALL_ARGS for {tool_call_id} (queue size before: {self.event_queue.qsize()})")
             await self.event_queue.put(args_event)
-            logger.debug(f"TOOL_CALL_ARGS queued for {tool_call_id} (queue size after: {self.event_queue.qsize()})")
+            logger.debug(f"🛠️  Emitted TOOL_CALL_ARGS for {tool_call_id}")
             
             # Emit TOOL_CALL_END event
             end_event = ToolCallEndEvent(
                 type=EventType.TOOL_CALL_END,
                 tool_call_id=tool_call_id
             )
-            logger.debug(f"Emitting TOOL_CALL_END for {tool_call_id} (queue size before: {self.event_queue.qsize()})")
             await self.event_queue.put(end_event)
-            logger.debug(f"TOOL_CALL_END queued for {tool_call_id} (queue size after: {self.event_queue.qsize()})")
+            logger.debug(f"🛠️  Emitted TOOL_CALL_END for {tool_call_id}")
             
-            # Return None immediately - all client tools are long-running
-            # Client will handle tool execution and provide results via separate request
-            logger.info(f"Tool '{self.name}' events emitted, returning None (long-running)")
+            # Return None for long-running tools - client handles the actual execution
+            logger.debug(f"🛠️  Returning None for long-running tool {tool_call_id}")
             return None
-                
+            
         except Exception as e:
-            logger.error(f"Error executing tool '{self.name}': {e}")
+            logger.error(f"🛠️  Error in proxy tool execution for {tool_call_id}: {e}")
             raise
     
     def __repr__(self) -> str:
         """String representation of the proxy tool."""
-        return f"ClientProxyTool(name='{self.name}', description='{self.description}', long_running=True)"
+        return f"ClientProxyTool(name='{self.name}', ag_ui_tool='{self.ag_ui_tool.name}')"

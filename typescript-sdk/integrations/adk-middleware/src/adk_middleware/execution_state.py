@@ -52,7 +52,6 @@ class ExecutionState:
         """
         return time.time() - self.start_time > timeout_seconds
     
-    
     async def cancel(self):
         """Cancel the execution and clean up resources."""
         logger.info(f"Cancelling execution for thread {self.thread_id}")
