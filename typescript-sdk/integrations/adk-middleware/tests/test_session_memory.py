@@ -154,6 +154,7 @@ class TestSessionMemory:
         # Create an expired session
         old_session = MagicMock()
         old_session.last_update_time = time.time() - 10  # 10 seconds ago
+        old_session.state = {}  # No pending tool calls
         
         # Track a session manually for testing
         manager._track_session("test_app:test_session", "test_user")

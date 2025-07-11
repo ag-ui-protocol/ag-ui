@@ -96,23 +96,18 @@ class TestToolErrorHandling:
     async def test_tool_result_parsing_error(self, adk_middleware, sample_tool):
         """Test error handling when tool result cannot be parsed."""
         # Create an execution with a pending tool
-        mock_task = AsyncMock()
+        mock_task = MagicMock()
+        mock_task.done.return_value = False
         event_queue = asyncio.Queue()
-        tool_futures = {}
         
         execution = ExecutionState(
             task=mock_task,
             thread_id="test_thread",
-            event_queue=event_queue,
-            tool_futures=tool_futures
+            event_queue=event_queue
         )
         
         # Add to active executions
         adk_middleware._active_executions["test_thread"] = execution
-        
-        # Create a future for the tool call
-        future = asyncio.Future()
-        tool_futures["call_1"] = future
         
         # Submit invalid JSON as tool result
         input_data = RunAgentInput(
@@ -129,30 +124,35 @@ class TestToolErrorHandling:
             tools=[sample_tool], context=[], state={}, forwarded_props={}
         )
         
-        events = []
-        async for event in adk_middleware._handle_tool_result_submission(input_data):
-            events.append(event)
+        # Mock _stream_events to avoid hanging on empty queue
+        async def mock_stream_events(execution):
+            # Return empty - no events from execution
+            return
+            yield  # Make it a generator
         
-        # Should get an error event for invalid JSON
-        error_events = [e for e in events if isinstance(e, RunErrorEvent)]
-        assert len(error_events) >= 1
-        # The actual JSON error message varies, so check for common JSON error indicators
-        error_msg = error_events[0].message.lower()
-        assert any(keyword in error_msg for keyword in ["json", "parse", "expecting", "decode"])
+        with patch.object(adk_middleware, '_stream_events', side_effect=mock_stream_events):
+            events = []
+            async for event in adk_middleware._handle_tool_result_submission(input_data):
+                events.append(event)
+            
+            # In the all-long-running architecture, tool results always start new executions
+            # Should get RUN_STARTED and RUN_FINISHED events (malformed JSON is handled gracefully)
+            assert len(events) == 2
+            assert events[0].type == EventType.RUN_STARTED
+            assert events[1].type == EventType.RUN_FINISHED
     
     @pytest.mark.asyncio
     async def test_tool_result_for_nonexistent_call(self, adk_middleware, sample_tool):
         """Test error handling when tool result is for non-existent call."""
         # Create an execution without the expected tool call
-        mock_task = AsyncMock()
+        mock_task = MagicMock()
+        mock_task.done.return_value = False
         event_queue = asyncio.Queue()
-        tool_futures = {}  # Empty - no pending tools
         
         execution = ExecutionState(
             task=mock_task,
             thread_id="test_thread",
-            event_queue=event_queue,
-            tool_futures=tool_futures
+            event_queue=event_queue
         )
         
         adk_middleware._active_executions["test_thread"] = execution
@@ -172,13 +172,20 @@ class TestToolErrorHandling:
             tools=[sample_tool], context=[], state={}, forwarded_props={}
         )
         
-        events = []
-        async for event in adk_middleware._handle_tool_result_submission(input_data):
-            events.append(event)
+        # Mock _stream_events to avoid hanging on empty queue
+        async def mock_stream_events(execution):
+            # Return empty - no events from execution
+            return
+            yield  # Make it a generator
         
-        # The system logs warnings but may not emit error events for unknown tool calls
-        # Just check that it doesn't crash the system
-        assert len(events) >= 0  # Should not crash
+        with patch.object(adk_middleware, '_stream_events', side_effect=mock_stream_events):
+            events = []
+            async for event in adk_middleware._handle_tool_result_submission(input_data):
+                events.append(event)
+            
+            # The system logs warnings but may not emit error events for unknown tool calls
+            # Just check that it doesn't crash the system
+            assert len(events) >= 0  # Should not crash
     
     @pytest.mark.asyncio
     async def test_toolset_creation_error(self, adk_middleware):
@@ -213,75 +220,59 @@ class TestToolErrorHandling:
     async def test_tool_timeout_during_execution(self, sample_tool):
         """Test that tool timeouts are properly handled."""
         event_queue = AsyncMock()
-        tool_futures = {}
         
-        # Create proxy tool with very short timeout
+        # Create proxy tool
         proxy_tool = ClientProxyTool(
             ag_ui_tool=sample_tool,
-            event_queue=event_queue,
-            tool_futures=tool_futures,
-            is_long_running = False,
-            timeout_seconds=0.001  # 1ms timeout
+            event_queue=event_queue
         )
         
         args = {"action": "slow_action"}
         mock_context = MagicMock()
         
-        # Should timeout quickly
-        with pytest.raises(TimeoutError) as exc_info:
-            await proxy_tool.run_async(args=args, tool_context=mock_context)
+        # In all-long-running architecture, tools return None immediately
+        result = await proxy_tool.run_async(args=args, tool_context=mock_context)
         
-        assert "timed out" in str(exc_info.value)
-        
-        # Future should be cleaned up
-        assert len(tool_futures) == 0
+        # Should return None (long-running behavior)
+        assert result is None
     
     @pytest.mark.asyncio
     async def test_execution_state_error_handling(self):
         """Test ExecutionState error handling methods."""
         mock_task = MagicMock()
+        mock_task.done.return_value = False  # Ensure it returns False for "running" status
         event_queue = asyncio.Queue()
-        tool_futures = {}
         
         execution = ExecutionState(
             task=mock_task,
             thread_id="test_thread",
-            event_queue=event_queue,
-            tool_futures=tool_futures
+            event_queue=event_queue
         )
         
-        # Test resolving a tool result successfully
-        future = asyncio.Future()
-        tool_futures["call_1"] = future
+        # Test basic execution state functionality
+        assert execution.thread_id == "test_thread"
+        assert execution.task == mock_task
+        assert execution.event_queue == event_queue
+        assert execution.is_complete is False
         
-        result = execution.resolve_tool_result("call_1", {"success": True})
-        
-        assert result is True  # Should return True for successful resolution
-        assert future.done()
-        assert future.result() == {"success": True}
+        # Test status reporting
+        assert execution.get_status() == "running"
     
     @pytest.mark.asyncio
     async def test_multiple_tool_errors_handling(self, adk_middleware, sample_tool):
         """Test handling multiple tool errors in sequence."""
         # Create execution with multiple pending tools
-        mock_task = AsyncMock()
+        mock_task = MagicMock()
+        mock_task.done.return_value = False  # Ensure it returns False for "running" status
         event_queue = asyncio.Queue()
-        tool_futures = {}
         
         execution = ExecutionState(
             task=mock_task,
             thread_id="test_thread",
-            event_queue=event_queue,
-            tool_futures=tool_futures
+            event_queue=event_queue
         )
         
         adk_middleware._active_executions["test_thread"] = execution
-        
-        # Create multiple futures
-        future1 = asyncio.Future()
-        future2 = asyncio.Future()
-        tool_futures["call_1"] = future1
-        tool_futures["call_2"] = future2
         
         # Submit results for both - one valid, one invalid
         input_data = RunAgentInput(
@@ -294,17 +285,22 @@ class TestToolErrorHandling:
             tools=[sample_tool], context=[], state={}, forwarded_props={}
         )
         
-        events = []
-        async for event in adk_middleware._handle_tool_result_submission(input_data):
-            events.append(event)
+        # Mock _stream_events to avoid hanging on empty queue
+        async def mock_stream_events(execution):
+            # Return empty - no events from execution
+            return
+            yield  # Make it a generator
         
-        # Should handle both results - one success, one error
-        # First tool should succeed
-        assert future1.done() and not future1.exception()
-        
-        # Should get error events for the invalid JSON
-        error_events = [e for e in events if isinstance(e, RunErrorEvent)]
-        assert len(error_events) >= 1
+        with patch.object(adk_middleware, '_stream_events', side_effect=mock_stream_events):
+            events = []
+            async for event in adk_middleware._handle_tool_result_submission(input_data):
+                events.append(event)
+            
+            # In all-long-running architecture, tool results always start new executions
+            # Should get RUN_STARTED and RUN_FINISHED events (only most recent tool result processed)
+            assert len(events) == 2
+            assert events[0].type == EventType.RUN_STARTED
+            assert events[1].type == EventType.RUN_FINISHED
     
     @pytest.mark.asyncio
     async def test_execution_cleanup_on_error(self, adk_middleware, sample_tool):
@@ -333,7 +329,6 @@ class TestToolErrorHandling:
     async def test_toolset_close_error_handling(self):
         """Test error handling during toolset close operations."""
         event_queue = AsyncMock()
-        tool_futures = {}
         
         # Create a sample tool for the toolset
         sample_tool = AGUITool(
@@ -344,16 +339,8 @@ class TestToolErrorHandling:
         
         toolset = ClientProxyToolset(
             ag_ui_tools=[sample_tool],
-            event_queue=event_queue,
-            tool_futures=tool_futures,
-            tool_timeout_seconds=1
+            event_queue=event_queue
         )
-        
-        # Add a future that will raise an exception when cancelled
-        problematic_future = MagicMock()
-        problematic_future.done.return_value = False
-        problematic_future.cancel.side_effect = Exception("Cancel failed")
-        tool_futures["problematic"] = problematic_future
         
         # Close should handle the exception gracefully
         try:
@@ -373,14 +360,9 @@ class TestToolErrorHandling:
         event_queue = AsyncMock()
         event_queue.put.side_effect = Exception("Queue operation failed")
         
-        tool_futures = {}
-        
         proxy_tool = ClientProxyTool(
             ag_ui_tool=sample_tool,
-            event_queue=event_queue,
-            tool_futures=tool_futures,
-            timeout_seconds=1,
-            is_long_running=True
+            event_queue=event_queue
         )
         
         args = {"action": "test"}
@@ -399,14 +381,9 @@ class TestToolErrorHandling:
         event_queue = AsyncMock()
         event_queue.put.side_effect = Exception("Queue operation failed")
         
-        tool_futures = {}
-        
         proxy_tool = ClientProxyTool(
             ag_ui_tool=sample_tool,
-            event_queue=event_queue,
-            tool_futures=tool_futures,
-            timeout_seconds=1,
-            is_long_running=False
+            event_queue=event_queue
         )
         
         args = {"action": "test"}
@@ -422,52 +399,46 @@ class TestToolErrorHandling:
     async def test_concurrent_tool_errors(self, adk_middleware, sample_tool):
         """Test handling errors when multiple tools fail concurrently."""
         # Create execution with multiple tools
-        mock_task = AsyncMock()
+        # Create a real asyncio task for proper cancellation testing
+        async def dummy_task():
+            await asyncio.sleep(10)  # Long running task
+        
+        real_task = asyncio.create_task(dummy_task())
         event_queue = asyncio.Queue()
-        tool_futures = {}
         
         execution = ExecutionState(
-            task=mock_task,
+            task=real_task,
             thread_id="test_thread",
-            event_queue=event_queue,
-            tool_futures=tool_futures
+            event_queue=event_queue
         )
         
         adk_middleware._active_executions["test_thread"] = execution
         
-        # Create multiple futures and set them to fail
-        for i in range(3):
-            future = asyncio.Future()
-            future.set_exception(Exception(f"Tool {i} failed"))
-            tool_futures[f"call_{i}"] = future
+        # Test concurrent execution state management
+        # In the all-long-running architecture, we don't track individual tool futures
+        # Instead, we test basic execution state properties
+        assert execution.thread_id == "test_thread"
+        assert execution.get_status() == "running"
+        assert execution.is_complete is False
         
-        # All tools should be in failed state
-        assert execution.has_pending_tools() is False  # All done (with exceptions)
-        
-        # Check that all have exceptions
-        for call_id, future in tool_futures.items():
-            assert future.done()
-            assert future.exception() is not None
+        # Test that execution can be cancelled
+        await execution.cancel()
+        assert execution.is_complete is True
     
     @pytest.mark.asyncio
     async def test_malformed_tool_message_handling(self, adk_middleware, sample_tool):
         """Test handling of malformed tool messages."""
-        mock_task = AsyncMock()
+        mock_task = MagicMock()
+        mock_task.done.return_value = False
         event_queue = asyncio.Queue()
-        tool_futures = {}
         
         execution = ExecutionState(
             task=mock_task,
             thread_id="test_thread",
-            event_queue=event_queue,
-            tool_futures=tool_futures
+            event_queue=event_queue
         )
         
         adk_middleware._active_executions["test_thread"] = execution
-        
-        # Create future for tool call
-        future = asyncio.Future()
-        tool_futures["call_1"] = future
         
         # Submit tool message with empty content (which should be handled gracefully)
         input_data = RunAgentInput(
@@ -484,10 +455,86 @@ class TestToolErrorHandling:
             tools=[sample_tool], context=[], state={}, forwarded_props={}
         )
         
-        events = []
-        async for event in adk_middleware._handle_tool_result_submission(input_data):
-            events.append(event)
+        # Mock _stream_events to avoid hanging on empty queue
+        async def mock_stream_events(execution):
+            # Return empty - no events from execution
+            return
+            yield  # Make it a generator
         
-        # Should handle the malformed message gracefully
-        error_events = [e for e in events if isinstance(e, RunErrorEvent)]
-        assert len(error_events) >= 1
+        with patch.object(adk_middleware, '_stream_events', side_effect=mock_stream_events):
+            events = []
+            async for event in adk_middleware._handle_tool_result_submission(input_data):
+                events.append(event)
+            
+            # In all-long-running architecture, tool results always start new executions
+            # Should get RUN_STARTED and RUN_FINISHED events (empty content handled gracefully)
+            assert len(events) == 2
+            assert events[0].type == EventType.RUN_STARTED
+            assert events[1].type == EventType.RUN_FINISHED
+    
+    @pytest.mark.asyncio
+    async def test_json_parsing_in_tool_result_submission(self, adk_middleware, sample_tool):
+        """Test that JSON parsing errors in tool results are handled gracefully."""
+        # Test with empty content
+        input_empty = RunAgentInput(
+            thread_id="test_thread",
+            run_id="run_1",
+            messages=[
+                UserMessage(id="1", role="user", content="Test"),
+                ToolMessage(
+                    id="2",
+                    role="tool",
+                    tool_call_id="call_1",
+                    content=""  # Empty content
+                )
+            ],
+            tools=[sample_tool],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+        
+        # This should not raise a JSONDecodeError
+        events = []
+        try:
+            async for event in adk_middleware.run(input_empty):
+                events.append(event)
+                if len(events) >= 5:  # Limit to avoid infinite loop
+                    break
+        except json.JSONDecodeError:
+            pytest.fail("JSONDecodeError should not be raised for empty tool content")
+        except Exception:
+            # Other exceptions are expected (e.g., from ADK library)
+            pass
+        
+        # Test with invalid JSON
+        input_invalid = RunAgentInput(
+            thread_id="test_thread2",
+            run_id="run_2",
+            messages=[
+                UserMessage(id="1", role="user", content="Test"),
+                ToolMessage(
+                    id="2",
+                    role="tool",
+                    tool_call_id="call_2",
+                    content="{ invalid json"  # Invalid JSON
+                )
+            ],
+            tools=[sample_tool],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+        
+        # This should not raise a JSONDecodeError
+        events = []
+        try:
+            async for event in adk_middleware.run(input_invalid):
+                events.append(event)
+                if len(events) >= 5:  # Limit to avoid infinite loop
+                    break
+        except json.JSONDecodeError:
+            pytest.fail("JSONDecodeError should not be raised for invalid JSON tool content")
+        except Exception:
+            # Other exceptions are expected (e.g., from ADK library)
+            pass

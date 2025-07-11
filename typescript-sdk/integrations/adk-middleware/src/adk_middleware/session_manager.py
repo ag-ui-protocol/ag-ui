@@ -275,8 +275,13 @@ class SessionManager:
                 if session and hasattr(session, 'last_update_time'):
                     age = current_time - session.last_update_time
                     if age > self._timeout:
-                        await self._delete_session(session_id, app_name, user_id)
-                        expired_count += 1
+                        # Check for pending tool calls before deletion (HITL scenarios)
+                        pending_calls = session.state.get("pending_tool_calls", []) if session.state else []
+                        if pending_calls:
+                            logger.info(f"Preserving expired session {session_key} - has {len(pending_calls)} pending tool calls (HITL)")
+                        else:
+                            await self._delete_session(session_id, app_name, user_id)
+                            expired_count += 1
                 elif not session:
                     # Session doesn't exist, just untrack it
                     self._untrack_session(session_key, user_id)

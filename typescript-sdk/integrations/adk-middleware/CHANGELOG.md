@@ -7,12 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- **CRITICAL**: Fixed handling of results from long-running tools where no active execution exists
-- **BEHAVIOR**: Added standalone tool result mode to properly process long-running tool results
+### Bug Fixes
+- **CRITICAL**: Fixed tool result accumulation causing Gemini API errors about function response count mismatch
+- **FIXED**: `_extract_tool_results()` now only extracts the most recent tool message instead of all tool messages from conversation history
+- **RELIABILITY**: Prevents multiple tool responses being passed to Gemini when only one function call is expected
 
-### Enhanced
-- **TESTING**: Improved test coverage to 94% overall with comprehensive unit tests for previously untested modules
+### Major Architecture Change
+- **BREAKING**: Simplified to all-long-running tool execution model, removing hybrid blocking/long-running complexity
+- **REMOVED**: Eliminated blocking tool execution mode - all tools now use long-running behavior for consistency
+- **REMOVED**: Removed tool futures, execution resumption, and hybrid execution state management
+- **REMOVED**: Eliminated per-tool execution mode configuration (`tool_long_running_config`)
+
+### Simplified Architecture
+- **SIMPLIFIED**: `ClientProxyTool` now always returns `None` immediately after emitting events, wrapping `LongRunningFunctionTool` for proper ADK behavior
+- **SIMPLIFIED**: `ClientProxyToolset` constructor simplified - removed `is_long_running` and `tool_futures` parameters
+- **SIMPLIFIED**: `ExecutionState` cleaned up - removed tool future resolution and hybrid execution logic
+- **SIMPLIFIED**: `ADKAgent.run()` method streamlined - removed commented hybrid model code
+- **IMPROVED**: Agent tool combination now uses `model_copy()` to avoid mutating original agent instances
+
+### Human-in-the-Loop (HITL) Support
+- **NEW**: Session-based pending tool call tracking for HITL scenarios using ADK session state
+- **NEW**: Sessions with pending tool calls are preserved during cleanup (no timeout for HITL workflows)
+- **NEW**: Automatic tool call tracking when tools emit events and tool response tracking when results are received
+- **NEW**: Standalone tool result handling - tool results without active executions start new executions
+- **IMPROVED**: Session cleanup logic now checks for pending tool calls before deletion, enabling indefinite HITL workflows
+
+### Enhanced Testing
+- **TESTING**: Comprehensive test suite refactored for all-long-running architecture
+- **TESTING**: 272 tests passing with 92% overall code coverage (increased from previous 269 tests)
+- **TESTING**: Added comprehensive HITL tool call tracking tests (`test_tool_tracking_hitl.py`)
+- **TESTING**: Removed obsolete test files for hybrid functionality (`test_hybrid_flow_integration.py`, `test_execution_resumption.py`)
+- **TESTING**: Fixed all integration tests to work with simplified architecture and HITL support
+- **TESTING**: Updated tool result flow tests to handle new standalone tool result behavior
+
+### Performance & Reliability
+- **PERFORMANCE**: Eliminated complex execution state tracking and tool future management overhead
+- **RELIABILITY**: Removed potential deadlocks and race conditions from hybrid execution model
+- **CONSISTENCY**: All tools now follow the same execution pattern, reducing cognitive load and bugs
+
+### Technical Architecture (HITL)
+- **Session State**: Pending tool calls tracked in ADK session state via `session.state["pending_tool_calls"]` array
+- **Event-Driven Tracking**: `ToolCallEndEvent` events automatically add tool calls to pending list via `append_event()` with `EventActions.stateDelta`
+- **Result Processing**: `ToolMessage` responses automatically remove tool calls from pending list with proper ADK session persistence
+- **Session Persistence**: Sessions with pending tool calls bypass timeout-based cleanup for indefinite HITL workflows
+- **Standalone Results**: Tool results without active executions start new ADK executions for proper session continuity
+- **State Persistence**: Uses ADK's `append_event()` with `EventActions(stateDelta={})` for proper session state persistence
+
+### Breaking Changes
+- **API**: `ClientProxyToolset` constructor no longer accepts `is_long_running`, `tool_futures`, or `tool_long_running_config` parameters
+- **BEHAVIOR**: All tools now behave as long-running tools - emit events and return `None` immediately
+- **BEHAVIOR**: Standalone tool results now start new executions instead of being silently ignored
+- **TESTING**: Test expectations updated for all-long-running behavior and HITL support
 
 ## [0.3.2] - 2025-07-08
 

@@ -108,7 +108,7 @@ class TestADKAgent:
     @pytest.mark.asyncio
     async def test_run_basic_flow(self, adk_agent, sample_input, registry, mock_agent):
         """Test basic run flow with mocked runner."""
-        with patch.object(adk_agent, '_get_or_create_runner') as mock_get_runner:
+        with patch.object(adk_agent, '_create_runner') as mock_create_runner:
             # Create a mock runner
             mock_runner = AsyncMock()
             mock_event = Mock()
@@ -126,7 +126,7 @@ class TestADKAgent:
                 yield mock_event
             
             mock_runner.run_async = mock_run_async
-            mock_get_runner.return_value = mock_runner
+            mock_create_runner.return_value = mock_runner
             
             # Collect events
             events = []
@@ -179,15 +179,18 @@ class TestADKAgent:
     @pytest.mark.asyncio
     async def test_cleanup(self, adk_agent):
         """Test cleanup method."""
-        # Add a mock runner
-        mock_runner = AsyncMock()
-        adk_agent._runners["test:user"] = mock_runner
+        # Add a mock execution
+        mock_execution = Mock()
+        mock_execution.cancel = AsyncMock()
+        
+        async with adk_agent._execution_lock:
+            adk_agent._active_executions["test_thread"] = mock_execution
         
         await adk_agent.close()
         
-        # Verify runner was closed
-        mock_runner.close.assert_called_once()
-        assert len(adk_agent._runners) == 0
+        # Verify execution was cancelled and cleaned up
+        mock_execution.cancel.assert_called_once()
+        assert len(adk_agent._active_executions) == 0
 
 
 @pytest.fixture(autouse=True)
