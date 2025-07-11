@@ -243,12 +243,6 @@ class LangGraphAgent:
                 StepStartedEvent(type=EventType.STEP_STARTED, step_name=self.active_run["node_name"])
             )
 
-        # if tasks is None:
-        yield self._dispatch_event(
-            StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=self.active_run["node_name"])
-        )
-        self.active_run["node_name"] = None
-
         state_values = state.values if state.values else state
         yield self._dispatch_event(
             StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(state_values))
@@ -260,6 +254,11 @@ class LangGraphAgent:
                 messages=langchain_messages_to_agui(state_values.get("messages", [])),
             )
         )
+
+        yield self._dispatch_event(
+            StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=self.active_run["node_name"])
+        )
+        self.active_run["node_name"] = None
 
         yield self._dispatch_event(
             RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
