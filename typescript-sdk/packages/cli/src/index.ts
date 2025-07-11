@@ -166,6 +166,15 @@ async function createProject() {
 async function handleCliClient() {
   console.log("🔧 Setting up CLI client...\n");
 
+  // Get current package versions from the monorepo
+  console.log("🔍 Reading current package versions...");
+  const versions = await getCurrentPackageVersions();
+  console.log(`📋 Found versions: ${Object.keys(versions).length} packages`);
+  Object.entries(versions).forEach(([name, version]) => {
+    console.log(`  - ${name}: ${version}`);
+  });
+  console.log("");
+
   const projectName = await inquirer.prompt([
     {
       type: "input",
@@ -193,8 +202,14 @@ async function handleCliClient() {
     });
 
     console.log("✅ CLI client template downloaded successfully!");
+
+    // Update workspace dependencies with actual versions
+    console.log("\n🔄 Updating workspace dependencies...");
+    await updateWorkspaceDependencies(projectName.name, versions);
+
     console.log(`\n📁 Project created in: ${projectName.name}`);
     console.log("\n🚀 Next steps:");
+    console.log("   export OPENAI_API_KEY='your-openai-api-key'");
     console.log(`   cd ${projectName.name}`);
     console.log("   npm install");
     console.log("   npm run dev");
@@ -222,3 +237,75 @@ program.action(async () => {
 });
 
 program.parse();
+
+// Utility functions
+
+// Helper function to get package versions from npmjs
+async function getCurrentPackageVersions(): Promise<{ [key: string]: string }> {
+  const packages = ["@ag-ui/client", "@ag-ui/core", "@ag-ui/mastra"];
+  const versions: { [key: string]: string } = {};
+
+  for (const packageName of packages) {
+    try {
+      // Fetch package info from npm registry
+      const response = await fetch(`https://registry.npmjs.org/${packageName}`);
+      if (response.ok) {
+        const packageInfo = await response.json();
+        versions[packageName] = packageInfo["dist-tags"]?.latest || "latest";
+        console.log(`  ✓ ${packageName}: ${versions[packageName]}`);
+      } else {
+        console.log(`  ⚠️  Could not fetch version for ${packageName}`);
+        // Fallback to latest
+        versions[packageName] = "latest";
+      }
+    } catch (error) {
+      console.log(`  ⚠️  Error fetching ${packageName}: ${error}`);
+      // Fallback to latest
+      versions[packageName] = "latest";
+    }
+  }
+
+  return versions;
+}
+
+// Function to update workspace dependencies in downloaded project
+async function updateWorkspaceDependencies(
+  projectPath: string,
+  versions: { [key: string]: string },
+) {
+  const packageJsonPath = path.join(projectPath, "package.json");
+
+  try {
+    if (!fs.existsSync(packageJsonPath)) {
+      console.log("⚠️  No package.json found in downloaded project");
+      return;
+    }
+
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    let updated = false;
+
+    // Update workspace dependencies with actual versions
+    if (packageJson.dependencies) {
+      for (const [depName, depVersion] of Object.entries(packageJson.dependencies)) {
+        if (
+          typeof depVersion === "string" &&
+          depVersion.startsWith("workspace:") &&
+          versions[depName]
+        ) {
+          packageJson.dependencies[depName] = `^${versions[depName]}`;
+          updated = true;
+          console.log(`  📦 Updated ${depName}: workspace:* → ^${versions[depName]}`);
+        }
+      }
+    }
+
+    if (updated) {
+      fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
+      console.log("✅ Package.json updated with actual package versions!");
+    } else {
+      console.log("📄 No workspace dependencies found to update");
+    }
+  } catch (error) {
+    console.log(`❌ Error updating package.json: ${error}`);
+  }
+}
