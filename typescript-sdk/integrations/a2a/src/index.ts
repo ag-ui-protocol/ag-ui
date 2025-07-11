@@ -146,6 +146,7 @@ export class A2AClientAgent extends AbstractAgent {
               sendMessage: sendMessageTool,
             },
             maxSteps: 10,
+            toolCallStreaming: true,
           });
 
           let messageId = randomUUID();
@@ -165,6 +166,25 @@ export class A2AClientAgent extends AbstractAgent {
               // reset the messageId
               messageId = randomUUID();
             },
+            onToolCallStreamingStartPart(streamPart) {
+              const event: ToolCallChunkEvent = {
+                type: EventType.TOOL_CALL_CHUNK,
+                toolCallId: streamPart.toolCallId,
+                parentMessageId: messageId,
+                toolCallName: streamPart.toolName,
+              };
+              observer.next(event);
+            },
+            onToolCallDeltaPart(streamPart) {
+              const event: ToolCallChunkEvent = {
+                type: EventType.TOOL_CALL_CHUNK,
+                toolCallId: streamPart.toolCallId,
+                delta: streamPart.argsTextDelta,
+                parentMessageId: messageId,
+              };
+              observer.next(event);
+            },
+
             onToolCallPart(streamPart) {
               const event: ToolCallChunkEvent = {
                 type: EventType.TOOL_CALL_CHUNK,

@@ -322,15 +322,20 @@ const Chat = () => {
       const availableSeats =
         args.tables?.reduce(
           (total, table: Table) =>
-            total + table.seats.filter((seat: Seat) => seat.status === "available").length,
+            total + (table.seats?.filter((seat: Seat) => seat.status === "available").length || 0),
           0,
         ) || 0;
 
       const teamMembers =
-        args.tables?.flatMap((table: Table) =>
-          table.seats
-            .filter((seat: Seat) => seat.status === "occupied" && seat.name)
-            .map((seat: Seat) => ({ name: seat.name!, table: table.name, seat: seat.seatNumber })),
+        args.tables?.flatMap(
+          (table: Table) =>
+            table.seats
+              ?.filter((seat: Seat) => seat.status === "occupied" && seat.name)
+              .map((seat: Seat) => ({
+                name: seat.name!,
+                table: table.name,
+                seat: seat.seatNumber,
+              })) || [],
         ) || [];
 
       const handleSeatClick = (tableIndex: number, seatNumber: number, status: string) => {
@@ -378,7 +383,7 @@ const Chat = () => {
               <div key={tableIndex} className="bg-gray-50 p-6 rounded-lg">
                 <h3 className="text-lg font-semibold text-center mb-4">{table.name}</h3>
                 <div className="grid grid-cols-2 gap-3">
-                  {table.seats.map((seat: Seat, seatIndex: number) => {
+                  {table.seats?.map((seat: Seat, seatIndex: number) => {
                     const isSelected =
                       selectedSeat?.tableIndex === tableIndex &&
                       selectedSeat?.seatNumber === seat.seatNumber;
@@ -443,7 +448,7 @@ const Chat = () => {
                 onClick={() => {
                   if (!isConfirmed) {
                     // Handle seat selection confirmation
-                    console.log("Selected seat:", selectedSeat);
+
                     setIsConfirmed(true);
                     respond?.(
                       `I would like to book ${args.tables?.[selectedSeat.tableIndex]?.name} - Seat ${selectedSeat.seatNumber}`,
