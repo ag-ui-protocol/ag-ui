@@ -27,7 +27,7 @@ try:
     sample_agent = LlmAgent(
         name="assistant",
         model="gemini-2.0-flash",
-        instruction="You are a helpful assistant."
+        instruction="You are a helpful assistant. Answer the query without using any tool"
     )
     
     # Register the agent
