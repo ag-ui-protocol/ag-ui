@@ -75,7 +75,7 @@ function Page({ params }: PageProps) {
     <div className="h-full w-full bg-gradient-to-br from-slate-50 to-slate-100">
       <Tabs value={activeTab} onValueChange={handleTabChange} className="h-full flex flex-col">
         {/* Beautiful Tab Bar */}
-        <div className="bg-white/80 backdrop-blur-sm border-b border-slate-200/60 px-6 py-3">
+        <div className="bg-white/80 backdrop-blur-sm border-b border-slate-200/60 px-6 py-3 h-[65px]">
           <div className="flex items-center justify-between">
             <TabsList className="bg-slate-100/70 p-1 rounded-xl shadow-sm">
               {tabs.map((tab) => {
