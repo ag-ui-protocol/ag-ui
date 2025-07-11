@@ -8,12 +8,11 @@ import { MastraClient } from "@mastra/client-js";
 import { MastraAgent } from "@ag-ui/mastra";
 import { VercelAISDKAgent } from "@ag-ui/vercel-ai-sdk";
 import { openai } from "@ai-sdk/openai";
-import { LangGraphAgent } from "@ag-ui/langgraph";
+import { LangGraphAgent, LangGraphHttpAgent } from "@ag-ui/langgraph";
 import { AgnoAgent } from "@ag-ui/agno";
 import { LlamaIndexAgent } from "@ag-ui/llamaindex";
 import { CrewAIAgent } from "@ag-ui/crewai";
 import { mastra } from "./mastra";
-import { HttpAgent } from "@ag-ui/client";
 
 export const agentsIntegrations: AgentIntegrationConfig[] = [
   {
@@ -118,22 +117,22 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     id: "langgraph-fastapi",
     agents: async () => {
       return {
-        agentic_chat: new HttpAgent({
+        agentic_chat: new LangGraphHttpAgent({
           url: "http://localhost:8000/agent/agentic_chat",
         }),
-        agentic_generative_ui: new HttpAgent({
+        agentic_generative_ui: new LangGraphHttpAgent({
           url: "http://localhost:8000/agent/agentic_generative_ui",
         }),
-        human_in_the_loop: new HttpAgent({
+        human_in_the_loop: new LangGraphHttpAgent({
           url: "http://localhost:8000/agent/human_in_the_loop",
         }),
-        predictive_state_updates: new HttpAgent({
+        predictive_state_updates: new LangGraphHttpAgent({
           url: "http://localhost:8000/agent/predictive_state_updates",
         }),
-        shared_state: new HttpAgent({
+        shared_state: new LangGraphHttpAgent({
           url: "http://localhost:8000/agent/shared_state",
         }),
-        tool_based_generative_ui: new HttpAgent({
+        tool_based_generative_ui: new LangGraphHttpAgent({
           url: "http://localhost:8000/agent/tool_based_generative_ui",
         }),
       };
