@@ -2,9 +2,11 @@
 This module contains the types for the Agent User Interaction Protocol Python SDK.
 """
 
-from typing import Any, List, Literal, Optional, Union, Annotated
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Annotated, Any, List, Literal, Optional, Union
+
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+
 
 class ConfiguredBaseModel(BaseModel):
     """
@@ -30,7 +32,7 @@ class ToolCall(ConfiguredBaseModel):
     A tool call, modelled after OpenAI tool calls.
     """
     id: str
-    type: Literal["function"]
+    type: Literal["function"] = "function"  # pyright: ignore[reportIncompatibleVariableOverride]
     function: FunctionCall
 
 
@@ -48,7 +50,7 @@ class DeveloperMessage(BaseMessage):
     """
     A developer message.
     """
-    role: Literal["developer"]
+    role: Literal["developer"] = "developer"  # pyright: ignore[reportIncompatibleVariableOverride]
     content: str
 
 
@@ -56,7 +58,7 @@ class SystemMessage(BaseMessage):
     """
     A system message.
     """
-    role: Literal["system"]
+    role: Literal["system"] = "system"  # pyright: ignore[reportIncompatibleVariableOverride]
     content: str
 
 
@@ -64,7 +66,7 @@ class AssistantMessage(BaseMessage):
     """
     An assistant message.
     """
-    role: Literal["assistant"]
+    role: Literal["assistant"] = "assistant"  # pyright: ignore[reportIncompatibleVariableOverride]
     tool_calls: Optional[List[ToolCall]] = None
 
 
@@ -72,7 +74,7 @@ class UserMessage(BaseMessage):
     """
     A user message.
     """
-    role: Literal["user"]
+    role: Literal["user"] = "user" # pyright: ignore[reportIncompatibleVariableOverride]
     content: str
 
 
@@ -81,7 +83,7 @@ class ToolMessage(ConfiguredBaseModel):
     A tool result message.
     """
     id: str
-    role: Literal["tool"]
+    role: Literal["tool"] = "tool"
     content: str
     tool_call_id: str
 
@@ -90,7 +92,6 @@ Message = Annotated[
     Union[DeveloperMessage, SystemMessage, AssistantMessage, UserMessage, ToolMessage],
     Field(discriminator="role")
 ]
-
 
 Role = Literal["developer", "system", "assistant", "user", "tool"]
 
