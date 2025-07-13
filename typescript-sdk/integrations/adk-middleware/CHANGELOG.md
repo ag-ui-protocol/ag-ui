@@ -7,7 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2025-07-13
+
+### Fixed
+- **CRITICAL**: Fixed memory persistence across sessions by ensuring consistent user ID extraction
+- **CRITICAL**: Fixed ADK tool call ID mapping to prevent mismatch between ADK and AG-UI protocols
+
+### Enhanced  
+- **ARCHITECTURE**: Simplified SessionManager._delete_session() to accept session object directly, eliminating redundant lookups
+- **TESTING**: Added comprehensive memory integration test suite (8 tests) for memory service functionality without requiring API keys
+- **DOCUMENTATION**: Updated README with memory tools integration guidance and testing configuration instructions
+
 ### Added
+- Memory integration tests covering service initialization, sharing, and cross-session persistence
+- PreloadMemoryTool import support in FastAPI server examples
+- Documentation for proper tool placement on ADK agents vs middleware
+
+### Technical Improvements
+- Consistent user ID generation for memory testing ("test_user" instead of dynamic anonymous IDs)
+- Optimized session deletion to use session objects directly
+- Enhanced tool call ID extraction from ADK context for proper protocol bridging
+- Cleaned up debug logging statements throughout codebase
+
+### Added (Previous Release)
 - GitHub Actions CI workflow for automated testing on pull requests
 - CI runs pytest for all 185 tests when ADK middleware files are modified
 - Path-specific triggering to avoid unnecessary test runs
