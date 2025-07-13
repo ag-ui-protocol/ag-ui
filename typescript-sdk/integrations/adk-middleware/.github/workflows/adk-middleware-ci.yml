@@ -1,0 +1,42 @@
+name: ADK Middleware CI
+
+on:
+  pull_request:
+    paths:
+      - 'typescript-sdk/integrations/adk-middleware/**'
+      - '.github/workflows/adk-middleware-ci.yml'
+
+jobs:
+  test:
+    name: Run ADK Middleware Tests
+    runs-on: ubuntu-latest
+    
+    defaults:
+      run:
+        working-directory: typescript-sdk/integrations/adk-middleware
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+        
+    - name: Cache pip dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('typescript-sdk/integrations/adk-middleware/requirements*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          
+    - name: Install package in editable mode
+      run: pip install -e .
+      
+    - name: Install dev dependencies
+      run: pip install -r requirements-dev.txt
+      
+    - name: Run tests
+      run: pytest
