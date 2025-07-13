@@ -576,6 +576,8 @@ class ADKAgent:
             await self._ensure_session_exists(
                 app_name, user_id, input.thread_id, input.state
             )
+            await self._session_manager.update_session_state(input.thread_id,app_name,user_id,input.state)
+            
             
             # Convert messages
             # only use this new_message if there is no tool response from the user
@@ -615,6 +617,12 @@ class ADKAgent:
                     input.run_id
                 ):
                     
+                    await event_queue.put(ag_ui_event)
+
+                if adk_event.is_final_response():
+                    final_state = await self._session_manager.get_session_state(input.thread_id,app_name,user_id)
+                    
+                    ag_ui_event =  event_translator._create_state_snapshot_event(final_state)                    
                     await event_queue.put(ag_ui_event)
 
             # Force close any streaming messages

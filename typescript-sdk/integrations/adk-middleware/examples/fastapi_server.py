@@ -8,8 +8,9 @@ Note: Requires google.adk to be installed and configured.
 
 import uvicorn
 from fastapi import FastAPI
-from tool_based_generative_ui.agent import haiku_generator_agent
-from human_in_the_loop.agent import human_in_loop_agent
+from .tool_based_generative_ui.agent import haiku_generator_agent
+from .human_in_the_loop.agent import human_in_loop_agent
+from .shared_state.agent import shared_state_agent
 
 # These imports will work once google.adk is available
 try:
@@ -63,6 +64,7 @@ try:
     add_adk_fastapi_endpoint(app, adk_agent, path="/chat")
     add_adk_fastapi_endpoint(app, adk_agent_haiku_generator, path="/adk-tool-based-generative-ui")
     add_adk_fastapi_endpoint(app, adk_human_in_loop_agent, path="/adk-human-in-loop-agent")
+    add_adk_fastapi_endpoint(app, adk_human_in_loop_agent, path="/adk-shared-state-agent")
     
     @app.get("/")
     async def root():
