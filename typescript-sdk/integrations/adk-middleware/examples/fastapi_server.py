@@ -30,11 +30,11 @@ try:
         model="gemini-2.0-flash",
         instruction="You are a helpful assistant. Answer the query without using any tool"
     )
-    
     # Register the agent
     registry.set_default_agent(sample_agent)
     registry.register_agent('adk-tool-based-generative-ui', haiku_generator_agent)
     registry.register_agent('adk-human-in-loop-agent', human_in_loop_agent)
+    registry.register_agent('adk-shared-state-agent', shared_state_agent)
     # Create ADK middleware agent
     adk_agent = ADKAgent(
         app_name="demo_app",
