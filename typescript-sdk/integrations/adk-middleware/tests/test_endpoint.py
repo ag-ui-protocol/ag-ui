@@ -183,7 +183,7 @@ class TestAddADKFastAPIEndpoint:
         
         # Check that events were encoded and logged
         assert mock_encoder.encode.call_count == 2
-        assert mock_logger.info.call_count == 2
+        assert mock_logger.debug.call_count == 2
     
     @patch('adk_middleware.endpoint.EventEncoder')
     @patch('adk_middleware.endpoint.logger')
