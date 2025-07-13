@@ -203,6 +203,68 @@ agent = ADKAgent(
 - **Comprehensive**: Applies to all session deletions (timeout, user limits, manual)
 - **Performance**: Preserves conversation history without manual intervention
 
+### Memory Tools Integration
+
+To enable memory functionality in your ADK agents, you need to add Google ADK's memory tools to your agents (not to the ADKAgent middleware):
+
+```python
+from google.adk.agents import Agent
+from google.adk import tools as adk_tools
+
+# Create agent with memory tools - THIS IS CORRECT
+my_agent = Agent(
+    name="assistant",
+    model="gemini-2.0-flash", 
+    instruction="You are a helpful assistant.",
+    tools=[adk_tools.preload_memory_tool.PreloadMemoryTool()]  # Add memory tools here
+)
+
+# Register the agent
+registry = AgentRegistry.get_instance()
+registry.set_default_agent(my_agent)
+
+# Create middleware WITHOUT tools parameter - THIS IS CORRECT  
+adk_agent = ADKAgent(
+    app_name="my_app",
+    user_id="user123",
+    memory_service=shared_memory_service  # Memory service enables automatic session memory
+)
+```
+
+**⚠️ Important**: The `tools` parameter belongs to the ADK agent (like `Agent` or `LlmAgent`), **not** to the `ADKAgent` middleware. The middleware automatically handles any tools defined on the registered agents.
+
+### Memory Testing Configuration
+
+For testing memory functionality across sessions, you may want to shorten the default session timeouts:
+
+```python
+# Normal production settings (default)
+adk_agent = ADKAgent(
+    app_name="my_app",
+    user_id="user123",
+    memory_service=shared_memory_service
+    # session_timeout_seconds=1200,    # 20 minutes (default)
+    # cleanup_interval_seconds=300     # 5 minutes (default)
+)
+
+# Short timeouts for memory testing
+adk_agent = ADKAgent(
+    app_name="my_app", 
+    user_id="user123",
+    memory_service=shared_memory_service,
+    session_timeout_seconds=60,     # 1 minute for quick testing
+    cleanup_interval_seconds=30     # 30 seconds cleanup for quick testing
+)
+```
+
+**Testing Memory Workflow:**
+1. Start a conversation and provide information (e.g., "My name is John")
+2. Wait for session timeout + cleanup interval (up to 90 seconds with testing config: 60s timeout + up to 30s for next cleanup cycle)
+3. Start a new conversation and ask about the information ("What's my name?") 
+4. The agent should remember the information from the previous session
+
+**⚠️ Note**: Always revert to production timeouts (defaults) for actual deployments.
+
 ## Tool Support
 
 The middleware provides complete bidirectional tool support, enabling AG-UI Protocol tools to execute within Google ADK agents through an advanced **hybrid execution model** that bridges AG-UI's stateless runs with ADK's stateful execution.

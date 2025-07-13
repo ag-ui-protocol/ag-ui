@@ -29,10 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enhanced tool call ID extraction from ADK context for proper protocol bridging
 - Cleaned up debug logging statements throughout codebase
 
-### Added (Previous Release)
-- GitHub Actions CI workflow for automated testing on pull requests
-- CI runs pytest for all 185 tests when ADK middleware files are modified
-- Path-specific triggering to avoid unnecessary test runs
 
 ## [0.4.0] - 2025-07-11
 

@@ -42,10 +42,12 @@ class TestSessionMemory:
         session.last_update_time = datetime.fromtimestamp(time.time())
         session.state = {"test": "data"}
         session.id = "test_session"
+        session.app_name = "test_app"
+        session.user_id = "test_user"
         return session
     
     @pytest.mark.asyncio
-    async def test_memory_service_disabled_by_default(self, mock_session_service):
+    async def test_memory_service_disabled_by_default(self, mock_session_service, mock_session):
         """Test that memory service is disabled when not provided."""
         manager = SessionManager.get_instance(
             session_service=mock_session_service,
@@ -60,7 +62,7 @@ class TestSessionMemory:
         mock_session_service.create_session.return_value = MagicMock()
         
         await manager.get_or_create_session("test_session", "test_app", "test_user")
-        await manager._delete_session("test_session", "test_app", "test_user")
+        await manager._delete_session(mock_session)
         
         # Only session service delete should be called
         mock_session_service.delete_session.assert_called_once()
@@ -77,19 +79,11 @@ class TestSessionMemory:
         # Verify memory service is set
         assert manager._memory_service is mock_memory_service
         
-        # Mock session retrieval for deletion
-        mock_session_service.get_session.return_value = mock_session
-        
-        # Delete a session
-        await manager._delete_session("test_session", "test_app", "test_user")
+        # Delete a session using session object
+        await manager._delete_session(mock_session)
         
         # Verify memory service was called with correct parameters
-        mock_memory_service.add_session_to_memory.assert_called_once_with(
-            session_id="test_session",
-            app_name="test_app",
-            user_id="test_user",
-            session=mock_session
-        )
+        mock_memory_service.add_session_to_memory.assert_called_once_with(mock_session)
         
         # Verify session was also deleted from session service
         mock_session_service.delete_session.assert_called_once_with(
@@ -107,14 +101,11 @@ class TestSessionMemory:
             auto_cleanup=False
         )
         
-        # Mock session retrieval
-        mock_session_service.get_session.return_value = mock_session
-        
         # Make memory service fail
         mock_memory_service.add_session_to_memory.side_effect = Exception("Memory service error")
         
         # Delete should still succeed despite memory service error
-        await manager._delete_session("test_session", "test_app", "test_user")
+        await manager._delete_session(mock_session)
         
         # Verify both were called despite memory service error
         mock_memory_service.add_session_to_memory.assert_called_once()
@@ -129,17 +120,14 @@ class TestSessionMemory:
             auto_cleanup=False
         )
         
-        # Mock session as not found
-        mock_session_service.get_session.return_value = None
-        
-        # Delete a non-existent session
-        await manager._delete_session("test_session", "test_app", "test_user")
+        # Delete a None session (simulates session not found)
+        await manager._delete_session(None)
         
         # Memory service should not be called for non-existent session
         mock_memory_service.add_session_to_memory.assert_not_called()
         
-        # Session service delete should still be called
-        mock_session_service.delete_session.assert_called_once()
+        # Session service delete should also not be called for None session
+        mock_session_service.delete_session.assert_not_called()
     
     @pytest.mark.asyncio
     async def test_memory_service_during_cleanup(self, mock_session_service, mock_memory_service):
@@ -166,12 +154,7 @@ class TestSessionMemory:
         await manager._cleanup_expired_sessions()
         
         # Verify memory service was called during cleanup
-        mock_memory_service.add_session_to_memory.assert_called_once_with(
-            session_id="test_session",
-            app_name="test_app",
-            user_id="test_user",
-            session=old_session
-        )
+        mock_memory_service.add_session_to_memory.assert_called_once_with(old_session)
     
     @pytest.mark.asyncio
     async def test_memory_service_during_user_limit_enforcement(self, mock_session_service, mock_memory_service):
@@ -206,12 +189,7 @@ class TestSessionMemory:
         await manager.get_or_create_session("session2", "test_app", "test_user")
         
         # Verify memory service was called for the removed session
-        mock_memory_service.add_session_to_memory.assert_called_once_with(
-            session_id="session1",
-            app_name="test_app",
-            user_id="test_user",
-            session=old_session
-        )
+        mock_memory_service.add_session_to_memory.assert_called_once_with(old_session)
     
     @pytest.mark.asyncio
     async def test_memory_service_configuration(self, mock_session_service, mock_memory_service):

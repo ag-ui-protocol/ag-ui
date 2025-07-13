@@ -101,6 +101,7 @@ class TestClientProxyTool:
         """Test successful tool execution with long-running behavior."""
         args = {"operation": "add", "a": 5, "b": 3}
         mock_context = MagicMock()
+        mock_context.function_call_id = "test_function_call_id"
         
         # Mock UUID generation for predictable tool_call_id
         with patch('uuid.uuid4') as mock_uuid:
@@ -119,19 +120,19 @@ class TestClientProxyTool:
             # Check TOOL_CALL_START event
             start_event = mock_event_queue.put.call_args_list[0][0][0]
             assert isinstance(start_event, ToolCallStartEvent)
-            assert start_event.tool_call_id == "call_abc12345"  # call_ + first 8 hex chars
+            assert start_event.tool_call_id == "test_function_call_id"  # Uses ADK function call ID
             assert start_event.tool_call_name == "test_calculator"
             
             # Check TOOL_CALL_ARGS event
             args_event = mock_event_queue.put.call_args_list[1][0][0]
             assert isinstance(args_event, ToolCallArgsEvent)
-            assert args_event.tool_call_id == "call_abc12345"  # call_ + first 8 hex chars
+            assert args_event.tool_call_id == "test_function_call_id"  # Uses ADK function call ID
             assert json.loads(args_event.delta) == args
             
             # Check TOOL_CALL_END event
             end_event = mock_event_queue.put.call_args_list[2][0][0]
             assert isinstance(end_event, ToolCallEndEvent)
-            assert end_event.tool_call_id == "call_abc12345"  # call_ + first 8 hex chars
+            assert end_event.tool_call_id == "test_function_call_id"  # Uses ADK function call ID
     
     
     @pytest.mark.asyncio
@@ -139,6 +140,7 @@ class TestClientProxyTool:
         """Test handling of event queue errors."""
         args = {"operation": "add", "a": 5, "b": 3}
         mock_context = MagicMock()
+        mock_context.function_call_id = "test_function_call_id"
         
         # Mock event queue to raise error
         error_queue = AsyncMock()
@@ -168,6 +170,7 @@ class TestClientProxyTool:
         args1 = {"operation": "add", "a": 1, "b": 2}
         args2 = {"operation": "subtract", "a": 10, "b": 5}
         mock_context = MagicMock()
+        mock_context.function_call_id = "test_function_call_id"
         
         # Start two concurrent executions - both should return None immediately
         task1 = asyncio.create_task(
@@ -201,6 +204,7 @@ class TestClientProxyTool:
             "values": [1.5, 2.7, 3.9]
         }
         mock_context = MagicMock()
+        mock_context.function_call_id = "test_function_call_id"
         
         with patch('uuid.uuid4') as mock_uuid:
             mock_uuid.return_value = MagicMock()

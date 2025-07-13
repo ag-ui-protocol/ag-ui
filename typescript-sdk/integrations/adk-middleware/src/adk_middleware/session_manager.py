@@ -165,7 +165,7 @@ class SessionManager:
         if user_id not in self._user_sessions:
             return
         
-        oldest_key = None
+        oldest_session = None
         oldest_time = float('inf')
         
         # Find oldest session by checking ADK's lastUpdateTime
@@ -181,64 +181,64 @@ class SessionManager:
                     update_time = session.last_update_time
                     if update_time < oldest_time:
                         oldest_time = update_time
-                        oldest_key = session_key
+                        oldest_session = session
             except Exception as e:
                 logger.error(f"Error checking session {session_key}: {e}")
         
-        if oldest_key:
-            app_name, session_id = oldest_key.split(':', 1)
-            await self._delete_session(session_id, app_name, user_id)
-            logger.info(f"Removed oldest session for user {user_id}: {oldest_key}")
+        if oldest_session:
+            session_key = f"{oldest_session.app_name}:{oldest_session.id}"
+            await self._delete_session(oldest_session)
+            logger.info(f"Removed oldest session for user {user_id}: {session_key}")
     
-    async def _delete_session(self, session_id: str, app_name: str, user_id: str):
-        """Delete a session and untrack it."""
-        session_key = f"{app_name}:{session_id}"
+    async def _delete_session(self, session):
+        """Delete a session using the session object directly.
+        
+        Args:
+            session: The ADK session object to delete
+        """
+        if not session:
+            logger.warning("Cannot delete None session")
+            return
+            
+        session_key = f"{session.app_name}:{session.id}"
         
         # If memory service is available, add session to memory before deletion
+        logger.debug(f"Deleting session {session_key}, memory_service: {self._memory_service is not None}")
         if self._memory_service:
             try:
-                session = await self._session_service.get_session(
-                    session_id=session_id,
-                    app_name=app_name,
-                    user_id=user_id
-                )
-                if session:
-                    await self._memory_service.add_session_to_memory(
-                        session_id=session_id,
-                        app_name=app_name,
-                        user_id=user_id,
-                        session=session
-                    )
-                    logger.debug(f"Added session {session_key} to memory before deletion")
+                await self._memory_service.add_session_to_memory(session)
+                logger.debug(f"Added session {session_key} to memory before deletion")
             except Exception as e:
                 logger.error(f"Failed to add session {session_key} to memory: {e}")
         
         try:
             await self._session_service.delete_session(
-                session_id=session_id,
-                app_name=app_name,
-                user_id=user_id
+                session_id=session.id,
+                app_name=session.app_name,
+                user_id=session.user_id
             )
             logger.debug(f"Deleted session: {session_key}")
         except Exception as e:
             logger.error(f"Failed to delete session {session_key}: {e}")
         
-        self._untrack_session(session_key, user_id)
+        self._untrack_session(session_key, session.user_id)
     
     def _start_cleanup_task(self):
         """Start the cleanup task if not already running."""
         try:
             loop = asyncio.get_running_loop()
             self._cleanup_task = loop.create_task(self._cleanup_loop())
-            logger.info("Started session cleanup task")
+            logger.debug(f"Started session cleanup task {id(self._cleanup_task)} for SessionManager {id(self)}")
         except RuntimeError:
             logger.debug("No event loop, cleanup will start later")
     
     async def _cleanup_loop(self):
         """Periodically clean up expired sessions."""
+        logger.debug(f"Cleanup loop started for SessionManager {id(self)}")
         while True:
             try:
                 await asyncio.sleep(self._cleanup_interval)
+                logger.debug(f"Running cleanup on SessionManager {id(self)}")
                 await self._cleanup_expired_sessions()
             except asyncio.CancelledError:
                 logger.info("Cleanup task cancelled")
@@ -280,7 +280,7 @@ class SessionManager:
                         if pending_calls:
                             logger.info(f"Preserving expired session {session_key} - has {len(pending_calls)} pending tool calls (HITL)")
                         else:
-                            await self._delete_session(session_id, app_name, user_id)
+                            await self._delete_session(session)
                             expired_count += 1
                 elif not session:
                     # Session doesn't exist, just untrack it

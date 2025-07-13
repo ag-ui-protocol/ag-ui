@@ -19,6 +19,7 @@ try:
 
     from adk_middleware import ADKAgent, AgentRegistry, add_adk_fastapi_endpoint
     from google.adk.agents import LlmAgent
+    from google.adk import tools as adk_tools
     
     # Set up the agent registry
     registry = AgentRegistry.get_instance()
@@ -27,7 +28,8 @@ try:
     sample_agent = LlmAgent(
         name="assistant",
         model="gemini-2.0-flash",
-        instruction="You are a helpful assistant."
+        instruction="You are a helpful assistant.",
+        tools=[adk_tools.preload_memory_tool.PreloadMemoryTool()]
     )
     
     # Register the agent
