@@ -20,11 +20,13 @@ try:
 
     from adk_middleware import ADKAgent, AgentRegistry, add_adk_fastapi_endpoint
     from google.adk.agents import LlmAgent
+    from google.adk import tools as adk_tools
     
     # Set up the agent registry
     registry = AgentRegistry.get_instance()
     
     # Create a sample ADK agent (this would be your actual agent)
+    # do not allow it to use any fronentend tool for now
     sample_agent = LlmAgent(
         name="assistant",
         model="gemini-2.0-flash",

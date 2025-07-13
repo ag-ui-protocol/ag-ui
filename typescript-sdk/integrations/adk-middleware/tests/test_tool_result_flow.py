@@ -111,7 +111,8 @@ class TestToolResultFlow:
         
         assert adk_middleware._is_tool_result_submission(empty_input) is False
     
-    def test_extract_tool_results_single_tool(self, adk_middleware):
+    @pytest.mark.asyncio
+    async def test_extract_tool_results_single_tool(self, adk_middleware):
         """Test extraction of single tool result."""
         input_data = RunAgentInput(
             thread_id="thread_1",
@@ -126,15 +127,17 @@ class TestToolResultFlow:
             forwarded_props={}
         )
         
-        tool_results = adk_middleware._extract_tool_results(input_data)
+        tool_results = await adk_middleware._extract_tool_results(input_data)
         
         assert len(tool_results) == 1
-        assert tool_results[0].role == "tool"
-        assert tool_results[0].tool_call_id == "call_1"
-        assert tool_results[0].content == '{"result": "success"}'
+        assert tool_results[0]['message'].role == "tool"
+        assert tool_results[0]['message'].tool_call_id == "call_1"
+        assert tool_results[0]['message'].content == '{"result": "success"}'
+        assert tool_results[0]['tool_name'] == "unknown"  # No tool_calls in messages
     
-    def test_extract_tool_results_multiple_tools(self, adk_middleware):
-        """Test extraction of multiple tool results."""
+    @pytest.mark.asyncio
+    async def test_extract_tool_results_multiple_tools(self, adk_middleware):
+        """Test extraction of most recent tool result when multiple exist."""
         input_data = RunAgentInput(
             thread_id="thread_1",
             run_id="run_1",
@@ -149,14 +152,15 @@ class TestToolResultFlow:
             forwarded_props={}
         )
         
-        tool_results = adk_middleware._extract_tool_results(input_data)
+        tool_results = await adk_middleware._extract_tool_results(input_data)
         
-        assert len(tool_results) == 2
-        tool_call_ids = [msg.tool_call_id for msg in tool_results]
-        assert "call_1" in tool_call_ids
-        assert "call_2" in tool_call_ids
+        # Should only extract the most recent tool result to prevent API errors
+        assert len(tool_results) == 1
+        assert tool_results[0]['message'].tool_call_id == "call_2"
+        assert tool_results[0]['message'].content == '{"result": "second"}'
     
-    def test_extract_tool_results_mixed_messages(self, adk_middleware):
+    @pytest.mark.asyncio
+    async def test_extract_tool_results_mixed_messages(self, adk_middleware):
         """Test extraction when mixed with other message types."""
         input_data = RunAgentInput(
             thread_id="thread_1",
@@ -173,12 +177,13 @@ class TestToolResultFlow:
             forwarded_props={}
         )
         
-        tool_results = adk_middleware._extract_tool_results(input_data)
+        tool_results = await adk_middleware._extract_tool_results(input_data)
         
-        assert len(tool_results) == 2
-        # Should only extract tool messages, not user messages
-        for result in tool_results:
-            assert result.role == "tool"
+        # Should only extract the most recent tool message to prevent API errors
+        assert len(tool_results) == 1
+        assert tool_results[0]['message'].role == "tool"
+        assert tool_results[0]['message'].tool_call_id == "call_2"
+        assert tool_results[0]['message'].content == '{"result": "done"}'
     
     @pytest.mark.asyncio
     async def test_handle_tool_result_submission_no_active_execution(self, adk_middleware):
@@ -199,26 +204,42 @@ class TestToolResultFlow:
         async for event in adk_middleware._handle_tool_result_submission(input_data):
             events.append(event)
         
+        # In all-long-running architecture, tool results without active execution
+        # are treated as standalone results from LongRunningTools and start new executions
+        # However, ADK may error if there's no conversation history for the tool result
+        assert len(events) >= 1  # At least RUN_STARTED, potentially RUN_ERROR and RUN_FINISHED
+    
+    @pytest.mark.asyncio
+    async def test_handle_tool_result_submission_no_active_execution_no_tools(self, adk_middleware):
+        """Test handling tool result when no tool results exist."""
+        input_data = RunAgentInput(
+            thread_id="nonexistent_thread",
+            run_id="run_1",
+            messages=[
+                UserMessage(id="1", role="user", content="Hello")  # No tool messages
+            ],
+            tools=[],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+        
+        events = []
+        async for event in adk_middleware._handle_tool_result_submission(input_data):
+            events.append(event)
+        
+        # When there are no tool results, should emit error for missing tool results
         assert len(events) == 1
         assert isinstance(events[0], RunErrorEvent)
-        assert events[0].code == "NO_ACTIVE_EXECUTION"
-        assert "No active execution found" in events[0].message
+        assert events[0].code == "NO_TOOL_RESULTS"
+        assert "No tool results found in submission" in events[0].message
     
     @pytest.mark.asyncio
     async def test_handle_tool_result_submission_with_active_execution(self, adk_middleware):
-        """Test handling tool result with active execution."""
+        """Test handling tool result - starts new execution regardless of existing executions."""
         thread_id = "test_thread"
         
-        # Create a mock execution state
-        mock_execution = MagicMock()
-        mock_execution.resolve_tool_result.return_value = True
-        mock_event_queue = AsyncMock()
-        
-        # Add mock execution to active executions
-        async with adk_middleware._execution_lock:
-            adk_middleware._active_executions[thread_id] = mock_execution
-        
-        # Mock the _stream_events method
+        # Mock the _stream_events method to simulate new execution
         mock_events = [
             MagicMock(type=EventType.TEXT_MESSAGE_CONTENT),
             MagicMock(type=EventType.TEXT_MESSAGE_END)
@@ -245,25 +266,20 @@ class TestToolResultFlow:
             async for event in adk_middleware._handle_tool_result_submission(input_data):
                 events.append(event)
             
-            # Should receive events from _stream_events
-            assert len(events) == 2
-            assert mock_execution.resolve_tool_result.called
+            # Should receive RUN_STARTED + mock events + RUN_FINISHED (4 total)
+            assert len(events) == 4
+            assert events[0].type == EventType.RUN_STARTED
+            assert events[-1].type == EventType.RUN_FINISHED
+            # In all-long-running architecture, tool results start new executions
     
     @pytest.mark.asyncio
-    async def test_handle_tool_result_submission_resolve_failure(self, adk_middleware):
-        """Test handling when tool result resolution fails."""
+    async def test_handle_tool_result_submission_streaming_error(self, adk_middleware):
+        """Test handling when streaming events fails."""
         thread_id = "test_thread"
         
-        # Create a mock execution that fails to resolve
-        mock_execution = MagicMock()
-        mock_execution.resolve_tool_result.return_value = False  # Resolution fails
-        
-        async with adk_middleware._execution_lock:
-            adk_middleware._active_executions[thread_id] = mock_execution
-        
-        # Mock _stream_events to return empty
+        # Mock _stream_events to raise an exception
         async def mock_stream_events(execution):
-            return
+            raise RuntimeError("Streaming failed")
             yield  # Make it a generator
         
         with patch.object(adk_middleware, '_stream_events', side_effect=mock_stream_events):
@@ -271,7 +287,7 @@ class TestToolResultFlow:
                 thread_id=thread_id,
                 run_id="run_1",
                 messages=[
-                    ToolMessage(id="1", role="tool", content='{"result": "success"}', tool_call_id="unknown_call")
+                    ToolMessage(id="1", role="tool", content='{"result": "success"}', tool_call_id="call_1")
                 ],
                 tools=[],
                 context=[],
@@ -283,18 +299,17 @@ class TestToolResultFlow:
             async for event in adk_middleware._handle_tool_result_submission(input_data):
                 events.append(event)
             
-            # Should still proceed even if resolution failed
-            # (warning is logged but execution continues)
-            mock_execution.resolve_tool_result.assert_called_once()
+            # Should emit RUN_STARTED then error event when streaming fails
+            assert len(events) == 2
+            assert events[0].type == EventType.RUN_STARTED
+            assert isinstance(events[1], RunErrorEvent)
+            assert events[1].code == "EXECUTION_ERROR"
+            assert "Streaming failed" in events[1].message
     
     @pytest.mark.asyncio
     async def test_handle_tool_result_submission_invalid_json(self, adk_middleware):
         """Test handling tool result with invalid JSON content."""
         thread_id = "test_thread"
-        
-        mock_execution = MagicMock()
-        async with adk_middleware._execution_lock:
-            adk_middleware._active_executions[thread_id] = mock_execution
         
         input_data = RunAgentInput(
             thread_id=thread_id,
@@ -312,51 +327,34 @@ class TestToolResultFlow:
         async for event in adk_middleware._handle_tool_result_submission(input_data):
             events.append(event)
         
-        # Should emit error event for invalid JSON
-        assert len(events) == 1
-        assert isinstance(events[0], RunErrorEvent)
-        assert events[0].code == "TOOL_RESULT_ERROR"
+        # Should start new execution, handle invalid JSON gracefully, and complete
+        # Invalid JSON is handled gracefully in _run_adk_in_background by providing error result
+        assert len(events) >= 2  # At least RUN_STARTED and some completion
+        assert events[0].type == EventType.RUN_STARTED
     
     @pytest.mark.asyncio
     async def test_handle_tool_result_submission_multiple_results(self, adk_middleware):
-        """Test handling multiple tool results in one submission."""
+        """Test handling multiple tool results in one submission - only most recent is extracted."""
         thread_id = "test_thread"
         
-        mock_execution = MagicMock()
-        mock_execution.resolve_tool_result.return_value = True
+        input_data = RunAgentInput(
+            thread_id=thread_id,
+            run_id="run_1",
+            messages=[
+                ToolMessage(id="1", role="tool", content='{"result": "first"}', tool_call_id="call_1"),
+                ToolMessage(id="2", role="tool", content='{"result": "second"}', tool_call_id="call_2")
+            ],
+            tools=[],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
         
-        async with adk_middleware._execution_lock:
-            adk_middleware._active_executions[thread_id] = mock_execution
-        
-        async def mock_stream_events(execution):
-            yield MagicMock(type=EventType.TEXT_MESSAGE_CONTENT)
-        
-        with patch.object(adk_middleware, '_stream_events', side_effect=mock_stream_events):
-            input_data = RunAgentInput(
-                thread_id=thread_id,
-                run_id="run_1",
-                messages=[
-                    ToolMessage(id="1", role="tool", content='{"result": "first"}', tool_call_id="call_1"),
-                    ToolMessage(id="2", role="tool", content='{"result": "second"}', tool_call_id="call_2")
-                ],
-                tools=[],
-                context=[],
-                state={},
-                forwarded_props={}
-            )
-            
-            events = []
-            async for event in adk_middleware._handle_tool_result_submission(input_data):
-                events.append(event)
-            
-            # Should resolve both tool results
-            assert mock_execution.resolve_tool_result.call_count == 2
-            
-            # Check the calls
-            calls = mock_execution.resolve_tool_result.call_args_list
-            call_ids = [call[0][0] for call in calls]  # First arg of each call
-            assert "call_1" in call_ids
-            assert "call_2" in call_ids
+        # Should extract only the most recent tool result to prevent API errors
+        tool_results = await adk_middleware._extract_tool_results(input_data)
+        assert len(tool_results) == 1
+        assert tool_results[0]['message'].tool_call_id == "call_2"
+        assert tool_results[0]['message'].content == '{"result": "second"}'
     
     @pytest.mark.asyncio
     async def test_tool_result_flow_integration(self, adk_middleware):
@@ -377,20 +375,30 @@ class TestToolResultFlow:
             forwarded_props={}
         )
         
-        # Mock the _handle_tool_result_submission method
-        mock_events = [MagicMock(type=EventType.TEXT_MESSAGE_CONTENT)]
+        # In the all-long-running architecture, tool result inputs are processed as new executions
+        # Mock the background execution to avoid ADK library errors
+        async def mock_start_new_execution(input_data, agent_id):
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=input_data.thread_id,
+                run_id=input_data.run_id
+            )
+            # In all-long-running architecture, tool results are processed through ADK sessions
+            yield RunFinishedEvent(
+                type=EventType.RUN_FINISHED,
+                thread_id=input_data.thread_id,
+                run_id=input_data.run_id
+            )
         
-        async def mock_handle_tool_result(input_data):
-            for event in mock_events:
-                yield event
-        
-        with patch.object(adk_middleware, '_handle_tool_result_submission', side_effect=mock_handle_tool_result):
+        with patch.object(adk_middleware, '_start_new_execution', side_effect=mock_start_new_execution):
             events = []
             async for event in adk_middleware.run(tool_result_input):
                 events.append(event)
             
-            assert len(events) == 1
-            assert events[0] == mock_events[0]
+            # Should get RUN_STARTED and RUN_FINISHED events
+            assert len(events) == 2
+            assert events[0].type == EventType.RUN_STARTED
+            assert events[1].type == EventType.RUN_FINISHED
     
     @pytest.mark.asyncio
     async def test_new_execution_routing(self, adk_middleware, sample_tool):

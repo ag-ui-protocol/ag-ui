@@ -28,6 +28,8 @@ def add_adk_fastapi_endpoint(app: FastAPI, agent: ADKAgent, path: str = "/"):
         # Get the accept header from the request
         accept_header = request.headers.get("accept")
         agent_id = path.lstrip('/')
+        
+        
         # Create an event encoder to properly format SSE events
         encoder = EventEncoder(accept=accept_header)
         
@@ -37,7 +39,7 @@ def add_adk_fastapi_endpoint(app: FastAPI, agent: ADKAgent, path: str = "/"):
                 async for event in agent.run(input_data, agent_id):
                     try:
                         encoded = encoder.encode(event)
-                        logger.info(f"🌐 HTTP Response: {encoded}")
+                        logger.debug(f"HTTP Response: {encoded}")
                         yield encoded
                     except Exception as encoding_error:
                         # Handle encoding-specific errors

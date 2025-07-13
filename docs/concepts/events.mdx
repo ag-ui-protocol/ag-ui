@@ -95,12 +95,14 @@ The `RunFinished` event indicates that an agent has successfully completed all
 its work for the current run. Upon receiving this event, frontends should
 finalize any UI states that were waiting on the agent's completion. This event
 marks a clean termination point and indicates that no further processing will
-occur in this run unless explicitly requested.
+occur in this run unless explicitly requested. The optional `result` field can
+contain any output data produced by the agent run.
 
 | Property   | Description                   |
 | ---------- | ----------------------------- |
 | `threadId` | ID of the conversation thread |
 | `runId`    | ID of the agent run           |
+| `result`   | Optional result data from run |
 
 ### RunError
 

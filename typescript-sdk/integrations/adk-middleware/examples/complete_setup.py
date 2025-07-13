@@ -1,10 +1,7 @@
 #!/usr/bin/env python
 """Complete setup example for ADK middleware with AG-UI."""
 
-import sys
 import logging
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import asyncio
 import uvicorn
@@ -19,11 +16,11 @@ logging.basicConfig(
 
 # Configure component-specific logging levels using standard Python logging
 # Can be overridden with PYTHONPATH or programmatically
-logging.getLogger('adk_agent').setLevel(logging.INFO)
+logging.getLogger('adk_agent').setLevel(logging.WARNING)
 logging.getLogger('event_translator').setLevel(logging.WARNING)
-logging.getLogger('endpoint').setLevel(logging.WARNING)
+logging.getLogger('endpoint').setLevel(logging.WARNING)  
 logging.getLogger('session_manager').setLevel(logging.WARNING)
-logging.getLogger('agent_registry').setLevel(logging.WARNING)
+logging.getLogger('agent_registry').setLevel(logging.WARNING)  
 
 # from adk_agent import ADKAgent
 # from agent_registry import AgentRegistry
@@ -31,7 +28,13 @@ logging.getLogger('agent_registry').setLevel(logging.WARNING)
 from adk_middleware import ADKAgent, AgentRegistry, add_adk_fastapi_endpoint
 # Import Google ADK components
 from google.adk.agents import Agent
+from google.adk import tools as adk_tools
 import os
+
+# Ensure session_manager logger is set to DEBUG after import
+logging.getLogger('adk_middleware.session_manager').setLevel(logging.DEBUG)
+# Also explicitly set adk_agent logger to DEBUG
+logging.getLogger('adk_middleware.adk_agent').setLevel(logging.DEBUG)
 
 
 async def setup_and_run():
@@ -47,7 +50,12 @@ async def setup_and_run():
     # The API key will be automatically picked up from the environment
     
     
-    # Step 2: Create your ADK agent(s)
+    # Step 2: Create shared memory service
+    print("🧠 Creating shared memory service...")
+    from google.adk.memory import InMemoryMemoryService
+    shared_memory_service = InMemoryMemoryService()
+    
+    # Step 3: Create your ADK agent(s)
     print("🤖 Creating ADK agents...")
     
     # Create a versatile assistant
@@ -62,9 +70,9 @@ async def setup_and_run():
         - Provide step-by-step explanations
         - Admit when you don't know something
         
-        Always be friendly and professional."""
+        Always be friendly and professional.""",
+        tools=[adk_tools.preload_memory_tool.PreloadMemoryTool()]
     )
-    
     
     # Step 3: Register agents
     print("📝 Registering agents...")
@@ -73,8 +81,25 @@ async def setup_and_run():
     # Register with specific IDs that AG-UI clients can reference
     registry.register_agent("assistant", assistant)
     
+    # Try to import and register haiku generator agent
+    print("🎋 Attempting to import haiku generator agent...")
+    try:
+        from tool_based_generative_ui.agent import haiku_generator_agent
+        print(f"   ✅ Successfully imported haiku_generator_agent")
+        print(f"   Type: {type(haiku_generator_agent)}")
+        print(f"   Name: {getattr(haiku_generator_agent, 'name', 'NO NAME')}")
+        registry.register_agent('adk-tool-based-generative-ui', haiku_generator_agent)
+        print(f"   ✅ Registered as 'adk-tool-based-generative-ui'")
+    except Exception as e:
+        print(f"   ❌ Failed to import haiku_generator_agent: {e}")
+    
     # Set default agent
     registry.set_default_agent(assistant)
+    
+    # List all registered agents
+    print("\n📋 Currently registered agents:")
+    for agent_id in registry.list_registered_agents():
+        print(f"   - {agent_id}")
     
     
     # Step 4: Configure ADK middleware
@@ -93,7 +118,7 @@ async def setup_and_run():
         for ctx in input_data.context:
             if ctx.description == "user":
                 return ctx.value
-        return f"anonymous_{input_data.thread_id}"
+        return "test_user"  # Static user ID for memory testing
     
     def extract_app_name(input_data):
         """Extract app name from context."""
@@ -105,10 +130,10 @@ async def setup_and_run():
     adk_agent = ADKAgent(
         app_name_extractor=extract_app_name,
         user_id_extractor=extract_user_id,
-        use_in_memory_services=True
-        # Uses default session manager with 20 min timeout, auto cleanup enabled
+        use_in_memory_services=True,
+        memory_service=shared_memory_service,  # Use the same memory service as the ADK agent
+        # Defaults: 1200s timeout (20 min), 300s cleanup (5 min)
     )
-
     
     # Step 5: Create FastAPI app
     print("🌐 Creating FastAPI app...")
@@ -131,6 +156,10 @@ async def setup_and_run():
     # Main chat endpoint
     add_adk_fastapi_endpoint(app, adk_agent, path="/chat")
     
+    # Add haiku generator endpoint
+    add_adk_fastapi_endpoint(app, adk_agent, path="/adk-tool-based-generative-ui")
+    print("   ✅ Added endpoint: /adk-tool-based-generative-ui")
+    
     # Agent-specific endpoints (optional)
     # This allows clients to specify which agent to use via the URL
     # add_adk_fastapi_endpoint(app, adk_agent, path="/agents/assistant")
@@ -138,15 +167,17 @@ async def setup_and_run():
     
     @app.get("/")
     async def root():
+        registry = AgentRegistry.get_instance()
         return {
             "service": "ADK-AG-UI Integration",
             "version": "0.1.0",
             "agents": {
                 "default": "assistant",
-                "available": ["assistant"]
+                "available": registry.list_registered_agents()
             },
             "endpoints": {
                 "chat": "/chat",
+                "adk-tool-based-generative-ui": "/adk-tool-based-generative-ui",
                 "docs": "/docs",
                 "health": "/health"
             }
@@ -175,7 +206,7 @@ async def setup_and_run():
     print("\n✅ Setup complete! Starting server...\n")
     print("🔗 Chat endpoint: http://localhost:8000/chat")
     print("📚 API documentation: http://localhost:8000/docs")
-    print("🔍 Health check: http://localhost:8000/health")
+    print("🏥 Health check: http://localhost:8000/health")
     print("\n🔧 Logging Control:")
     print("   # Set logging level for specific components:")
     print("   logging.getLogger('event_translator').setLevel(logging.DEBUG)")
@@ -196,7 +227,7 @@ async def setup_and_run():
     print('  }\'')
     
     # Run with uvicorn
-    config = uvicorn.Config(app, host="0.0.0.0", port=3000, log_level="info")
+    config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
     server = uvicorn.Server(config)
     await server.serve()
 

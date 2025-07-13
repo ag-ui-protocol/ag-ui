@@ -45,8 +45,14 @@ async def test_session_deletion():
     assert session_key in session_manager._session_keys
     print(f"✅ Session tracked: {session_key}")
     
+    # Create a mock session object for deletion
+    mock_session = MagicMock()
+    mock_session.id = test_session_id
+    mock_session.app_name = test_app_name
+    mock_session.user_id = test_user_id
+    
     # Manually delete the session (internal method)
-    await session_manager._delete_session(test_session_id, test_app_name, test_user_id)
+    await session_manager._delete_session(mock_session)
     
     # Verify session is no longer tracked
     assert session_key not in session_manager._session_keys
@@ -123,10 +129,13 @@ async def test_user_session_limits():
     # Create mock session service
     mock_session_service = AsyncMock()
     
-    # Mock session objects with last_update_time
+    # Mock session objects with last_update_time and required attributes
     class MockSession:
-        def __init__(self, update_time):
+        def __init__(self, update_time, session_id=None, app_name=None, user_id=None):
             self.last_update_time = update_time
+            self.id = session_id
+            self.app_name = app_name
+            self.user_id = user_id
     
     created_sessions = {}
     
@@ -136,7 +145,7 @@ async def test_user_session_limits():
     
     async def mock_create_session(session_id, app_name, user_id, state):
         import time
-        session = MockSession(time.time())
+        session = MockSession(time.time(), session_id, app_name, user_id)
         key = f"{app_name}:{session_id}"
         created_sessions[key] = session
         return session

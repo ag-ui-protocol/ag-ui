@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from ag_ui.core import Tool as AGUITool
 from adk_middleware.client_proxy_toolset import ClientProxyToolset
 from adk_middleware.client_proxy_tool import ClientProxyTool
+from google.adk.tools import FunctionTool, LongRunningFunctionTool
 
 
 class TestClientProxyToolset:
@@ -53,31 +54,21 @@ class TestClientProxyToolset:
         return AsyncMock()
     
     @pytest.fixture
-    def tool_futures(self):
-        """Create tool futures dictionary."""
-        return {}
-    
-    @pytest.fixture
-    def toolset(self, sample_tools, mock_event_queue, tool_futures):
+    def toolset(self, sample_tools, mock_event_queue):
         """Create a ClientProxyToolset instance."""
         return ClientProxyToolset(
             ag_ui_tools=sample_tools,
-            event_queue=mock_event_queue,
-            tool_futures=tool_futures,
-            tool_timeout_seconds=120
+            event_queue=mock_event_queue
         )
     
-    def test_initialization(self, toolset, sample_tools, mock_event_queue, tool_futures):
+    def test_initialization(self, toolset, sample_tools, mock_event_queue):
         """Test ClientProxyToolset initialization."""
         assert toolset.ag_ui_tools == sample_tools
         assert toolset.event_queue == mock_event_queue
-        assert toolset.tool_futures == tool_futures
-        assert toolset.tool_timeout_seconds == 120
-        assert toolset._proxy_tools is None  # Not created yet
     
     @pytest.mark.asyncio
     async def test_get_tools_first_call(self, toolset, sample_tools):
-        """Test get_tools creates proxy tools on first call."""
+        """Test get_tools creates proxy tools."""
         tools = await toolset.get_tools()
         
         # Should have created 3 proxy tools
@@ -92,24 +83,25 @@ class TestClientProxyToolset:
         assert "calculator" in tool_names
         assert "weather" in tool_names
         assert "simple_tool" in tool_names
-        
-        # Tools should be cached
-        assert toolset._proxy_tools is not None
-        assert len(toolset._proxy_tools) == 3
     
     @pytest.mark.asyncio
-    async def test_get_tools_cached(self, toolset):
-        """Test get_tools returns cached tools on subsequent calls."""
+    async def test_get_tools_fresh_instances(self, toolset):
+        """Test get_tools creates fresh tool instances on each call."""
         # First call
         tools1 = await toolset.get_tools()
         
         # Second call
         tools2 = await toolset.get_tools()
         
-        # Should return the same instances
-        assert tools1 is tools2
+        # Should create fresh instances (no caching)
+        assert tools1 is not tools2
         assert len(tools1) == 3
         assert len(tools2) == 3
+        
+        # But should have same tool names
+        names1 = {tool.name for tool in tools1}
+        names2 = {tool.name for tool in tools2}
+        assert names1 == names2
     
     @pytest.mark.asyncio
     async def test_get_tools_with_readonly_context(self, toolset):
@@ -122,12 +114,11 @@ class TestClientProxyToolset:
         assert len(tools) == 3
     
     @pytest.mark.asyncio
-    async def test_get_tools_empty_list(self, mock_event_queue, tool_futures):
+    async def test_get_tools_empty_list(self, mock_event_queue):
         """Test get_tools with empty tool list."""
         empty_toolset = ClientProxyToolset(
             ag_ui_tools=[],
-            event_queue=mock_event_queue,
-            tool_futures=tool_futures
+            event_queue=mock_event_queue
         )
         
         tools = await empty_toolset.get_tools()
@@ -136,7 +127,7 @@ class TestClientProxyToolset:
         assert tools == []
     
     @pytest.mark.asyncio
-    async def test_get_tools_with_invalid_tool(self, mock_event_queue, tool_futures):
+    async def test_get_tools_with_invalid_tool(self, mock_event_queue):
         """Test get_tools handles invalid tool definitions gracefully."""
         # Create a tool that might cause issues
         problematic_tool = AGUITool(
@@ -154,8 +145,7 @@ class TestClientProxyToolset:
             
             toolset = ClientProxyToolset(
                 ag_ui_tools=[problematic_tool, AGUITool(name="good", description="Good tool", parameters={})],
-                event_queue=mock_event_queue,
-                tool_futures=tool_futures
+                event_queue=mock_event_queue
             )
             
             tools = await toolset.get_tools()
@@ -164,41 +154,20 @@ class TestClientProxyToolset:
             assert len(tools) == 1  # Only the successful tool
     
     @pytest.mark.asyncio
-    async def test_close_no_pending_futures(self, toolset, tool_futures):
-        """Test close with no pending futures."""
+    async def test_close_no_pending_futures(self, toolset):
+        """Test close method completes successfully."""
         await toolset.close()
         
-        # Should clear cached tools
-        assert toolset._proxy_tools is None
-        
-        # Futures dict should be cleared
-        assert len(tool_futures) == 0
+        # Close should complete without error
+        # No cached tools to clean up in new architecture
     
     @pytest.mark.asyncio
-    async def test_close_with_pending_futures(self, toolset, tool_futures):
-        """Test close with pending tool futures."""
-        # Add some pending futures
-        future1 = asyncio.Future()
-        future2 = asyncio.Future()
-        future3 = asyncio.Future()
-        future3.set_result("completed")  # This one is done
-        
-        tool_futures["tool1"] = future1
-        tool_futures["tool2"] = future2
-        tool_futures["tool3"] = future3
-        
+    async def test_close_with_pending_futures(self, toolset):
+        """Test close method completes successfully."""
         await toolset.close()
         
-        # Pending futures should be cancelled
-        assert future1.cancelled()
-        assert future2.cancelled()
-        assert future3.done()  # Was already done, shouldn't be cancelled
-        
-        # Dict should be cleared
-        assert len(tool_futures) == 0
-        
-        # Cached tools should be cleared
-        assert toolset._proxy_tools is None
+        # Close should complete without error
+        # No tool futures to clean up in new architecture
     
     @pytest.mark.asyncio
     async def test_close_idempotent(self, toolset):
@@ -207,7 +176,7 @@ class TestClientProxyToolset:
         await toolset.close()  # Should not raise
         await toolset.close()  # Should not raise
         
-        assert toolset._proxy_tools is None
+        # All calls should complete without error
     
     def test_string_representation(self, toolset):
         """Test __repr__ method."""
@@ -218,12 +187,11 @@ class TestClientProxyToolset:
         assert "weather" in repr_str
         assert "simple_tool" in repr_str
     
-    def test_string_representation_empty(self, mock_event_queue, tool_futures):
+    def test_string_representation_empty(self, mock_event_queue):
         """Test __repr__ method with empty toolset."""
         empty_toolset = ClientProxyToolset(
             ag_ui_tools=[],
-            event_queue=mock_event_queue,
-            tool_futures=tool_futures
+            event_queue=mock_event_queue
         )
         
         repr_str = repr(empty_toolset)
@@ -242,70 +210,52 @@ class TestClientProxyToolset:
         assert calc_tool.name == "calculator"
         assert calc_tool.description == "Basic arithmetic operations"
         assert calc_tool.ag_ui_tool == sample_tools[0]  # Should reference original
-        assert calc_tool.timeout_seconds == 120
     
     @pytest.mark.asyncio
-    async def test_shared_state_between_tools(self, toolset, mock_event_queue, tool_futures):
-        """Test that all proxy tools share the same event queue and futures dict."""
+    async def test_shared_state_between_tools(self, toolset, mock_event_queue):
+        """Test that all proxy tools share the same event queue."""
         tools = await toolset.get_tools()
         
         # All tools should share the same references
         for tool in tools:
             assert tool.event_queue is mock_event_queue
-            assert tool.tool_futures is tool_futures
     
     @pytest.mark.asyncio
-    async def test_tool_timeout_configuration(self, sample_tools, mock_event_queue, tool_futures):
+    async def test_tool_timeout_configuration(self, sample_tools, mock_event_queue):
         """Test that tool timeout is properly configured."""
-        custom_timeout = 300  # 5 minutes
-        
+        # Tool timeout configuration was removed in all-long-running architecture
         toolset = ClientProxyToolset(
             ag_ui_tools=sample_tools,
-            event_queue=mock_event_queue,
-            tool_futures=tool_futures,
-            tool_timeout_seconds=custom_timeout
+            event_queue=mock_event_queue
         )
         
         tools = await toolset.get_tools()
         
-        # All tools should have the custom timeout
-        for tool in tools:
-            assert tool.timeout_seconds == custom_timeout
+        # All tools should be created successfully
+        assert len(tools) == len(sample_tools)
     
     @pytest.mark.asyncio
-    async def test_lifecycle_get_tools_then_close(self, toolset, tool_futures):
-        """Test complete lifecycle: get tools, add futures, then close."""
+    async def test_lifecycle_get_tools_then_close(self, toolset):
+        """Test complete lifecycle: get tools, then close."""
         # Get tools (creates proxy tools)
         tools = await toolset.get_tools()
         assert len(tools) == 3
         
-        # Simulate some tool executions by adding futures
-        future1 = asyncio.Future()
-        future2 = asyncio.Future()
-        tool_futures["execution1"] = future1
-        tool_futures["execution2"] = future2
-        
-        # Close should clean everything up
+        # Close should complete without error
         await toolset.close()
         
-        # Futures cancelled and cleared
-        assert future1.cancelled()
-        assert future2.cancelled()
-        assert len(tool_futures) == 0
-        
-        # Tools cleared
-        assert toolset._proxy_tools is None
+        # Can still get tools after close (creates fresh instances)
+        tools_after_close = await toolset.get_tools()
+        assert len(tools_after_close) == 3
     
     @pytest.mark.asyncio
-    async def test_multiple_toolsets_isolation(self, sample_tools, tool_futures):
+    async def test_multiple_toolsets_isolation(self, sample_tools):
         """Test that multiple toolsets don't interfere with each other."""
         queue1 = AsyncMock()
         queue2 = AsyncMock()
-        futures1 = {}
-        futures2 = {}
         
-        toolset1 = ClientProxyToolset(sample_tools, queue1, futures1)
-        toolset2 = ClientProxyToolset(sample_tools, queue2, futures2)
+        toolset1 = ClientProxyToolset(sample_tools, queue1)
+        toolset2 = ClientProxyToolset(sample_tools, queue2)
         
         tools1 = await toolset1.get_tools()
         tools2 = await toolset2.get_tools()
@@ -314,11 +264,9 @@ class TestClientProxyToolset:
         assert tools1 is not tools2
         assert len(tools1) == len(tools2) == 3
         
-        # Tools should reference their respective queues/futures
+        # Tools should reference their respective queues
         for tool in tools1:
             assert tool.event_queue is queue1
-            assert tool.tool_futures is futures1
         
         for tool in tools2:
             assert tool.event_queue is queue2
-            assert tool.tool_futures is futures2

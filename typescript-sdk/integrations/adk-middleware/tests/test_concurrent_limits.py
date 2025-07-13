@@ -340,8 +340,7 @@ class TestConcurrentLimits:
             execution = ExecutionState(
                 task=mock_task,
                 thread_id=f"stale_{i}",
-                event_queue=mock_queue,
-                tool_futures={}
+                event_queue=mock_queue
             )
             # Make them stale by setting an old start time
             execution.start_time = time.time() - 1000  # 1000 seconds ago, definitely stale
