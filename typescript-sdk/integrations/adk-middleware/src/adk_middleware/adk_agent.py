@@ -35,14 +35,6 @@ from .client_proxy_toolset import ClientProxyToolset
 import logging
 logger = logging.getLogger(__name__)
 
-# Set up debug logging
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
 
 
 class ADKAgent:
@@ -75,7 +67,10 @@ class ADKAgent:
         # Tool configuration
         execution_timeout_seconds: int = 600,  # 10 minutes
         tool_timeout_seconds: int = 300,  # 5 minutes
-        max_concurrent_executions: int = 10
+        max_concurrent_executions: int = 10,
+        
+        # Session cleanup configuration
+        cleanup_interval_seconds: int = 300  # 5 minutes default
     ):
         """Initialize the ADKAgent.
         
@@ -129,9 +124,9 @@ class ADKAgent:
             
         self._session_manager = SessionManager.get_instance(
             session_service=session_service,
-            memory_service=memory_service,  # Pass memory service for automatic session memory
+            memory_service=self._memory_service,  # Pass memory service for automatic session memory
             session_timeout_seconds=session_timeout_seconds,  # 20 minutes default
-            cleanup_interval_seconds=300,  # 5 minutes default
+            cleanup_interval_seconds=cleanup_interval_seconds,
             max_sessions_per_user=None,    # No limit by default
             auto_cleanup=True              # Enable by default
         )

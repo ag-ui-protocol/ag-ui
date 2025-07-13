@@ -20,14 +20,6 @@ from ag_ui.core import (
 
 logger = logging.getLogger(__name__)
 
-# Set up debug logging
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
 
 
 class ClientProxyTool(BaseTool):
@@ -111,9 +103,6 @@ class ClientProxyTool(BaseTool):
         # Convert AG-UI parameters (JSON Schema) to ADK format
         parameters = self.ag_ui_tool.parameters
         
-        # Debug: Show the raw parameters
-        print(f"🔍 TOOL PARAMS DEBUG: Tool '{self.ag_ui_tool.name}' parameters: {parameters}")
-        print(f"🔍 TOOL PARAMS DEBUG: Parameters type: {type(parameters)}")
         
         # Ensure it's a proper object schema
         if not isinstance(parameters, dict):
@@ -161,11 +150,20 @@ class ClientProxyTool(BaseTool):
         Returns:
             None for long-running tools
         """
-        logger.debug(f"🛠️  PROXY TOOL EXECUTION: {self.ag_ui_tool.name}")
-        logger.debug(f"🛠️  Arguments received: {args}")
+        logger.debug(f"Proxy tool execution: {self.ag_ui_tool.name}")
+        logger.debug(f"Arguments received: {args}")
+        logger.debug(f"Tool context type: {type(tool_context)}")
         
-        # Generate a unique tool call ID
-        tool_call_id = f"call_{uuid.uuid4().hex[:8]}"
+        # Extract ADK-generated function call ID if available
+        adk_function_call_id = None
+        if tool_context and hasattr(tool_context, 'function_call_id'):
+            adk_function_call_id = tool_context.function_call_id
+            logger.debug(f"Using ADK function_call_id: {adk_function_call_id}")
+        
+        # Use ADK ID if available, otherwise fall back to generated ID
+        tool_call_id = adk_function_call_id or f"call_{uuid.uuid4().hex[:8]}"
+        if not adk_function_call_id:
+            logger.warning(f"ADK function_call_id not available, generated: {tool_call_id}")
         
         try:
             # Emit TOOL_CALL_START event
@@ -175,7 +173,7 @@ class ClientProxyTool(BaseTool):
                 tool_call_name=self.ag_ui_tool.name
             )
             await self.event_queue.put(start_event)
-            logger.debug(f"🛠️  Emitted TOOL_CALL_START for {tool_call_id}")
+            logger.debug(f"Emitted TOOL_CALL_START for {tool_call_id}")
             
             # Emit TOOL_CALL_ARGS event
             args_json = json.dumps(args)
@@ -185,7 +183,7 @@ class ClientProxyTool(BaseTool):
                 delta=args_json
             )
             await self.event_queue.put(args_event)
-            logger.debug(f"🛠️  Emitted TOOL_CALL_ARGS for {tool_call_id}")
+            logger.debug(f"Emitted TOOL_CALL_ARGS for {tool_call_id}")
             
             # Emit TOOL_CALL_END event
             end_event = ToolCallEndEvent(
@@ -193,14 +191,14 @@ class ClientProxyTool(BaseTool):
                 tool_call_id=tool_call_id
             )
             await self.event_queue.put(end_event)
-            logger.debug(f"🛠️  Emitted TOOL_CALL_END for {tool_call_id}")
+            logger.debug(f"Emitted TOOL_CALL_END for {tool_call_id}")
             
             # Return None for long-running tools - client handles the actual execution
-            logger.debug(f"🛠️  Returning None for long-running tool {tool_call_id}")
+            logger.debug(f"Returning None for long-running tool {tool_call_id}")
             return None
             
         except Exception as e:
-            logger.error(f"🛠️  Error in proxy tool execution for {tool_call_id}: {e}")
+            logger.error(f"Error in proxy tool execution for {tool_call_id}: {e}")
             raise
     
     def __repr__(self) -> str:

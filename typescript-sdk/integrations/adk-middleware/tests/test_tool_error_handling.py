@@ -229,6 +229,7 @@ class TestToolErrorHandling:
         
         args = {"action": "slow_action"}
         mock_context = MagicMock()
+        mock_context.function_call_id = "test_function_call_id"
         
         # In all-long-running architecture, tools return None immediately
         result = await proxy_tool.run_async(args=args, tool_context=mock_context)
@@ -367,6 +368,7 @@ class TestToolErrorHandling:
         
         args = {"action": "test"}
         mock_context = MagicMock()
+        mock_context.function_call_id = "test_function_call_id"
         
         # Should handle queue errors gracefully
         with pytest.raises(Exception) as exc_info:
@@ -388,6 +390,7 @@ class TestToolErrorHandling:
         
         args = {"action": "test"}
         mock_context = MagicMock()
+        mock_context.function_call_id = "test_function_call_id"
         
         # Should handle queue errors gracefully
         with pytest.raises(Exception) as exc_info:

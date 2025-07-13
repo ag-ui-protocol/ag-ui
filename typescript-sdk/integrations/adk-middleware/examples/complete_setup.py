@@ -1,10 +1,7 @@
 #!/usr/bin/env python
 """Complete setup example for ADK middleware with AG-UI."""
 
-import sys
 import logging
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import asyncio
 import uvicorn
@@ -19,11 +16,11 @@ logging.basicConfig(
 
 # Configure component-specific logging levels using standard Python logging
 # Can be overridden with PYTHONPATH or programmatically
-logging.getLogger('adk_agent').setLevel(logging.DEBUG)
+logging.getLogger('adk_agent').setLevel(logging.WARNING)
 logging.getLogger('event_translator').setLevel(logging.WARNING)
-logging.getLogger('endpoint').setLevel(logging.DEBUG)  # Changed to INFO for debugging
+logging.getLogger('endpoint').setLevel(logging.WARNING)  
 logging.getLogger('session_manager').setLevel(logging.WARNING)
-logging.getLogger('agent_registry').setLevel(logging.DEBUG)  # Changed to INFO for debugging
+logging.getLogger('agent_registry').setLevel(logging.WARNING)  
 
 # from adk_agent import ADKAgent
 # from agent_registry import AgentRegistry
@@ -31,7 +28,13 @@ logging.getLogger('agent_registry').setLevel(logging.DEBUG)  # Changed to INFO f
 from adk_middleware import ADKAgent, AgentRegistry, add_adk_fastapi_endpoint
 # Import Google ADK components
 from google.adk.agents import Agent
+from google.adk import tools as adk_tools
 import os
+
+# Ensure session_manager logger is set to DEBUG after import
+logging.getLogger('adk_middleware.session_manager').setLevel(logging.DEBUG)
+# Also explicitly set adk_agent logger to DEBUG
+logging.getLogger('adk_middleware.adk_agent').setLevel(logging.DEBUG)
 
 
 async def setup_and_run():
@@ -47,7 +50,12 @@ async def setup_and_run():
     # The API key will be automatically picked up from the environment
     
     
-    # Step 2: Create your ADK agent(s)
+    # Step 2: Create shared memory service
+    print("🧠 Creating shared memory service...")
+    from google.adk.memory import InMemoryMemoryService
+    shared_memory_service = InMemoryMemoryService()
+    
+    # Step 3: Create your ADK agent(s)
     print("🤖 Creating ADK agents...")
     
     # Create a versatile assistant
@@ -62,9 +70,9 @@ async def setup_and_run():
         - Provide step-by-step explanations
         - Admit when you don't know something
         
-        Always be friendly and professional."""
+        Always be friendly and professional.""",
+        tools=[adk_tools.preload_memory_tool.PreloadMemoryTool()]
     )
-    
     
     # Step 3: Register agents
     print("📝 Registering agents...")
@@ -110,7 +118,7 @@ async def setup_and_run():
         for ctx in input_data.context:
             if ctx.description == "user":
                 return ctx.value
-        return f"anonymous_{input_data.thread_id}"
+        return "test_user"  # Static user ID for memory testing
     
     def extract_app_name(input_data):
         """Extract app name from context."""
@@ -122,10 +130,10 @@ async def setup_and_run():
     adk_agent = ADKAgent(
         app_name_extractor=extract_app_name,
         user_id_extractor=extract_user_id,
-        use_in_memory_services=True
-        # Uses default session manager with 20 min timeout, auto cleanup enabled
+        use_in_memory_services=True,
+        memory_service=shared_memory_service,  # Use the same memory service as the ADK agent
+        # Defaults: 1200s timeout (20 min), 300s cleanup (5 min)
     )
-
     
     # Step 5: Create FastAPI app
     print("🌐 Creating FastAPI app...")
@@ -198,7 +206,7 @@ async def setup_and_run():
     print("\n✅ Setup complete! Starting server...\n")
     print("🔗 Chat endpoint: http://localhost:8000/chat")
     print("📚 API documentation: http://localhost:8000/docs")
-    print("🔍 Health check: http://localhost:8000/health")
+    print("🏥 Health check: http://localhost:8000/health")
     print("\n🔧 Logging Control:")
     print("   # Set logging level for specific components:")
     print("   logging.getLogger('event_translator').setLevel(logging.DEBUG)")
