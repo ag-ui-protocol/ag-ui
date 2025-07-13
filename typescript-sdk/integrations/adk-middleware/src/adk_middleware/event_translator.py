@@ -295,11 +295,11 @@ class EventTranslator:
             A StateDeltaEvent
         """
         # Convert to JSON Patch format (RFC 6902)
-        # For now, we'll use a simple "replace" operation for each key
+        # Use "add" operation which works for both new and existing paths
         patches = []
         for key, value in state_delta.items():
             patches.append({
-                "op": "replace",
+                "op": "add",
                 "path": f"/{key}",
                 "value": value
             })

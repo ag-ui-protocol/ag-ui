@@ -458,8 +458,8 @@ class TestEventTranslatorComprehensive:
         
         # Check patches
         patches = event.delta
-        assert any(patch["op"] == "replace" and patch["path"] == "/key1" and patch["value"] == "value1" for patch in patches)
-        assert any(patch["op"] == "replace" and patch["path"] == "/key2" and patch["value"] == "value2" for patch in patches)
+        assert any(patch["op"] == "add" and patch["path"] == "/key1" and patch["value"] == "value1" for patch in patches)
+        assert any(patch["op"] == "add" and patch["path"] == "/key2" and patch["value"] == "value2" for patch in patches)
     
     def test_create_state_delta_event_empty(self, translator):
         """Test state delta event creation with empty delta."""
@@ -467,6 +467,93 @@ class TestEventTranslatorComprehensive:
         
         assert isinstance(event, StateDeltaEvent)
         assert event.delta == []
+    
+    def test_create_state_delta_event_nested_objects(self, translator):
+        """Test state delta event creation with nested objects."""
+        state_delta = {
+            "user": {"name": "John", "age": 30},
+            "settings": {"theme": "dark", "notifications": True}
+        }
+        
+        event = translator._create_state_delta_event(state_delta, "thread_1", "run_1")
+        
+        assert isinstance(event, StateDeltaEvent)
+        assert len(event.delta) == 2
+        
+        # Check patches for nested objects
+        patches = event.delta
+        assert any(patch["op"] == "add" and patch["path"] == "/user" and patch["value"] == {"name": "John", "age": 30} for patch in patches)
+        assert any(patch["op"] == "add" and patch["path"] == "/settings" and patch["value"] == {"theme": "dark", "notifications": True} for patch in patches)
+    
+    def test_create_state_delta_event_array_values(self, translator):
+        """Test state delta event creation with array values."""
+        state_delta = {
+            "items": ["item1", "item2", "item3"],
+            "numbers": [1, 2, 3, 4, 5]
+        }
+        
+        event = translator._create_state_delta_event(state_delta, "thread_1", "run_1")
+        
+        assert isinstance(event, StateDeltaEvent)
+        assert len(event.delta) == 2
+        
+        # Check patches for arrays
+        patches = event.delta
+        assert any(patch["op"] == "add" and patch["path"] == "/items" and patch["value"] == ["item1", "item2", "item3"] for patch in patches)
+        assert any(patch["op"] == "add" and patch["path"] == "/numbers" and patch["value"] == [1, 2, 3, 4, 5] for patch in patches)
+    
+    def test_create_state_delta_event_mixed_types(self, translator):
+        """Test state delta event creation with mixed value types."""
+        state_delta = {
+            "string_val": "text",
+            "number_val": 42,
+            "boolean_val": True,
+            "null_val": None,
+            "object_val": {"nested": "value"},
+            "array_val": [1, "mixed", {"nested": True}]
+        }
+        
+        event = translator._create_state_delta_event(state_delta, "thread_1", "run_1")
+        
+        assert isinstance(event, StateDeltaEvent)
+        assert len(event.delta) == 6
+        
+        # Check all patches use "add" operation
+        patches = event.delta
+        for patch in patches:
+            assert patch["op"] == "add"
+            assert patch["path"].startswith("/")
+        
+        # Verify specific values
+        patch_dict = {patch["path"]: patch["value"] for patch in patches}
+        assert patch_dict["/string_val"] == "text"
+        assert patch_dict["/number_val"] == 42
+        assert patch_dict["/boolean_val"] is True
+        assert patch_dict["/null_val"] is None
+        assert patch_dict["/object_val"] == {"nested": "value"}
+        assert patch_dict["/array_val"] == [1, "mixed", {"nested": True}]
+    
+    def test_create_state_delta_event_special_characters_in_keys(self, translator):
+        """Test state delta event creation with special characters in keys."""
+        state_delta = {
+            "key-with-dashes": "value1",
+            "key_with_underscores": "value2",
+            "key.with.dots": "value3",
+            "key with spaces": "value4"
+        }
+        
+        event = translator._create_state_delta_event(state_delta, "thread_1", "run_1")
+        
+        assert isinstance(event, StateDeltaEvent)
+        assert len(event.delta) == 4
+        
+        # Check that all keys are properly escaped in paths
+        patches = event.delta
+        paths = [patch["path"] for patch in patches]
+        assert "/key-with-dashes" in paths
+        assert "/key_with_underscores" in paths
+        assert "/key.with.dots" in paths
+        assert "/key with spaces" in paths
     
     @pytest.mark.asyncio
     async def test_force_close_streaming_message_with_open_stream(self, translator):
