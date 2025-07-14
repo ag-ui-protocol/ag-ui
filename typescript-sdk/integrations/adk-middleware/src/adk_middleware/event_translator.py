@@ -107,11 +107,8 @@ class EventTranslator:
             
             # state_delta events were causing issues in patching the states so here I am using state_snapshot event
             if hasattr(adk_event, 'actions') and adk_event.actions and hasattr(adk_event.actions, 'state_delta') and adk_event.actions.state_delta:
-                # yield self._create_state_delta_event(
-                #     adk_event.actions.state_delta, thread_id, run_id
-                # )
-                yield self._create_state_snapshot_event(
-                    adk_event.actions.state_delta
+                yield self._create_state_delta_event(
+                    adk_event.actions.state_delta, thread_id, run_id
                 )
                 
             
