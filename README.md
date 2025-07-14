@@ -1,14 +1,26 @@
-[![AG-UI Working Group – July 17](https://img.shields.io/badge/AG--UI%20Working_Group%20%E2%80%94July%2017-blue?style=flat-square)](https://lu.ma/743wdv06)
-![Discord](https://img.shields.io/discord/1379082175625953370?logo=discord&logoColor=%23FFFFFF&label=Discord&color=%236963ff)
-
 
 # <img src="https://github.com/user-attachments/assets/ebc0dd08-8732-4519-9b6c-452ce54d8058" alt="ag-ui Logo" width="45"/> AG-UI: The Agent-User Interaction Protocol
+
 AG-UI is a lightweight, event-based protocol that standardizes how AI agents connect to front-end applications. Built for simplicity and flexibility, it enables seamless integration between your AI agents and user interfaces.
 
-![AG-UI](https://github.com/user-attachments/assets/bec3bc01-d8f2-4667-885e-028cbcbc8439)
+[![Version](https://img.shields.io/npm/v/@ag-ui/core?label=Version&color=6963ff&logo=npm&logoColor=white)](https://www.npmjs.com/package/@ag-ui/core)
+![MIT](https://img.shields.io/github/license/copilotkit/copilotkit?color=%236963ff&label=License)
+![Discord](https://img.shields.io/discord/1379082175625953370?logo=discord&logoColor=%23FFFFFF&label=Discord&color=%236963ff)
 
+![Banner](https://github.com/user-attachments/assets/c92ee75a-d8c5-42f3-aa42-d4511fdc935a)
 
-# What is AG-UI? (Specification)
+## 🚀 Getting Started
+Create a new AG-UI application in seconds:
+```ts
+npx create-ag-ui-app my-agent-app
+```
+<h3>Building AG-UI Integrations (new frameworks):</h3>
+
+- [Build new integrations (Quickstart)](https://go.copilotkit.ai/agui-contribute)
+- [Book a call to discuss an AG-UI integration with a new framework](https://calendly.com/markus-copilotkit/ag-ui)
+- [Join the Discord Community](https://discord.gg/Jd3FzfdJa8)
+
+## What is AG-UI?
 
 AG-UI is an open, lightweight, event-based protocol for agent-human interaction, designed for simplicity & flexibility:
 
@@ -23,7 +35,7 @@ AG-UI is an open, lightweight, event-based protocol for agent-human interaction,
 It also ships with a **reference HTTP implementation** and **default connector** to help teams get started fast.
 
 
-[Learn more about the specs](https://go.copilotkit.ai/ag-ui-introduction)
+[Learn more about the specs →](https://go.copilotkit.ai/ag-ui-introduction)
 
 
 ## Why AG-UI?
@@ -38,11 +50,17 @@ AG-UI is complementary to the other 2 top agentic protocols
 - A2A allows agents to communicate with other agents
 - AG-UI brings agents into user-facing applications
 
+## Where does AGUI fit in the agentic protocol stack?
+AG-UI is complementary to the other 2 top agentic protocols
+- MCP gives agents tools
+- A2A allows agents to communicate with other agents
+- AG-UI brings agents into user-facing applications
+
 <div align="center">
   <img src="https://github.com/user-attachments/assets/0c1ec566-050b-4ef8-ab89-15be41abe64f" height="300px" />
 </div>  
    
-## Features
+## 🚀 Features
 
 - 💬 Real-time agentic chat with streaming
 - 🔄 Bi-directional state synchronization
@@ -53,7 +71,8 @@ AG-UI is complementary to the other 2 top agentic protocols
 
 ### 1st party integrations with top agentic frameworks
 
-## Framework Support
+## 🛠 Supported Frameworks
+
 
 AG-UI integrates with many popular agent frameworks
 
@@ -83,52 +102,39 @@ AG-UI integrates with many popular agent frameworks
 
 [View all supported frameworks →](https://ag-ui.com/frameworks)
 
-## Hello World App
-https://agui-demo.vercel.app/
+
+## ✨ Hello World App
+
 
 Video:
 
 https://github.com/user-attachments/assets/18c03330-1ebc-4863-b2b8-cc6c3a4c7bae
 
+https://agui-demo.vercel.app/
 
-## AG-UI Showcase: The AG-UI Dojo (Building-Blocks Viewer)
+
+
+## 🧩 AG-UI Showcase: The AG-UI Dojo (Building-Blocks Viewer)
 The [AG-UI Dojo](https://copilotkit-feature-viewer.vercel.app/) showcases many of the building blocks that AG-UI supports ([AG-UI Dojo Source Code](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo)).
 
 The building blocks are designed to be simple and focused -- between 50-200 lines of code.
 
 https://github.com/user-attachments/assets/a67d3d54-36b2-4c7a-ac69-a0ca01365d5b
 
-## Getting Started
 
-Choose your path:
-
-### Building AG-UI Powered Applications
-
-Create a new AG-UI application in seconds:
-
-```bash
-npx create-ag-ui-app my-agent-app
-```
-
-[View Documentation](https://go.copilotkit.ai/ag-ui-introduction) · [Join Discord](https://discord.gg/Jd3FzfdJa8)
-
-### Building AG-UI Integrations (new frameworks)
-
-1. [Build new integrations (Quickstart)](https://go.copilotkit.ai/build-quickstart)
-2. [Book a call to discuss an AG-UI integration with a new framework](https://go.copilotkit.ai/ag-ui-book-a-call)
-3. [Join the Discord Community](https://go.copilotkit.ai/AG-UI-Discord)
-
-
-## Contributing
-
+## 🙋🏽‍♂️ Contributing to AG-UI
 
 Check out the [Contributing guide](https://github.com/ag-ui-protocol/ag-ui/blob/main/CONTRIBUTING.md)
 
+- **[Weekely AG-UI Working Group](https://lu.ma/CopilotKit?k=c)**  
+  📅 Follow the CopilotKit Luma Events Page
+
 ## Roadmap
 
-Check out the [AG-UI Roadmap](https://github.com/orgs/ag-ui-protocol/projects/1)
+Check out the [AG-UI Roadmap](https://github.com/orgs/ag-ui-protocol/projects/1) to see what's being built and where you can jump in.
 
 
-## License
+## 📄 License
 
-AG-UI is open source and available under the MIT License.
+AG-UI is open source software [licensed as MIT](https://opensource.org/licenses/MIT).  
+Maintained by [AG Protocol](https://www.agprotocol.ai).
