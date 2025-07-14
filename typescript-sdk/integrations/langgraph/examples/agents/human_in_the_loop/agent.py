@@ -20,7 +20,7 @@ from langchain_core.messages import SystemMessage
 DEFINE_TASK_TOOL = {
     "type": "function",
     "function": {
-        "name": "generate_task_steps",
+        "name": "plan_execution_steps",
         "description": "Make up 10 steps (only a couple of words per step) that are required for a task. The step should be in imperative form (i.e. Dig hole, Open door, ...)",
         "parameters": {
             "type": "object",
@@ -80,7 +80,7 @@ async def chat_node(state: Dict[str, Any], config: RunnableConfig):
     """
     system_prompt = """
     You are a helpful assistant that can perform any task.
-    You MUST call the `generate_task_steps` function when the user asks you to perform a task.
+    You MUST call the `plan_execution_steps` function when the user asks you to perform a task.
     Always make sure you will provide tasks based on the user query
     """
 
@@ -94,7 +94,7 @@ async def chat_node(state: Dict[str, Any], config: RunnableConfig):
     # Use "predict_state" metadata to set up streaming for the write_document tool
     config["metadata"]["predict_state"] = [{
         "state_key": "steps",
-        "tool": "generate_task_steps",
+        "tool": "plan_execution_steps",
         "tool_argument": "steps"
     }]
 
@@ -131,7 +131,7 @@ async def chat_node(state: Dict[str, Any], config: RunnableConfig):
             args = tool_call.get("args", {})
             tool_call_args = args if not isinstance(args, str) else json.loads(args)
 
-        if tool_call_name == "generate_task_steps":
+        if tool_call_name == "plan_execution_steps":
             # Get the steps from the tool call
             steps_raw = tool_call_args.get("steps", [])
             
@@ -182,7 +182,7 @@ async def chat_node(state: Dict[str, Any], config: RunnableConfig):
                 }
             )
     
-    # If no tool calls or not generate_task_steps, return to END with the updated messages
+    # If no tool calls or not plan_execution_steps, return to END with the updated messages
     return Command(
         goto=END,
         update={
