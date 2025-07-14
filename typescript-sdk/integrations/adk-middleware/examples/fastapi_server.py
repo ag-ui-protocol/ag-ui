@@ -34,7 +34,7 @@ try:
     sample_agent = LlmAgent(
         name="assistant",
         model="gemini-2.0-flash",
-        instruction="You are a helpful assistant. Answer the query without using any tool",
+        instruction="You are a helpful assistant.",
         tools=[adk_tools.preload_memory_tool.PreloadMemoryTool()]
     )
     # Register the agent
