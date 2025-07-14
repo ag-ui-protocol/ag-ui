@@ -1,4 +1,4 @@
-[![AG-UI Workshop – June 20](https://img.shields.io/badge/AG--UI%20Workshop%20%E2%80%94June%2020-blue?style=flat-square)](https://go.copilotkit.ai/ag-ui-build-an-agent-canvas)
+[![AG-UI Working Group – July 17](https://img.shields.io/badge/AG--UI%20Working_Group%20%E2%80%94July%2017-blue?style=flat-square)](https://lu.ma/743wdv06)
 ![Discord](https://img.shields.io/discord/1379082175625953370?logo=discord&logoColor=%23FFFFFF&label=Discord&color=%236963ff)
 
 
@@ -30,6 +30,8 @@ It also ships with a **reference HTTP implementation** and **default connector**
 
 AG-UI was developed based on real-world requirements and practical experience building in-app agent interactions.
 
+
+
 ## Where does AGUI fit in the agentic protocol stack?
 AG-UI is complementary to the other 2 top agentic protocols
 - MCP gives agents tools
@@ -49,23 +51,25 @@ AG-UI is complementary to the other 2 top agentic protocols
 - 🛠️ Frontend tool integration
 - 🧑‍💻 Human-in-the-loop collaboration
 
+### 1st party integrations with top agentic frameworks
+
 ## Framework Support
 
 AG-UI integrates with many popular agent frameworks
 
-| Framework                                                          | Status                   | AG-UI Resources                                                              |
-| ------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------- |
+| Framework                                                          | Status                   | AG-UI Resources                                                              | 
+| ------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------- | 
 | No-framework                                                       | ✅ Supported             | ➡️ Docs coming soon       |
-| [LangGraph](https://www.langchain.com/langgraph)                   | ✅ Supported             | ➡️ [Demo](https://v0-langgraph-land.vercel.app/) |
+| [LangGraph](https://www.langchain.com/langgraph)                   | ✅ Supported             | ➡️ [Demo](https://v0-langgraph-land.vercel.app/) |  
 | [Mastra](https://mastra.ai/)                                       | ✅ Supported             | ➡️ [Demo](https://v0-mastra-land.vercel.app/)    |
 | [CrewAI](https://crewai.com/)                                      | ✅ Supported             | ➡️ [Demo](https://v0-crew-land.vercel.app/)      |
 | [AG2](https://ag2.ai/)                                             | ✅ Supported             | ➡️ [Demo](https://v0-ag2-land.vercel.app/)       |
 | [Agno](https://github.com/agno-agi/agno)                           | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/agno)     |                                                  |
-| [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported             |   ➡️ [Docs](https://docs.copilotkit.ai/llamaindex)      |                                               |
+| [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/llamaindex)      |                                               |
 | [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | 🛠️ In Progress           | –                                                                            |
 | [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            |
-| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 💡 Open to Contributions | –                                                                            |
 | [Google ADK](https://google.github.io/adk-docs/get-started/)       | 🛠️ In Progress           | –                                                                            |
+| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 💡 Open to Contributions | –                                                                            |
 | [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/)       | 💡 Open to Contributions | –                                                                            |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/)     | 💡 Open to Contributions | –                                                                            |
 | [Strands Agents SDK](https://github.com/strands-agents/sdk-python) | 💡 Open to Contributions | –                                                                            |
@@ -119,9 +123,6 @@ npx create-ag-ui-app my-agent-app
 
 
 Check out the [Contributing guide](https://github.com/ag-ui-protocol/ag-ui/blob/main/CONTRIBUTING.md)
-
-- **[AG-UI: Build an agent canvas with AG-UI](https://go.copilotkit.ai/ag-ui-build-an-agent-canvas)**  
-  📅 Friday, June 20, 9:00 AM PT  
 
 
 ## License
