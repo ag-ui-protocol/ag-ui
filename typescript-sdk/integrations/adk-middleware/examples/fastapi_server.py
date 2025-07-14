@@ -7,9 +7,13 @@ Note: Requires google.adk to be installed and configured.
 """
 
 import uvicorn
+import logging
 from fastapi import FastAPI
 from tool_based_generative_ui.agent import haiku_generator_agent
 from human_in_the_loop.agent import human_in_loop_agent
+
+# Basic logging configuration
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # These imports will work once google.adk is available
 try:
