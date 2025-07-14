@@ -21,6 +21,7 @@
                 "group": "Quickstart",
                 "pages": [
                   "quickstart/applications",
+                  "quickstart/clients",
                   {
                     "group": "Build integrations",
                     "pages": [
@@ -30,8 +31,7 @@
                     ]
                   }
                 ]
-              },
-              "integrations"
+              }
             ]
           },
           {
@@ -68,7 +68,12 @@
               },
               {
                 "group": "@ag-ui/client",
-                "pages": ["sdk/js/client/overview"]
+                "pages": [
+                  "sdk/js/client/overview",
+                  "sdk/js/client/abstract-agent",
+                  "sdk/js/client/http-agent",
+                  "sdk/js/client/subscriber"
+                ]
               },
               "sdk/js/encoder",
               "sdk/js/proto"
@@ -131,6 +136,12 @@
       "og:image": "https://raw.githubusercontent.com/ag-ui-protocol/docs/logo/light.png"
     },
     "indexing": "navigable"
+  },
+  "integrations": {
+    "posthog": {
+      "apiKey": "phc_XZdymVYjrph9Mi0xZYGNyCKexxgblXRR1jMENCtdz5Q",
+      "apiHost": "https://eu.posthog.com"
+    }
   },
   "footer": {
     "socials": {

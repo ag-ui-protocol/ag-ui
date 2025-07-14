@@ -31,7 +31,7 @@ describe("verifyEvents tool calls", () => {
     const events: BaseEvent[] = [];
 
     // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(source$).subscribe({
+    const subscription = verifyEvents(false)(source$).subscribe({
       next: (event) => events.push(event),
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
@@ -75,7 +75,7 @@ describe("verifyEvents tool calls", () => {
     const events: BaseEvent[] = [];
 
     // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(source$).subscribe({
+    const subscription = verifyEvents(false)(source$).subscribe({
       next: (event) => events.push(event),
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
@@ -119,7 +119,7 @@ describe("verifyEvents tool calls", () => {
     const events: BaseEvent[] = [];
 
     // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(source$).subscribe({
+    const subscription = verifyEvents(false)(source$).subscribe({
       next: (event) => events.push(event),
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
@@ -164,7 +164,7 @@ describe("verifyEvents tool calls", () => {
 
     // Set up subscription and collect events
     const promise = firstValueFrom(
-      verifyEvents(source$).pipe(
+      verifyEvents(false)(source$).pipe(
         toArray(),
         catchError((err) => {
           throw err;
@@ -219,7 +219,7 @@ describe("verifyEvents tool calls", () => {
 
     // Set up subscription and collect events
     const promise = firstValueFrom(
-      verifyEvents(source$).pipe(
+      verifyEvents(false)(source$).pipe(
         toArray(),
         catchError((err) => {
           throw err;
@@ -273,7 +273,7 @@ describe("verifyEvents tool calls", () => {
     const events: BaseEvent[] = [];
 
     // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(source$).subscribe({
+    const subscription = verifyEvents(false)(source$).subscribe({
       next: (event) => events.push(event),
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
@@ -316,7 +316,7 @@ describe("verifyEvents tool calls", () => {
     const events: BaseEvent[] = [];
 
     // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(source$).subscribe({
+    const subscription = verifyEvents(false)(source$).subscribe({
       next: (event) => events.push(event),
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
@@ -360,7 +360,7 @@ describe("verifyEvents tool calls", () => {
     const events: BaseEvent[] = [];
 
     // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(source$).subscribe({
+    const subscription = verifyEvents(false)(source$).subscribe({
       next: (event) => events.push(event),
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
@@ -404,7 +404,7 @@ describe("verifyEvents tool calls", () => {
     const events: BaseEvent[] = [];
 
     // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(source$).subscribe({
+    const subscription = verifyEvents(false)(source$).subscribe({
       next: (event) => events.push(event),
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);

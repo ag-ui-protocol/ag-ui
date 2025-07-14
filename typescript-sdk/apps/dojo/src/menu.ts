@@ -13,7 +13,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   },
   {
     id: "server-starter-all-features",
-    name: "Server Starter All Features",
+    name: "Server Starter (All Features)",
     features: [
       "agentic_chat",
       "human_in_the_loop",
@@ -27,6 +27,11 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
     id: "mastra",
     name: "Mastra",
     features: ["agentic_chat"],
+  },
+  {
+    id: "mastra-agent-local",
+    name: "Mastra Agent (Local)",
+    features: ["agentic_chat", "shared_state"],
   },
   {
     id: "vercel-ai-sdk",
@@ -46,6 +51,18 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
     ],
   },
   {
+    id: "langgraph-fastapi",
+    name: "LangGraph FastAPI",
+    features: [
+      "agentic_chat",
+      "human_in_the_loop",
+      "agentic_generative_ui",
+      "tool_based_generative_ui",
+      "predictive_state_updates",
+      "shared_state",
+    ],
+  },
+  {
     id: "agno",
     name: "Agno",
     features: ["agentic_chat"],
@@ -53,11 +70,18 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   {
     id: "llama-index",
     name: "LlamaIndex",
+    features: ["agentic_chat", "human_in_the_loop", "agentic_generative_ui", "shared_state"],
+  },
+  {
+    id: "crewai",
+    name: "CrewAI",
     features: [
       "agentic_chat",
       "human_in_the_loop",
+      "tool_based_generative_ui",
       "agentic_generative_ui",
       "shared_state",
+      "predictive_state_updates",
     ],
   },
 ];

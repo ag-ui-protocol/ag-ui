@@ -10,6 +10,7 @@ import {
   ToolCallStartEvent,
   ToolCallArgsEvent,
   ToolCallEndEvent,
+  ToolCallResultEvent,
   CustomEvent,
   StateSnapshotEvent,
   StepStartedEvent,
@@ -34,6 +35,7 @@ import {
   LegacyTextMessage,
   LegacyActionExecutionMessage,
   LegacyResultMessage,
+  LegacyActionExecutionResult,
 } from "./types";
 import untruncateJson from "untruncate-json";
 
@@ -53,6 +55,7 @@ export const convertToLegacyEvents =
     let syncedMessages: Message[] | null = null;
     let predictState: PredictStateValue[] | null = null;
     let currentToolCalls: ToolCall[] = [];
+    let toolCallNames: Record<string, string> = {};
 
     const updateCurrentState = (newState: any) => {
       // the legacy protocol will only support object state
@@ -108,6 +111,7 @@ export const convertToLegacyEvents =
             });
 
             active = true;
+            toolCallNames[startEvent.toolCallId] = startEvent.toolCallName;
 
             return [
               {
@@ -186,6 +190,17 @@ export const convertToLegacyEvents =
                 type: LegacyRuntimeEventTypes.enum.ActionExecutionEnd,
                 actionExecutionId: endEvent.toolCallId,
               } as LegacyActionExecutionEnd,
+            ];
+          }
+          case EventType.TOOL_CALL_RESULT: {
+            const resultEvent = event as ToolCallResultEvent;
+            return [
+              {
+                type: LegacyRuntimeEventTypes.enum.ActionExecutionResult,
+                actionExecutionId: resultEvent.toolCallId,
+                result: resultEvent.content,
+                actionName: toolCallNames[resultEvent.toolCallId] || "unknown",
+              } as LegacyActionExecutionResult,
             ];
           }
           case EventType.RAW: {

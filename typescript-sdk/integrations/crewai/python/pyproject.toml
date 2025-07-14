@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "ag-ui-crewai"
+version = "0.1.3"
+description = ""
+authors = ["Markus Ecker <markus.ecker@gmail.com>"]
+readme = "README.md"
+exclude = [
+    "ag_ui_crewai/dojo.py",
+    "ag_ui_crewai/examples/**",
+]
+
+[tool.poetry.dependencies]
+python = "<3.14,>=3.10"
+ag-ui-protocol = "==0.1.5"
+fastapi = "^0.115.12"
+uvicorn = "^0.34.3"
+crewai = "^0.130.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+dev = "ag_ui_crewai.dojo:main"

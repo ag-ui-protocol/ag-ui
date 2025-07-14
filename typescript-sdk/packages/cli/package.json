@@ -1,7 +1,7 @@
 {
   "name": "create-ag-ui-app",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.2",
+  "version": "0.0.34",
   "private": false,
   "publishConfig": {
     "access": "public"
@@ -9,7 +9,7 @@
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
-  "bin": "./dist/index.js",
+  "bin": "./dist/index.mjs",
   "sideEffects": false,
   "files": [
     "dist/**"
@@ -26,7 +26,8 @@
   "dependencies": {
     "@types/inquirer": "^9.0.8",
     "commander": "^12.1.0",
-    "inquirer": "^12.6.3"
+    "inquirer": "^12.6.3",
+    "giget": "2.0.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

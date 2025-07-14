@@ -53,10 +53,10 @@ class MyAgent extends AbstractAgent {
 
 ### runAgent()
 
-The primary method for executing an agent and receiving the event stream.
+The primary method for executing an agent and processing the result.
 
 ```typescript
-runAgent(parameters?: RunAgentParameters): Observable<RuntimeProtocolEvent>
+runAgent(parameters?: RunAgentParameters, subscriber?: AgentSubscriber): Promise<RunAgentResult>
 ```
 
 #### Parameters
@@ -69,6 +69,31 @@ interface RunAgentParameters {
   forwardedProps?: Record<string, any> // Additional properties to forward
 }
 ```
+
+The optional `subscriber` parameter allows you to provide an
+[AgentSubscriber](/sdk/js/client/subscriber) for handling events during this
+specific run.
+
+#### Return Value
+
+```typescript
+interface RunAgentResult {
+  result: any // The final result returned by the agent
+  newMessages: Message[] // New messages added during this run
+}
+```
+
+### subscribe()
+
+Adds an [AgentSubscriber](/sdk/js/client/subscriber) to handle events across
+multiple agent runs.
+
+```typescript
+subscribe(subscriber: AgentSubscriber): { unsubscribe: () => void }
+```
+
+Returns an object with an `unsubscribe()` method to remove the subscriber when
+no longer needed.
 
 ### abortRun()
 

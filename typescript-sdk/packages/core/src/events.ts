@@ -13,6 +13,7 @@ export enum EventType {
   TOOL_CALL_ARGS = "TOOL_CALL_ARGS",
   TOOL_CALL_END = "TOOL_CALL_END",
   TOOL_CALL_CHUNK = "TOOL_CALL_CHUNK",
+  TOOL_CALL_RESULT = "TOOL_CALL_RESULT",
   THINKING_START = "THINKING_START",
   THINKING_END = "THINKING_END",
   STATE_SNAPSHOT = "STATE_SNAPSHOT",
@@ -31,34 +32,6 @@ const BaseEventSchema = z.object({
   type: z.nativeEnum(EventType),
   timestamp: z.number().optional(),
   rawEvent: z.any().optional(),
-});
-
-export const RunStartedSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.RUN_STARTED),
-  threadId: z.string(),
-  runId: z.string(),
-});
-
-export const RunFinishedSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.RUN_FINISHED),
-  threadId: z.string(),
-  runId: z.string(),
-});
-
-export const RunErrorSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.RUN_ERROR),
-  message: z.string(),
-  code: z.string().optional(),
-});
-
-export const StepStartedSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.STEP_STARTED),
-  stepName: z.string(),
-});
-
-export const StepFinishedSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.STEP_FINISHED),
-  stepName: z.string(),
 });
 
 export const TextMessageStartEventSchema = BaseEventSchema.extend({
@@ -118,6 +91,14 @@ export const ToolCallEndEventSchema = BaseEventSchema.extend({
   toolCallId: z.string(),
 });
 
+export const ToolCallResultEventSchema = BaseEventSchema.extend({
+  messageId: z.string(),
+  type: z.literal(EventType.TOOL_CALL_RESULT),
+  toolCallId: z.string(),
+  content: z.string(),
+  role: z.literal("tool").optional(),
+});
+
 export const ToolCallChunkEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TOOL_CALL_CHUNK),
   toolCallId: z.string().optional(),
@@ -172,6 +153,7 @@ export const RunFinishedEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.RUN_FINISHED),
   threadId: z.string(),
   runId: z.string(),
+  result: z.any().optional(),
 });
 
 export const RunErrorEventSchema = BaseEventSchema.extend({
@@ -202,6 +184,7 @@ export const EventSchemas = z.discriminatedUnion("type", [
   ToolCallArgsEventSchema,
   ToolCallEndEventSchema,
   ToolCallChunkEventSchema,
+  ToolCallResultEventSchema,
   StateSnapshotEventSchema,
   StateDeltaEventSchema,
   MessagesSnapshotEventSchema,
@@ -226,6 +209,7 @@ export type ToolCallStartEvent = z.infer<typeof ToolCallStartEventSchema>;
 export type ToolCallArgsEvent = z.infer<typeof ToolCallArgsEventSchema>;
 export type ToolCallEndEvent = z.infer<typeof ToolCallEndEventSchema>;
 export type ToolCallChunkEvent = z.infer<typeof ToolCallChunkEventSchema>;
+export type ToolCallResultEvent = z.infer<typeof ToolCallResultEventSchema>;
 export type ThinkingStartEvent = z.infer<typeof ThinkingStartEventSchema>;
 export type ThinkingEndEvent = z.infer<typeof ThinkingEndEventSchema>;
 export type StateSnapshotEvent = z.infer<typeof StateSnapshotEventSchema>;

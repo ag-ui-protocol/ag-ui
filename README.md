@@ -1,4 +1,6 @@
-# <img src="https://github.com/user-attachments/assets/ebc0dd08-8732-4519-9b6c-452ce54d8058" alt="ag-ui Logo" height="42px" /> AG-UI: The Agent-User Interaction Protocol
+
+# <img src="https://github.com/user-attachments/assets/ebc0dd08-8732-4519-9b6c-452ce54d8058" alt="ag-ui Logo" width="45"/> AG-UI: The Agent-User Interaction Protocol
+
 AG-UI is a lightweight, event-based protocol that standardizes how AI agents connect to front-end applications. Built for simplicity and flexibility, it enables seamless integration between your AI agents and user interfaces.
 
 [![Version](https://img.shields.io/npm/v/@ag-ui/core?label=Version&color=6963ff&logo=npm&logoColor=white)](https://www.npmjs.com/package/@ag-ui/core)
@@ -40,6 +42,8 @@ It also ships with a **reference HTTP implementation** and **default connector**
 
 AG-UI was developed based on real-world requirements and practical experience building in-app agent interactions.
 
+
+
 ## Where does AGUI fit in the agentic protocol stack?
 AG-UI is complementary to the other 2 top agentic protocols
 - MCP gives agents tools
@@ -69,6 +73,7 @@ AG-UI is complementary to the other 2 top agentic protocols
 
 ## 🛠 Supported Frameworks
 
+
 AG-UI integrates with many popular agent frameworks
 
 | Framework                                                          | Status                   | AG-UI Resources                                                              | 
@@ -97,13 +102,20 @@ AG-UI integrates with many popular agent frameworks
 
 [View all supported frameworks →](https://ag-ui.com/frameworks)
 
+
 ## ✨ Hello World App
+
+
+Video:
+
+https://github.com/user-attachments/assets/18c03330-1ebc-4863-b2b8-cc6c3a4c7bae
 
 https://agui-demo.vercel.app/
 
 Video:
 
-https://github.com/user-attachments/assets/18c03330-1ebc-4863-b2b8-cc6c3a4c7bae
+https://github.com/user-attachments/assets/a67d3d54-36b2-4c7a-ac69-a0ca01365d5b
+
 
 
 ## 🧩 AG-UI Showcase: The AG-UI Dojo (Building-Blocks Viewer)
@@ -130,6 +142,3 @@ Check out the [AG-UI Roadmap](https://github.com/orgs/ag-ui-protocol/projects/1)
 
 AG-UI is open source software [licensed as MIT](https://opensource.org/licenses/MIT).  
 Maintained by [AG Protocol](https://www.agprotocol.ai).
-
-
-

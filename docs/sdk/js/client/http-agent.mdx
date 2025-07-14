@@ -39,20 +39,39 @@ const agent = new HttpAgent({
 
 ### runAgent()
 
-Executes the agent by making an HTTP request to the configured endpoint. Returns
-an observable event stream.
+Executes the agent by making an HTTP request to the configured endpoint.
 
 ```typescript
-runAgent(parameters?: RunHttpAgentConfig): Observable<RuntimeProtocolEvent>
+runAgent(parameters?: RunAgentParameters, subscriber?: AgentSubscriber): Promise<RunAgentResult>
 ```
 
 #### Parameters
 
+The `parameters` argument follows the standard `RunAgentParameters` interface.
+The optional `subscriber` parameter allows you to provide an
+[AgentSubscriber](/sdk/js/client/subscriber) for handling events during this
+specific run.
+
+#### Return Value
+
 ```typescript
-interface RunHttpAgentConfig extends RunAgentParameters {
-  abortController?: AbortController // For canceling the HTTP request
+interface RunAgentResult {
+  result: any // The final result returned by the agent
+  newMessages: Message[] // New messages added during this run
 }
 ```
+
+### subscribe()
+
+Adds an [AgentSubscriber](/sdk/js/client/subscriber) to handle events across
+multiple agent runs.
+
+```typescript
+subscribe(subscriber: AgentSubscriber): { unsubscribe: () => void }
+```
+
+Returns an object with an `unsubscribe()` method to remove the subscriber when
+no longer needed.
 
 ### abortRun()
 
