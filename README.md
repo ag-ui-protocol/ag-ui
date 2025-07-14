@@ -124,6 +124,10 @@ npx create-ag-ui-app my-agent-app
 
 Check out the [Contributing guide](https://github.com/ag-ui-protocol/ag-ui/blob/main/CONTRIBUTING.md)
 
+## Roadmap
+
+Check out the [AG-UI Roadmap](https://github.com/orgs/ag-ui-protocol/projects/1)
+
 
 ## License
 
