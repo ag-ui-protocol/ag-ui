@@ -770,6 +770,9 @@ class ADKAgent:
             await self._ensure_session_exists(
                 app_name, user_id, input.thread_id, input.state
             )
+
+            # this will always update the backend states with the frontend states
+            # Recipe Demo Example: if there is a state "salt" in the ingredients state and in frontend user remove this salt state using UI from the ingredients list then our backend should also update these state changes as well to sync both the states
             await self._session_manager.update_session_state(input.thread_id,app_name,user_id,input.state)
             
             
