@@ -112,10 +112,6 @@ https://github.com/user-attachments/assets/18c03330-1ebc-4863-b2b8-cc6c3a4c7bae
 
 https://agui-demo.vercel.app/
 
-Video:
-
-https://github.com/user-attachments/assets/a67d3d54-36b2-4c7a-ac69-a0ca01365d5b
-
 
 
 ## 🧩 AG-UI Showcase: The AG-UI Dojo (Building-Blocks Viewer)
