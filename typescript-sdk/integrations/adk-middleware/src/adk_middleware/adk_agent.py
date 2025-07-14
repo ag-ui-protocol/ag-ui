@@ -13,7 +13,7 @@ from ag_ui.core import (
     RunStartedEvent, RunFinishedEvent, RunErrorEvent,
     TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent,
     StateSnapshotEvent, StateDeltaEvent,
-    Context, ToolMessage, ToolCallEndEvent
+    Context, ToolMessage, ToolCallEndEvent, SystemMessage
 )
 
 from google.adk import Runner
@@ -427,6 +427,8 @@ class ADKAgent:
                     # Could add more specific check here for the exact tool_call_id
                     # but for now just log that we're processing a tool result while tools are pending
                     logger.debug(f"Processing tool result {tool_call_id} for thread {thread_id} with pending tools")
+                    # Remove from pending tool calls now that we're processing it
+                    await self._remove_pending_tool_call(thread_id, tool_call_id)
                 else:
                     # No pending tools - this could be a stale result or from a different session
                     logger.warning(f"No pending tool calls found for tool result {tool_call_id} in thread {thread_id}")
@@ -476,9 +478,6 @@ class ADKAgent:
             
             # Debug: Log the extracted tool message
             logger.info(f"Extracted most recent ToolMessage: role={most_recent_tool_message.role}, tool_call_id={most_recent_tool_message.tool_call_id}, content='{most_recent_tool_message.content}'")
-            
-            # Remove from pending tool calls when response is received
-            await self._remove_pending_tool_call(input.thread_id, most_recent_tool_message.tool_call_id)
             
             return [{
                 'tool_name': tool_name,
@@ -692,13 +691,47 @@ class ADKAgent:
         registry = AgentRegistry.get_instance()
         adk_agent = registry.get_agent(agent_id)
         
-        # Create dynamic toolset if tools provided
+        # Prepare agent modifications (SystemMessage and tools)
+        agent_updates = {}
+        
+        # Handle SystemMessage if it's the first message - append to agent instructions
+        if input.messages and isinstance(input.messages[0], SystemMessage):
+            system_content = input.messages[0].content
+            if system_content:
+                # Get existing instruction (may be None or empty)
+                current_instruction = getattr(adk_agent, 'instruction', '') or ''
+                
+                # Append SystemMessage content to existing instructions
+                if current_instruction:
+                    new_instruction = f"{current_instruction}\n\n{system_content}"
+                else:
+                    new_instruction = system_content
+                
+                agent_updates['instruction'] = new_instruction
+                logger.debug(f"Will append SystemMessage to agent instructions: '{system_content[:100]}...'")
+        
+        # Create dynamic toolset if tools provided and prepare tool updates
         toolset = None
         if input.tools:
             toolset = ClientProxyToolset(
                 ag_ui_tools=input.tools,
                 event_queue=event_queue
             )
+            
+            # Get existing tools from the agent
+            existing_tools = []
+            if hasattr(adk_agent, 'tools') and adk_agent.tools:
+                existing_tools = list(adk_agent.tools) if isinstance(adk_agent.tools, (list, tuple)) else [adk_agent.tools]
+            
+            # Combine existing tools with our proxy toolset
+            combined_tools = existing_tools + [toolset]
+            agent_updates['tools'] = combined_tools
+            logger.debug(f"Will combine {len(existing_tools)} existing tools with proxy toolset")
+        
+        # Create a single copy of the agent with all updates if any modifications needed
+        if agent_updates:
+            adk_agent = adk_agent.model_copy(update=agent_updates)
+            logger.debug(f"Created modified agent copy with updates: {list(agent_updates.keys())}")
         
         # Create background task
         logger.debug(f"Creating background task for thread {input.thread_id}")
@@ -708,7 +741,6 @@ class ADKAgent:
                 adk_agent=adk_agent,
                 user_id=user_id,
                 app_name=app_name,
-                toolset=toolset,
                 event_queue=event_queue
             )
         )
@@ -726,34 +758,20 @@ class ADKAgent:
         adk_agent: ADKBaseAgent,
         user_id: str,
         app_name: str,
-        toolset: Optional[ClientProxyToolset],
         event_queue: asyncio.Queue
     ):
         """Run ADK agent in background, emitting events to queue.
         
         Args:
             input: The run input
-            adk_agent: The ADK agent to run
+            adk_agent: The ADK agent to run (already prepared with tools and SystemMessage)
             user_id: User ID
             app_name: App name
-            toolset: Optional client proxy toolset
             event_queue: Queue for emitting events
         """
         try:
-            # Handle tool combination if toolset provided - use agent cloning to avoid mutating original
-            if toolset:
-                # Get existing tools from the agent
-                existing_tools = []
-                if hasattr(adk_agent, 'tools') and adk_agent.tools:
-                    existing_tools = list(adk_agent.tools) if isinstance(adk_agent.tools, (list, tuple)) else [adk_agent.tools]
-                
-                # Combine existing tools with our proxy toolset
-                combined_tools = existing_tools + [toolset]
-                
-                # Create a copy of the agent with the combined tools (avoid mutating original)
-                adk_agent = adk_agent.model_copy(update={'tools': combined_tools})
-                
-                logger.debug(f"Combined {len(existing_tools)} existing tools with proxy toolset via agent cloning")
+            # Agent is already prepared with tools and SystemMessage instructions (if any)
+            # from _start_background_execution, so no additional agent copying needed here
             
             # Create runner
             runner = self._create_runner(
@@ -867,9 +885,10 @@ class ADKAgent:
             )
             await event_queue.put(None)
         finally:
-            # Clean up toolset
-            if toolset:
-                await toolset.close()
+            # Background task cleanup completed
+            # Note: toolset cleanup is handled by garbage collection
+            # since toolset is now embedded in the agent's tools
+            pass
     
     async def _cleanup_stale_executions(self):
         """Clean up stale executions."""

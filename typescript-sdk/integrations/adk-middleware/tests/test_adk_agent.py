@@ -10,7 +10,7 @@ from unittest.mock import Mock, MagicMock, AsyncMock, patch
 from adk_middleware import ADKAgent, AgentRegistry,SessionManager
 from ag_ui.core import (
     RunAgentInput, EventType, UserMessage, Context,
-    RunStartedEvent, RunFinishedEvent, TextMessageChunkEvent
+    RunStartedEvent, RunFinishedEvent, TextMessageChunkEvent, SystemMessage
 )
 from google.adk.agents import Agent
 
@@ -191,6 +191,128 @@ class TestADKAgent:
         # Verify execution was cancelled and cleaned up
         mock_execution.cancel.assert_called_once()
         assert len(adk_agent._active_executions) == 0
+
+    @pytest.mark.asyncio
+    async def test_system_message_appended_to_instructions(self, registry):
+        """Test that SystemMessage as first message gets appended to agent instructions."""
+        # Create an agent with initial instructions
+        mock_agent = Agent(
+            name="test_agent",
+            instruction="You are a helpful assistant."
+        )
+        registry.set_default_agent(mock_agent)
+        
+        adk_agent = ADKAgent(app_name="test_app", user_id="test_user")
+        
+        # Create input with SystemMessage as first message
+        system_input = RunAgentInput(
+            thread_id="test_thread",
+            run_id="test_run",
+            messages=[
+                SystemMessage(id="sys_1", role="system", content="Be very concise in responses."),
+                UserMessage(id="msg_1", role="user", content="Hello")
+            ],
+            context=[],
+            state={},
+            tools=[],
+            forwarded_props={}
+        )
+        
+        # Mock the background execution to capture the modified agent
+        captured_agent = None
+        original_run_background = adk_agent._run_adk_in_background
+        
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue):
+            nonlocal captured_agent
+            captured_agent = adk_agent
+            # Just put a completion event in the queue and return
+            await event_queue.put(None)
+        
+        with patch.object(adk_agent, '_run_adk_in_background', side_effect=mock_run_background):
+            # Start execution to trigger agent modification
+            execution = await adk_agent._start_background_execution(system_input, "default")
+            
+            # Wait briefly for the background task to start
+            await asyncio.sleep(0.01)
+        
+        # Verify the agent's instruction was modified
+        assert captured_agent is not None
+        expected_instruction = "You are a helpful assistant.\n\nBe very concise in responses."
+        assert captured_agent.instruction == expected_instruction
+
+    @pytest.mark.asyncio
+    async def test_system_message_not_first_ignored(self, registry):
+        """Test that SystemMessage not as first message is ignored."""
+        mock_agent = Agent(
+            name="test_agent", 
+            instruction="You are a helpful assistant."
+        )
+        registry.set_default_agent(mock_agent)
+        
+        adk_agent = ADKAgent(app_name="test_app", user_id="test_user")
+        
+        # Create input with SystemMessage as second message
+        system_input = RunAgentInput(
+            thread_id="test_thread",
+            run_id="test_run", 
+            messages=[
+                UserMessage(id="msg_1", role="user", content="Hello"),
+                SystemMessage(id="sys_1", role="system", content="Be very concise in responses.")
+            ],
+            context=[],
+            state={},
+            tools=[],
+            forwarded_props={}
+        )
+        
+        # Mock the background execution to capture the agent
+        captured_agent = None
+        
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue):
+            nonlocal captured_agent
+            captured_agent = adk_agent
+            await event_queue.put(None)
+        
+        with patch.object(adk_agent, '_run_adk_in_background', side_effect=mock_run_background):
+            execution = await adk_agent._start_background_execution(system_input, "default")
+            await asyncio.sleep(0.01)
+        
+        # Verify the agent's instruction was NOT modified
+        assert captured_agent.instruction == "You are a helpful assistant."
+
+    @pytest.mark.asyncio
+    async def test_system_message_with_no_existing_instruction(self, registry):
+        """Test SystemMessage handling when agent has no existing instruction."""
+        mock_agent = Agent(name="test_agent")  # No instruction
+        registry.set_default_agent(mock_agent)
+        
+        adk_agent = ADKAgent(app_name="test_app", user_id="test_user")
+        
+        system_input = RunAgentInput(
+            thread_id="test_thread",
+            run_id="test_run",
+            messages=[
+                SystemMessage(id="sys_1", role="system", content="You are a math tutor.")
+            ],
+            context=[],
+            state={},
+            tools=[],
+            forwarded_props={}
+        )
+        
+        captured_agent = None
+        
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue):
+            nonlocal captured_agent
+            captured_agent = adk_agent
+            await event_queue.put(None)
+        
+        with patch.object(adk_agent, '_run_adk_in_background', side_effect=mock_run_background):
+            execution = await adk_agent._start_background_execution(system_input, "default")
+            await asyncio.sleep(0.01)
+        
+        # Verify the SystemMessage became the instruction
+        assert captured_agent.instruction == "You are a math tutor."
 
 
 @pytest.fixture(autouse=True)
