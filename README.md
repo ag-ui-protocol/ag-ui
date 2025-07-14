@@ -43,13 +43,6 @@ It also ships with a **reference HTTP implementation** and **default connector**
 AG-UI was developed based on real-world requirements and practical experience building in-app agent interactions.
 
 
-
-## Where does AGUI fit in the agentic protocol stack?
-AG-UI is complementary to the other 2 top agentic protocols
-- MCP gives agents tools
-- A2A allows agents to communicate with other agents
-- AG-UI brings agents into user-facing applications
-
 ## Where does AGUI fit in the agentic protocol stack?
 AG-UI is complementary to the other 2 top agentic protocols
 - MCP gives agents tools
