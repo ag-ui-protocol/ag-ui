@@ -124,9 +124,6 @@ npx create-ag-ui-app my-agent-app
 
 Check out the [Contributing guide](https://github.com/ag-ui-protocol/ag-ui/blob/main/CONTRIBUTING.md)
 
-- **[AG-UI: Build an agent canvas with AG-UI](https://go.copilotkit.ai/ag-ui-build-an-agent-canvas)**  
-  📅 Friday, June 20, 9:00 AM PT  
-
 
 ## License
 
