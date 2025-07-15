@@ -406,7 +406,7 @@ class TestEventTranslatorComprehensive:
         
         events = []
         async for event in translator._translate_function_calls(
-             [mock_function_call], "thread_1", "run_1"
+             [mock_function_call]
         ):
             events.append(event)
         
