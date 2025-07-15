@@ -172,13 +172,6 @@ def on_before_agent(callback_context: CallbackContext):
 
     return None
 
-def on_before_model(callback_context: CallbackContext):
-    """
-    Initialize recipe state if it doesn't exist.
-    """
-    # callback_context.
-    return None
-
 
 
 shared_state_agent = LlmAgent(
