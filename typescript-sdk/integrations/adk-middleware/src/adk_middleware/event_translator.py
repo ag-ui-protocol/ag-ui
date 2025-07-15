@@ -5,6 +5,8 @@
 from typing import AsyncGenerator, Optional, Dict, Any
 import uuid
 
+from google.genai import types
+
 from ag_ui.core import (
     BaseEvent, EventType,
     TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent,
@@ -83,14 +85,7 @@ class EventTranslator:
                 ):
                     yield event
             
-            # Handle function calls
-            # NOTE: We don't emit TOOL_CALL events here because ClientProxyTool will emit them
-            # when the tool is actually executed. This avoids duplicate tool call events.
-            if hasattr(adk_event, 'get_function_calls'):
-                function_calls = adk_event.get_function_calls()
-                if function_calls:
-                    logger.debug(f"ADK function calls detected: {len(function_calls)} calls")
-                    # Just log for debugging, don't emit events
+
             
             # Handle function responses
             if hasattr(adk_event, 'get_function_responses'):
@@ -99,12 +94,23 @@ class EventTranslator:
                     # Function responses are typically handled by the agent internally
                     # We don't need to emit them as AG-UI events
                     pass
+
+            # call _translate_function_calls function to yield Tool Events
+            if hasattr(adk_event, 'get_function_calls'):               
+                function_calls = adk_event.get_function_calls()
+                if function_calls:
+                    logger.debug(f"ADK function calls detected: {len(function_calls)} calls")
+                    # NOW ACTUALLY YIELD THE EVENTS
+                    async for event in self._translate_function_calls(function_calls):
+                        yield event
+                        
             
             # Handle state changes
             if hasattr(adk_event, 'actions') and adk_event.actions and hasattr(adk_event.actions, 'state_delta') and adk_event.actions.state_delta:
                 yield self._create_state_delta_event(
                     adk_event.actions.state_delta, thread_id, run_id
                 )
+                
             
             # Handle custom events or metadata
             if hasattr(adk_event, 'custom_data') and adk_event.custom_data:
@@ -224,10 +230,7 @@ class EventTranslator:
     
     async def _translate_function_calls(
         self,
-        adk_event: ADKEvent,
-        function_calls: list,
-        thread_id: str,
-        run_id: str
+        function_calls: list[types.FunctionCall],
     ) -> AsyncGenerator[BaseEvent, None]:
         """Translate function calls from ADK event to AG-UI tool call events.
         
@@ -307,6 +310,24 @@ class EventTranslator:
         return StateDeltaEvent(
             type=EventType.STATE_DELTA,
             delta=patches
+        )
+    
+    def _create_state_snapshot_event(
+        self,
+        state_snapshot: Dict[str, Any],
+    ) -> StateSnapshotEvent:
+        """Create a state snapshot event from ADK state changes.
+        
+        Args:
+            state_snapshot: The state changes from ADK
+            
+        Returns:
+            A StateSnapshotEvent
+        """
+ 
+        return StateSnapshotEvent(
+            type=EventType.STATE_SNAPSHOT,
+            snapshot=state_snapshot
         )
     
     async def force_close_streaming_message(self) -> AsyncGenerator[BaseEvent, None]:

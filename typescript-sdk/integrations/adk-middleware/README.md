@@ -648,6 +648,16 @@ See the `examples/` directory for comprehensive working examples:
   - Interactive workflows with user refinement
   - Real-world application patterns
 
+## Running the ADK Backend Server for Dojo App
+
+To run the ADK backend server that works with the Dojo app, use the following command:
+
+```bash
+python -m examples.fastapi_server
+```
+
+This will start a FastAPI server that connects your ADK middleware to the Dojo application.
+
 ## Examples
 
 ### Simple Conversation

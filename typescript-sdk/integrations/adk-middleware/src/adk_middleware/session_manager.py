@@ -2,7 +2,7 @@
 
 """Session manager that adds production features to ADK's native session service."""
 
-from typing import Dict, Optional, Set, Any
+from typing import Dict, Optional, Set, Any, Union
 import asyncio
 import logging
 import time
@@ -19,6 +19,7 @@ class SessionManager:
     - Per-user session limits
     - Automatic cleanup of expired sessions
     - Optional automatic session memory on deletion
+    - State management and updates
     """
     
     _instance = None
@@ -142,6 +143,359 @@ class SessionManager:
             self._start_cleanup_task()
         
         return session
+    
+    # ===== STATE MANAGEMENT METHODS =====
+    
+    async def update_session_state(
+        self,
+        session_id: str,
+        app_name: str,
+        user_id: str,
+        state_updates: Dict[str, Any],
+        merge: bool = True
+    ) -> bool:
+        """Update session state with new values.
+        
+        Args:
+            session_id: Session identifier
+            app_name: Application name
+            user_id: User identifier
+            state_updates: Dictionary of state key-value pairs to update
+            merge: If True, merge with existing state; if False, replace completely
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            session = await self._session_service.get_session(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id
+            )
+            
+            if not (session and state_updates):
+                logger.warning(f"Session not found: {app_name}:{session_id}")
+                return False
+            
+            # Apply state updates using EventActions
+            from google.adk.events import Event, EventActions
+            
+            # Prepare state delta
+            if merge:
+                # Merge with existing state
+                state_delta = state_updates
+            else:
+                # Replace entire state
+                state_delta = state_updates
+                # Note: Complete replacement might need clearing existing keys
+                # This depends on ADK's behavior - may need to explicitly clear
+            
+            # Create event with state changes
+            actions = EventActions(state_delta=state_delta)
+            event = Event(
+                invocation_id=f"state_update_{int(time.time())}",
+                author="system",
+                actions=actions,
+                timestamp=time.time()
+            )
+            
+            # Apply changes through ADK's event system
+            await self._session_service.append_event(session, event)
+            
+            logger.info(f"Updated state for session {app_name}:{session_id}")
+            logger.debug(f"State updates: {state_updates}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to update session state: {e}", exc_info=True)
+            return False
+    
+    async def get_session_state(
+        self,
+        session_id: str,
+        app_name: str,
+        user_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get current session state.
+        
+        Args:
+            session_id: Session identifier
+            app_name: Application name
+            user_id: User identifier
+            
+        Returns:
+            Session state dictionary or None if session not found
+        """
+        try:
+            session = await self._session_service.get_session(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id
+            )
+            
+            if not session:
+                logger.warning(f"Session not found: {app_name}:{session_id}")
+                return None
+            
+            # Return state as dictionary
+            if hasattr(session.state, 'to_dict'):
+                return session.state.to_dict()
+            else:
+                # Fallback for dict-like state objects
+                return dict(session.state)
+                
+        except Exception as e:
+            logger.error(f"Failed to get session state: {e}", exc_info=True)
+            return None
+    
+    async def get_state_value(
+        self,
+        session_id: str,
+        app_name: str,
+        user_id: str,
+        key: str,
+        default: Any = None
+    ) -> Any:
+        """Get a specific value from session state.
+        
+        Args:
+            session_id: Session identifier
+            app_name: Application name
+            user_id: User identifier
+            key: State key to retrieve
+            default: Default value if key not found
+            
+        Returns:
+            Value for the key or default
+        """
+        try:
+            session = await self._session_service.get_session(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id
+            )
+            
+            if not session:
+                logger.warning(f"Session not found: {app_name}:{session_id}")
+                return default
+            
+            if hasattr(session.state, 'get'):
+                return session.state.get(key, default)
+            else:
+                return session.state.get(key, default) if key in session.state else default
+                
+        except Exception as e:
+            logger.error(f"Failed to get state value: {e}", exc_info=True)
+            return default
+    
+    async def set_state_value(
+        self,
+        session_id: str,
+        app_name: str,
+        user_id: str,
+        key: str,
+        value: Any
+    ) -> bool:
+        """Set a specific value in session state.
+        
+        Args:
+            session_id: Session identifier
+            app_name: Application name
+            user_id: User identifier
+            key: State key to set
+            value: Value to set
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        return await self.update_session_state(
+            session_id=session_id,
+            app_name=app_name,
+            user_id=user_id,
+            state_updates={key: value}
+        )
+    
+    async def remove_state_keys(
+        self,
+        session_id: str,
+        app_name: str,
+        user_id: str,
+        keys: Union[str, list]
+    ) -> bool:
+        """Remove specific keys from session state.
+        
+        Args:
+            session_id: Session identifier
+            app_name: Application name
+            user_id: User identifier
+            keys: Single key or list of keys to remove
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if isinstance(keys, str):
+                keys = [keys]
+            
+            # Get current state
+            current_state = await self.get_session_state(session_id, app_name, user_id)
+            if not current_state:
+                return False
+            
+            # Create state delta to remove keys (set to None for removal)
+            state_delta = {key: None for key in keys if key in current_state}
+            
+            if not state_delta:
+                logger.info(f"No keys to remove from session {app_name}:{session_id}")
+                return True
+            
+            return await self.update_session_state(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id,
+                state_updates=state_delta
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to remove state keys: {e}", exc_info=True)
+            return False
+    
+    async def clear_session_state(
+        self,
+        session_id: str,
+        app_name: str,
+        user_id: str,
+        preserve_prefixes: Optional[list] = None
+    ) -> bool:
+        """Clear session state, optionally preserving certain prefixes.
+        
+        Args:
+            session_id: Session identifier
+            app_name: Application name
+            user_id: User identifier
+            preserve_prefixes: List of prefixes to preserve (e.g., ['user:', 'app:'])
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            current_state = await self.get_session_state(session_id, app_name, user_id)
+            if not current_state:
+                return False
+            
+            preserve_prefixes = preserve_prefixes or []
+            
+            # Determine which keys to remove
+            keys_to_remove = []
+            for key in current_state.keys():
+                should_preserve = any(key.startswith(prefix) for prefix in preserve_prefixes)
+                if not should_preserve:
+                    keys_to_remove.append(key)
+            
+            if keys_to_remove:
+                return await self.remove_state_keys(
+                    session_id=session_id,
+                    app_name=app_name,
+                    user_id=user_id,
+                    keys=keys_to_remove
+                )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to clear session state: {e}", exc_info=True)
+            return False
+    
+    async def initialize_session_state(
+        self,
+        session_id: str,
+        app_name: str,
+        user_id: str,
+        initial_state: Dict[str, Any],
+        overwrite_existing: bool = False
+    ) -> bool:
+        """Initialize session state with default values.
+        
+        Args:
+            session_id: Session identifier
+            app_name: Application name
+            user_id: User identifier
+            initial_state: Initial state values
+            overwrite_existing: Whether to overwrite existing values
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if not overwrite_existing:
+                # Only set values that don't already exist
+                current_state = await self.get_session_state(session_id, app_name, user_id)
+                if current_state:
+                    # Filter out keys that already exist
+                    filtered_state = {
+                        key: value for key, value in initial_state.items()
+                        if key not in current_state
+                    }
+                    if not filtered_state:
+                        logger.info(f"No new state values to initialize for session {app_name}:{session_id}")
+                        return True
+                    initial_state = filtered_state
+            
+            return await self.update_session_state(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id,
+                state_updates=initial_state
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize session state: {e}", exc_info=True)
+            return False
+    
+    # ===== BULK STATE OPERATIONS =====
+    
+    async def bulk_update_user_state(
+        self,
+        user_id: str,
+        state_updates: Dict[str, Any],
+        app_name_filter: Optional[str] = None
+    ) -> Dict[str, bool]:
+        """Update state across all sessions for a user.
+        
+        Args:
+            user_id: User identifier
+            state_updates: State updates to apply
+            app_name_filter: Optional filter for specific app
+            
+        Returns:
+            Dictionary mapping session_key to success status
+        """
+        results = {}
+        
+        if user_id not in self._user_sessions:
+            logger.info(f"No sessions found for user {user_id}")
+            return results
+        
+        for session_key in self._user_sessions[user_id]:
+            app_name, session_id = session_key.split(':', 1)
+            
+            # Apply filter if specified
+            if app_name_filter and app_name != app_name_filter:
+                continue
+            
+            success = await self.update_session_state(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id,
+                state_updates=state_updates
+            )
+            
+            results[session_key] = success
+        
+        return results
+    
+    # ===== EXISTING METHODS (unchanged) =====
     
     def _track_session(self, session_key: str, user_id: str):
         """Track a session key for enumeration."""

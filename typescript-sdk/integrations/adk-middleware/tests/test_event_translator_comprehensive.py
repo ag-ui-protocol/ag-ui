@@ -338,7 +338,7 @@ class TestEventTranslatorComprehensive:
         
         events = []
         async for event in translator._translate_function_calls(
-            mock_adk_event, [mock_function_call], "thread_1", "run_1"
+             [mock_function_call]
         ):
             events.append(event)
         
@@ -368,7 +368,7 @@ class TestEventTranslatorComprehensive:
             
             events = []
             async for event in translator._translate_function_calls(
-                mock_adk_event, [mock_function_call], "thread_1", "run_1"
+                 [mock_function_call]
             ):
                 events.append(event)
         
@@ -388,7 +388,7 @@ class TestEventTranslatorComprehensive:
         
         events = []
         async for event in translator._translate_function_calls(
-            mock_adk_event, [mock_function_call], "thread_1", "run_1"
+            [mock_function_call]
         ):
             events.append(event)
         
@@ -406,7 +406,7 @@ class TestEventTranslatorComprehensive:
         
         events = []
         async for event in translator._translate_function_calls(
-            mock_adk_event, [mock_function_call], "thread_1", "run_1"
+             [mock_function_call]
         ):
             events.append(event)
         
@@ -428,7 +428,7 @@ class TestEventTranslatorComprehensive:
         
         events = []
         async for event in translator._translate_function_calls(
-            mock_adk_event, [mock_function_call1, mock_function_call2], "thread_1", "run_1"
+             [mock_function_call1, mock_function_call2]
         ):
             events.append(event)
         
@@ -706,7 +706,7 @@ class TestEventTranslatorComprehensive:
         
         events = []
         async for event in translator._translate_function_calls(
-            mock_adk_event, [mock_function_call], "thread_1", "run_1"
+             [mock_function_call]
         ):
             events.append(event)
         

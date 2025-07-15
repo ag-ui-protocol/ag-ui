@@ -337,7 +337,7 @@ class ADKAgent:
         # Check if this is a tool result submission for an existing execution
         if self._is_tool_result_submission(input):
             # Handle tool results for existing execution
-            async for event in self._handle_tool_result_submission(input):
+            async for event in self._handle_tool_result_submission(input,agent_id):
                 yield event
         else:
             # Start new execution for regular requests
@@ -393,7 +393,8 @@ class ADKAgent:
     
     async def _handle_tool_result_submission(
         self, 
-        input: RunAgentInput
+        input: RunAgentInput,
+        agent_id: str = "default"
     ) -> AsyncGenerator[BaseEvent, None]:
         """Handle tool result submission for existing execution.
         
@@ -436,7 +437,7 @@ class ADKAgent:
             # Since all tools are long-running, all tool results are standalone
             # and should start new executions with the tool results
             logger.info(f"Starting new execution for tool result in thread {thread_id}")
-            async for event in self._start_new_execution(input, "default"):
+            async for event in self._start_new_execution(input, agent_id):
                 yield event
                 
         except Exception as e:
@@ -788,6 +789,11 @@ class ADKAgent:
             await self._ensure_session_exists(
                 app_name, user_id, input.thread_id, input.state
             )
+
+            # this will always update the backend states with the frontend states
+            # Recipe Demo Example: if there is a state "salt" in the ingredients state and in frontend user remove this salt state using UI from the ingredients list then our backend should also update these state changes as well to sync both the states
+            await self._session_manager.update_session_state(input.thread_id,app_name,user_id,input.state)
+            
             
             # Convert messages
             # only use this new_message if there is no tool response from the user
@@ -842,16 +848,21 @@ class ADKAgent:
                 new_message=new_message,
                 run_config=run_config
             ):
-
+                if not adk_event.is_final_response():
                 # Translate and emit events
-                async for ag_ui_event in event_translator.translate(
-                    adk_event,
-                    input.thread_id,
-                    input.run_id
-                ):
-                    logger.debug(f"Emitting event to queue: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size before: {event_queue.qsize()})")
+                    async for ag_ui_event in event_translator.translate(
+                        adk_event,
+                        input.thread_id,
+                        input.run_id
+                    ):
+                        
+                        logger.debug(f"Emitting event to queue: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size before: {event_queue.qsize()})")
+                        await event_queue.put(ag_ui_event)
+                        logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
+                else:
+                    final_state = await self._session_manager.get_session_state(input.thread_id,app_name,user_id)
+                    ag_ui_event =  event_translator._create_state_snapshot_event(final_state)                    
                     await event_queue.put(ag_ui_event)
-                    logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
 
             # Force close any streaming messages
             async for ag_ui_event in event_translator.force_close_streaming_message():
