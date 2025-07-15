@@ -240,7 +240,6 @@ async def run_recipe_agent(user_message: str, app_name: str = "recipe_app",
         USER:{user_message}
         """,
         tools=[generate_recipe],
-        # output_key="last_response",  # Store the agent's response in state
         before_agent_callback=on_before_agent
         # before_model_callback=on_before_model
     )
