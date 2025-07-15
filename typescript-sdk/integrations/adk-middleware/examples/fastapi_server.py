@@ -71,7 +71,7 @@ try:
     add_adk_fastapi_endpoint(app, adk_agent, path="/chat")
     add_adk_fastapi_endpoint(app, adk_agent_haiku_generator, path="/adk-tool-based-generative-ui")
     add_adk_fastapi_endpoint(app, adk_human_in_loop_agent, path="/adk-human-in-loop-agent")
-    add_adk_fastapi_endpoint(app, adk_human_in_loop_agent, path="/adk-shared-state-agent")
+    add_adk_fastapi_endpoint(app, adk_shared_state_agent, path="/adk-shared-state-agent")
     
     @app.get("/")
     async def root():
