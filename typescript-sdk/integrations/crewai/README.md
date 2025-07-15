@@ -1,13 +1,44 @@
-# Server Starter
+# @ag-ui/crewai
 
-This starter kit demonstrates sending the minimal set of events that are needed to stream data from the agent to the frontend.
+AG-UI integration for **CrewAI** - Sequential multi-agent workflows and collaborative agent teams.
 
-## Running the server
+Connects CrewAI Flows and Crews to frontend applications via the AG-UI protocol. Supports both TypeScript HTTP clients and Python FastAPI server integration with streaming crew execution.
 
-To run the server:
+## Installation
 
 ```bash
-cd typescript-sdk/integrations/server-starter/server/python
+npm install @ag-ui/crewai
+pnpm add @ag-ui/crewai
+yarn add @ag-ui/crewai
+```
 
+## Usage
+
+```ts
+import { CrewAIAgent } from "@ag-ui/crewai";
+
+// Create an AG-UI compatible agent
+const agent = new CrewAIAgent({
+  url: "http://localhost:8000/crew-endpoint",
+  headers: { "Content-Type": "application/json" },
+});
+
+// Run with streaming
+const result = await agent.runAgent({
+  messages: [{ role: "user", content: "Execute the research crew" }],
+});
+```
+
+## Features
+
+- **HTTP connectivity** – Connect to CrewAI FastAPI servers
+- **Flow & Crew support** – Works with both CrewAI Flows and traditional Crews
+- **Step tracking** – Real-time crew execution progress
+- **Python integration** – Full FastAPI server implementation included
+
+## To run the example server in the dojo
+
+```bash
+cd typescript-sdk/integrations/crewai/python
 poetry install && poetry run dev
 ```

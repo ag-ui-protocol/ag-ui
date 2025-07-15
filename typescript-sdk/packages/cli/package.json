@@ -12,7 +12,8 @@
   "bin": "./dist/index.mjs",
   "sideEffects": false,
   "files": [
-    "dist/**"
+    "dist/**",
+    "README.md"
   ],
   "scripts": {
     "build": "tsup",
