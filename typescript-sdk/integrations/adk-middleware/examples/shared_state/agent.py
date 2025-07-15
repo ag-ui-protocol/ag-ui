@@ -197,7 +197,6 @@ shared_state_agent = LlmAgent(
         """,
         tools=[generate_recipe],
         before_agent_callback=on_before_agent
-        # before_model_callback=on_before_model
     )
 
 async def run_recipe_agent(user_message: str, app_name: str = "recipe_app", 
