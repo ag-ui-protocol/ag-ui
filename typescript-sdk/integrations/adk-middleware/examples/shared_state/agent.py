@@ -196,7 +196,6 @@ shared_state_agent = LlmAgent(
         Always provide complete, practical recipes that users can actually cook.
         """,
         tools=[generate_recipe],
-        # output_key="last_response",  # Store the agent's response in state
         before_agent_callback=on_before_agent
         # before_model_callback=on_before_model
     )
