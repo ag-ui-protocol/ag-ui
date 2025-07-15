@@ -1,6 +1,6 @@
 # @ag-ui/langgraph
 
-AG-UI integration for **LangGraph** - Build agent-native applications with shared state and human-in-the-loop workflows.
+Implementation of the AG-UI protocol for LangGraph.
 
 Connects LangGraph graphs to frontend applications via the AG-UI protocol. Supports both local TypeScript graphs and remote LangGraph Cloud deployments with full state management and interrupt handling.
 

@@ -1,6 +1,6 @@
 # @ag-ui/agno
 
-AG-UI integration for **Agno** - Multi-Agent Systems framework with memory, knowledge and reasoning.
+Implementation of the AG-UI protocol for Agno.
 
 Connects Agno agents to frontend applications via the AG-UI protocol using HTTP communication.
 

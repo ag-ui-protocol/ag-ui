@@ -1,6 +1,6 @@
 # @ag-ui/llamaindex
 
-AG-UI integration for **LlamaIndex** - Build RAG applications with workflows and agentic reasoning.
+Implementation of the AG-UI protocol for LlamaIndex.
 
 Connects LlamaIndex workflows to frontend applications via the AG-UI protocol. Provides HTTP connectivity to LlamaIndex servers with support for RAG pipelines and workflow orchestration.
 

@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "ag-ui-crewai"
 version = "0.1.3"
-description = "AG-UI integration for CrewAI - Build powerful agent workflows and multi-agent crews with LLMs"
+description = "Implementation of the AG-UI protocol for CrewAI"
 authors = ["Markus Ecker <markus.ecker@gmail.com>"]
 readme = "README.md"
 exclude = [

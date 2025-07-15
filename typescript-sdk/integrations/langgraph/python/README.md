@@ -1,6 +1,6 @@
 # ag-ui-langgraph
 
-AG-UI integration for **LangGraph** - Build stateful, multi-actor applications with LLMs using graphs.
+Implementation of the AG-UI protocol for LangGraph.
 
 Provides a complete Python integration for LangGraph agents with the AG-UI protocol, including FastAPI endpoint creation and comprehensive event streaming.
 

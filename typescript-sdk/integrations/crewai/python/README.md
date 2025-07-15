@@ -1,6 +1,6 @@
 # ag-ui-crewai
 
-AG-UI integration for **CrewAI** - Build powerful agent workflows and multi-agent crews with LLMs.
+Implementation of the AG-UI protocol for CrewAI.
 
 Provides a complete Python integration for CrewAI flows and crews with the AG-UI protocol, including FastAPI endpoint creation and comprehensive event streaming.
 

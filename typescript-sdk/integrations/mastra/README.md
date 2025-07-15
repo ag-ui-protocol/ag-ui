@@ -1,6 +1,6 @@
 # @ag-ui/mastra
 
-AG-UI integration for **Mastra** - TypeScript-native agentic framework.
+Implementation of the AG-UI protocol for Mastra.
 
 Connects Mastra agents (local and remote) to frontend applications via the AG-UI protocol. Supports streaming responses, memory management, and tool execution.
 

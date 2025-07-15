@@ -1,6 +1,6 @@
 # @ag-ui/crewai
 
-AG-UI integration for **CrewAI** - Sequential multi-agent workflows and collaborative agent teams.
+Implementation of the AG-UI protocol for CrewAI.
 
 Connects CrewAI Flows and Crews to frontend applications via the AG-UI protocol. Supports both TypeScript HTTP clients and Python FastAPI server integration with streaming crew execution.
 

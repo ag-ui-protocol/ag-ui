@@ -1,6 +1,6 @@
 # @ag-ui/vercel-ai-sdk
 
-AG-UI integration for **Vercel AI SDK** - Build AI applications with streaming text and tool calls.
+Implementation of the AG-UI protocol for Vercel AI SDK.
 
 Connects Vercel AI SDK models and tools to frontend applications via the AG-UI protocol. Provides native TypeScript integration with streamText, tool execution, and multi-step workflows.
 
