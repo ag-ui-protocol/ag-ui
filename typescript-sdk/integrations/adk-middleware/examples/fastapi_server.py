@@ -30,7 +30,6 @@ try:
     registry = AgentRegistry.get_instance()
     
     # Create a sample ADK agent (this would be your actual agent)
-    # do not allow it to use any fronentend tool for now
     sample_agent = LlmAgent(
         name="assistant",
         model="gemini-2.0-flash",
