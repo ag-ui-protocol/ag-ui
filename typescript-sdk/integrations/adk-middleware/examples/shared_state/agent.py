@@ -248,7 +248,6 @@ async def run_recipe_agent(user_message: str, app_name: str = "recipe_app",
     )
 
     # Create the agent
-    # agent = create_recipe_agent()
     
     # Create runner
     runner = Runner(
