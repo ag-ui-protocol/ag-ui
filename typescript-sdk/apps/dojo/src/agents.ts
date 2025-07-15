@@ -120,22 +120,22 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new LangGraphHttpAgent({
-          url: "http://localhost:8000/agent/agentic_chat",
+          url: `${envVars.langgraphFastApiUrl}/agent/agentic_chat`,
         }),
         agentic_generative_ui: new LangGraphHttpAgent({
-          url: "http://localhost:8000/agent/agentic_generative_ui",
+          url: `${envVars.langgraphFastApiUrl}/agent/agentic_generative_ui`,
         }),
         human_in_the_loop: new LangGraphHttpAgent({
-          url: "http://localhost:8000/agent/human_in_the_loop",
+          url: `${envVars.langgraphFastApiUrl}/agent/human_in_the_loop`,
         }),
         predictive_state_updates: new LangGraphHttpAgent({
-          url: "http://localhost:8000/agent/predictive_state_updates",
+          url: `${envVars.langgraphFastApiUrl}/agent/predictive_state_updates`,
         }),
         shared_state: new LangGraphHttpAgent({
-          url: "http://localhost:8000/agent/shared_state",
+          url: `${envVars.langgraphFastApiUrl}/agent/shared_state`,
         }),
         tool_based_generative_ui: new LangGraphHttpAgent({
-          url: "http://localhost:8000/agent/tool_based_generative_ui",
+          url: `${envVars.langgraphFastApiUrl}/agent/tool_based_generative_ui`,
         }),
       };
     },
