@@ -241,7 +241,6 @@ async def run_recipe_agent(user_message: str, app_name: str = "recipe_app",
         """,
         tools=[generate_recipe],
         before_agent_callback=on_before_agent
-        # before_model_callback=on_before_model
     )
 
     # Create the agent
