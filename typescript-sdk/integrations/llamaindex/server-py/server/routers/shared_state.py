@@ -1,4 +1,6 @@
-from typing import Literal, List
+from __future__ import annotations
+
+from typing import List
 from pydantic import BaseModel
 
 from llama_index.core.workflow import Context

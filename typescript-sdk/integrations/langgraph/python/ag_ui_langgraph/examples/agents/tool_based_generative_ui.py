@@ -2,7 +2,9 @@
 An example demonstrating tool-based generative UI using LangGraph.
 """
 
-from typing import Dict, List, Any, Optional
+from __future__ import annotations
+
+from typing import List, Any
 
 # LangGraph imports
 from langchain_core.runnables import RunnableConfig

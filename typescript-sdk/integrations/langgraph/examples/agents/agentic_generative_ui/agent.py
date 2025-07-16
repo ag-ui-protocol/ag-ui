@@ -2,9 +2,10 @@
 An example demonstrating agentic generative UI using LangGraph.
 """
 
-import json
+from __future__ import annotations
+
 import asyncio
-from typing import Dict, List, Any, Optional, Literal
+from typing import List, Any
 # LangGraph imports
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, END, START

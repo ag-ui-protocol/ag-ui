@@ -2,14 +2,15 @@
 A simple agentic chat flow using LangGraph instead of CrewAI.
 """
 
-from typing import Dict, List, Any, Optional
+from __future__ import annotations
+
+from typing import List, Any
 
 # Updated imports for LangGraph
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, END, START
 from langgraph.graph import MessagesState
 from langgraph.types import Command
-from typing_extensions import Literal
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage
 from langgraph.checkpoint.memory import MemorySaver

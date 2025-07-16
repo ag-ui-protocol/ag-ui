@@ -2,9 +2,11 @@
 A demo of shared state between the agent and CopilotKit.
 """
 
+from __future__ import annotations
+
 import json
 from enum import Enum
-from typing import List, Optional
+from typing import List
 from litellm import completion
 from pydantic import BaseModel, Field
 from crewai.flow.flow import Flow, start, router, listen
@@ -119,7 +121,7 @@ class AgentState(CopilotKitState):
     """
     The state of the recipe.
     """
-    recipe: Optional[Recipe] = None
+    recipe: Recipe | None = None
 
 class SharedStateFlow(Flow[AgentState]):
     """
@@ -132,7 +134,7 @@ class SharedStateFlow(Flow[AgentState]):
         """
         This is the entry point for the flow.
         """
-        print(f"start_flow")
+        print("start_flow")
         print(f"self.state: {self.state}")
 
     @router(start_flow)

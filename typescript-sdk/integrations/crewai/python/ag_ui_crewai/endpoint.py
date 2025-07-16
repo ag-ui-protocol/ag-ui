@@ -1,9 +1,11 @@
 """
 AG-UI FastAPI server for CrewAI.
 """
+from __future__ import annotations
+
 import copy
 import asyncio
-from typing import List, Optional
+from typing import List
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 
@@ -60,7 +62,7 @@ async def create_queue(flow: object) -> asyncio.Queue:
         return queue
 
 
-def get_queue(flow: object) -> Optional[asyncio.Queue]:
+def get_queue(flow: object) -> asyncio.Queue | None:
     """Get the queue for a flow."""
     queue_id = id(flow)
     # not using a lock here should be fine

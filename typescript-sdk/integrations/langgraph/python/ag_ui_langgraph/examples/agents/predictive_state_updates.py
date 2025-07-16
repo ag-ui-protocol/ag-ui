@@ -2,9 +2,10 @@
 A demo of predictive state updates using LangGraph.
 """
 
-import json
+from __future__ import annotations
+
 import uuid
-from typing import Dict, List, Any, Optional
+from typing import List, Any
 
 # LangGraph imports
 from langchain_core.runnables import RunnableConfig
@@ -46,7 +47,7 @@ class AgentState(MessagesState):
     """
     The state of the agent.
     """
-    document: Optional[str] = None
+    document: str | None = None
     tools: List[Any]
 
 

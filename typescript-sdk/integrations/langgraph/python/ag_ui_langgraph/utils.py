@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import json
 import re
-from typing import List, Any, Dict, Union
+from typing import List, Any, Dict
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from ag_ui.core import (
@@ -26,7 +28,7 @@ def get_stream_payload_input(
     mode: str,
     state: State,
     schema_keys: SchemaKeys,
-) -> Union[State, None]:
+) -> State | None:
     input_payload = state if mode == "start" else None
     if input_payload and schema_keys and schema_keys.get("input"):
         input_payload = filter_object_by_schema_keys(input_payload, [*DEFAULT_SCHEMA_KEYS, *schema_keys["input"]])

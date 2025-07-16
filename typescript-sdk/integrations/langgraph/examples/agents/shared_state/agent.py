@@ -2,9 +2,11 @@
 A demo of shared state between the agent and CopilotKit using LangGraph.
 """
 
+from __future__ import annotations
+
 import json
 from enum import Enum
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 
 # LangGraph imports
 from langchain_core.runnables import RunnableConfig
@@ -113,7 +115,7 @@ class AgentState(MessagesState):
     """
     The state of the recipe.
     """
-    recipe: Optional[Dict[str, Any]] = None
+    recipe: Dict[str, Any] | None = None
     tools: List[Any]
 
 
