@@ -2,45 +2,29 @@
 A demo of predictive state updates using LangGraph.
 """
 
-import json
 import uuid
-from typing import Dict, List, Any, Optional
-
-# LangGraph imports
+from typing import List, Any, Optional
 from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import SystemMessage
+from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END, START
 from langgraph.types import Command
 from langgraph.graph import MessagesState
 from langgraph.checkpoint.memory import MemorySaver
-# OpenAI imports
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage
 
-WRITE_DOCUMENT_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "write_document",
-        "description": " ".join("""
-            Write a document. Use markdown formatting to format the document.
-            It's good to format the document extensively so it's easy to read.
-            You can use all kinds of markdown.
-            However, do not use italic or strike-through formatting, it's reserved for another purpose.
-            You MUST write the full document, even when changing only a few words.
-            When making edits to the document, try to make them minimal - do not change every word.
-            Keep stories SHORT!
-            """.split()),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "document": {
-                    "type": "string",
-                    "description": "The document to write"
-                },
-            },
-        }
-    }
-}
-
+@tool
+def write_document(document: str): # pylint: disable=unused-argument
+    """
+    Write a document. Use markdown formatting to format the document.
+    It's good to format the document extensively so it's easy to read.
+    You can use all kinds of markdown.
+    However, do not use italic or strike-through formatting, it's reserved for another purpose.
+    You MUST write the full document, even when changing only a few words.
+    When making edits to the document, try to make them minimal - do not change every word.
+    Keep stories SHORT!
+    """
+    return document
 
 class AgentState(MessagesState):
     """
@@ -50,7 +34,7 @@ class AgentState(MessagesState):
     tools: List[Any]
 
 
-async def start_flow(state: AgentState, config: RunnableConfig):
+async def start_node(state: AgentState, config: RunnableConfig): # pylint: disable=unused-argument
     """
     This is the entry point for the flow.
     """
@@ -59,7 +43,7 @@ async def start_flow(state: AgentState, config: RunnableConfig):
     )
 
 
-async def chat_node(state: AgentState, config: RunnableConfig):
+async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     """
     Standard chat node.
     """
@@ -75,7 +59,7 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
     # Define the model
     model = ChatOpenAI(model="gpt-4o")
-    
+
     # Define config for the model with emit_intermediate_state to stream tool calls to frontend
     if config is None:
         config = RunnableConfig(recursion_limit=25)
@@ -91,7 +75,7 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     model_with_tools = model.bind_tools(
         [
             *state["tools"],
-            WRITE_DOCUMENT_TOOL
+            write_document
         ],
         # Disable parallel tool calls to avoid race conditions
         parallel_tool_calls=False,
@@ -105,30 +89,22 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
     # Update messages with the response
     messages = state["messages"] + [response]
-    
+
     # Extract any tool calls from the response
     if hasattr(response, "tool_calls") and response.tool_calls:
-        tool_call = response.tool_calls[0]
-        
-        # Handle tool_call as a dictionary or an object
-        if isinstance(tool_call, dict):
-            tool_call_id = tool_call["id"]
-            tool_call_name = tool_call["name"]
-            tool_call_args = tool_call["args"]
-        else:
-            # Handle as an object (backward compatibility)
-            tool_call_id = tool_call.id
-            tool_call_name = tool_call.name
-            tool_call_args = tool_call.args
+        # Handle dicts or object (backward compatibility)
+        tool_call = (response.tool_calls[0]
+                     if isinstance(response.tool_calls[0], dict)
+                     else vars(response.tool_calls[0]))
 
-        if tool_call_name == "write_document":
+        if tool_call["name"] == "write_document":
             # Add the tool response to messages
             tool_response = {
                 "role": "tool",
                 "content": "Document written.",
-                "tool_call_id": tool_call_id
+                "tool_call_id": tool_call["id"]
             }
-            
+
             # Add confirmation tool call
             confirm_tool_call = {
                 "role": "assistant",
@@ -141,18 +117,18 @@ async def chat_node(state: AgentState, config: RunnableConfig):
                     }
                 }]
             }
-            
+
             messages = messages + [tool_response, confirm_tool_call]
-            
+
             # Return Command to route to end
             return Command(
                 goto=END,
                 update={
                     "messages": messages,
-                    "document": tool_call_args["document"]
+                    "document": tool_call["args"]["document"]
                 }
             )
-    
+
     # If no tool was called, go to end
     return Command(
         goto=END,
@@ -164,15 +140,11 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
 # Define the graph
 workflow = StateGraph(AgentState)
-
-# Add nodes
-workflow.add_node("start_flow", start_flow)
+workflow.add_node("start_node", start_node)
 workflow.add_node("chat_node", chat_node)
-
-# Add edges
-workflow.set_entry_point("start_flow")
-workflow.add_edge(START, "start_flow")
-workflow.add_edge("start_flow", "chat_node")
+workflow.set_entry_point("start_node")
+workflow.add_edge(START, "start_node")
+workflow.add_edge("start_node", "chat_node")
 workflow.add_edge("chat_node", END)
 
 # Compile the graph

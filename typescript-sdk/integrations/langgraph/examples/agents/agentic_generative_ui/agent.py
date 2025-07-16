@@ -2,62 +2,51 @@
 An example demonstrating agentic generative UI using LangGraph.
 """
 
-import json
 import asyncio
-from typing import Dict, List, Any, Optional, Literal
-# LangGraph imports
+from typing import List, Any, Optional, Annotated
 from langchain_core.runnables import RunnableConfig
+from langchain_core.callbacks.manager import adispatch_custom_event
+from langchain_core.messages import SystemMessage
+from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END, START
 from langgraph.types import Command
-from langchain_core.callbacks.manager import adispatch_custom_event
 from langgraph.graph import MessagesState
+from pydantic import BaseModel, Field
 
-# OpenAI imports
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage
+class Step(BaseModel):
+    """
+    A step in a task.
+    """
+    description: str = Field(description="The text of the step in gerund form")
+    status: str = Field(description="The status of the step, always 'pending'")
+
+
 
 # This tool simulates performing a task on the server.
 # The tool call will be streamed to the frontend as it is being generated.
-PERFORM_TASK_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "generate_task_steps_generative_ui",
-        "description": "Make up 10 steps (only a couple of words per step) that are required for a task. The step should be in gerund form (i.e. Digging hole, opening door, ...)",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "steps": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "description": {
-                                "type": "string",
-                                "description": "The text of the step in gerund form"
-                            },
-                            "status": {
-                                "type": "string",
-                                "enum": ["pending"],
-                                "description": "The status of the step, always 'pending'"
-                            }
-                        },
-                        "required": ["description", "status"]
-                    },
-                    "description": "An array of 10 step objects, each containing text and status"
-                }
-            },
-            "required": ["steps"]
-        }
-    }
-}
+@tool
+def generate_task_steps_generative_ui(
+    steps: Annotated[ # pylint: disable=unused-argument
+        List[Step],
+        "An array of 10 step objects, each containing text and status"
+    ]
+):
+    """
+    Make up 10 steps (only a couple of words per step) that are required for a task. 
+    The step should be in gerund form (i.e. Digging hole, opening door, ...).
+    """
 
 
 class AgentState(MessagesState):
+    """
+    State of the agent.
+    """
     steps: List[dict] = []
     tools: List[Any]
 
 
-async def start_flow(state: AgentState, config: RunnableConfig):
+async def start_node(state: AgentState, config: RunnableConfig): # pylint: disable=unused-argument
     """
     This is the entry point for the flow.
     """
@@ -74,7 +63,7 @@ async def start_flow(state: AgentState, config: RunnableConfig):
     )
 
 
-async def chat_node(state: AgentState, config: RunnableConfig):
+async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     """
     Standard chat node.
     """
@@ -89,7 +78,7 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
     # Define the model
     model = ChatOpenAI(model="gpt-4o")
-    
+
     # Define config for the model with emit_intermediate_state to stream tool calls to frontend
     if config is None:
         config = RunnableConfig(recursion_limit=25)
@@ -105,7 +94,7 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     model_with_tools = model.bind_tools(
         [
             *state["tools"],
-            PERFORM_TASK_TOOL
+            generate_task_steps_generative_ui
         ],
         # Disable parallel tool calls to avoid race conditions
         parallel_tool_calls=False,
@@ -121,46 +110,41 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
     # Extract any tool calls from the response
     if hasattr(response, "tool_calls") and response.tool_calls and len(response.tool_calls) > 0:
-        tool_call = response.tool_calls[0]
-        
-        # Handle tool_call as a dictionary rather than an object
-        if isinstance(tool_call, dict):
-            tool_call_id = tool_call["id"]
-            tool_call_name = tool_call["name"]
-            tool_call_args = tool_call["args"]
-        else:
-            # Handle as an object (backward compatibility)
-            tool_call_id = tool_call.id
-            tool_call_name = tool_call.name
-            tool_call_args = tool_call.args
+        # Handle dicts or object (backward compatibility)
+        tool_call = (response.tool_calls[0]
+                     if isinstance(response.tool_calls[0], dict)
+                     else vars(response.tool_calls[0]))
 
-        if tool_call_name == "generate_task_steps_generative_ui":
-            steps = [{"description": step["description"], "status": step["status"]} for step in tool_call_args["steps"]]
-            
+        if tool_call["name"] == "generate_task_steps_generative_ui":
+            steps = [
+                {"description": step["description"], "status": step["status"]} 
+                for step in tool_call["args"]["steps"]
+            ]
+
             # Add the tool response to messages
             tool_response = {
                 "role": "tool",
                 "content": "Steps executed.",
-                "tool_call_id": tool_call_id
+                "tool_call_id": tool_call["id"]
             }
 
             messages = messages + [tool_response]
+            state["steps"] = steps
 
             # Return Command to route to simulate_task_node
-            for i, step in enumerate(steps):
+            for i, _ in enumerate(steps):
             # simulate executing the step
                 await asyncio.sleep(1)
                 steps[i]["status"] = "completed"
-                # Update the state with the completed step - using config as first parameter
-                state["steps"] = steps
+                # Update the state with the completed step using config
                 await adispatch_custom_event(
                     "manually_emit_state",
                     state,
                     config=config,
                 )
-            
+
             return Command(
-                goto='start_flow',
+                goto='start_node',
                 update={
                     "messages": messages,
                     "steps": state["steps"]
@@ -180,13 +164,13 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 workflow = StateGraph(AgentState)
 
 # Add nodes
-workflow.add_node("start_flow", start_flow)
+workflow.add_node("start_node", start_node)
 workflow.add_node("chat_node", chat_node)
 
-# Add edges (equivalent to the routing in CrewAI)
-workflow.set_entry_point("start_flow")
-workflow.add_edge(START, "start_flow")
-workflow.add_edge("start_flow", "chat_node")
+# Add edges
+workflow.set_entry_point("start_node")
+workflow.add_edge(START, "start_node")
+workflow.add_edge("start_node", "chat_node")
 workflow.add_edge("chat_node", END)
 
 # Compile the graph

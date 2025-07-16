@@ -2,22 +2,22 @@
 A simple agentic chat flow using LangGraph instead of CrewAI.
 """
 
-from typing import Dict, List, Any, Optional
-
-# Updated imports for LangGraph
+from typing import List, Any, Optional
 from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import SystemMessage
+from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END, START
 from langgraph.graph import MessagesState
 from langgraph.types import Command
-from typing_extensions import Literal
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 
 class AgentState(MessagesState):
+    """
+    State of our graph.
+    """
     tools: List[Any]
 
-async def chat_node(state: AgentState, config: RunnableConfig):
+async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     """
     Standard chat node based on the ReAct design pattern. It handles:
     - The model to use (and binds in CopilotKit actions and the tools defined above)
@@ -28,10 +28,10 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     For more about the ReAct design pattern, see: 
     https://www.perplexity.ai/search/react-agents-NcXLQhreS0WDzpVaS4m9Cg
     """
-    
+
     # 1. Define the model
     model = ChatOpenAI(model="gpt-4o")
-    
+
     # Define config for the model
     if config is None:
         config = RunnableConfig(recursion_limit=25)
@@ -51,7 +51,7 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
     # 3. Define the system message by which the chat model will be run
     system_message = SystemMessage(
-        content=f"You are a helpful assistant. ."
+        content="You are a helpful assistant."
     )
 
     # 4. Run the model to generate a response
