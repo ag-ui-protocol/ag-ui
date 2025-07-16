@@ -1,46 +1,71 @@
-# Contributing to AG-UI
+# 👋 Contributing to AG-UI
 
-Thanks for your interest in contributing to AG-UI! Here's how to get started—whether you're reporting issues, submitting code, or just exploring.
+Thanks for checking out AG-UI! Whether you’re here to fix a bug, ship a feature, improve the docs, or just figure out how things work—we’re glad you’re here.
 
----
-
-## 🙋‍♂️ Have a Question or Issue?
-
-Choose the right channel so we can respond efficiently:
-
-- **🐛 Bugs / 🔧 Feature Requests**: [Open a GitHub Issue](https://github.com/ag-ui-protocol/ag-ui/issues)
-- **❓ Technical Questions / How-Tos**: [Use GitHub Discussions](https://github.com/ag-ui-protocol/ag-ui/discussions)
-- **💬 Informal Questions or Chat**: [Join our Discord]([<DISCORD_LINK>](https://discord.gg/Jd3FzfdJa8)) and post in `#-💎-contributing`
+Here’s how to get involved:
 
 ---
 
-## 🛠 Want to Contribute Code?
+## 🤔 Have a Question or Ran Into Something?
 
-1. **Find an Issue**  
-   Browse open issues on [GitHub](https://github.com/ag-ui-protocol/ag-ui/issues) and find something you’re interested in.
+Pick the right spot so we can help you faster:
 
-2. **Get Assigned**  
-   Comment on the issue and tag a code owner to request assignment:  
-   → [Code Owners List](https://github.com/ag-ui-protocol/ag-ui/blob/main/.github/CODEOWNERS)
-
-3. **Approval & Roadmap**  
-   Once approved, you’ll be assigned to the issue and it will be added to our [public roadmap](https://github.com/orgs/ag-ui-protocol/projects/1).
-
-4. **Coordinate**  
-   - Use Discord to communicate with others working on the same thing.  
-   - Create a thread in `#contributing` or DM the assignee if needed.
-
-5. **Submit a Pull Request**  
-   - Make sure your PR includes a comment in the description:  
-     `Fixes #<issue-number>`  
-   - This auto-links the PR to the issue and marks it for closure.
-
-6. **Code Review & Merge**  
-   - A maintainer will review the PR and give feedback if needed.  
-   - Once approved, your contribution will be merged and marked as "done."
+- **🐛 Bugs / Feature Ideas** → [GitHub Issues](https://github.com/ag-ui-protocol/ag-ui/issues)  
+- **❓ "How do I...?" / General Questions** → [GitHub Discussions](https://github.com/ag-ui-protocol/ag-ui/discussions)  
+- **💬 Quick chats / casual stuff** → [Discord](https://discord.gg/Jd3FzfdJa8) → `#-💎-contributing`
 
 ---
 
-## ❤️ Thank You
+## 🧑‍💻 Want to Contribute Code?
 
-We appreciate every contributor who helps make AG-UI better. Whether you're here to fix a bug, build a feature, or just ask a good question—you’re part of the project.
+1. **Find Something to Work On**  
+   Browse open issues on [GitHub](https://github.com/ag-ui-protocol/ag-ui/issues).  
+   Got your own idea? Open an issue first so we can start the discussion.
+
+2. **Ask to Be Assigned**  
+   Comment on the issue and tag a code owner:  
+   → [Code Owners](https://github.com/ag-ui-protocol/ag-ui/blob/main/.github/CODEOWNERS)
+
+3. **Get on the Roadmap**  
+   Once approved, you'll be assigned the issue, and it'll get added to our [roadmap](https://github.com/orgs/ag-ui-protocol/projects/1).
+
+4. **Coordinate With Others**  
+   - If you're collaborating or need feedback, start a thread in `#-💎-contributing` on Discord  
+   - Or just DM the assignee directly
+
+5. **Open a Pull Request**  
+   - When you’re ready, submit your PR  
+   - In the description, include: `Fixes #<issue-number>`  
+     (This links your PR to the issue and closes it automatically)
+
+6. **Review & Merge**  
+   - A maintainer will review your code and leave comments if needed  
+   - Once it’s approved, we’ll merge it and move the issue to “done.”
+
+---
+
+## 📝 Want to Contribute to the Docs?
+
+Docs are part of the codebase and super valuable—thanks for helping improve them!
+
+Here’s how to contribute:
+
+1. **Open an Issue First**  
+   - Open a [GitHub issue](https://github.com/ag-ui-protocol/ag-ui/issues) describing what you’d like to update or add.  
+   - Then comment and ask to be assigned.
+
+2. **Submit a PR**  
+   - Once assigned, make your edits and open a pull request.
+   - In the description, include: `Fixes #<issue-number>`  
+     (This links your PR to the issue and closes it automatically)
+
+   - A maintainer will review it and merge if it looks good.
+
+That’s it! Simple and appreciated.
+
+---
+
+## 🙌 That’s It!
+
+AG-UI is community-built, and every contribution helps shape where we go next.  
+Big thanks for being part of it!
