@@ -1,57 +1,46 @@
 # Contributing to AG-UI
 
-Thanks for your interest in improving **AG-UI**!
-
-This short guide shows the fastest way to get your idea merged.
-You can find more detailed contribution guides at [ag-ui.com](ag-ui.com) 
+Thanks for your interest in contributing to AG-UI! Here's how to get started—whether you're reporting issues, submitting code, or just exploring.
 
 ---
 
-## 1. Start a Discussion
+## 🙋‍♂️ Have a Question or Issue?
 
-Before writing code, open a new **Discussion** and briefly cover:
+Choose the right channel so we can respond efficiently:
 
-1. **Problem** – what you’re trying to solve.
-2. **Proposal** – how you plan to solve it (code, docs, design, etc.).
-3. **Alternatives** – other options you considered.
-
-Early feedback keeps everyone aligned and saves re-work.
+- **🐛 Bugs / 🔧 Feature Requests**: [Open a GitHub Issue](https://github.com/ag-ui-protocol/ag-ui/issues)
+- **❓ Technical Questions / How-Tos**: [Use GitHub Discussions](https://github.com/ag-ui-protocol/ag-ui/discussions)
+- **💬 Informal Questions or Chat**: [Join our Discord]([<DISCORD_LINK>](https://discord.gg/Jd3FzfdJa8)) and post in `#-💎-contributing`
 
 ---
 
-## 2. Join a Bi-Weekly Working Group
+## 🛠 Want to Contribute Code?
 
-Meet the team and potential collaborators in our [bi-weekly community call](https://lu.ma/calendar/manage/cal-DBw2gK428IQbiSO).
+1. **Find an Issue**  
+   Browse open issues on [GitHub](https://github.com/ag-ui-protocol/ag-ui/issues) and find something you’re interested in.
 
----
+2. **Get Assigned**  
+   Comment on the issue and tag a code owner to request assignment:  
+   → [Code Owners List](https://github.com/ag-ui-protocol/ag-ui/blob/main/.github/CODEOWNERS)
 
-## 3. Connect with the Maintainers
+3. **Approval & Roadmap**  
+   Once approved, you’ll be assigned to the issue and it will be added to our [public roadmap](https://github.com/orgs/ag-ui-protocol/projects/1).
 
-Need a quick sync?
+4. **Coordinate**  
+   - Use Discord to communicate with others working on the same thing.  
+   - Create a thread in `#contributing` or DM the assignee if needed.
 
-- **Markus:** [@mme_xyz](https://twitter.com/mme_xyz) on X (Twitter)
-- **Book a chat:** <https://calendly.com/markus-copilotkit/ag-ui>
+5. **Submit a Pull Request**  
+   - Make sure your PR includes a comment in the description:  
+     `Fixes #<issue-number>`  
+   - This auto-links the PR to the issue and marks it for closure.
 
----
-
-## 4. Useful Resources & Docs
-
-| Resource                                  | Link                                                     |
-| ----------------------------------------- | -------------------------------------------------------- |
-| Learn how to connect to AG-UI with JS     | <https://docs.ag-ui.com/quickstart/connect>              |
-| Learn how to connect to AG-UI with Python | <https://docs.ag-ui.com/quickstart/build>                |
-| Dojo reference implementation             | <https://github.com/ag-ui-protocol/ag-ui/tree/main/dojo> |
-
----
-
-## 5. Open Your Pull Request
-
-1. **Fork** the repo and create a feature branch.
-2. Keep changes focused—one PR per feature or fix.
-3. Link back to your Discussion in the PR description.
-
-We review PRs weekly. Feel free to nudge us in your Discussion if you haven’t heard back in a few days.
+6. **Code Review & Merge**  
+   - A maintainer will review the PR and give feedback if needed.  
+   - Once approved, your contribution will be merged and marked as "done."
 
 ---
 
-**Thank you for making AG-UI better!**
+## ❤️ Thank You
+
+We appreciate every contributor who helps make AG-UI better. Whether you're here to fix a bug, build a feature, or just ask a good question—you’re part of the project.
