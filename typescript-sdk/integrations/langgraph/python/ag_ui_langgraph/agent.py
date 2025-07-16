@@ -543,7 +543,7 @@ class LangGraphAgent:
                     TextMessageContentEvent(
                         type=EventType.TEXT_MESSAGE_CONTENT,
                         message_id=current_stream["id"],
-                        delta=event["data"]["chunk"].content,
+                        delta=message_content,
                         raw_event=event,
                     )
                 )
