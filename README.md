@@ -60,6 +60,10 @@ AG-UI is complementary to the other 2 top agentic protocols
 - A2A allows agents to communicate with other agents
 - AG-UI brings agents into user-facing applications
 
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/0c1ec566-050b-4ef8-ab89-15be41abe64f"  />
+</div>  
+
    
 ## 🚀 Features
 
