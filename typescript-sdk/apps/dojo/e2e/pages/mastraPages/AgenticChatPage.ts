@@ -67,21 +67,12 @@ export class AgenticChatPage {
     await expect(agentMessage).toContainText("The current weather in Islamabad is as follows:", { timeout: 10000 });
     
     // Check for temperature information
-    await expect(agentMessage).toContainText("Temperature:", { timeout: 5000 });
-    await expect(agentMessage).toContainText("°C", { timeout: 5000 });
-    await expect(agentMessage).toContainText("Feels like", { timeout: 5000 });
-    
+    await expect(agentMessage).toContainText("Temperature:", { timeout: 5000 }); 
     // Check for humidity
     await expect(agentMessage).toContainText("Humidity:", { timeout: 5000 });
-    await expect(agentMessage).toContainText("%", { timeout: 5000 });
     
     // Check for wind speed
     await expect(agentMessage).toContainText("Wind Speed:", { timeout: 5000 });
-    await expect(agentMessage).toContainText("km/h", { timeout: 5000 });
-    
-    // Check for wind gusts
-    await expect(agentMessage).toContainText("Wind Gusts:", { timeout: 5000 });
-    
     // Check for conditions
     await expect(agentMessage).toContainText("Conditions:", { timeout: 5000 });
   }

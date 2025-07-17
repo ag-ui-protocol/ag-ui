@@ -26,7 +26,7 @@ test("[Mastra] Agentic Chat sends and receives a greeting message", async ({
   });
 });
 
-test("[Mastra] Agentic Chat provides weather information for Islamabad", async ({
+test("[Mastra] Agentic Chat provides weather information", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {
