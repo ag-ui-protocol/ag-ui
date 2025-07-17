@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "examples"
+version = "0.1.0"
+description = ""
+authors = ["Markus Ecker <markus.ecker@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+agno = "^1.7.4"
+openai = "^1.97.0"
+ag-ui-protocol = "^0.1.8"
+fastapi = "^0.116.1"
+uvicorn = "^0.35.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+dev = "examples:main"

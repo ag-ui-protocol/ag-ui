@@ -65,7 +65,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   {
     id: "agno",
     name: "Agno",
-    features: ["agentic_chat"],
+    features: ["agentic_chat", "tool_based_generative_ui"],
   },
   {
     id: "llama-index",

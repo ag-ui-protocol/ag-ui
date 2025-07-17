@@ -1,5 +1,5 @@
 "use client";
-import { CopilotKit, useCopilotAction } from "@copilotkit/react-core";
+import { CopilotKit, useCopilotAction, useCopilotChat } from "@copilotkit/react-core";
 import { CopilotKitCSSProperties, CopilotSidebar } from "@copilotkit/react-ui";
 import { useState } from "react";
 import "@copilotkit/react-ui/styles.css";
@@ -22,18 +22,26 @@ export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIP
       // agent lock to the relevant agent
       agent="tool_based_generative_ui"
     >
-      <div className="min-h-full w-full flex items-center justify-center">
-        <Haiku />
-        <CopilotSidebar
-          defaultOpen={true}
-          labels={{
-            title: "Haiku Generator",
-            initial: "I'm a haiku generator 👋. How can I help you?",
-          }}
-          clickOutsideToClose={false}
-        />
-      </div>
+      <Chat />
     </CopilotKit>
+  );
+}
+
+function Chat() {
+  const { visibleMessages } = useCopilotChat();
+  console.log("VISIBLE MESSAGES", visibleMessages);
+  return (
+    <div className="min-h-full w-full flex items-center justify-center">
+      <Haiku />
+      <CopilotSidebar
+        defaultOpen={true}
+        labels={{
+          title: "Haiku Generator",
+          initial: "I'm a haiku generator 👋. How can I help you?",
+        }}
+        clickOutsideToClose={false}
+      />
+    </div>
   );
 }
 

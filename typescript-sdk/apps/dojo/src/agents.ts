@@ -145,6 +145,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         agentic_chat: new AgnoAgent({
           url: "http://localhost:8000/agui",
         }),
+        tool_based_generative_ui: new AgnoAgent({
+          url: "http://localhost:8000/agui",
+        }),
       };
     },
   },
