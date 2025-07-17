@@ -12,6 +12,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
   const searchParams = useSearchParams();
 
   const sidebarDisabled = searchParams.get("sidebar") === "disabled";
+  const integrationPickerDisabled = searchParams.get("picker") === "false";
 
   // Extract the current demo ID from the pathname
   const pathParts = pathname.split("/");
@@ -22,7 +23,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
     <ViewerLayout showFileTree={false} showCodeEditor={false}>
       <div className="flex h-full w-full overflow-hidden">
         {/* Sidebar */}
-        {!sidebarDisabled && <Sidebar activeTab={"preview"} readmeContent={""} />}
+        {!sidebarDisabled && <Sidebar activeTab={"preview"} readmeContent={""} pickerDisabled={integrationPickerDisabled} />}
 
         {/* Content */}
         <div className="flex-1 overflow-auto">
