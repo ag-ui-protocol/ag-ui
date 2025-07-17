@@ -11,6 +11,7 @@ from langgraph.graph import StateGraph, END, START
 from langgraph.types import Command
 from langgraph.graph import MessagesState
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.prebuilt import ToolNode
 
 @tool
 def generate_haiku(
@@ -27,6 +28,7 @@ def generate_haiku(
     Generate a haiku in Japanese and its English translation. 
     Also select exactly 3 relevant images from the provided list based on the haiku's theme.
     """
+    return "Haiku generated."
 
 class AgentState(MessagesState):
     """
@@ -64,7 +66,13 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
         *state["messages"],
     ], config)
 
-    # Return Command to end with updated messages
+    if response.tool_calls:
+        return Command(
+            goto="tool_node",
+            update={
+                "messages": state["messages"] + [response]
+            }
+        )
     return Command(
         goto=END,
         update={
@@ -77,11 +85,13 @@ workflow = StateGraph(AgentState)
 
 # Add nodes
 workflow.add_node("chat_node", chat_node)
+workflow.add_node("tool_node", ToolNode([generate_haiku]))
 
 # Add edges
 workflow.set_entry_point("chat_node")
 workflow.add_edge(START, "chat_node")
 workflow.add_edge("chat_node", END)
+workflow.add_edge("tool_node", END)
 
 # Compile the graph
 tool_based_generative_ui_graph = workflow.compile(checkpointer=MemorySaver())

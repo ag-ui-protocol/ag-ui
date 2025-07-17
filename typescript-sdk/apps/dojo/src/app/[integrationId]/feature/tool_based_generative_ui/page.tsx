@@ -22,15 +22,7 @@ export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIP
       // agent lock to the relevant agent
       agent="tool_based_generative_ui"
     >
-      <div
-        className="min-h-full w-full flex items-center justify-center"
-        style={
-          {
-            // "--copilot-kit-primary-color": "#222",
-            // "--copilot-kit-separator-color": "#CCC",
-          } as CopilotKitCSSProperties
-        }
-      >
+      <div className="min-h-full w-full flex items-center justify-center">
         <Haiku />
         <CopilotSidebar
           defaultOpen={true}
@@ -56,6 +48,7 @@ function Haiku() {
 
   useCopilotAction({
     name: "generate_haiku",
+    available: "remote",
     parameters: [
       {
         name: "japanese",
@@ -67,9 +60,6 @@ function Haiku() {
       },
     ],
     followUp: false,
-    handler: async () => {
-      return "Haiku generated.";
-    },
     render: ({ args: generatedHaiku, result, status }) => {
       return <HaikuApproval setHaiku={setHaiku} generatedHaiku={generatedHaiku} status={status} />;
     },
