@@ -7,6 +7,16 @@ AG-UI is a lightweight, event-based protocol that standardizes how AI agents con
 ![MIT](https://img.shields.io/github/license/copilotkit/copilotkit?color=%236963ff&label=License)
 ![Discord](https://img.shields.io/discord/1379082175625953370?logo=discord&logoColor=%23FFFFFF&label=Discord&color=%236963ff)
 
+  <a href="https://discord.gg/Jd3FzfdJa8" target="_blank">
+   Join our Discord →
+  </a> &nbsp;&nbsp;&nbsp;
+    <a href="https://ag-ui.com/" target="_blank">
+   Read the Docs →
+  </a> &nbsp;&nbsp;&nbsp;
+    <a href="https://x.com/CopilotKit" target="_blank">
+   Follow us →
+  </a> 
+
 <img width="4096" height="1816" alt="Readme 3 - Redesign" src="https://github.com/user-attachments/assets/af15b751-a72a-434f-a93c-9103f2a17006" />
 
 
