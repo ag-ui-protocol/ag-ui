@@ -448,14 +448,6 @@ export class LangGraphAgent extends AbstractAgent {
           this.thinkingProcess = null;
         }
 
-        if (toolCallUsedToPredictState) {
-          this.dispatchEvent({
-            type: EventType.CUSTOM,
-            name: "PredictState",
-            value: event.metadata["predict_state"],
-          });
-        }
-
         if (isToolCallEndEvent) {
           const resolved = this.dispatchEvent({
             type: EventType.TOOL_CALL_END,
@@ -478,6 +470,14 @@ export class LangGraphAgent extends AbstractAgent {
             this.messagesInProcess[this.activeRun!.id] = null;
           }
           break;
+        }
+
+        if (toolCallUsedToPredictState) {
+          this.dispatchEvent({
+            type: EventType.CUSTOM,
+            name: "PredictState",
+            value: event.metadata["predict_state"],
+          });
         }
 
         if (isToolCallStartEvent && shouldEmitToolCalls) {

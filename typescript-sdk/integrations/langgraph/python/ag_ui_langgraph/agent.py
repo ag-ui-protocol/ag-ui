@@ -467,6 +467,20 @@ class LangGraphAgent:
                 )
                 self.active_run["thinking_process"] = None
 
+            if is_tool_call_end_event:
+                yield self._dispatch_event(
+                    ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=current_stream["tool_call_id"], raw_event=event)
+                )
+                self.messages_in_process[self.active_run["id"]] = None
+                return
+
+            if is_message_end_event:
+                yield self._dispatch_event(
+                    TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=current_stream["id"], raw_event=event)
+                )
+                self.messages_in_process[self.active_run["id"]] = None
+                return
+
             if tool_call_used_to_predict_state:
                 yield self._dispatch_event(
                     CustomEvent(
@@ -476,21 +490,6 @@ class LangGraphAgent:
                         raw_event=event
                     )
                 )
-
-            if is_tool_call_end_event:
-                yield self._dispatch_event(
-                    ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=current_stream["tool_call_id"], raw_event=event)
-                )
-                self.messages_in_process[self.active_run["id"]] = None
-                return
-
-
-            if is_message_end_event:
-                yield self._dispatch_event(
-                    TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=current_stream["id"], raw_event=event)
-                )
-                self.messages_in_process[self.active_run["id"]] = None
-                return
 
             if is_tool_call_start_event and should_emit_tool_calls:
                 yield self._dispatch_event(
