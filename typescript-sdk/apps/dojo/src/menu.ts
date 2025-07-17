@@ -26,7 +26,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   {
     id: "mastra",
     name: "Mastra",
-    features: ["agentic_chat"],
+    features: ["agentic_chat", "tool_based_generative_ui"],
   },
   {
     id: "mastra-agent-local",

@@ -109,20 +109,20 @@ importers:
         specifier: ^1.3.22
         version: 1.3.22(zod@3.25.67)
       '@copilotkit/react-core':
-        specifier: 0.0.0-mme-fix-remote-results-20250717113906
-        version: 0.0.0-mme-fix-remote-results-20250717113906(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+        specifier: 0.0.0-mme-fix-remote-results-20250717143107
+        version: 0.0.0-mme-fix-remote-results-20250717143107(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@copilotkit/react-ui':
-        specifier: 0.0.0-mme-fix-remote-results-20250717113906
-        version: 0.0.0-mme-fix-remote-results-20250717113906(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+        specifier: 0.0.0-mme-fix-remote-results-20250717143107
+        version: 0.0.0-mme-fix-remote-results-20250717143107(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@copilotkit/runtime':
-        specifier: 0.0.0-mme-fix-remote-results-20250717113906
-        version: 0.0.0-mme-fix-remote-results-20250717113906(@ag-ui/client@0.0.30)(@ag-ui/core@0.0.30)(@ag-ui/encoder@0.0.30)(@ag-ui/proto@0.0.30)(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/client-bedrock-agent-runtime@3.846.0)(@aws-sdk/client-bedrock-runtime@3.846.0)(@aws-sdk/client-kendra@3.846.0)(@aws-sdk/credential-provider-node@3.846.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@2.4.0(deepmerge@4.3.1)(dotenv@17.0.1)(react@19.1.0)(zod@3.25.67))(@ibm-cloud/watsonx-ai@1.6.8)(@libsql/client@0.15.9)(@smithy/eventstream-codec@4.0.4)(@smithy/protocol-http@5.1.2)(@smithy/signature-v4@5.1.2)(@smithy/util-utf8@4.0.0)(@upstash/redis@1.35.1)(axios@1.10.0)(cohere-ai@7.17.1)(fast-xml-parser@5.2.5)(google-auth-library@10.1.0)(ibm-cloud-sdk-core@5.4.0)(ignore@7.0.5)(jsonwebtoken@9.0.2)(lodash@4.17.21)(pg@8.16.3)(playwright@1.53.2)(react@19.1.0)(redis@5.5.6)(ws@8.18.3)
+        specifier: 0.0.0-mme-fix-remote-results-20250717143107
+        version: 0.0.0-mme-fix-remote-results-20250717143107(@ag-ui/client@0.0.30)(@ag-ui/core@0.0.30)(@ag-ui/encoder@0.0.30)(@ag-ui/proto@0.0.30)(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/client-bedrock-agent-runtime@3.846.0)(@aws-sdk/client-bedrock-runtime@3.846.0)(@aws-sdk/client-kendra@3.846.0)(@aws-sdk/credential-provider-node@3.846.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@2.4.0(deepmerge@4.3.1)(dotenv@17.0.1)(react@19.1.0)(zod@3.25.67))(@ibm-cloud/watsonx-ai@1.6.8)(@libsql/client@0.15.9)(@smithy/eventstream-codec@4.0.4)(@smithy/protocol-http@5.1.2)(@smithy/signature-v4@5.1.2)(@smithy/util-utf8@4.0.0)(@upstash/redis@1.35.1)(axios@1.10.0)(cohere-ai@7.17.1)(fast-xml-parser@5.2.5)(google-auth-library@10.1.0)(ibm-cloud-sdk-core@5.4.0)(ignore@7.0.5)(jsonwebtoken@9.0.2)(lodash@4.17.21)(pg@8.16.3)(playwright@1.53.2)(react@19.1.0)(redis@5.5.6)(ws@8.18.3)
       '@copilotkit/runtime-client-gql':
-        specifier: 0.0.0-mme-fix-remote-results-20250717113906
-        version: 0.0.0-mme-fix-remote-results-20250717113906(graphql@16.11.0)(react@19.1.0)
+        specifier: 0.0.0-mme-fix-remote-results-20250717143107
+        version: 0.0.0-mme-fix-remote-results-20250717143107(graphql@16.11.0)(react@19.1.0)
       '@copilotkit/shared':
-        specifier: 0.0.0-mme-fix-remote-results-20250717113906
-        version: 0.0.0-mme-fix-remote-results-20250717113906
+        specifier: 0.0.0-mme-fix-remote-results-20250717143107
+        version: 0.0.0-mme-fix-remote-results-20250717143107
       '@mastra/client-js':
         specifier: ^0.10.9
         version: 0.10.9(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.67)
@@ -1358,24 +1358,24 @@ packages:
     resolution: {integrity: sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ==}
     engines: {node: '>=0.1.90'}
 
-  '@copilotkit/react-core@0.0.0-mme-fix-remote-results-20250717113906':
-    resolution: {integrity: sha512-6czKWdM3MfvetXW5e3EfIV0bgVutnDHp4FT1GDwYwlFO/+YLTB39KRSnnqm1TSKJblFV/FH1J439UoJH4AwmXg==}
+  '@copilotkit/react-core@0.0.0-mme-fix-remote-results-20250717143107':
+    resolution: {integrity: sha512-UMOKDR+L3yk+c3ECyrut4e2jOXWpsDIpG55Dn5KZIVKp4jYaQtP3mYF+GHSJ6mWJYdtdOxRhoJuMFMWRF6GC/A==}
     peerDependencies:
       react: ^18 || ^19 || ^19.0.0-rc
       react-dom: ^18 || ^19 || ^19.0.0-rc
 
-  '@copilotkit/react-ui@0.0.0-mme-fix-remote-results-20250717113906':
-    resolution: {integrity: sha512-SyYe/oM+u3Keva/Rp5lbwwCeftMU8d0bierjMPRRhbWanGmyvBK8cU5swPUJdOkMHa5cc/qBMXV+jElbgFZFCg==}
+  '@copilotkit/react-ui@0.0.0-mme-fix-remote-results-20250717143107':
+    resolution: {integrity: sha512-IQywo7Kv3EcdEzWtZL7IJ9zoNfvzrM+duhhVmFq1i1WgWGGcBoe9XjlsXNVuoep6h6gbZdXiljK9hXbn+2pNKg==}
     peerDependencies:
       react: ^18 || ^19 || ^19.0.0-rc
 
-  '@copilotkit/runtime-client-gql@0.0.0-mme-fix-remote-results-20250717113906':
-    resolution: {integrity: sha512-rMTXG94D3NnLAlT4knrcyPcuu7dIkL4nLwh47hrqAp/mleGP5Z+C/IsLEgmA63tkM2lsltawZFYI/fZNDS3+UQ==}
+  '@copilotkit/runtime-client-gql@0.0.0-mme-fix-remote-results-20250717143107':
+    resolution: {integrity: sha512-XLLw43wpl860M86HSUq3+xY0XHbNQv/sSBfCzMxurQGxylskNhW+0jDlD6pMlYYpejHS3aBZWkakQ51bICHZMA==}
     peerDependencies:
       react: ^18 || ^19 || ^19.0.0-rc
 
-  '@copilotkit/runtime@0.0.0-mme-fix-remote-results-20250717113906':
-    resolution: {integrity: sha512-8qLC+AMFU2NjQ3K70/dnScIsM+EQJL0MTBe/mFuvJZ0HdYFulWrRojWpFTdBTDt0OLI9BN7ZEBdXXvpvghO26w==}
+  '@copilotkit/runtime@0.0.0-mme-fix-remote-results-20250717143107':
+    resolution: {integrity: sha512-8A+O27uNJYGiYdrgiWxX+8k0iYs3I9Z9GQbxSMBAOkQIhAifnc4Zf+7vN9zQeZC/nliW6VW3Xt1+gE9bscA/Iw==}
     peerDependencies:
       '@ag-ui/client': '>=0.0.34'
       '@ag-ui/core': '>=0.0.34'
@@ -1390,8 +1390,8 @@ packages:
       '@ag-ui/encoder': '>=0.0.28'
       '@ag-ui/proto': '>=0.0.28'
 
-  '@copilotkit/shared@0.0.0-mme-fix-remote-results-20250717113906':
-    resolution: {integrity: sha512-XuDxMWfJmm/jkBJLgNe4DBhyAsX6h8IfKliQn9ihXs7FGtUyZCjRupivCNs8RVDW//RSXW8YK5YXm0IomyuWbw==}
+  '@copilotkit/shared@0.0.0-mme-fix-remote-results-20250717143107':
+    resolution: {integrity: sha512-H6z6xzGRYHyCEp6wnY4ecECb5gOU00lFqP7RRHQalEIdPeQ0P8nSHiju5grq1ZyG2B5UEZeoEY4Y8xbMw+fCgw==}
 
   '@copilotkit/shared@1.8.13':
     resolution: {integrity: sha512-5J0+4KSh8kzwH9OZ627PtqBcQn0QyK4+1sqQLeNt35piWp++lOfLor2q0Daq8v277GI9dgLVO6UjK2MZkEpJiQ==}
@@ -11927,10 +11927,10 @@ snapshots:
 
   '@colors/colors@1.5.0': {}
 
-  '@copilotkit/react-core@0.0.0-mme-fix-remote-results-20250717113906(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
+  '@copilotkit/react-core@0.0.0-mme-fix-remote-results-20250717143107(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
-      '@copilotkit/runtime-client-gql': 0.0.0-mme-fix-remote-results-20250717113906(graphql@16.11.0)(react@19.1.0)
-      '@copilotkit/shared': 0.0.0-mme-fix-remote-results-20250717113906
+      '@copilotkit/runtime-client-gql': 0.0.0-mme-fix-remote-results-20250717143107(graphql@16.11.0)(react@19.1.0)
+      '@copilotkit/shared': 0.0.0-mme-fix-remote-results-20250717143107
       '@scarf/scarf': 1.4.0
       react: 19.1.0
       react-dom: 19.1.0(react@19.1.0)
@@ -11942,11 +11942,11 @@ snapshots:
       - graphql
       - supports-color
 
-  '@copilotkit/react-ui@0.0.0-mme-fix-remote-results-20250717113906(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
+  '@copilotkit/react-ui@0.0.0-mme-fix-remote-results-20250717143107(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
-      '@copilotkit/react-core': 0.0.0-mme-fix-remote-results-20250717113906(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
-      '@copilotkit/runtime-client-gql': 0.0.0-mme-fix-remote-results-20250717113906(graphql@16.11.0)(react@19.1.0)
-      '@copilotkit/shared': 0.0.0-mme-fix-remote-results-20250717113906
+      '@copilotkit/react-core': 0.0.0-mme-fix-remote-results-20250717143107(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      '@copilotkit/runtime-client-gql': 0.0.0-mme-fix-remote-results-20250717143107(graphql@16.11.0)(react@19.1.0)
+      '@copilotkit/shared': 0.0.0-mme-fix-remote-results-20250717143107
       '@headlessui/react': 2.2.4(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       react: 19.1.0
       react-markdown: 10.1.0(@types/react@19.1.5)(react@19.1.0)
@@ -11961,9 +11961,9 @@ snapshots:
       - react-dom
       - supports-color
 
-  '@copilotkit/runtime-client-gql@0.0.0-mme-fix-remote-results-20250717113906(graphql@16.11.0)(react@19.1.0)':
+  '@copilotkit/runtime-client-gql@0.0.0-mme-fix-remote-results-20250717143107(graphql@16.11.0)(react@19.1.0)':
     dependencies:
-      '@copilotkit/shared': 0.0.0-mme-fix-remote-results-20250717113906
+      '@copilotkit/shared': 0.0.0-mme-fix-remote-results-20250717143107
       '@urql/core': 5.1.1(graphql@16.11.0)
       react: 19.1.0
       untruncate-json: 0.0.1
@@ -11972,7 +11972,7 @@ snapshots:
       - encoding
       - graphql
 
-  '@copilotkit/runtime@0.0.0-mme-fix-remote-results-20250717113906(@ag-ui/client@0.0.30)(@ag-ui/core@0.0.30)(@ag-ui/encoder@0.0.30)(@ag-ui/proto@0.0.30)(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/client-bedrock-agent-runtime@3.846.0)(@aws-sdk/client-bedrock-runtime@3.846.0)(@aws-sdk/client-kendra@3.846.0)(@aws-sdk/credential-provider-node@3.846.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@2.4.0(deepmerge@4.3.1)(dotenv@17.0.1)(react@19.1.0)(zod@3.25.67))(@ibm-cloud/watsonx-ai@1.6.8)(@libsql/client@0.15.9)(@smithy/eventstream-codec@4.0.4)(@smithy/protocol-http@5.1.2)(@smithy/signature-v4@5.1.2)(@smithy/util-utf8@4.0.0)(@upstash/redis@1.35.1)(axios@1.10.0)(cohere-ai@7.17.1)(fast-xml-parser@5.2.5)(google-auth-library@10.1.0)(ibm-cloud-sdk-core@5.4.0)(ignore@7.0.5)(jsonwebtoken@9.0.2)(lodash@4.17.21)(pg@8.16.3)(playwright@1.53.2)(react@19.1.0)(redis@5.5.6)(ws@8.18.3)':
+  '@copilotkit/runtime@0.0.0-mme-fix-remote-results-20250717143107(@ag-ui/client@0.0.30)(@ag-ui/core@0.0.30)(@ag-ui/encoder@0.0.30)(@ag-ui/proto@0.0.30)(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/client-bedrock-agent-runtime@3.846.0)(@aws-sdk/client-bedrock-runtime@3.846.0)(@aws-sdk/client-kendra@3.846.0)(@aws-sdk/credential-provider-node@3.846.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@2.4.0(deepmerge@4.3.1)(dotenv@17.0.1)(react@19.1.0)(zod@3.25.67))(@ibm-cloud/watsonx-ai@1.6.8)(@libsql/client@0.15.9)(@smithy/eventstream-codec@4.0.4)(@smithy/protocol-http@5.1.2)(@smithy/signature-v4@5.1.2)(@smithy/util-utf8@4.0.0)(@upstash/redis@1.35.1)(axios@1.10.0)(cohere-ai@7.17.1)(fast-xml-parser@5.2.5)(google-auth-library@10.1.0)(ibm-cloud-sdk-core@5.4.0)(ignore@7.0.5)(jsonwebtoken@9.0.2)(lodash@4.17.21)(pg@8.16.3)(playwright@1.53.2)(react@19.1.0)(redis@5.5.6)(ws@8.18.3)':
     dependencies:
       '@ag-ui/client': 0.0.30
       '@ag-ui/core': 0.0.30
@@ -11980,7 +11980,7 @@ snapshots:
       '@ag-ui/langgraph': 0.0.7(openai@4.104.0(ws@8.18.3)(zod@3.25.71))(react@19.1.0)
       '@ag-ui/proto': 0.0.30
       '@anthropic-ai/sdk': 0.27.3
-      '@copilotkit/shared': 0.0.0-mme-fix-remote-results-20250717113906
+      '@copilotkit/shared': 0.0.0-mme-fix-remote-results-20250717143107
       '@graphql-yoga/plugin-defer-stream': 3.13.4(graphql-yoga@5.13.4(graphql@16.11.0))(graphql@16.11.0)
       '@langchain/aws': 0.1.11(@langchain/core@0.3.56(openai@4.100.0(ws@8.18.3)(zod@3.25.71)))
       '@langchain/community': 0.3.43(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/client-bedrock-agent-runtime@3.846.0)(@aws-sdk/client-bedrock-runtime@3.846.0)(@aws-sdk/client-kendra@3.846.0)(@aws-sdk/credential-provider-node@3.846.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@2.4.0(deepmerge@4.3.1)(dotenv@17.0.1)(react@19.1.0)(zod@3.25.67))(@ibm-cloud/watsonx-ai@1.6.8)(@langchain/aws@0.1.11(@langchain/core@0.3.56(openai@4.104.0(ws@8.18.3)(zod@3.25.71))))(@langchain/core@0.3.56(openai@4.104.0(ws@8.18.3)(zod@3.25.71)))(@libsql/client@0.15.9)(@smithy/eventstream-codec@4.0.4)(@smithy/protocol-http@5.1.2)(@smithy/signature-v4@5.1.2)(@smithy/util-utf8@4.0.0)(@upstash/redis@1.35.1)(axios@1.10.0)(cohere-ai@7.17.1)(fast-xml-parser@5.2.5)(google-auth-library@10.1.0)(ibm-cloud-sdk-core@5.4.0)(ignore@7.0.5)(jsonwebtoken@9.0.2)(lodash@4.17.21)(openai@4.104.0(ws@8.18.3)(zod@3.25.71))(pg@8.16.3)(playwright@1.53.2)(redis@5.5.6)(ws@8.18.3)
@@ -12331,7 +12331,7 @@ snapshots:
       - ws
       - youtubei.js
 
-  '@copilotkit/shared@0.0.0-mme-fix-remote-results-20250717113906':
+  '@copilotkit/shared@0.0.0-mme-fix-remote-results-20250717143107':
     dependencies:
       '@segment/analytics-node': 2.2.1
       chalk: 4.1.2

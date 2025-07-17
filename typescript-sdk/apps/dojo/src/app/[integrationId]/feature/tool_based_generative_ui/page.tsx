@@ -48,7 +48,7 @@ function Haiku() {
 
   useCopilotAction({
     name: "generate_haiku",
-    available: "remote",
+    available: "frontend",
     parameters: [
       {
         name: "japanese",
