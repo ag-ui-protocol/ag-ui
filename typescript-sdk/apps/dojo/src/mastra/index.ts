@@ -105,5 +105,22 @@ export const mastra = new Mastra({
         },
       }),
     }),
+    tool_based_generative_ui: new Agent({
+      name: "tool_based_generative_ui",
+      instructions: `
+        You are a helpful assistant for creating haikus.
+      `,
+      model: openai("gpt-4o"),
+      tools: {
+        generate_haiku: {
+          description: "Generate a haiku",
+          parameters: z.object({
+            japanese: z.string().describe("The japanese haiku"),
+            english: z.string().describe("The english haiku"),
+            image_names: z.array(z.string()).describe("The names of the images"),
+          }),
+        },
+      },
+    }),
   },
 });
