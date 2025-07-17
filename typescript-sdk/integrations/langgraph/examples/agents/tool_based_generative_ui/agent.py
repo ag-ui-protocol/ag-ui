@@ -10,7 +10,7 @@ from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END, START
 from langgraph.types import Command
 from langgraph.graph import MessagesState
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.prebuilt import ToolNode
 
 @tool
 def generate_haiku(
@@ -64,6 +64,13 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
         *state["messages"],
     ], config)
 
+    if response.tool_calls:
+        return Command(
+            goto="tool_node",
+            update={
+                "messages": state["messages"] + [response]
+            }
+        )
     # Return Command to end with updated messages
     return Command(
         goto=END,
@@ -77,11 +84,14 @@ workflow = StateGraph(AgentState)
 
 # Add nodes
 workflow.add_node("chat_node", chat_node)
+workflow.add_node("tool_node", ToolNode([generate_haiku]))
 
 # Add edges
 workflow.set_entry_point("chat_node")
 workflow.add_edge(START, "chat_node")
 workflow.add_edge("chat_node", END)
+workflow.add_edge("tool_node", END)
+
 
 # Compile the graph
 tool_based_generative_ui_graph = workflow.compile()
