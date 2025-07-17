@@ -1,7 +1,7 @@
 {
   "name": "create-ag-ui-app",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.34",
+  "version": "0.0.35",
   "private": false,
   "publishConfig": {
     "access": "public"
@@ -12,7 +12,8 @@
   "bin": "./dist/index.mjs",
   "sideEffects": false,
   "files": [
-    "dist/**"
+    "dist/**",
+    "README.md"
   ],
   "scripts": {
     "build": "tsup",
