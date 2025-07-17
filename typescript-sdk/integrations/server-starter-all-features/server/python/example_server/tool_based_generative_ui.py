@@ -38,8 +38,10 @@ async def tool_based_generative_ui_endpoint(input_data: RunAgentInput, request: 
         if input_data.messages and len(input_data.messages) > 0:
             last_message = input_data.messages[-1]
 
+        result_message = None
+
         # Determine what type of message to send
-        if last_message and getattr(last_message, 'role', None) == "tool":
+        if last_message and getattr(last_message, 'content', None) == "thanks":
             # Send text message for tool result
             message_id = str(uuid.uuid4())
             new_message = {
@@ -51,7 +53,7 @@ async def tool_based_generative_ui_endpoint(input_data: RunAgentInput, request: 
             # Send tool call message
             tool_call_id = str(uuid.uuid4())
             message_id = str(uuid.uuid4())
-            
+
             # Prepare haiku arguments
             haiku_args = {
                 "japanese": ["エーアイの", "橋つなぐ道", "コパキット"],
@@ -78,8 +80,18 @@ async def tool_based_generative_ui_endpoint(input_data: RunAgentInput, request: 
                 ]
             }
 
+            result_message = {
+                "id": str(uuid.uuid4()),
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": "Haiku created"
+            }
+
         # Create messages list with input messages plus the new message
         all_messages = list(input_data.messages) + [new_message]
+
+        if result_message:
+            all_messages.append(result_message)
 
         # Send messages snapshot event
         yield encoder.encode(
