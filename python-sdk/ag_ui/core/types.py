@@ -2,7 +2,7 @@
 This module contains the types for the Agent User Interaction Protocol Python SDK.
 """
 
-from typing import Annotated, Any, List, Literal, Optional, Union
+from typing import Annotated, Any, Iterable, List, Literal, Optional, Required, TypeAlias, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -46,6 +46,77 @@ class BaseMessage(ConfiguredBaseModel):
     name: Optional[str] = None
 
 
+class FileWithBytes(ConfiguredBaseModel):
+    """
+    Define the variant where 'bytes' is present and 'uri' is absent
+    """
+
+    bytes: str
+    """
+    base64 encoded content of the file
+    """
+    mimeType: str | None = None
+    """
+    Optional mimeType for the file
+    """
+    name: str | None = None
+    """
+    Optional name for the file
+    """
+
+class FileWithUri(ConfiguredBaseModel):
+    """
+    Define the variant where 'uri' is present and 'bytes' is absent
+    """
+
+    mimeType: str | None = None
+    """
+    Optional mimeType for the file
+    """
+    name: str | None = None
+    """
+    Optional name for the file
+    """
+    uri: str
+    """
+    URL for the File content
+    """
+
+class FilePart(ConfiguredBaseModel):
+    """
+    Represents a File segment within parts.
+    """
+
+    file: FileWithBytes | FileWithUri
+    """
+    File content either as url or bytes
+    """
+    type: Literal["file"] = "file"
+    """
+    Part type - file for FileParts
+    """
+    metadata: dict[str, Any] | None = None
+    """
+    Optional metadata associated with the part.
+    """
+
+class ImagePart(FilePart):
+    type: Literal["image"] = "image"
+
+class AudioPart(FilePart):
+    type: Literal["audio"] = "audio"
+
+class TextPart(ConfiguredBaseModel):
+    type: Literal["text"] = "text"
+    text: str
+
+MultipleModalPart: TypeAlias = Union[
+    TextPart,
+    AudioPart,
+    ImagePart,
+    FilePart,
+]
+
 class DeveloperMessage(BaseMessage):
     """
     A developer message.
@@ -68,6 +139,7 @@ class AssistantMessage(BaseMessage):
     """
     role: Literal["assistant"] = "assistant"  # pyright: ignore[reportIncompatibleVariableOverride]
     tool_calls: Optional[List[ToolCall]] = None
+    content: Optional[str | Iterable[MultipleModalPart]] = None
 
 
 class UserMessage(BaseMessage):
@@ -75,7 +147,7 @@ class UserMessage(BaseMessage):
     A user message.
     """
     role: Literal["user"] = "user" # pyright: ignore[reportIncompatibleVariableOverride]
-    content: str
+    content: Required[str | Iterable[MultipleModalPart]] = None
 
 
 class ToolMessage(ConfiguredBaseModel):
