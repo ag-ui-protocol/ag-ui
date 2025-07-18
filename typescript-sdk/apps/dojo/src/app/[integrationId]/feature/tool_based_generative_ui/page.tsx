@@ -22,26 +22,18 @@ export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIP
       // agent lock to the relevant agent
       agent="tool_based_generative_ui"
     >
-      <Chat />
+      <div className="min-h-full w-full flex items-center justify-center">
+        <Haiku />
+        <CopilotSidebar
+          defaultOpen={true}
+          labels={{
+            title: "Haiku Generator",
+            initial: "I'm a haiku generator 👋. How can I help you?",
+          }}
+          clickOutsideToClose={false}
+        />
+      </div>
     </CopilotKit>
-  );
-}
-
-function Chat() {
-  const { visibleMessages } = useCopilotChat();
-  console.log("VISIBLE MESSAGES", visibleMessages);
-  return (
-    <div className="min-h-full w-full flex items-center justify-center">
-      <Haiku />
-      <CopilotSidebar
-        defaultOpen={true}
-        labels={{
-          title: "Haiku Generator",
-          initial: "I'm a haiku generator 👋. How can I help you?",
-        }}
-        clickOutsideToClose={false}
-      />
-    </div>
   );
 }
 
