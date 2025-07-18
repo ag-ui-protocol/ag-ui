@@ -12,6 +12,7 @@ from .shared_state import shared_state_graph
 from .tool_based_generative_ui import tool_based_generative_ui_graph
 from .agentic_chat import agentic_chat_graph
 from .agentic_generative_ui import graph
+from .agentic_chat_reasoning import agentic_chat_reasoning_graph
 
 app = FastAPI(title="LangGraph Dojo Example Server")
 
@@ -46,7 +47,12 @@ agents = {
         name="predictive_state_updates",
         description="An example for a predictive state updates flow.",
         graph=predictive_state_updates_graph,
-    )
+    ),
+    "agentic_chat_reasoning": LangGraphAgent(
+        name="agentic_chat_reasoning",
+        description="An example for a reasoning chat.",
+        graph=agentic_chat_reasoning_graph,
+    ),
 }
 
 add_langgraph_fastapi_endpoint(
@@ -83,6 +89,12 @@ add_langgraph_fastapi_endpoint(
     app=app,
     agent=agents["predictive_state_updates"],
     path="/agent/predictive_state_updates"
+)
+
+add_langgraph_fastapi_endpoint(
+    app=app,
+    agent=agents["agentic_chat_reasoning"],
+    path="/agent/agentic_chat_reasoning"
 )
 
 def main():

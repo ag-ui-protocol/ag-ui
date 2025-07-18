@@ -60,6 +60,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
       "tool_based_generative_ui",
       "predictive_state_updates",
       "shared_state",
+      "agentic_chat_reasoning",
     ],
   },
   {

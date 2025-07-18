@@ -18,6 +18,8 @@ langchain-community = ">=0.0.1"
 langchain-experimental = ">=0.0.11"
 langchain-openai = ">=0.0.1"
 langgraph = "0.4.10"
+langchain-anthropic = "^0.3.17"
+langchain-google-genai = "^2.1.8"
 
 [build-system]
 requires = ["poetry-core"]

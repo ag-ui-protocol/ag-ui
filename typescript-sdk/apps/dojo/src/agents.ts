@@ -135,6 +135,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         tool_based_generative_ui: new LangGraphHttpAgent({
           url: "http://localhost:8000/agent/tool_based_generative_ui",
         }),
+        agentic_chat_reasoning: new LangGraphHttpAgent({
+          url: "http://localhost:8000/agent/agentic_chat_reasoning",
+        }),
       };
     },
   },
