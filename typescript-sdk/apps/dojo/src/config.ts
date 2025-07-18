@@ -24,22 +24,22 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["Chat", "Tools", "Streaming"],
   }),
   createFeatureConfig({
-    id: "agentic_generative_ui",
-    name: "Agentic Generative UI",
-    description: "Assign a long running task to your Copilot and see how it performs!",
-    tags: ["Generative ui (agent)", "Long running task"],
-  }),
-  createFeatureConfig({
     id: "human_in_the_loop",
     name: "Human in the loop",
     description: "Plan a task together and direct the Copilot to take the right steps",
     tags: ["HITL", "Interactivity"],
   }),
   createFeatureConfig({
-    id: "predictive_state_updates",
-    name: "Predictive State Updates",
-    description: "Use collaboration to edit a document in real time with your Copilot",
-    tags: ["State", "Streaming", "Tools"],
+    id: "agentic_generative_ui",
+    name: "Agentic Generative UI",
+    description: "Assign a long running task to your Copilot and see how it performs!",
+    tags: ["Generative ui (agent)", "Long running task"],
+  }),
+  createFeatureConfig({
+    id: "tool_based_generative_ui",
+    name: "Tool Based Generative UI",
+    description: "Haiku generator that uses tool based generative UI.",
+    tags: ["Generative ui (action)", "Tools"],
   }),
   createFeatureConfig({
     id: "shared_state",
@@ -48,10 +48,10 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["Agent State", "Collaborating"],
   }),
   createFeatureConfig({
-    id: "tool_based_generative_ui",
-    name: "Tool Based Generative UI",
-    description: "Haiku generator that uses tool based generative UI.",
-    tags: ["Generative ui (action)", "Tools"],
+    id: "predictive_state_updates",
+    name: "Predictive State Updates",
+    description: "Use collaboration to edit a document in real time with your Copilot",
+    tags: ["State", "Streaming", "Tools"],
   }),
 ];
 
