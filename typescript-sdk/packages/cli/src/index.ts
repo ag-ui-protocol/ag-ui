@@ -202,7 +202,7 @@ async function handleCliClient() {
 program
   .name("create-ag-ui-app")
   .description(description)
-  .version("0.0.35");
+  .version("0.0.36");
 
 // Add framework flags
 program
