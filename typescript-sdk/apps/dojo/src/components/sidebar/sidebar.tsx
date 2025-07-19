@@ -23,9 +23,10 @@ interface SidebarProps {
   activeTab?: string;
   onTabChange?: (tab: string) => void;
   readmeContent?: string | null;
+  pickerDisabled?: boolean;
 }
 
-export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: SidebarProps) {
+export function Sidebar({ activeTab = "preview", onTabChange, readmeContent, pickerDisabled }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [isDarkTheme, setIsDarkTheme] = useState<boolean>(false);
@@ -105,30 +106,32 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent }: S
       {/* Controls Section */}
       <div className="p-4 border-b bg-background">
         {/* Preview/Code Tabs */}
-        <div className="mb-1">
-          <label className="block text-sm font-medium text-muted-foreground mb-2">View</label>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="w-full justify-between">
-                {currentIntegration ? currentIntegration.name : "Select Integration"}
-                <ChevronDown className="h-4 w-4 opacity-50" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-56">
-              {menuIntegrations.map((integration) => (
-                <DropdownMenuItem
-                  key={integration.id}
-                  onClick={() => {
-                    router.push(`/${integration.id}`);
-                  }}
-                  className="cursor-pointer"
-                >
-                  <span>{integration.name}</span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        {!pickerDisabled && (
+          <div className="mb-1">
+            <label className="block text-sm font-medium text-muted-foreground mb-2">View</label>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="w-full justify-between">
+                  {currentIntegration ? currentIntegration.name : "Select Integration"}
+                  <ChevronDown className="h-4 w-4 opacity-50" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-56">
+                {menuIntegrations.map((integration) => (
+                  <DropdownMenuItem
+                    key={integration.id}
+                    onClick={() => {
+                      router.push(`/${integration.id}`);
+                    }}
+                    className="cursor-pointer"
+                  >
+                    <span>{integration.name}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
       </div>
 
       {/* Demo List */}
