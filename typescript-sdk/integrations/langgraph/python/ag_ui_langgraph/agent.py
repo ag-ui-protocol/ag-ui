@@ -543,7 +543,7 @@ class LangGraphAgent:
                     TextMessageContentEvent(
                         type=EventType.TEXT_MESSAGE_CONTENT,
                         message_id=current_stream["id"],
-                        delta=event["data"]["chunk"].content,
+                        delta=message_content,
                         raw_event=event,
                     )
                 )
@@ -602,7 +602,7 @@ class LangGraphAgent:
             elif event["name"] == CustomEventNames.ManuallyEmitState:
                 self.active_run["manually_emitted_state"] = event["data"]
                 yield self._dispatch_event(
-                    StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(state), raw_event=event)
+                    StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(self.active_run["manually_emitted_state"]), raw_event=event)
                 )
             
             yield self._dispatch_event(

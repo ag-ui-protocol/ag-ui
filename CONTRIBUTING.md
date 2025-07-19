@@ -1,57 +1,71 @@
-# Contributing to AG-UI
+# 👋 Contributing to AG-UI
 
-Thanks for your interest in improving **AG-UI**!
+Thanks for checking out AG-UI! Whether you’re here to fix a bug, ship a feature, improve the docs, or just figure out how things work—we’re glad you’re here.
 
-This short guide shows the fastest way to get your idea merged.
-You can find more detailed contribution guides at [ag-ui.com](ag-ui.com) 
-
----
-
-## 1. Start a Discussion
-
-Before writing code, open a new **Discussion** and briefly cover:
-
-1. **Problem** – what you’re trying to solve.
-2. **Proposal** – how you plan to solve it (code, docs, design, etc.).
-3. **Alternatives** – other options you considered.
-
-Early feedback keeps everyone aligned and saves re-work.
+Here’s how to get involved:
 
 ---
 
-## 2. Join a Bi-Weekly Working Group
+## 🤔 Have a Question or Ran Into Something?
 
-Meet the team and potential collaborators in our [bi-weekly community call](https://lu.ma/calendar/manage/cal-DBw2gK428IQbiSO).
+Pick the right spot so we can help you faster:
 
----
-
-## 3. Connect with the Maintainers
-
-Need a quick sync?
-
-- **Markus:** [@mme_xyz](https://twitter.com/mme_xyz) on X (Twitter)
-- **Book a chat:** <https://calendly.com/markus-copilotkit/ag-ui>
+- **🐛 Bugs / Feature Ideas** → [GitHub Issues](https://github.com/ag-ui-protocol/ag-ui/issues)  
+- **❓ "How do I...?" / General Questions** → [GitHub Discussions](https://github.com/ag-ui-protocol/ag-ui/discussions)  
+- **💬 Quick chats / casual stuff** → [Discord](https://discord.gg/Jd3FzfdJa8) → `#-💎-contributing`
 
 ---
 
-## 4. Useful Resources & Docs
+## 🧑‍💻 Want to Contribute Code?
 
-| Resource                                  | Link                                                     |
-| ----------------------------------------- | -------------------------------------------------------- |
-| Learn how to connect to AG-UI with JS     | <https://docs.ag-ui.com/quickstart/connect>              |
-| Learn how to connect to AG-UI with Python | <https://docs.ag-ui.com/quickstart/build>                |
-| Dojo reference implementation             | <https://github.com/ag-ui-protocol/ag-ui/tree/main/dojo> |
+1. **Find Something to Work On**  
+   Browse open issues on [GitHub](https://github.com/ag-ui-protocol/ag-ui/issues).  
+   Got your own idea? Open an issue first so we can start the discussion.
+
+2. **Ask to Be Assigned**  
+   Comment on the issue and tag a code owner:  
+   → [Code Owners](https://github.com/ag-ui-protocol/ag-ui/blob/main/.github/CODEOWNERS)
+
+3. **Get on the Roadmap**  
+   Once approved, you'll be assigned the issue, and it'll get added to our [roadmap](https://github.com/orgs/ag-ui-protocol/projects/1).
+
+4. **Coordinate With Others**  
+   - If you're collaborating or need feedback, start a thread in `#-💎-contributing` on Discord  
+   - Or just DM the assignee directly
+
+5. **Open a Pull Request**  
+   - When you’re ready, submit your PR  
+   - In the description, include: `Fixes #<issue-number>`  
+     (This links your PR to the issue and closes it automatically)
+
+6. **Review & Merge**  
+   - A maintainer will review your code and leave comments if needed  
+   - Once it’s approved, we’ll merge it and move the issue to “done.”
 
 ---
 
-## 5. Open Your Pull Request
+## 📝 Want to Contribute to the Docs?
 
-1. **Fork** the repo and create a feature branch.
-2. Keep changes focused—one PR per feature or fix.
-3. Link back to your Discussion in the PR description.
+Docs are part of the codebase and super valuable—thanks for helping improve them!
 
-We review PRs weekly. Feel free to nudge us in your Discussion if you haven’t heard back in a few days.
+Here’s how to contribute:
+
+1. **Open an Issue First**  
+   - Open a [GitHub issue](https://github.com/ag-ui-protocol/ag-ui/issues) describing what you’d like to update or add.  
+   - Then comment and ask to be assigned.
+
+2. **Submit a PR**  
+   - Once assigned, make your edits and open a pull request.
+   - In the description, include: `Fixes #<issue-number>`  
+     (This links your PR to the issue and closes it automatically)
+
+   - A maintainer will review it and merge if it looks good.
+
+That’s it! Simple and appreciated.
 
 ---
 
-**Thank you for making AG-UI better!**
+## 🙌 That’s It!
+
+AG-UI is community-built, and every contribution helps shape where we go next.  
+Big thanks for being part of it!

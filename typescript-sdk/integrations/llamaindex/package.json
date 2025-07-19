@@ -1,13 +1,14 @@
 {
   "name": "@ag-ui/llamaindex",
   "author": "Logan Markewich <logan@runllama.ai>",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "sideEffects": false,
   "files": [
-    "dist/**"
+    "dist/**",
+    "README.md"
   ],
   "private": false,
   "publishConfig": {
