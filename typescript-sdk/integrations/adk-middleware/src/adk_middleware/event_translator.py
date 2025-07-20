@@ -11,13 +11,13 @@ from ag_ui.core import (
     BaseEvent, EventType,
     TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent,
     ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent,
-    ToolCallChunkEvent,
+    ToolCallChunkEvent,ToolCallResultEvent,
     StateSnapshotEvent, StateDeltaEvent,
     MessagesSnapshotEvent,
     CustomEvent,
     Message, AssistantMessage, UserMessage, ToolMessage
 )
-
+import json
 from google.adk.events import Event as ADKEvent
 
 import logging
@@ -87,13 +87,6 @@ class EventTranslator:
             
 
             
-            # Handle function responses
-            if hasattr(adk_event, 'get_function_responses'):
-                function_responses = adk_event.get_function_responses()
-                if function_responses:
-                    # Function responses are typically handled by the agent internally
-                    # We don't need to emit them as AG-UI events
-                    pass
 
             # call _translate_function_calls function to yield Tool Events
             if hasattr(adk_event, 'get_function_calls'):               
@@ -104,6 +97,15 @@ class EventTranslator:
                     async for event in self._translate_function_calls(function_calls):
                         yield event
                         
+            # Handle function responses and yield the tool response event
+            # this is essential for scenerios when user has to render function response at frontend
+            if hasattr(adk_event, 'get_function_responses'):
+                function_responses = adk_event.get_function_responses()
+                if function_responses:
+                    # Function responses should be emmitted to frontend so it can render the response as well
+                    async for event in self._translate_function_response(function_responses):
+                        yield event
+                    
             
             # Handle state changes
             if hasattr(adk_event, 'actions') and adk_event.actions and hasattr(adk_event.actions, 'state_delta') and adk_event.actions.state_delta:
@@ -281,6 +283,32 @@ class EventTranslator:
             # Clean up tracking
             self._active_tool_calls.pop(tool_call_id, None)
     
+
+    async def _translate_function_response(
+        self,
+        function_response: list[types.FunctionResponse],
+    ) -> AsyncGenerator[BaseEvent, None]:
+        """Translate function calls from ADK event to AG-UI tool call events.
+        
+        Args:
+            adk_event: The ADK event containing function calls
+            function_response: List of function response from the event
+            
+        Yields:
+            Tool result events 
+        """
+        
+        for func_response in function_response:
+            
+            tool_call_id = getattr(func_response, 'id', str(uuid.uuid4()))
+            
+            yield ToolCallResultEvent(
+                message_id=str(uuid.uuid4()),
+                type=EventType.TOOL_CALL_RESULT,
+                tool_call_id=tool_call_id,
+                content=json.dumps(func_response.response)
+            )
+  
     def _create_state_delta_event(
         self,
         state_delta: Dict[str, Any],
