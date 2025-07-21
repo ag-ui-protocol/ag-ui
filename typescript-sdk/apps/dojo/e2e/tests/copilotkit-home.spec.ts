@@ -10,7 +10,7 @@ test('[Core] CopilotKit homepage renders', async ({ page }) => {
   // Validate hero heading content.
   await expect(
     page.getByRole("heading", {
-      name: /AI Copilots for your product/i,
+      name: /Build User-Facing Agentic Applications/i,
       exact: false,
     })
   ).toBeVisible();
