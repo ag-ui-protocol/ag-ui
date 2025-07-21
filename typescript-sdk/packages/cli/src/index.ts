@@ -26,14 +26,35 @@ ${RESET}
   console.log(banner);
 }
 
+const description = `
+Quickly scaffold AG-UI enabled applications for your favorite agent frameworks.
+`
+
 async function createProject() {
   displayBanner();
 
   console.log("\n~ Let's get started building an AG-UI powered user interactive agent ~");
   console.log("  Read more about AG-UI at https://ag-ui.com\n");
-  console.log("");
-  console.log("To build an AG-UI app, you need to select a client.");
-  console.log("");
+
+  const options = program.opts();
+  const isFrameworkDefined = [
+    "langgraphPy",
+    "langgraphJs",
+    "crewaiFlows",
+    "mastra",
+    "ag2",
+    "llamaindex",
+    "agno"
+  ].some(flag => options[flag]);
+
+  if (isFrameworkDefined) {
+    await handleCopilotKitNextJs();
+    return;
+  } else {
+    console.log("");
+    console.log("To build an AG-UI app, you need to select a client.");
+    console.log("");
+  }
 
   const answers = await inquirer.prompt([
     {
@@ -43,118 +64,75 @@ async function createProject() {
       choices: [
         "CopilotKit/Next.js",
         "CLI client",
-        new inquirer.Separator("Other clients coming soon (SMS, Whatsapp, Slack ...)"),
+        new inquirer.Separator(" Other clients coming soon (SMS, Whatsapp, Slack ...)"),
       ],
     },
   ]);
 
-  console.log(`\nSelected client: ${answers.client}`);
-  console.log("Initializing your project...\n");
-
-  // Handle CLI client option
-  if (answers.client === "CLI client") {
-    await handleCliClient();
-    return;
+  switch (answers.client) {
+    case "CopilotKit/Next.js":
+      await handleCopilotKitNextJs();
+      break;
+    case "CLI client":
+      await handleCliClient();
+      break;
+    default:
+      break;
   }
+}
 
-  // Continue with existing CopilotKit/Next.js logic
-  const packageJsonPath = path.join(process.cwd(), "package.json");
-  const packageJsonExists = fs.existsSync(packageJsonPath);
-
-  let projectDir = process.cwd();
-
-  if (!packageJsonExists) {
-    console.log("📦 No package.json found, creating a new Next.js app...\n");
-
-    const projectName = await inquirer.prompt([
-      {
-        type: "input",
-        name: "name",
-        message: "What would you like to name your project?",
-        default: "my-ag-ui-app",
-        validate: (input) => {
-          if (!input.trim()) {
-            return "Project name cannot be empty";
-          }
-          if (!/^[a-zA-Z0-9-_]+$/.test(input)) {
-            return "Project name can only contain letters, numbers, hyphens, and underscores";
-          }
-          return true;
-        },
-      },
-    ]);
-
-    projectDir = path.join(process.cwd(), projectName.name);
-
-    console.log(`Creating Next.js app: ${projectName.name}\n`);
-
-    const createNextApp = spawn(
-      "npx",
-      [
-        "create-next-app@latest",
-        projectName.name,
-        "--typescript",
-        "--tailwind",
-        "--eslint",
-        "--app",
-        "--src-dir",
-        "--import-alias",
-        "@/*",
-        "--no-turbopack",
-      ],
-      {
-        stdio: "inherit",
-        shell: true,
-      },
-    );
-
-    await new Promise<void>((resolve, reject) => {
-      createNextApp.on("close", (code) => {
-        if (code === 0) {
-          console.log("\n✅ Next.js app created successfully!");
-          resolve();
-        } else {
-          console.log("\n❌ Failed to create Next.js app");
-          reject(new Error(`create-next-app exited with code ${code}`));
-        }
-      });
-    });
-
-    // Change to the new project directory
-    try {
-      process.chdir(projectDir);
-    } catch (error) {
-      console.log("❌ Error changing directory:", error);
-      process.exit(1);
-    }
-  }
-
-  // Run copilotkit init with framework flags
-  console.log("\n🚀 Running CopilotKit initialization...\n");
-
+async function handleCopilotKitNextJs() {
   const options = program.opts();
-  const frameworkArgs = [];
+  const frameworkArgs: string[] = [];
 
-  if (options.langgraph) {
-    frameworkArgs.push("-m", "LangGraph");
-  } else if (options.crewiAiCrews) {
-    frameworkArgs.push("-m", "CrewAI", "--crew-type", "Crews");
+  const projectName = await inquirer.prompt([
+    {
+      type: "input",
+      name: "name",
+      message: "What would you like to name your project?",
+      default: "my-ag-ui-app",
+      validate: (input) => {
+        if (!input.trim()) {
+          return "Project name cannot be empty";
+        }
+        if (!/^[a-zA-Z0-9-_]+$/.test(input)) {
+          return "Project name can only contain letters, numbers, hyphens, and underscores";
+        }
+        return true;
+      },
+    },
+  ]);
+
+  // Translate options to CopilotKit framework flags
+  if (options.langgraphPy) {
+    frameworkArgs.push("-f", "langgraph-py");
+  } else if (options.langgraphJs) {
+    frameworkArgs.push("-f", "langgraph-js");
   } else if (options.crewiAiFlows) {
-    frameworkArgs.push("-m", "CrewAI", "--crew-type", "Flows");
+    frameworkArgs.push("-f", "flows");
   } else if (options.mastra) {
-    frameworkArgs.push("-m", "Mastra");
+    frameworkArgs.push("-f", "mastra");
   } else if (options.ag2) {
-    frameworkArgs.push("-m", "AG2");
+    frameworkArgs.push("-f", "ag2");
   } else if (options.llamaindex) {
-    frameworkArgs.push("-m", "LlamaIndex");
+    frameworkArgs.push("-f", "llamaindex");
   } else if (options.agno) {
-    frameworkArgs.push("-m", "Agno");
+    frameworkArgs.push("-f", "agno");
   }
 
-  const copilotkit = spawn("npx", ["copilotkit", "init", ...frameworkArgs], {
-    stdio: "inherit",
-    shell: true,
-  });
+  const copilotkit = spawn("npx", 
+    [
+      "copilotkit@latest",
+      "create",
+      "--no-banner",
+      "-n", projectName.name,
+      ...frameworkArgs,
+    ],
+    {
+      stdio: "inherit",
+      shell: true,
+    },
+  );
 
   copilotkit.on("close", (code) => {
     if (code !== 0) {
@@ -220,13 +198,17 @@ async function handleCliClient() {
   }
 }
 
-program.name("create-ag-ui-app").description("AG-UI CLI").version("0.0.1-alpha.1");
+// Metadata
+program
+  .name("create-ag-ui-app")
+  .description(description)
+  .version("0.0.36");
 
 // Add framework flags
 program
-  .option("--langgraph", "Use the LangGraph framework")
-  .option("--crewi-ai-crews", "Use the CrewAI framework with Crews")
-  .option("--crewi-ai-flows", "Use the CrewAI framework with Flows")
+  .option("--langgraph-py", "Use the LangGraph framework with Python")
+  .option("--langgraph-js", "Use the LangGraph framework with JavaScript")
+  .option("--crewai-flows", "Use the CrewAI framework with Flows")
   .option("--mastra", "Use the Mastra framework")
   .option("--ag2", "Use the AG2 framework")
   .option("--llamaindex", "Use the LlamaIndex framework")

@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "ag-ui-langgraph"
-version = "0.0.1"
-description = ""
+version = "0.0.3"
+description = "Implementation of the AG-UI protocol for LangGraph."
 authors = ["Ran Shem Tov <ran@copilotkit.ai>"]
 readme = "README.md"
 exclude = [

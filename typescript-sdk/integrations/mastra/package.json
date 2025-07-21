@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/mastra",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "license": "Elastic-2.0",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -11,7 +11,8 @@
     "access": "public"
   },
   "files": [
-    "dist/**"
+    "dist/**",
+    "README.md"
   ],
   "scripts": {
     "build": "tsup",
