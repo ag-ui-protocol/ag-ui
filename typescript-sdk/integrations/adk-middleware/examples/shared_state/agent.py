@@ -15,7 +15,8 @@ from google.adk.runners import Runner
 from google.adk.events import Event, EventActions
 from google.adk.tools import FunctionTool, ToolContext
 from google.genai.types import Content, Part , FunctionDeclaration
-
+from google.adk.models import LlmResponse, LlmRequest
+from google.genai import types
 
 
 from pydantic import BaseModel, Field
@@ -157,7 +158,7 @@ def on_before_agent(callback_context: CallbackContext):
     """
     Initialize recipe state if it doesn't exist.
     """
-
+    print('recipe state ==>',callback_context.state.get('recipe'))
     if "recipe" not in callback_context.state:
         # Initialize with default recipe
         default_recipe =     {
@@ -173,12 +174,48 @@ def on_before_agent(callback_context: CallbackContext):
     return None
 
 
+# --- Define the Callback Function ---
+#  modifying the agent's system prompt to incude the current state of recipe
+def before_model_modifier(
+    callback_context: CallbackContext, llm_request: LlmRequest
+) -> Optional[LlmResponse]:
+    """Inspects/modifies the LLM request or skips the call."""
+    agent_name = callback_context.agent_name
+    print(f"[Callback] Before model call for agent: {agent_name}")
+    if agent_name == "RecipeAgent":
+        recipe_json = "No recipe yet"
+        if "recipe" in callback_context.state and callback_context.state["recipe"] is not None:
+            try:
+                recipe_json = json.dumps(callback_context.state["recipe"], indent=2)
+            except Exception as e:
+                recipe_json = f"Error serializing recipe: {str(e)}"
+        # --- Modification Example ---
+        # Add a prefix to the system instruction
+        original_instruction = llm_request.config.system_instruction or types.Content(role="system", parts=[])
+        prefix = f"""You are a helpful assistant for creating recipes. 
+        This is the current state of the recipe: {recipe_json}
+        You can improve the recipe by calling the generate_recipe tool."""
+        # Ensure system_instruction is Content and parts list exists
+        if not isinstance(original_instruction, types.Content):
+            # Handle case where it might be a string (though config expects Content)
+            original_instruction = types.Content(role="system", parts=[types.Part(text=str(original_instruction))])
+        if not original_instruction.parts:
+            original_instruction.parts.append(types.Part(text="")) # Add an empty part if none exist
+
+        # Modify the text of the first part
+        modified_text = prefix + (original_instruction.parts[0].text or "")
+        original_instruction.parts[0].text = modified_text
+        llm_request.config.system_instruction = original_instruction
+
+
+
+    return None
+
 
 shared_state_agent = LlmAgent(
         name="RecipeAgent",
         model="gemini-2.5-pro",
-        instruction=f"""You are a helpful recipe assistant. 
-
+        instruction=f"""
         When a user asks for a recipe or wants to modify one, you MUST use the generate_recipe tool.
 
         IMPORTANT RULES:
@@ -196,133 +233,7 @@ shared_state_agent = LlmAgent(
         Always provide complete, practical recipes that users can actually cook.
         """,
         tools=[generate_recipe],
-        before_agent_callback=on_before_agent
+        before_agent_callback=on_before_agent,
+        before_model_callback=before_model_modifier
     )
 
-async def run_recipe_agent(user_message: str, app_name: str = "recipe_app", 
-                          user_id: str = "user1", session_id: str = "session1"):
-    """
-    Run the recipe agent with a user message.
-    
-    Args:
-        user_message: The user's input message
-        app_name: Application name for the session
-        user_id: User identifier
-        session_id: Session identifier
-    
-    Returns:
-        The agent's response and updated session state
-    """
-    
-    # Create session service
-    
-    session_service = InMemorySessionService()
-    agent = LlmAgent(
-        name="RecipeAgent",
-        model="gemini-2.5-pro",
-        instruction=f"""You are a helpful recipe assistant. 
-
-        When a user asks for a recipe or wants to modify one, you MUST use the generate_recipe tool.
-
-        IMPORTANT RULES:
-        1. Always use the generate_recipe tool for any recipe-related requests
-        2. When creating a new recipe, provide at least skill_level, ingredients, and instructions
-        3. When modifying an existing recipe, include the changes parameter to describe what was modified
-        4. Be creative and helpful in generating complete, practical recipes
-        5. After using the tool, provide a brief summary of what you created or changed
-
-        Examples of when to use the tool:
-        - "Create a pasta recipe" → Use tool with skill_level, ingredients, instructions
-        - "Make it vegetarian" → Use tool with special_preferences="vegetarian" and changes describing the modification
-        - "Add some herbs" → Use tool with updated ingredients and changes describing the addition
-
-        Always provide complete, practical recipes that users can actually cook.
-        USER:{user_message}
-        """,
-        tools=[generate_recipe],
-        before_agent_callback=on_before_agent
-    )
-
-    # Create the agent
-    
-    # Create runner
-    runner = Runner(
-        agent=agent,
-        app_name=app_name,
-        session_service=session_service
-    )
-    
-    # Create or get session
-
-    session = await session_service.get_session(
-        app_name=app_name,
-        user_id=user_id,
-        session_id=session_id
-    )
-    print('session already exist with session_id',session_id)
-    if not session:
-        print('creating session with session_id',session_id)
-        session = await session_service.create_session(
-            app_name=app_name,
-            user_id=user_id,
-            session_id=session_id
-    )
-
-        # Create new session if it doesn't exist
-    # Create user message content
-    user_content = Content(parts=[Part(text=user_message)])
-    print('user_message==>',user_message)
-    # Run the agent
-    response_content = None
-    async for event in runner.run_async(
-        user_id=user_id,
-        session_id=session_id,
-        new_message=user_content
-    ):
-        print(f"Event emitted: {response_content}")
-        if event.is_final_response():
-            response_content = event.content
-            print(f"Agent responded: {response_content}")
-    
-    # Get updated session to check state
-    updated_session = await session_service.get_session(
-        app_name=app_name,
-        user_id=user_id,
-        session_id=session_id
-    )
-    
-    return {
-        "response": response_content,
-        "recipe_state": updated_session.state.get("recipe"),
-        "session_state": updated_session.state
-    }
-
-
-# Example usage
-async def main():
-    """
-    Example usage of the recipe agent.
-    """
-    
-    # Test the agent
-    print("=== Recipe Agent Test ===")
-    
-    # First interaction - create a recipe
-    result1 = await run_recipe_agent("I want to cook Biryani, create a simple Biryani recipe and use generate_recipe tool for this",session_id='123121')
-    print(f"Response 1: {result1['response']}")
-    print(f"Recipe State: {json.dumps(result1['recipe_state'], indent=2)}")
-    
-    # # Second interaction - modify the recipe
-    # result2 = await run_recipe_agent("Make it vegetarian and add some herbs")
-    # print(f"Response 2: {result2['response']}")
-    # print(f"Updated Recipe State: {json.dumps(result2['recipe_state'], indent=2)}")
-    
-    # # Third interaction - adjust cooking time
-    # result3 = await run_recipe_agent("Make it a quick 15-minute recipe")
-    # print(f"Response 3: {result3['response']}")
-    # print(f"Final Recipe State: {json.dumps(result3['recipe_state'], indent=2)}")
-
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
