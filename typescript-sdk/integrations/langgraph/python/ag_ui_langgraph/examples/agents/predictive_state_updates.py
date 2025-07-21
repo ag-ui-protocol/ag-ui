@@ -19,7 +19,7 @@ from langchain_core.messages import SystemMessage
 WRITE_DOCUMENT_TOOL = {
     "type": "function",
     "function": {
-        "name": "write_document",
+        "name": "write_document_local",
         "description": " ".join("""
             Write a document. Use markdown formatting to format the document.
             It's good to format the document extensively so it's easy to read.
@@ -66,7 +66,7 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
     system_prompt = f"""
     You are a helpful assistant for writing documents. 
-    To write the document, you MUST use the write_document tool.
+    To write the document, you MUST use the write_document_local tool.
     You MUST write the full document, even when changing only a few words.
     When you wrote the document, DO NOT repeat it as a message. 
     Just briefly summarize the changes you made. 2 sentences max.
@@ -80,10 +80,10 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     if config is None:
         config = RunnableConfig(recursion_limit=25)
 
-    # Use "predict_state" metadata to set up streaming for the write_document tool
+    # Use "predict_state" metadata to set up streaming for the write_document_local tool
     config["metadata"]["predict_state"] = [{
         "state_key": "document",
-        "tool": "write_document",
+        "tool": "write_document_local",
         "tool_argument": "document"
     }]
 
@@ -121,7 +121,7 @@ async def chat_node(state: AgentState, config: RunnableConfig):
             tool_call_name = tool_call.name
             tool_call_args = tool_call.args
 
-        if tool_call_name == "write_document":
+        if tool_call_name == "write_document_local":
             # Add the tool response to messages
             tool_response = {
                 "role": "tool",
