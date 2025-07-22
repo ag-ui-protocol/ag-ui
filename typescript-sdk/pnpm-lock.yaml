@@ -96,6 +96,9 @@ importers:
       '@ag-ui/proto':
         specifier: workspace:*
         version: 0.0.30
+      '@ag-ui/pydantic-ai':
+        specifier: workspace:*
+        version: link:../../integrations/pydantic-ai
       '@ag-ui/server-starter':
         specifier: workspace:*
         version: link:../../integrations/server-starter
@@ -446,6 +449,34 @@ importers:
         version: 5.8.2
 
   integrations/middleware-starter:
+    dependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../packages/client
+      rxjs:
+        specifier: 7.8.1
+        version: 7.8.1
+    devDependencies:
+      '@types/jest':
+        specifier: ^29.5.14
+        version: 29.5.14
+      '@types/node':
+        specifier: ^20.11.19
+        version: 20.17.50
+      jest:
+        specifier: ^29.7.0
+        version: 29.7.0(@types/node@20.17.50)
+      ts-jest:
+        specifier: ^29.1.2
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@30.0.4)(@jest/types@30.0.1)(babel-jest@30.0.4(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+      tsup:
+        specifier: ^8.0.2
+        version: 8.5.0(jiti@2.4.2)(postcss@8.5.6)(tsx@4.20.3)(typescript@5.8.2)(yaml@2.8.0)
+      typescript:
+        specifier: ^5.3.3
+        version: 5.8.2
+
+  integrations/pydantic-ai:
     dependencies:
       '@ag-ui/client':
         specifier: workspace:*

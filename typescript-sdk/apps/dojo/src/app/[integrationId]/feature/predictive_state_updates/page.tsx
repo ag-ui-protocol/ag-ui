@@ -127,6 +127,7 @@ const DocumentEditor = () => {
     }
   }, [text]);
 
+  // TODO(steve): Remove this when all agents have been updated to use write_document tool.
   useCopilotAction({
     name: "confirm_changes",
     renderAndWaitForResponse: ({ args, respond, status }) => (
@@ -145,6 +146,40 @@ const DocumentEditor = () => {
         }}
       />
     ),
+  });
+
+  // Action to write the document.
+  useCopilotAction({
+    name: "write_document",
+    description: `Present the proposed changes to the user for review`,
+    parameters: [
+      {
+        name: "document",
+        type: "string",
+        description: "The full updated document in markdown format",
+      },
+    ],
+    renderAndWaitForResponse({ args, status, respond }) {
+      if (status === "executing") {
+        return (
+          <ConfirmChanges
+            args={args}
+            respond={respond}
+            status={status}
+            onReject={() => {
+              editor?.commands.setContent(fromMarkdown(currentDocument));
+              setAgentState({ document: currentDocument });
+            }}
+            onConfirm={() => {
+              editor?.commands.setContent(fromMarkdown(agentState?.document || ""));
+              setCurrentDocument(agentState?.document || "");
+              setAgentState({ document: agentState?.document || "" });
+            }}
+          />
+        );
+      }
+      return <></>;
+    },
   });
 
   return (
