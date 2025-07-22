@@ -241,6 +241,8 @@ class StepStartedEvent(BaseEvent):
     """
     type: Literal[EventType.STEP_STARTED] = EventType.STEP_STARTED  # pyright: ignore[reportIncompatibleVariableOverride]
     step_name: str
+    step_id: str
+    parent_step_id: Optional[str] = None
 
 
 class StepFinishedEvent(BaseEvent):
@@ -249,6 +251,8 @@ class StepFinishedEvent(BaseEvent):
     """
     type: Literal[EventType.STEP_FINISHED] = EventType.STEP_FINISHED  # pyright: ignore[reportIncompatibleVariableOverride]
     step_name: str
+    step_id: str
+    parent_step_id: Optional[str] = None
 
 
 Event = Annotated[
