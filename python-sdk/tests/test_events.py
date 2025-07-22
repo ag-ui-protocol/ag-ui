@@ -1,9 +1,10 @@
-import unittest
-import json
-from datetime import datetime
-from pydantic import ValidationError, TypeAdapter
+from __future__ import annotations
 
-from ag_ui.core.types import Message, UserMessage, AssistantMessage, FunctionCall, ToolCall
+import unittest
+from datetime import datetime
+from pydantic import TypeAdapter
+
+from ag_ui.core.types import UserMessage, AssistantMessage, FunctionCall, ToolCall
 from ag_ui.core.events import (
     EventType,
     BaseEvent,

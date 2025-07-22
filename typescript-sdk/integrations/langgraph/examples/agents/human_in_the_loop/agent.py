@@ -2,6 +2,8 @@
 A LangGraph implementation of the human-in-the-loop agent.
 """
 
+from __future__ import annotations
+
 import json
 from typing import Dict, List, Any
 
@@ -11,7 +13,6 @@ from langgraph.graph import StateGraph, END, START
 from langgraph.types import Command, interrupt
 from langgraph.graph import MessagesState
 
-from copilotkit.langgraph import copilotkit_emit_state, copilotkit_interrupt
 
 # LLM imports
 from langchain_openai import ChatOpenAI

@@ -2,8 +2,10 @@
 This is a placeholder for the copilotkit_stream function.
 """
 
+from __future__ import annotations
+
 import uuid
-from typing import List, Any, Optional, Mapping, Dict, Literal, TypedDict
+from typing import List, Any, Mapping, Dict, Literal, TypedDict
 from litellm.types.utils import (
   ModelResponse,
   Choices,
@@ -39,7 +41,7 @@ class PredictStateConfig(TypedDict):
     Predict State Config
     """
     tool_name: str
-    tool_argument: Optional[str]
+    tool_argument: str | None
 
 async def copilotkit_predict_state(
         config: Dict[str, PredictStateConfig]
@@ -166,7 +168,7 @@ async def copilotkit_stream(response):
 async def _copilotkit_stream_custom_stream_wrapper(response: CustomStreamWrapper):
     flow = flow_context.get(None)
 
-    message_id: Optional[str] = None
+    message_id: str | None = None
     tool_call_id: str = ""
     content = ""
     created = 0

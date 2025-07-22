@@ -48,15 +48,15 @@ shared across all event types.
 ```python
 class BaseEvent(ConfiguredBaseModel):
     type: EventType
-    timestamp: Optional[int] = None
-    raw_event: Optional[Any] = None
+    timestamp: int | None = None
+    raw_event: Any = None
 ```
 
 | Property    | Type            | Description                                           |
 | ----------- | --------------- | ----------------------------------------------------- |
 | `type`      | `EventType`     | The type of event (discriminator field for the union) |
-| `timestamp` | `Optional[int]` | Timestamp when the event was created                  |
-| `raw_event` | `Optional[Any]` | Original event data if this event was transformed     |
+| `timestamp` | `int | None`    | Timestamp when the event was created                  |
+| `raw_event` | `Any`           | Original event data if this event was transformed     |
 
 ## Lifecycle Events
 
@@ -91,14 +91,14 @@ class RunFinishedEvent(BaseEvent):
     type: Literal[EventType.RUN_FINISHED]
     thread_id: str
     run_id: str
-    result: Optional[Any] = None
+    result: Any = None
 ```
 
 | Property    | Type            | Description                    |
 | ----------- | --------------- | ------------------------------ |
 | `thread_id` | `str`           | ID of the conversation thread  |
 | `run_id`    | `str`           | ID of the agent run            |
-| `result`    | `Optional[Any]` | Result data from the agent run |
+| `result`    | `Any`           | Result data from the agent run |
 
 ### RunErrorEvent
 
@@ -110,13 +110,13 @@ Signals an error during an agent run.
 class RunErrorEvent(BaseEvent):
     type: Literal[EventType.RUN_ERROR]
     message: str
-    code: Optional[str] = None
+    code: str | None = None
 ```
 
 | Property  | Type            | Description   |
 | --------- | --------------- | ------------- |
 | `message` | `str`           | Error message |
-| `code`    | `Optional[str]` | Error code    |
+| `code`    | `str | None`    | Error code    |
 
 ### StepStartedEvent
 
@@ -225,14 +225,14 @@ class ToolCallStartEvent(BaseEvent):
     type: Literal[EventType.TOOL_CALL_START]
     tool_call_id: str
     tool_call_name: str
-    parent_message_id: Optional[str] = None
+    parent_message_id: str | None = None
 ```
 
 | Property            | Type            | Description                         |
 | ------------------- | --------------- | ----------------------------------- |
 | `tool_call_id`      | `str`           | Unique identifier for the tool call |
 | `tool_call_name`    | `str`           | Name of the tool being called       |
-| `parent_message_id` | `Optional[str]` | ID of the parent message            |
+| `parent_message_id` | `str | None`    | ID of the parent message            |
 
 ### ToolCallArgsEvent
 
@@ -280,7 +280,7 @@ class ToolCallResultEvent(BaseEvent):
     type: Literal[EventType.TOOL_CALL_RESULT]
     tool_call_id: str
     content: str
-    role: Optional[Literal["tool"]] = None
+    role: Literal["tool"] | None = None
 ```
 
 | Property       | Type                        | Description                                                 |
@@ -288,7 +288,7 @@ class ToolCallResultEvent(BaseEvent):
 | `message_id`   | `str`                       | ID of the conversation message this result belongs to       |
 | `tool_call_id` | `str`                       | Matches the ID from the corresponding ToolCallStartEvent    |
 | `content`      | `str`                       | The actual result/output content from the tool execution    |
-| `role`         | `Optional[Literal["tool"]]` | Optional role identifier, typically "tool" for tool results |
+| `role`         | `Literal["tool"] | None`    | Optional role identifier, typically "tool" for tool results |
 
 ## State Management Events
 
@@ -354,13 +354,13 @@ Used to pass through events from external systems.
 class RawEvent(BaseEvent):
     type: Literal[EventType.RAW]
     event: Any
-    source: Optional[str] = None
+    source: str | None = None
 ```
 
 | Property | Type            | Description         |
 | -------- | --------------- | ------------------- |
 | `event`  | `Any`           | Original event data |
-| `source` | `Optional[str]` | Source of the event |
+| `source` | `str | None`    | Source of the event |
 
 ### CustomEvent
 
@@ -388,25 +388,27 @@ The SDK uses Pydantic's discriminated unions for event validation:
 
 ```python
 Event = Annotated[
-    Union[
-        TextMessageStartEvent,
-        TextMessageContentEvent,
-        TextMessageEndEvent,
-        ToolCallStartEvent,
-        ToolCallArgsEvent,
-        ToolCallEndEvent,
-        ToolCallResultEvent,
-        StateSnapshotEvent,
-        StateDeltaEvent,
-        MessagesSnapshotEvent,
-        RawEvent,
-        CustomEvent,
-        RunStartedEvent,
-        RunFinishedEvent,
-        RunErrorEvent,
-        StepStartedEvent,
-        StepFinishedEvent,
-    ],
+    TextMessageStartEvent |
+    TextMessageContentEvent |
+    TextMessageEndEvent |
+    TextMessageChunkEvent |
+    ToolCallStartEvent |
+    ToolCallArgsEvent |
+    ToolCallEndEvent |
+    ToolCallChunkEvent |
+    ToolCallResultEvent |
+    ThinkingStartEvent |
+    ThinkingEndEvent |
+    StateSnapshotEvent |
+    StateDeltaEvent |
+    MessagesSnapshotEvent |
+    RawEvent |
+    CustomEvent |
+    RunStartedEvent |
+    RunFinishedEvent |
+    RunErrorEvent |
+    StepStartedEvent |
+    StepFinishedEvent,
     Field(discriminator="type")
 ]
 ```

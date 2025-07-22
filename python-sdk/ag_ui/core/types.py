@@ -1,8 +1,9 @@
 """
 This module contains the types for the Agent User Interaction Protocol Python SDK.
 """
+from __future__ import annotations
 
-from typing import Annotated, Any, List, Literal, Optional, Union
+from typing import Annotated, Any, List, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -42,8 +43,8 @@ class BaseMessage(ConfiguredBaseModel):
     """
     id: str
     role: str
-    content: Optional[str] = None
-    name: Optional[str] = None
+    content: str | None = None
+    name: str | None = None
 
 
 class DeveloperMessage(BaseMessage):
@@ -51,7 +52,7 @@ class DeveloperMessage(BaseMessage):
     A developer message.
     """
     role: Literal["developer"] = "developer"  # pyright: ignore[reportIncompatibleVariableOverride]
-    content: str
+    content: str # pyright: ignore[reportIncompatibleVariableOverride,reportGeneralTypeIssues]
 
 
 class SystemMessage(BaseMessage):
@@ -59,7 +60,7 @@ class SystemMessage(BaseMessage):
     A system message.
     """
     role: Literal["system"] = "system"  # pyright: ignore[reportIncompatibleVariableOverride]
-    content: str
+    content: str # pyright: ignore[reportIncompatibleVariableOverride,reportGeneralTypeIssues]
 
 
 class AssistantMessage(BaseMessage):
@@ -67,7 +68,7 @@ class AssistantMessage(BaseMessage):
     An assistant message.
     """
     role: Literal["assistant"] = "assistant"  # pyright: ignore[reportIncompatibleVariableOverride]
-    tool_calls: Optional[List[ToolCall]] = None
+    tool_calls: List[ToolCall] | None = None
 
 
 class UserMessage(BaseMessage):
@@ -75,7 +76,7 @@ class UserMessage(BaseMessage):
     A user message.
     """
     role: Literal["user"] = "user" # pyright: ignore[reportIncompatibleVariableOverride]
-    content: str
+    content: str # pyright: ignore[reportIncompatibleVariableOverride,reportGeneralTypeIssues]
 
 
 class ToolMessage(ConfiguredBaseModel):
@@ -89,7 +90,7 @@ class ToolMessage(ConfiguredBaseModel):
 
 
 Message = Annotated[
-    Union[DeveloperMessage, SystemMessage, AssistantMessage, UserMessage, ToolMessage],
+    DeveloperMessage | SystemMessage | AssistantMessage | UserMessage | ToolMessage,
     Field(discriminator="role")
 ]
 

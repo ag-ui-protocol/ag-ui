@@ -2,9 +2,10 @@
 A demo of predictive state updates.
 """
 
+from __future__ import annotations
+
 import json
 import uuid
-from typing import Optional
 from litellm import completion
 from crewai.flow.flow import Flow, start, router, listen
 from ..sdk import (
@@ -43,7 +44,7 @@ class AgentState(CopilotKitState):
     """
     The state of the agent.
     """
-    document: Optional[str] = None
+    document: str | None = None
 
 class PredictiveStateUpdatesFlow(Flow[AgentState]):
     """
