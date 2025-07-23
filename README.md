@@ -140,7 +140,7 @@ https://github.com/user-attachments/assets/a67d3d54-36b2-4c7a-ac69-a0ca01365d5b
 Check out the [Contributing guide](https://github.com/ag-ui-protocol/ag-ui/blob/main/CONTRIBUTING.md)
 
 - **[Weekely AG-UI Working Group](https://lu.ma/CopilotKit?k=c)**  
-  📅 Follow the CopilotKit Luma Events Page
+  📅 Follow the CopilotKit Luma Events Calendar
 
 ## Roadmap
 
