@@ -4,6 +4,13 @@
 AG-UI is a lightweight, event-based protocol that standardizes how AI agents connect to user-facing applications.
 Built for simplicity and flexibility, it enables seamless integration between AI agents, real time user context, and user interfaces.
 
+---
+
+[📅 Upcoming Event: July 24 - San Francisco AG-UI workshop with AI Tinkerers in person (Feat. CopilotKit & Mastra)](https://lu.ma/ai-tinkerers-workshop?tk=JeUCY5)
+
+<br>
+
+
 [![Version](https://img.shields.io/npm/v/@ag-ui/core?label=Version&color=6963ff&logo=npm&logoColor=white)](https://www.npmjs.com/package/@ag-ui/core)
 ![MIT](https://img.shields.io/github/license/copilotkit/copilotkit?color=%236963ff&label=License)
 ![Discord](https://img.shields.io/discord/1379082175625953370?logo=discord&logoColor=%23FFFFFF&label=Discord&color=%236963ff)
