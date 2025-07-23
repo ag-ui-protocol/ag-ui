@@ -1,13 +1,14 @@
 import * as readline from "readline";
-import { agent } from "./agent";
 import { randomUUID } from "node:crypto";
+import { loadAgentFromCLI } from "./agents/loadAgent";
+import { AbstractAgent } from "@ag-ui/client";
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
+async function chatLoop(agent: AbstractAgent) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
 
-async function chatLoop() {
   console.log("🤖 AG-UI chat started! Type your messages and press Enter. Press Ctrl+D to quit.\n");
 
   return new Promise<void>((resolve) => {
@@ -75,7 +76,8 @@ async function chatLoop() {
 }
 
 async function main() {
-  await chatLoop();
+  const agent = await loadAgentFromCLI();
+  await chatLoop(agent);
 }
 
-main().catch(console.error);
+main();
