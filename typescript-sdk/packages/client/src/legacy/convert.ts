@@ -127,7 +127,13 @@ export const convertToLegacyEvents =
           case EventType.TOOL_CALL_ARGS: {
             const argsEvent = event as ToolCallArgsEvent;
 
-            const currentToolCall = currentToolCalls[currentToolCalls.length - 1];
+            // Find the tool call by ID instead of using the last one
+            const currentToolCall = currentToolCalls.find((tc) => tc.id === argsEvent.toolCallId);
+            if (!currentToolCall) {
+              console.warn(`TOOL_CALL_ARGS: No tool call found with ID '${argsEvent.toolCallId}'`);
+              return [];
+            }
+
             currentToolCall.function.arguments += argsEvent.delta;
             let didUpdateState = false;
 
