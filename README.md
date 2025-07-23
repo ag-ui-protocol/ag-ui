@@ -91,7 +91,7 @@ AG-UI integrates with many popular agent frameworks
 | [AG2](https://ag2.ai/)                                             | ✅ Supported             | ➡️ [Demo](https://v0-ag2-land.vercel.app/)       |
 | [Agno](https://github.com/agno-agi/agno)                           | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/agno)     |                                                  |
 | [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/llamaindex)      |                                               |
-| [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | 🛠️ In Progress           | –                                                                            |
+| [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | ✅ Supported           | ➡️ [Docs](https://docs.copilotkit.ai/pydantic-ai)                                                                           |
 | [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            |
 | [Google ADK](https://google.github.io/adk-docs/get-started/)       | 🛠️ In Progress           | –                                                                            |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 💡 Open to Contributions | –                                                                            |
