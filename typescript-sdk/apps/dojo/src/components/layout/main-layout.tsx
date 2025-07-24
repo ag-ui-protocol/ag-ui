@@ -4,18 +4,9 @@ import React, { Suspense, useState } from "react";
 import { ViewerLayout } from "@/components/layout/viewer-layout";
 import { Sidebar } from "@/components/sidebar/sidebar";
 
-import { usePathname, useSearchParams } from "next/navigation";
-import featureConfig from "@/config";
+import { useSearchParams } from "next/navigation";
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
-
-
-  // Extract the current demo ID from the pathname
-  const pathParts = pathname.split("/");
-  const currentFeatureId = pathParts[pathParts.length - 1];
-  const currentFeature = featureConfig.find((d) => d.id === currentFeatureId);
-
   return (
     <ViewerLayout showFileTree={false} showCodeEditor={false}>
       <div className="flex h-full w-full overflow-hidden">
