@@ -84,7 +84,6 @@ AG-UI is complementary to the other 2 top agentic protocols
 
 ### 1st party integrations with top agentic frameworks
 
-### 1st party integrations with top agentic frameworks
 
 ## 🛠 Supported Frameworks
 
