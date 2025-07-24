@@ -84,27 +84,31 @@ AG-UI is complementary to the other 2 top agentic protocols
 
 ### 1st party integrations with top agentic frameworks
 
-## 🛠 Supported Frameworks
+### 1st party integrations with top agentic frameworks
 
+## 🛠 Supported Frameworks
 
 AG-UI integrates with many popular agent frameworks
 
-| Framework                                                          | Status                   | AG-UI Resources                                                              | 
-| ------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------- | 
-| No-framework                                                       | ✅ Supported             | ➡️ Docs coming soon       |
-| [LangGraph](https://www.langchain.com/langgraph)                   | ✅ Supported             | ➡️ [Demo](https://v0-langgraph-land.vercel.app/) |  
-| [Mastra](https://mastra.ai/)                                       | ✅ Supported             | ➡️ [Demo](https://v0-mastra-land.vercel.app/)    |
-| [CrewAI](https://crewai.com/)                                      | ✅ Supported             | ➡️ [Demo](https://v0-crew-land.vercel.app/)      |
-| [AG2](https://ag2.ai/)                                             | ✅ Supported             | ➡️ [Demo](https://v0-ag2-land.vercel.app/)       |
-| [Agno](https://github.com/agno-agi/agno)                           | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/agno)     |                                                  |
-| [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/llamaindex)      |                                               |
-| [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | ✅ Supported           | ➡️ [Docs](https://docs.copilotkit.ai/pydantic-ai)                                                                           |
-| [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            |
-| [Google ADK](https://google.github.io/adk-docs/get-started/)       | 🛠️ In Progress           | –                                                                            |
-| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 💡 Open to Contributions | –                                                                            |
-| [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/)       | 💡 Open to Contributions | –                                                                            |
-| [Cloudflare Agents](https://developers.cloudflare.com/agents/)     | 💡 Open to Contributions | –                                                                            |
-| [Strands Agents SDK](https://github.com/strands-agents/sdk-python) | 💡 Open to Contributions | –                                                                            |
+| Framework                                                          | Status                   | AG-UI Resources                                                              | ✅ 1st Party Integration |
+| ------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------- | ------------------------ |
+| No-framework                                                       | ✅ Supported             | ➡️ Docs coming soon                                                          | ✅                      |
+| [LangGraph](https://www.langchain.com/langgraph)                   | ✅ Supported             | ➡️ [Demo](https://v0-langgraph-land.vercel.app/)                             | ✅                      |
+| [Mastra](https://mastra.ai/)                                       | ✅ Supported             | ➡️ [Demo](https://v0-mastra-land.vercel.app/)                                | ✅                      |
+| [CrewAI](https://crewai.com/)                                      | ✅ Supported             | ➡️ [Demo](https://v0-crew-land.vercel.app/)                                  | ✅                      |
+| [AG2](https://ag2.ai/)                                             | ✅ Supported             | ➡️ [Demo](https://v0-ag2-land.vercel.app/)                                   | ✅                      |
+| [Agno](https://github.com/agno-agi/agno)                           | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/agno)                                   | ✅                      |
+| [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/llamaindex)                             | ✅                      |
+| [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/pydantic-ai)                            | ✅                      |
+| [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            | ⬜                      |
+| [Google ADK](https://google.github.io/adk-docs/get-started/)       | 🛠️ In Progress           | –                                                                            | ⬜                      |
+| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 💡 Open to Contributions | –                                                                            | ⬜                      |
+| [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/)       | 💡 Open to Contributions | –                                                                            | ⬜                      |
+| [Cloudflare Agents](https://developers.cloudflare.com/agents/)     | 💡 Open to Contributions | –                                                                            | ⬜                      |
+| [Strands Agents SDK](https://github.com/strands-agents/sdk-python) | 💡 Open to Contributions | –                                                                            | ⬜                      |
+
+[View all supported frameworks →](https://ag-ui.com/frameworks)
+
 
 | Language SDK                                                      | Status                | AG-UI Resources                                                                 |
 | ------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------- |
