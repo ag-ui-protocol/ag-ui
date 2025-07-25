@@ -17,8 +17,7 @@ AG-UI is a lightweight, event-based protocol that standardizes how AI agents con
    Follow us →
   </a> 
 
-<img width="4096" height="1816" alt="Readme 3 - Redesign" src="https://github.com/user-attachments/assets/af15b751-a72a-434f-a93c-9103f2a17006" />
-
+<img width="4096" height="1752" alt="Your application-AG-UI protocol" src="https://github.com/user-attachments/assets/dc58c64c-3257-490a-b827-e163475f4166" />
 
 ## 🚀 Getting Started
 Create a new AG-UI application in seconds:
