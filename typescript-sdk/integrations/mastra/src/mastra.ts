@@ -74,6 +74,7 @@ export class MastraAgent extends AbstractAgent {
 
         // Handle local agent memory management (from Mastra implementation)
         if ("metrics" in this.agent) {
+          // @ts-ignore
           const memory = this.agent.getMemory();
 
           if (memory && input.state && Object.keys(input.state || {}).length > 0) {
@@ -164,6 +165,7 @@ export class MastraAgent extends AbstractAgent {
             onRunFinished: async () => {
               if ("metrics" in this.agent) {
                 try {
+                  // @ts-ignore
                   const memory = this.agent.getMemory();
                   if (memory) {
                     const workingMemory = await memory.getWorkingMemory({
