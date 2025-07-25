@@ -63,24 +63,48 @@ function extractBalancedBraces(text: string, startIndex: number): string {
 }
 
 const agentConfigs = parseAgentsFile();
-console.log("Loaded agents:", agentConfigs.length);
 
 const featureFiles = ["page.tsx", "style.css", "README.mdx"]
 
-function getFile(_filePath: string | undefined, _fileName?: string) {
+async function getFile(_filePath: string | undefined, _fileName?: string) {
   if (!_filePath) {
     console.warn(`File path is undefined, skipping.`);
     return {}
   }
+  
   const fileName = _fileName ?? _filePath.split('/').pop() ?? ''
   const filePath = _fileName ? path.join(_filePath, fileName) : _filePath;
-  if (!fs.existsSync(filePath)) {
-    console.warn(`File not found: ${filePath}, skipping.`);
-    return {}
-  }
-
+  
+  // Check if it's a remote URL
+  const isRemoteUrl = _filePath.startsWith('http://') || _filePath.startsWith('https://');
+  
+  let content: string;
+  
   try {
-    const content = fs.readFileSync(filePath, "utf8");
+    if (isRemoteUrl) {
+      // Convert GitHub URLs to raw URLs for direct file access
+      let fetchUrl = _filePath;
+      if (_filePath.includes('github.com') && _filePath.includes('/blob/')) {
+        fetchUrl = _filePath.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
+      }
+      
+      // Fetch remote file content
+      console.log(`Fetching remote file: ${fetchUrl}`);
+      const response = await fetch(fetchUrl);
+      if (!response.ok) {
+        console.warn(`Failed to fetch remote file: ${fetchUrl}, status: ${response.status}`);
+        return {}
+      }
+      content = await response.text();
+    } else {
+      // Handle local file
+      if (!fs.existsSync(filePath)) {
+        console.warn(`File not found: ${filePath}, skipping.`);
+        return {}
+      }
+      content = fs.readFileSync(filePath, "utf8");
+    }
+
     const extension = fileName.split(".").pop();
     let language = extension;
     if (extension === "py") language = "python";
@@ -95,21 +119,21 @@ function getFile(_filePath: string | undefined, _fileName?: string) {
     return {
       name: fileName,
       content,
-      // path: path.join(demoIdWithFramework, fileName), // Store relative path within agent/demo
       language,
       type: 'file'
     }
   } catch (error) {
     console.error(`Error reading file ${filePath}:`, error);
+    return {}
   }
 }
 
-function getFeatureFrontendFiles(featureId: string) {
+async function getFeatureFrontendFiles(featureId: string) {
   const featurePath = path.join(__dirname, `../src/app/[integrationId]/feature/${featureId as string}`);
   const retrievedFiles = []
 
   for (const fileName of featureFiles) {
-    retrievedFiles.push(getFile(featurePath, fileName))
+    retrievedFiles.push(await getFile(featurePath, fileName))
   }
 
   return retrievedFiles;
@@ -171,7 +195,7 @@ const agentFilesMapper: Record<string, (agentKeys: string[]) => Record<string, s
   }
 }
 
-function runGenerateContent() {
+async function runGenerateContent() {
   const result = {}
   for (const agentConfig of agentConfigs) {
     // Use the parsed agent keys instead of executing the agents function
@@ -179,15 +203,15 @@ function runGenerateContent() {
 
     const agentFilePaths = agentFilesMapper[agentConfig.id](agentConfig.agentKeys)
     // Per feature, assign all the frontend files like page.tsx as well as all agent files
-    agentsPerFeatures.forEach(featureId => {
+    for (const featureId of agentsPerFeatures) {
       // @ts-expect-error -- redundant error about indexing of a new object.
       result[`${agentConfig.id}::${featureId}`] = [
         // Get all frontend files for the feature
-        ...getFeatureFrontendFiles(featureId),
+        ...(await getFeatureFrontendFiles(featureId)),
         // Get the agent (python/TS) file
-        getFile(agentFilePaths[featureId])
+        await getFile(agentFilePaths[featureId])
       ]
-    })
+    }
   }
 
   return result
@@ -239,10 +263,12 @@ function runGenerateContent() {
 //     }
 //   }
 // }
-const result = runGenerateContent();
-fs.writeFileSync(
-    path.join(__dirname, "../src/files.json"),
-    JSON.stringify(result, null, 2)
-);
-
-console.log("Successfully generated src/files.json");
+(async () => {
+  const result = await runGenerateContent();
+  fs.writeFileSync(
+      path.join(__dirname, "../src/files.json"),
+      JSON.stringify(result, null, 2)
+  );
+  
+  console.log("Successfully generated src/files.json");
+})();
