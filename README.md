@@ -108,11 +108,12 @@ AG-UI integrates with many popular agent frameworks
 [View all supported frameworks →](https://ag-ui.com/frameworks)
 
 
-| Language SDK                                                      | Status                | AG-UI Resources                                                                 |
+| Language SDK                                                       | Status                   | AG-UI Resources                                                              |
 | ------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------- |
-| [.NET]()                                                           | 🛠️ In Progress               | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/38)                 |
-| [Nim]()                                                            | 🛠️ In Progress               | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/29)                 |
-| [Rust]()                                                           | 🛠️ In Progress               |                    |
+| [Kotlin]()                                                         | 🛠️ In Progress            | ➡️ [GitHub Source](https://github.com/Contextable/ag-ui-4k)                  |
+| [.NET]()                                                           | 🛠️ In Progress            | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/38)                     |
+| [Nim]()                                                            | 🛠️ In Progress            | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/29)                     |
+| [Golang]()                                                         | 🛠️ In Progress            | ➡️ [Issue](https://github.com/ag-ui-protocol/ag-ui/issues/156)               |
 
 
 [View all supported frameworks →](https://ag-ui.com/frameworks)
