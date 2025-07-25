@@ -12,23 +12,18 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
 } from "../ui/dropdown-menu";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "../ui/button";
 import { menuIntegrations } from "@/menu";
 import { Feature } from "@/types/integration";
+import { useURLParams } from "@/contexts/url-params-context";
+import { View } from "@/types/interface";
 
-interface SidebarProps {
-  activeTab?: string;
-  onTabChange?: (tab: string) => void;
-  readmeContent?: string | null;
-  pickerDisabled?: boolean;
-}
-
-export function Sidebar({ activeTab = "preview", onTabChange, readmeContent, pickerDisabled }: SidebarProps) {
+export function Sidebar() {
   const router = useRouter();
   const pathname = usePathname();
+  const { view, pickerDisabled, setView } = useURLParams();
   const [isDarkTheme, setIsDarkTheme] = useState<boolean>(false);
 
   // Extract the current integration ID from the pathname
@@ -105,10 +100,10 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent, pic
 
       {/* Controls Section */}
       <div className="p-4 border-b bg-background">
-        {/* Preview/Code Tabs */}
+        {/* Integration picker */}
         {!pickerDisabled && (
           <div className="mb-1">
-            <label className="block text-sm font-medium text-muted-foreground mb-2">View</label>
+            <label className="block text-sm font-medium text-muted-foreground mb-2">Integrations</label>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" className="w-full justify-between">
@@ -132,6 +127,40 @@ export function Sidebar({ activeTab = "preview", onTabChange, readmeContent, pic
             </DropdownMenu>
           </div>
         )}
+
+        {/* Preview/Code Tabs */}
+        <div className="mb-1">
+          <label className="block text-sm font-medium text-muted-foreground mb-2">View</label>
+          <Tabs
+            value={view}
+            onValueChange={tab => setView(tab as View)}
+            className="w-full"
+          >
+            <TabsList className="w-full h-9 bg-background border shadow-sm rounded-lg p-1">
+              <TabsTrigger
+                value="preview"
+                className="flex-1 h-7 px-2 text-sm font-medium gap-1 rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow"
+              >
+                <Eye className="h-3 w-3" />
+                <span>Preview</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="code"
+                className="flex-1 h-7 px-2 text-sm font-medium gap-1 rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow"
+              >
+                <Code className="h-3 w-3" />
+                <span>Code</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="readme"
+                className="flex-1 h-7 px-2 text-sm font-medium gap-1 rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow"
+              >
+                <Book className="h-3 w-3" />
+                <span>Docs</span>
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
       </div>
 
       {/* Demo List */}

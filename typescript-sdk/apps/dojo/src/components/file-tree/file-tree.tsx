@@ -1,85 +1,77 @@
 import React from "react";
 import { ChevronDown, ChevronRight, File, Folder } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FeatureFile } from "@/types/feature";
 
 // Helper function to convert flat file paths to a hierarchical structure
-function convertToFileTree(files: FileEntry[]) {
-  const root: FileEntry[] = [];
-  const map: Record<string, FileEntry> = {};
-
-  // First pass: create all directories and files
-  files.forEach((file) => {
-    // Split the path into segments
-    const pathParts = file.path.split("/");
-    const fileName = pathParts.pop();
-
-    let currentPath = "";
-    let currentLevel = root;
-
-    // Create or navigate the directory structure
-    pathParts.forEach((part) => {
-      currentPath = currentPath ? `${currentPath}/${part}` : part;
-
-      // Check if this directory already exists
-      let dir = map[currentPath];
-      if (!dir) {
-        // Create new directory
-        dir = {
-          name: part,
-          path: currentPath,
-          type: "directory",
-          content: "",
-          children: [],
-        };
-        map[currentPath] = dir;
-        currentLevel.push(dir);
-      }
-
-      // Navigate to this directory for the next iteration
-      currentLevel = dir.children || [];
-    });
-
-    // Add the file to the last directory level
-    currentLevel.push({
-      name: fileName || "",
-      path: file.path,
-      type: "file",
-      content: "",
-    });
-  });
-
-  return root;
-}
+// function convertToFileTree(files: FeatureFile[]) {
+//   const root: FeatureFile[] = [];
+//   const map: Record<string, FeatureFile> = {};
+//
+//   // First pass: create all directories and files
+//   files.forEach((file) => {
+//     // Split the path into segments
+//     const pathParts = file.path.split("/");
+//     const fileName = pathParts.pop();
+//
+//     let currentPath = "";
+//     let currentLevel = root;
+//
+//     // Create or navigate the directory structure
+//     pathParts.forEach((part) => {
+//       currentPath = currentPath ? `${currentPath}/${part}` : part;
+//
+//       // Check if this directory already exists
+//       let dir = map[currentPath];
+//       if (!dir) {
+//         // Create new directory
+//         dir = {
+//           name: part,
+//           path: currentPath,
+//           type: "directory",
+//           content: "",
+//           children: [],
+//         };
+//         map[currentPath] = dir;
+//         currentLevel.push(dir);
+//       }
+//
+//       // Navigate to this directory for the next iteration
+//       currentLevel = dir.children || [];
+//     });
+//
+//     // Add the file to the last directory level
+//     currentLevel.push({
+//       name: fileName || "",
+//       path: file.path,
+//       type: "file",
+//       content: "",
+//     });
+//   });
+//
+//   return root;
+// }
 
 interface FileTreeProps {
-  basePath: string;
-  files: FileEntry[];
-  onFileSelect: (path: string) => void;
-  selectedFile?: string;
-}
-
-export interface FileEntry {
-  name: string;
-  path: string;
-  type: "file" | "directory";
-  content: string;
-  children?: FileEntry[];
+  files: FeatureFile[];
+  onFileSelect: (fileName: string) => void;
+  selectedFile?: FeatureFile;
 }
 
 function FileTreeNode({
   entry,
   depth = 0,
   onFileSelect,
-  selectedFile,
+  selectedFileName,
 }: {
-  entry: FileEntry;
+  entry: FeatureFile;
   depth?: number;
-  onFileSelect: (path: string) => void;
-  selectedFile?: string;
+  onFileSelect: (fileName: string) => void;
+  selectedFileName?: string;
 }) {
   const [isOpen, setIsOpen] = React.useState(true);
   const isDirectory = entry.type === "directory";
-  const isSelected = entry.path === selectedFile;
+  const isSelected = entry.name === selectedFileName;
 
   return (
     <div className={cn("relative", depth > 0 && "pl-2")}>
@@ -98,7 +90,7 @@ function FileTreeNode({
           if (isDirectory) {
             setIsOpen(!isOpen);
           } else {
-            onFileSelect(entry.path);
+            onFileSelect(entry.name);
           }
         }}
       >
@@ -115,17 +107,6 @@ function FileTreeNode({
         )}
         <span className="truncate">{entry.name}</span>
       </button>
-      {isDirectory &&
-        isOpen &&
-        entry.children?.map((child) => (
-          <FileTreeNode
-            key={child.path}
-            entry={child}
-            depth={depth + 1}
-            onFileSelect={onFileSelect}
-            selectedFile={selectedFile}
-          />
-        ))}
     </div>
   );
 }
@@ -133,12 +114,12 @@ function FileTreeNode({
 export function FileTree({ files, onFileSelect, selectedFile }: FileTreeProps) {
   return (
     <div className="p-2">
-      {convertToFileTree(files).map((entry) => (
+      {files.map((entry) => (
         <FileTreeNode
-          key={entry.path}
+          key={entry.name}
           entry={entry}
           onFileSelect={onFileSelect}
-          selectedFile={selectedFile}
+          selectedFileName={selectedFile?.name}
         />
       ))}
     </div>
