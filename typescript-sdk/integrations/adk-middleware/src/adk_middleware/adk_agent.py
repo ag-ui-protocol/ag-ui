@@ -13,7 +13,7 @@ from ag_ui.core import (
     RunStartedEvent, RunFinishedEvent, RunErrorEvent,
     TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent,
     StateSnapshotEvent, StateDeltaEvent,
-    Context, ToolMessage, ToolCallEndEvent, SystemMessage
+    Context, ToolMessage, ToolCallEndEvent, SystemMessage,ToolCallResultEvent
 )
 
 from google.adk import Runner
@@ -626,6 +626,13 @@ class ADKAgent:
                     logger.info(f"Detected ToolCallEndEvent with id: {event.tool_call_id}")
                     has_tool_calls = True
                     tool_call_ids.append(event.tool_call_id)
+
+                # backend tools will always emit ToolCallResultEvent
+                # If it is a backend tool then we don't need to add the tool_id in pending_tools
+                if isinstance(event, ToolCallResultEvent) and event.tool_call_id in tool_call_ids:
+                    logger.info(f"Detected ToolCallResultEvent with id: {event.tool_call_id}")
+                    tool_call_ids.remove(event.tool_call_id)
+                
                 
                 logger.debug(f"Yielding event: {type(event).__name__}")
                 yield event
