@@ -189,29 +189,29 @@ class ADKAgent:
         """
         logger.debug(f"Adding pending tool call {tool_call_id} for session {session_id}, app_name={app_name}, user_id={user_id}")
         try:
-            session = await self._session_manager._session_service.get_session(
+            # Get current pending calls using SessionManager
+            pending_calls = await self._session_manager.get_state_value(
                 session_id=session_id,
                 app_name=app_name,
-                user_id=user_id
+                user_id=user_id,
+                key="pending_tool_calls",
+                default=[]
             )
-            logger.debug(f"Retrieved session: {session}")
-            if session:
-                # Get current state or initialize empty
-                current_state = session.state or {}
-                pending_calls = current_state.get("pending_tool_calls", [])
+            
+            # Add new tool call if not already present
+            if tool_call_id not in pending_calls:
+                pending_calls.append(tool_call_id)
                 
-                # Add new tool call if not already present
-                if tool_call_id not in pending_calls:
-                    pending_calls.append(tool_call_id)
-                    
-                    # Persist the state change using append_event with EventActions
-                    from google.adk.events import Event, EventActions
-                    event = Event(
-                        author="adk_middleware",
-                        actions=EventActions(stateDelta={"pending_tool_calls": pending_calls})
-                    )
-                    await self._session_manager._session_service.append_event(session, event)
-                    
+                # Update the state using SessionManager
+                success = await self._session_manager.set_state_value(
+                    session_id=session_id,
+                    app_name=app_name,
+                    user_id=user_id,
+                    key="pending_tool_calls",
+                    value=pending_calls
+                )
+                
+                if success:
                     logger.info(f"Added tool call {tool_call_id} to session {session_id} pending list")
         except Exception as e:
             logger.error(f"Failed to add pending tool call {tool_call_id} to session {session_id}: {e}")
@@ -242,28 +242,29 @@ class ADKAgent:
                     break
             
             if session_key and user_id and app_name:
-                session = await self._session_manager._session_service.get_session(
+                # Get current pending calls using SessionManager
+                pending_calls = await self._session_manager.get_state_value(
                     session_id=session_id,
                     app_name=app_name,
-                    user_id=user_id
+                    user_id=user_id,
+                    key="pending_tool_calls",
+                    default=[]
                 )
-                if session:
-                    # Get current state
-                    current_state = session.state or {}
-                    pending_calls = current_state.get("pending_tool_calls", [])
+                
+                # Remove tool call if present
+                if tool_call_id in pending_calls:
+                    pending_calls.remove(tool_call_id)
                     
-                    # Remove tool call if present
-                    if tool_call_id in pending_calls:
-                        pending_calls.remove(tool_call_id)
-                        
-                        # Persist the state change using append_event with EventActions
-                        from google.adk.events import Event, EventActions
-                        event = Event(
-                            author="adk_middleware",
-                            actions=EventActions(stateDelta={"pending_tool_calls": pending_calls})
-                        )
-                        await self._session_manager._session_service.append_event(session, event)
-                        
+                    # Update the state using SessionManager
+                    success = await self._session_manager.set_state_value(
+                        session_id=session_id,
+                        app_name=app_name,
+                        user_id=user_id,
+                        key="pending_tool_calls",
+                        value=pending_calls
+                    )
+                    
+                    if success:
                         logger.info(f"Removed tool call {tool_call_id} from session {session_id} pending list")
         except Exception as e:
             logger.error(f"Failed to remove pending tool call {tool_call_id} from session {session_id}: {e}")
@@ -283,15 +284,16 @@ class ADKAgent:
                 for key in keys:
                     if key.endswith(f":{session_id}"):
                         app_name = key.split(':', 1)[0]
-                        session = await self._session_manager._session_service.get_session(
+                        
+                        # Get pending calls using SessionManager
+                        pending_calls = await self._session_manager.get_state_value(
                             session_id=session_id,
                             app_name=app_name,
-                            user_id=uid
+                            user_id=uid,
+                            key="pending_tool_calls",
+                            default=[]
                         )
-                        if session:
-                            current_state = session.state or {}
-                            pending_calls = current_state.get("pending_tool_calls", [])
-                            return len(pending_calls) > 0
+                        return len(pending_calls) > 0
         except Exception as e:
             logger.error(f"Failed to check pending tool calls for session {session_id}: {e}")
         
