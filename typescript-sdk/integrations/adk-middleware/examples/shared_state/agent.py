@@ -143,8 +143,7 @@ def generate_recipe(
         
         tool_context.state["recipe"] = current_recipe
         
-        # Log the update
-        print(f"Recipe updated: {recipe.get('change')}")
+
         
         return {"status": "success", "message": "Recipe generated successfully"}
         
@@ -158,7 +157,7 @@ def on_before_agent(callback_context: CallbackContext):
     """
     Initialize recipe state if it doesn't exist.
     """
-    print('recipe state ==>',callback_context.state.get('recipe'))
+
     if "recipe" not in callback_context.state:
         # Initialize with default recipe
         default_recipe =     {
@@ -169,7 +168,7 @@ def on_before_agent(callback_context: CallbackContext):
             "instructions": ["First step instruction"]
         }
         callback_context.state["recipe"] = default_recipe
-        print("Initialized default recipe state")
+ 
 
     return None
 
@@ -181,7 +180,6 @@ def before_model_modifier(
 ) -> Optional[LlmResponse]:
     """Inspects/modifies the LLM request or skips the call."""
     agent_name = callback_context.agent_name
-    print(f"[Callback] Before model call for agent: {agent_name}")
     if agent_name == "RecipeAgent":
         recipe_json = "No recipe yet"
         if "recipe" in callback_context.state and callback_context.state["recipe"] is not None:
