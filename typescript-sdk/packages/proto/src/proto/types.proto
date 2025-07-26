@@ -19,4 +19,5 @@ message Message {
   optional string name = 4;
   repeated ToolCall tool_calls = 5;
   optional string tool_call_id = 6;
+  optional string error = 7;
 }

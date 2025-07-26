@@ -144,6 +144,7 @@ class ToolMessage(ConfiguredBaseModel):
     role: Literal["tool"]
     content: str
     tool_call_id: str
+    error: Optional[str] = None
 ```
 
 | Property       | Type              | Description                                  |
@@ -152,6 +153,7 @@ class ToolMessage(ConfiguredBaseModel):
 | `content`      | `str`             | Text content of the message                  |
 | `role`         | `Literal["tool"]` | Role of the message sender, fixed as "tool"  |
 | `tool_call_id` | `str`             | ID of the tool call this message responds to |
+| `error`        | `Optional[str]`   | Error message if the tool call failed        |
 
 ### Message
 
