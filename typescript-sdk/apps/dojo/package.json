@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "mastra:dev": "mastra dev"
+    "mastra:dev": "mastra dev",
+    "generate-content-json": "tsx scripts/generate-content-json.ts"
   },
   "dependencies": {
     "@ag-ui/agno": "workspace:*",
@@ -86,6 +87,7 @@
     "eslint-config-next": "15.2.1",
     "mastra": "^0.10.10",
     "tailwindcss": "^4",
+    "tsx": "^4.7.0",
     "typescript": "^5"
   }
 }

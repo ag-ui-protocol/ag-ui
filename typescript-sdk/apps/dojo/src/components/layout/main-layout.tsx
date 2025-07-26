@@ -1,14 +1,13 @@
 "use client";
 
-import React, { Suspense, useState } from "react";
+import React, { Suspense } from "react";
 import { ViewerLayout } from "@/components/layout/viewer-layout";
 import { Sidebar } from "@/components/sidebar/sidebar";
-
-import { useSearchParams } from "next/navigation";
+import { useURLParams } from "@/contexts/url-params-context";
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
   return (
-    <ViewerLayout showFileTree={false} showCodeEditor={false}>
+    <ViewerLayout>
       <div className="flex h-full w-full overflow-hidden">
         {/* Sidebar */}
         <Suspense>
@@ -26,10 +25,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
 }
 
 function MaybeSidebar() {
-  const searchParams = useSearchParams();
+  const { sidebarHidden } = useURLParams();
 
-  const sidebarDisabled = searchParams.get("sidebar") === "disabled";
-  const integrationPickerDisabled = searchParams.get("picker") === "false";
-
-  return !sidebarDisabled && <Sidebar activeTab={"preview"} readmeContent={""} pickerDisabled={integrationPickerDisabled} />;
+  return !sidebarHidden && <Sidebar />;
 }
