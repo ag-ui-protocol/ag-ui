@@ -33,7 +33,7 @@ try:
     sample_agent = LlmAgent(
         name="assistant",
         model="gemini-2.0-flash",
-        instruction="You are a helpful assistant.",
+        instruction="You are a helpful assistant. Help users by answering their questions and assisting with their needs.",
         tools=[adk_tools.preload_memory_tool.PreloadMemoryTool()]
     )
     # Register the agent
