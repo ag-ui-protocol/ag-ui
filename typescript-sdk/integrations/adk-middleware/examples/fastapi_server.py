@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from .tool_based_generative_ui.agent import haiku_generator_agent
 from .human_in_the_loop.agent import human_in_loop_agent
 from .shared_state.agent import shared_state_agent
+from .predictive_state_updates.agent import predictive_state_updates_agent
 
 # Basic logging configuration
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -41,6 +42,7 @@ try:
     registry.register_agent('adk-tool-based-generative-ui', haiku_generator_agent)
     registry.register_agent('adk-human-in-loop-agent', human_in_loop_agent)
     registry.register_agent('adk-shared-state-agent', shared_state_agent)
+    registry.register_agent('adk-predictive-state-agent', predictive_state_updates_agent)
     # Create ADK middleware agent
     adk_agent = ADKAgent(
         app_name="demo_app",
@@ -70,6 +72,13 @@ try:
         use_in_memory_services=True
     )
     
+    adk_predictive_state_agent = ADKAgent(
+        app_name="demo_app",
+        user_id="demo_user",
+        session_timeout_seconds=3600,
+        use_in_memory_services=True
+    )
+    
     # Create FastAPI app
     app = FastAPI(title="ADK Middleware Demo")
     
@@ -78,6 +87,7 @@ try:
     add_adk_fastapi_endpoint(app, adk_agent_haiku_generator, path="/adk-tool-based-generative-ui")
     add_adk_fastapi_endpoint(app, adk_human_in_loop_agent, path="/adk-human-in-loop-agent")
     add_adk_fastapi_endpoint(app, adk_shared_state_agent, path="/adk-shared-state-agent")
+    add_adk_fastapi_endpoint(app, adk_shared_state_agent, path="/adk-predictive-state-agent")
     
     @app.get("/")
     async def root():

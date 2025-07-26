@@ -14,7 +14,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   {
     id: "adk-middleware",
     name: "ADK Middleware",
-    features: ["agentic_chat","tool_based_generative_ui","human_in_the_loop","shared_state"],
+    features: ["agentic_chat","tool_based_generative_ui","human_in_the_loop","shared_state","predictive_state_updates"],
   },
   {
     id: "server-starter-all-features",
