@@ -10,39 +10,39 @@ jobs:
   python:
     name: Python SDK Tests
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.9'
-        
+
     - name: Install Poetry
       uses: snok/install-poetry@v1
       with:
         version: latest
         virtualenvs-create: true
         virtualenvs-in-project: true
-        
+
     - name: Load cached venv
       id: cached-poetry-dependencies
       uses: actions/cache@v4
       with:
         path: python-sdk/.venv
         key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
-        
+
     - name: Install dependencies
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
       working-directory: python-sdk
       run: poetry install --no-interaction --no-root
-      
+
     - name: Install project
       working-directory: python-sdk
       run: poetry install --no-interaction
-      
+
     - name: Run tests
       working-directory: python-sdk
       run: poetry run python -m unittest discover tests -v
@@ -50,27 +50,27 @@ jobs:
   typescript:
     name: TypeScript SDK Tests
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
+
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '18'
-        
+
     - name: Install protoc
       uses: arduino/setup-protoc@v3
       with:
         version: "25.x"
         repo-token: ${{ secrets.GITHUB_TOKEN }}
-        
+
     - name: Install pnpm
       uses: pnpm/action-setup@v4
       with:
         version: 9.0.0
-        
+
     - name: Setup pnpm cache
       uses: actions/cache@v4
       with:
@@ -78,11 +78,15 @@ jobs:
         key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
         restore-keys: |
           ${{ runner.os }}-pnpm-store-
-        
+
     - name: Install dependencies
       working-directory: typescript-sdk
       run: pnpm install --frozen-lockfile
-      
+
+    - name: Test Build
+      working-directory: typescript-sdk
+      run: pnpm run build
+
     - name: Run tests
       working-directory: typescript-sdk
-      run: pnpm run test 
+      run: pnpm run test
