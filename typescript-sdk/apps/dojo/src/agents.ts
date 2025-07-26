@@ -138,6 +138,10 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
           deploymentUrl: envVars.langgraphUrl,
           graphId: "tool_based_generative_ui",
         }),
+        gomoku: new LangGraphAgent({
+          deploymentUrl: "http://localhost:2024",
+          graphId: "gomoku",
+        }),
       };
     },
   },
