@@ -10,12 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **NEW**: SystemMessage support for ADK agents (issue #22) - SystemMessages as first message are now appended to agent instructions
 - **NEW**: Comprehensive tests for SystemMessage functionality including edge cases
+- **NEW**: Long running tools can be defined in backend side as well
+- **NEW**: Predictive state demo is added in dojo App
 
 ### Fixed  
 - **FIXED**: Race condition in tool result processing causing "No pending tool calls found" warnings
 - **FIXED**: Tool call removal now happens after pending check to prevent race conditions
 - **IMPROVED**: Better handling of empty tool result content with graceful JSON parsing fallback
 - **FIXED**: Pending tool call state management now uses SessionManager methods (issue #25)
+- **FIXED**: Pending tools issue for normal backend tools is now fixed (issue #32)
 
 ### Enhanced
 - **LOGGING**: Added debug logging for tool result processing to aid in troubleshooting
