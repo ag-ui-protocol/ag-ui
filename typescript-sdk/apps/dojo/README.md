@@ -23,7 +23,7 @@ brew install protobuf
 ```
 
 ```bash
-npm i turbo
+pnpm i turbo
 ```
 
 ```bash

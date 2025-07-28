@@ -61,6 +61,7 @@
     "rxjs": "7.8.1",
     "tailwind-merge": "^3.0.2",
     "tailwindcss-animate": "^1.0.7",
+    "turbo": "^2.4.4",
     "uuid": "^11.1.0",
     "zod": "^3.22.4"
   },
