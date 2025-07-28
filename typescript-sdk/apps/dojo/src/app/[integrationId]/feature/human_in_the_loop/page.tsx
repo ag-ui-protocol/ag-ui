@@ -21,7 +21,7 @@ const HumanInTheLoop: React.FC<HumanInTheLoopProps> = ({ params }) => {
       // agent lock to the relevant agent
       agent="human_in_the_loop"
     >
-      <Chat />
+      <Chat integrationId={integrationId} />
     </CopilotKit>
   );
 };
@@ -93,7 +93,9 @@ const InterruptHumanInTheLoop: React.FC<{
   );
 };
 
-const Chat = () => {
+const Chat = ({ integrationId }: { integrationId: string }) => {
+  // Langgraph uses it's own hook to handle human-in-the-loop interactions via langgraph interrupts,
+  // This hook won't do anything for other integrations.
   useLangGraphInterrupt({
     render: ({ event, resolve }) => <InterruptHumanInTheLoop event={event} resolve={resolve} />,
   });
@@ -117,6 +119,9 @@ const Chat = () => {
         ],
       },
     ],
+    // Langgraph uses it's own hook to handle human-in-the-loop interactions via langgraph interrupts,
+    // so don't use this action for langgraph integration.
+    available: ['langgraph', 'langgraph-fastapi'].includes(integrationId) ? 'disabled' : 'enabled',
     renderAndWaitForResponse: ({ args, respond, status }) => {
       return <StepsFeedback args={args} respond={respond} status={status} />;
     },

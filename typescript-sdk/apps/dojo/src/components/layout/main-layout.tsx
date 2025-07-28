@@ -1,25 +1,20 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { Suspense, useState } from "react";
 import { ViewerLayout } from "@/components/layout/viewer-layout";
 import { Sidebar } from "@/components/sidebar/sidebar";
 
-import { usePathname } from "next/navigation";
-import featureConfig from "@/config";
+import { useSearchParams } from "next/navigation";
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
-
-  // Extract the current demo ID from the pathname
-  const pathParts = pathname.split("/");
-  const currentFeatureId = pathParts[pathParts.length - 1];
-  const currentFeature = featureConfig.find((d) => d.id === currentFeatureId);
-
   return (
     <ViewerLayout showFileTree={false} showCodeEditor={false}>
       <div className="flex h-full w-full overflow-hidden">
         {/* Sidebar */}
-        <Sidebar activeTab={"preview"} readmeContent={""} />
+        <Suspense>
+          <MaybeSidebar/>
+        </Suspense>
+
 
         {/* Content */}
         <div className="flex-1 overflow-auto">
@@ -28,4 +23,13 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
       </div>
     </ViewerLayout>
   );
+}
+
+function MaybeSidebar() {
+  const searchParams = useSearchParams();
+
+  const sidebarDisabled = searchParams.get("sidebar") === "disabled";
+  const integrationPickerDisabled = searchParams.get("picker") === "false";
+
+  return !sidebarDisabled && <Sidebar activeTab={"preview"} readmeContent={""} pickerDisabled={integrationPickerDisabled} />;
 }
