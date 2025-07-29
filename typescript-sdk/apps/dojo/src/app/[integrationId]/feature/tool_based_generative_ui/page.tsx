@@ -1,10 +1,12 @@
 "use client";
 import { CopilotKit, useCopilotAction } from "@copilotkit/react-core";
-import { CopilotKitCSSProperties, CopilotSidebar } from "@copilotkit/react-ui";
-import { Dispatch, SetStateAction, useState } from "react";
+import { CopilotKitCSSProperties, CopilotSidebar, CopilotChat } from "@copilotkit/react-ui";
+import { Dispatch, SetStateAction, useState, useEffect } from "react";
 import "@copilotkit/react-ui/styles.css";
 import "./style.css";
 import React, { useMemo } from "react";
+import { useMobileView } from "@/utils/use-mobile-view";
+import { useMobileChat } from "@/utils/use-mobile-chat";
 
 interface ToolBasedGenerativeUIProps {
   params: Promise<{
@@ -27,16 +29,29 @@ interface HaikuCardProps{
 
 export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIProps) {
   const { integrationId } = React.use(params);
+  const { isMobile } = useMobileView();
+  const defaultChatHeight = 50
+  const {
+    isChatOpen,
+    setChatHeight,
+    setIsChatOpen,
+    isDragging,
+    chatHeight,
+    handleDragStart
+  } = useMobileChat(defaultChatHeight)
+
+  const chatTitle = 'Haiku Generator'
+  const chatDescription = 'Ask me to create haikus'
+  const initialLabel = 'I\'m a haiku generator 👋. How can I help you?'
 
   return (
     <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
-      // agent lock to the relevant agent
       agent="tool_based_generative_ui"
     >
       <div
-        className="min-h-full w-full flex items-center justify-center"
+        className={`${isMobile ? 'h-screen' : 'min-h-full'} w-full relative overflow-hidden`}
         style={
           {
             // "--copilot-kit-primary-color": "#222",
@@ -45,14 +60,103 @@ export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIP
         }
       >
         <Haiku />
-        <CopilotSidebar
-          defaultOpen={true}
-          labels={{
-            title: "Haiku Generator",
-            initial: "I'm a haiku generator 👋. How can I help you?",
-          }}
-          clickOutsideToClose={false}
-        />
+
+        {/* Desktop Sidebar */}
+        {!isMobile && (
+          <CopilotSidebar
+            defaultOpen={true}
+            labels={{
+              title: chatTitle,
+              initial: initialLabel,
+            }}
+            clickOutsideToClose={false}
+          />
+        )}
+
+        {/* Mobile Pull-Up Chat */}
+        {isMobile && (
+          <>
+            {/* Chat Toggle Button */}
+            <div className="fixed bottom-0 left-0 right-0 z-50">
+              <div className="bg-gradient-to-t from-white via-white to-transparent h-6"></div>
+              <div
+                className="bg-white border-t border-gray-200 px-4 py-3 flex items-center justify-between cursor-pointer shadow-lg"
+                onClick={() => {
+                  if (!isChatOpen) {
+                    setChatHeight(defaultChatHeight); // Reset to good default when opening
+                  }
+                  setIsChatOpen(!isChatOpen);
+                }}
+              >
+                <div className="flex items-center gap-3">
+                  <div>
+                    <div className="font-medium text-gray-900">{chatTitle}</div>
+                    <div className="text-sm text-gray-500">{chatDescription}</div>
+                  </div>
+                </div>
+                <div className={`transform transition-transform duration-300 ${isChatOpen ? 'rotate-180' : ''}`}>
+                  <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+
+            {/* Pull-Up Chat Container */}
+            <div
+              className={`fixed inset-x-0 bottom-0 z-40 bg-white rounded-t-2xl shadow-[0px_0px_20px_0px_rgba(0,0,0,0.15)] transform transition-all duration-300 ease-in-out flex flex-col ${
+                isChatOpen ? 'translate-y-0' : 'translate-y-full'
+              } ${isDragging ? 'transition-none' : ''}`}
+              style={{ 
+                height: `${chatHeight}vh`,
+                paddingBottom: 'env(safe-area-inset-bottom)' // Handle iPhone bottom padding
+              }}
+            >
+              {/* Drag Handle Bar */}
+              <div 
+                className="flex justify-center pt-3 pb-2 flex-shrink-0 cursor-grab active:cursor-grabbing"
+                onMouseDown={handleDragStart}
+              >
+                <div className="w-12 h-1 bg-gray-400 rounded-full hover:bg-gray-500 transition-colors"></div>
+              </div>
+              
+              {/* Chat Header */}
+              <div className="px-4 py-3 border-b border-gray-100 flex-shrink-0">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <h3 className="font-semibold text-gray-900">{chatTitle}</h3>
+                  </div>
+                  <button
+                    onClick={() => setIsChatOpen(false)}
+                    className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+                  >
+                    <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* Chat Content - Flexible container for messages and input */}
+              <div className="flex-1 flex flex-col min-h-0 overflow-hidden pb-16">
+                <CopilotChat
+                  className="h-full flex flex-col"
+                  labels={{
+                    initial: initialLabel,
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Backdrop */}
+            {isChatOpen && (
+              <div
+                className="fixed inset-0 z-30"
+                onClick={() => setIsChatOpen(false)}
+              />
+            )}
+          </>
+        )}
       </div>
     </CopilotKit>
   );
@@ -201,7 +305,7 @@ function Haiku() {
       },
     ],
     followUp: false,
-    handler: async ({ japanese, english, image_names }) => {
+    handler: async ({ japanese, english, image_names }: { japanese: string[], english: string[], image_names: string[] }) => {
       const finalCorrectedImages = validateAndCorrectImageNames(image_names);
       const newHaiku = {
         japanese: japanese || [],
@@ -215,7 +319,7 @@ function Haiku() {
       setTimeout(() => setIsJustApplied(false), 600);
       return "Haiku generated.";
     },
-    render: ({ args: generatedHaiku }) => {
+    render: ({ args: generatedHaiku }: { args: Partial<GenerateHaiku> }) => {
       return (
         <HaikuCard generatedHaiku={generatedHaiku} setHaikus={setHaikus} haikus={haikus} />
       );
@@ -226,12 +330,13 @@ function Haiku() {
     haikus.filter((haiku) => haiku.english[0] !== "A placeholder verse—")
   ), [haikus]);
 
-  return (
-    <div className="flex h-screen w-full">
+  const { isMobile } = useMobileView();
 
+  return (
+    <div className="flex h-full w-full">
       {/* Thumbnail List */}
-      {generatedHaikus.length && (
-        <div className="w-40 p-4 border-r border-gray-200 overflow-y-auto overflow-x-hidden">
+      {Boolean(generatedHaikus.length) && !isMobile && (
+        <div className="w-40 p-4 border-r border-gray-200 overflow-y-auto overflow-x-hidden max-w-1">
           {generatedHaikus.map((haiku, index) => (
             <div
               key={index}
@@ -278,9 +383,12 @@ function Haiku() {
       )}
 
       {/* Main Display */}
-      {/* Add a margin to the left of margin-left: -48px; */}
-      <div className="flex-1 p-8 flex items-center justify-center " style={{ marginLeft: '-48px' }}>
-        <div className="haiku-stack">
+      <div className={`flex-1 flex items-center justify-center h-full ${
+        isMobile 
+          ? 'px-6' 
+          : 'p-8'
+      }`} style={{ marginLeft: isMobile ? '0' : '-48px' }}>
+        <div className="haiku-stack w-full max-w-lg">
           {haikus.filter((_haiku: Haiku, index: number) => {
             if (haikus.length == 1) return true;
             else return index == activeIndex + 1;
@@ -292,28 +400,47 @@ function Haiku() {
                 zIndex: index === activeIndex ? haikus.length : index,
                 transform: `translateY(${index === activeIndex ? '0' : `${(index - activeIndex) * 20}px`}) scale(${index === activeIndex ? '1' : '0.95'})`,
               }}
-              // onClick={() => setActiveIndex(index)}
             >
               {haiku.japanese.map((line, lineIndex) => (
                 <div
-                  className="flex items-start gap-4 mb-4 haiku-line"
+                  className={`flex items-start mb-4 haiku-line ${
+                    isMobile 
+                      ? 'flex-col gap-1' 
+                      : 'gap-4'
+                  }`}
                   key={lineIndex}
                   style={{ animationDelay: `${lineIndex * 0.1}s` }}
                 >
-                  <p className="text-4xl font-bold text-gray-600 w-auto">{line}</p>
-                  <p className="text-base font-light text-gray-500 w-auto">{haiku.english?.[lineIndex]}</p>
+                  <p className={`font-bold text-gray-600 w-auto ${
+                    isMobile 
+                      ? 'text-2xl leading-tight' 
+                      : 'text-4xl'
+                  }`}>
+                    {line}
+                  </p>
+                  <p className={`font-light text-gray-500 w-auto ${
+                    isMobile 
+                      ? 'text-sm ml-2' 
+                      : 'text-base'
+                  }`}>
+                    {haiku.english?.[lineIndex]}
+                  </p>
                 </div>
               ))}
               {haiku.image_names && haiku.image_names.length === 3 && (
-                <div className="mt-6 flex gap-4 justify-center">
+                <div className={`flex justify-center ${
+                  isMobile 
+                    ? 'mt-4 gap-2 flex-wrap' 
+                    : 'mt-6 gap-4'
+                }`}>
                   {haiku.image_names.map((imageName, imgIndex) => (
                     <img
                       key={imageName}
                       src={`/images/${imageName}`}
                       alt={imageName || ""}
                       style={{
-                        width: '130px',
-                        height: '130px',
+                        width: isMobile ? '90px' : '130px',
+                        height: isMobile ? '90px' : '130px',
                         objectFit: 'cover',
                       }}
                       className={(haiku.selectedImage === imageName) ? `suggestion-card-image-focus` : `haiku-card-image`}
