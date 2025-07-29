@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "npm run generate-content-json && next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "npm run generate-content-json && next start",
     "lint": "next lint",
     "mastra:dev": "mastra dev",
     "generate-content-json": "tsx scripts/generate-content-json.ts"
