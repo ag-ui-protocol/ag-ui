@@ -217,52 +217,6 @@ async function runGenerateContent() {
   return result
 }
 
-// const result = {};
-// const agentDemoBaseDir = path.join(__dirname, "../agent/demo");
-//
-// for (const demoIdWithFramework in config) {
-//   const demoFilesConfig = config[demoIdWithFramework];
-//   const demoDirPath = path.join(agentDemoBaseDir, demoIdWithFramework);
-//
-//   if (!fs.existsSync(demoDirPath)) {
-//     console.warn(`Directory not found for demo: ${demoIdWithFramework}, skipping.`);
-//     continue;
-//   }
-//
-//   result[demoIdWithFramework] = { files: [] };
-//
-//   for (const fileName of demoFilesConfig) {
-//     const filePath = path.join(demoDirPath, fileName);
-//     if (!fs.existsSync(filePath)) {
-//       console.warn(`File not found: ${filePath}, skipping.`);
-//       continue;
-//     }
-//
-//     try {
-//       const content = fs.readFileSync(filePath, "utf8");
-//       const extension = fileName.split(".").pop();
-//       let language = extension;
-//       if (extension === "py") language = "python";
-//       else if (extension === "css") language = "css";
-//       else if (extension === "md" || extension === "mdx") language = "markdown";
-//       else if (extension === "tsx") language = "typescript";
-//       else if (extension === "js") language = "javascript";
-//       else if (extension === "json") language = "json";
-//       else if (extension === "yaml" || extension === "yml") language = "yaml";
-//       else if (extension === "toml") language = "toml";
-//
-//       result[demoIdWithFramework].files.push({
-//         name: fileName,
-//         content,
-//         path: path.join(demoIdWithFramework, fileName), // Store relative path within agent/demo
-//         language,
-//         type: 'file'
-//       });
-//     } catch (error) {
-//         console.error(`Error reading file ${filePath}:`, error);
-//     }
-//   }
-// }
 (async () => {
   const result = await runGenerateContent();
   fs.writeFileSync(

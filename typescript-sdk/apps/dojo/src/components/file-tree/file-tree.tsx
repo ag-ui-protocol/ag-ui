@@ -3,55 +3,6 @@ import { ChevronDown, ChevronRight, File, Folder } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FeatureFile } from "@/types/feature";
 
-// Helper function to convert flat file paths to a hierarchical structure
-// function convertToFileTree(files: FeatureFile[]) {
-//   const root: FeatureFile[] = [];
-//   const map: Record<string, FeatureFile> = {};
-//
-//   // First pass: create all directories and files
-//   files.forEach((file) => {
-//     // Split the path into segments
-//     const pathParts = file.path.split("/");
-//     const fileName = pathParts.pop();
-//
-//     let currentPath = "";
-//     let currentLevel = root;
-//
-//     // Create or navigate the directory structure
-//     pathParts.forEach((part) => {
-//       currentPath = currentPath ? `${currentPath}/${part}` : part;
-//
-//       // Check if this directory already exists
-//       let dir = map[currentPath];
-//       if (!dir) {
-//         // Create new directory
-//         dir = {
-//           name: part,
-//           path: currentPath,
-//           type: "directory",
-//           content: "",
-//           children: [],
-//         };
-//         map[currentPath] = dir;
-//         currentLevel.push(dir);
-//       }
-//
-//       // Navigate to this directory for the next iteration
-//       currentLevel = dir.children || [];
-//     });
-//
-//     // Add the file to the last directory level
-//     currentLevel.push({
-//       name: fileName || "",
-//       path: file.path,
-//       type: "file",
-//       content: "",
-//     });
-//   });
-//
-//   return root;
-// }
-
 interface FileTreeProps {
   files: FeatureFile[];
   onFileSelect: (fileName: string) => void;
