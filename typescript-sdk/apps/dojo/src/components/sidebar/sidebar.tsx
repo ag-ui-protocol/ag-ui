@@ -20,7 +20,12 @@ import { Feature } from "@/types/integration";
 import { useURLParams } from "@/contexts/url-params-context";
 import { View } from "@/types/interface";
 
-export function Sidebar() {
+interface SidebarProps {
+  isMobile?: boolean;
+  onMobileClose?: () => void;
+}
+
+export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const { view, pickerDisabled, setView } = useURLParams();
@@ -48,7 +53,16 @@ export function Sidebar() {
   const handleDemoSelect = (demoId: string) => {
     if (currentIntegration) {
       router.push(`/${currentIntegration.id}/feature/${demoId}`);
+      // Close mobile sidebar when demo is selected
+      if (isMobile && onMobileClose) {
+        onMobileClose();
+      }
     }
+  };
+
+  // Handle integration selection
+  const handleIntegrationSelect = (integrationId: string) => {
+    router.push(`/${integrationId}`);
   };
 
   // Check for dark mode using media query
@@ -84,7 +98,9 @@ export function Sidebar() {
   }, []);
 
   return (
-    <div className="flex flex-col h-full w-74 min-w-[296px] flex-shrink-0 border-r">
+    <div className={`flex flex-col h-full bg-background border-r 
+      ${isMobile ? 'w-80 shadow-xl' : 'w-74 min-w-[296px] flex-shrink-0'}
+    `}>
       {/* Sidebar Header */}
       <div className="p-4 border-b bg-background">
         <div className="flex items-center justify-between ml-1">
@@ -115,9 +131,7 @@ export function Sidebar() {
                 {menuIntegrations.map((integration) => (
                   <DropdownMenuItem
                     key={integration.id}
-                    onClick={() => {
-                      router.push(`/${integration.id}`);
-                    }}
+                    onClick={() => handleIntegrationSelect(integration.id)}
                     className="cursor-pointer"
                   >
                     <span>{integration.name}</span>
