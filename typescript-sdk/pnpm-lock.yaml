@@ -352,8 +352,8 @@ importers:
         specifier: ^0.3.66
         version: 0.3.66(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.201.1(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.0.1(@opentelemetry/api@1.9.0))(openai@4.104.0(zod@3.25.71))
       '@langchain/langgraph-sdk':
-        specifier: ^0.0.104
-        version: 0.0.104(@langchain/core@0.3.66(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.201.1(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.0.1(@opentelemetry/api@1.9.0))(openai@4.104.0(zod@3.25.71)))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+        specifier: ^0.0.105
+        version: 0.0.105(@langchain/core@0.3.66(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.201.1(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.0.1(@opentelemetry/api@1.9.0))(openai@4.104.0(zod@3.25.71)))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       partial-json:
         specifier: ^0.1.7
         version: 0.1.7
@@ -2681,8 +2681,8 @@ packages:
     peerDependencies:
       '@langchain/core': '>=0.2.21 <0.4.0'
 
-  '@langchain/langgraph-sdk@0.0.104':
-    resolution: {integrity: sha512-wUO6GMy65Y7DsWtjTJ3dA59enrZy2wN4o48AMYN7dF7u/PMXXYyBjBCKSzgVWqO6uWH2yNpyGDrcMwKuk5kQLA==}
+  '@langchain/langgraph-sdk@0.0.105':
+    resolution: {integrity: sha512-3DD1W1wnbP48807qq+5gY248mFcwwNGqKdmZt05P3zeLpfP5Sfm6ELzVvqHGpr+qumP0yGRZs/7qArYGXRRfcQ==}
     peerDependencies:
       '@langchain/core': '>=0.2.31 <0.4.0'
       react: ^18 || ^19
@@ -12646,7 +12646,7 @@ snapshots:
       - supports-color
       - zod
 
-  '@langchain/langgraph-sdk@0.0.104(@langchain/core@0.3.66(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.201.1(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.0.1(@opentelemetry/api@1.9.0))(openai@4.104.0(zod@3.25.71)))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
+  '@langchain/langgraph-sdk@0.0.105(@langchain/core@0.3.66(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.201.1(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.0.1(@opentelemetry/api@1.9.0))(openai@4.104.0(zod@3.25.71)))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
       '@types/json-schema': 7.0.15
       p-queue: 6.6.2

@@ -152,8 +152,7 @@ async function chatNode(state: AgentState, config?: RunnableConfig): Promise<Com
       recipeJson = `Error serializing recipe: ${e}`;
     }
   }
-  console.log(recipeJson)
-  
+
   const systemPrompt = `You are a helpful assistant for creating recipes. 
     This is the current state of the recipe: ${recipeJson}
     You can improve the recipe by calling the generate_recipe tool.
@@ -212,9 +211,6 @@ async function chatNode(state: AgentState, config?: RunnableConfig): Promise<Com
     if (toolCall.name === "generate_recipe") {
       // Update recipe state with tool_call_args
       const recipeData = toolCall.args.recipe;
-      console.log('*****RECEIPE DATA')
-      console.log(recipeData)
-
       let recipe: Recipe;
       // If we have an existing recipe, update it
       if (state.recipe) {
