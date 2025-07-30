@@ -11,7 +11,6 @@ version = "0.0.1"
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.13"
-copilotkit = "0.1.56"
 tavily-python = "^0.5.1"
 uvicorn = "^0.34.0"
 dotenv = "^0.9.9"
@@ -21,8 +20,7 @@ langchain-core = ">=0.1.5"
 langchain-community = ">=0.0.1"
 langchain-experimental = ">=0.0.11"
 langchain-openai = ">=0.0.1"
-langgraph = "^0.4.0"
-langgraph-api = "0.2.114"
+langgraph = "^0.6.1"
 
 [build-system]
 requires = ["poetry-core"]
