@@ -14,8 +14,6 @@ The examples include implementations for each of the AG-UI dojo features:
 
 ## Setup
 
-### Using uv (Recommended)
-
 1. Install dependencies:
    ```bash
    uv sync
@@ -26,21 +24,19 @@ The examples include implementations for each of the AG-UI dojo features:
    uv run dev
    ```
 
-### Using pip
-
-1. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. Run the development server:
-   ```bash
-   python -m pydantic_ai_examples
-   ```
-
 ## Usage
 
-Once the server is running, you can access the different examples at:
+Once the server is running, launch the frontend dojo with:
+
+```bash
+cd ../../../
+pnpm install
+turbo run dev
+```
+
+and view it at http://localhost:3000.
+
+By default, the agents can be reached at:
 
 - `http://localhost:9000/agentic_chat` - Agentic Chat
 - `http://localhost:9000/agentic_generative_ui` - Agentic Generative UI
@@ -48,13 +44,3 @@ Once the server is running, you can access the different examples at:
 - `http://localhost:9000/predictive_state_updates` - Predictive State Updates
 - `http://localhost:9000/shared_state` - Shared State
 - `http://localhost:9000/tool_based_generative_ui` - Tool Based Generative UI
-
-## Development
-
-To install development dependencies:
-
-```bash
-uv sync --extra dev
-```
-
-This will install additional tools for testing, formatting, and type checking.
