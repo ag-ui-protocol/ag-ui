@@ -8,7 +8,7 @@
     "start": "npm run generate-content-json && next start",
     "lint": "next lint",
     "mastra:dev": "mastra dev",
-    "generate-content-json": "tsx scripts/generate-content-json.ts"
+    "generate-content-json": "npx tsx scripts/generate-content-json.ts"
   },
   "dependencies": {
     "@ag-ui/agno": "workspace:*",
