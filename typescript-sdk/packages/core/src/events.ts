@@ -28,7 +28,7 @@ export enum EventType {
   STEP_FINISHED = "STEP_FINISHED",
 }
 
-const BaseEventSchema = z.object({
+export const BaseEventSchema = z.object({
   type: z.nativeEnum(EventType),
   timestamp: z.number().optional(),
   rawEvent: z.any().optional(),
