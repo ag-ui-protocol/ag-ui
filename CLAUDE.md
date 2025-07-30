@@ -46,7 +46,7 @@ cd python-sdk
 poetry install
 
 # Run tests
-poetry run pytest
+python -m unittest discover tests
 
 # Build distribution
 poetry build

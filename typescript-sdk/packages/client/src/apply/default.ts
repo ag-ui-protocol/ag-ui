@@ -3,6 +3,10 @@ import {
   TextMessageStartEvent,
   TextMessageContentEvent,
   Message,
+  DeveloperMessage,
+  SystemMessage,
+  AssistantMessage,
+  UserMessage,
   ToolCallStartEvent,
   ToolCallArgsEvent,
   StateSnapshotEvent,
@@ -10,7 +14,6 @@ import {
   MessagesSnapshotEvent,
   CustomEvent,
   BaseEvent,
-  AssistantMessage,
   ToolCallResultEvent,
   ToolMessage,
   RunAgentInput,
@@ -99,9 +102,10 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { messageId, role } = event as TextMessageStartEvent;
+            const { messageId, role = "assistant" } = event as TextMessageStartEvent;
 
             // Create a new message using properties from the event
+            // Text messages can be developer, system, assistant, or user (not tool)
             const newMessage: Message = {
               id: messageId,
               role: role,
