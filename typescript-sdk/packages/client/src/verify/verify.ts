@@ -16,6 +16,19 @@ export const verifyEvents =
     let activeSteps = new Map<string, boolean>(); // Map of step name -> active status
     let activeThinkingStep = false;
     let activeThinkingStepMessage = false;
+    let runStarted = false; // Track if a run has started
+
+    // Function to reset state for a new run
+    const resetRunState = () => {
+      activeMessages.clear();
+      activeToolCalls.clear();
+      activeSteps.clear();
+      activeThinkingStep = false;
+      activeThinkingStepMessage = false;
+      runFinished = false;
+      runError = false;
+      runStarted = true;
+    };
 
     return source$.pipe(
       // Process each event through our state machine
@@ -36,8 +49,8 @@ export const verifyEvents =
           );
         }
 
-        // Check if run has already finished
-        if (runFinished && eventType !== EventType.RUN_ERROR) {
+        // Check if run has already finished (but allow new RUN_STARTED to start a new run)
+        if (runFinished && eventType !== EventType.RUN_ERROR && eventType !== EventType.RUN_STARTED) {
           return throwError(
             () =>
               new AGUIError(
@@ -46,20 +59,27 @@ export const verifyEvents =
           );
         }
 
-        // Handle first event requirement and prevent multiple RUN_STARTED
+        // Handle first event requirement and sequential RUN_STARTED
         if (!firstEventReceived) {
           firstEventReceived = true;
           if (eventType !== EventType.RUN_STARTED && eventType !== EventType.RUN_ERROR) {
             return throwError(() => new AGUIError(`First event must be 'RUN_STARTED'`));
           }
         } else if (eventType === EventType.RUN_STARTED) {
-          // Prevent multiple RUN_STARTED events
-          return throwError(
-            () =>
-              new AGUIError(
-                `Cannot send multiple 'RUN_STARTED' events: A 'RUN_STARTED' event was already sent. Each run must have exactly one 'RUN_STARTED' event at the beginning.`,
-              ),
-          );
+          // Allow RUN_STARTED after RUN_FINISHED (new run), but not during an active run
+          if (runStarted && !runFinished) {
+            return throwError(
+              () =>
+                new AGUIError(
+                  `Cannot send 'RUN_STARTED' while a run is still active. The previous run must be finished with 'RUN_FINISHED' before starting a new run.`,
+                ),
+            );
+          }
+          // If we're here, it's either the first RUN_STARTED or a new run after RUN_FINISHED
+          if (runFinished) {
+            // This is a new run after the previous one finished, reset state
+            resetRunState();
+          }
         }
 
         // Validate event based on type and current state
@@ -197,6 +217,7 @@ export const verifyEvents =
           // Run flow
           case EventType.RUN_STARTED: {
             // We've already validated this above
+            runStarted = true;
             return of(event);
           }
 

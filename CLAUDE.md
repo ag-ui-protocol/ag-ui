@@ -59,7 +59,8 @@ cd typescript-sdk/packages/<package-name>
 pnpm test
 
 # For running a single test file
-pnpm test path/to/test.spec.ts
+cd typescript-sdk/packages/<package-name>
+pnpm test -- path/to/test.spec.ts
 ```
 
 ## High-Level Architecture
@@ -95,6 +96,13 @@ Each framework integration follows a similar pattern:
 - Uses STATE_SNAPSHOT for complete state representations
 - Uses STATE_DELTA with JSON Patch (RFC 6902) for efficient incremental updates
 - MESSAGES_SNAPSHOT provides conversation history
+
+### Multiple Sequential Runs
+- AG-UI supports multiple sequential runs in a single event stream
+- Each run must complete (RUN_FINISHED) before a new run can start (RUN_STARTED)
+- Messages accumulate across runs (e.g., messages from run1 + messages from run2)
+- State continues to evolve across runs unless explicitly reset with STATE_SNAPSHOT
+- Run-specific tracking (active messages, tool calls, steps) resets between runs
 
 ### Development Workflow
 - Turbo is used for monorepo build orchestration
