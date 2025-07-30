@@ -51,7 +51,7 @@ export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIP
       agent="tool_based_generative_ui"
     >
       <div
-        className={`${isMobile ? 'h-screen' : 'min-h-full'} w-full relative overflow-hidden`}
+        className={`${isMobile ? 'h-screen' : 'min-h-full flex'} w-full relative overflow-hidden`}
         style={
           {
             // "--copilot-kit-primary-color": "#222",
@@ -336,7 +336,7 @@ function Haiku() {
     <div className="flex h-full w-full">
       {/* Thumbnail List */}
       {Boolean(generatedHaikus.length) && !isMobile && (
-        <div className="w-40 p-4 border-r border-gray-200 overflow-y-auto overflow-x-hidden max-w-1">
+        <div className="w-40 p-4 border-r border-gray-200 overflow-y-auto overflow-x-hidden">
           {generatedHaikus.map((haiku, index) => (
             <div
               key={index}
