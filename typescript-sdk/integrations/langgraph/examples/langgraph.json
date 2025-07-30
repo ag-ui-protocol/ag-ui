@@ -8,6 +8,7 @@
     "human_in_the_loop": "./agents/human_in_the_loop/agent.py:human_in_the_loop_graph",
     "predictive_state_updates": "./agents/predictive_state_updates/agent.py:predictive_state_updates_graph",
     "shared_state": "./agents/shared_state/agent.py:shared_state_graph",
+    "gomoku": "./agents/gomoku/agent.py:gomoku_graph",
     "tool_based_generative_ui": "./agents/tool_based_generative_ui/agent.py:tool_based_generative_ui_graph"
   },
   "env": ".env"
