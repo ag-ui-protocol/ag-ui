@@ -14,6 +14,8 @@ each of the AG-UI dojo features:
 from __future__ import annotations
 
 from fastapi import FastAPI
+import uvicorn
+
 
 from .api import (
     agentic_chat_app,
@@ -39,3 +41,13 @@ app.mount(
     tool_based_generative_ui_app,
     'Tool Based Generative UI',
 )
+
+
+def main():
+    """Main function to start the FastAPI server."""
+    uvicorn.run(app, host="0.0.0.0", port=9000)
+
+if __name__ == "__main__":
+    main()
+
+__all__ = ["main"]

@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "server"
+version = "0.1.0"
+description = "Example usage of the AG-UI adapter for Pydantic AI"
+license = "MIT"
+
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic-ai>=0.1.0",
+]
+authors = [
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
+    { name = "Douwe Maan", email = "douwe@pydantic.dev" },
+]
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning]
+dependencies = [
+    "pydantic-ai-slim[openai,vertexai,groq,anthropic,ag-ui]=={{ version }}",
+    "pydantic-evals=={{ version }}",
+    "asyncpg>=0.30.0",
+    "fastapi>=0.115.4",
+    "logfire[asyncpg,fastapi,sqlite3,httpx]>=2.6",
+    "python-multipart>=0.0.17",
+    "rich>=13.9.2",
+    "uvicorn>=0.32.0",
+    "devtools>=0.12.2",
+    "gradio>=5.9.0; python_version>'3.9'",
+    "mcp[cli]>=1.4.1; python_version >= '3.10'",
+    "modal>=1.0.4",
+]
+
+
+[tool.hatch.build.targets.sdist]
+include = ["server/"]
+
+[tool.hatch.build.targets.wheel]
+include = ["server/"]
+
+[project.scripts]
+dev = "server:main"
+
