@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 import uvicorn
+import os
 
 
 from .api import (
@@ -45,7 +46,8 @@ app.mount(
 
 def main():
     """Main function to start the FastAPI server."""
-    uvicorn.run(app, host="0.0.0.0", port=9000)
+    port = int(os.getenv("PORT", "9000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
     main()
