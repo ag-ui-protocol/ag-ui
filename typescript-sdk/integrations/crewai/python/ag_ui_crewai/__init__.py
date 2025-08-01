@@ -5,9 +5,9 @@ from .sdk import (
   copilotkit_emit_state,
   copilotkit_stream
 )
-from .enterprise import CrewEnterpriseEventListener
+# from .enterprise import CrewEnterpriseEventListener
 
-CREW_ENTERPRISE_EVENT_LISTENER = CrewEnterpriseEventListener()
+# CREW_ENTERPRISE_EVENT_LISTENER = CrewEnterpriseEventListener()
 
 __all__ = [
   "add_crewai_flow_fastapi_endpoint",

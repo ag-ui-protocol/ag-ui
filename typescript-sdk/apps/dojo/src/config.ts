@@ -53,6 +53,12 @@ export const featureConfig: FeatureConfig[] = [
     description: "Use collaboration to edit a document in real time with your Copilot",
     tags: ["State", "Streaming", "Tools"],
   }),
+  createFeatureConfig({
+    id: "agentic_chat_reasoning",
+    name: "Agentic Chat Reasoning",
+    description: "Chat with a reasoning Copilot and call frontend tools",
+    tags: ["Chat", "Tools", "Streaming", "Reasoning"],
+  }),
 ];
 
 export default featureConfig;

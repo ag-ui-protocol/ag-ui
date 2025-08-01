@@ -8,38 +8,26 @@ import os
 
 # LangGraph imports
 from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import SystemMessage
+from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END, START
 from langgraph.types import Command
 from langgraph.graph import MessagesState
-# OpenAI imports
+from langgraph.checkpoint.memory import MemorySaver
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage
 
-WRITE_DOCUMENT_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "write_document_local",
-        "description": " ".join("""
-            Write a document. Use markdown formatting to format the document.
-            It's good to format the document extensively so it's easy to read.
-            You can use all kinds of markdown.
-            However, do not use italic or strike-through formatting, it's reserved for another purpose.
-            You MUST write the full document, even when changing only a few words.
-            When making edits to the document, try to make them minimal - do not change every word.
-            Keep stories SHORT!
-            """.split()),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "document": {
-                    "type": "string",
-                    "description": "The document to write"
-                },
-            },
-        }
-    }
-}
-
+@tool
+def write_document_local(document: str): # pylint: disable=unused-argument
+    """
+    Write a document. Use markdown formatting to format the document.
+    It's good to format the document extensively so it's easy to read.
+    You can use all kinds of markdown.
+    However, do not use italic or strike-through formatting, it's reserved for another purpose.
+    You MUST write the full document, even when changing only a few words.
+    When making edits to the document, try to make them minimal - do not change every word.
+    Keep stories SHORT!
+    """
+    return document
 
 class AgentState(MessagesState):
     """
@@ -49,7 +37,7 @@ class AgentState(MessagesState):
     tools: List[Any]
 
 
-async def start_flow(state: AgentState, config: RunnableConfig):
+async def start_node(state: AgentState, config: RunnableConfig): # pylint: disable=unused-argument
     """
     This is the entry point for the flow.
     """
@@ -58,7 +46,7 @@ async def start_flow(state: AgentState, config: RunnableConfig):
     )
 
 
-async def chat_node(state: AgentState, config: RunnableConfig):
+async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     """
     Standard chat node.
     """
@@ -90,7 +78,7 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     model_with_tools = model.bind_tools(
         [
             *state["tools"],
-            WRITE_DOCUMENT_TOOL
+            write_document_local
         ],
         # Disable parallel tool calls to avoid race conditions
         parallel_tool_calls=False,
@@ -163,15 +151,11 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
 # Define the graph
 workflow = StateGraph(AgentState)
-
-# Add nodes
-workflow.add_node("start_flow", start_flow)
+workflow.add_node("start_node", start_node)
 workflow.add_node("chat_node", chat_node)
-
-# Add edges
-workflow.set_entry_point("start_flow")
-workflow.add_edge(START, "start_flow")
-workflow.add_edge("start_flow", "chat_node")
+workflow.set_entry_point("start_node")
+workflow.add_edge(START, "start_node")
+workflow.add_edge("start_node", "chat_node")
 workflow.add_edge("chat_node", END)
 
 # Conditionally use a checkpointer based on the environment

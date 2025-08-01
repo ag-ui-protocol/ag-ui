@@ -84,9 +84,17 @@ class ToolBasedGenerativeUIFlow(Flow[CopilotKitState]):
                 stream=True
             )
         )
-
         message = response.choices[0].message
 
         # 2. Append the message to the messages in state
         self.state.messages.append(message)
 
+        # 3. If there are tool calls, append a tool message to the messages in state
+        if message.tool_calls:
+            self.state.messages.append(
+                {
+                    "tool_call_id": message.tool_calls[0].id,
+                    "role": "tool",
+                    "content": "Haiku generated."
+                }
+            )
