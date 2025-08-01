@@ -335,7 +335,7 @@ export default function Home() {
             </p>
             <div className="bg-white p-3 rounded border">
               <code className="text-sm text-gray-800">
-                {typeof window !== "undefined" ? `${window.location.origin}/api/webhook` : "/api/webhook"}
+                /api/webhook
               </code>
             </div>
             <div className="mt-4 text-sm text-blue-700">
