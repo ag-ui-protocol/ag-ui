@@ -88,6 +88,7 @@
     "eslint-config-next": "15.2.1",
     "tailwindcss": "^4",
     "tsx": "^4.7.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wait-port": "^1.1.0"
   }
 }

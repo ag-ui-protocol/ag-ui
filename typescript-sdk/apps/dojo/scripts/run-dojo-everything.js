@@ -7,8 +7,6 @@ const concurrently = require('concurrently');
 const gitRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim();
 const integrationsRoot = path.join(gitRoot, 'typescript-sdk', 'integrations');
 
-
-
 // Server Starter
 const serverStarter = {
   command: 'poetry run dev',
@@ -49,12 +47,20 @@ const langgraphFastapi = {
   env: {PORT: 8004},
 }
 
-// Langgraph (Platform)
-const langgraph = {
+// Langgraph (Platform {python})
+const langgraphPlatformPython = {
   command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --port 8005',
   name: 'LG Platform',
-  cwd: path.join(integrationsRoot, 'langgraph/examples'),
+  cwd: path.join(integrationsRoot, 'langgraph/examples/python'),
   env: {PORT: 8005},
+}
+
+// Langgraph (Platform {typescript})
+const langgraphPlatformTypescript = {
+  command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --port 8006',
+  name: 'LG Platform TS',
+  cwd: path.join(integrationsRoot, 'langgraph/examples/typescript/'),
+  env: {PORT: 8006},
 }
 
 // Llama Index
@@ -62,7 +68,7 @@ const llamaIndex = {
   command: 'uv run dev',
   name: 'Llama Index',
   cwd: path.join(integrationsRoot, 'llamaindex/server-py'),
-  env: {PORT: 8006},
+  env: {PORT: 8007},
 }
 
 // Mastra
@@ -70,7 +76,7 @@ const mastra = {
   command: 'npm run dev',
   name: 'Mastra',
   cwd: path.join(integrationsRoot, 'mastra/example'),
-  env: {PORT: 8007},
+  env: {PORT: 8008},
 }
 
 // Pydantic AI
@@ -78,7 +84,7 @@ const pydanticAi = {
   command: 'uv run dev',
   name: 'Pydantic AI',
   cwd: path.join(integrationsRoot, 'pydantic-ai/examples'),
-  env: {PORT: 8008},
+  env: {PORT: 8009},
 }
 
 // THE ACTUAL DOJO
@@ -87,31 +93,51 @@ const dojo = {
   name: 'Dojo',
   cwd: path.join(gitRoot, 'typescript-sdk/apps/dojo'),
   env: {
+    PORT: 9999,
     SERVER_STARTER_URL: 'http://localhost:8000',
     SERVER_STARTER_ALL_FEATURES_URL: 'http://localhost:8001',
     AGNO_URL: 'http://localhost:8002',
     CREW_AI_URL: 'http://localhost:8003',
     LANGGRAPH_FAST_API_URL: 'http://localhost:8004',
+    // TODO: Move this to run 2 platforms for testing.
     LANGGRAPH_URL: 'http://localhost:8005',
-    LLAMA_INDEX_URL: 'http://localhost:8006',
-    MASTRA_URL: 'http://localhost:8007',
-    PYDANTIC_AI_URL: 'http://localhost:8008',
+    // LANGGRAPH_PLATFORM_PYTHON_URL: 'http://localhost:8005',
+    // LANGGRAPH_PLATFORM_TYPESCRIPT_URL: 'http://localhost:8006',
+    LLAMA_INDEX_URL: 'http://localhost:8007',
+    MASTRA_URL: 'http://localhost:8008',
+    PYDANTIC_AI_URL: 'http://localhost:8009',
   }
 }
 
+// TODO: wire in actual tests here
+const e2e = {
+  // Silly little sleep until we have a healthcheck or something on agents to know they're ready
+  command: 'npx wait-port 9999 && sleep 10 && echo "I AM ECHOING INSTEAD OF RUNNING TESTS"',
+  name: 'E2E',
+  cwd: path.join(gitRoot, 'typescript-sdk/apps/dojo'),
+}
+
+const procs = [
+  serverStarter,
+  serverStarterAllFeatures,
+  agno,
+  crewai,
+  // langgraphFastapi, // Disabled until it runs
+  langgraphPlatformPython,
+  // TODO: Also run the typescript version of langgraph.
+  langgraphPlatformTypescript,
+  llamaIndex,
+  mastra,
+  pydanticAi,
+  dojo
+];
+
+if (process.argv.includes('--e2e')) {
+  procs.push(e2e);
+}
+
 async function main() {
-  const {result} = concurrently([
-    serverStarter,
-    serverStarterAllFeatures,
-    agno,
-    crewai,
-    langgraphFastapi,
-    langgraph,
-    llamaIndex,
-    mastra,
-    pydanticAi,
-    dojo,
-  ]);
+  const {result} = concurrently(procs);
 
   result.then(() => process.exit(0)).catch((err) => {
     console.error(err);

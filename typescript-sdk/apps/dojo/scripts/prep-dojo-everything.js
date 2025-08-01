@@ -44,6 +44,13 @@ const langgraphFastapi = {
   cwd: path.join(integrationsRoot, 'langgraph/python/ag_ui_langgraph/examples'),
 }
 
+// Langgraph (Platorm {typescript})
+const langgraphPlatformTypescript = {
+  command: 'pnpm install',
+  name: 'LG Platform TS',
+  cwd: path.join(integrationsRoot, 'langgraph/examples/typescript/'),
+}
+
 // Llama Index
 const llamaIndex = {
   command: 'uv sync',
@@ -78,7 +85,8 @@ async function main() {
     serverStarterAllFeatures,
     agno,
     crewai,
-    langgraphFastapi,
+    // langgraphFastapi, // Disabled until build fixes
+    langgraphPlatformTypescript,
     llamaIndex,
     mastra,
     pydanticAi,
