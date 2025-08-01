@@ -1,0 +1,46 @@
+name: e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 9.0.0
+
+    - name: Setup pnpm cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.local/share/pnpm/store
+        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-pnpm-store-
+
+    - name: Install dependencies
+      working-directory: typescript-sdk
+      run: pnpm install --frozen-lockfile
+
+    - name: Prepare dojo for e2e
+      working-directory: typescript-sdk/apps/dojo
+      run: node ./scripts/prep-dojo-everything.js -e2e
+
+    - name: Run dojo e2e tests
+      working-directory: typescript-sdk/apps/dojo
+      run: node ./scripts/run-dojo-everything.js -e2e
