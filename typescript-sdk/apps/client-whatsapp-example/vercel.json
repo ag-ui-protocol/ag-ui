@@ -1,0 +1,19 @@
+{
+  "functions": {
+    "src/app/api/webhook/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/send-message/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/debug/route.ts": {
+      "maxDuration": 30
+    }
+  },
+  "env": {
+    "WHATSAPP_PHONE_NUMBER_ID": "@whatsapp_phone_number_id",
+    "WHATSAPP_ACCESS_TOKEN": "@whatsapp_access_token",
+    "WHATSAPP_WEBHOOK_SECRET": "@whatsapp_webhook_secret",
+    "WHATSAPP_VERIFY_TOKEN": "@whatsapp_verify_token"
+  }
+} 

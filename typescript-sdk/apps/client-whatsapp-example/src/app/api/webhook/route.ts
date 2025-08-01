@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-// import { WhatsAppAgent } from "@ag-ui/community-whatsapp";
+import { WhatsAppAgent } from "@ag-ui/community-whatsapp";
 import { getConfig } from "@/lib/config";
 
 export async function GET(request: NextRequest) {
@@ -35,28 +35,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Configuration not found" }, { status: 500 });
     }
 
-    // const agent = new WhatsAppAgent({
-    //   phoneNumberId: config.phoneNumberId,
-    //   accessToken: config.accessToken,
-    //   webhookSecret: config.webhookSecret,
-    // });
+    const agent = new WhatsAppAgent({
+      phoneNumberId: config.phoneNumberId,
+      accessToken: config.accessToken,
+      webhookSecret: config.webhookSecret,
+    });
 
     const body = await request.text();
     console.log("Webhook body:", body);
 
     // Verify webhook signature
-    // const signature = request.headers.get("x-hub-signature-256");
-    // if (!signature || !agent.verifyWebhookSignature(body, signature)) {
-    //   console.log("Webhook signature verification failed");
-    //   return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-    // }
+    const signature = request.headers.get("x-hub-signature-256");
+    if (!signature || !agent.verifyWebhookSignature(body, signature)) {
+      console.log("Webhook signature verification failed");
+      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+    }
 
     // Process webhook
-    // const webhookData = JSON.parse(body);
-    // const processedMessages = await agent.processWebhook(webhookData);
+    const webhookData = JSON.parse(body);
+    const processedMessages = await agent.processWebhook(webhookData);
 
-    console.log("Webhook processed successfully (mock)");
-    return NextResponse.json({ success: true });
+    console.log("Webhook processed successfully:", processedMessages);
+    return NextResponse.json({ 
+      success: true, 
+      processedMessages 
+    });
   } catch (error) {
     console.error("Webhook processing error:", error);
     return NextResponse.json({ error: "Webhook processing failed" }, { status: 500 });

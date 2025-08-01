@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-// import { WhatsAppAgent } from "@ag-ui/community-whatsapp";
+import { WhatsAppAgent } from "@ag-ui/community-whatsapp";
 import { getConfig } from "@/lib/config";
 
 export async function POST(request: NextRequest) {
@@ -21,11 +21,11 @@ export async function POST(request: NextRequest) {
     console.log("Has Access Token:", !!config.accessToken);
     console.log("Has Webhook Secret:", !!config.webhookSecret);
 
-    // const agent = new WhatsAppAgent({
-    //   phoneNumberId: config.phoneNumberId,
-    //   accessToken: config.accessToken,
-    //   webhookSecret: config.webhookSecret,
-    // });
+    const agent = new WhatsAppAgent({
+      phoneNumberId: config.phoneNumberId,
+      accessToken: config.accessToken,
+      webhookSecret: config.webhookSecret,
+    });
 
     const { phoneNumber, message } = await request.json();
     console.log("Sending message to:", phoneNumber);
@@ -40,13 +40,8 @@ export async function POST(request: NextRequest) {
 
     console.log("Calling sendMessageToNumber");
     try {
-      // const response = await agent.sendMessageToNumber(phoneNumber, message);
-      // console.log("Message sent successfully:", response.messages[0].id);
-
-      // Temporary mock response for testing
-      const response = {
-        messages: [{ id: "mock-message-id" }]
-      };
+      const response = await agent.sendMessageToNumber(phoneNumber, message);
+      console.log("Message sent successfully:", response.messages[0].id);
 
       return NextResponse.json({
         success: true,
@@ -62,7 +57,7 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json(
         {
-          error: "WhatsApp integration not available in this example",
+          error: "Failed to send WhatsApp message",
           details: sendError instanceof Error ? sendError.message : 'Unknown error'
         },
         { status: 500 }
