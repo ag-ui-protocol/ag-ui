@@ -257,11 +257,11 @@ export class LangGraphAgent extends AbstractAgent {
     this.activeRun!.graphInfo = await this.client.assistants.getGraph(this.assistant.assistant_id);
 
     const mode =
-      threadId && this.activeRun!.nodeName != "__end__" && this.activeRun!.nodeName
+      !forwardedProps?.command?.resume && threadId && this.activeRun!.nodeName != "__end__" && this.activeRun!.nodeName
         ? "continue"
         : "start";
 
-    if (mode === "continue" && !forwardedProps?.command?.resume) {
+    if (mode === "continue") {
       const nodeBefore = this.activeRun!.graphInfo.edges.find(e => e.target === this.activeRun!.nodeName);
       await this.client.threads.updateState(threadId, {
         values: inputState,
@@ -447,7 +447,7 @@ export class LangGraphAgent extends AbstractAgent {
           event: chunkData,
         });
 
-        this.handleSingleEvent(chunkData, state);
+        this.handleSingleEvent(chunkData);
       }
 
       state = await this.client.threads.getState(threadId);
@@ -500,7 +500,7 @@ export class LangGraphAgent extends AbstractAgent {
     }
   }
 
-  handleSingleEvent(event: any, state: State): void {
+  handleSingleEvent(event: any): void {
     switch (event.event) {
       case LangGraphEventTypes.OnChatModelStream:
         let shouldEmitMessages = event.metadata["emit-messages"] ?? true;

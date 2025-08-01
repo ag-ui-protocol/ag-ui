@@ -118,7 +118,12 @@ class LangGraphAgent:
         config["configurable"] = {**(config.get('configurable', {})), "thread_id": thread_id}
 
         agent_state = await self.graph.aget_state(config)
-        self.active_run["mode"] = "continue" if thread_id and self.active_run.get("node_name") != "__end__" and self.active_run.get("node_name") else "start"
+        resume_input = forwarded_props.get('command', {}).get('resume', None)
+
+        if resume_input is None and thread_id and self.active_run.get("node_name") != "__end__" and self.active_run.get("node_name"):
+            self.active_run["mode"] = "continue"
+        else:
+            self.active_run["mode"] = "start"
 
         prepared_stream_response = await self.prepare_stream(input=input, agent_state=agent_state, config=config)
 
@@ -264,6 +269,7 @@ class LangGraphAgent:
         interrupts = agent_state.tasks[0].interrupts if agent_state.tasks and len(agent_state.tasks) > 0 else []
         has_active_interrupts = len(interrupts) > 0
         resume_input = forwarded_props.get('command', {}).get('resume', None)
+
         self.active_run["schema_keys"] = self.get_schema_keys(config)
 
         non_system_messages = [msg for msg in langchain_messages if not isinstance(msg, SystemMessage)]
