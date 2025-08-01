@@ -14,13 +14,11 @@ if (showHelp) {
 Usage: node run-dojo-everything.js [options]
 
 Options:
-  --e2e           Run end-to-end tests after starting services
   --dry-run       Show what would be started without actually running
   --help, -h      Show this help message
 
 Examples:
   node run-dojo-everything.js
-  node run-dojo-everything.js --e2e
   node run-dojo-everything.js --dry-run
 `);
   process.exit(0);
@@ -131,14 +129,6 @@ const dojo = {
   }
 }
 
-// TODO: wire in actual tests here
-const e2e = {
-  // Silly little sleep until we have a healthcheck or something on agents to know they're ready
-  command: 'npx wait-port 9999 && sleep 10 && echo "I AM ECHOING INSTEAD OF RUNNING TESTS"',
-  name: 'E2E',
-  cwd: path.join(gitRoot, 'typescript-sdk/apps/dojo'),
-}
-
 const procs = [
   serverStarter,
   serverStarterAllFeatures,
@@ -153,10 +143,6 @@ const procs = [
   pydanticAi,
   dojo
 ];
-
-if (args.includes('--e2e')) {
-  procs.push(e2e);
-}
 
 function printDryRunServices(procs) {
   console.log('Dry run - would start the following services:');
@@ -183,7 +169,7 @@ async function main() {
 
   console.log('Starting services: ', procs.map(p => p.name).join(', '));
 
-  const {result} = concurrently(procs);
+  const {result} = concurrently(procs, {killOthersOn: ['failure', 'success']});
 
   result.then(() => process.exit(0)).catch((err) => {
     console.error(err);
