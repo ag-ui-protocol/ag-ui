@@ -7,7 +7,7 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.12"
-agno = "^1.7.4"
+agno = "^1.7.7"
 openai = "^1.97.0"
 ag-ui-protocol = "^0.1.8"
 fastapi = "^0.116.1"
