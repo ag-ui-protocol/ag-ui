@@ -99,7 +99,7 @@ AG-UI was born from CopilotKit's initial partnership with LangGraph and CrewAI -
 | [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            | Community                |
 | [Google ADK](https://google.github.io/adk-docs/get-started/)       | 🛠️ In Progress           | –                                                                            | Community                |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress           | –                                                                            | Community                |
-| [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/)       | 💡 Open to Contributions | –                                                                            | Community                |
+| [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/)       | 🛠️ In Progress           | –                                                                            | 1st party                |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/)     | 💡 Open to Contributions | –                                                                            | Community                |
 | [Strands Agents SDK](https://github.com/strands-agents/sdk-python) | 💡 Open to Contributions | –                                                                            | Community                |   
 
@@ -112,6 +112,7 @@ AG-UI was born from CopilotKit's initial partnership with LangGraph and CrewAI -
 | [.NET]()                                                           | 🛠️ In Progress            | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/38)                     |
 | [Nim]()                                                            | 🛠️ In Progress            | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/29)                     |
 | [Golang]()                                                         | 🛠️ In Progress            | ➡️ [Issue](https://github.com/ag-ui-protocol/ag-ui/issues/156)               |
+| [Rust]()                                                           | 🛠️ In Progress            | ➡️ [Issue](https://github.com/ag-ui-protocol/ag-ui/issues/239)               |
 | [Java]()                                                           | 💡 Open to Contributions  | ➡️ [Issue](https://github.com/ag-ui-protocol/ag-ui/issues/20)                |
 
 

@@ -2,7 +2,7 @@ import { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
 import { State, SchemaKeys, LangGraphReasoning } from "./types";
 import { Message, ToolCall } from "@ag-ui/client";
 
-export const DEFAULT_SCHEMA_KEYS = ["tools"];
+export const DEFAULT_SCHEMA_KEYS = ["messages", "tools"];
 
 export function filterObjectBySchemaKeys(obj: Record<string, any>, schemaKeys: string[]) {
   return Object.fromEntries(Object.entries(obj).filter(([key]) => schemaKeys.includes(key)));
