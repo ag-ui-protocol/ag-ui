@@ -180,7 +180,7 @@ async def chat_node(state: Dict[str, Any], config: RunnableConfig):
                     "steps": state["steps"],
                 }
             )
-    
+
     # If no tool calls or not plan_execution_steps, return to END with the updated messages
     return Command(
         goto=END,
@@ -206,7 +206,7 @@ async def process_steps_node(state: Dict[str, Any], config: RunnableConfig):
         user_response = interrupt({"steps": state["steps"]})
         # Store the user response in state for when the node restarts
         state["user_response"] = user_response
-    
+
     # Generate the creative completion response
     final_prompt = """
     Provide a textual description of how you are performing the task.
@@ -223,11 +223,11 @@ async def process_steps_node(state: Dict[str, Any], config: RunnableConfig):
 
     # Add the final response to messages
     messages = state["messages"] + [final_response]
-    
+
     # Clear the user_response from state to prepare for future interactions
     if "user_response" in state:
         state.pop("user_response")
-    
+
     # Return to END with the updated messages
     return Command(
         goto=END,
@@ -272,17 +272,14 @@ workflow.add_conditional_edges(
 
 # Conditionally use a checkpointer based on the environment
 # Check for multiple indicators that we're running in LangGraph dev/API mode
-is_langgraph_api = (
-        os.environ.get("LANGGRAPH_API", "false").lower() == "true" or
-        os.environ.get("LANGGRAPH_API_DIR") is not None
-)
+is_fast_api = os.environ.get("LANGGRAPH_FAST_API", "false").lower() == "true"
 
 # Compile the graph
-if is_langgraph_api:
-    # When running in LangGraph API/dev, don't use a custom checkpointer
-    graph = workflow.compile()
-else:
+if is_fast_api:
     # For CopilotKit and other contexts, use MemorySaver
     from langgraph.checkpoint.memory import MemorySaver
     memory = MemorySaver()
     graph = workflow.compile(checkpointer=memory)
+else:
+    # When running in LangGraph API/dev, don't use a custom checkpointer
+    graph = workflow.compile()

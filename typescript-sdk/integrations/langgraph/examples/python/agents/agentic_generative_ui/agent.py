@@ -192,17 +192,14 @@ workflow.add_edge("chat_node", END)
 
 # Conditionally use a checkpointer based on the environment
 # Check for multiple indicators that we're running in LangGraph dev/API mode
-is_langgraph_api = (
-        os.environ.get("LANGGRAPH_API", "false").lower() == "true" or
-        os.environ.get("LANGGRAPH_API_DIR") is not None
-)
+is_fast_api = os.environ.get("LANGGRAPH_FAST_API", "false").lower() == "true"
 
 # Compile the graph
-if is_langgraph_api:
-    # When running in LangGraph API/dev, don't use a custom checkpointer
-    graph = workflow.compile()
-else:
+if is_fast_api:
     # For CopilotKit and other contexts, use MemorySaver
     from langgraph.checkpoint.memory import MemorySaver
     memory = MemorySaver()
     graph = workflow.compile(checkpointer=memory)
+else:
+    # When running in LangGraph API/dev, don't use a custom checkpointer
+    graph = workflow.compile()
