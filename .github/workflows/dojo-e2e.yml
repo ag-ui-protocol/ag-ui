@@ -25,6 +25,16 @@ jobs:
       with:
         version: 9.0.0
 
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: latest
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
+
     - name: Setup pnpm cache
       uses: actions/cache@v4
       with:
