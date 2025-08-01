@@ -236,6 +236,7 @@ export class LangGraphAgent extends AbstractAgent {
       values: { ...stateValuesDiff, messages: [...agentStateMessages, ...stateValuesDiff.messages] },
     }
     let stateValues = threadState.values;
+    this.activeRun!.schemaKeys = await this.getSchemaKeys();
 
     if ((agentState.values.messages ?? []).length > messages.filter((m) => m.role !== "system").length) {
       let lastUserMessage: LangGraphMessage | null = null;
@@ -267,8 +268,6 @@ export class LangGraphAgent extends AbstractAgent {
         asNode: nodeBefore?.source,
       });
     }
-
-    this.activeRun!.schemaKeys = await this.getSchemaKeys();
 
     const payloadInput = getStreamPayloadInput({
       mode,
