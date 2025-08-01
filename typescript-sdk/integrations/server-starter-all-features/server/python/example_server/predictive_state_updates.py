@@ -80,7 +80,7 @@ dog_names = ["Rex", "Buddy", "Max", "Charlie", "Buddy", "Max", "Charlie"]
 async def send_tool_call_events():
     """Send tool call events with predictive state and incremental story generation"""
     tool_call_id = str(uuid.uuid4())
-    tool_call_name = "write_document"
+    tool_call_name = "write_document_local"
 
     # Generate a random story
     story = make_story(random.choice(dog_names))
@@ -93,13 +93,13 @@ async def send_tool_call_events():
         value=[
             {
                 "state_key": "document",
-                "tool": "write_document",
+                "tool": "write_document_local",
                 "tool_argument": "document"
             }
         ]
     )
 
-    # First tool call: write_document
+    # First tool call: write_document_local
     yield ToolCallStartEvent(
         type=EventType.TOOL_CALL_START,
         tool_call_id=tool_call_id,

@@ -149,3 +149,6 @@ poetry.lock
 
 # UV
 uv.lock
+
+# LangGraph API
+.langgraph_api

@@ -20,7 +20,7 @@ class Step(BaseModel):
     status: str = Field(description="The status of the step, always 'enabled'")
 
 @tool
-def generate_task_steps(
+def plan_execution_steps(
     steps: Annotated[ # pylint: disable=unused-argument
         List[Step],
         "An array of 10 step objects, each containing text and status"
@@ -64,7 +64,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     """
     system_prompt = """
     You are a helpful assistant that can perform any task.
-    You MUST call the `generate_task_steps` function when the user asks you to perform a task.
+    You MUST call the `plan_execution_steps` function when the user asks you to perform a task.
     Always make sure you will provide tasks based on the user query
     """
 
@@ -78,7 +78,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     # Use "predict_state" metadata to set up streaming for the write_document tool
     config["metadata"]["predict_state"] = [{
         "state_key": "steps",
-        "tool": "generate_task_steps",
+        "tool": "plan_execution_steps",
         "tool_argument": "steps"
     }]
 
@@ -86,7 +86,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     model_with_tools = model.bind_tools(
         [
             *state["tools"],
-            generate_task_steps
+            plan_execution_steps
         ],
         # Disable parallel tool calls to avoid race conditions
         parallel_tool_calls=False,
@@ -108,7 +108,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
                      if isinstance(response.tool_calls[0], dict)
                      else vars(response.tool_calls[0]))
 
-        if tool_call["name"] == "generate_task_steps":
+        if tool_call["name"] == "plan_execution_steps":
             # Get the steps from the tool call
             steps_raw = tool_call["args"]["steps"]
 
@@ -159,7 +159,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
                 }
             )
 
-    # If no tool calls or not generate_task_steps, return to END with the updated messages
+    # If no tool calls or not plan_execution_steps, return to END with the updated messages
     return Command(
         goto=END,
         update={

@@ -14,7 +14,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langchain_openai import ChatOpenAI
 
 @tool
-def write_document(document: str): # pylint: disable=unused-argument
+def write_document_local(document: str): # pylint: disable=unused-argument
     """
     Write a document. Use markdown formatting to format the document.
     It's good to format the document extensively so it's easy to read.
@@ -50,7 +50,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
 
     system_prompt = f"""
     You are a helpful assistant for writing documents. 
-    To write the document, you MUST use the write_document tool.
+    To write the document, you MUST use the write_document_local tool.
     You MUST write the full document, even when changing only a few words.
     When you wrote the document, DO NOT repeat it as a message. 
     Just briefly summarize the changes you made. 2 sentences max.
@@ -64,10 +64,10 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     if config is None:
         config = RunnableConfig(recursion_limit=25)
 
-    # Use "predict_state" metadata to set up streaming for the write_document tool
+    # Use "predict_state" metadata to set up streaming for the write_document_local tool
     config["metadata"]["predict_state"] = [{
         "state_key": "document",
-        "tool": "write_document",
+        "tool": "write_document_local",
         "tool_argument": "document"
     }]
 
@@ -75,7 +75,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     model_with_tools = model.bind_tools(
         [
             *state["tools"],
-            write_document
+            write_document_local
         ],
         # Disable parallel tool calls to avoid race conditions
         parallel_tool_calls=False,
@@ -92,17 +92,25 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
 
     # Extract any tool calls from the response
     if hasattr(response, "tool_calls") and response.tool_calls:
-        # Handle dicts or object (backward compatibility)
-        tool_call = (response.tool_calls[0]
-                     if isinstance(response.tool_calls[0], dict)
-                     else vars(response.tool_calls[0]))
+        tool_call = response.tool_calls[0]
 
-        if tool_call["name"] == "write_document":
+        # Handle tool_call as a dictionary or an object
+        if isinstance(tool_call, dict):
+            tool_call_id = tool_call["id"]
+            tool_call_name = tool_call["name"]
+            tool_call_args = tool_call["args"]
+        else:
+            # Handle as an object (backward compatibility)
+            tool_call_id = tool_call.id
+            tool_call_name = tool_call.name
+            tool_call_args = tool_call.args
+
+        if tool_call_name == "write_document_local":
             # Add the tool response to messages
             tool_response = {
                 "role": "tool",
                 "content": "Document written.",
-                "tool_call_id": tool_call["id"]
+                "tool_call_id": tool_call_id
             }
 
             # Add confirmation tool call
@@ -125,7 +133,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
                 goto=END,
                 update={
                     "messages": messages,
-                    "document": tool_call["args"]["document"]
+                    "document": tool_call_args["document"]
                 }
             )
 

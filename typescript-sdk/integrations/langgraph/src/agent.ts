@@ -609,7 +609,7 @@ export class LangGraphAgent extends AbstractAgent {
           this.activeRun!.manuallyEmittedState = event.data;
           this.dispatchEvent({
             type: EventType.STATE_SNAPSHOT,
-            snapshot: this.getStateSnapshot(state),
+            snapshot: this.getStateSnapshot(this.activeRun!.manuallyEmittedState!),
             rawEvent: event,
           });
         }
