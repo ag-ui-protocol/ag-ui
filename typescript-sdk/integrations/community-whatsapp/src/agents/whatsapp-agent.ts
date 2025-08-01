@@ -39,22 +39,39 @@ export class WhatsAppAgent extends AbstractAgent {
   async sendMessage(to: string, message: WhatsAppSendMessageRequest): Promise<WhatsAppSendMessageResponse> {
     const url = `${this.baseUrl}/${this.phoneNumberId}/messages`;
     
+    const requestBody = {
+      ...message,
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to,
+    };
+
+    console.log("=== WHATSAPP API REQUEST DEBUG ===");
+    console.log("URL:", url);
+    console.log("Method: POST");
+    console.log("Headers:", {
+      "Authorization": `Bearer ${this.accessToken.substring(0, 20)}...`,
+      "Content-Type": "application/json",
+    });
+    console.log("Body:", JSON.stringify(requestBody, null, 2));
+    console.log("==================================");
+    
     const response = await fetch(url, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${this.accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        ...message,
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
       const error = await response.json();
+      console.log("=== WHATSAPP API ERROR DEBUG ===");
+      console.log("Status:", response.status);
+      console.log("Status Text:", response.statusText);
+      console.log("Error Response:", JSON.stringify(error, null, 2));
+      console.log("==================================");
       throw new Error(`WhatsApp API error: ${error.error?.message || response.statusText}`);
     }
 
