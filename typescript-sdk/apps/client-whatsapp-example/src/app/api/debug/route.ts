@@ -14,7 +14,7 @@ export async function GET() {
     }
 
     // Test the WhatsApp API credentials
-    const testUrl = `https://graph.facebook.com/v18.0/${config.phoneNumberId}`;
+    const testUrl = `https://graph.facebook.com/v23.0/${config.phoneNumberId}`;
     console.log("Testing WhatsApp API with URL:", testUrl);
     
     const response = await fetch(testUrl, {

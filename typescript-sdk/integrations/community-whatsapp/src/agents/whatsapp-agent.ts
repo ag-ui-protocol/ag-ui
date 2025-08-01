@@ -15,7 +15,7 @@ export class WhatsAppAgent extends AbstractAgent {
     this.phoneNumberId = config.phoneNumberId;
     this.accessToken = config.accessToken;
     this.webhookSecret = config.webhookSecret;
-    this.apiVersion = config.apiVersion || "v18.0";
+    this.apiVersion = config.apiVersion || "v23.0";
     this.baseUrl = config.baseUrl || `https://graph.facebook.com/${this.apiVersion}`;
   }
 

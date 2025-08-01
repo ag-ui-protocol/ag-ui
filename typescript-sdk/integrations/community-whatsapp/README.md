@@ -109,7 +109,7 @@ await agent.handleWebhookWithAI(webhookBody, signature);
 - `phoneNumberId`: Your WhatsApp Business API phone number ID (from Step 2)
 - `accessToken`: Your WhatsApp Business API access token (from Step 3)
 - `webhookSecret`: Secret for verifying webhook requests (from Step 4)
-- `apiVersion`: WhatsApp API version (default: "v18.0")
+- `apiVersion`: WhatsApp API version (default: "v23.0")
 
 ### Enhanced Configuration
 - `aiProvider`: AI service provider (OpenAI, Anthropic, etc.)
