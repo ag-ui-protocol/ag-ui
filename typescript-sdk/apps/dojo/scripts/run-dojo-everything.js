@@ -72,7 +72,7 @@ const langgraphFastapi = {
 // Langgraph (Platform {python})
 const langgraphPlatformPython = {
   command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --port 8005',
-  name: 'LG Platform',
+  name: 'LG Platform Py',
   cwd: path.join(integrationsRoot, 'langgraph/examples/python'),
   env: {PORT: 8005},
 }
@@ -180,6 +180,8 @@ async function main() {
   if (dryRun) {
     printDryRunServices(procs);
   }
+
+  console.log('Starting services: ', procs.map(p => p.name).join(', '));
 
   const {result} = concurrently(procs);
 
