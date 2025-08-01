@@ -51,6 +51,12 @@ jobs:
       working-directory: typescript-sdk/apps/dojo
       run: node ./scripts/prep-dojo-everything.js -e2e
 
+    - name: Install e2e dependencies
+      working-directory: typescript-sdk/apps/dojo/e2e2
+      run: |
+        pnpm install --frozen-lockfile
+        pnpm dlx playwright install --with-deps
+
     - name: write langgraph env files
       working-directory: typescript-sdk/integrations/langgraph
       env:
@@ -64,13 +70,21 @@ jobs:
         echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > python/ag_ui_langgraph/.env
         echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> python/ag_ui_langgraph/.env
 
-    - name: Run dojo and agents
-      working-directory: typescript-sdk/apps/dojo
+    - name: Run dojo+agents and tests
+      working-directory: typescript-sdk/apps/dojo/e2e2
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
-      run: node ./scripts/run-dojo-everything.js &
+      run: |
+        node ../scripts/run-dojo-everything.js &
+        npx wait-port 9999
+        sleep 10
+        pnpm exec playwright test --reporter=dot
 
-    - name: Run tests
-      working-directory: typescript-sdk/apps/dojo
-      run: npx wait-port 9999 && sleep 10 && echo "I AM ECHOING INSTEAD OF RUNNING TESTS"
+    - name: Upload traces
+      if: always() # Uploads artifacts even if tests fail
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-traces
+        path: typescript-sdk/apps/dojo/e2e2/test-results/
+        retention-days: 7

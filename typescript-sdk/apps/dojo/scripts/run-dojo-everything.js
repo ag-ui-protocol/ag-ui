@@ -109,7 +109,7 @@ const pydanticAi = {
 
 // THE ACTUAL DOJO
 const dojo = {
-  command: 'pnpm run dev',
+  command: 'pnpm run start',
   name: 'Dojo',
   cwd: path.join(gitRoot, 'typescript-sdk/apps/dojo'),
   env: {

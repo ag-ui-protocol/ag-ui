@@ -94,7 +94,7 @@ const pydanticAi = {
 
 // THE ACTUAL DOJO
 const dojo = {
-  command: 'pnpm install && pnpm build:clean',
+  command: 'pnpm install && pnpm build --filter=demo-viewer...',
   name: 'Dojo',
   cwd: path.join(gitRoot, 'typescript-sdk'),
 }
