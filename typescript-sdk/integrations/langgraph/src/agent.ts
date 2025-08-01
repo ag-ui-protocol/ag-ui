@@ -122,7 +122,7 @@ export class LangGraphAgent extends AbstractAgent {
   activeRun?: RunMetadata;
   // @ts-expect-error no need to initialize subscriber right now
   subscriber: Subscriber<ProcessedEvents>;
-  constantSchemaKeys: string[] = ["messages", "tools"];
+  constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
 
   constructor(config: LangGraphAgentConfig) {
     super(config);
@@ -766,7 +766,7 @@ export class LangGraphAgent extends AbstractAgent {
     const schemaKeys = this.activeRun!.schemaKeys!;
     // Do not emit state keys that are not part of the output schema
     if (schemaKeys?.output) {
-      state = filterObjectBySchemaKeys(state, [...DEFAULT_SCHEMA_KEYS, ...schemaKeys.output]);
+      state = filterObjectBySchemaKeys(state, [...this.constantSchemaKeys, ...schemaKeys.output]);
     }
     // return state
     return state;
@@ -813,7 +813,7 @@ export class LangGraphAgent extends AbstractAgent {
       if (cfg.configurable) {
         filteredConfigurable = schemaKeys?.config
           ? filterObjectBySchemaKeys(cfg?.configurable, [
-            ...DEFAULT_SCHEMA_KEYS,
+            ...this.constantSchemaKeys,
             ...(schemaKeys?.config ?? []),
           ])
           : cfg?.configurable;
