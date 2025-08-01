@@ -14,7 +14,7 @@ from .shared_state.agent import graph as shared_state_graph
 from .tool_based_generative_ui.agent import graph as tool_based_generative_ui_graph
 from .agentic_chat.agent import graph as agentic_chat_graph
 from .agentic_generative_ui.agent import graph as agentic_generative_ui_graph
-from .agentic_chat_reasoning import agentic_chat_reasoning_graph
+from .agentic_chat_reasoning.agent import graph as agentic_chat_reasoning_graph
 
 app = FastAPI(title="LangGraph Dojo Example Server")
 
