@@ -140,57 +140,60 @@ async function getFeatureFrontendFiles(featureId: string) {
 }
 
 const integrationsFolderPath = '../../../integrations'
-const agentFilesMapper: Record<string, (agentKeys: string[]) => Record<string, string>> = {
+const agentFilesMapper: Record<string, (agentKeys: string[]) => Record<string, string[]>> = {
   'middleware-starter': () => ({
-    agentic_chat: path.join(__dirname, integrationsFolderPath, `/middleware-starter/src/index.ts`)
+    agentic_chat: [path.join(__dirname, integrationsFolderPath, `/middleware-starter/src/index.ts`)]
   }),
   'pydantic-ai': (agentKeys: string[]) => {
     return agentKeys.reduce((acc, agentId) => ({
       ...acc,
-      [agentId]: `https://github.com/pydantic/pydantic-ai/blob/main/examples/pydantic_ai_examples/ag_ui/api/${agentId}.py`
+      [agentId]: [`https://github.com/pydantic/pydantic-ai/blob/main/examples/pydantic_ai_examples/ag_ui/api/${agentId}.py`]
     }), {})
   },
   'server-starter': () => ({
-    agentic_chat: path.join(__dirname, integrationsFolderPath, `/server-starter/server/python/example_server/__init__.py`)
+    agentic_chat: [path.join(__dirname, integrationsFolderPath, `/server-starter/server/python/example_server/__init__.py`)]
   }),
   'server-starter-all-features': (agentKeys: string[]) => {
     return agentKeys.reduce((acc, agentId) => ({
       ...acc,
-      [agentId]: path.join(__dirname, integrationsFolderPath, `/server-starter/server/python/example_server/${agentId}.py`)
+      [agentId]: [path.join(__dirname, integrationsFolderPath, `/server-starter-all-features/server/python/example_server/${agentId}.py`)]
     }), {})
   },
   'mastra': () => ({
-    agentic_chat: path.join(__dirname, integrationsFolderPath, `/mastra/example/src/mastra/agents/weather-agent.ts`)
+    agentic_chat: [path.join(__dirname, integrationsFolderPath, `/mastra/example/src/mastra/agents/weather-agent.ts`)]
   }),
   'mastra-agent-lock': () => ({
-    agentic_chat: path.join(__dirname, integrationsFolderPath, `/mastra/example/src/mastra/agents/weather-agent.ts`)
+    agentic_chat: [path.join(__dirname, integrationsFolderPath, `/mastra/example/src/mastra/agents/weather-agent.ts`)]
   }),
   'vercel-ai-sdk': () => ({
-    agentic_chat: path.join(__dirname, integrationsFolderPath, `/vercel-ai-sdk/src/index.ts`)
+    agentic_chat: [path.join(__dirname, integrationsFolderPath, `/vercel-ai-sdk/src/index.ts`)]
   }),
   'langgraph': (agentKeys: string[]) => {
     return agentKeys.reduce((acc, agentId) => ({
       ...acc,
-      [agentId]: path.join(__dirname, integrationsFolderPath, `/langgraph/examples/agents/${agentId}/agent.py`)
+      [agentId]: [
+        path.join(__dirname, integrationsFolderPath, `/langgraph/examples/python/agents/${agentId}/agent.py`),
+        path.join(__dirname, integrationsFolderPath, `/langgraph/examples/typescript/src/agents/${agentId}/agent.ts`)
+      ]
     }), {})
   },
   'langgraph-fastapi': (agentKeys: string[]) => {
     return agentKeys.reduce((acc, agentId) => ({
       ...acc,
-      [agentId]: path.join(__dirname, integrationsFolderPath, `/langgraph/python/ag_ui_langgraph/examples/agents/${agentId}.py`)
+      [agentId]: [path.join(__dirname, integrationsFolderPath, `/langgraph/examples/python/agents/${agentId}/agent.py`)]
     }), {})
   },
   'agno': () => ({}),
   'llama-index': (agentKeys: string[]) => {
     return agentKeys.reduce((acc, agentId) => ({
       ...acc,
-      [agentId]: path.join(__dirname, integrationsFolderPath, `/llamaindex/server-py/server/routers/${agentId}.py`)
+      [agentId]: [path.join(__dirname, integrationsFolderPath, `/llamaindex/server-py/server/routers/${agentId}.py`)]
     }), {})
   },
   'crewai': (agentKeys: string[]) => {
     return agentKeys.reduce((acc, agentId) => ({
       ...acc,
-      [agentId]: path.join(__dirname, integrationsFolderPath, `/crewai/python/ag_ui_crewai/examples/${agentId}.py`)
+      [agentId]: [path.join(__dirname, integrationsFolderPath, `/crewai/python/ag_ui_crewai/examples/${agentId}.py`)]
     }), {})
   }
 }
@@ -202,14 +205,16 @@ async function runGenerateContent() {
     const agentsPerFeatures = agentConfig.agentKeys
 
     const agentFilePaths = agentFilesMapper[agentConfig.id](agentConfig.agentKeys)
+
     // Per feature, assign all the frontend files like page.tsx as well as all agent files
     for (const featureId of agentsPerFeatures) {
+      const agentFilePathsForFeature = agentFilePaths[featureId] ?? []
       // @ts-expect-error -- redundant error about indexing of a new object.
       result[`${agentConfig.id}::${featureId}`] = [
         // Get all frontend files for the feature
         ...(await getFeatureFrontendFiles(featureId)),
         // Get the agent (python/TS) file
-        await getFile(agentFilePaths[featureId])
+        ...(await Promise.all(agentFilePathsForFeature.map(async f => await getFile(f))))
       ]
     }
   }

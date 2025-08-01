@@ -1,4 +1,4 @@
-import { Message } from "@langchain/langgraph-sdk";
+import { AssistantGraph, Message } from "@langchain/langgraph-sdk";
 import { MessageType } from "@langchain/core/messages";
 
 export enum LangGraphEventTypes {
@@ -41,6 +41,7 @@ export interface RunMetadata {
   exitingNode?: boolean;
   manuallyEmittedState?: State | null;
   threadId?: string;
+  graphInfo?: AssistantGraph
 }
 
 export type MessagesInProgressRecord = Record<string, MessageInProgress | null>;

@@ -24,8 +24,8 @@
   },
   "dependencies": {
     "@ag-ui/client": "workspace:*",
-    "@langchain/core": "^0.3.38",
-    "@langchain/langgraph-sdk": "^0.0.78",
+    "@langchain/core": "^0.3.66",
+    "@langchain/langgraph-sdk": "^0.0.105",
     "partial-json": "^0.1.7",
     "rxjs": "7.8.1"
   },
