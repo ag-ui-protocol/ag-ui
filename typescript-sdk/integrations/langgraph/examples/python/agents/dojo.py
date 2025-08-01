@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from dotenv import load_dotenv
 load_dotenv()
 
-os.environ["IS_FASTAPI"] = "true"
+os.environ["LANGGRAPH_FAST_API"] = "true"
 
 from ag_ui_langgraph import LangGraphAgent, add_langgraph_fastapi_endpoint
 from .human_in_the_loop.agent import graph as human_in_the_loop_graph
