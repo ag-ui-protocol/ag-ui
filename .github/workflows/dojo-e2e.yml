@@ -41,6 +41,22 @@ jobs:
       working-directory: typescript-sdk/apps/dojo
       run: node ./scripts/prep-dojo-everything.js -e2e
 
+    - name: write langgraph env files
+      working-directory: typescript-sdk/integrations/langgraph
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+      run: |
+        echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > examples/python/.env
+        echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> examples/python/.env
+        echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > examples/typescript/.env
+        echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> examples/typescript/.env
+        echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > python/ag_ui_langgraph/.env
+        echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> python/ag_ui_langgraph/.env
+
     - name: Run dojo e2e tests
       working-directory: typescript-sdk/apps/dojo
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
       run: node ./scripts/run-dojo-everything.js -e2e
