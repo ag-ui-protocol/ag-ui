@@ -4,6 +4,28 @@ const { execSync } = require('child_process');
 const path = require('path');
 const concurrently = require('concurrently');
 
+// Parse command line arguments
+const args = process.argv.slice(2);
+const showHelp = args.includes('--help') || args.includes('-h');
+const dryRun = args.includes('--dry-run');
+
+if (showHelp) {
+  console.log(`
+Usage: node run-dojo-everything.js [options]
+
+Options:
+  --e2e           Run end-to-end tests after starting services
+  --dry-run       Show what would be started without actually running
+  --help, -h      Show this help message
+
+Examples:
+  node run-dojo-everything.js
+  node run-dojo-everything.js --e2e
+  node run-dojo-everything.js --dry-run
+`);
+  process.exit(0);
+}
+
 const gitRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim();
 const integrationsRoot = path.join(gitRoot, 'typescript-sdk', 'integrations');
 
@@ -132,11 +154,33 @@ const procs = [
   dojo
 ];
 
-if (process.argv.includes('--e2e')) {
+if (args.includes('--e2e')) {
   procs.push(e2e);
 }
 
+function printDryRunServices(procs) {
+  console.log('Dry run - would start the following services:');
+  procs.forEach(proc => {
+    console.log(`  - ${proc.name} (${proc.cwd})`);
+    console.log(`    Command: ${proc.command}`);
+    console.log(`    Environment variables:`);
+    if (proc.env) {
+      Object.entries(proc.env).forEach(([key, value]) => {
+        console.log(`      ${key}: ${value}`);
+      });
+    } else {
+      console.log('      No environment variables specified.');
+    }
+    console.log('');
+  });
+  process.exit(0);
+}
+
 async function main() {
+  if (dryRun) {
+    printDryRunServices(procs);
+  }
+
   const {result} = concurrently(procs);
 
   result.then(() => process.exit(0)).catch((err) => {

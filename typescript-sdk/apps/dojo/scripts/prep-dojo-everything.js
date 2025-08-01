@@ -4,6 +4,26 @@ const { execSync } = require('child_process');
 const path = require('path');
 const concurrently = require('concurrently');
 
+// Parse command line arguments
+const args = process.argv.slice(2);
+const showHelp = args.includes('--help') || args.includes('-h');
+const dryRun = args.includes('--dry-run');
+
+if (showHelp) {
+  console.log(`
+Usage: node prep-dojo-everything.js [options]
+
+Options:
+  --dry-run       Show what would be installed without actually running
+  --help, -h      Show this help message
+
+Examples:
+  node prep-dojo-everything.js
+  node prep-dojo-everything.js --dry-run
+`);
+  process.exit(0);
+}
+
 const gitRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim();
 const integrationsRoot = path.join(gitRoot, 'typescript-sdk', 'integrations');
 
@@ -79,8 +99,18 @@ const dojo = {
   cwd: path.join(gitRoot, 'typescript-sdk'),
 }
 
+function printDryRunServices(procs) {
+  console.log('Dry run - would install dependencies for the following services:');
+  procs.forEach(proc => {
+    console.log(`  - ${proc.name} (${proc.cwd})`);
+    console.log(`    Command: ${proc.command}`);
+    console.log('');
+  });
+  process.exit(0);
+}
+
 async function main() {
-  const {result} = concurrently([
+  const procs = [
     serverStarter,
     serverStarterAllFeatures,
     agno,
@@ -91,7 +121,13 @@ async function main() {
     mastra,
     pydanticAi,
     dojo
-  ]);
+  ];
+
+  if (dryRun) {
+    printDryRunServices(procs);
+  }
+
+  const {result} = concurrently(procs);
 
   result.then(() => process.exit(0)).catch((err) => {
     console.error(err);
