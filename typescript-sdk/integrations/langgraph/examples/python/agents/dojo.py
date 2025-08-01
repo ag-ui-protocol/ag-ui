@@ -6,12 +6,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from ag_ui_langgraph import LangGraphAgent, add_langgraph_fastapi_endpoint
-from .human_in_the_loop import human_in_the_loop_graph
-from .predictive_state_updates import predictive_state_updates_graph
-from .shared_state import shared_state_graph
-from .tool_based_generative_ui import tool_based_generative_ui_graph
-from .agentic_chat import agentic_chat_graph
-from .agentic_generative_ui import graph
+from .human_in_the_loop.agent import graph as human_in_the_loop_graph
+from .predictive_state_updates.agent import graph as predictive_state_updates_graph
+from .shared_state.agent import graph as shared_state_graph
+from .tool_based_generative_ui.agent import graph as tool_based_generative_ui_graph
+from .agentic_chat.agent import graph as agentic_chat_graph
+from .agentic_generative_ui.agent import graph as agentic_generative_ui_graph
 
 app = FastAPI(title="LangGraph Dojo Example Server")
 
@@ -30,7 +30,7 @@ agents = {
     "agentic_generative_ui": LangGraphAgent(
         name="agentic_generative_ui",
         description="An example for an agentic generative UI flow.",
-        graph=graph,
+        graph=agentic_generative_ui_graph,
     ),
     "human_in_the_loop": LangGraphAgent(
         name="human_in_the_loop",

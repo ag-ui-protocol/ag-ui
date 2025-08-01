@@ -2,7 +2,8 @@
 A simple agentic chat flow using LangGraph instead of CrewAI.
 """
 
-from typing import Dict, List, Any, Optional
+from typing import List, Any
+import os
 
 # Updated imports for LangGraph
 from langchain_core.runnables import RunnableConfig
@@ -76,5 +77,19 @@ workflow.set_entry_point("chat_node")
 workflow.add_edge(START, "chat_node")
 workflow.add_edge("chat_node", END)
 
+# Conditionally use a checkpointer based on the environment
+# Check for multiple indicators that we're running in LangGraph dev/API mode
+is_langgraph_api = (
+        os.environ.get("LANGGRAPH_API", "false").lower() == "true" or
+        os.environ.get("LANGGRAPH_API_DIR") is not None
+)
+
 # Compile the graph
-agentic_chat_graph = workflow.compile()
+if is_langgraph_api:
+    # When running in LangGraph API/dev, don't use a custom checkpointer
+    graph = workflow.compile()
+else:
+    # For CopilotKit and other contexts, use MemorySaver
+    from langgraph.checkpoint.memory import MemorySaver
+    memory = MemorySaver()
+    graph = workflow.compile(checkpointer=memory)
