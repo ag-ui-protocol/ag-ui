@@ -131,6 +131,12 @@ class LangGraphAgent:
             RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["id"])
         )
 
+        # In case of resume (interrupt), re-start resumed step
+        if resume_input and self.active_run.get("node_name"):
+            yield self._dispatch_event(
+                StepStartedEvent(type=EventType.STEP_STARTED, step_name=self.active_run.get("node_name"))
+            )
+
         state = prepared_stream_response["state"]
         stream = prepared_stream_response["stream"]
         config = prepared_stream_response["config"]

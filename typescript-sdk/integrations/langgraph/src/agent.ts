@@ -169,7 +169,7 @@ export class LangGraphAgent extends AbstractAgent {
       return subscriber.error('No stream to regenerate');
     }
 
-    this.handleStreamEvents(preparedStream, threadId, subscriber, input, streamMode)
+    await this.handleStreamEvents(preparedStream, threadId, subscriber, input, streamMode)
   }
 
   async prepareRegenerateStream(input: RegenerateInput, streamMode: StreamMode | StreamMode[]) {
@@ -352,6 +352,11 @@ export class LangGraphAgent extends AbstractAgent {
         threadId,
         runId: this.activeRun!.id,
       });
+
+      // In case of resume (interrupt), re-start resumed step
+      if (forwardedProps?.command?.resume && this.activeRun!.nodeName) {
+        this.startStep(this.activeRun!.nodeName)
+      }
 
       for await (let streamResponseChunk of streamResponse) {
         // @ts-ignore
