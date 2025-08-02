@@ -377,7 +377,7 @@ class TestToolResultFlow:
         
         # In the all-long-running architecture, tool result inputs are processed as new executions
         # Mock the background execution to avoid ADK library errors
-        async def mock_start_new_execution(input_data, agent_id):
+        async def mock_start_new_execution(input_data):
             yield RunStartedEvent(
                 type=EventType.RUN_STARTED,
                 thread_id=input_data.thread_id,
@@ -421,7 +421,7 @@ class TestToolResultFlow:
             RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id="thread_1", run_id="run_1")
         ]
         
-        async def mock_start_new_execution(input_data, agent_id):
+        async def mock_start_new_execution(input_data):
             for event in mock_events:
                 yield event
         

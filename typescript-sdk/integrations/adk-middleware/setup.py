@@ -14,7 +14,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="ag-ui-adk-middleware",
-    version="0.2.1",
+    version="0.5.0",
     author="AG-UI Protocol Contributors",
     description="ADK Middleware for AG-UI Protocol - Bridge Google ADK agents with AG-UI",
     long_description=long_description,

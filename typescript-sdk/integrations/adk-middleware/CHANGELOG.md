@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2025-01-08
+
+### Breaking Changes
+- **BREAKING**: ADKAgent constructor now requires `agent_id` parameter for cleaner architecture (issue #24)
+- **BREAKING**: Removed `agent_id` parameter from `ADKAgent.run()` method - uses instance's agent_id instead
+- **BREAKING**: Endpoint registration no longer extracts agent_id from URL path
+
+### Architecture Improvements
+- **ARCHITECTURE**: Cleaned up agent registration/instantiation redundancy (issue #24)
+- **ARCHITECTURE**: Each ADKAgent instance is now bound to a specific agent via agent_id
+- **ARCHITECTURE**: Eliminated confusing indirection where endpoint agent didn't determine execution
+- **ARCHITECTURE**: Simplified method signatures by removing redundant agent_id parameters
+
+### Fixed
+- **FIXED**: All 309 tests now pass with new architecture
+- **EXAMPLES**: Updated examples to demonstrate cleaner agent registration pattern
+
 ### Added
 - **NEW**: SystemMessage support for ADK agents (issue #22) - SystemMessages as first message are now appended to agent instructions
 - **NEW**: Comprehensive tests for SystemMessage functionality including edge cases

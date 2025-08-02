@@ -202,7 +202,7 @@ class TestADKAgent:
         )
         registry.set_default_agent(mock_agent)
         
-        adk_agent = ADKAgent(app_name="test_app", user_id="test_user")
+        adk_agent = ADKAgent(agent_id="default", app_name="test_app", user_id="test_user")
         
         # Create input with SystemMessage as first message
         system_input = RunAgentInput(
@@ -230,7 +230,7 @@ class TestADKAgent:
         
         with patch.object(adk_agent, '_run_adk_in_background', side_effect=mock_run_background):
             # Start execution to trigger agent modification
-            execution = await adk_agent._start_background_execution(system_input, "default")
+            execution = await adk_agent._start_background_execution(system_input)
             
             # Wait briefly for the background task to start
             await asyncio.sleep(0.01)
@@ -249,7 +249,7 @@ class TestADKAgent:
         )
         registry.set_default_agent(mock_agent)
         
-        adk_agent = ADKAgent(app_name="test_app", user_id="test_user")
+        adk_agent = ADKAgent(agent_id="default", app_name="test_app", user_id="test_user")
         
         # Create input with SystemMessage as second message
         system_input = RunAgentInput(
@@ -274,7 +274,7 @@ class TestADKAgent:
             await event_queue.put(None)
         
         with patch.object(adk_agent, '_run_adk_in_background', side_effect=mock_run_background):
-            execution = await adk_agent._start_background_execution(system_input, "default")
+            execution = await adk_agent._start_background_execution(system_input)
             await asyncio.sleep(0.01)
         
         # Verify the agent's instruction was NOT modified
@@ -286,7 +286,7 @@ class TestADKAgent:
         mock_agent = Agent(name="test_agent")  # No instruction
         registry.set_default_agent(mock_agent)
         
-        adk_agent = ADKAgent(app_name="test_app", user_id="test_user")
+        adk_agent = ADKAgent(agent_id="default", app_name="test_app", user_id="test_user")
         
         system_input = RunAgentInput(
             thread_id="test_thread",
@@ -308,7 +308,7 @@ class TestADKAgent:
             await event_queue.put(None)
         
         with patch.object(adk_agent, '_run_adk_in_background', side_effect=mock_run_background):
-            execution = await adk_agent._start_background_execution(system_input, "default")
+            execution = await adk_agent._start_background_execution(system_input)
             await asyncio.sleep(0.01)
         
         # Verify the SystemMessage became the instruction

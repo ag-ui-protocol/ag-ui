@@ -117,8 +117,11 @@ class TestAddADKFastAPIEndpoint:
         client = TestClient(app)
         response = client.post("/agent123", json=sample_input.model_dump())
         
-        # Agent should be called with agent_id extracted from path
-        mock_agent.run.assert_called_once_with(sample_input, "agent123")
+        # Set the agent_id on the mock agent to match our new architecture
+        mock_agent.agent_id = "agent123"
+        
+        # Agent should be called without agent_id parameter (uses internal agent_id)
+        mock_agent.run.assert_called_once_with(sample_input)
         assert response.status_code == 200
     
     @patch('adk_middleware.endpoint.EventEncoder')
@@ -142,8 +145,11 @@ class TestAddADKFastAPIEndpoint:
         client = TestClient(app)
         response = client.post("/", json=sample_input.model_dump())
         
-        # Agent should be called with empty agent_id for root path
-        mock_agent.run.assert_called_once_with(sample_input, "")
+        # Set the agent_id on the mock agent 
+        mock_agent.agent_id = "default"
+        
+        # Agent should be called without agent_id parameter (uses internal agent_id)
+        mock_agent.run.assert_called_once_with(sample_input)
         assert response.status_code == 200
     
     @patch('adk_middleware.endpoint.EventEncoder')
@@ -167,7 +173,7 @@ class TestAddADKFastAPIEndpoint:
             run_id="test_run"
         )
         
-        async def mock_agent_run(input_data, agent_id):
+        async def mock_agent_run(input_data):
             yield mock_event1
             yield mock_event2
         
@@ -204,7 +210,7 @@ class TestAddADKFastAPIEndpoint:
             run_id="test_run"
         )
         
-        async def mock_agent_run(input_data, agent_id):
+        async def mock_agent_run(input_data):
             yield mock_event
         
         mock_agent.run = mock_agent_run
@@ -245,7 +251,7 @@ class TestAddADKFastAPIEndpoint:
             run_id="test_run"
         )
         
-        async def mock_agent_run(input_data, agent_id):
+        async def mock_agent_run(input_data):
             yield mock_event
         
         mock_agent.run = mock_agent_run
@@ -345,7 +351,7 @@ class TestAddADKFastAPIEndpoint:
             run_id="test_run"
         )
         
-        async def mock_agent_run(input_data, agent_id):
+        async def mock_agent_run(input_data):
             yield mock_event
         
         mock_agent.run = mock_agent_run
@@ -385,7 +391,7 @@ class TestAddADKFastAPIEndpoint:
             run_id="test_run"
         )
         
-        async def mock_agent_run(input_data, agent_id):
+        async def mock_agent_run(input_data):
             yield mock_event
         
         mock_agent.run = mock_agent_run
@@ -459,7 +465,7 @@ class TestCreateADKApp:
             run_id="test_run"
         )
         
-        async def mock_agent_run(input_data, agent_id):
+        async def mock_agent_run(input_data):
             yield mock_event
         
         mock_agent.run = mock_agent_run
@@ -530,8 +536,8 @@ class TestEndpointIntegration:
         
         call_args = []
         
-        async def mock_agent_run(input_data, agent_id):
-            call_args.append((input_data, agent_id))
+        async def mock_agent_run(input_data):
+            call_args.append((input_data,))
             for event in events:
                 yield event
         
@@ -553,7 +559,6 @@ class TestEndpointIntegration:
         # Verify agent was called correctly
         assert len(call_args) == 1
         assert call_args[0][0] == sample_input
-        assert call_args[0][1] == "integration"
         
         # Verify events were encoded
         assert mock_encoder.encode.call_count == len(events)
@@ -589,7 +594,7 @@ class TestEndpointIntegration:
         mock_encoder_class.return_value = mock_encoder
         
         # Mock agent to return many events
-        async def mock_agent_run(input_data, agent_id):
+        async def mock_agent_run(input_data):
             for i in range(10):
                 yield RunStartedEvent(
                     type=EventType.RUN_STARTED,

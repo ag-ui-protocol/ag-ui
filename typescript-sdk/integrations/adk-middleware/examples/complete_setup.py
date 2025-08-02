@@ -127,12 +127,22 @@ async def setup_and_run():
                 return ctx.value
         return "default_app"
     
-    adk_agent = ADKAgent(
+    # Create ADKAgent instances for different agents
+    assistant_adk_agent = ADKAgent(
+        agent_id="assistant",
         app_name_extractor=extract_app_name,
         user_id_extractor=extract_user_id,
         use_in_memory_services=True,
         memory_service=shared_memory_service,  # Use the same memory service as the ADK agent
         # Defaults: 1200s timeout (20 min), 300s cleanup (5 min)
+    )
+    
+    haiku_adk_agent = ADKAgent(
+        agent_id="adk-tool-based-generative-ui",
+        app_name_extractor=extract_app_name,
+        user_id_extractor=extract_user_id,
+        use_in_memory_services=True,
+        memory_service=shared_memory_service,
     )
     
     # Step 5: Create FastAPI app
@@ -153,17 +163,18 @@ async def setup_and_run():
     
     
     # Step 6: Add endpoints
-    # Main chat endpoint
-    add_adk_fastapi_endpoint(app, adk_agent, path="/chat")
+    # Each endpoint uses its specific ADKAgent instance
+    add_adk_fastapi_endpoint(app, assistant_adk_agent, path="/chat")
     
     # Add haiku generator endpoint
-    add_adk_fastapi_endpoint(app, adk_agent, path="/adk-tool-based-generative-ui")
+    add_adk_fastapi_endpoint(app, haiku_adk_agent, path="/adk-tool-based-generative-ui")
     print("   ✅ Added endpoint: /adk-tool-based-generative-ui")
     
-    # Agent-specific endpoints (optional)
-    # This allows clients to specify which agent to use via the URL
-    # add_adk_fastapi_endpoint(app, adk_agent, path="/agents/assistant")
-    # add_adk_fastapi_endpoint(app, adk_agent, path="/agents/code-helper")
+    # Agent-specific endpoints (optional) - each would use its own ADKAgent instance
+    # assistant_adk_agent = ADKAgent(agent_id="assistant", ...)
+    # add_adk_fastapi_endpoint(app, assistant_adk_agent, path="/agents/assistant")
+    # code_helper_adk_agent = ADKAgent(agent_id="code-helper", ...)
+    # add_adk_fastapi_endpoint(app, code_helper_adk_agent, path="/agents/code-helper")
     
     @app.get("/")
     async def root():

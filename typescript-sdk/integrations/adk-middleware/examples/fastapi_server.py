@@ -37,14 +37,16 @@ try:
         instruction="You are a helpful assistant. Help users by answering their questions and assisting with their needs.",
         tools=[adk_tools.preload_memory_tool.PreloadMemoryTool()]
     )
-    # Register the agent
-    registry.set_default_agent(sample_agent)
+    # Register the agents with IDs that will match the ADKAgent agent_ids
+    registry.register_agent('chat', sample_agent)  # For the chat endpoint
     registry.register_agent('adk-tool-based-generative-ui', haiku_generator_agent)
     registry.register_agent('adk-human-in-loop-agent', human_in_loop_agent)
     registry.register_agent('adk-shared-state-agent', shared_state_agent)
     registry.register_agent('adk-predictive-state-agent', predictive_state_updates_agent)
-    # Create ADK middleware agent
-    adk_agent = ADKAgent(
+    registry.set_default_agent(sample_agent)
+    # Create ADK middleware agent instances with agent_ids matching their endpoints
+    chat_agent = ADKAgent(
+        agent_id="chat",
         app_name="demo_app",
         user_id="demo_user",
         session_timeout_seconds=3600,
@@ -52,6 +54,7 @@ try:
     )
     
     adk_agent_haiku_generator = ADKAgent(
+        agent_id="adk-tool-based-generative-ui",
         app_name="demo_app",
         user_id="demo_user",
         session_timeout_seconds=3600,
@@ -59,6 +62,7 @@ try:
     )
     
     adk_human_in_loop_agent = ADKAgent(
+        agent_id="adk-human-in-loop-agent",
         app_name="demo_app",
         user_id="demo_user",
         session_timeout_seconds=3600,
@@ -66,6 +70,7 @@ try:
     )
     
     adk_shared_state_agent = ADKAgent(
+        agent_id="adk-shared-state-agent",
         app_name="demo_app",
         user_id="demo_user",
         session_timeout_seconds=3600,
@@ -73,6 +78,7 @@ try:
     )
     
     adk_predictive_state_agent = ADKAgent(
+        agent_id="adk-predictive-state-agent",
         app_name="demo_app",
         user_id="demo_user",
         session_timeout_seconds=3600,
@@ -83,7 +89,7 @@ try:
     app = FastAPI(title="ADK Middleware Demo")
     
     # Add the ADK endpoint
-    add_adk_fastapi_endpoint(app, adk_agent, path="/chat")
+    add_adk_fastapi_endpoint(app, chat_agent, path="/chat")
     add_adk_fastapi_endpoint(app, adk_agent_haiku_generator, path="/adk-tool-based-generative-ui")
     add_adk_fastapi_endpoint(app, adk_human_in_loop_agent, path="/adk-human-in-loop-agent")
     add_adk_fastapi_endpoint(app, adk_shared_state_agent, path="/adk-shared-state-agent")
