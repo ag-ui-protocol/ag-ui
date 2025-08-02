@@ -1,0 +1,20 @@
+tool.uv.package = true
+
+[project]
+name = "server"
+version = "0.1.0"
+description = "Example usage of the AG-UI adapter for Pydantic AI"
+license = "MIT"
+
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic-ai-slim[openai,ag-ui]>=0.1.0",
+]
+authors = []
+
+[project.scripts]
+dev = "server:main"
+
