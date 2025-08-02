@@ -3,6 +3,7 @@
 
 from ag_ui.core import RunAgentInput, UserMessage
 from adk_middleware import ADKAgent
+from google.adk.agents import Agent
 
 
 
@@ -10,7 +11,10 @@ def test_static_user_id():
     """Test static user ID configuration."""
     print("🧪 Testing static user ID...")
     
-    agent = ADKAgent(app_name="test_app", user_id="static_test_user")
+    # Create a test ADK agent
+    test_agent = Agent(name="test_agent", instruction="You are a test agent.")
+    
+    agent = ADKAgent(adk_agent=test_agent, app_name="test_app", user_id="static_test_user")
     
     # Create test input
     test_input = RunAgentInput(
@@ -42,7 +46,10 @@ def test_custom_extractor():
             return input.state["custom_user"]
         return "anonymous"
     
-    agent = ADKAgent(app_name="test_app", user_id_extractor=custom_extractor)
+    # Create a test ADK agent
+    test_agent_custom = Agent(name="custom_test_agent", instruction="You are a test agent.")
+    
+    agent = ADKAgent(adk_agent=test_agent_custom, app_name="test_app", user_id_extractor=custom_extractor)
     
     # Test with user_id in state
     test_input_with_user = RunAgentInput(
@@ -82,8 +89,11 @@ def test_default_extractor():
     """Test default user extraction logic."""
     print("\n🧪 Testing default user extraction...")
     
+    # Create a test ADK agent
+    test_agent_default = Agent(name="default_test_agent", instruction="You are a test agent.")
+    
     # No static user_id or custom extractor
-    agent = ADKAgent(app_name="test_app")
+    agent = ADKAgent(adk_agent=test_agent_default, app_name="test_app")
     
     # Test default behavior - should use thread_id
     test_input = RunAgentInput(
@@ -108,9 +118,13 @@ def test_conflicting_config():
     """Test that conflicting configuration raises error."""
     print("\n🧪 Testing conflicting configuration...")
     
+    # Create a test ADK agent
+    test_agent_conflict = Agent(name="conflict_test_agent", instruction="You are a test agent.")
+    
     try:
         # Both static user_id and extractor should raise error
         agent = ADKAgent(
+            adk_agent=test_agent_conflict,
             app_name="test_app",
             user_id="static_user",
             user_id_extractor=lambda x: "extracted_user"

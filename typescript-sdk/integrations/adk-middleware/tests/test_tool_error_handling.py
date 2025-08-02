@@ -12,7 +12,7 @@ from ag_ui.core import (
     ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent
 )
 
-from adk_middleware import ADKAgent, AgentRegistry
+from adk_middleware import ADKAgent
 from adk_middleware.execution_state import ExecutionState
 from adk_middleware.client_proxy_tool import ClientProxyTool
 from adk_middleware.client_proxy_toolset import ClientProxyToolset
@@ -21,12 +21,6 @@ from adk_middleware.client_proxy_toolset import ClientProxyToolset
 class TestToolErrorHandling:
     """Test cases for various tool error scenarios."""
     
-    @pytest.fixture(autouse=True)
-    def reset_registry(self):
-        """Reset agent registry before each test."""
-        AgentRegistry.reset_instance()
-        yield
-        AgentRegistry.reset_instance()
     
     @pytest.fixture
     def mock_adk_agent(self):
@@ -41,10 +35,8 @@ class TestToolErrorHandling:
     @pytest.fixture
     def adk_middleware(self, mock_adk_agent):
         """Create ADK middleware."""
-        registry = AgentRegistry.get_instance()
-        registry.set_default_agent(mock_adk_agent)
-        
         return ADKAgent(
+            adk_agent=mock_adk_agent,
             user_id="test_user",
             execution_timeout_seconds=60,
             tool_timeout_seconds=30,

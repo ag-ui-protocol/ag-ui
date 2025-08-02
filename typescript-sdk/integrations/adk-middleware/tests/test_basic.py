@@ -4,7 +4,7 @@
 import pytest
 from google.adk.agents import Agent
 from google.adk import Runner
-from adk_middleware import ADKAgent, AgentRegistry
+from adk_middleware import ADKAgent
 
 
 def test_google_adk_imports():
@@ -18,7 +18,6 @@ def test_adk_middleware_imports():
     """Test that ADK middleware imports work correctly."""
     # If we got here, imports were successful
     assert ADKAgent is not None
-    assert AgentRegistry is not None
 
 
 def test_agent_creation():
@@ -31,25 +30,31 @@ def test_agent_creation():
     assert "test agent" in agent.instruction.lower()
 
 
-def test_registry_operations():
-    """Test registry set/get operations."""
-    registry = AgentRegistry.get_instance()
-    
+def test_adk_agent_creation():
+    """Test ADKAgent creation with direct agent embedding."""
     # Create test agent
     agent = Agent(
         name="test_agent",
         instruction="You are a test agent."
     )
     
-    # Test setting default agent
-    registry.set_default_agent(agent)
-    retrieved = registry.get_agent("test")  # Should return default agent
-    assert retrieved.name == "test_agent"
+    # Create ADKAgent with the test agent
+    adk_agent = ADKAgent(
+        adk_agent=agent,
+        app_name="test_app",
+        user_id="test_user",
+        use_in_memory_services=True
+    )
+    assert adk_agent._adk_agent.name == "test_agent"
 
 
 def test_adk_middleware_creation():
     """Test that ADK middleware can be created."""
+    # Create test agent first
+    agent = Agent(name="middleware_test_agent", instruction="Test agent.")
+    
     adk_agent = ADKAgent(
+        adk_agent=agent,
         app_name="test_app",
         user_id="test",
         use_in_memory_services=True,
@@ -67,18 +72,14 @@ def test_full_integration():
         instruction="You are a test agent for integration testing."
     )
     
-    # Set up registry
-    registry = AgentRegistry.get_instance()
-    registry.set_default_agent(agent)
-    
-    # Create middleware
+    # Create middleware with direct agent embedding
     adk_agent = ADKAgent(
+        adk_agent=agent,
         app_name="integration_test_app",
         user_id="integration_test_user",
         use_in_memory_services=True,
     )
     
     # Verify components work together
-    retrieved_agent = registry.get_agent("integration_test")
-    assert retrieved_agent.name == "integration_test_agent"
+    assert adk_agent._adk_agent.name == "integration_test_agent"
     assert adk_agent._static_app_name == "integration_test_app"

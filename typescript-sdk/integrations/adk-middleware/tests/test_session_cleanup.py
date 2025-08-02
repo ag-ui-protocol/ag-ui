@@ -4,7 +4,7 @@
 import asyncio
 import time
 
-from adk_middleware import ADKAgent, AgentRegistry, SessionManager
+from adk_middleware import ADKAgent, SessionManager
 from google.adk.agents import Agent
 from ag_ui.core import RunAgentInput, UserMessage, EventType
 
@@ -18,15 +18,12 @@ async def test_session_cleanup():
         instruction="Test agent for cleanup"
     )
     
-    registry = AgentRegistry.get_instance()
-    registry.clear()
-    registry.set_default_agent(agent)
-    
     # Reset singleton and create session manager with short timeout for faster testing
     SessionManager.reset_instance()
     
     # Create ADK middleware with short timeouts
     adk_agent = ADKAgent(
+        adk_agent=agent,
         app_name="test_app",
         user_id="cleanup_test_user",
         use_in_memory_services=True

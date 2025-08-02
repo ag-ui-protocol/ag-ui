@@ -7,15 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2025-01-08
+
+### Breaking Changes
+- **BREAKING**: ADKAgent constructor now requires `adk_agent` parameter instead of `agent_id` for direct agent embedding
+- **BREAKING**: Removed AgentRegistry dependency - agents are now directly embedded in middleware instances
+- **BREAKING**: Removed `agent_id` parameter from `ADKAgent.run()` method
+- **BREAKING**: Endpoint registration no longer extracts agent_id from URL path
+- **BREAKING**: AgentRegistry class removed from public API
+
+### Architecture Improvements
+- **ARCHITECTURE**: Eliminated AgentRegistry entirely - simplified architecture by embedding ADK agents directly
+- **ARCHITECTURE**: Cleaned up agent registration/instantiation redundancy (issue #24)
+- **ARCHITECTURE**: Removed confusing indirection where endpoint agent didn't determine execution
+- **ARCHITECTURE**: Each ADKAgent instance now directly holds its ADK agent instance
+- **ARCHITECTURE**: Simplified method signatures and removed agent lookup overhead
+
+### Fixed
+- **FIXED**: All 271 tests now pass with new simplified architecture
+- **EXAMPLES**: Updated examples to demonstrate direct agent embedding pattern
+- **TESTS**: Updated all test fixtures to work with new agent embedding pattern
+
 ### Added
 - **NEW**: SystemMessage support for ADK agents (issue #22) - SystemMessages as first message are now appended to agent instructions
 - **NEW**: Comprehensive tests for SystemMessage functionality including edge cases
+- **NEW**: Long running tools can be defined in backend side as well
+- **NEW**: Predictive state demo is added in dojo App
 
 ### Fixed  
 - **FIXED**: Race condition in tool result processing causing "No pending tool calls found" warnings
 - **FIXED**: Tool call removal now happens after pending check to prevent race conditions
 - **IMPROVED**: Better handling of empty tool result content with graceful JSON parsing fallback
 - **FIXED**: Pending tool call state management now uses SessionManager methods (issue #25)
+- **FIXED**: Pending tools issue for normal backend tools is now fixed (issue #32)
+- **FIXED**: TestEventTranslatorComprehensive unit test cases fixed
 
 ### Enhanced
 - **LOGGING**: Added debug logging for tool result processing to aid in troubleshooting

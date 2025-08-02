@@ -3,15 +3,19 @@
 
 import asyncio
 from ag_ui.core import RunAgentInput, UserMessage, Context
-from adk_middleware import ADKAgent, AgentRegistry, add_adk_fastapi_endpoint
+from adk_middleware import ADKAgent, add_adk_fastapi_endpoint
 from google.adk.agents import Agent
 
 async def test_static_app_name():
     """Test static app name configuration."""
     print("🧪 Testing static app name...")
     
+    # Create a test ADK agent
+    test_agent = Agent(name="test_agent", instruction="You are a test agent.")
+    
     # Create agent with static app name
     adk_agent = ADKAgent(
+        adk_agent=test_agent,
         app_name="static_test_app",
         user_id="test_user",
         use_in_memory_services=True
@@ -50,8 +54,12 @@ async def test_custom_extractor():
                 return ctx.value
         return "fallback_app"
     
+    # Create a test ADK agent
+    test_agent = Agent(name="test_agent", instruction="You are a test agent.")
+    
     # Create agent with custom extractor
     adk_agent = ADKAgent(
+        adk_agent=test_agent,
         app_name_extractor=extract_app_from_context,
         user_id="test_user",
         use_in_memory_services=True
@@ -99,9 +107,13 @@ async def test_default_extractor():
     """Test default app extraction logic - should use agent name."""
     print("\n🧪 Testing default app extraction...")
     
+    # Create a test ADK agent with a specific name
+    test_agent = Agent(name="default_app_agent", instruction="You are a test agent.")
+    
     # Create agent without specifying app_name or extractor
     # This should now use the agent name as app_name
     adk_agent = ADKAgent(
+        adk_agent=test_agent,
         user_id="test_user",
         use_in_memory_services=True
     )
@@ -136,8 +148,12 @@ async def test_conflicting_config():
     def dummy_extractor(input_data):
         return "extracted_app"
     
+    # Create a test ADK agent
+    test_agent = Agent(name="conflict_test_agent", instruction="You are a test agent.")
+    
     try:
         adk_agent = ADKAgent(
+            adk_agent=test_agent,
             app_name="static_app",
             app_name_extractor=dummy_extractor,
             user_id="test_user",
@@ -165,8 +181,12 @@ async def test_combined_extractors():
                 return ctx.value
         return "anonymous"
     
+    # Create a test ADK agent
+    test_agent = Agent(name="combined_test_agent", instruction="You are a test agent.")
+    
     # Create agent with both extractors
     adk_agent = ADKAgent(
+        adk_agent=test_agent,
         app_name_extractor=extract_app,
         user_id_extractor=extract_user,
         use_in_memory_services=True
