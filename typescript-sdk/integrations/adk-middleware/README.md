@@ -1,21 +1,82 @@
 # ADK Middleware for AG-UI Protocol
 
-This Python middleware enables Google ADK agents to be used with the AG-UI Protocol, providing a seamless bridge between the two frameworks.
+This Python middleware enables [Google ADK](https://google.github.io/adk-docs/) agents to be used with the AG-UI Protocol, providing a bridge between the two frameworks.
 
-## Features
+## Prerequisites
 
-- ⚠️ Full event translation between AG-UI and ADK (partial - full support coming soon)
-- ✅ Automatic session management with configurable timeouts
-- ✅ Automatic session memory option - expired sessions automatically preserved in ADK memory service
-- ✅ Support for multiple agents with centralized registry
-- ❌ State synchronization between protocols (coming soon)
-- ✅ **Complete bidirectional tool support** - Enable AG-UI Protocol tools within Google ADK agents
-- ✅ Streaming responses with SSE
-- ✅ Multi-user support with session isolation
+The examples use ADK Agents using various Gemini models along with the AG-UI Dojo.
 
-## Installation
+- A [Gemini API Key](https://makersuite.google.com/app/apikey). The examples assume that this is exported via the GOOGLE_API_KEY environment variable.
+
+## Quick Start
+
+To use this integration you need to:
+
+1. Clone the [AG-UI repository](https://github.com/ag-ui-protocol/ag-ui).
+
+    ```bash
+    git clone https://github.com/ag-ui-protocol/ag-ui.git
+    ```
+
+2. Change to the `typescript-sdk/integrations/adk-middleware` directory.
+
+    ```bash
+    cd typescript-sdk/integrations/adk-middleware
+
+3. Install the `adk-middleware` package from the local directory.  For example,
+
+    ```bash
+    pip install .
+    ```
+
+    or 
+
+    ```bash
+    uv pip install .
+    ```
+
+4. Install the requirements for the `examples`, for example:
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+    or:
+
+    ```bash
+    uv pip install -r requirements.txt
+    ```
+
+5. Run the example fast_api server.
+
+    ```bash
+    export GOOGLE_API_KEY=<My API Key>
+    python -m examples.fastapi_server
+    ```
+
+    or
+
+    ```bash
+    export GOOGLE_API_KEY=<My API Key>
+    uv python -m examples.fastapi_server
+    ```
+
+6. Open another terminal in the root directory of the ag-ui repository clone.
+
+7. Start the integration ag-ui dojo:
+
+    ```bash
+    cd typescript-sdk
+    pnpm install && pnpm run dev
+    ```
+
+8. Visit [http://localhost:3000/adk-middleware](http://localhost:3000/adk-middleware).
+
+9. Select View `ADK Middleware` from the sidebar.
 
 ### Development Setup
+
+If you want to contribute to ADK Middleware development, you'll need to take some additional steps.  You can either use the following script of the manual development setup.
 
 ```bash
 # From the adk-middleware directory
@@ -23,7 +84,7 @@ chmod +x setup_dev.sh
 ./setup_dev.sh
 ```
 
-### Manual Setup
+### Manual Development Setup
 
 ```bash
 # Create virtual environment
@@ -41,11 +102,22 @@ pip install -r requirements-dev.txt
 
 This installs the ADK middleware in editable mode for development.
 
-## Directory Structure Note
+## Testing
 
-Although this is a Python integration, it lives in `typescript-sdk/integrations/` following the ag-ui-protocol repository conventions where all integrations are centralized regardless of implementation language.
+```bash
+# Run tests
+pytest
 
-## Quick Start
+# With coverage
+pytest --cov=src/adk_middleware
+
+# Specific test file
+pytest tests/test_adk_agent.py
+```
+
+## Usage instructions
+
+For instructions on using the ADK Middleware outside of the Dojo environment, see [Usage](./USAGE.md).
 
 ### Option 1: Direct Usage
 ```python
@@ -71,6 +143,7 @@ async for event in agent.run(input_data):
 ```
 
 ### Option 2: FastAPI Server
+
 ```python
 from fastapi import FastAPI
 from adk_middleware import ADKAgent, AgentRegistry, add_adk_fastapi_endpoint
@@ -171,7 +244,7 @@ agent = ADKAgent(
     app_name="my_app", 
     user_id="user123",
     artifact_service=GCSArtifactService(),
-    memory_service=VertexAIMemoryService(),  # Enables automatic session memory!
+    memory_service=VertexAIMemoryService(),  
     credential_service=SecretManagerService(),
     use_in_memory_services=False
 )
@@ -198,11 +271,6 @@ agent = ADKAgent(
 # 3. Available for retrieval and context in future conversations
 ```
 
-**Benefits:**
-- **Zero-config**: Works automatically when a memory service is provided
-- **Comprehensive**: Applies to all session deletions (timeout, user limits, manual)
-- **Performance**: Preserves conversation history without manual intervention
-
 ### Memory Tools Integration
 
 To enable memory functionality in your ADK agents, you need to add Google ADK's memory tools to your agents (not to the ADKAgent middleware):
@@ -223,7 +291,7 @@ my_agent = Agent(
 registry = AgentRegistry.get_instance()
 registry.set_default_agent(my_agent)
 
-# Create middleware WITHOUT tools parameter - THIS IS CORRECT  
+# Create middleware WITHOUT tools parameter 
 adk_agent = ADKAgent(
     app_name="my_app",
     user_id="user123",
@@ -233,37 +301,12 @@ adk_agent = ADKAgent(
 
 **⚠️ Important**: The `tools` parameter belongs to the ADK agent (like `Agent` or `LlmAgent`), **not** to the `ADKAgent` middleware. The middleware automatically handles any tools defined on the registered agents.
 
-### Memory Testing Configuration
-
-For testing memory functionality across sessions, you may want to shorten the default session timeouts:
-
-```python
-# Normal production settings (default)
-adk_agent = ADKAgent(
-    app_name="my_app",
-    user_id="user123",
-    memory_service=shared_memory_service
-    # session_timeout_seconds=1200,    # 20 minutes (default)
-    # cleanup_interval_seconds=300     # 5 minutes (default)
-)
-
-# Short timeouts for memory testing
-adk_agent = ADKAgent(
-    app_name="my_app", 
-    user_id="user123",
-    memory_service=shared_memory_service,
-    session_timeout_seconds=60,     # 1 minute for quick testing
-    cleanup_interval_seconds=30     # 30 seconds cleanup for quick testing
-)
-```
-
 **Testing Memory Workflow:**
+
 1. Start a conversation and provide information (e.g., "My name is John")
 2. Wait for session timeout + cleanup interval (up to 90 seconds with testing config: 60s timeout + up to 30s for next cleanup cycle)
-3. Start a new conversation and ask about the information ("What's my name?") 
-4. The agent should remember the information from the previous session
-
-**⚠️ Note**: Always revert to production timeouts (defaults) for actual deployments.
+3. Start a new conversation and ask about the information ("What's my name?").
+4. The agent should remember the information from the previous session.
 
 ## Tool Support
 
@@ -326,26 +369,6 @@ result = await proxy_tool.run_async(args, context)  # Returns None immediately
 # Client provides result via ToolMessage in subsequent run
 ```
 
-#### Blocking Tools (`is_long_running=False`)
-**For immediate results with timeout protection**
-
-- **Blocking pattern**: Waits for tool result with configurable timeout
-- **Timeout applied**: Default 300 seconds, configurable per tool
-- **Ideal for**: API calls, calculations, data retrieval
-- **Error handling**: TimeoutError raised if no result within timeout
-
-```python
-# Blocking tool example  
-calculator_tool = Tool(
-    name="calculate",
-    description="Perform mathematical calculations",
-    parameters={"type": "object", "properties": {"expression": {"type": "string"}}}
-)
-
-# Tool execution waits for result
-result = await proxy_tool.run_async(args, context)  # Waits and returns result
-```
-
 ### Per-Tool Configuration
 
 The `ClientProxyToolset` supports mixed execution modes within the same toolset:
@@ -372,7 +395,6 @@ toolset = ClientProxyToolset(
 - **`is_long_running`**: Default execution mode for all tools in the toolset
 - **`tool_long_running_config`**: Dict mapping tool names to specific `is_long_running` values
 - **Per-tool overrides**: Specific tools can override the default behavior
-- **Flexible mixing**: Same toolset can contain both long-running and blocking tools
 
 ### Tool Configuration
 
@@ -735,35 +757,3 @@ RunAgentInput ──────> ADKAgent.run() ──────> Runner.run_
      │                        │                       │
 BaseEvent[] <──────── translate events <──────── Event[]
 ```
-
-## Advanced Features
-
-### Multi-User Support
-- Session isolation per user
-- Configurable session limits
-- Automatic resource cleanup
-
-## Testing
-
-```bash
-# Run tests
-pytest
-
-# With coverage
-pytest --cov=src/adk_middleware
-
-# Specific test file
-pytest tests/test_adk_agent.py
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-## License
-
-This project is part of the AG-UI Protocol and follows the same license terms.
