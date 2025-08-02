@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from ag_ui.core import RunAgentInput, UserMessage
-from adk_middleware import ADKAgent, AgentRegistry
+from adk_middleware import ADKAgent
 from google.adk.agents import Agent
 
 
@@ -27,12 +27,9 @@ async def test_message_events():
         instruction="You are a helpful assistant. Keep responses brief."
     )
     
-    registry = AgentRegistry.get_instance()
-    registry.clear()
-    registry.set_default_agent(agent)
-    
-    # Create middleware
+    # Create middleware with direct agent embedding
     adk_agent = ADKAgent(
+        adk_agent=agent,
         app_name="test_app",
         user_id="test_user",
         use_in_memory_services=True,
@@ -164,12 +161,9 @@ async def test_with_mock():
         instruction="Mock agent for testing"
     )
     
-    registry = AgentRegistry.get_instance()
-    registry.clear()
-    registry.set_default_agent(agent)
-    
-    # Create middleware
+    # Create middleware with direct agent embedding
     adk_agent = ADKAgent(
+        adk_agent=agent,
         app_name="test_app",
         user_id="test_user",
         use_in_memory_services=True,

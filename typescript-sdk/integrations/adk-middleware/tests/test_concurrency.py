@@ -5,7 +5,7 @@ import asyncio
 from pathlib import Path
 
 from ag_ui.core import RunAgentInput, UserMessage, EventType
-from adk_middleware import ADKAgent, AgentRegistry, EventTranslator
+from adk_middleware import ADKAgent, EventTranslator
 from google.adk.agents import Agent
 from unittest.mock import MagicMock, AsyncMock
 

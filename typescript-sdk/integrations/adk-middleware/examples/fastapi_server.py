@@ -23,12 +23,9 @@ try:
     # from src.agent_registry import AgentRegistry
     # from src.endpoint import add_adk_fastapi_endpoint
 
-    from adk_middleware import ADKAgent, AgentRegistry, add_adk_fastapi_endpoint
+    from adk_middleware import ADKAgent, add_adk_fastapi_endpoint
     from google.adk.agents import LlmAgent
     from google.adk import tools as adk_tools
-    
-    # Set up the agent registry
-    registry = AgentRegistry.get_instance()
     
     # Create a sample ADK agent (this would be your actual agent)
     sample_agent = LlmAgent(
@@ -37,16 +34,9 @@ try:
         instruction="You are a helpful assistant. Help users by answering their questions and assisting with their needs.",
         tools=[adk_tools.preload_memory_tool.PreloadMemoryTool()]
     )
-    # Register the agents with IDs that will match the ADKAgent agent_ids
-    registry.register_agent('chat', sample_agent)  # For the chat endpoint
-    registry.register_agent('adk-tool-based-generative-ui', haiku_generator_agent)
-    registry.register_agent('adk-human-in-loop-agent', human_in_loop_agent)
-    registry.register_agent('adk-shared-state-agent', shared_state_agent)
-    registry.register_agent('adk-predictive-state-agent', predictive_state_updates_agent)
-    registry.set_default_agent(sample_agent)
-    # Create ADK middleware agent instances with agent_ids matching their endpoints
+    # Create ADK middleware agent instances with direct agent references
     chat_agent = ADKAgent(
-        agent_id="chat",
+        adk_agent=sample_agent,
         app_name="demo_app",
         user_id="demo_user",
         session_timeout_seconds=3600,
@@ -54,7 +44,7 @@ try:
     )
     
     adk_agent_haiku_generator = ADKAgent(
-        agent_id="adk-tool-based-generative-ui",
+        adk_agent=haiku_generator_agent,
         app_name="demo_app",
         user_id="demo_user",
         session_timeout_seconds=3600,
@@ -62,7 +52,7 @@ try:
     )
     
     adk_human_in_loop_agent = ADKAgent(
-        agent_id="adk-human-in-loop-agent",
+        adk_agent=human_in_loop_agent,
         app_name="demo_app",
         user_id="demo_user",
         session_timeout_seconds=3600,
@@ -70,7 +60,7 @@ try:
     )
     
     adk_shared_state_agent = ADKAgent(
-        agent_id="adk-shared-state-agent",
+        adk_agent=shared_state_agent,
         app_name="demo_app",
         user_id="demo_user",
         session_timeout_seconds=3600,
@@ -78,7 +68,7 @@ try:
     )
     
     adk_predictive_state_agent = ADKAgent(
-        agent_id="adk-predictive-state-agent",
+        adk_agent=predictive_state_updates_agent,
         app_name="demo_app",
         user_id="demo_user",
         session_timeout_seconds=3600,

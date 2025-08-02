@@ -17,7 +17,7 @@ from ag_ui.core import (
 )
 
 from google.adk import Runner
-from google.adk.agents import BaseAgent as ADKBaseAgent, RunConfig as ADKRunConfig
+from google.adk.agents import BaseAgent, RunConfig as ADKRunConfig
 from google.adk.agents.run_config import StreamingMode
 from google.adk.sessions import InMemorySessionService
 from google.adk.artifacts import BaseArtifactService, InMemoryArtifactService
@@ -26,7 +26,6 @@ from google.adk.auth.credential_service.base_credential_service import BaseCrede
 from google.adk.auth.credential_service.in_memory_credential_service import InMemoryCredentialService
 from google.genai import types
 
-from .agent_registry import AgentRegistry
 from .event_translator import EventTranslator
 from .session_manager import SessionManager
 from .execution_state import ExecutionState
@@ -46,8 +45,8 @@ class ADKAgent:
     
     def __init__(
         self,
-        # Agent identification
-        agent_id: str = "default",
+        # ADK Agent instance
+        adk_agent: BaseAgent,
         
         # App identification
         app_name: Optional[str] = None,
@@ -78,7 +77,7 @@ class ADKAgent:
         """Initialize the ADKAgent.
         
         Args:
-            agent_id: The ID of the ADK agent this middleware instance is bound to
+            adk_agent: The ADK agent instance to use
             app_name: Static application name for all requests
             app_name_extractor: Function to extract app name dynamically from input
             user_id: Static user ID for all requests
@@ -100,7 +99,7 @@ class ADKAgent:
         if user_id and user_id_extractor:
             raise ValueError("Cannot specify both 'user_id' and 'user_id_extractor'")
         
-        self.agent_id = agent_id
+        self._adk_agent = adk_agent
         self._static_app_name = app_name
         self._app_name_extractor = app_name_extractor
         self._static_user_id = user_id
@@ -158,13 +157,10 @@ class ADKAgent:
             return self._default_app_extractor(input)
     
     def _default_app_extractor(self, input: RunAgentInput) -> str:
-        """Default app extraction logic - use agent name from registry."""
-        # Get the agent from registry and use its name as app name
+        """Default app extraction logic - use agent name directly."""
+        # Use the ADK agent's name as app name
         try:
-            agent_id = self._get_agent_id()
-            registry = AgentRegistry.get_instance()
-            adk_agent = registry.get_agent(agent_id)
-            return adk_agent.name
+            return self._adk_agent.name
         except Exception as e:
             logger.warning(f"Could not get agent name for app_name, using default: {e}")
             return "AG-UI ADK Agent"
@@ -304,9 +300,6 @@ class ADKAgent:
         
         return False
     
-    def _get_agent_id(self) -> str:
-        """Get the agent ID - always returns 'default' in this implementation."""
-        return "default"
     
     def _default_run_config(self, input: RunAgentInput) -> ADKRunConfig:
         """Create default RunConfig with SSE streaming enabled."""
@@ -316,7 +309,7 @@ class ADKAgent:
         )
     
     
-    def _create_runner(self, adk_agent: ADKBaseAgent, user_id: str, app_name: str) -> Runner:
+    def _create_runner(self, adk_agent: BaseAgent, user_id: str, app_name: str) -> Runner:
         """Create a new runner instance."""
         return Runner(
             app_name=app_name,
@@ -699,9 +692,8 @@ class ADKAgent:
         user_id = self._get_user_id(input)
         app_name = self._get_app_name(input)
         
-        # Get the ADK agent
-        registry = AgentRegistry.get_instance()
-        adk_agent = registry.get_agent(self.agent_id)
+        # Use the ADK agent directly
+        adk_agent = self._adk_agent
         
         # Prepare agent modifications (SystemMessage and tools)
         agent_updates = {}
@@ -777,7 +769,7 @@ class ADKAgent:
     async def _run_adk_in_background(
         self,
         input: RunAgentInput,
-        adk_agent: ADKBaseAgent,
+        adk_agent: BaseAgent,
         user_id: str,
         app_name: str,
         event_queue: asyncio.Queue
