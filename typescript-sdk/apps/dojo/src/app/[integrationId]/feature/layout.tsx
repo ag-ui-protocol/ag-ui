@@ -32,7 +32,7 @@ export default function FeatureLayout({ children, params }: Props) {
   const pathParts = pathname.split('/');
   const featureId = pathParts[pathParts.length - 1]; // Last segment is the featureId
 
-  const files = (filesJSON as FilesJsonType)[`${integrationId}::${featureId}`];
+  const files = (filesJSON as FilesJsonType)[`${integrationId}::${featureId}`] || [];
 
   const readme = files.find(file => file.name.includes('.mdx'));
   const codeFiles = files.filter(file => !file.name.includes('.mdx'));
