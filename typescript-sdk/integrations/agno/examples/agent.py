@@ -2,6 +2,7 @@
 
 This example shows how to create an Agno Agent with tools (YFinanceTools) and expose it in an AG-UI compatible way.
 """
+import os
 
 from agno.agent.agent import Agent
 from agno.app.agui.app import AGUIApp
@@ -29,4 +30,6 @@ agui_app = AGUIApp(
 app = agui_app.get_app()
 
 if __name__ == "__main__":
-  agui_app.serve(app="agent:app", host="0.0.0.0", port=9001, reload=True)
+  port = int(os.getenv("PORT", "9001"))
+
+  agui_app.serve(app="agent:app", host="0.0.0.0", port=port, reload=True)
