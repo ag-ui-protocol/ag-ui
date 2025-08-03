@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { WhatsAppAgent } from "@ag-ui/community-whatsapp";
+import { WhatsAppAgent } from "@/lib/whatsapp-agent";
 import { getConfig } from "@/lib/config";
 
 export async function POST(request: NextRequest) {
