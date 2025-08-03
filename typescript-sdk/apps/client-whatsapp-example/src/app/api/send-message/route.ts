@@ -11,7 +11,10 @@ export async function POST(request: NextRequest) {
     if (!config) {
       console.log("No configuration found, returning error");
       return NextResponse.json(
-        { error: "WhatsApp configuration not found. Please configure your settings first." },
+        { 
+          error: "WhatsApp configuration not found. Please configure your settings first.",
+          details: "Missing or invalid configuration"
+        },
         { status: 500 }
       );
     }
@@ -33,7 +36,10 @@ export async function POST(request: NextRequest) {
 
     if (!phoneNumber || !message) {
       return NextResponse.json(
-        { error: "phoneNumber and message are required" },
+        { 
+          error: "phoneNumber and message are required",
+          details: "Missing required fields"
+        },
         { status: 400 }
       );
     }
@@ -55,10 +61,19 @@ export async function POST(request: NextRequest) {
         stack: sendError instanceof Error ? sendError.stack : undefined
       });
 
+      // Enhanced error response with detailed information
+      const errorMessage = sendError instanceof Error ? sendError.message : 'Unknown error';
+      
       return NextResponse.json(
         {
           error: "Failed to send WhatsApp message",
-          details: sendError instanceof Error ? sendError.message : 'Unknown error'
+          details: errorMessage,
+          status: 500,
+          response: {
+            error: errorMessage,
+            type: "WhatsApp API Error",
+            timestamp: new Date().toISOString()
+          }
         },
         { status: 500 }
       );
@@ -66,7 +81,11 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Send message error:", error);
     return NextResponse.json(
-      { error: "Failed to send message" },
+      { 
+        error: "Failed to send message",
+        details: "Unexpected server error",
+        status: 500
+      },
       { status: 500 }
     );
   }

@@ -34,12 +34,19 @@ interface DebugResult {
   response?: Record<string, unknown>;
 }
 
+interface ErrorDetails {
+  message: string;
+  details?: string;
+  status?: number;
+  response?: Record<string, unknown>;
+}
+
 export default function Home() {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<SendMessageResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ErrorDetails | null>(null);
   const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
   const [debugResult, setDebugResult] = useState<DebugResult | null>(null);
   const [isDebugLoading, setIsDebugLoading] = useState(false);
@@ -78,12 +85,23 @@ export default function Home() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Failed to send message");
+        // Enhanced error handling with detailed information
+        const errorDetails: ErrorDetails = {
+          message: data.error || "Failed to send message",
+          status: response.status,
+          details: data.details || undefined,
+          response: data.response || undefined
+        };
+        setError(errorDetails);
+        return;
       }
 
       setResult(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      setError({
+        message: err instanceof Error ? err.message : "An error occurred",
+        details: "Network or unexpected error"
+      });
     } finally {
       setIsLoading(false);
     }
@@ -127,7 +145,7 @@ export default function Home() {
         </div>
 
         {/* Main Content */}
-        <div className="max-w-2xl mx-auto">
+        <div className="max-w-2xl mx-auto w-full px-4">
           {/* Configuration Status */}
           <div className="bg-white rounded-lg shadow-md p-6 mb-8">
             <div className="flex items-center justify-between mb-4">
@@ -302,11 +320,42 @@ export default function Home() {
             )}
           </div>
 
-          {/* Results */}
+          {/* Enhanced Error Display */}
           {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-8">
-              <h3 className="text-lg font-semibold text-red-800 mb-2">Error</h3>
-              <p className="text-red-700">{error}</p>
+            <div className="bg-red-50 border border-red-200 rounded-lg p-6 mb-8 error-container">
+              <div className="flex items-start">
+                <div className="flex-shrink-0">
+                  <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="ml-3 flex-1 min-w-0">
+                  <h3 className="text-lg font-semibold text-red-800 mb-2">
+                    WhatsApp API Error
+                  </h3>
+                  <div className="text-red-700 space-y-2">
+                    <p className="font-medium break-words error-text">{error.message}</p>
+                    {error.status && (
+                      <p className="text-sm">Status Code: {error.status}</p>
+                    )}
+                    {error.details && (
+                      <p className="text-sm break-words error-text">{error.details}</p>
+                    )}
+                    {error.response && (
+                      <details className="mt-3">
+                        <summary className="cursor-pointer text-sm font-medium">
+                          View Detailed Error Response
+                        </summary>
+                        <div className="mt-2 text-xs bg-red-100 p-3 rounded border border-red-200 overflow-x-auto">
+                          <pre className="whitespace-pre-wrap break-words error-text">
+                            {JSON.stringify(error.response, null, 2)}
+                          </pre>
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
