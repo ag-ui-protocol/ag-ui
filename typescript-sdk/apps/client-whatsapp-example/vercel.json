@@ -15,5 +15,12 @@
     "WHATSAPP_ACCESS_TOKEN": "@whatsapp_access_token",
     "WHATSAPP_WEBHOOK_SECRET": "@whatsapp_webhook_secret",
     "WHATSAPP_VERIFY_TOKEN": "@whatsapp_verify_token"
+  },
+  "git": {
+    "deploymentEnabled": {
+      "main": true,
+      "develop": true,
+      "feature/*": false
+    }
   }
 } 
