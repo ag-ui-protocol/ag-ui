@@ -23,7 +23,7 @@ jobs:
     - name: Install pnpm
       uses: pnpm/action-setup@v4
       with:
-        version: 9.0.0
+        version: 10.13.1
 
     - name: Install Poetry
       uses: snok/install-poetry@v1
