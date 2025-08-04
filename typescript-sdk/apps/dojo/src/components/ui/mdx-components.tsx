@@ -1,7 +1,6 @@
 import React from "react";
 import { cn } from "@/lib/utils";
 import { MarkdownComponents } from "./markdown-components";
-import { MDXProvider } from "@mdx-js/react";
 import type { Components } from "react-markdown";
 
 // Video component specifically for MDX
@@ -34,12 +33,3 @@ export const MDXComponents: CustomMDXComponents = {
   Video: VideoPlayer,
   video: VideoPlayer,
 } as CustomMDXComponents;
-
-// MDX Provider wrapper component
-export const MDXContent: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  return (
-    <MDXProvider components={MDXComponents}>
-      <div className="mdx-content">{children}</div>
-    </MDXProvider>
-  );
-};
