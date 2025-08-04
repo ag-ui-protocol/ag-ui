@@ -38,9 +38,9 @@ pub struct DeveloperMessage {
 }
 
 impl DeveloperMessage {
-    pub fn new(id: MessageId, content: String) -> Self {
+    pub fn new(id: impl Into<MessageId>, content: String) -> Self {
         Self {
-            id,
+            id: id.into(),
             role: Role::Developer,
             content,
             name: None,
@@ -63,9 +63,9 @@ pub struct SystemMessage {
 }
 
 impl SystemMessage {
-    pub fn new(id: MessageId, content: String) -> Self {
+    pub fn new(id: impl Into<MessageId>, content: String) -> Self {
         Self {
-            id,
+            id: id.into(),
             role: Role::System,
             content,
             name: None,
@@ -91,9 +91,9 @@ pub struct AssistantMessage {
 }
 
 impl AssistantMessage {
-    pub fn new(id: MessageId) -> Self {
+    pub fn new(id: impl Into<MessageId>) -> Self {
         Self {
-            id,
+            id: id.into(),
             role: Role::Assistant,
             content: None,
             name: None,
@@ -127,9 +127,9 @@ pub struct UserMessage {
 }
 
 impl UserMessage {
-    pub fn new(id: MessageId, content: String) -> Self {
+    pub fn new(id: impl Into<MessageId>, content: String) -> Self {
         Self {
-            id,
+            id: id.into(),
             role: Role::User,
             content,
             name: None,
@@ -154,12 +154,12 @@ pub struct ToolMessage {
 }
 
 impl ToolMessage {
-    pub fn new(id: MessageId, content: String, tool_call_id: ToolCallId) -> Self {
+    pub fn new(id: impl Into<MessageId>, content: String, tool_call_id: impl Into<ToolCallId>) -> Self {
         Self {
-            id,
+            id: id.into(),
             content,
             role: Role::Tool,
-            tool_call_id,
+            tool_call_id: tool_call_id.into(),
             error: None,
         }
     }

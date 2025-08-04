@@ -66,7 +66,7 @@ mod tests {
             arguments: "{}".to_string(),
         };
 
-        let tool_call = ToolCall::new("call_123".to_string(), function_call);
+        let tool_call = ToolCall::new(Uuid::new_v4(), function_call);
         assert_eq!(tool_call.call_type, "function");
     }
 
@@ -139,8 +139,8 @@ mod tests {
 
         // If this compiles, it's okay
         let _input = RunAgentInput::new(
-            Uuid::new_v4().into(),
-            Uuid::new_v4().into(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
             json!({}),
             vec![],
             vec![],

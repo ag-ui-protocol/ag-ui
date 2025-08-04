@@ -1,18 +1,19 @@
 use crate::types::message::FunctionCall;
 use serde::{Deserialize, Serialize};
+use crate::types::ids::ToolCallId;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
-    pub id: String,
+    pub id: ToolCallId,
     #[serde(rename = "type")]
     pub call_type: String, // Always "function"
     pub function: FunctionCall,
 }
 
 impl ToolCall {
-    pub fn new(id: String, function: FunctionCall) -> Self {
+    pub fn new(id: impl Into<ToolCallId>, function: FunctionCall) -> Self {
         Self {
-            id,
+            id: id.into(),
             call_type: "function".to_string(),
             function,
         }

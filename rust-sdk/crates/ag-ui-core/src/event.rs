@@ -1,7 +1,7 @@
 use crate::types::message::Message;
 use serde::{Deserialize, Serialize};
 use crate::JsonValue;
-use crate::types::ids::ToolCallId;
+use crate::types::ids::{MessageId, RunId, ToolCallId, ThreadId};
 
 /// Event types for AG-UI protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,7 +50,7 @@ pub struct TextMessageStartEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
     #[serde(rename = "messageId")]
-    pub message_id: String,
+    pub message_id: MessageId,
     pub role: String, // "assistant"
 }
 
@@ -60,7 +60,7 @@ pub struct TextMessageContentEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
     #[serde(rename = "messageId")]
-    pub message_id: String,
+    pub message_id: MessageId,
     pub delta: String,
 }
 
@@ -70,7 +70,7 @@ pub struct TextMessageEndEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
     #[serde(rename = "messageId")]
-    pub message_id: String,
+    pub message_id: MessageId,
 }
 
 /// Text message chunk event (optional fields)
@@ -79,7 +79,7 @@ pub struct TextMessageChunkEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
     #[serde(rename = "messageId", skip_serializing_if = "Option::is_none")]
-    pub message_id: Option<String>,
+    pub message_id: Option<MessageId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -118,7 +118,7 @@ pub struct ToolCallStartEvent {
     #[serde(rename = "toolCallName")]
     pub tool_call_name: String,
     #[serde(rename = "parentMessageId", skip_serializing_if = "Option::is_none")]
-    pub parent_message_id: Option<String>,
+    pub parent_message_id: Option<MessageId>,
 }
 
 /// Tool call arguments event
@@ -146,7 +146,7 @@ pub struct ToolCallResultEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
     #[serde(rename = "messageId")]
-    pub message_id: String,
+    pub message_id: MessageId,
     #[serde(rename = "toolCallId")]
     pub tool_call_id: ToolCallId,
     pub content: String,
@@ -164,7 +164,7 @@ pub struct ToolCallChunkEvent {
     #[serde(rename = "toolCallName", skip_serializing_if = "Option::is_none")]
     pub tool_call_name: Option<String>,
     #[serde(rename = "parentMessageId", skip_serializing_if = "Option::is_none")]
-    pub parent_message_id: Option<String>,
+    pub parent_message_id: Option<MessageId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delta: Option<String>,
 }
@@ -234,9 +234,9 @@ pub struct RunStartedEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
     #[serde(rename = "threadId")]
-    pub thread_id: String,
+    pub thread_id: ThreadId,
     #[serde(rename = "runId")]
-    pub run_id: String,
+    pub run_id: RunId,
 }
 
 /// Run finished event
@@ -245,9 +245,9 @@ pub struct RunFinishedEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
     #[serde(rename = "threadId")]
-    pub thread_id: String,
+    pub thread_id: ThreadId,
     #[serde(rename = "runId")]
-    pub run_id: String,
+    pub run_id: RunId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<JsonValue>,
 }
@@ -393,14 +393,14 @@ impl TextMessageContentEvent {
 
 /// Builder pattern for creating events
 impl TextMessageStartEvent {
-    pub fn new(message_id: String) -> Self {
+    pub fn new(message_id: impl Into<MessageId>) -> Self {
         Self {
             base: BaseEvent {
                 event_type: EventType::TextMessageStart,
                 timestamp: None,
                 raw_event: None,
             },
-            message_id,
+            message_id: message_id.into(),
             role: "assistant".to_string(),
         }
     }
@@ -417,14 +417,14 @@ impl TextMessageStartEvent {
 }
 
 impl TextMessageContentEvent {
-    pub fn new(message_id: String, delta: String) -> Result<Self, EventValidationError> {
+    pub fn new(message_id: impl Into<MessageId>, delta: String) -> Result<Self, EventValidationError> {
         let event = Self {
             base: BaseEvent {
                 event_type: EventType::TextMessageContent,
                 timestamp: None,
                 raw_event: None,
             },
-            message_id,
+            message_id: message_id.into(),
             delta,
         };
         event.validate()?;
