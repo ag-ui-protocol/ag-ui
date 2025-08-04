@@ -6,7 +6,7 @@ Built for simplicity and flexibility, it enables seamless integration between AI
 
 ---
 
-[📅 Upcoming Event: July 24 - San Francisco AG-UI workshop with AI Tinkerers in person (Feat. CopilotKit & Mastra)](https://lu.ma/ai-tinkerers-workshop?tk=JeUCY5)
+[📅 Upcoming Event: August 6th - AG-UI + Mastra: Build a Project Management Canvas](https://lu.ma/94688z7e)
 
 <br>
 
@@ -29,7 +29,7 @@ Built for simplicity and flexibility, it enables seamless integration between AI
 
 ## 🚀 Getting Started
 Create a new AG-UI application in seconds:
-```ts
+```bash
 npx create-ag-ui-app my-agent-app
 ```
 <h3>Building AG-UI Integrations (new frameworks):</h3>
