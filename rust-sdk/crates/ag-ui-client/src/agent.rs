@@ -1,18 +1,18 @@
+use futures::stream::StreamExt;
 use std::collections::HashSet;
 use std::sync::Arc;
-use futures::stream::StreamExt;
 use thiserror::Error;
 
-use ag_ui_core::event::Event;
-use ag_ui_core::types::context::Context;
-use ag_ui_core::types::ids::{AgentId, RunId, ThreadId};
-use ag_ui_core::types::input::RunAgentInput;
-use ag_ui_core::types::messages::Message;
-use ag_ui_core::types::tool::Tool;
-use ag_ui_core::{FwdProps, JsonValue, State};
 use crate::event::EventExt;
 use crate::stream::EventStream;
 use crate::subscriber::AgentSubscriber;
+use ag_ui_core::event::Event;
+use ag_ui_core::types::context::Context;
+use ag_ui_core::types::ids::{AgentId, MessageId, RunId, ThreadId};
+use ag_ui_core::types::input::RunAgentInput;
+use ag_ui_core::types::message::Message;
+use ag_ui_core::types::tool::Tool;
+use ag_ui_core::{FwdProps, JsonValue, State};
 
 #[derive(Debug, Clone)]
 pub struct AgentConfig<StateT = JsonValue> {
@@ -86,7 +86,6 @@ pub enum AgentError {
     },
 }
 
-
 /// Agent trait
 #[async_trait::async_trait]
 pub trait Agent<StateT = JsonValue, FwdPropsT = JsonValue>: Send + Sync
@@ -132,10 +131,8 @@ where
 
         let input = self.prepare_run_agent_input(params);
         let messages = self.messages().to_vec();
-        let current_message_ids: HashSet<_> =
-            messages.iter().map(|m| m.id()).collect();
+        let current_message_ids: HashSet<&MessageId> = messages.iter().map(|m| m.id()).collect();
         let mut result_val = JsonValue::Null;
-
 
         let mut stream = self.run(&input).fuse();
 
@@ -145,7 +142,7 @@ where
                     let (mutation, value) = event
                         .apply_and_process_event(&input, &messages, &input.state, &subscribers)
                         .await?;
-                        result_val = JsonValue::from(value);
+                    result_val = JsonValue::from(value);
                 }
                 Err(e) => {
                     // self.on_error(&input, &e, &subscribers).await?;
@@ -197,9 +194,15 @@ where
         // This is a simplified stand-in for the logic from `defaultApplyEvents` in TS.
         // A full implementation would handle each event type to create the correct state mutation.
         let (mutation, result) = match event {
-            Event::RunFinished ( e ) => {
+            Event::RunFinished(e) => {
                 for sub in subscribers {
-                    sub.on_run_finished(&e.result.clone().unwrap(), self.messages(), self.state(), input).await?;
+                    sub.on_run_finished(
+                        &e.result.clone().unwrap(),
+                        self.messages(),
+                        self.state(),
+                        input,
+                    )
+                    .await?;
                 }
                 (AgentStateMutation::default(), e.result)
             }

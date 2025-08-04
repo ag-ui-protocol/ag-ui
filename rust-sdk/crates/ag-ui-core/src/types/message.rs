@@ -1,15 +1,14 @@
 use crate::types::tool::ToolCall;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-use crate::types::ids::ToolCallId;
+use crate::types::ids::{MessageId, ToolCallId};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FunctionCall {
     pub name: String,
     pub arguments: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum Role {
     Developer,
@@ -19,9 +18,9 @@ pub enum Role {
     Tool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BaseMessage {
-    pub id: Uuid,
+    pub id: MessageId,
     pub role: Role,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
@@ -29,9 +28,9 @@ pub struct BaseMessage {
     pub name: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeveloperMessage {
-    pub id: Uuid,
+    pub id: MessageId,
     pub role: Role, // Always Role::Developer
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -39,7 +38,7 @@ pub struct DeveloperMessage {
 }
 
 impl DeveloperMessage {
-    pub fn new(id: Uuid, content: String) -> Self {
+    pub fn new(id: MessageId, content: String) -> Self {
         Self {
             id,
             role: Role::Developer,
@@ -54,9 +53,9 @@ impl DeveloperMessage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SystemMessage {
-    pub id: Uuid,
+    pub id: MessageId,
     pub role: Role, // Always Role::System
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -64,7 +63,7 @@ pub struct SystemMessage {
 }
 
 impl SystemMessage {
-    pub fn new(id: Uuid, content: String) -> Self {
+    pub fn new(id: MessageId, content: String) -> Self {
         Self {
             id,
             role: Role::System,
@@ -79,9 +78,9 @@ impl SystemMessage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssistantMessage {
-    pub id: Uuid,
+    pub id: MessageId,
     pub role: Role, // Always Role::Assistant
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
@@ -92,7 +91,7 @@ pub struct AssistantMessage {
 }
 
 impl AssistantMessage {
-    pub fn new(id: Uuid) -> Self {
+    pub fn new(id: MessageId) -> Self {
         Self {
             id,
             role: Role::Assistant,
@@ -118,9 +117,9 @@ impl AssistantMessage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserMessage {
-    pub id: Uuid,
+    pub id: MessageId,
     pub role: Role, // Always Role::User
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -128,7 +127,7 @@ pub struct UserMessage {
 }
 
 impl UserMessage {
-    pub fn new(id: Uuid, content: String) -> Self {
+    pub fn new(id: MessageId, content: String) -> Self {
         Self {
             id,
             role: Role::User,
@@ -143,9 +142,9 @@ impl UserMessage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolMessage {
-    pub id: Uuid,
+    pub id: MessageId,
     pub content: String,
     pub role: Role, // Always Role::Tool
     #[serde(rename = "toolCallId")]
@@ -155,7 +154,7 @@ pub struct ToolMessage {
 }
 
 impl ToolMessage {
-    pub fn new(id: Uuid, content: String, tool_call_id: ToolCallId) -> Self {
+    pub fn new(id: MessageId, content: String, tool_call_id: ToolCallId) -> Self {
         Self {
             id,
             content,
@@ -171,23 +170,23 @@ impl ToolMessage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum Message {
     Developer {
-        id: Uuid,
+        id: MessageId,
         content: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
     System {
-        id: Uuid,
+        id: MessageId,
         content: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
     Assistant {
-        id: Uuid,
+        id: MessageId,
         #[serde(skip_serializing_if = "Option::is_none")]
         content: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -196,13 +195,13 @@ pub enum Message {
         tool_calls: Option<Vec<ToolCall>>,
     },
     User {
-        id: Uuid,
+        id: MessageId,
         content: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
     Tool {
-        id: Uuid,
+        id: MessageId,
         content: String,
         #[serde(rename = "toolCallId")]
         tool_call_id: ToolCallId,
@@ -212,7 +211,7 @@ pub enum Message {
 }
 
 impl Message {
-    pub fn id(&self) -> &Uuid {
+    pub fn id(&self) -> &MessageId {
         match self {
             Message::Developer { id, .. } => id,
             Message::System { id, .. } => id,

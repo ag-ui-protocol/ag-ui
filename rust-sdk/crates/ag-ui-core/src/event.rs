@@ -1,4 +1,4 @@
-use crate::types::messages::Message;
+use crate::types::message::Message;
 use serde::{Deserialize, Serialize};
 use crate::JsonValue;
 use crate::types::ids::ToolCallId;

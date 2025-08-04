@@ -1,5 +1,5 @@
 use crate::types::context::Context;
-use crate::types::messages::Message;
+use crate::types::message::Message;
 use crate::types::tool::Tool;
 use serde::{Deserialize, Serialize};
 use crate::JsonValue;

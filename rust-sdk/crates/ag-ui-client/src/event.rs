@@ -2,7 +2,7 @@ use crate::agent::{AgentError, AgentStateMutation};
 use crate::subscriber::AgentSubscriber;
 use ag_ui_core::event::Event;
 use ag_ui_core::types::input::RunAgentInput;
-use ag_ui_core::types::messages::Message;
+use ag_ui_core::types::message::Message;
 use ag_ui_core::{FwdProps, JsonValue, State};
 use std::sync::Arc;
 

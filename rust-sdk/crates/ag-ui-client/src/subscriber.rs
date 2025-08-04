@@ -1,7 +1,7 @@
 use serde_json::Value as JsonValue;
 use ag_ui_core::{FwdProps, State};
 use ag_ui_core::types::input::RunAgentInput;
-use ag_ui_core::types::messages::Message;
+use ag_ui_core::types::message::Message;
 use crate::agent::{AgentError, AgentStateMutation};
 
 /// Subscriber trait for handling agent events

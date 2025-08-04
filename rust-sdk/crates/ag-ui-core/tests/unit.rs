@@ -3,7 +3,7 @@ mod tests {
     use ag_ui_core::error::AguiError;
     use ag_ui_core::types::context::Context;
     use ag_ui_core::types::input::*;
-    use ag_ui_core::types::messages::{
+    use ag_ui_core::types::message::{
         AssistantMessage, DeveloperMessage, FunctionCall, Message, Role, SystemMessage,
         ToolMessage, UserMessage,
     };
@@ -11,7 +11,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use serde_json::json;
     use uuid::Uuid;
-    use ag_ui_core::types::ids::{RunId, ThreadId};
+    use ag_ui_core::types::ids::{MessageId, RunId, ThreadId, ToolCallId};
 
     #[test]
     fn test_role_serialization() {
@@ -22,23 +22,23 @@ mod tests {
 
     #[test]
     fn test_message_types() {
-        let dev_msg = DeveloperMessage::new("dev1".to_string(), "dev content".to_string())
+        let dev_msg = DeveloperMessage::new(MessageId::new(), "dev content".to_string())
             .with_name("dev".to_string());
         assert_eq!(dev_msg.role, Role::Developer);
         assert_eq!(dev_msg.name, Some("dev".to_string()));
 
-        let sys_msg = SystemMessage::new("sys1".to_string(), "sys content".to_string())
+        let sys_msg = SystemMessage::new(MessageId::new(), "sys content".to_string())
             .with_name("sys".to_string());
         assert_eq!(sys_msg.role, Role::System);
 
-        let user_msg = UserMessage::new("user1".to_string(), "user content".to_string())
+        let user_msg = UserMessage::new(MessageId::new(), "user content".to_string())
             .with_name("user".to_string());
         assert_eq!(user_msg.role, Role::User);
 
         let tool_msg = ToolMessage::new(
-            "tool1".to_string(),
+            MessageId::new(),
             "result".to_string(),
-            "call_id".to_string(),
+            ToolCallId::new(),
         )
         .with_error("error".to_string());
         assert_eq!(tool_msg.role, Role::Tool);
@@ -48,7 +48,7 @@ mod tests {
     #[test]
     fn test_message_serialization() {
         let user_msg = Message::User {
-            id: "123".to_string(),
+            id: MessageId::new(),
             content: "Hello".to_string(),
             name: None,
         };
@@ -72,7 +72,7 @@ mod tests {
 
     #[test]
     fn test_assistant_message_builder() {
-        let msg = AssistantMessage::new("123".to_string())
+        let msg = AssistantMessage::new(MessageId::new())
             .with_content("Hello".to_string())
             .with_name("Assistant".to_string());
 
@@ -153,12 +153,12 @@ mod tests {
     fn test_complex_assistant_message_deserialization() {
         let json_str = r#"{
 			"role": "assistant",
-			"id": "asst_123",
+			"id": "00000000-0000-0000-0000-000000000000",
 			"content": "I'll help you with that function.",
 			"name": "CodeHelper",
 			"toolCalls": [
 				{
-					"id": "call_1",
+					"id": "00000000-0000-0000-0000-000000000000",
 					"type": "function",
 					"function": {
 						"name": "write_function",
@@ -176,7 +176,7 @@ mod tests {
                 name,
                 tool_calls,
             } => {
-                assert_eq!(id, "asst_123");
+                assert_eq!(id.to_string(), "00000000-0000-0000-0000-000000000000");
                 assert_eq!(
                     content,
                     Some("I'll help you with that function.".to_string())
@@ -196,21 +196,21 @@ mod tests {
         let json_str = r#"[
 			{
 				"role": "user",
-				"id": "user_1",
+				"id": "00000000-0000-0000-0000-000000000000",
 				"content": "Hello!",
 				"name": "Alice"
 			},
 			{
 				"role": "assistant",
-				"id": "asst_1",
+				"id": "00000000-0000-0000-0000-000000000000",
 				"content": "Hi Alice!",
 				"name": "Assistant"
 			},
 			{
 				"role": "tool",
-				"id": "tool_1",
+				"id": "00000000-0000-0000-0000-000000000000",
 				"content": "Function result",
-				"toolCallId": "call_1"
+				"toolCallId": "00000000-0000-0000-0000-000000000000"
 			}
 		]"#;
 
@@ -219,7 +219,7 @@ mod tests {
 
         match &messages[0] {
             Message::User { id, content, name } => {
-                assert_eq!(id, "user_1");
+                assert_eq!(id.to_string(), "00000000-0000-0000-0000-000000000000");
                 assert_eq!(content, "Hello!");
                 assert_eq!(*name, Some("Alice".to_string()));
             }
@@ -236,7 +236,7 @@ mod tests {
 			"messages": [
 				{
 					"role": "user",
-					"id": "msg_1",
+					"id": "00000000-0000-0000-0000-000000000000",
 					"content": "Hello"
 				}
 			],
@@ -286,7 +286,7 @@ mod tests {
 			"messages": [
 				{
 					"role": "user",
-					"id": "msg_1",
+					"id": "00000000-0000-0000-0000-000000000000",
 					"content": "Hello"
 				}
 			],
