@@ -8,3 +8,6 @@ ag-ui-core = { path = "../ag-ui-core"}
 thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+async-trait = "0.1.88"
+uuid = { version = "1.17.0", features = ["v4"] }
+futures = "0.3.31"

@@ -2,31 +2,33 @@ use crate::types::context::Context;
 use crate::types::messages::Message;
 use crate::types::tool::Tool;
 use serde::{Deserialize, Serialize};
+use crate::JsonValue;
+use crate::types::ids::{RunId, ThreadId};
 
 /// Input for running an agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RunAgentInput<State = serde_json::Value, FwdProps = serde_json::Value> {
+pub struct RunAgentInput<StateT = JsonValue, FwdPropsT = JsonValue> {
     #[serde(rename = "threadId")]
-    pub thread_id: String,
+    pub thread_id: ThreadId,
     #[serde(rename = "runId")]
-    pub run_id: String,
-    pub state: State,
+    pub run_id: RunId,
+    pub state: StateT,
     pub messages: Vec<Message>,
     pub tools: Vec<Tool>,
     pub context: Vec<Context>,
     #[serde(rename = "forwardedProps")]
-    pub forwarded_props: FwdProps,
+    pub forwarded_props: FwdPropsT,
 }
 
-impl<State, FwdProps> RunAgentInput<State, FwdProps> {
+impl<StateT, FwdPropsT> RunAgentInput<StateT, FwdPropsT> {
     pub fn new(
-        thread_id: String,
-        run_id: String,
-        state: State,
+        thread_id: ThreadId,
+        run_id: RunId,
+        state: StateT,
         messages: Vec<Message>,
         tools: Vec<Tool>,
         context: Vec<Context>,
-        forwarded_props: FwdProps,
+        forwarded_props: FwdPropsT,
     ) -> Self {
         Self {
             thread_id,

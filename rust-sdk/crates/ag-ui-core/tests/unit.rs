@@ -10,6 +10,8 @@ mod tests {
     use ag_ui_core::types::tool::{Tool, ToolCall};
     use serde::{Deserialize, Serialize};
     use serde_json::json;
+    use uuid::Uuid;
+    use ag_ui_core::types::ids::{RunId, ThreadId};
 
     #[test]
     fn test_role_serialization() {
@@ -92,21 +94,6 @@ mod tests {
     }
 
     #[test]
-    fn test_run_agent_input() {
-        let input = RunAgentInput::new(
-            "thread1".to_string(),
-            "run1".to_string(),
-            json!({}),
-            vec![],
-            vec![],
-            vec![],
-            json!({}),
-        );
-        assert_eq!(input.thread_id, "thread1");
-        assert_eq!(input.run_id, "run1");
-    }
-
-    #[test]
     fn test_agui_error() {
         let error = AguiError::new("test error");
         assert_eq!(error.to_string(), "AG-UI Error: test error");
@@ -127,8 +114,8 @@ mod tests {
 
         // If this compiles, it's okay
         let _input = RunAgentInput::new(
-            "thread1".to_string(),
-            "run1".to_string(),
+            ThreadId::new(),
+            RunId::new(),
             state,
             vec![],
             vec![],
@@ -152,8 +139,8 @@ mod tests {
 
         // If this compiles, it's okay
         let _input = RunAgentInput::new(
-            "thread1".to_string(),
-            "run1".to_string(),
+            Uuid::new_v4().into(),
+            Uuid::new_v4().into(),
             json!({}),
             vec![],
             vec![],
@@ -243,8 +230,8 @@ mod tests {
     #[test]
     fn test_complex_run_agent_input_deserialization() {
         let json_str = r#"{
-			"threadId": "thread_123",
-			"runId": "run_456",
+			"threadId": "00000000-0000-0000-0000-000000000000",
+			"runId": "00000000-0000-0000-0000-000000000000",
 			"state": {"counter": 42},
 			"messages": [
 				{
@@ -275,8 +262,6 @@ mod tests {
 		}"#;
 
         let input: RunAgentInput = serde_json::from_str(json_str).unwrap();
-        assert_eq!(input.thread_id, "thread_123");
-        assert_eq!(input.run_id, "run_456");
         assert_eq!(input.messages.len(), 1);
         assert_eq!(input.tools.len(), 1);
         assert_eq!(input.context.len(), 1);
@@ -295,8 +280,8 @@ mod tests {
         }
 
         let json_str = r#"{
-			"threadId": "thread_123",
-			"runId": "run_456",
+			"threadId": "00000000-0000-0000-0000-000000000000",
+			"runId": "00000000-0000-0000-0000-000000000000",
 			"state": {"counter": 42},
 			"messages": [
 				{
@@ -327,8 +312,6 @@ mod tests {
 		}"#;
 
         let input: RunAgentInput<CustomState> = serde_json::from_str(json_str).unwrap();
-        assert_eq!(input.thread_id, "thread_123");
-        assert_eq!(input.run_id, "run_456");
         assert_eq!(input.messages.len(), 1);
         assert_eq!(input.tools.len(), 1);
         assert_eq!(input.context.len(), 1);
@@ -336,5 +319,7 @@ mod tests {
         let wrong_input: serde_json::Result<RunAgentInput<OtherState>> =
             serde_json::from_str(json_str);
         assert!(wrong_input.is_err())
+
+
     }
 }

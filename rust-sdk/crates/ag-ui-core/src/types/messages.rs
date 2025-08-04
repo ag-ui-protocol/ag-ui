@@ -1,5 +1,7 @@
 use crate::types::tool::ToolCall;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+use crate::types::ids::ToolCallId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FunctionCall {
@@ -19,7 +21,7 @@ pub enum Role {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BaseMessage {
-    pub id: String,
+    pub id: Uuid,
     pub role: Role,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
@@ -29,7 +31,7 @@ pub struct BaseMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeveloperMessage {
-    pub id: String,
+    pub id: Uuid,
     pub role: Role, // Always Role::Developer
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -37,7 +39,7 @@ pub struct DeveloperMessage {
 }
 
 impl DeveloperMessage {
-    pub fn new(id: String, content: String) -> Self {
+    pub fn new(id: Uuid, content: String) -> Self {
         Self {
             id,
             role: Role::Developer,
@@ -54,7 +56,7 @@ impl DeveloperMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SystemMessage {
-    pub id: String,
+    pub id: Uuid,
     pub role: Role, // Always Role::System
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -62,7 +64,7 @@ pub struct SystemMessage {
 }
 
 impl SystemMessage {
-    pub fn new(id: String, content: String) -> Self {
+    pub fn new(id: Uuid, content: String) -> Self {
         Self {
             id,
             role: Role::System,
@@ -79,7 +81,7 @@ impl SystemMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssistantMessage {
-    pub id: String,
+    pub id: Uuid,
     pub role: Role, // Always Role::Assistant
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
@@ -90,7 +92,7 @@ pub struct AssistantMessage {
 }
 
 impl AssistantMessage {
-    pub fn new(id: String) -> Self {
+    pub fn new(id: Uuid) -> Self {
         Self {
             id,
             role: Role::Assistant,
@@ -118,7 +120,7 @@ impl AssistantMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserMessage {
-    pub id: String,
+    pub id: Uuid,
     pub role: Role, // Always Role::User
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -126,7 +128,7 @@ pub struct UserMessage {
 }
 
 impl UserMessage {
-    pub fn new(id: String, content: String) -> Self {
+    pub fn new(id: Uuid, content: String) -> Self {
         Self {
             id,
             role: Role::User,
@@ -143,17 +145,17 @@ impl UserMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolMessage {
-    pub id: String,
+    pub id: Uuid,
     pub content: String,
     pub role: Role, // Always Role::Tool
     #[serde(rename = "toolCallId")]
-    pub tool_call_id: String,
+    pub tool_call_id: ToolCallId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
 impl ToolMessage {
-    pub fn new(id: String, content: String, tool_call_id: String) -> Self {
+    pub fn new(id: Uuid, content: String, tool_call_id: ToolCallId) -> Self {
         Self {
             id,
             content,
@@ -173,19 +175,19 @@ impl ToolMessage {
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum Message {
     Developer {
-        id: String,
+        id: Uuid,
         content: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
     System {
-        id: String,
+        id: Uuid,
         content: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
     Assistant {
-        id: String,
+        id: Uuid,
         #[serde(skip_serializing_if = "Option::is_none")]
         content: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -194,23 +196,23 @@ pub enum Message {
         tool_calls: Option<Vec<ToolCall>>,
     },
     User {
-        id: String,
+        id: Uuid,
         content: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
     Tool {
-        id: String,
+        id: Uuid,
         content: String,
         #[serde(rename = "toolCallId")]
-        tool_call_id: String,
+        tool_call_id: ToolCallId,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
 }
 
 impl Message {
-    pub fn id(&self) -> &str {
+    pub fn id(&self) -> &Uuid {
         match self {
             Message::Developer { id, .. } => id,
             Message::System { id, .. } => id,

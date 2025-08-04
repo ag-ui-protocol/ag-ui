@@ -1,5 +1,7 @@
 use crate::types::messages::Message;
 use serde::{Deserialize, Serialize};
+use crate::JsonValue;
+use crate::types::ids::ToolCallId;
 
 /// Event types for AG-UI protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,7 +41,7 @@ pub struct BaseEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<f64>,
     #[serde(rename = "rawEvent", skip_serializing_if = "Option::is_none")]
-    pub raw_event: Option<serde_json::Value>,
+    pub raw_event: Option<JsonValue>,
 }
 
 /// Text message start event
@@ -112,7 +114,7 @@ pub struct ToolCallStartEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
     #[serde(rename = "toolCallId")]
-    pub tool_call_id: String,
+    pub tool_call_id: ToolCallId,
     #[serde(rename = "toolCallName")]
     pub tool_call_name: String,
     #[serde(rename = "parentMessageId", skip_serializing_if = "Option::is_none")]
@@ -125,7 +127,7 @@ pub struct ToolCallArgsEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
     #[serde(rename = "toolCallId")]
-    pub tool_call_id: String,
+    pub tool_call_id: ToolCallId,
     pub delta: String,
 }
 
@@ -135,7 +137,7 @@ pub struct ToolCallEndEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
     #[serde(rename = "toolCallId")]
-    pub tool_call_id: String,
+    pub tool_call_id: ToolCallId,
 }
 
 /// Tool call result event
@@ -146,7 +148,7 @@ pub struct ToolCallResultEvent {
     #[serde(rename = "messageId")]
     pub message_id: String,
     #[serde(rename = "toolCallId")]
-    pub tool_call_id: String,
+    pub tool_call_id: ToolCallId,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>, // "tool"
@@ -158,7 +160,7 @@ pub struct ToolCallChunkEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
     #[serde(rename = "toolCallId", skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>,
+    pub tool_call_id: Option<ToolCallId>,
     #[serde(rename = "toolCallName", skip_serializing_if = "Option::is_none")]
     pub tool_call_name: Option<String>,
     #[serde(rename = "parentMessageId", skip_serializing_if = "Option::is_none")]
@@ -188,7 +190,7 @@ pub struct ThinkingEndEvent {
 pub struct StateSnapshotEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
-    pub snapshot: serde_json::Value,
+    pub snapshot: JsonValue,
 }
 
 /// State delta event (JSON Patch RFC 6902)
@@ -196,7 +198,7 @@ pub struct StateSnapshotEvent {
 pub struct StateDeltaEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
-    pub delta: Vec<serde_json::Value>,
+    pub delta: Vec<JsonValue>,
 }
 
 /// Messages snapshot event
@@ -212,7 +214,7 @@ pub struct MessagesSnapshotEvent {
 pub struct RawEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
-    pub event: serde_json::Value,
+    pub event: JsonValue,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
 }
@@ -223,7 +225,7 @@ pub struct CustomEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
     pub name: String,
-    pub value: serde_json::Value,
+    pub value: JsonValue,
 }
 
 /// Run started event
@@ -247,7 +249,7 @@ pub struct RunFinishedEvent {
     #[serde(rename = "runId")]
     pub run_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<serde_json::Value>,
+    pub result: Option<JsonValue>,
 }
 
 /// Run error event
@@ -408,7 +410,7 @@ impl TextMessageStartEvent {
         self
     }
 
-    pub fn with_raw_event(mut self, raw_event: serde_json::Value) -> Self {
+    pub fn with_raw_event(mut self, raw_event: JsonValue) -> Self {
         self.base.raw_event = Some(raw_event);
         self
     }
@@ -434,6 +436,3 @@ impl TextMessageContentEvent {
         self
     }
 }
-
-/// Type alias for processed events (matching the TypeScript version)
-pub type ProcessedEvent = Event;
