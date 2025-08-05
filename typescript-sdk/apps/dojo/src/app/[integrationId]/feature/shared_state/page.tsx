@@ -366,7 +366,9 @@ function Recipe() {
   };
 
   return (
-    <form className="recipe-card">
+    <form 
+    data-testid="recipe-card"
+    className="recipe-card">
       {/* Recipe Title */}
       <div className="recipe-header">
         <input
@@ -452,13 +454,23 @@ function Recipe() {
         {changedKeysRef.current.includes("ingredients") && <Ping />}
         <div className="section-header">
           <h2 className="section-title">Ingredients</h2>
-          <button type="button" className="add-button" onClick={addIngredient}>
+          <button
+            data-testid="add-ingredient-button"
+            type="button"
+            className="add-button"
+            onClick={addIngredient}
+          >
             + Add Ingredient
           </button>
         </div>
-        <div className="ingredients-container">
+        <div
+          data-testid="ingredients-container"
+          className="ingredients-container"
+        >
           {recipe.ingredients.map((ingredient, index) => (
-            <div key={index} className="ingredient-card">
+            <div key={index} 
+             data-testid="ingredient-card"
+             className="ingredient-card">
               <div className="ingredient-icon">{getProperIcon(ingredient.icon)}</div>
               <div className="ingredient-content">
                 <input
@@ -498,7 +510,9 @@ function Recipe() {
             + Add Step
           </button>
         </div>
-        <div className="instructions-container">
+        <div 
+          data-testid="instructions-container"
+          className="instructions-container">
           {recipe.instructions.map((instruction, index) => (
             <div key={index} className="instruction-item">
               {/* Number Circle */}
@@ -555,6 +569,7 @@ function Recipe() {
       {/* Improve with AI Button */}
       <div className="action-container">
         <button
+          data-testid="improve-button"
           className={isLoading ? "improve-button loading" : "improve-button"}
           type="button"
           onClick={() => {

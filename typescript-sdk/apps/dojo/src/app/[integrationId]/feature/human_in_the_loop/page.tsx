@@ -34,7 +34,9 @@ interface Step {
 
 // Shared UI Components
 const StepContainer = ({ theme, children }: { theme?: string; children: React.ReactNode }) => (
-  <div className="flex">
+  <div 
+  data-testid="select-steps"
+  className="flex">
     <div className={`relative rounded-xl w-[600px] p-6 shadow-lg backdrop-blur-sm ${
       theme === "dark" 
         ? "bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white border border-slate-700/50 shadow-2xl"
@@ -114,7 +116,9 @@ const StepItem = ({
         ? "bg-slate-800/30 border border-slate-600/30"
         : "bg-gray-50/50 border border-gray-200/40"
   }`}>
-    <label className="flex items-center cursor-pointer w-full">
+    <label 
+    data-testid="step-item" 
+    className="flex items-center cursor-pointer w-full">
       <div className="relative">
         <input
           type="checkbox"
@@ -137,7 +141,9 @@ const StepItem = ({
           )}
         </div>
       </div>
-      <span className={`ml-3 font-medium transition-all duration-300 ${
+      <span 
+       data-testid="step-text"
+       className={`ml-3 font-medium transition-all duration-300 ${
         step.status !== "enabled" && status != "inProgress"
           ? `line-through ${theme === "dark" ? "text-slate-500" : "text-gray-400"}`
           : theme === "dark" ? "text-white" : "text-gray-800"
