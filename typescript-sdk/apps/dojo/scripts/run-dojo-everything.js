@@ -126,6 +126,7 @@ const dojo = {
     LLAMA_INDEX_URL: 'http://localhost:8007',
     MASTRA_URL: 'http://localhost:8008',
     PYDANTIC_AI_URL: 'http://localhost:8009',
+    NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: 'cpkdojo.local___CopilotKit Feature Viewer',
   }
 }
 
