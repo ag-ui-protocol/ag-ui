@@ -19,6 +19,7 @@ import { menuIntegrations } from "@/menu";
 import { Feature } from "@/types/integration";
 import { useURLParams } from "@/contexts/url-params-context";
 import { View } from "@/types/interface";
+import { getTitleForCurrentDomain } from "@/utils/domain-config";
 
 interface SidebarProps {
   isMobile?: boolean;
@@ -28,7 +29,7 @@ interface SidebarProps {
 export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const { view, pickerDisabled, setView } = useURLParams();
+  const { view, frameworkPickerHidden, viewPickerHidden, featurePickerHidden, setView} = useURLParams();
   const [isDarkTheme, setIsDarkTheme] = useState<boolean>(false);
 
   // Extract the current integration ID from the pathname
@@ -98,7 +99,7 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
   }, []);
 
   return (
-    <div className={`flex flex-col h-full bg-background border-r 
+    <div className={`flex flex-col h-full bg-background border-r
       ${isMobile ? 'w-80 shadow-xl' : 'w-74 min-w-[296px] flex-shrink-0'}
     `}>
       {/* Sidebar Header */}
@@ -106,7 +107,7 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
         <div className="flex items-center justify-between ml-1">
           <div className="flex items-start flex-col">
             <h1 className={`text-lg font-light ${isDarkTheme ? "text-white" : "text-gray-900"}`}>
-              AG-UI Interactive Dojo
+              {getTitleForCurrentDomain() || "AG-UI Interactive Dojo"}
             </h1>
           </div>
 
@@ -115,9 +116,10 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
       </div>
 
       {/* Controls Section */}
+      {(!frameworkPickerHidden|| !viewPickerHidden) && (
       <div className="p-4 border-b bg-background">
         {/* Integration picker */}
-        {!pickerDisabled && (
+        {!frameworkPickerHidden&& (
           <div className="mb-1">
             <label className="block text-sm font-medium text-muted-foreground mb-2">Integrations</label>
             <DropdownMenu>
@@ -143,6 +145,7 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
         )}
 
         {/* Preview/Code Tabs */}
+        {!viewPickerHidden &&
         <div className="mb-1">
           <label className="block text-sm font-medium text-muted-foreground mb-2">View</label>
           <Tabs
@@ -175,11 +178,13 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
             </TabsList>
           </Tabs>
         </div>
+        }
       </div>
+      )}
 
       {/* Demo List */}
       <div className="flex-1 overflow-auto">
-        {currentIntegration ? (
+        {(currentIntegration && !featurePickerHidden) ? (
           <DemoList
             demos={filteredDemos}
             selectedDemo={currentDemoId}
