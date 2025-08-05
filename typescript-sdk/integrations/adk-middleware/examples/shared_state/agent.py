@@ -233,13 +233,10 @@ def simple_after_model_modifier(
             if  llm_response.content.role=='model' and llm_response.content.parts[0].text:
                 original_text = llm_response.content.parts[0].text
                 callback_context._invocation_context.end_invocation = True
-                print(f"-----hard stopping the agent execution'") 
         
         elif llm_response.error_message:
-            print(f"[Callback] Inspected response: Contains error '{llm_response.error_message}'. No modification.")
             return None
         else:
-            print("[Callback] Inspected response: Empty LlmResponse.")
             return None # Nothing to modify
     return None
 
@@ -271,4 +268,3 @@ shared_state_agent = LlmAgent(
         before_model_callback=before_model_modifier,
         after_model_callback = simple_after_model_modifier
     )
-
