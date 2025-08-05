@@ -13,14 +13,52 @@ load_dotenv()
 
 app = FastAPI(title="SuperOptiX AG-UI Server")
 
-# Add SuperOptiX endpoint
-# You can specify the project root if needed
-project_root = Path.cwd()  # or specify a specific path
+# Use the proper SuperOptiX project structure
+# Point to the swe project root where the .super file is located
+project_root = Path("/Users/shashi/superagentic/SuperOptiX/swe")
+
+# Add SuperOptiX endpoints for different features
+# The agent name should match what's available in the project
 add_superoptix_fastapi_endpoint(
     app, 
-    agent_name="developer",  # Change this to your agent name
+    agent_name="developer",  # This should match the agent name in swe/swe/agents/
     project_root=project_root,
-    path="/"
+    path="/agentic_chat"
+)
+
+add_superoptix_fastapi_endpoint(
+    app, 
+    agent_name="developer",  # This should match the agent name in swe/swe/agents/
+    project_root=project_root,
+    path="/human_in_the_loop"
+)
+
+add_superoptix_fastapi_endpoint(
+    app, 
+    agent_name="developer",  # This should match the agent name in swe/swe/agents/
+    project_root=project_root,
+    path="/tool_based_generative_ui"
+)
+
+add_superoptix_fastapi_endpoint(
+    app, 
+    agent_name="developer",  # This should match the agent name in swe/swe/agents/
+    project_root=project_root,
+    path="/agentic_generative_ui"
+)
+
+add_superoptix_fastapi_endpoint(
+    app, 
+    agent_name="developer",  # This should match the agent name in swe/swe/agents/
+    project_root=project_root,
+    path="/shared_state"
+)
+
+add_superoptix_fastapi_endpoint(
+    app, 
+    agent_name="developer",  # This should match the agent name in swe/swe/agents/
+    project_root=project_root,
+    path="/predictive_state_updates"
 )
 
 def main():

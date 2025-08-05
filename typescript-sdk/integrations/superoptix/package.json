@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/superoptix",
-  "author": "SuperOptiX Team <team@superoptix.ai>",
+  "author": "Your Name <your-email@example.com>",
   "version": "0.0.1",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

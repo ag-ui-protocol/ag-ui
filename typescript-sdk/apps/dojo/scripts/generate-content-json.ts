@@ -195,6 +195,12 @@ const agentFilesMapper: Record<string, (agentKeys: string[]) => Record<string, s
       ...acc,
       [agentId]: [path.join(__dirname, integrationsFolderPath, `/crewai/python/ag_ui_crewai/examples/${agentId}.py`)]
     }), {})
+  },
+  'superoptix': (agentKeys: string[]) => {
+    return agentKeys.reduce((acc, agentId) => ({
+      ...acc,
+      [agentId]: [path.join(__dirname, integrationsFolderPath, `/superoptix/python/ag_ui_superoptix/endpoint.py`)]
+    }), {})
   }
 }
 

@@ -2,7 +2,7 @@
 name = "ag-ui-superoptix"
 version = "0.0.1"
 description = "AG-UI integration for SuperOptiX"
-authors = ["Shashi Jagtap <shashi@super-agentic.ai>"]
+authors = ["SuperOptiX Team <team@superoptix.ai>"]
 readme = "README.md"
 packages = [{include = "ag_ui_superoptix"}]
 
