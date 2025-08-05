@@ -98,7 +98,7 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
   useEffect(() => {
     const newState: URLParamsState = {
       view: (searchParams.get("view") as View) || "preview",
-      sidebarHidden: searchParams.get("sidebar") === "disabled",
+      sidebarHidden: searchParams.get("sidebar") === "false",
       frameworkPickerHidden: searchParams.get("frameworkPicker") === "false",
       viewPickerHidden: searchParams.get("viewPicker") === "false",
       featurePickerHidden: searchParams.get("featurePicker") === "false",
