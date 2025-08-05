@@ -8,6 +8,7 @@ type envVars = {
   llamaIndexUrl: string;
   crewAiUrl: string;
   pydanticAIUrl: string;
+  superoptixUrl: string;
 }
 
 export default function getEnvVars(): envVars {
@@ -21,5 +22,6 @@ export default function getEnvVars(): envVars {
         llamaIndexUrl: process.env.LLAMA_INDEX_URL || 'http://localhost:9000',
         crewAiUrl: process.env.CREW_AI_URL || 'http://localhost:9002',
         pydanticAIUrl: process.env.PYDANTIC_AI_URL || 'http://localhost:9000',
+        superoptixUrl: process.env.SUPEROPTIX_URL || 'http://localhost:8000',
     }
 }

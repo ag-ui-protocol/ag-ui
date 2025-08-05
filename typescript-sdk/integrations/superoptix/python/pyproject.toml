@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "ag-ui-superoptix"
+version = "0.0.1"
+description = "AG-UI integration for SuperOptiX"
+authors = ["Shashi Jagtap <shashi@super-agentic.ai>"]
+readme = "README.md"
+packages = [{include = "ag_ui_superoptix"}]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.104.1"
+uvicorn = "^0.24.0"
+ag-ui-protocol = "^0.1.8"
+superoptix = "^0.1.0b10"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+black = "^23.11.0"
+isort = "^5.12.0"
+mypy = "^1.7.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api" 
