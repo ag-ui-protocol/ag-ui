@@ -8,6 +8,7 @@ interface URLParamsState {
   view: View;
   sidebarHidden: boolean;
   featureSelectionDisabled: boolean;
+  viewSelectionDisabled: boolean;
   pickerDisabled: boolean;
   file?: string;
 }
@@ -16,6 +17,7 @@ interface URLParamsContextType extends URLParamsState {
   setView: (view: View) => void;
   setSidebarHidden: (disabled: boolean) => void;
   setFeatureSelectionDisabled: (disabled: boolean) => void;
+  setViewSelectionDisabled: (disabled: boolean) => void;
   setPickerDisabled: (disabled: boolean) => void;
   setCodeFile: (fileName: string) => void;
 }
@@ -35,6 +37,7 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
   const [state, setState] = useState<URLParamsState>(() => ({
     view: (searchParams.get("view") as View) || "preview",
     sidebarHidden: searchParams.get("sidebar") === "disabled",
+    viewSelectionDisabled: searchParams.get("viewSelection") === "false",
     pickerDisabled: searchParams.get("picker") === "false",
     featureSelectionDisabled: searchParams.get("features") === "false",
   }));
@@ -61,6 +64,14 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
       }
     }
 
+    // Update viewSelection param
+    if (newState.viewSelectionDisabled !== undefined) {
+      if (newState.viewSelectionDisabled) {
+        params.set("viewSelection", "false");
+      } else {
+        params.delete("viewSelection");
+      }
+    }
     // Update features param
     if (newState.featureSelectionDisabled !== undefined) {
       if (newState.featureSelectionDisabled) {
@@ -90,6 +101,7 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
       sidebarHidden: searchParams.get("sidebar") === "disabled",
       pickerDisabled: searchParams.get("picker") === "false",
       featureSelectionDisabled: searchParams.get("features") === "false",
+      viewSelectionDisabled: searchParams.get("viewSelection") === "false",
     };
 
     setState(newState);
@@ -120,6 +132,12 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
     updateURL({ featureSelectionDisabled });
   };
 
+  const setViewSelectionDisabled = (viewSelectionDisabled: boolean) => {
+    const newState = { ...state, viewSelectionDisabled };
+    setState(newState);
+    updateURL({ viewSelectionDisabled });
+  };
+
   const setCodeFile = (fileName: string) => {
     const newState = { ...state, file: fileName };
     setState(newState);
@@ -132,6 +150,7 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
     setSidebarHidden,
     setPickerDisabled,
     setFeatureSelectionDisabled,
+    setViewSelectionDisabled,
     setCodeFile,
   };
 
