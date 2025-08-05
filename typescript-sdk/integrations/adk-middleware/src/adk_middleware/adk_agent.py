@@ -19,7 +19,7 @@ from ag_ui.core import (
 from google.adk import Runner
 from google.adk.agents import BaseAgent, RunConfig as ADKRunConfig
 from google.adk.agents.run_config import StreamingMode
-from google.adk.sessions import InMemorySessionService
+from google.adk.sessions import BaseSessionService, InMemorySessionService
 from google.adk.artifacts import BaseArtifactService, InMemoryArtifactService
 from google.adk.memory import BaseMemoryService, InMemoryMemoryService
 from google.adk.auth.credential_service.base_credential_service import BaseCredentialService
@@ -57,7 +57,8 @@ class ADKAgent:
         user_id: Optional[str] = None,
         user_id_extractor: Optional[Callable[[RunAgentInput], str]] = None,
         
-        # ADK Services (session service now encapsulated in session manager)
+        # ADK Services
+        session_service: Optional[BaseSessionService] = None,
         artifact_service: Optional[BaseArtifactService] = None,
         memory_service: Optional[BaseMemoryService] = None,
         credential_service: Optional[BaseCredentialService] = None,
@@ -82,6 +83,7 @@ class ADKAgent:
             app_name_extractor: Function to extract app name dynamically from input
             user_id: Static user ID for all requests
             user_id_extractor: Function to extract user ID dynamically from input
+            session_service: Session management service (defaults to InMemorySessionService)
             artifact_service: File/artifact storage service
             memory_service: Conversation memory and search service (also enables automatic session memory)
             credential_service: Authentication credential storage
@@ -119,12 +121,9 @@ class ADKAgent:
         
         
         # Session lifecycle management - use singleton
-        # Initialize with session service based on use_in_memory_services
-        if use_in_memory_services:
-            session_service = InMemorySessionService()
-        else:
-            # For production, you would inject the real session service here
-            session_service = InMemorySessionService()  # TODO: Make this configurable
+        # Use provided session service or create default based on use_in_memory_services
+        if session_service is None:
+            session_service = InMemorySessionService()  # Default for both dev and production
             
         self._session_manager = SessionManager.get_instance(
             session_service=session_service,
