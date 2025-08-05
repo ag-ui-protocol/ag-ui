@@ -28,7 +28,7 @@ interface SidebarProps {
 export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const { view, pickerDisabled, setView } = useURLParams();
+  const { view, pickerDisabled, featureSelectionDisabled, setView } = useURLParams();
   const [isDarkTheme, setIsDarkTheme] = useState<boolean>(false);
 
   // Extract the current integration ID from the pathname
@@ -98,7 +98,7 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
   }, []);
 
   return (
-    <div className={`flex flex-col h-full bg-background border-r 
+    <div className={`flex flex-col h-full bg-background border-r
       ${isMobile ? 'w-80 shadow-xl' : 'w-74 min-w-[296px] flex-shrink-0'}
     `}>
       {/* Sidebar Header */}
@@ -179,7 +179,7 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
 
       {/* Demo List */}
       <div className="flex-1 overflow-auto">
-        {currentIntegration ? (
+        {(currentIntegration && !featureSelectionDisabled) ? (
           <DemoList
             demos={filteredDemos}
             selectedDemo={currentDemoId}

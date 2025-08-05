@@ -7,6 +7,7 @@ import { View } from "@/types/interface";
 interface URLParamsState {
   view: View;
   sidebarHidden: boolean;
+  featureSelectionDisabled: boolean;
   pickerDisabled: boolean;
   file?: string;
 }
@@ -14,6 +15,7 @@ interface URLParamsState {
 interface URLParamsContextType extends URLParamsState {
   setView: (view: View) => void;
   setSidebarHidden: (disabled: boolean) => void;
+  setFeatureSelectionDisabled: (disabled: boolean) => void;
   setPickerDisabled: (disabled: boolean) => void;
   setCodeFile: (fileName: string) => void;
 }
@@ -34,12 +36,13 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
     view: (searchParams.get("view") as View) || "preview",
     sidebarHidden: searchParams.get("sidebar") === "disabled",
     pickerDisabled: searchParams.get("picker") === "false",
+    featureSelectionDisabled: searchParams.get("features") === "false",
   }));
 
   // Update URL when state changes
   const updateURL = (newState: Partial<URLParamsState>) => {
     const params = new URLSearchParams(searchParams.toString());
-    
+
     // Update view param
     if (newState.view !== undefined) {
       if (newState.view === "preview") {
@@ -48,7 +51,7 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
         params.set("view", newState.view);
       }
     }
-    
+
     // Update sidebar param
     if (newState.sidebarHidden !== undefined) {
       if (newState.sidebarHidden) {
@@ -57,7 +60,16 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
         params.delete("sidebar");
       }
     }
-    
+
+    // Update features param
+    if (newState.featureSelectionDisabled !== undefined) {
+      if (newState.featureSelectionDisabled) {
+        params.set("features", "false");
+      } else {
+        params.delete("features");
+      }
+    }
+
     // Update picker param
     if (newState.pickerDisabled !== undefined) {
       if (newState.pickerDisabled) {
@@ -77,8 +89,9 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
       view: (searchParams.get("view") as View) || "preview",
       sidebarHidden: searchParams.get("sidebar") === "disabled",
       pickerDisabled: searchParams.get("picker") === "false",
+      featureSelectionDisabled: searchParams.get("features") === "false",
     };
-    
+
     setState(newState);
   }, [searchParams]);
 
@@ -101,6 +114,12 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
     updateURL({ pickerDisabled });
   };
 
+  const setFeatureSelectionDisabled = (featureSelectionDisabled: boolean) => {
+    const newState = { ...state, featureSelectionDisabled };
+    setState(newState);
+    updateURL({ featureSelectionDisabled });
+  };
+
   const setCodeFile = (fileName: string) => {
     const newState = { ...state, file: fileName };
     setState(newState);
@@ -112,6 +131,7 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
     setView,
     setSidebarHidden,
     setPickerDisabled,
+    setFeatureSelectionDisabled,
     setCodeFile,
   };
 
