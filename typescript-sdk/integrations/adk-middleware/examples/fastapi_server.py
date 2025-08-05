@@ -34,6 +34,13 @@ try:
         instruction="You are a helpful assistant. Help users by answering their questions and assisting with their needs.",
         tools=[adk_tools.preload_memory_tool.PreloadMemoryTool()]
     )
+    # Register the agent
+    registry.set_default_agent(sample_agent)
+    registry.register_agent('adk-tool-based-generative-ui', haiku_generator_agent)
+    registry.register_agent('adk-human-in-loop-agent', human_in_loop_agent)
+    registry.register_agent('adk-shared-state-agent', shared_state_agent)
+    registry.register_agent('adk-predictive-state-agent', predictive_state_updates_agent)
+    # Create ADK middleware agent
     # Create ADK middleware agent instances with direct agent references
     chat_agent = ADKAgent(
         adk_agent=sample_agent,
@@ -69,6 +76,13 @@ try:
     
     adk_predictive_state_agent = ADKAgent(
         adk_agent=predictive_state_updates_agent,
+        app_name="demo_app",
+        user_id="demo_user",
+        session_timeout_seconds=3600,
+        use_in_memory_services=True
+    )
+    
+    adk_predictive_state_agent = ADKAgent(
         app_name="demo_app",
         user_id="demo_user",
         session_timeout_seconds=3600,

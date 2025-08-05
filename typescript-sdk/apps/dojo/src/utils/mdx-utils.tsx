@@ -1,6 +1,5 @@
 import React from "react";
 import { MDXComponents } from "@/components/ui/mdx-components";
-import { MDXProvider } from "@mdx-js/react";
 import ReactMarkdown from "react-markdown";
 
 /**
@@ -40,7 +39,6 @@ export const MDXRenderer: React.FC<{
   if (!content) return null;
 
   return (
-    <MDXProvider components={MDXComponents}>
       <div className="mdx-content">
         {/* Render the markdown content with proper formatting */}
         <ReactMarkdown components={MDXComponents}>{content}</ReactMarkdown>
@@ -50,7 +48,6 @@ export const MDXRenderer: React.FC<{
           <div className="mt-4" dangerouslySetInnerHTML={{ __html: processedVideos }} />
         )}
       </div>
-    </MDXProvider>
   );
 };
 
