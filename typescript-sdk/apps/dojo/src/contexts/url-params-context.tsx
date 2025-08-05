@@ -7,18 +7,18 @@ import { View } from "@/types/interface";
 interface URLParamsState {
   view: View;
   sidebarHidden: boolean;
-  featureSelectionDisabled: boolean;
-  viewSelectionDisabled: boolean;
-  pickerDisabled: boolean;
+  frameworkPickerHidden: boolean;
+  viewPickerHidden: boolean;
+  featurePickerHidden: boolean;
   file?: string;
 }
 
 interface URLParamsContextType extends URLParamsState {
   setView: (view: View) => void;
   setSidebarHidden: (disabled: boolean) => void;
-  setFeatureSelectionDisabled: (disabled: boolean) => void;
-  setViewSelectionDisabled: (disabled: boolean) => void;
-  setPickerDisabled: (disabled: boolean) => void;
+  setFrameworkPickerHidden: (disabled: boolean) => void;
+  setViewPickerHidden: (disabled: boolean) => void;
+  setFeaturePickerHidden: (disabled: boolean) => void;
   setCodeFile: (fileName: string) => void;
 }
 
@@ -36,10 +36,10 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
   // Initialize state from URL params
   const [state, setState] = useState<URLParamsState>(() => ({
     view: (searchParams.get("view") as View) || "preview",
-    sidebarHidden: searchParams.get("sidebar") === "disabled",
-    viewSelectionDisabled: searchParams.get("viewSelection") === "false",
-    pickerDisabled: searchParams.get("picker") === "false",
-    featureSelectionDisabled: searchParams.get("features") === "false",
+    sidebarHidden: searchParams.get("sidebar") === "false",
+    frameworkPickerHidden: searchParams.get("frameworkPicker") === "false",
+    viewPickerHidden: searchParams.get("viewPicker") === "false",
+    featurePickerHidden: searchParams.get("featurePicker") === "false",
   }));
 
   // Update URL when state changes
@@ -58,35 +58,35 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
     // Update sidebar param
     if (newState.sidebarHidden !== undefined) {
       if (newState.sidebarHidden) {
-        params.set("sidebar", "disabled");
+        params.set("sidebar", "false");
       } else {
         params.delete("sidebar");
       }
     }
 
-    // Update viewSelection param
-    if (newState.viewSelectionDisabled !== undefined) {
-      if (newState.viewSelectionDisabled) {
-        params.set("viewSelection", "false");
+    // Update frameworkPicker param
+    if (newState.frameworkPickerHidden !== undefined) {
+      if (newState.frameworkPickerHidden) {
+        params.set("frameworkPicker", "false");
       } else {
-        params.delete("viewSelection");
-      }
-    }
-    // Update features param
-    if (newState.featureSelectionDisabled !== undefined) {
-      if (newState.featureSelectionDisabled) {
-        params.set("features", "false");
-      } else {
-        params.delete("features");
+        params.delete("frameworkPicker");
       }
     }
 
-    // Update picker param
-    if (newState.pickerDisabled !== undefined) {
-      if (newState.pickerDisabled) {
-        params.set("picker", "false");
+    // Update viewPicker param
+    if (newState.viewPickerHidden !== undefined) {
+      if (newState.viewPickerHidden) {
+        params.set("viewPicker", "false");
       } else {
-        params.delete("picker");
+        params.delete("viewPicker");
+      }
+    }
+    // Update featurePicker param
+    if (newState.featurePickerHidden !== undefined) {
+      if (newState.featurePickerHidden) {
+        params.set("featurePicker", "false");
+      } else {
+        params.delete("features");
       }
     }
 
@@ -99,9 +99,9 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
     const newState: URLParamsState = {
       view: (searchParams.get("view") as View) || "preview",
       sidebarHidden: searchParams.get("sidebar") === "disabled",
-      pickerDisabled: searchParams.get("picker") === "false",
-      featureSelectionDisabled: searchParams.get("features") === "false",
-      viewSelectionDisabled: searchParams.get("viewSelection") === "false",
+      frameworkPickerHidden: searchParams.get("frameworkPicker") === "false",
+      viewPickerHidden: searchParams.get("viewPicker") === "false",
+      featurePickerHidden: searchParams.get("featurePicker") === "false",
     };
 
     setState(newState);
@@ -120,22 +120,22 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
     updateURL({ sidebarHidden });
   };
 
-  const setPickerDisabled = (pickerDisabled: boolean) => {
-    const newState = { ...state, pickerDisabled };
+  const setFrameworkPickerHidden = (frameworkPickerHidden: boolean) => {
+    const newState = { ...state, frameworkPickerHidden };
     setState(newState);
-    updateURL({ pickerDisabled });
+    updateURL({ frameworkPickerHidden });
   };
 
-  const setFeatureSelectionDisabled = (featureSelectionDisabled: boolean) => {
-    const newState = { ...state, featureSelectionDisabled };
+  const setViewPickerHidden = (viewPickerHidden: boolean) => {
+    const newState = { ...state, viewPickerHidden };
     setState(newState);
-    updateURL({ featureSelectionDisabled });
+    updateURL({ viewPickerHidden });
   };
 
-  const setViewSelectionDisabled = (viewSelectionDisabled: boolean) => {
-    const newState = { ...state, viewSelectionDisabled };
+  const setFeaturePickerHidden = (featurePickerHidden: boolean) => {
+    const newState = { ...state, featurePickerHidden };
     setState(newState);
-    updateURL({ viewSelectionDisabled });
+    updateURL({ featurePickerHidden });
   };
 
   const setCodeFile = (fileName: string) => {
@@ -148,9 +148,9 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
     ...state,
     setView,
     setSidebarHidden,
-    setPickerDisabled,
-    setFeatureSelectionDisabled,
-    setViewSelectionDisabled,
+    setFrameworkPickerHidden,
+    setViewPickerHidden,
+    setFeaturePickerHidden,
     setCodeFile,
   };
 

@@ -29,7 +29,7 @@ interface SidebarProps {
 export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const { view, pickerDisabled, featureSelectionDisabled, setView, viewSelectionDisabled} = useURLParams();
+  const { view, frameworkPickerHidden, viewPickerHidden, featurePickerHidden, setView} = useURLParams();
   const [isDarkTheme, setIsDarkTheme] = useState<boolean>(false);
 
   // Extract the current integration ID from the pathname
@@ -116,10 +116,10 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
       </div>
 
       {/* Controls Section */}
-      {(!viewSelectionDisabled || !pickerDisabled) && (
+      {(!frameworkPickerHidden|| !viewPickerHidden) && (
       <div className="p-4 border-b bg-background">
         {/* Integration picker */}
-        {!pickerDisabled && (
+        {!frameworkPickerHidden&& (
           <div className="mb-1">
             <label className="block text-sm font-medium text-muted-foreground mb-2">Integrations</label>
             <DropdownMenu>
@@ -145,7 +145,7 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
         )}
 
         {/* Preview/Code Tabs */}
-        {!viewSelectionDisabled &&
+        {!viewPickerHidden &&
         <div className="mb-1">
           <label className="block text-sm font-medium text-muted-foreground mb-2">View</label>
           <Tabs
@@ -184,7 +184,7 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
 
       {/* Demo List */}
       <div className="flex-1 overflow-auto">
-        {(currentIntegration && !featureSelectionDisabled) ? (
+        {(currentIntegration && !featurePickerHidden) ? (
           <DemoList
             demos={filteredDemos}
             selectedDemo={currentDemoId}
