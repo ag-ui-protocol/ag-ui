@@ -19,6 +19,7 @@ import { menuIntegrations } from "@/menu";
 import { Feature } from "@/types/integration";
 import { useURLParams } from "@/contexts/url-params-context";
 import { View } from "@/types/interface";
+import { getTitleForCurrentDomain } from "@/utils/domain-config";
 
 interface SidebarProps {
   isMobile?: boolean;
@@ -106,7 +107,7 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
         <div className="flex items-center justify-between ml-1">
           <div className="flex items-start flex-col">
             <h1 className={`text-lg font-light ${isDarkTheme ? "text-white" : "text-gray-900"}`}>
-              AG-UI Interactive Dojo
+              {getTitleForCurrentDomain() || "AG-UI Interactive Dojo"}
             </h1>
           </div>
 
