@@ -2,7 +2,7 @@
 
 """Event translator for converting ADK events to AG-UI protocol events."""
 
-from typing import AsyncGenerator, Optional, Dict, Any
+from typing import AsyncGenerator, Optional, Dict, Any , List
 import uuid
 
 from google.genai import types
@@ -38,6 +38,7 @@ class EventTranslator:
         # Track streaming message state
         self._streaming_message_id: Optional[str] = None  # Current streaming message ID
         self._is_streaming: bool = False  # Whether we're currently streaming a message
+        self.long_running_tool_ids: List[str] = []  # Track the long running tool IDs
     
     async def translate(
         self, 
@@ -93,6 +94,12 @@ class EventTranslator:
                 function_calls = adk_event.get_function_calls()
                 if function_calls:
                     logger.debug(f"ADK function calls detected: {len(function_calls)} calls")
+                    
+                    # CRITICAL FIX: End any active text message stream before starting tool calls
+                    # Per AG-UI protocol: TEXT_MESSAGE_END must be sent before TOOL_CALL_START
+                    async for event in self.force_close_streaming_message():
+                        yield event
+                    
                     # NOW ACTUALLY YIELD THE EVENTS
                     async for event in self._translate_function_calls(function_calls):
                         yield event
@@ -230,6 +237,49 @@ class EventTranslator:
             self._is_streaming = False
             logger.info("🏁 Streaming completed, state reset")
     
+    async def translate_lro_function_calls(self,adk_event: ADKEvent)-> AsyncGenerator[BaseEvent, None]:
+        """Translate long running function calls from ADK event to AG-UI tool call events.
+        
+        Args:
+            adk_event: The ADK event containing function calls
+            
+        Yields:
+            Tool call events (START, ARGS, END)
+        """
+        long_running_function_call = None
+        if adk_event.content and adk_event.content.parts:
+            for i, part in enumerate(adk_event.content.parts):
+                if part.function_call:
+                    if not long_running_function_call and part.function_call.id in (
+                        adk_event.long_running_tool_ids or []
+                    ):
+                        long_running_function_call = part.function_call
+                        self.long_running_tool_ids.append(long_running_function_call.id)
+                        yield ToolCallStartEvent(
+                            type=EventType.TOOL_CALL_START,
+                            tool_call_id=long_running_function_call.id,
+                            tool_call_name=long_running_function_call.name,
+                            parent_message_id=None
+                        )
+                        if hasattr(long_running_function_call, 'args') and long_running_function_call.args:
+                            # Convert args to string (JSON format)
+                            import json
+                            args_str = json.dumps(long_running_function_call.args) if isinstance(long_running_function_call.args, dict) else str(long_running_function_call.args)
+                            yield ToolCallArgsEvent(
+                                type=EventType.TOOL_CALL_ARGS,
+                                tool_call_id=long_running_function_call.id,
+                                delta=args_str
+                            )
+                        
+                        # Emit TOOL_CALL_END
+                        yield ToolCallEndEvent(
+                            type=EventType.TOOL_CALL_END,
+                            tool_call_id=long_running_function_call.id
+                        )                       
+                        
+                        # Clean up tracking
+                        self._active_tool_calls.pop(long_running_function_call.id, None)   
+    
     async def _translate_function_calls(
         self,
         function_calls: list[types.FunctionCall],
@@ -295,19 +345,23 @@ class EventTranslator:
             function_response: List of function response from the event
             
         Yields:
-            Tool result events 
+            Tool result events (only for tool_call_ids not in long_running_tool_ids)
         """
         
         for func_response in function_response:
             
             tool_call_id = getattr(func_response, 'id', str(uuid.uuid4()))
-            
-            yield ToolCallResultEvent(
-                message_id=str(uuid.uuid4()),
-                type=EventType.TOOL_CALL_RESULT,
-                tool_call_id=tool_call_id,
-                content=json.dumps(func_response.response)
-            )
+            # Only emit ToolCallResultEvent for tool_call_ids which are not long_running_tool
+            # this is because long running tools are handle by the frontend
+            if tool_call_id not in self.long_running_tool_ids:
+                yield ToolCallResultEvent(
+                    message_id=str(uuid.uuid4()),
+                    type=EventType.TOOL_CALL_RESULT,
+                    tool_call_id=tool_call_id,
+                    content=json.dumps(func_response.response)
+                )
+            else:
+                logger.debug(f"Skipping ToolCallResultEvent for long-running tool: {tool_call_id}")
   
     def _create_state_delta_event(
         self,
@@ -390,4 +444,5 @@ class EventTranslator:
         self._active_tool_calls.clear()
         self._streaming_message_id = None
         self._is_streaming = False
+        self.long_running_tool_ids.clear()
         logger.debug("Reset EventTranslator state (including streaming state)")

@@ -69,7 +69,8 @@ class Recipe(BaseModel):
 def generate_recipe(
     tool_context: ToolContext,
     skill_level: str,
-    special_preferences: str = "",
+    title: str,
+    special_preferences: List[str] = [],
     cooking_time: str = "",
     ingredients: List[dict] = [],
     instructions: List[str] = [],
@@ -79,14 +80,20 @@ def generate_recipe(
     Generate or update a recipe using the provided recipe data.
     
     Args:
+        "title": {
+            "type": "string",
+            "description": "**REQUIRED** - The title of the recipe."
+        },
         "skill_level": {
             "type": "string",
             "enum": ["Beginner","Intermediate","Advanced"],
             "description": "**REQUIRED** - The skill level required for the recipe. Must be one of the predefined skill levels (Beginner, Intermediate, Advanced)."
         },
         "special_preferences": {
-            "type": "string",
-            "description": "**OPTIONAL** - Special dietary preferences for the recipe as comma-separated values. Example: 'High Protein, Low Carb, Gluten Free'. Leave empty or omit if no special preferences."
+            "type": "array",
+            "items": {"type": "string"},
+            "enum": ["High Protein","Low Carb","Spicy","Budget-Friendly","One-Pot Meal","Vegetarian","Vegan"],
+            "description": "**OPTIONAL** - Special dietary preferences for the recipe as comma-separated values. Example: 'High Protein, Low Carb, Gluten Free'. Leave empty array if no special preferences."
         },
         "cooking_time": {
             "type": "string",
@@ -123,6 +130,7 @@ def generate_recipe(
         
         # Create RecipeData object to validate structure
         recipe = {
+            "title": title,
             "skill_level": skill_level,
             "special_preferences": special_preferences ,
             "cooking_time": cooking_time ,
@@ -143,8 +151,7 @@ def generate_recipe(
         
         tool_context.state["recipe"] = current_recipe
         
-        # Log the update
-        print(f"Recipe updated: {recipe.get('change')}")
+
         
         return {"status": "success", "message": "Recipe generated successfully"}
         
@@ -158,10 +165,11 @@ def on_before_agent(callback_context: CallbackContext):
     """
     Initialize recipe state if it doesn't exist.
     """
-    print('recipe state ==>',callback_context.state.get('recipe'))
+
     if "recipe" not in callback_context.state:
         # Initialize with default recipe
         default_recipe =     {
+            "title": "Make Your Recipe",
             "skill_level": "Beginner",
             "special_preferences": [],
             "cooking_time": '15 min',
@@ -169,7 +177,7 @@ def on_before_agent(callback_context: CallbackContext):
             "instructions": ["First step instruction"]
         }
         callback_context.state["recipe"] = default_recipe
-        print("Initialized default recipe state")
+ 
 
     return None
 
@@ -181,7 +189,6 @@ def before_model_modifier(
 ) -> Optional[LlmResponse]:
     """Inspects/modifies the LLM request or skips the call."""
     agent_name = callback_context.agent_name
-    print(f"[Callback] Before model call for agent: {agent_name}")
     if agent_name == "RecipeAgent":
         recipe_json = "No recipe yet"
         if "recipe" in callback_context.state and callback_context.state["recipe"] is not None:
@@ -212,6 +219,28 @@ def before_model_modifier(
     return None
 
 
+# --- Define the Callback Function ---
+def simple_after_model_modifier(
+    callback_context: CallbackContext, llm_response: LlmResponse
+) -> Optional[LlmResponse]:
+    """Stop the consecutive tool calling of the agent"""
+    agent_name = callback_context.agent_name
+    # --- Inspection ---
+    if agent_name == "RecipeAgent":
+        original_text = ""
+        if llm_response.content and llm_response.content.parts:
+            # Assuming simple text response for this example
+            if  llm_response.content.role=='model' and llm_response.content.parts[0].text:
+                original_text = llm_response.content.parts[0].text
+                callback_context._invocation_context.end_invocation = True
+        
+        elif llm_response.error_message:
+            return None
+        else:
+            return None # Nothing to modify
+    return None
+
+
 shared_state_agent = LlmAgent(
         name="RecipeAgent",
         model="gemini-2.5-pro",
@@ -224,16 +253,18 @@ shared_state_agent = LlmAgent(
         3. When modifying an existing recipe, include the changes parameter to describe what was modified
         4. Be creative and helpful in generating complete, practical recipes
         5. After using the tool, provide a brief summary of what you created or changed
+        6. If user ask to improve the recipe then add more ingredients and make it healthier
+        7. When you see the 'Recipe generated successfully' confirmation message, wish the user well with their cooking by telling them to enjoy their dish.
 
         Examples of when to use the tool:
         - "Create a pasta recipe" → Use tool with skill_level, ingredients, instructions
-        - "Make it vegetarian" → Use tool with special_preferences="vegetarian" and changes describing the modification
+        - "Make it vegetarian" → Use tool with special_preferences=["vegetarian"] and changes describing the modification
         - "Add some herbs" → Use tool with updated ingredients and changes describing the addition
 
         Always provide complete, practical recipes that users can actually cook.
         """,
         tools=[generate_recipe],
         before_agent_callback=on_before_agent,
-        before_model_callback=before_model_modifier
+        before_model_callback=before_model_modifier,
+        after_model_callback = simple_after_model_modifier
     )
-

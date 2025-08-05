@@ -13,7 +13,7 @@ from ag_ui.core import (
     RunStartedEvent, RunFinishedEvent, RunErrorEvent,
     TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent,
     StateSnapshotEvent, StateDeltaEvent,
-    Context, ToolMessage, ToolCallEndEvent, SystemMessage
+    Context, ToolMessage, ToolCallEndEvent, SystemMessage,ToolCallResultEvent
 )
 
 from google.adk import Runner
@@ -626,6 +626,13 @@ class ADKAgent:
                     logger.info(f"Detected ToolCallEndEvent with id: {event.tool_call_id}")
                     has_tool_calls = True
                     tool_call_ids.append(event.tool_call_id)
+
+                # backend tools will always emit ToolCallResultEvent
+                # If it is a backend tool then we don't need to add the tool_id in pending_tools
+                if isinstance(event, ToolCallResultEvent) and event.tool_call_id in tool_call_ids:
+                    logger.info(f"Detected ToolCallResultEvent with id: {event.tool_call_id}")
+                    tool_call_ids.remove(event.tool_call_id)
+                
                 
                 logger.debug(f"Yielding event: {type(event).__name__}")
                 yield event
@@ -727,8 +734,9 @@ class ADKAgent:
             input_tools = []
             for input_tool in input.tools:
                 # Check if this input tool's name matches any existing tool
-                if not any(hasattr(existing_tool, '__name__') and input_tool.name == existing_tool.__name__ 
-                        for existing_tool in existing_tools):
+                # Also exclude this specific tool call "transfer_to_agent" which is used internally by the adk to handoff to other agents
+                if (not any(hasattr(existing_tool, '__name__') and input_tool.name == existing_tool.__name__
+                        for existing_tool in existing_tools) and input_tool.name != 'transfer_to_agent'):
                     input_tools.append(input_tool)
                         
             toolset = ClientProxyToolset(
@@ -854,6 +862,7 @@ class ADKAgent:
             event_translator = EventTranslator()
             
             # Run ADK agent
+            is_long_running_tool = False
             async for adk_event in runner.run_async(
                 user_id=user_id,
                 session_id=input.thread_id,
@@ -871,8 +880,18 @@ class ADKAgent:
                         logger.debug(f"Emitting event to queue: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size before: {event_queue.qsize()})")
                         await event_queue.put(ag_ui_event)
                         logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
-             
-
+                else:
+                    # LongRunning Tool events are usually emmitted in final response                   
+                    async for ag_ui_event in event_translator.translate_lro_function_calls(
+                        adk_event
+                    ):
+                        await event_queue.put(ag_ui_event)
+                        if ag_ui_event.type == EventType.TOOL_CALL_END:
+                            is_long_running_tool = True
+                        logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
+                    # hard stop the execution if we find any long running tool
+                    if is_long_running_tool:
+                        return
             # Force close any streaming messages
             async for ag_ui_event in event_translator.force_close_streaming_message():
                 await event_queue.put(ag_ui_event)
