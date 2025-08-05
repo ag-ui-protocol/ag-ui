@@ -12,6 +12,7 @@ import { LangGraphAgent, LangGraphHttpAgent } from "@ag-ui/langgraph";
 import { AgnoAgent } from "@ag-ui/agno";
 import { LlamaIndexAgent } from "@ag-ui/llamaindex";
 import { CrewAIAgent } from "@ag-ui/crewai";
+import { SuperOptiXAgent } from "@ag-ui/superoptix";
 import getEnvVars from "./env";
 import { mastra } from "./mastra";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
@@ -216,6 +217,31 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         }),
         predictive_state_updates: new CrewAIAgent({
           url: `${envVars.crewAiUrl}/predictive_state_updates`,
+        }),
+      };
+    },
+  },
+  {
+    id: "superoptix",
+    agents: async () => {
+      return {
+        agentic_chat: new SuperOptiXAgent({
+          url: `${envVars.superoptixUrl || "http://localhost:8000"}/agentic_chat`,
+        }),
+        human_in_the_loop: new SuperOptiXAgent({
+          url: `${envVars.superoptixUrl || "http://localhost:8000"}/human_in_the_loop`,
+        }),
+        tool_based_generative_ui: new SuperOptiXAgent({
+          url: `${envVars.superoptixUrl || "http://localhost:8000"}/tool_based_generative_ui`,
+        }),
+        agentic_generative_ui: new SuperOptiXAgent({
+          url: `${envVars.superoptixUrl || "http://localhost:8000"}/agentic_generative_ui`,
+        }),
+        shared_state: new SuperOptiXAgent({
+          url: `${envVars.superoptixUrl || "http://localhost:8000"}/shared_state`,
+        }),
+        predictive_state_updates: new SuperOptiXAgent({
+          url: `${envVars.superoptixUrl || "http://localhost:8000"}/predictive_state_updates`,
         }),
       };
     },
