@@ -219,6 +219,31 @@ def before_model_modifier(
     return None
 
 
+# --- Define the Callback Function ---
+def simple_after_model_modifier(
+    callback_context: CallbackContext, llm_response: LlmResponse
+) -> Optional[LlmResponse]:
+    """Stop the consecutive tool calling of the agent"""
+    agent_name = callback_context.agent_name
+    # --- Inspection ---
+    if agent_name == "RecipeAgent":
+        original_text = ""
+        if llm_response.content and llm_response.content.parts:
+            # Assuming simple text response for this example
+            if  llm_response.content.role=='model' and llm_response.content.parts[0].text:
+                original_text = llm_response.content.parts[0].text
+                callback_context._invocation_context.end_invocation = True
+                print(f"-----hard stopping the agent execution'") 
+        
+        elif llm_response.error_message:
+            print(f"[Callback] Inspected response: Contains error '{llm_response.error_message}'. No modification.")
+            return None
+        else:
+            print("[Callback] Inspected response: Empty LlmResponse.")
+            return None # Nothing to modify
+    return None
+
+
 shared_state_agent = LlmAgent(
         name="RecipeAgent",
         model="gemini-2.5-pro",
@@ -243,6 +268,7 @@ shared_state_agent = LlmAgent(
         """,
         tools=[generate_recipe],
         before_agent_callback=on_before_agent,
-        before_model_callback=before_model_modifier
+        before_model_callback=before_model_modifier,
+        after_model_callback = simple_after_model_modifier
     )
 
