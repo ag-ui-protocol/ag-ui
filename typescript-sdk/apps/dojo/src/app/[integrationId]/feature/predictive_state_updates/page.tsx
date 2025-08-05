@@ -303,12 +303,15 @@ interface ConfirmChangesProps {
 function ConfirmChanges({ args, respond, status, onReject, onConfirm }: ConfirmChangesProps) {
   const [accepted, setAccepted] = useState<boolean | null>(null);
   return (
-    <div className="bg-white p-6 rounded shadow-lg border border-gray-200 mt-5 mb-5">
+    <div 
+    data-testid="confirm-changes-modal"
+    className="bg-white p-6 rounded shadow-lg border border-gray-200 mt-5 mb-5">
       <h2 className="text-lg font-bold mb-4">Confirm Changes</h2>
       <p className="mb-6">Do you want to accept the changes?</p>
       {accepted === null && (
         <div className="flex justify-end space-x-4">
           <button
+            data-testid="reject-button"
             className={`bg-gray-200 text-black py-2 px-4 rounded disabled:opacity-50 ${
               status === "executing" ? "cursor-pointer" : "cursor-default"
             }`}
@@ -324,6 +327,7 @@ function ConfirmChanges({ args, respond, status, onReject, onConfirm }: ConfirmC
             Reject
           </button>
           <button
+            data-testid="confirm-button"
             className={`bg-black text-white py-2 px-4 rounded disabled:opacity-50 ${
               status === "executing" ? "cursor-pointer" : "cursor-default"
             }`}
@@ -342,7 +346,9 @@ function ConfirmChanges({ args, respond, status, onReject, onConfirm }: ConfirmC
       )}
       {accepted !== null && (
         <div className="flex justify-end">
-          <div className="mt-4 bg-gray-200 text-black py-2 px-4 rounded inline-block">
+          <div 
+          data-testid="status-display"
+          className="mt-4 bg-gray-200 text-black py-2 px-4 rounded inline-block">
             {accepted ? "✓ Accepted" : "✗ Rejected"}
           </div>
         </div>
