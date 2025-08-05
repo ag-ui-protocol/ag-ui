@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 
-from adk_middleware import ADKAgent, AgentRegistry, add_adk_fastapi_endpoint
+from adk_middleware import ADKAgent, add_adk_fastapi_endpoint
 
 # Import your ADK agent - adjust based on what you have
 from google.adk.agents import Agent

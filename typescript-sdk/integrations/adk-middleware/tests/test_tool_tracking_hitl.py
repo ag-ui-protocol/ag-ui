@@ -11,7 +11,7 @@ from ag_ui.core import (
     RunStartedEvent, RunFinishedEvent, EventType
 )
 
-from adk_middleware import ADKAgent, AgentRegistry
+from adk_middleware import ADKAgent
 from adk_middleware.execution_state import ExecutionState
 
 
@@ -19,13 +19,11 @@ class TestHITLToolTracking:
     """Test cases for HITL tool call tracking."""
     
     @pytest.fixture(autouse=True)
-    def reset_registry(self):
-        """Reset agent registry and session manager before each test."""
+    def reset_session_manager(self):
+        """Reset session manager before each test."""
         from adk_middleware.session_manager import SessionManager
-        AgentRegistry.reset_instance()
         SessionManager.reset_instance()
         yield
-        AgentRegistry.reset_instance()
         SessionManager.reset_instance()
     
     @pytest.fixture
@@ -41,10 +39,8 @@ class TestHITLToolTracking:
     @pytest.fixture
     def adk_middleware(self, mock_adk_agent):
         """Create ADK middleware."""
-        registry = AgentRegistry.get_instance()
-        registry.set_default_agent(mock_adk_agent)
-        
         return ADKAgent(
+            adk_agent=mock_adk_agent,
             app_name="test_app",
             user_id="test_user"
         )

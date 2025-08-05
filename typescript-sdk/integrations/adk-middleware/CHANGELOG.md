@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2025-08-05
+
+### Breaking Changes
+- **BREAKING**: ADKAgent constructor now requires `adk_agent` parameter instead of `agent_id` for direct agent embedding
+- **BREAKING**: Removed AgentRegistry dependency - agents are now directly embedded in middleware instances
+- **BREAKING**: Removed `agent_id` parameter from `ADKAgent.run()` method
+- **BREAKING**: Endpoint registration no longer extracts agent_id from URL path
+- **BREAKING**: AgentRegistry class removed from public API
+
+### Architecture Improvements
+- **ARCHITECTURE**: Eliminated AgentRegistry entirely - simplified architecture by embedding ADK agents directly
+- **ARCHITECTURE**: Cleaned up agent registration/instantiation redundancy (issue #24)
+- **ARCHITECTURE**: Removed confusing indirection where endpoint agent didn't determine execution
+- **ARCHITECTURE**: Each ADKAgent instance now directly holds its ADK agent instance
+- **ARCHITECTURE**: Simplified method signatures and removed agent lookup overhead
+
+### Fixed
+- **FIXED**: All 271 tests now pass with new simplified architecture
+- **TESTS**: Updated all test fixtures to match new ADKAgent.run(input_data) signature without agent_id parameter
+- **TESTS**: Fixed test expectations in test_endpoint.py to work with direct agent embedding architecture
+- **TESTS**: Updated all test fixtures to work with new agent embedding pattern
+- **EXAMPLES**: Updated examples to demonstrate direct agent embedding pattern
+
 ### Added
 - **NEW**: SystemMessage support for ADK agents (issue #22) - SystemMessages as first message are now appended to agent instructions
 - **NEW**: Comprehensive tests for SystemMessage functionality including edge cases

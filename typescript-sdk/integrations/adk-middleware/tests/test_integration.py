@@ -5,7 +5,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from ag_ui.core import RunAgentInput, UserMessage, EventType
-from adk_middleware import ADKAgent, AgentRegistry
+from adk_middleware import ADKAgent
 
 async def test_session_creation_logic():
     """Test session creation logic with mocked ADK agent."""
@@ -32,13 +32,9 @@ async def test_session_creation_logic():
     
     mock_runner.run_async = mock_run_async
     
-    # Setup registry with mock agent
-    registry = AgentRegistry.get_instance()
-    registry.clear()  # Clear any previous state
-    registry.set_default_agent(mock_adk_agent)
-    
-    # Create ADK middleware
+    # Create ADK middleware with direct agent embedding
     adk_agent = ADKAgent(
+        adk_agent=mock_adk_agent,
         app_name="test_app",
         user_id="test_user",
         use_in_memory_services=True,
@@ -90,8 +86,13 @@ async def test_session_service_calls():
     """Test that session service methods are called correctly."""
     print("\n🧪 Testing session service interaction...")
     
+    # Create a test agent first
+    from google.adk.agents import Agent
+    test_agent = Agent(name="session_test_agent", instruction="Test agent.")
+    
     # Create ADK middleware (session service is now encapsulated in session manager)
     adk_agent = ADKAgent(
+        adk_agent=test_agent,
         app_name="test_app",
         user_id="test_user",
         use_in_memory_services=True,

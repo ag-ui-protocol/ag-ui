@@ -36,7 +36,7 @@ def add_adk_fastapi_endpoint(app: FastAPI, agent: ADKAgent, path: str = "/"):
         async def event_generator():
             """Generate events from ADK agent."""
             try:
-                async for event in agent.run(input_data, agent_id):
+                async for event in agent.run(input_data):
                     try:
                         encoded = encoder.encode(event)
                         logger.debug(f"HTTP Response: {encoded}")
