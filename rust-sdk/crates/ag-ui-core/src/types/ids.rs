@@ -1,18 +1,21 @@
-use uuid::Uuid;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// Macro to define a newtype ID based on Uuid.
-/// Accepts doc comments and other derive-able attributes.
 macro_rules! define_id_type {
+    // This arm of the macro handles calls that don't specify extra derives.
+    ($name:ident) => {
+        define_id_type!($name,);
+    };
     // This arm handles calls that do specify extra derives (like Eq).
-    ($(#[$attr:meta])* $name:ident, $($extra_derive:ident),*) => {
-        $(#[$attr])*
+    ($name:ident, $($extra_derive:ident),*) => {
+        #[doc = concat!(stringify!($name), ": A newtype used to prevent mixing it with other ID values.")]
         #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Eq, Hash, $($extra_derive),*)]
         pub struct $name(Uuid);
 
         impl $name {
             /// Creates a new random ID.
-            pub fn new() -> Self {
+            pub fn random() -> Self {
                 Self(Uuid::new_v4())
             }
         }
@@ -72,42 +75,10 @@ macro_rules! define_id_type {
             }
         }
     };
-    ($(#[$attr:meta])* $name:ident) => {
-        define_id_type!($(#[$attr])* $name,);
-    };
 }
 
-define_id_type!(
-    /// Agent ID
-    ///
-    /// A newtype is used to prevent mixing them with other ID values.
-    AgentId
-);
-
-define_id_type!(
-    /// Thread ID
-    ///
-    /// A newtype is used to prevent mixing them with other ID values.
-    ThreadId
-);
-
-define_id_type!(
-    /// Run ID
-    ///
-    /// A newtype is used to prevent mixing them with other ID values.
-    RunId
-);
-
-define_id_type!(
-    /// Tool Call ID
-    ///
-    /// A newtype is used to prevent mixing them with other ID values.
-    ToolCallId
-);
-
-define_id_type!(
-    /// Message ID
-    ///
-    /// A newtype is used to prevent mixing them with other ID values.
-    MessageId
-);
+define_id_type!(AgentId);
+define_id_type!(ThreadId);
+define_id_type!(RunId);
+define_id_type!(MessageId);
+define_id_type!(ToolCallId);

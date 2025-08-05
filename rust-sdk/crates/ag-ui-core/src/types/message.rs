@@ -1,10 +1,11 @@
+use crate::types::ids::{MessageId, ToolCallId};
 use crate::types::tool::ToolCall;
 use serde::{Deserialize, Serialize};
-use crate::types::ids::{MessageId, ToolCallId};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FunctionCall {
     pub name: String,
+    // TODO: More suitable to use JsonValue here?
     pub arguments: String,
 }
 
@@ -154,7 +155,11 @@ pub struct ToolMessage {
 }
 
 impl ToolMessage {
-    pub fn new(id: impl Into<MessageId>, content: String, tool_call_id: impl Into<ToolCallId>) -> Self {
+    pub fn new(
+        id: impl Into<MessageId>,
+        content: String,
+        tool_call_id: impl Into<ToolCallId>,
+    ) -> Self {
         Self {
             id: id.into(),
             content,
@@ -211,7 +216,48 @@ pub enum Message {
 }
 
 impl Message {
+    pub fn new(role: Role, id: impl Into<MessageId>, content: String) -> Self {
+        match role {
+            Role::Developer => Self::Developer {
+                id: id.into(),
+                content,
+                name: None,
+            },
+            Role::System => Self::System {
+                id: id.into(),
+                content,
+                name: None,
+            },
+            Role::Assistant => Self::Assistant {
+                id: id.into(),
+                content: None,
+                name: None,
+                tool_calls: None,
+            },
+            Role::User => Self::User {
+                id: id.into(),
+                content,
+                name: None,
+            },
+            Role::Tool => Self::Tool {
+                id: id.into(),
+                content,
+                tool_call_id: ToolCallId::random(),
+                error: None,
+            },
+        }
+    }
     pub fn id(&self) -> &MessageId {
+        match self {
+            Message::Developer { id, .. } => id,
+            Message::System { id, .. } => id,
+            Message::Assistant { id, .. } => id,
+            Message::User { id, .. } => id,
+            Message::Tool { id, .. } => id,
+        }
+    }
+
+    pub fn id_mut(&mut self) -> &mut MessageId {
         match self {
             Message::Developer { id, .. } => id,
             Message::System { id, .. } => id,
@@ -228,6 +274,49 @@ impl Message {
             Message::Assistant { .. } => Role::Assistant,
             Message::User { .. } => Role::User,
             Message::Tool { .. } => Role::Tool,
+        }
+    }
+    pub fn content(&self) -> Option<&str> {
+        match self {
+            Message::Developer { content, .. } => Some(content),
+            Message::System { content, .. } => Some(content),
+            Message::User { content, .. } => Some(content),
+            Message::Tool { content, .. } => Some(content),
+            Message::Assistant { content, .. } => content.as_deref(),
+        }
+    }
+
+    pub fn content_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Message::Developer { content, .. }
+            | Message::System { content, .. }
+            | Message::User { content, .. }
+            | Message::Tool { content, .. } => Some(content),
+            Message::Assistant { content, .. } => {
+                if content.is_none() {
+                    *content = Some(String::new());
+                }
+                content.as_mut()
+            }
+        }
+    }
+
+    pub fn tool_calls(&self) -> Option<&[ToolCall]> {
+        match self {
+            Message::Assistant { tool_calls, .. } => tool_calls.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub fn tool_calls_mut(&mut self) -> Option<&mut Vec<ToolCall>> {
+        match self {
+            Message::Assistant { tool_calls, .. } => {
+                if tool_calls.is_none() {
+                    *tool_calls = Some(Vec::new());
+                }
+                tool_calls.as_mut()
+            }
+            _ => None,
         }
     }
 }

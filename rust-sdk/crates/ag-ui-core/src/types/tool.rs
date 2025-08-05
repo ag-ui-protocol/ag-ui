@@ -1,12 +1,12 @@
+use crate::types::ids::ToolCallId;
 use crate::types::message::FunctionCall;
 use serde::{Deserialize, Serialize};
-use crate::types::ids::ToolCallId;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: ToolCallId,
     #[serde(rename = "type")]
-    pub call_type: String, // Always "function"
+    pub call_type: String,
     pub function: FunctionCall,
 }
 

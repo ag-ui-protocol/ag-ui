@@ -1,9 +1,9 @@
+use crate::JsonValue;
 use crate::types::context::Context;
+use crate::types::ids::{RunId, ThreadId};
 use crate::types::message::Message;
 use crate::types::tool::Tool;
 use serde::{Deserialize, Serialize};
-use crate::JsonValue;
-use crate::types::ids::{RunId, ThreadId};
 
 /// Input for running an agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

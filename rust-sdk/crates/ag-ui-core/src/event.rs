@@ -1,39 +1,65 @@
-use crate::types::message::Message;
+use crate::types::ids::{MessageId, RunId, ThreadId, ToolCallId};
+use crate::types::message::{Message, Role};
+use crate::{AgentState, JsonValue};
 use serde::{Deserialize, Serialize};
-use crate::JsonValue;
-use crate::types::ids::{MessageId, RunId, ToolCallId, ThreadId};
 
+/// Event types for AG-UI protocol
 /// Event types for AG-UI protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum EventType {
+    /// Event indicating the start of a text message
     TextMessageStart,
+    /// Event containing a piece of text message content
     TextMessageContent,
+    /// Event indicating the end of a text message
     TextMessageEnd,
+    /// Event containing a chunk of text message content
     TextMessageChunk,
+    /// Event indicating the start of a thinking text message
     ThinkingTextMessageStart,
+    /// Event indicating a piece of a thinking text message
     ThinkingTextMessageContent,
+    /// Event indicating the end of a thinking text message
     ThinkingTextMessageEnd,
+    /// Event indicating the start of a tool call
     ToolCallStart,
+    /// Event containing tool call arguments
     ToolCallArgs,
+    /// Event indicating the end of a tool call
     ToolCallEnd,
+    /// Event containing a chunk of tool call content
     ToolCallChunk,
+    /// Event containing the result of a tool call
     ToolCallResult,
+    /// Event indicating the start of a thinking step event
     ThinkingStart,
+    /// Event indicating the end of a thinking step event
     ThinkingEnd,
+    /// Event containing a snapshot of the state
     StateSnapshot,
+    /// Event containing a delta of the state
     StateDelta,
+    /// Event containing a snapshot of the messages
     MessagesSnapshot,
+    /// Event containing a raw event
     Raw,
+    /// Event containing a custom event
     Custom,
+    /// Event indicating that a run has started
     RunStarted,
+    /// Event indicating that a run has finished
     RunFinished,
+    /// Event indicating that a run has encountered an error
     RunError,
+    /// Event indicating that a step has started
     StepStarted,
+    /// Event indicating that a step has finished
     StepFinished,
 }
 
-/// Base event fields common to all events
+/// Base event for all events in the Agent User Interaction Protocol.
+/// Contains common fields that are present in all event types.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BaseEvent {
     #[serde(rename = "type")]
@@ -44,17 +70,19 @@ pub struct BaseEvent {
     pub raw_event: Option<JsonValue>,
 }
 
-/// Text message start event
+/// Event indicating the start of a text message.
+/// This event is sent when the agent begins generating a text message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextMessageStartEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
     #[serde(rename = "messageId")]
     pub message_id: MessageId,
-    pub role: String, // "assistant"
+    pub role: Role, // "assistant"
 }
 
-/// Text message content event with delta text
+/// Event containing a piece of text message content.
+/// This event is sent for each chunk of content as the agent generates a message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextMessageContentEvent {
     #[serde(flatten)]
@@ -64,7 +92,8 @@ pub struct TextMessageContentEvent {
     pub delta: String,
 }
 
-/// Text message end event
+/// Event indicating the end of a text message.
+/// This event is sent when the agent completes a text message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextMessageEndEvent {
     #[serde(flatten)]
@@ -73,7 +102,9 @@ pub struct TextMessageEndEvent {
     pub message_id: MessageId,
 }
 
-/// Text message chunk event (optional fields)
+/// Event containing a chunk of text message content.
+/// This event combines start, content, and potentially end information in a single event,
+/// with optional fields that may or may not be present.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextMessageChunkEvent {
     #[serde(flatten)]
@@ -86,14 +117,16 @@ pub struct TextMessageChunkEvent {
     pub delta: Option<String>,
 }
 
-/// Thinking text message start event
+/// Event indicating the start of a thinking text message.
+/// This event is sent when the agent begins generating internal thinking content.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThinkingTextMessageStartEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
 }
 
-/// Thinking text message content event
+/// Event indicating a piece of a thinking text message.
+/// This event contains chunks of the agent's internal thinking process.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThinkingTextMessageContentEvent {
     #[serde(flatten)]
@@ -101,14 +134,16 @@ pub struct ThinkingTextMessageContentEvent {
     pub delta: String,
 }
 
-/// Thinking text message end event
+/// Event indicating the end of a thinking text message.
+/// This event is sent when the agent completes its internal thinking process.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThinkingTextMessageEndEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
 }
 
-/// Tool call start event
+/// Event indicating the start of a tool call.
+/// This event is sent when the agent begins to call a tool with specific parameters.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCallStartEvent {
     #[serde(flatten)]
@@ -121,7 +156,8 @@ pub struct ToolCallStartEvent {
     pub parent_message_id: Option<MessageId>,
 }
 
-/// Tool call arguments event
+/// Event containing tool call arguments.
+/// This event contains chunks of the arguments being passed to a tool.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCallArgsEvent {
     #[serde(flatten)]
@@ -131,7 +167,8 @@ pub struct ToolCallArgsEvent {
     pub delta: String,
 }
 
-/// Tool call end event
+/// Event indicating the end of a tool call.
+/// This event is sent when the agent completes sending arguments to a tool.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCallEndEvent {
     #[serde(flatten)]
@@ -140,7 +177,8 @@ pub struct ToolCallEndEvent {
     pub tool_call_id: ToolCallId,
 }
 
-/// Tool call result event
+/// Event containing the result of a tool call.
+/// This event is sent when a tool has completed execution and returns its result.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCallResultEvent {
     #[serde(flatten)]
@@ -154,7 +192,9 @@ pub struct ToolCallResultEvent {
     pub role: Option<String>, // "tool"
 }
 
-/// Tool call chunk event (optional fields)
+/// Event containing a chunk of tool call content.
+/// This event combines start, args, and potentially end information in a single event,
+/// with optional fields that may or may not be present.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCallChunkEvent {
     #[serde(flatten)]
@@ -169,7 +209,8 @@ pub struct ToolCallChunkEvent {
     pub delta: Option<String>,
 }
 
-/// Thinking start event
+/// Event indicating the start of a thinking step event.
+/// This event is sent when the agent begins a deliberate thinking phase.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThinkingStartEvent {
     #[serde(flatten)]
@@ -178,22 +219,26 @@ pub struct ThinkingStartEvent {
     pub title: Option<String>,
 }
 
-/// Thinking end event
+/// Event indicating the end of a thinking step event.
+/// This event is sent when the agent completes a thinking phase.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThinkingEndEvent {
     #[serde(flatten)]
     pub base: BaseEvent,
 }
 
-/// State snapshot event
+/// Event containing a snapshot of the state.
+/// This event provides a complete representation of the current agent state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StateSnapshotEvent {
+#[serde(bound(deserialize = ""))]
+pub struct StateSnapshotEvent<StateT: AgentState = JsonValue> {
     #[serde(flatten)]
     pub base: BaseEvent,
-    pub snapshot: JsonValue,
+    pub snapshot: StateT,
 }
 
-/// State delta event (JSON Patch RFC 6902)
+/// Event containing a delta of the state.
+/// This event contains JSON Patch operations (RFC 6902) that describe changes to the agent state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StateDeltaEvent {
     #[serde(flatten)]
@@ -201,7 +246,8 @@ pub struct StateDeltaEvent {
     pub delta: Vec<JsonValue>,
 }
 
-/// Messages snapshot event
+/// Event containing a snapshot of the messages.
+/// This event provides a complete list of all current conversation messages.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MessagesSnapshotEvent {
     #[serde(flatten)]
@@ -209,7 +255,8 @@ pub struct MessagesSnapshotEvent {
     pub messages: Vec<Message>,
 }
 
-/// Raw event
+/// Event containing a raw event.
+/// This event type allows wrapping arbitrary events from external sources.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RawEvent {
     #[serde(flatten)]
@@ -219,7 +266,8 @@ pub struct RawEvent {
     pub source: Option<String>,
 }
 
-/// Custom event
+/// Event containing a custom event.
+/// This event type allows for application-specific custom events with arbitrary data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CustomEvent {
     #[serde(flatten)]
@@ -228,7 +276,8 @@ pub struct CustomEvent {
     pub value: JsonValue,
 }
 
-/// Run started event
+/// Event indicating that a run has started.
+/// This event is sent when an agent run begins execution within a specific thread.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunStartedEvent {
     #[serde(flatten)]
@@ -239,7 +288,8 @@ pub struct RunStartedEvent {
     pub run_id: RunId,
 }
 
-/// Run finished event
+/// Event indicating that a run has finished.
+/// This event is sent when an agent run completes successfully, potentially with a result.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunFinishedEvent {
     #[serde(flatten)]
@@ -252,7 +302,8 @@ pub struct RunFinishedEvent {
     pub result: Option<JsonValue>,
 }
 
-/// Run error event
+/// Event indicating that a run has encountered an error.
+/// This event is sent when an agent run fails with an error message and optional error code.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunErrorEvent {
     #[serde(flatten)]
@@ -262,7 +313,8 @@ pub struct RunErrorEvent {
     pub code: Option<String>,
 }
 
-/// Step started event
+/// Event indicating that a step has started.
+/// This event is sent when a specific named step within a run begins execution.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StepStartedEvent {
     #[serde(flatten)]
@@ -271,7 +323,8 @@ pub struct StepStartedEvent {
     pub step_name: String,
 }
 
-/// Step finished event
+/// Event indicating that a step has finished.
+/// This event is sent when a specific named step within a run completes execution.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StepFinishedEvent {
     #[serde(flatten)]
@@ -280,33 +333,108 @@ pub struct StepFinishedEvent {
     pub step_name: String,
 }
 
-/// Union of all possible events
+/// Union of all possible events in the Agent User Interaction Protocol.
+/// This enum represents the full set of events that can be exchanged
+/// between the agent and the client.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum Event {
+#[serde(
+    tag = "type",
+    rename_all = "SCREAMING_SNAKE_CASE",
+    bound(deserialize = "")
+)]
+pub enum Event<StateT: AgentState = JsonValue> {
+    /// Signals the start of a text message from an agent.
+    /// Contains the message ID and role information.
     TextMessageStart(TextMessageStartEvent),
+
+    /// Represents a chunk of content being added to an in-progress text message.
+    /// Contains the message ID and the text delta to append.
     TextMessageContent(TextMessageContentEvent),
+
+    /// Signals the completion of a text message.
+    /// Contains the message ID of the completed message.
     TextMessageEnd(TextMessageEndEvent),
+
+    /// Represents a complete or partial message chunk in a single event.
+    /// May contain optional message ID, role, and delta information.
     TextMessageChunk(TextMessageChunkEvent),
+
+    /// Signals the start of a thinking text message.
+    /// Used for internal agent thought processes that should be displayed to the user.
     ThinkingTextMessageStart(ThinkingTextMessageStartEvent),
+
+    /// Represents content being added to an in-progress thinking text message.
+    /// Contains the delta text to append.
     ThinkingTextMessageContent(ThinkingTextMessageContentEvent),
+
+    /// Signals the completion of a thinking text message.
     ThinkingTextMessageEnd(ThinkingTextMessageEndEvent),
+
+    /// Signals the start of a tool call by the agent.
+    /// Contains the tool call ID, name, and optional parent message ID.
     ToolCallStart(ToolCallStartEvent),
+
+    /// Represents arguments being added to an in-progress tool call.
+    /// Contains the tool call ID and argument data delta.
     ToolCallArgs(ToolCallArgsEvent),
+
+    /// Signals the completion of a tool call.
+    /// Contains the tool call ID of the completed call.
     ToolCallEnd(ToolCallEndEvent),
+
+    /// Represents a complete or partial tool call in a single event.
+    /// May contain optional tool call ID, name, parent message ID, and delta.
     ToolCallChunk(ToolCallChunkEvent),
+
+    /// Represents the result of a completed tool call.
+    /// Contains the message ID, tool call ID, content, and optional role.
     ToolCallResult(ToolCallResultEvent),
+
+    /// Signals the start of a thinking process.
+    /// Contains an optional title describing the thinking process.
     ThinkingStart(ThinkingStartEvent),
+
+    /// Signals the end of a thinking process.
     ThinkingEnd(ThinkingEndEvent),
-    StateSnapshot(StateSnapshotEvent),
+
+    /// Provides a complete snapshot of the current state.
+    /// Contains the full state as a JSON value.
+    StateSnapshot(StateSnapshotEvent<StateT>),
+
+    /// Provides incremental changes to the state.
+    /// Contains a vector of delta operations to apply to the state.
     StateDelta(StateDeltaEvent),
+
+    /// Provides a complete snapshot of all messages.
+    /// Contains a vector of all current messages.
     MessagesSnapshot(MessagesSnapshotEvent),
+
+    /// Wraps a raw event from an external source.
+    /// Contains the original event as a JSON value and an optional source identifier.
     Raw(RawEvent),
+
+    /// Represents a custom event type not covered by the standard events.
+    /// Contains a name identifying the custom event type and an associated value.
     Custom(CustomEvent),
+
+    /// Signals the start of an agent run.
+    /// Contains thread ID and run ID to identify the run.
     RunStarted(RunStartedEvent),
+
+    /// Signals the completion of an agent run.
+    /// Contains thread ID, run ID, and optional result data.
     RunFinished(RunFinishedEvent),
+
+    /// Signals an error that occurred during an agent run.
+    /// Contains error message and optional error code.
     RunError(RunErrorEvent),
+
+    /// Signals the start of a step within an agent run.
+    /// Contains the name of the step being started.
     StepStarted(StepStartedEvent),
+
+    /// Signals the completion of a step within an agent run.
+    /// Contains the name of the completed step.
     StepFinished(StepFinishedEvent),
 }
 
@@ -372,7 +500,8 @@ impl Event {
     }
 }
 
-/// Validation error for events
+/// Validation error types for events in the Agent User Interaction Protocol.
+/// These errors represent validation failures when creating or processing events.
 #[derive(Debug, thiserror::Error)]
 pub enum EventValidationError {
     #[error("Delta must not be an empty string")]
@@ -401,7 +530,7 @@ impl TextMessageStartEvent {
                 raw_event: None,
             },
             message_id: message_id.into(),
-            role: "assistant".to_string(),
+            role: Role::Assistant,
         }
     }
 
@@ -417,7 +546,10 @@ impl TextMessageStartEvent {
 }
 
 impl TextMessageContentEvent {
-    pub fn new(message_id: impl Into<MessageId>, delta: String) -> Result<Self, EventValidationError> {
+    pub fn new(
+        message_id: impl Into<MessageId>,
+        delta: String,
+    ) -> Result<Self, EventValidationError> {
         let event = Self {
             base: BaseEvent {
                 event_type: EventType::TextMessageContent,

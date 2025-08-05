@@ -11,3 +11,10 @@ serde_json = { workspace = true }
 async-trait = "0.1.88"
 uuid = { version = "1.17.0", features = ["v4"] }
 futures = "0.3.31"
+json-patch = "4.0.0"
+log = "0.4.27"
+reqwest = { version = "0.12.22" , features = ["json", "stream"]}
+sse-client = "1.1.1"
+
+[dev-dependencies]
+tokio = { version = "1.36.0", features = ["full"] }

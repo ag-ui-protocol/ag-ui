@@ -2,6 +2,7 @@
 mod tests {
     use ag_ui_core::error::AguiError;
     use ag_ui_core::types::context::Context;
+    use ag_ui_core::types::ids::{MessageId, RunId, ThreadId, ToolCallId};
     use ag_ui_core::types::input::*;
     use ag_ui_core::types::message::{
         AssistantMessage, DeveloperMessage, FunctionCall, Message, Role, SystemMessage,
@@ -11,7 +12,6 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use serde_json::json;
     use uuid::Uuid;
-    use ag_ui_core::types::ids::{MessageId, RunId, ThreadId, ToolCallId};
 
     #[test]
     fn test_role_serialization() {
@@ -22,23 +22,23 @@ mod tests {
 
     #[test]
     fn test_message_types() {
-        let dev_msg = DeveloperMessage::new(MessageId::new(), "dev content".to_string())
+        let dev_msg = DeveloperMessage::new(MessageId::random(), "dev content".to_string())
             .with_name("dev".to_string());
         assert_eq!(dev_msg.role, Role::Developer);
         assert_eq!(dev_msg.name, Some("dev".to_string()));
 
-        let sys_msg = SystemMessage::new(MessageId::new(), "sys content".to_string())
+        let sys_msg = SystemMessage::new(MessageId::random(), "sys content".to_string())
             .with_name("sys".to_string());
         assert_eq!(sys_msg.role, Role::System);
 
-        let user_msg = UserMessage::new(MessageId::new(), "user content".to_string())
+        let user_msg = UserMessage::new(MessageId::random(), "user content".to_string())
             .with_name("user".to_string());
         assert_eq!(user_msg.role, Role::User);
 
         let tool_msg = ToolMessage::new(
-            MessageId::new(),
+            MessageId::random(),
             "result".to_string(),
-            ToolCallId::new(),
+            ToolCallId::random(),
         )
         .with_error("error".to_string());
         assert_eq!(tool_msg.role, Role::Tool);
@@ -48,7 +48,7 @@ mod tests {
     #[test]
     fn test_message_serialization() {
         let user_msg = Message::User {
-            id: MessageId::new(),
+            id: MessageId::random(),
             content: "Hello".to_string(),
             name: None,
         };
@@ -72,7 +72,7 @@ mod tests {
 
     #[test]
     fn test_assistant_message_builder() {
-        let msg = AssistantMessage::new(MessageId::new())
+        let msg = AssistantMessage::new(MessageId::random())
             .with_content("Hello".to_string())
             .with_name("Assistant".to_string());
 
@@ -114,8 +114,8 @@ mod tests {
 
         // If this compiles, it's okay
         let _input = RunAgentInput::new(
-            ThreadId::new(),
-            RunId::new(),
+            ThreadId::random(),
+            RunId::random(),
             state,
             vec![],
             vec![],
@@ -319,7 +319,5 @@ mod tests {
         let wrong_input: serde_json::Result<RunAgentInput<OtherState>> =
             serde_json::from_str(json_str);
         assert!(wrong_input.is_err())
-
-
     }
 }
