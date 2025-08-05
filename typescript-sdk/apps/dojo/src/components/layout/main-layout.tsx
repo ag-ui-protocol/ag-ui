@@ -7,6 +7,7 @@ import { Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 import { useURLParams } from "@/contexts/url-params-context";
+import { getTitleForCurrentDomain } from "@/utils/domain-config";
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -52,7 +53,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
               >
                 {isMobileSidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
               </Button>
-              <h1 className="text-sm font-medium text-center flex-1">AG-UI Dojo</h1>
+              <h1 className="text-sm font-medium text-center flex-1">{getTitleForCurrentDomain() || "AG-UI Dojo"}</h1>
               <div className="w-9" /> {/* Spacer for centering */}
             </div>
           </div>
@@ -100,8 +101,8 @@ function MaybeSidebar({ isMobile, isMobileSidebarOpen, onMobileClose }: MaybeSid
 
   return (
     <div className={`
-      ${isMobile 
-        ? 'absolute left-0 top-0 z-50 h-full w-80 transform transition-transform duration-300 ease-in-out' 
+      ${isMobile
+        ? 'absolute left-0 top-0 z-50 h-full w-80 transform transition-transform duration-300 ease-in-out'
         : 'relative'
       }
     `}>
