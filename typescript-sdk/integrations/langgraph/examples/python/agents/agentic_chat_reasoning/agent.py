@@ -3,6 +3,8 @@ A simple agentic chat flow using LangGraph instead of CrewAI.
 """
 
 from typing import List, Any, Optional
+import os
+
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
