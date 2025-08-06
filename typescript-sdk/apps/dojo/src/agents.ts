@@ -167,7 +167,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
           url: `${envVars.langgraphFastApiUrl}/agent/tool_based_generative_ui`,
         }),
         agentic_chat_reasoning: new LangGraphHttpAgent({
-          url: "http://localhost:8000/agent/agentic_chat_reasoning",
+          url: `${envVars.langgraphFastApiUrl}/agent/agentic_chat_reasoning`,
         }),
       };
     },
