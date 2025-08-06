@@ -61,7 +61,7 @@ const crewai = {
 const langgraphFastapi = {
   command: 'poetry install',
   name: 'LG FastAPI',
-  cwd: path.join(integrationsRoot, 'langgraph/python/ag_ui_langgraph/examples'),
+  cwd: path.join(integrationsRoot, 'langgraph/examples/python'),
 }
 
 // Langgraph (Platorm {typescript})
@@ -115,7 +115,7 @@ async function main() {
     serverStarterAllFeatures,
     agno,
     crewai,
-    // langgraphFastapi, // Disabled until build fixes
+    langgraphFastapi,
     langgraphPlatformTypescript,
     llamaIndex,
     mastra,

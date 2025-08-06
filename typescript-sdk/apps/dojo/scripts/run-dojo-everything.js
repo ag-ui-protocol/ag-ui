@@ -63,7 +63,7 @@ const crewai = {
 const langgraphFastapi = {
   command: 'poetry run dev',
   name: 'LG FastAPI',
-  cwd: path.join(integrationsRoot, 'langgraph/python/ag_ui_langgraph/examples'),
+  cwd: path.join(integrationsRoot, 'langgraph/examples/python'),
   env: {PORT: 8004},
 }
 
@@ -135,7 +135,7 @@ const procs = [
   serverStarterAllFeatures,
   agno,
   crewai,
-  // langgraphFastapi, // Disabled until it runs
+  langgraphFastapi,
   langgraphPlatformPython,
   // TODO: Also run the typescript version of langgraph.
   langgraphPlatformTypescript,
