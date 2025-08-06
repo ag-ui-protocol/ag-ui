@@ -138,6 +138,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
           deploymentUrl: envVars.langgraphPythonUrl,
           graphId: "tool_based_generative_ui",
         }),
+        agentic_chat_reasoning: new LangGraphHttpAgent({
+          url: `${envVars.langgraphPythonUrl}/agent/agentic_chat_reasoning`,
+        }),
       };
     },
   },
