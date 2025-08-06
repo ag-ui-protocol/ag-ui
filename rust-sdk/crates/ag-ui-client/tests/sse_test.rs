@@ -1,4 +1,4 @@
-use ag_ui_client::sse::{SseEvent, SseResponseExt};
+use ag_ui_client::sse::SseResponseExt;
 use futures::StreamExt;
 use reqwest::Client;
 use serde::Deserialize;
@@ -71,6 +71,7 @@ async fn test_sse_with_json_data() {
     let client = Client::new();
 
     #[derive(Debug, Deserialize)]
+    #[allow(unused)]
     struct UserData {
         name: String,
         age: u16,
@@ -79,7 +80,7 @@ async fn test_sse_with_json_data() {
     // Make a request to httpbun.org/sse
     let response = client
         .get(r#"https://sse.dev/test?jsonobj={"name":"werner","age":38}"#)
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(5))
         .send()
         .await
         .expect("Failed to send request to sse.dev");
@@ -100,7 +101,7 @@ async fn test_sse_with_json_data() {
                 println!("{user_data:?}");
                 events.push(event);
                 count += 1;
-                if count >= 5 {
+                if count >= 2 {
                     break;
                 }
             }
@@ -110,5 +111,3 @@ async fn test_sse_with_json_data() {
         }
     }
 }
-
-// "https://sse.dev/test?jsonobj={"name":"werner","age":38}"

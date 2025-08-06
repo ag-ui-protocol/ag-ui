@@ -3,16 +3,16 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use thiserror::Error;
 
-use crate::stream::EventStream;
-use crate::subscriber::AgentSubscriber;
-
-use crate::event_handler::EventHandler;
 use ag_ui_core::types::context::Context;
 use ag_ui_core::types::ids::{AgentId, MessageId, RunId, ThreadId};
 use ag_ui_core::types::input::RunAgentInput;
 use ag_ui_core::types::message::Message;
 use ag_ui_core::types::tool::Tool;
 use ag_ui_core::{AgentState, FwdProps, JsonValue};
+
+use crate::event_handler::EventHandler;
+use crate::stream::EventStream;
+use crate::subscriber::AgentSubscriber;
 
 #[derive(Debug, Clone)]
 pub struct AgentConfig<StateT = JsonValue> {
@@ -163,36 +163,4 @@ where
             new_messages,
         })
     }
-
-    // Helper function to run subscribers that can return a mutation
-    // async fn run_subscribers_with_mutation<F, Fut>(
-    //     &self,
-    //     subscribers: &[Arc<dyn AgentSubscriber<StateT, FwdPropsT>>],
-    //     mut callback: F,
-    // ) -> Result<AgentStateMutation<StateT>, AgentError>
-    // where
-    //     F: FnMut(&Arc<dyn AgentSubscriber<StateT, FwdPropsT>>) -> Fut + Send,
-    //     Fut: std::future::Future<Output = Result<AgentStateMutation<StateT>, AgentError>>,
-    // {
-    //     let mut result = AgentStateMutation::default();
-    //
-    //     for subscriber in subscribers {
-    //         let mutation = callback(subscriber).await?;
-    //
-    //         if mutation.messages.is_some() {
-    //             result.messages = mutation.messages;
-    //         }
-    //
-    //         if mutation.state.is_some() {
-    //             result.state = mutation.state;
-    //         }
-    //
-    //         if mutation.stop_propagation {
-    //             result.stop_propagation = true;
-    //             break;
-    //         }
-    //     }
-    //
-    //     Ok(result)
-    // }
 }

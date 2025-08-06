@@ -19,7 +19,7 @@ pub struct AgentSubscriberParams<'a, StateT: AgentState, FwdPropsT: FwdProps> {
 
 /// Subscriber trait for handling agent events
 #[async_trait::async_trait]
-pub trait AgentSubscriber<StateT = JsonValue, FwdPropsT = JsonValue>: Send + Sync
+pub trait AgentSubscriber<StateT, FwdPropsT>: Send + Sync
 where
     StateT: AgentState,
     FwdPropsT: FwdProps,

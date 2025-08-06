@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 // Import our simple subscriber implementation
 use ag_ui_client::Agent;
+use ag_ui_core::types::ids::MessageId;
 use ag_ui_core::types::message::Message;
 use ag_ui_core::types::tool::ToolCall;
 use std::collections::HashMap;
@@ -27,7 +28,7 @@ use std::fmt::Debug;
 async fn main() -> Result<(), Box<dyn Error>> {
     // Create a base URL for the mock server
     // Note: Make sure the mock server is running on this address
-    let base_url = Url::parse("http://127.0.0.1:3000/agent")?;
+    let base_url = Url::parse("http://127.0.0.1:3001/")?;
 
     // Create headers
     let mut headers = HeaderMap::new();
@@ -37,7 +38,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let agent = HttpAgent::new(base_url, headers);
 
     // Create a simple subscriber
-    let subscriber = SimpleSubscriber::new(true);
+    let subscriber = LoggingSubscriber::new(true);
 
     // Create run parameters
     let params = RunAgentParams::<JsonValue, JsonValue> {
@@ -45,7 +46,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         tools: None,
         context: None,
         forwarded_props: Some(serde_json::json!({})),
-        messages: vec![],
+        messages: vec![Message::User {
+            id: MessageId::random(),
+            content: "Can you give me the current temperature in New York?".into(),
+            name: None,
+        }],
         state: serde_json::json!({}),
     };
 
@@ -64,11 +69,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 /// A simple implementation of the AgentSubscriber trait that logs events
-pub struct SimpleSubscriber {
+pub struct LoggingSubscriber {
     pub verbose: bool,
 }
 
-impl SimpleSubscriber {
+impl LoggingSubscriber {
     pub fn new(verbose: bool) -> Self {
         Self { verbose }
     }
@@ -83,7 +88,7 @@ impl SimpleSubscriber {
 }
 
 #[async_trait]
-impl<StateT, FwdPropsT> AgentSubscriber<StateT, FwdPropsT> for SimpleSubscriber
+impl<StateT, FwdPropsT> AgentSubscriber<StateT, FwdPropsT> for LoggingSubscriber
 where
     StateT: AgentState,
     FwdPropsT: FwdProps,
@@ -198,42 +203,6 @@ where
         Ok(AgentStateMutation::default())
     }
 
-    async fn on_text_message_chunk_event(
-        &self,
-        event: &TextMessageChunkEvent,
-        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        self.log_event("TextMessageChunk", event);
-        Ok(AgentStateMutation::default())
-    }
-
-    async fn on_thinking_text_message_start_event(
-        &self,
-        event: &ThinkingTextMessageStartEvent,
-        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        self.log_event("ThinkingTextMessageStart", event);
-        Ok(AgentStateMutation::default())
-    }
-
-    async fn on_thinking_text_message_content_event(
-        &self,
-        event: &ThinkingTextMessageContentEvent,
-        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        self.log_event("ThinkingTextMessageContent", event);
-        Ok(AgentStateMutation::default())
-    }
-
-    async fn on_thinking_text_message_end_event(
-        &self,
-        event: &ThinkingTextMessageEndEvent,
-        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        self.log_event("ThinkingTextMessageEnd", event);
-        Ok(AgentStateMutation::default())
-    }
-
     async fn on_tool_call_start_event(
         &self,
         event: &ToolCallStartEvent,
@@ -284,33 +253,6 @@ where
         Ok(AgentStateMutation::default())
     }
 
-    async fn on_tool_call_chunk_event(
-        &self,
-        event: &ToolCallChunkEvent,
-        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        self.log_event("ToolCallChunk", event);
-        Ok(AgentStateMutation::default())
-    }
-
-    async fn on_thinking_start_event(
-        &self,
-        event: &ThinkingStartEvent,
-        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        self.log_event("ThinkingStart", event);
-        Ok(AgentStateMutation::default())
-    }
-
-    async fn on_thinking_end_event(
-        &self,
-        event: &ThinkingEndEvent,
-        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        self.log_event("ThinkingEnd", event);
-        Ok(AgentStateMutation::default())
-    }
-
     async fn on_state_snapshot_event(
         &self,
         event: &StateSnapshotEvent<StateT>,
@@ -353,6 +295,69 @@ where
         _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         self.log_event("Custom", event);
+        Ok(AgentStateMutation::default())
+    }
+
+    async fn on_text_message_chunk_event(
+        &self,
+        event: &TextMessageChunkEvent,
+        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
+    ) -> Result<AgentStateMutation<StateT>, AgentError> {
+        self.log_event("TextMessageChunk", event);
+        Ok(AgentStateMutation::default())
+    }
+
+    async fn on_thinking_text_message_start_event(
+        &self,
+        event: &ThinkingTextMessageStartEvent,
+        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
+    ) -> Result<AgentStateMutation<StateT>, AgentError> {
+        self.log_event("ThinkingTextMessageStart", event);
+        Ok(AgentStateMutation::default())
+    }
+
+    async fn on_thinking_text_message_content_event(
+        &self,
+        event: &ThinkingTextMessageContentEvent,
+        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
+    ) -> Result<AgentStateMutation<StateT>, AgentError> {
+        self.log_event("ThinkingTextMessageContent", event);
+        Ok(AgentStateMutation::default())
+    }
+
+    async fn on_thinking_text_message_end_event(
+        &self,
+        event: &ThinkingTextMessageEndEvent,
+        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
+    ) -> Result<AgentStateMutation<StateT>, AgentError> {
+        self.log_event("ThinkingTextMessageEnd", event);
+        Ok(AgentStateMutation::default())
+    }
+
+    async fn on_tool_call_chunk_event(
+        &self,
+        event: &ToolCallChunkEvent,
+        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
+    ) -> Result<AgentStateMutation<StateT>, AgentError> {
+        self.log_event("ToolCallChunk", event);
+        Ok(AgentStateMutation::default())
+    }
+
+    async fn on_thinking_start_event(
+        &self,
+        event: &ThinkingStartEvent,
+        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
+    ) -> Result<AgentStateMutation<StateT>, AgentError> {
+        self.log_event("ThinkingStart", event);
+        Ok(AgentStateMutation::default())
+    }
+
+    async fn on_thinking_end_event(
+        &self,
+        event: &ThinkingEndEvent,
+        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
+    ) -> Result<AgentStateMutation<StateT>, AgentError> {
+        self.log_event("ThinkingEnd", event);
         Ok(AgentStateMutation::default())
     }
 

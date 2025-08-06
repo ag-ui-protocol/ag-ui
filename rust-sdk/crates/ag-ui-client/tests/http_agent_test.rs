@@ -1,4 +1,5 @@
 use ag_ui_client::HttpAgent;
+use ag_ui_client::agent::AgentError::ExecutionError;
 use ag_ui_client::agent::{Agent, RunAgentParams};
 use ag_ui_core::types::ids::MessageId;
 use ag_ui_core::types::message::{Message, Role};
@@ -44,7 +45,7 @@ async fn test_http_agent_basic_functionality() {
     // Print the messages for debugging
     for msg in &result.new_messages {
         println!("Message role: {:?}", msg.role());
-        println!("Message content: {:?}", msg.content());
+        println!("Message content: {:?}", msg.content().unwrap());
         if let Some(tool_calls) = msg.tool_calls() {
             for tool_call in tool_calls {
                 println!(

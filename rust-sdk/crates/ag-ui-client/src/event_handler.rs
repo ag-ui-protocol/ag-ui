@@ -1,15 +1,17 @@
-use crate::agent::{AgentError, AgentStateMutation};
-use crate::subscriber::{AgentSubscriber, AgentSubscriberParams};
+use json_patch::PatchOperation;
+use serde_json::Value as JsonValue;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
 use ag_ui_core::event::Event;
 use ag_ui_core::types::ids::MessageId;
 use ag_ui_core::types::input::RunAgentInput;
 use ag_ui_core::types::message::{FunctionCall, Message, Role};
 use ag_ui_core::types::tool::ToolCall;
 use ag_ui_core::{AgentState, FwdProps};
-use json_patch::PatchOperation;
-use serde_json::Value as JsonValue;
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+
+use crate::agent::{AgentError, AgentStateMutation};
+use crate::subscriber::{AgentSubscriber, AgentSubscriberParams};
 
 /// Captures the run state and handles events
 #[derive(Clone)]
@@ -118,7 +120,6 @@ where
                 self.messages.push(new_message);
                 current_mutation.messages = Some(self.messages.clone());
 
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -135,7 +136,9 @@ where
                 // Default behavior
                 if let Some(last_message) = self.messages.last_mut() {
                     let content = last_message.content_mut();
-                    if let Some(s) = content { s.push_str(&e.delta) }
+                    if let Some(s) = content {
+                        s.push_str(&e.delta)
+                    }
                     current_mutation.messages = Some(self.messages.clone());
                 }
 
@@ -147,7 +150,6 @@ where
                     .unwrap_or_default()
                     .to_string(); // Clone to avoid borrowing issues
 
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -171,7 +173,6 @@ where
                     .unwrap_or_default()
                     .to_string(); // Clone to avoid borrowing issues
 
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -187,7 +188,6 @@ where
                 }
             }
             Event::TextMessageChunk(e) => {
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -201,7 +201,6 @@ where
                 }
             }
             Event::ThinkingTextMessageStart(e) => {
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -217,7 +216,6 @@ where
                 }
             }
             Event::ThinkingTextMessageContent(e) => {
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -233,7 +231,6 @@ where
                 }
             }
             Event::ThinkingTextMessageEnd(e) => {
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -281,7 +278,6 @@ where
                 }
                 current_mutation.messages = Some(self.messages.clone());
 
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -331,7 +327,6 @@ where
                     (String::new(), String::new(), HashMap::new())
                 };
 
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -374,7 +369,6 @@ where
                         (String::new(), HashMap::new())
                     };
 
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -390,7 +384,6 @@ where
                 }
             }
             Event::ToolCallChunk(e) => {
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -404,7 +397,6 @@ where
                 }
             }
             Event::ToolCallResult(e) => {
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -418,7 +410,6 @@ where
                 }
             }
             Event::ThinkingStart(e) => {
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -432,7 +423,6 @@ where
                 }
             }
             Event::ThinkingEnd(e) => {
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -450,7 +440,6 @@ where
                 self.state = e.snapshot.clone();
                 current_mutation.state = Some(self.state.clone());
 
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -480,7 +469,6 @@ where
                 self.state = new_state;
                 current_mutation.state = Some(self.state.clone());
 
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -494,7 +482,6 @@ where
                 }
             }
             Event::MessagesSnapshot(e) => {
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -508,7 +495,6 @@ where
                 }
             }
             Event::Raw(e) => {
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -522,7 +508,6 @@ where
                 }
             }
             Event::Custom(e) => {
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -536,7 +521,6 @@ where
                 }
             }
             Event::RunStarted(e) => {
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -553,7 +537,6 @@ where
                 // Default behavior
                 self.result = e.result.clone().unwrap_or(JsonValue::Null);
 
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -567,7 +550,6 @@ where
                 }
             }
             Event::RunError(e) => {
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -581,7 +563,6 @@ where
                 }
             }
             Event::StepStarted(e) => {
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();
@@ -595,7 +576,6 @@ where
                 }
             }
             Event::StepFinished(e) => {
-                // Call specific event handlers
                 let subscribers = self.subscribers.clone();
                 for subscriber in subscribers {
                     let params = self.to_subscriber_params();

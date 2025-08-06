@@ -1,15 +1,17 @@
-use crate::Agent;
-use crate::agent::AgentError;
-use crate::sse::SseResponseExt;
-use crate::stream::EventStream;
-use ag_ui_core::event::Event;
-use ag_ui_core::types::input::RunAgentInput;
-use ag_ui_core::{AgentState, FwdProps};
 use async_trait::async_trait;
 use futures::StreamExt;
 use log::trace;
 use reqwest::header::HeaderMap;
 use reqwest::{Client as HttpClient, Url};
+
+use ag_ui_core::event::Event;
+use ag_ui_core::types::input::RunAgentInput;
+use ag_ui_core::{AgentState, FwdProps};
+
+use crate::Agent;
+use crate::agent::AgentError;
+use crate::sse::SseResponseExt;
+use crate::stream::EventStream;
 
 pub struct HttpAgent {
     http_client: HttpClient,
