@@ -119,10 +119,8 @@ const dojo = {
     AGNO_URL: 'http://localhost:8002',
     CREW_AI_URL: 'http://localhost:8003',
     LANGGRAPH_FAST_API_URL: 'http://localhost:8004',
-    // TODO: Move this to run 2 platforms for testing.
-    LANGGRAPH_URL: 'http://localhost:8005',
-    // LANGGRAPH_PLATFORM_PYTHON_URL: 'http://localhost:8005',
-    // LANGGRAPH_PLATFORM_TYPESCRIPT_URL: 'http://localhost:8006',
+    LANGGRAPH_PYTHON_URL: 'http://localhost:8005',
+    LANGGRAPH_TYPESCRIPT_URL: 'http://localhost:8006',
     LLAMA_INDEX_URL: 'http://localhost:8007',
     MASTRA_URL: 'http://localhost:8008',
     PYDANTIC_AI_URL: 'http://localhost:8009',
@@ -137,7 +135,6 @@ const procs = [
   crewai,
   langgraphFastapi,
   langgraphPlatformPython,
-  // TODO: Also run the typescript version of langgraph.
   langgraphPlatformTypescript,
   llamaIndex,
   mastra,

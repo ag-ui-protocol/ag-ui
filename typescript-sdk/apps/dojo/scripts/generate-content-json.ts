@@ -177,6 +177,15 @@ const agentFilesMapper: Record<string, (agentKeys: string[]) => Record<string, s
       ]
     }), {})
   },
+  'langgraph-typescript': (agentKeys: string[]) => {
+    return agentKeys.reduce((acc, agentId) => ({
+      ...acc,
+      [agentId]: [
+        path.join(__dirname, integrationsFolderPath, `/langgraph/examples/python/agents/${agentId}/agent.py`),
+        path.join(__dirname, integrationsFolderPath, `/langgraph/examples/typescript/src/agents/${agentId}/agent.ts`)
+      ]
+    }), {})
+  },
   'langgraph-fastapi': (agentKeys: string[]) => {
     return agentKeys.reduce((acc, agentId) => ({
       ...acc,
