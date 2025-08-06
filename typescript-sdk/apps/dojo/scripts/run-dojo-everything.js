@@ -64,7 +64,10 @@ const langgraphFastapi = {
   command: 'poetry run dev',
   name: 'LG FastAPI',
   cwd: path.join(integrationsRoot, 'langgraph/examples/python'),
-  env: {PORT: 8004},
+  env: {
+    PORT: 8004,
+    POETRY_VIRTUALENVS_IN_PROJECT: "false"
+  },
 }
 
 // Langgraph (Platform {python})

@@ -62,6 +62,9 @@ const langgraphFastapi = {
   command: 'poetry install',
   name: 'LG FastAPI',
   cwd: path.join(integrationsRoot, 'langgraph/examples/python'),
+  env: {
+    POETRY_VIRTUALENVS_IN_PROJECT: "false"
+  }
 }
 
 // Langgraph (Platorm {typescript})
