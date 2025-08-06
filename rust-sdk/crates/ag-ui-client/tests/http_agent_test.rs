@@ -48,6 +48,8 @@ impl Drop for ServerProcess {
 
 #[tokio::test]
 async fn test_http_agent_basic_functionality() {
+    env_logger::init();
+    
     // Create an HttpAgent
     let mut headers = HeaderMap::new();
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));

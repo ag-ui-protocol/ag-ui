@@ -62,8 +62,6 @@ pub enum EventType {
 /// Contains common fields that are present in all event types.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BaseEvent {
-    #[serde(rename = "type")]
-    pub event_type: EventType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<f64>,
     #[serde(rename = "rawEvent", skip_serializing_if = "Option::is_none")]
@@ -525,7 +523,6 @@ impl TextMessageStartEvent {
     pub fn new(message_id: impl Into<MessageId>) -> Self {
         Self {
             base: BaseEvent {
-                event_type: EventType::TextMessageStart,
                 timestamp: None,
                 raw_event: None,
             },
@@ -552,7 +549,6 @@ impl TextMessageContentEvent {
     ) -> Result<Self, EventValidationError> {
         let event = Self {
             base: BaseEvent {
-                event_type: EventType::TextMessageContent,
                 timestamp: None,
                 raw_event: None,
             },
