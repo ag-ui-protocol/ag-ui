@@ -2,8 +2,6 @@
 
 This example shows how to create an Agno Agent with tools (YFinanceTools) and expose it in an AG-UI compatible way.
 """
-import os
-
 from agno.agent.agent import Agent
 from agno.app.agui.app import AGUIApp
 from agno.models.openai import OpenAIChat
@@ -23,13 +21,8 @@ agent = Agent(
 agui_app = AGUIApp(
   agent=agent,
   name="Investment Analyst",
-  app_id="investment_analyst",
+  app_id="agentic_chat",
   description="An investment analyst that researches stock prices, analyst recommendations, and stock fundamentals.",
 )
 
 app = agui_app.get_app()
-
-if __name__ == "__main__":
-  port = int(os.getenv("PORT", "9001"))
-
-  agui_app.serve(app="agent:app", host="0.0.0.0", port=port, reload=True)

@@ -291,6 +291,7 @@ function Haiku() {
 
   useCopilotAction({
     name: "generate_haiku",
+    available: "frontend",
     parameters: [
       {
         name: "japanese",

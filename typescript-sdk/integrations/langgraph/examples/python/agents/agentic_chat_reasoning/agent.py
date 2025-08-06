@@ -5,19 +5,22 @@ A simple agentic chat flow using LangGraph instead of CrewAI.
 from typing import List, Any, Optional
 import os
 
-# Updated imports for LangGraph
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, END, START
 from langgraph.graph import MessagesState
 from langgraph.types import Command
+from langgraph.checkpoint.memory import MemorySaver
 
 class AgentState(MessagesState):
     """
     State of our graph.
     """
     tools: List[Any]
+    model: str
 
 async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     """
@@ -27,12 +30,20 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     - Getting a response from the model
     - Handling tool calls
 
-    For more about the ReAct design pattern, see: 
+    For more about the ReAct design pattern, see:
     https://www.perplexity.ai/search/react-agents-NcXLQhreS0WDzpVaS4m9Cg
     """
 
+
     # 1. Define the model
-    model = ChatOpenAI(model="gpt-4o")
+    model = ChatOpenAI(model="o3")
+    if state["model"] == "Anthropic":
+        model = ChatAnthropic(
+            model="claude-sonnet-4-20250514",
+            thinking={"type": "enabled", "budget_tokens": 2000}
+        )
+    elif state["model"] == "Gemini":
+        model = ChatGoogleGenerativeAI(model="gemini-2.5-pro", thinking_budget=1024)
 
     # Define config for the model
     if config is None:
@@ -44,11 +55,6 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
             *state["tools"],
             # your_tool_here
         ],
-
-        # 2.1 Disable parallel tool calls to avoid race conditions,
-        #     enable this for faster performance if you want to manage
-        #     the complexity of running tool calls in parallel.
-        parallel_tool_calls=False,
     )
 
     # 3. Define the system message by which the chat model will be run

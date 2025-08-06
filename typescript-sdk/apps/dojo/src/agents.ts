@@ -163,6 +163,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         tool_based_generative_ui: new LangGraphHttpAgent({
           url: `${envVars.langgraphFastApiUrl}/agent/tool_based_generative_ui`,
         }),
+        agentic_chat_reasoning: new LangGraphHttpAgent({
+          url: "http://localhost:8000/agent/agentic_chat_reasoning",
+        }),
       };
     },
   },
@@ -171,7 +174,10 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new AgnoAgent({
-          url: `${envVars.agnoUrl}/agui`,
+          url: `${envVars.agnoUrl}/agentic_chat/agui`,
+        }),
+        tool_based_generative_ui: new AgnoAgent({
+          url: `${envVars.agnoUrl}/tool_based_generative_ui/agui`,
         }),
       };
     },

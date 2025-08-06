@@ -45,7 +45,7 @@ const serverStarterAllFeatures = {
 
 // Agno
 const agno = {
-  command: 'uv run agent.py',
+  command: 'uv run dev',
   name: 'Agno',
   cwd: path.join(integrationsRoot, 'agno/examples'),
   env: {PORT: 8002},
