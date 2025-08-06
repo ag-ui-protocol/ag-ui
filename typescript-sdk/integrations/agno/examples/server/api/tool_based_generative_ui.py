@@ -1,7 +1,8 @@
-"""
-Example: Agno Agent
-"""
+"""Example: Tool-based Generative UI Agent
 
+This example shows how to create an Agno Agent with custom tools for haiku generation
+and background changing, exposed in an AG-UI compatible way.
+"""
 from typing import List
 
 from agno.agent.agent import Agent
@@ -43,18 +44,9 @@ agent = Agent(
 
 agui_app = AGUIApp(
   agent=agent,
-  name="Agno Agent",
-  app_id="agno_agent",
-  description="A helpful assistant.",
+  name="Tool-based Generative UI Agent",
+  app_id="tool_based_generative_ui",
+  description="A tool-based generative UI agent with haiku generation and background changing capabilities.",
 )
 
 app = agui_app.get_app()
-
-def main():
-    """
-    Serve the AG-UI app.
-    """
-    agui_app.serve(app="examples:app", port=8000, reload=True)
-
-if __name__ == "__main__":
-    main()

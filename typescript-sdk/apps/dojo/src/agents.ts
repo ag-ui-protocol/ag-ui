@@ -174,10 +174,10 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new AgnoAgent({
-          url: `${envVars.agnoUrl}/agui`,
+          url: `${envVars.agnoUrl}/agentic_chat/agui`,
         }),
         tool_based_generative_ui: new AgnoAgent({
-          url: "http://localhost:8000/agui",
+          url: `${envVars.agnoUrl}/tool_based_generative_ui/agui`,
         }),
       };
     },

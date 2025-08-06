@@ -45,7 +45,7 @@ const serverStarterAllFeatures = {
 
 // Agno
 const agno = {
-  command: 'uv venv --allow-existing && uv pip install -r requirements.txt',
+  command: 'uv sync',
   name: 'Agno',
   cwd: path.join(integrationsRoot, 'agno/examples'),
 }

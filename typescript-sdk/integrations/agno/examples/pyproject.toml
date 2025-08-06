@@ -1,22 +1,25 @@
-[tool.poetry]
-name = "examples"
+tool.uv.package = true
+
+[project]
+name = "server"
 version = "0.1.0"
-description = ""
-authors = ["Markus Ecker <markus.ecker@gmail.com>"]
+description = "Example usage of the AG-UI adapter for Agno"
+license = "MIT"
+
 readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "agno>=1.7.7",
+    "openai>=1.99.1",
+    "yfinance>=0.2.63",
+    "fastapi>=0.116.1",
+    "uvicorn>=0.35.0",
+    "ag-ui-protocol>=0.1.8",
+]
+authors = [
+    {name = "AG-UI Team"}
+]
 
-[tool.poetry.dependencies]
-python = "^3.12"
-agno = "^1.7.7"
-openai = "^1.97.0"
-ag-ui-protocol = "^0.1.8"
-fastapi = "^0.116.1"
-uvicorn = "^0.35.0"
 
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
-
-[tool.poetry.scripts]
-dev = "examples:main"
+[project.scripts]
+dev = "server:main"
