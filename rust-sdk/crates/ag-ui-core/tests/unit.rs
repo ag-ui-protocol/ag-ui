@@ -66,7 +66,7 @@ mod tests {
             arguments: "{}".to_string(),
         };
 
-        let tool_call = ToolCall::new(Uuid::new_v4(), function_call);
+        let tool_call = ToolCall::new(ToolCallId::random(), function_call);
         assert_eq!(tool_call.call_type, "function");
     }
 

@@ -1,7 +1,6 @@
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use reqwest::Response;
-use serde::de::DeserializeOwned;
 use thiserror::Error;
 use std::future::Future;
 

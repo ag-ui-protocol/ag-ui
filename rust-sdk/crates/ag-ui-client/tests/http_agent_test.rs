@@ -1,7 +1,3 @@
-use std::process::{Child, Command};
-use std::time::Duration;
-use std::thread::sleep;
-
 use ag_ui_client::HttpAgent;
 use ag_ui_client::agent::{Agent, RunAgentParams};
 use ag_ui_core::types::message::{Message, Role};
@@ -11,45 +7,11 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::json;
 use uuid::Uuid;
 
-struct ServerProcess {
-    process: Child,
-}
-
-impl ServerProcess {
-    fn new() -> Self {
-        // Start the Python server
-        println!("Starting pydantic_ai_server.py...");
-        
-        // Get the current directory
-        let current_dir = std::env::current_dir().expect("Failed to get current directory");
-        let script_path = current_dir.join("scripts").join("pydantic_ai_server.py");
-        
-        println!("Script path: {:?}", script_path);
-
-        
-        let process = Command::new("uv")
-            .args(["run", &script_path.to_str().unwrap()])
-            .spawn()
-            .expect("Failed to start pydantic_ai_server.py");
-        
-        // Give the server some time to start up
-        sleep(Duration::from_secs(5));
-        
-        Self { process }
-    }
-}
-
-impl Drop for ServerProcess {
-    fn drop(&mut self) {
-        println!("Stopping pydantic_ai_server.py...");
-        let _ = self.process.kill();
-    }
-}
 
 #[tokio::test]
 async fn test_http_agent_basic_functionality() {
     env_logger::init();
-    
+
     // Create an HttpAgent
     let mut headers = HeaderMap::new();
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
@@ -105,9 +67,6 @@ async fn test_http_agent_basic_functionality() {
 
 #[tokio::test]
 async fn test_http_agent_tool_calls() {
-    // Start the server
-    let _server = ServerProcess::new();
-    
     // Create an HttpAgent
     let mut headers = HeaderMap::new();
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));

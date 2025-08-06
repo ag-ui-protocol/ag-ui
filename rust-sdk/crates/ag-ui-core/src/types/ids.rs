@@ -1,3 +1,4 @@
+use std::ops::Deref;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -81,4 +82,37 @@ define_id_type!(AgentId);
 define_id_type!(ThreadId);
 define_id_type!(RunId);
 define_id_type!(MessageId);
-define_id_type!(ToolCallId);
+
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
+pub struct ToolCallId(String);
+
+
+/// Tool Call ID
+///
+/// Does not follow UUID format, instead uses "call_xxxxxxxx"
+impl ToolCallId {
+    pub fn random() -> Self {
+        let uuid = &Uuid::new_v4().to_string()[..8];
+        let id = format!("call_{uuid}");
+        Self(id)
+    }
+}
+
+impl Deref for ToolCallId {
+    type Target = str;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Test whether tool call ID has same format as rest of AG-UI
+    #[test]
+    fn test_tool_call_random() {
+        let id = super::ToolCallId::random();
+        assert_eq!(id.0.len(), 5 + 8);
+        assert!(id.0.starts_with("call_"));
+        dbg!(id);
+    }
+}

@@ -57,7 +57,7 @@ impl<StateT: AgentState, FwdPropsT: FwdProps> Agent<StateT, FwdPropsT> for HttpA
             .await
             .map(|result| match result {
                 Ok(event) => {
-                    trace!("Received event: {event:?}");
+                    // trace!("Received event: {event:?}");
                     let event_data: Event<StateT> = serde_json::from_str(&event.data)?;
                     trace!("Deserialized event: {event_data:?}");
                     Ok(event_data)
