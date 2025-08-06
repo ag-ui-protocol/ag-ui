@@ -10,8 +10,7 @@ use std::fmt::Debug;
 
 pub trait AgentState:
     'static + Debug + Clone + Send + Sync + for<'de> Deserialize<'de> + Serialize
-{
-}
+{}
 impl AgentState for JsonValue {}
 
 pub trait FwdProps: 'static + Clone + Send + Sync + for<'de> Deserialize<'de> + Serialize {}

@@ -23,4 +23,4 @@ tokio = { version = "1.36.0", features = ["full"] }
 
 [[example]]
 name = "http-agent"
-path = "examples/http_agent.rs"
+path = "examples/basic_agent.rs"

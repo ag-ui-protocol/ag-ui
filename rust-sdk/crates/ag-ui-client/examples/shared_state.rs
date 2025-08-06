@@ -142,10 +142,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 	env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let base_url = Url::parse("http://127.0.0.1:3001/")?;
-
-    // Create headers
-    let mut headers = HeaderMap::new();
-    headers.insert("Content-Type", HeaderValue::from_static("application/json"));
+    let headers = HeaderMap::new();
 
     // Create the HTTP agent
     let agent = HttpAgent::new(base_url, headers);
@@ -170,7 +167,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 	let result = agent.run_agent(&params, vec![Arc::new(subscriber)]).await?;
 
-	info!("Agent run finished. Final state: {:#?}", result.result);
+	info!("Agent run finished. Final result: {:#?}", result);
 
 	Ok(())
 }

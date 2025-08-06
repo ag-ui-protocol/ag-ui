@@ -52,9 +52,10 @@ pub struct RunAgentParams<StateT: AgentState, FwdPropsT = JsonValue> {
 }
 
 #[derive(Debug, Clone)]
-pub struct RunAgentResult {
+pub struct RunAgentResult<StateT: AgentState> {
     pub result: JsonValue,
     pub new_messages: Vec<Message>,
+    pub new_state: StateT
 }
 
 pub type AgentRunState<StateT, FwdPropsT> = RunAgentInput<StateT, FwdPropsT>;
@@ -97,6 +98,7 @@ where
     StateT: AgentState,
     FwdPropsT: FwdProps,
 {
+
     async fn run(
         &self,
         input: &RunAgentInput<StateT, FwdPropsT>,
@@ -107,7 +109,7 @@ where
         &self,
         params: &RunAgentParams<StateT, FwdPropsT>,
         subscribers: Vec<Arc<dyn AgentSubscriber<StateT, FwdPropsT>>>,
-    ) -> Result<RunAgentResult, AgentError> {
+    ) -> Result<RunAgentResult<StateT>, AgentError> {
         // TODO: Use Agent ID?
         let _agent_id = AgentId::random();
 
@@ -158,9 +160,11 @@ where
             .cloned()
             .collect();
 
+
         Ok(RunAgentResult {
             result: event_handler.result,
             new_messages,
+            new_state: event_handler.state
         })
     }
 }

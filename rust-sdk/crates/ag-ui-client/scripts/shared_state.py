@@ -93,7 +93,7 @@ class RecipeSnapshot(BaseModel):
     )
 
 model = OpenAIModel(
-    model_name="llama3.1",
+    model_name="gpt-oss:20b",
     provider=OpenAIProvider(
         base_url="http://localhost:11434/v1", api_key="ollama"
     ),
