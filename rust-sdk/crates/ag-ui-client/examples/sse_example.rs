@@ -28,13 +28,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if let Some(event_type) = &sse_event.event {
                     match event_type.as_str() {
                         "ping" => println!("Ping: {}", sse_event.data),
-                        &_ => panic!("Unknown event type {event_type}")
+                        &_ => panic!("Unknown event type {event_type}"),
                     }
                 }
-            },
+            }
             Err(err) => eprintln!("Error: {}", err),
         }
     }
     Ok(())
 }
-

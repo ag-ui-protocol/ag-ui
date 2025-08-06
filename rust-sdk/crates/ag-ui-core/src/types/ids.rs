@@ -1,5 +1,5 @@
-use std::ops::Deref;
 use serde::{Deserialize, Serialize};
+use std::ops::Deref;
 use uuid::Uuid;
 
 /// Macro to define a newtype ID based on Uuid.
@@ -85,7 +85,6 @@ define_id_type!(MessageId);
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub struct ToolCallId(String);
-
 
 /// Tool Call ID
 ///

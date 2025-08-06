@@ -6,13 +6,13 @@ use thiserror::Error;
 use crate::stream::EventStream;
 use crate::subscriber::AgentSubscriber;
 
+use crate::event_handler::EventHandler;
 use ag_ui_core::types::context::Context;
 use ag_ui_core::types::ids::{AgentId, MessageId, RunId, ThreadId};
 use ag_ui_core::types::input::RunAgentInput;
 use ag_ui_core::types::message::Message;
 use ag_ui_core::types::tool::Tool;
 use ag_ui_core::{AgentState, FwdProps, JsonValue};
-use crate::event_handler::EventHandler;
 
 #[derive(Debug, Clone)]
 pub struct AgentConfig<StateT = JsonValue> {
@@ -109,7 +109,7 @@ where
         subscribers: Vec<Arc<dyn AgentSubscriber<StateT, FwdPropsT>>>,
     ) -> Result<RunAgentResult, AgentError> {
         // TODO: Use Agent ID?
-        let agent_id = AgentId::random();
+        let _agent_id = AgentId::random();
 
         let input = RunAgentInput {
             thread_id: ThreadId::random(),

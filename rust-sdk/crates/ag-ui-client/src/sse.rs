@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use reqwest::Response;
-use thiserror::Error;
 use std::future::Future;
+use thiserror::Error;
 
 /// Error type for SSE response processing
 #[derive(Error, Debug)]
@@ -10,11 +10,11 @@ pub enum SseError {
     /// Error when parsing SSE data
     #[error("Failed to parse SSE data: {0}")]
     ParseError(String),
-    
+
     /// Error from reqwest
     #[error("HTTP error: {0}")]
     HttpError(#[from] reqwest::Error),
-    
+
     /// Error when deserializing JSON
     #[error("JSON deserialization error: {0}")]
     JsonError(#[from] serde_json::Error),
@@ -25,10 +25,10 @@ pub enum SseError {
 pub struct SseEvent {
     /// The event type (from the "event:" field)
     pub event: Option<String>,
-    
+
     /// The event ID (from the "id:" field)
     pub id: Option<String>,
-    
+
     /// The event data (from the "data:" field)
     pub data: String,
 }
@@ -59,12 +59,15 @@ pub struct SseEvent {
 /// Events are separated by double newlines (`\n\n`).
 pub trait SseResponseExt {
     /// Converts a reqwest::Response into a Stream of SSE events
-    fn event_source(self) -> impl Future<Output = impl Stream<Item = Result<SseEvent, SseError>>> + Send;
+    fn event_source(
+        self,
+    ) -> impl Future<Output = impl Stream<Item = Result<SseEvent, SseError>>> + Send;
 }
 
 impl SseResponseExt for Response {
-    fn event_source(self) -> impl Future<Output = impl Stream<Item = Result<SseEvent, SseError>>> + Send
-    {
+    fn event_source(
+        self,
+    ) -> impl Future<Output = impl Stream<Item = Result<SseEvent, SseError>>> + Send {
         async move {
             // Create a stream of bytes from the response
             let stream = self.bytes_stream();
@@ -80,7 +83,9 @@ struct SseEventProcessor;
 
 impl SseEventProcessor {
     /// Creates a new SSE event processor
-    fn new(stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + 'static) -> impl Stream<Item = Result<SseEvent, SseError>> {
+    fn new(
+        stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + 'static,
+    ) -> impl Stream<Item = Result<SseEvent, SseError>> {
         let mut buffer = String::new();
 
         // Process the stream
@@ -100,10 +105,10 @@ impl SseEventProcessor {
                         // Process complete events from the buffer
                         let (events, new_buffer) = process_raw_sse_events(&buffer);
                         buffer = new_buffer;
-                        
+
                         events
-                    },
-                    Err(e) => vec![Err(SseError::ParseError(format!("Invalid UTF-8: {}", e)))],
+                    }
+                    Err(e) => vec![Err(SseError::ParseError(format!("Invalid UTF-8: {e}")))],
                 }
             })
             .flat_map(futures::stream::iter)
@@ -111,7 +116,7 @@ impl SseEventProcessor {
 }
 
 /// Process SSE data from a buffer string into raw SSE events
-/// 
+///
 /// Returns a tuple of (events, new_buffer) where:
 /// - events: A vector of parsed events or errors
 /// - new_buffer: The remaining buffer that might contain incomplete events
@@ -147,7 +152,7 @@ fn process_raw_sse_events(buffer: &str) -> (Vec<Result<SseEvent, SseError>>, Str
     } else {
         String::new()
     };
-    
+
     (results, new_buffer)
 }
 
@@ -156,12 +161,12 @@ fn parse_sse_event(event_text: &str) -> Result<SseEvent, SseError> {
     let mut event = None;
     let mut id = None;
     let mut data_lines = Vec::new();
-    
+
     for line in event_text.lines() {
         if line.is_empty() {
             continue;
         }
-        
+
         if let Some(value) = line.strip_prefix("event:") {
             event = Some(value.trim().to_string());
         } else if let Some(value) = line.strip_prefix("id:") {
@@ -173,13 +178,12 @@ fn parse_sse_event(event_text: &str) -> Result<SseEvent, SseError> {
         }
         // Ignore other fields like "retry:"
     }
-    
+
     // Join all data lines with newlines
     let data = data_lines.join("\n");
-    
+
     Ok(SseEvent { event, id, data })
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -220,7 +224,10 @@ mod tests {
                       data: {\"event_type\":\"test2\",\"data\":\"hello2\"}";
         let (events, new_buffer) = process_raw_sse_events(buffer);
         assert_eq!(events.len(), 1);
-        assert_eq!(new_buffer, "data: {\"event_type\":\"test2\",\"data\":\"hello2\"}");
+        assert_eq!(
+            new_buffer,
+            "data: {\"event_type\":\"test2\",\"data\":\"hello2\"}"
+        );
     }
 
     #[tokio::test]
@@ -278,11 +285,22 @@ mod tests {
 
         // Deserialize the ping event
         let ping_data: PingData = serde_json::from_str(&ping_event.data).unwrap();
-        assert_eq!(ping_data, PingData { message: "hello".to_string() });
+        assert_eq!(
+            ping_data,
+            PingData {
+                message: "hello".to_string()
+            }
+        );
 
         // Deserialize the update event
         let update_data: UpdateData = serde_json::from_str(&update_event.data).unwrap();
-        assert_eq!(update_data, UpdateData { id: 123, status: "ok".to_string() });
+        assert_eq!(
+            update_data,
+            UpdateData {
+                id: 123,
+                status: "ok".to_string()
+            }
+        );
     }
 
     #[tokio::test]
@@ -314,7 +332,8 @@ mod tests {
         // Parse event types as enum values
         for raw_event in raw_events {
             let sse_event = raw_event.unwrap();
-            let event_type: EventType = serde_json::from_str(&format!("\"{}\"", sse_event.event.unwrap())).unwrap();
+            let event_type: EventType =
+                serde_json::from_str(&format!("\"{}\"", sse_event.event.unwrap())).unwrap();
             let data: EventData = serde_json::from_str(&sse_event.data).unwrap();
 
             // Verify the event type matches the expected enum variant
