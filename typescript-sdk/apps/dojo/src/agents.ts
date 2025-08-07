@@ -63,11 +63,11 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     id: "adk-middleware",
     agents: async () => {
       return {
-        agentic_chat: new ServerStarterAgent({ url: "http://localhost:8000/chat" }),
-        tool_based_generative_ui: new ServerStarterAgent({ url: "http://localhost:8000/adk-tool-based-generative-ui" }),
-        human_in_the_loop: new ServerStarterAgent({ url: "http://localhost:8000/adk-human-in-loop-agent" }),
-        shared_state: new ServerStarterAgent({ url: "http://localhost:8000/adk-shared-state-agent" }),
-        predictive_state_updates: new ServerStarterAgent({ url: "http://localhost:8000/adk-predictive-state-agent" }),
+        agentic_chat: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/chat` }),
+        tool_based_generative_ui: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-tool-based-generative-ui` }),
+        human_in_the_loop: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-human-in-loop-agent` }),
+        shared_state: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-shared-state-agent` }),
+        predictive_state_updates: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-predictive-state-agent` }),
       };
     },
   },
