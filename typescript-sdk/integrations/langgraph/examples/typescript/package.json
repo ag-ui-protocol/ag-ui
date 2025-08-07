@@ -1,0 +1,23 @@
+{
+  "name": "langgraph-agui-dojo-typescript",
+  "version": "0.1.0",
+  "description": "TypeScript examples for LangGraph agents with CopilotKit integration",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "pnpx @langchain/langgraph-cli@latest dev",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.66",
+    "@langchain/openai": "^0.6.3",
+    "@langchain/langgraph": "^0.2.65",
+    "dotenv": "^16.4.5",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.0.0"
+  }
+}

@@ -43,4 +43,6 @@ packages/proto/src/generated
 # LangGraph API
 **/**/.langgraph_api
 
+# Python
 venv
+__pycache__/

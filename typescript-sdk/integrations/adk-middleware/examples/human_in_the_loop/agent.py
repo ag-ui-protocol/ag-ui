@@ -37,7 +37,7 @@ DEFINE_TASK_TOOL = {
 
 
 human_in_loop_agent = Agent(
-    model='gemini-1.5-flash',
+    model='gemini-2.5-flash',
     name='human_in_loop_agent',
     instruction=f"""
         You are a human-in-the-loop task planning assistant that helps break down complex tasks into manageable steps with human oversight and approval.

@@ -11,18 +11,12 @@ from ag_ui.core import (
     UserMessage, ToolMessage, RunStartedEvent, RunFinishedEvent, RunErrorEvent
 )
 
-from adk_middleware import ADKAgent, AgentRegistry
+from adk_middleware import ADKAgent
 
 
 class TestToolResultFlow:
     """Test cases for tool result submission flow."""
     
-    @pytest.fixture(autouse=True)
-    def reset_registry(self):
-        """Reset agent registry before each test."""
-        AgentRegistry.reset_instance()
-        yield
-        AgentRegistry.reset_instance()
     
     @pytest.fixture
     def sample_tool(self):
@@ -51,11 +45,8 @@ class TestToolResultFlow:
     @pytest.fixture
     def adk_middleware(self, mock_adk_agent):
         """Create ADK middleware with mocked dependencies."""
-        # Register the mock agent
-        registry = AgentRegistry.get_instance()
-        registry.set_default_agent(mock_adk_agent)
-        
         return ADKAgent(
+            adk_agent=mock_adk_agent,
             user_id="test_user",
             execution_timeout_seconds=60,
             tool_timeout_seconds=30
@@ -377,7 +368,7 @@ class TestToolResultFlow:
         
         # In the all-long-running architecture, tool result inputs are processed as new executions
         # Mock the background execution to avoid ADK library errors
-        async def mock_start_new_execution(input_data, agent_id):
+        async def mock_start_new_execution(input_data):
             yield RunStartedEvent(
                 type=EventType.RUN_STARTED,
                 thread_id=input_data.thread_id,
@@ -421,7 +412,7 @@ class TestToolResultFlow:
             RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id="thread_1", run_id="run_1")
         ]
         
-        async def mock_start_new_execution(input_data, agent_id):
+        async def mock_start_new_execution(input_data):
             for event in mock_events:
                 yield event
         

@@ -42,6 +42,8 @@ Pick the right spot so we can help you faster:
    - A maintainer will review your code and leave comments if needed  
    - Once it’s approved, we’ll merge it and move the issue to “done.”
 
+**NOTE:** All community integrations (ie, .NET, Golang SDK, etc.) will need to be maintained by the community
+
 ---
 
 ## 📝 Want to Contribute to the Docs?

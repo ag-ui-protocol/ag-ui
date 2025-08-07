@@ -12,8 +12,11 @@ import { LangGraphAgent, LangGraphHttpAgent } from "@ag-ui/langgraph";
 import { AgnoAgent } from "@ag-ui/agno";
 import { LlamaIndexAgent } from "@ag-ui/llamaindex";
 import { CrewAIAgent } from "@ag-ui/crewai";
+import getEnvVars from "./env";
 import { mastra } from "./mastra";
+import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 
+const envVars = getEnvVars();
 export const agentsIntegrations: AgentIntegrationConfig[] = [
   {
     id: "middleware-starter",
@@ -24,10 +27,35 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     },
   },
   {
+    id: "pydantic-ai",
+    agents: async () => {
+      return {
+        agentic_chat: new PydanticAIAgent({
+          url: `${envVars.pydanticAIUrl}/agentic_chat/`,
+        }),
+        agentic_generative_ui: new PydanticAIAgent({
+          url: `${envVars.pydanticAIUrl}/agentic_generative_ui/`,
+        }),
+        human_in_the_loop: new PydanticAIAgent({
+          url: `${envVars.pydanticAIUrl}/human_in_the_loop/`,
+        }),
+        predictive_state_updates: new PydanticAIAgent({
+          url: `${envVars.pydanticAIUrl}/predictive_state_updates/`,
+        }),
+        shared_state: new PydanticAIAgent({
+          url: `${envVars.pydanticAIUrl}/shared_state/`,
+        }),
+        tool_based_generative_ui: new PydanticAIAgent({
+          url: `${envVars.pydanticAIUrl}/tool_based_generative_ui/`,
+        }),
+      };
+    },
+  },
+  {
     id: "server-starter",
     agents: async () => {
       return {
-        agentic_chat: new ServerStarterAgent({ url: "http://localhost:8000/" }),
+        agentic_chat: new ServerStarterAgent({ url: envVars.serverStarterUrl }),
       };
     },
   },
@@ -35,10 +63,11 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     id: "adk-middleware",
     agents: async () => {
       return {
-        agentic_chat: new ServerStarterAgent({ url: "http://localhost:8000/chat" }),
-        tool_based_generative_ui: new ServerStarterAgent({ url: "http://localhost:8000/adk-tool-based-generative-ui" }),
-        human_in_the_loop: new ServerStarterAgent({ url: "http://localhost:8000/adk-human-in-loop-agent" }),
-        shared_state: new ServerStarterAgent({ url: "http://localhost:8000/adk-shared-state-agent" }),
+        agentic_chat: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/chat` }),
+        tool_based_generative_ui: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-tool-based-generative-ui` }),
+        human_in_the_loop: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-human-in-loop-agent` }),
+        shared_state: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-shared-state-agent` }),
+        predictive_state_updates: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-predictive-state-agent` }),
       };
     },
   },
@@ -47,22 +76,22 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new ServerStarterAllFeaturesAgent({
-          url: "http://localhost:8000/agentic_chat",
+          url: `${envVars.serverStarterAllFeaturesUrl}/agentic_chat`,
         }),
         human_in_the_loop: new ServerStarterAllFeaturesAgent({
-          url: "http://localhost:8000/human_in_the_loop",
+          url: `${envVars.serverStarterAllFeaturesUrl}/human_in_the_loop`,
         }),
         agentic_generative_ui: new ServerStarterAllFeaturesAgent({
-          url: "http://localhost:8000/agentic_generative_ui",
+          url: `${envVars.serverStarterAllFeaturesUrl}/agentic_generative_ui`,
         }),
         tool_based_generative_ui: new ServerStarterAllFeaturesAgent({
-          url: "http://localhost:8000/tool_based_generative_ui",
+          url: `${envVars.serverStarterAllFeaturesUrl}/tool_based_generative_ui`,
         }),
         shared_state: new ServerStarterAllFeaturesAgent({
-          url: "http://localhost:8000/shared_state",
+          url: `${envVars.serverStarterAllFeaturesUrl}/shared_state`,
         }),
         predictive_state_updates: new ServerStarterAllFeaturesAgent({
-          url: "http://localhost:8000/predictive_state_updates",
+          url: `${envVars.serverStarterAllFeaturesUrl}/predictive_state_updates`,
         }),
       };
     },
@@ -71,7 +100,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     id: "mastra",
     agents: async () => {
       const mastraClient = new MastraClient({
-        baseUrl: "http://localhost:4111",
+        baseUrl: envVars.mastraUrl,
       });
 
       return MastraAgent.getRemoteAgents({
@@ -98,27 +127,27 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new LangGraphAgent({
-          deploymentUrl: "http://localhost:2024",
+          deploymentUrl: envVars.langgraphUrl,
           graphId: "agentic_chat",
         }),
         agentic_generative_ui: new LangGraphAgent({
-          deploymentUrl: "http://localhost:2024",
+          deploymentUrl: envVars.langgraphUrl,
           graphId: "agentic_generative_ui",
         }),
         human_in_the_loop: new LangGraphAgent({
-          deploymentUrl: "http://localhost:2024",
+          deploymentUrl: envVars.langgraphUrl,
           graphId: "human_in_the_loop",
         }),
         predictive_state_updates: new LangGraphAgent({
-          deploymentUrl: "http://localhost:2024",
+          deploymentUrl: envVars.langgraphUrl,
           graphId: "predictive_state_updates",
         }),
         shared_state: new LangGraphAgent({
-          deploymentUrl: "http://localhost:2024",
+          deploymentUrl: envVars.langgraphUrl,
           graphId: "shared_state",
         }),
         tool_based_generative_ui: new LangGraphAgent({
-          deploymentUrl: "http://localhost:2024",
+          deploymentUrl: envVars.langgraphUrl,
           graphId: "tool_based_generative_ui",
         }),
       };
@@ -129,22 +158,22 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new LangGraphHttpAgent({
-          url: "http://localhost:8000/agent/agentic_chat",
+          url: `${envVars.langgraphFastApiUrl}/agent/agentic_chat`,
         }),
         agentic_generative_ui: new LangGraphHttpAgent({
-          url: "http://localhost:8000/agent/agentic_generative_ui",
+          url: `${envVars.langgraphFastApiUrl}/agent/agentic_generative_ui`,
         }),
         human_in_the_loop: new LangGraphHttpAgent({
-          url: "http://localhost:8000/agent/human_in_the_loop",
+          url: `${envVars.langgraphFastApiUrl}/agent/human_in_the_loop`,
         }),
         predictive_state_updates: new LangGraphHttpAgent({
-          url: "http://localhost:8000/agent/predictive_state_updates",
+          url: `${envVars.langgraphFastApiUrl}/agent/predictive_state_updates`,
         }),
         shared_state: new LangGraphHttpAgent({
-          url: "http://localhost:8000/agent/shared_state",
+          url: `${envVars.langgraphFastApiUrl}/agent/shared_state`,
         }),
         tool_based_generative_ui: new LangGraphHttpAgent({
-          url: "http://localhost:8000/agent/tool_based_generative_ui",
+          url: `${envVars.langgraphFastApiUrl}/agent/tool_based_generative_ui`,
         }),
       };
     },
@@ -154,7 +183,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new AgnoAgent({
-          url: "http://localhost:8000/agui",
+          url: `${envVars.agnoUrl}/agui`,
         }),
       };
     },
@@ -164,16 +193,16 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new LlamaIndexAgent({
-          url: "http://localhost:9000/agentic_chat/run",
+          url: `${envVars.llamaIndexUrl}/agentic_chat/run`,
         }),
         human_in_the_loop: new LlamaIndexAgent({
-          url: "http://localhost:9000/human_in_the_loop/run",
+          url: `${envVars.llamaIndexUrl}/human_in_the_loop/run`,
         }),
         agentic_generative_ui: new LlamaIndexAgent({
-          url: "http://localhost:9000/agentic_generative_ui/run",
+          url: `${envVars.llamaIndexUrl}/agentic_generative_ui/run`,
         }),
         shared_state: new LlamaIndexAgent({
-          url: "http://localhost:9000/shared_state/run",
+          url: `${envVars.llamaIndexUrl}/shared_state/run`,
         }),
       };
     },
@@ -183,22 +212,22 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new CrewAIAgent({
-          url: "http://localhost:8000/agentic_chat",
+          url: `${envVars.crewAiUrl}/agentic_chat`,
         }),
         human_in_the_loop: new CrewAIAgent({
-          url: "http://localhost:8000/human_in_the_loop",
+          url: `${envVars.crewAiUrl}/human_in_the_loop`,
         }),
         tool_based_generative_ui: new CrewAIAgent({
-          url: "http://localhost:8000/tool_based_generative_ui",
+          url: `${envVars.crewAiUrl}/tool_based_generative_ui`,
         }),
         agentic_generative_ui: new CrewAIAgent({
-          url: "http://localhost:8000/agentic_generative_ui",
+          url: `${envVars.crewAiUrl}/agentic_generative_ui`,
         }),
         shared_state: new CrewAIAgent({
-          url: "http://localhost:8000/shared_state",
+          url: `${envVars.crewAiUrl}/shared_state`,
         }),
         predictive_state_updates: new CrewAIAgent({
-          url: "http://localhost:8000/predictive_state_updates",
+          url: `${envVars.crewAiUrl}/predictive_state_updates`,
         }),
       };
     },

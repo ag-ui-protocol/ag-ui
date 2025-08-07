@@ -143,6 +143,7 @@ type ToolMessage = {
   content: string
   role: "tool"
   toolCallId: string
+  error?: string
 }
 ```
 
@@ -152,6 +153,7 @@ type ToolMessage = {
 | `content`    | `string` | Text content of the message                  |
 | `role`       | `"tool"` | Role of the message sender, fixed as "tool"  |
 | `toolCallId` | `string` | ID of the tool call this message responds to |
+| `error`      | `string` | Error message if the tool call failed        |
 
 ### Message
 

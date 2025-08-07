@@ -13,20 +13,19 @@ from ag_ui.core import (
     RunStartedEvent, RunFinishedEvent, RunErrorEvent,
     TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent,
     StateSnapshotEvent, StateDeltaEvent,
-    Context, ToolMessage, ToolCallEndEvent, SystemMessage
+    Context, ToolMessage, ToolCallEndEvent, SystemMessage,ToolCallResultEvent
 )
 
 from google.adk import Runner
-from google.adk.agents import BaseAgent as ADKBaseAgent, RunConfig as ADKRunConfig
+from google.adk.agents import BaseAgent, RunConfig as ADKRunConfig
 from google.adk.agents.run_config import StreamingMode
-from google.adk.sessions import InMemorySessionService
+from google.adk.sessions import BaseSessionService, InMemorySessionService
 from google.adk.artifacts import BaseArtifactService, InMemoryArtifactService
 from google.adk.memory import BaseMemoryService, InMemoryMemoryService
 from google.adk.auth.credential_service.base_credential_service import BaseCredentialService
 from google.adk.auth.credential_service.in_memory_credential_service import InMemoryCredentialService
 from google.genai import types
 
-from .agent_registry import AgentRegistry
 from .event_translator import EventTranslator
 from .session_manager import SessionManager
 from .execution_state import ExecutionState
@@ -46,6 +45,9 @@ class ADKAgent:
     
     def __init__(
         self,
+        # ADK Agent instance
+        adk_agent: BaseAgent,
+        
         # App identification
         app_name: Optional[str] = None,
         session_timeout_seconds: Optional[int] = 1200,
@@ -55,7 +57,8 @@ class ADKAgent:
         user_id: Optional[str] = None,
         user_id_extractor: Optional[Callable[[RunAgentInput], str]] = None,
         
-        # ADK Services (session service now encapsulated in session manager)
+        # ADK Services
+        session_service: Optional[BaseSessionService] = None,
         artifact_service: Optional[BaseArtifactService] = None,
         memory_service: Optional[BaseMemoryService] = None,
         credential_service: Optional[BaseCredentialService] = None,
@@ -75,10 +78,12 @@ class ADKAgent:
         """Initialize the ADKAgent.
         
         Args:
+            adk_agent: The ADK agent instance to use
             app_name: Static application name for all requests
             app_name_extractor: Function to extract app name dynamically from input
             user_id: Static user ID for all requests
             user_id_extractor: Function to extract user ID dynamically from input
+            session_service: Session management service (defaults to InMemorySessionService)
             artifact_service: File/artifact storage service
             memory_service: Conversation memory and search service (also enables automatic session memory)
             credential_service: Authentication credential storage
@@ -96,6 +101,7 @@ class ADKAgent:
         if user_id and user_id_extractor:
             raise ValueError("Cannot specify both 'user_id' and 'user_id_extractor'")
         
+        self._adk_agent = adk_agent
         self._static_app_name = app_name
         self._app_name_extractor = app_name_extractor
         self._static_user_id = user_id
@@ -115,12 +121,9 @@ class ADKAgent:
         
         
         # Session lifecycle management - use singleton
-        # Initialize with session service based on use_in_memory_services
-        if use_in_memory_services:
-            session_service = InMemorySessionService()
-        else:
-            # For production, you would inject the real session service here
-            session_service = InMemorySessionService()  # TODO: Make this configurable
+        # Use provided session service or create default based on use_in_memory_services
+        if session_service is None:
+            session_service = InMemorySessionService()  # Default for both dev and production
             
         self._session_manager = SessionManager.get_instance(
             session_service=session_service,
@@ -153,13 +156,10 @@ class ADKAgent:
             return self._default_app_extractor(input)
     
     def _default_app_extractor(self, input: RunAgentInput) -> str:
-        """Default app extraction logic - use agent name from registry."""
-        # Get the agent from registry and use its name as app name
+        """Default app extraction logic - use agent name directly."""
+        # Use the ADK agent's name as app name
         try:
-            agent_id = self._get_agent_id()
-            registry = AgentRegistry.get_instance()
-            adk_agent = registry.get_agent(agent_id)
-            return adk_agent.name
+            return self._adk_agent.name
         except Exception as e:
             logger.warning(f"Could not get agent name for app_name, using default: {e}")
             return "AG-UI ADK Agent"
@@ -299,9 +299,6 @@ class ADKAgent:
         
         return False
     
-    def _get_agent_id(self) -> str:
-        """Get the agent ID - always returns 'default' in this implementation."""
-        return "default"
     
     def _default_run_config(self, input: RunAgentInput) -> ADKRunConfig:
         """Create default RunConfig with SSE streaming enabled."""
@@ -311,7 +308,7 @@ class ADKAgent:
         )
     
     
-    def _create_runner(self, agent_id: str, adk_agent: ADKBaseAgent, user_id: str, app_name: str) -> Runner:
+    def _create_runner(self, adk_agent: BaseAgent, user_id: str, app_name: str) -> Runner:
         """Create a new runner instance."""
         return Runner(
             app_name=app_name,
@@ -322,7 +319,7 @@ class ADKAgent:
             credential_service=self._credential_service
         )
     
-    async def run(self, input: RunAgentInput, agent_id: str = "default") -> AsyncGenerator[BaseEvent, None]:
+    async def run(self, input: RunAgentInput) -> AsyncGenerator[BaseEvent, None]:
         """Run the ADK agent with client-side tool support.
         
         All client-side tools are long-running. For tool result submissions,
@@ -331,7 +328,6 @@ class ADKAgent:
         
         Args:
             input: The AG-UI run input
-            agent_id: The agent ID to use (defaults to "default")
             
         Yields:
             AG-UI protocol events
@@ -339,11 +335,11 @@ class ADKAgent:
         # Check if this is a tool result submission for an existing execution
         if self._is_tool_result_submission(input):
             # Handle tool results for existing execution
-            async for event in self._handle_tool_result_submission(input,agent_id):
+            async for event in self._handle_tool_result_submission(input):
                 yield event
         else:
             # Start new execution for regular requests
-            async for event in self._start_new_execution(input, agent_id):
+            async for event in self._start_new_execution(input):
                 yield event
     
     async def _ensure_session_exists(self, app_name: str, user_id: str, session_id: str, initial_state: dict):
@@ -395,8 +391,7 @@ class ADKAgent:
     
     async def _handle_tool_result_submission(
         self, 
-        input: RunAgentInput,
-        agent_id: str = "default"
+        input: RunAgentInput
     ) -> AsyncGenerator[BaseEvent, None]:
         """Handle tool result submission for existing execution.
         
@@ -440,7 +435,7 @@ class ADKAgent:
             # Since all tools are long-running, all tool results are standalone
             # and should start new executions with the tool results
             logger.info(f"Starting new execution for tool result in thread {thread_id}")
-            async for event in self._start_new_execution(input, agent_id):
+            async for event in self._start_new_execution(input):
                 yield event
                 
         except Exception as e:
@@ -563,8 +558,7 @@ class ADKAgent:
     
     async def _start_new_execution(
         self, 
-        input: RunAgentInput,
-        agent_id: str = "default"
+        input: RunAgentInput
     ) -> AsyncGenerator[BaseEvent, None]:
         """Start a new ADK execution with tool support.
         
@@ -608,7 +602,7 @@ class ADKAgent:
                     logger.debug(f"Previous execution completed with error: {e}")
             
             # Start background execution
-            execution = await self._start_background_execution(input,agent_id)
+            execution = await self._start_background_execution(input)
             
             # Store execution (replacing any previous one)
             async with self._execution_lock:
@@ -626,6 +620,13 @@ class ADKAgent:
                     logger.info(f"Detected ToolCallEndEvent with id: {event.tool_call_id}")
                     has_tool_calls = True
                     tool_call_ids.append(event.tool_call_id)
+
+                # backend tools will always emit ToolCallResultEvent
+                # If it is a backend tool then we don't need to add the tool_id in pending_tools
+                if isinstance(event, ToolCallResultEvent) and event.tool_call_id in tool_call_ids:
+                    logger.info(f"Detected ToolCallResultEvent with id: {event.tool_call_id}")
+                    tool_call_ids.remove(event.tool_call_id)
+                
                 
                 logger.debug(f"Yielding event: {type(event).__name__}")
                 yield event
@@ -674,8 +675,7 @@ class ADKAgent:
     
     async def _start_background_execution(
         self, 
-        input: RunAgentInput,
-        agent_id: str = "default"
+        input: RunAgentInput
     ) -> ExecutionState:
         """Start ADK execution in background with tool support.
         
@@ -691,9 +691,8 @@ class ADKAgent:
         user_id = self._get_user_id(input)
         app_name = self._get_app_name(input)
         
-        # Get the ADK agent
-        registry = AgentRegistry.get_instance()
-        adk_agent = registry.get_agent(agent_id)
+        # Use the ADK agent directly
+        adk_agent = self._adk_agent
         
         # Prepare agent modifications (SystemMessage and tools)
         agent_updates = {}
@@ -727,8 +726,9 @@ class ADKAgent:
             input_tools = []
             for input_tool in input.tools:
                 # Check if this input tool's name matches any existing tool
-                if not any(hasattr(existing_tool, '__name__') and input_tool.name == existing_tool.__name__ 
-                        for existing_tool in existing_tools):
+                # Also exclude this specific tool call "transfer_to_agent" which is used internally by the adk to handoff to other agents
+                if (not any(hasattr(existing_tool, '__name__') and input_tool.name == existing_tool.__name__
+                        for existing_tool in existing_tools) and input_tool.name != 'transfer_to_agent'):
                     input_tools.append(input_tool)
                         
             toolset = ClientProxyToolset(
@@ -768,7 +768,7 @@ class ADKAgent:
     async def _run_adk_in_background(
         self,
         input: RunAgentInput,
-        adk_agent: ADKBaseAgent,
+        adk_agent: BaseAgent,
         user_id: str,
         app_name: str,
         event_queue: asyncio.Queue
@@ -788,7 +788,6 @@ class ADKAgent:
             
             # Create runner
             runner = self._create_runner(
-                agent_id="default", 
                 adk_agent=adk_agent,
                 user_id=user_id,
                 app_name=app_name
@@ -854,6 +853,7 @@ class ADKAgent:
             event_translator = EventTranslator()
             
             # Run ADK agent
+            is_long_running_tool = False
             async for adk_event in runner.run_async(
                 user_id=user_id,
                 session_id=input.thread_id,
@@ -871,8 +871,18 @@ class ADKAgent:
                         logger.debug(f"Emitting event to queue: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size before: {event_queue.qsize()})")
                         await event_queue.put(ag_ui_event)
                         logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
-             
-
+                else:
+                    # LongRunning Tool events are usually emmitted in final response                   
+                    async for ag_ui_event in event_translator.translate_lro_function_calls(
+                        adk_event
+                    ):
+                        await event_queue.put(ag_ui_event)
+                        if ag_ui_event.type == EventType.TOOL_CALL_END:
+                            is_long_running_tool = True
+                        logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
+                    # hard stop the execution if we find any long running tool
+                    if is_long_running_tool:
+                        return
             # Force close any streaming messages
             async for ag_ui_event in event_translator.force_close_streaming_message():
                 await event_queue.put(ag_ui_event)

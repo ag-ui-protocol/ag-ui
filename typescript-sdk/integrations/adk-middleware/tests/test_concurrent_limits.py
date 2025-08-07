@@ -10,18 +10,12 @@ from ag_ui.core import (
     UserMessage, RunStartedEvent, RunFinishedEvent, RunErrorEvent
 )
 
-from adk_middleware import ADKAgent, AgentRegistry
+from adk_middleware import ADKAgent
 
 
 class TestConcurrentLimits:
     """Test cases for concurrent execution limits."""
     
-    @pytest.fixture(autouse=True)
-    def reset_registry(self):
-        """Reset agent registry before each test."""
-        AgentRegistry.reset_instance()
-        yield
-        AgentRegistry.reset_instance()
     
     @pytest.fixture
     def mock_adk_agent(self):
@@ -36,11 +30,8 @@ class TestConcurrentLimits:
     @pytest.fixture
     def adk_middleware(self, mock_adk_agent):
         """Create ADK middleware with low concurrent limits."""
-        # Register the mock agent
-        registry = AgentRegistry.get_instance()
-        registry.set_default_agent(mock_adk_agent)
-        
         return ADKAgent(
+            adk_agent=mock_adk_agent,
             user_id="test_user",
             execution_timeout_seconds=60,
             tool_timeout_seconds=30,
@@ -215,10 +206,8 @@ class TestConcurrentLimits:
         from google.adk.agents import LlmAgent
         mock_agent = LlmAgent(name="test", model="gemini-2.0-flash", instruction="test")
         
-        registry = AgentRegistry.get_instance()
-        registry.set_default_agent(mock_agent)
-        
         zero_limit_middleware = ADKAgent(
+            adk_agent=mock_agent,
             user_id="test_user",
             max_concurrent_executions=0
         )
@@ -305,10 +294,8 @@ class TestConcurrentLimits:
         from google.adk.agents import LlmAgent
         mock_agent = LlmAgent(name="test", model="gemini-2.0-flash", instruction="test")
         
-        registry = AgentRegistry.get_instance()
-        registry.set_default_agent(mock_agent)
-        
         high_limit_middleware = ADKAgent(
+            adk_agent=mock_agent,
             user_id="test_user",
             max_concurrent_executions=1000  # Very high limit
         )

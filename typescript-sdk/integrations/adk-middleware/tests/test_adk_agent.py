@@ -7,7 +7,7 @@ import asyncio
 from unittest.mock import Mock, MagicMock, AsyncMock, patch
 
 
-from adk_middleware import ADKAgent, AgentRegistry,SessionManager
+from adk_middleware import ADKAgent, SessionManager
 from ag_ui.core import (
     RunAgentInput, EventType, UserMessage, Context,
     RunStartedEvent, RunFinishedEvent, TextMessageChunkEvent, SystemMessage
@@ -25,13 +25,6 @@ class TestADKAgent:
         agent.name = "test_agent"
         return agent
     
-    @pytest.fixture
-    def registry(self, mock_agent):
-        """Set up the agent registry."""
-        registry = AgentRegistry.get_instance()
-        registry.clear()  # Clear any existing registrations
-        registry.set_default_agent(mock_agent)
-        return registry
     
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):
@@ -50,9 +43,10 @@ class TestADKAgent:
             pass
 
     @pytest.fixture
-    def adk_agent(self):
+    def adk_agent(self, mock_agent):
         """Create an ADKAgent instance."""
         return ADKAgent(
+            adk_agent=mock_agent,
             app_name="test_app",
             user_id="test_user",
             use_in_memory_services=True
@@ -96,17 +90,22 @@ class TestADKAgent:
         def custom_extractor(input):
             return "custom_user"
         
-        adk_agent_custom = ADKAgent(app_name="test_app", user_id_extractor=custom_extractor)
+        # Create a test agent for the custom instance
+        test_agent_custom = Mock(spec=Agent)
+        test_agent_custom.name = "custom_test_agent"
+        
+        adk_agent_custom = ADKAgent(adk_agent=test_agent_custom, app_name="test_app", user_id_extractor=custom_extractor)
         assert adk_agent_custom._get_user_id(sample_input) == "custom_user"
     
     @pytest.mark.asyncio
-    async def test_agent_id_default(self, adk_agent, sample_input):
-        """Test agent ID is always default."""
-        # Should always return default
-        assert adk_agent._get_agent_id() == "default"
+    async def test_adk_agent_has_direct_reference(self, adk_agent, sample_input):
+        """Test that ADK agent has direct reference to underlying agent."""
+        # Test that the agent is directly accessible
+        assert adk_agent._adk_agent is not None
+        assert adk_agent._adk_agent.name == "test_agent"
     
     @pytest.mark.asyncio
-    async def test_run_basic_flow(self, adk_agent, sample_input, registry, mock_agent):
+    async def test_run_basic_flow(self, adk_agent, sample_input, mock_agent):
         """Test basic run flow with mocked runner."""
         with patch.object(adk_agent, '_create_runner') as mock_create_runner:
             # Create a mock runner
@@ -163,18 +162,19 @@ class TestADKAgent:
     @pytest.mark.asyncio
     async def test_error_handling(self, adk_agent, sample_input):
         """Test error handling in run method."""
-        # Force an error by not setting up the registry
-        AgentRegistry.reset_instance()
+        # Force an error by making the underlying agent fail
+        adk_agent._adk_agent = None  # This will cause an error
         
         events = []
         async for event in adk_agent.run(sample_input):
             events.append(event)
         
-        # Should get RUN_STARTED and RUN_ERROR
-        assert len(events) == 2
+        # Should get RUN_STARTED, RUN_ERROR, and RUN_FINISHED
+        assert len(events) == 3
         assert events[0].type == EventType.RUN_STARTED
         assert events[1].type == EventType.RUN_ERROR
-        assert "No agent found" in events[1].message
+        assert events[2].type == EventType.RUN_FINISHED
+        assert "validation error" in events[1].message
     
     @pytest.mark.asyncio
     async def test_cleanup(self, adk_agent):
@@ -193,16 +193,15 @@ class TestADKAgent:
         assert len(adk_agent._active_executions) == 0
 
     @pytest.mark.asyncio
-    async def test_system_message_appended_to_instructions(self, registry):
+    async def test_system_message_appended_to_instructions(self):
         """Test that SystemMessage as first message gets appended to agent instructions."""
         # Create an agent with initial instructions
         mock_agent = Agent(
             name="test_agent",
             instruction="You are a helpful assistant."
         )
-        registry.set_default_agent(mock_agent)
         
-        adk_agent = ADKAgent(app_name="test_app", user_id="test_user")
+        adk_agent = ADKAgent(adk_agent=mock_agent, app_name="test_app", user_id="test_user")
         
         # Create input with SystemMessage as first message
         system_input = RunAgentInput(
@@ -230,7 +229,7 @@ class TestADKAgent:
         
         with patch.object(adk_agent, '_run_adk_in_background', side_effect=mock_run_background):
             # Start execution to trigger agent modification
-            execution = await adk_agent._start_background_execution(system_input, "default")
+            execution = await adk_agent._start_background_execution(system_input)
             
             # Wait briefly for the background task to start
             await asyncio.sleep(0.01)
@@ -241,15 +240,14 @@ class TestADKAgent:
         assert captured_agent.instruction == expected_instruction
 
     @pytest.mark.asyncio
-    async def test_system_message_not_first_ignored(self, registry):
+    async def test_system_message_not_first_ignored(self):
         """Test that SystemMessage not as first message is ignored."""
         mock_agent = Agent(
             name="test_agent", 
             instruction="You are a helpful assistant."
         )
-        registry.set_default_agent(mock_agent)
         
-        adk_agent = ADKAgent(app_name="test_app", user_id="test_user")
+        adk_agent = ADKAgent(adk_agent=mock_agent, app_name="test_app", user_id="test_user")
         
         # Create input with SystemMessage as second message
         system_input = RunAgentInput(
@@ -274,19 +272,18 @@ class TestADKAgent:
             await event_queue.put(None)
         
         with patch.object(adk_agent, '_run_adk_in_background', side_effect=mock_run_background):
-            execution = await adk_agent._start_background_execution(system_input, "default")
+            execution = await adk_agent._start_background_execution(system_input)
             await asyncio.sleep(0.01)
         
         # Verify the agent's instruction was NOT modified
         assert captured_agent.instruction == "You are a helpful assistant."
 
     @pytest.mark.asyncio
-    async def test_system_message_with_no_existing_instruction(self, registry):
+    async def test_system_message_with_no_existing_instruction(self):
         """Test SystemMessage handling when agent has no existing instruction."""
         mock_agent = Agent(name="test_agent")  # No instruction
-        registry.set_default_agent(mock_agent)
         
-        adk_agent = ADKAgent(app_name="test_app", user_id="test_user")
+        adk_agent = ADKAgent(adk_agent=mock_agent, app_name="test_app", user_id="test_user")
         
         system_input = RunAgentInput(
             thread_id="test_thread",
@@ -308,16 +305,10 @@ class TestADKAgent:
             await event_queue.put(None)
         
         with patch.object(adk_agent, '_run_adk_in_background', side_effect=mock_run_background):
-            execution = await adk_agent._start_background_execution(system_input, "default")
+            execution = await adk_agent._start_background_execution(system_input)
             await asyncio.sleep(0.01)
         
         # Verify the SystemMessage became the instruction
         assert captured_agent.instruction == "You are a math tutor."
 
 
-@pytest.fixture(autouse=True)
-def reset_registry():
-    """Reset the AgentRegistry before each test."""
-    AgentRegistry.reset_instance()
-    yield
-    AgentRegistry.reset_instance()

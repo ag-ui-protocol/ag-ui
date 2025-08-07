@@ -5,7 +5,7 @@ import asyncio
 from pathlib import Path
 
 from ag_ui.core import RunAgentInput, UserMessage
-from adk_middleware import ADKAgent, AgentRegistry
+from adk_middleware import ADKAgent
 from google.adk.agents import Agent
 
 async def test_session_creation():

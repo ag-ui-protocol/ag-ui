@@ -121,7 +121,7 @@ For instructions on using the ADK Middleware outside of the Dojo environment, se
 
 ### Option 1: Direct Usage
 ```python
-from adk_middleware import ADKAgent, AgentRegistry
+from adk_middleware import ADKAgent
 from google.adk.agents import Agent
 
 # 1. Create your ADK agent
@@ -130,14 +130,14 @@ my_agent = Agent(
     instruction="You are a helpful assistant."
 )
 
-# 2. Register the agent
-registry = AgentRegistry.get_instance()
-registry.set_default_agent(my_agent)
+# 2. Create the middleware with direct agent embedding
+agent = ADKAgent(
+    adk_agent=my_agent,
+    app_name="my_app", 
+    user_id="user123"
+)
 
-# 3. Create the middleware
-agent = ADKAgent(app_name="my_app", user_id="user123")
-
-# 4. Use directly with AG-UI RunAgentInput
+# 3. Use directly with AG-UI RunAgentInput
 async for event in agent.run(input_data):
     print(f"Event: {event.type}")
 ```
@@ -146,15 +146,23 @@ async for event in agent.run(input_data):
 
 ```python
 from fastapi import FastAPI
-from adk_middleware import ADKAgent, AgentRegistry, add_adk_fastapi_endpoint
+from adk_middleware import ADKAgent, add_adk_fastapi_endpoint
 from google.adk.agents import Agent
 
-# Set up agent and registry (same as above)
-registry = AgentRegistry.get_instance()
-registry.set_default_agent(my_agent)
-agent = ADKAgent(app_name="my_app", user_id="user123")
+# 1. Create your ADK agent
+my_agent = Agent(
+    name="assistant",
+    instruction="You are a helpful assistant."
+)
 
-# Create FastAPI app
+# 2. Create the middleware with direct agent embedding
+agent = ADKAgent(
+    adk_agent=my_agent,
+    app_name="my_app", 
+    user_id="user123"
+)
+
+# 3. Create FastAPI app
 app = FastAPI()
 add_adk_fastapi_endpoint(app, agent, path="/chat")
 
@@ -163,32 +171,15 @@ add_adk_fastapi_endpoint(app, agent, path="/chat")
 
 ## Configuration Options
 
-### Agent Registry
-
-The `AgentRegistry` provides flexible agent mapping:
-
-```python
-registry = AgentRegistry.get_instance()
-
-# Option 1: Default agent for all requests
-registry.set_default_agent(my_agent)
-
-# Option 2: Map specific agent IDs
-registry.register_agent("support", support_agent)
-registry.register_agent("coder", coding_agent)
-
-# Option 3: Dynamic agent creation
-def create_agent(agent_id: str) -> BaseAgent:
-    return Agent(name=agent_id, instruction="You are a helpful assistant.")
-
-registry.set_agent_factory(create_agent)
-```
-
 ### App and User Identification
 
 ```python
 # Static app name and user ID (single-tenant apps)
-agent = ADKAgent(app_name="my_app", user_id="static_user")
+agent = ADKAgent(
+    adk_agent=my_agent,
+    app_name="my_app", 
+    user_id="static_user"
+)
 
 # Dynamic extraction from context (recommended for multi-tenant)
 def extract_app(input: RunAgentInput) -> str:
@@ -206,6 +197,7 @@ def extract_user(input: RunAgentInput) -> str:
     return f"anonymous_{input.thread_id}"
 
 agent = ADKAgent(
+    adk_agent=my_agent,
     app_name_extractor=extract_app,
     user_id_extractor=extract_user
 )
@@ -287,19 +279,16 @@ my_agent = Agent(
     tools=[adk_tools.preload_memory_tool.PreloadMemoryTool()]  # Add memory tools here
 )
 
-# Register the agent
-registry = AgentRegistry.get_instance()
-registry.set_default_agent(my_agent)
-
-# Create middleware WITHOUT tools parameter 
+# Create middleware with direct agent embedding
 adk_agent = ADKAgent(
+    adk_agent=my_agent,
     app_name="my_app",
     user_id="user123",
     memory_service=shared_memory_service  # Memory service enables automatic session memory
 )
 ```
 
-**⚠️ Important**: The `tools` parameter belongs to the ADK agent (like `Agent` or `LlmAgent`), **not** to the `ADKAgent` middleware. The middleware automatically handles any tools defined on the registered agents.
+**⚠️ Important**: The `tools` parameter belongs to the ADK agent (like `Agent` or `LlmAgent`), **not** to the `ADKAgent` middleware. The middleware automatically handles any tools defined on the embedded agents.
 
 **Testing Memory Workflow:**
 
@@ -399,7 +388,7 @@ toolset = ClientProxyToolset(
 ### Tool Configuration
 
 ```python
-from adk_middleware import ADKAgent, AgentRegistry
+from adk_middleware import ADKAgent
 from google.adk.agents import LlmAgent
 from ag_ui.core import RunAgentInput, UserMessage, Tool
 
@@ -453,11 +442,9 @@ agent = LlmAgent(
     Use calculate for math operations and get_weather for weather information."""
 )
 
-registry = AgentRegistry.get_instance()
-registry.set_default_agent(agent)
-
 # 3. Create middleware with hybrid execution configuration
 adk_agent = ADKAgent(
+    adk_agent=agent,
     user_id="user123",
     tool_timeout_seconds=60,       # Timeout for blocking tools only
     execution_timeout_seconds=300, # Overall execution timeout
@@ -686,18 +673,19 @@ This will start a FastAPI server that connects your ADK middleware to the Dojo a
 
 ```python
 import asyncio
-from adk_middleware import ADKAgent, AgentRegistry
+from adk_middleware import ADKAgent
 from google.adk.agents import Agent
 from ag_ui.core import RunAgentInput, UserMessage
 
 async def main():
     # Setup
-    registry = AgentRegistry.get_instance()
-    registry.set_default_agent(
-        Agent(name="assistant", instruction="You are a helpful assistant.")
-    )
+    my_agent = Agent(name="assistant", instruction="You are a helpful assistant.")
     
-    agent = ADKAgent(app_name="demo_app", user_id="demo")
+    agent = ADKAgent(
+        adk_agent=my_agent,
+        app_name="demo_app", 
+        user_id="demo"
+    )
     
     # Create input
     input = RunAgentInput(
@@ -724,17 +712,33 @@ asyncio.run(main())
 ### Multi-Agent Setup
 
 ```python
-# Register multiple agents
-registry = AgentRegistry.get_instance()
-registry.register_agent("general", general_agent)
-registry.register_agent("technical", technical_agent)
-registry.register_agent("creative", creative_agent)
-
-# The middleware uses the default agent from the registry
-agent = ADKAgent(
+# Create multiple agent instances with different ADK agents
+general_agent_wrapper = ADKAgent(
+    adk_agent=general_agent,
     app_name="demo_app",
-    user_id="demo"  # Or use user_id_extractor for dynamic extraction
+    user_id="demo"
 )
+
+technical_agent_wrapper = ADKAgent(
+    adk_agent=technical_agent,
+    app_name="demo_app",
+    user_id="demo"
+)
+
+creative_agent_wrapper = ADKAgent(
+    adk_agent=creative_agent,
+    app_name="demo_app",
+    user_id="demo"
+)
+
+# Use different endpoints for each agent
+from fastapi import FastAPI
+from adk_middleware import add_adk_fastapi_endpoint
+
+app = FastAPI()
+add_adk_fastapi_endpoint(app, general_agent_wrapper, path="/agents/general")
+add_adk_fastapi_endpoint(app, technical_agent_wrapper, path="/agents/technical")
+add_adk_fastapi_endpoint(app, creative_agent_wrapper, path="/agents/creative")
 ```
 
 ## Event Translation

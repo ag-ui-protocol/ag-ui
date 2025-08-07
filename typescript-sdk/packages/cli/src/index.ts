@@ -44,6 +44,7 @@ async function createProject() {
     "mastra",
     "ag2",
     "llamaindex",
+    "pydanticAi",
     "agno"
   ].some(flag => options[flag]);
 
@@ -118,6 +119,8 @@ async function handleCopilotKitNextJs() {
     frameworkArgs.push("-f", "llamaindex");
   } else if (options.agno) {
     frameworkArgs.push("-f", "agno");
+  } else if (options.pydanticAi) {
+    frameworkArgs.push("-f", "pydantic-ai");
   }
 
   const copilotkit = spawn("npx", 
@@ -210,9 +213,10 @@ program
   .option("--langgraph-js", "Use the LangGraph framework with JavaScript")
   .option("--crewai-flows", "Use the CrewAI framework with Flows")
   .option("--mastra", "Use the Mastra framework")
-  .option("--ag2", "Use the AG2 framework")
+  .option("--pydantic-ai", "Use the Pydantic AI framework")
   .option("--llamaindex", "Use the LlamaIndex framework")
-  .option("--agno", "Use the Agno framework");
+  .option("--agno", "Use the Agno framework")
+  .option("--ag2", "Use the AG2 framework")
 
 program.action(async () => {
   await createProject();

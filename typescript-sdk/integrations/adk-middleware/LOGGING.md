@@ -38,7 +38,7 @@ import logging
 logging.getLogger().setLevel(logging.DEBUG)
 
 # Or configure specific components
-components = ['adk_agent', 'event_translator', 'endpoint', 'session_manager', 'agent_registry']
+components = ['adk_agent', 'event_translator', 'endpoint', 'session_manager']
 for component in components:
     logging.getLogger(component).setLevel(logging.DEBUG)
 ```
@@ -51,7 +51,6 @@ for component in components:
 | `endpoint` | HTTP endpoint responses | WARNING |
 | `adk_agent` | Main agent logic | INFO |
 | `session_manager` | Session management | WARNING |
-| `agent_registry` | Agent registration | WARNING |
 
 ## Python API
 
@@ -128,8 +127,7 @@ components = {
     'adk_agent': os.getenv('LOG_ADK_AGENT', 'INFO'),
     'event_translator': os.getenv('LOG_EVENT_TRANSLATOR', 'WARNING'),
     'endpoint': os.getenv('LOG_ENDPOINT', 'WARNING'),
-    'session_manager': os.getenv('LOG_SESSION_MANAGER', 'WARNING'),
-    'agent_registry': os.getenv('LOG_AGENT_REGISTRY', 'WARNING')
+    'session_manager': os.getenv('LOG_SESSION_MANAGER', 'WARNING')
 }
 
 for component, level in components.items():
