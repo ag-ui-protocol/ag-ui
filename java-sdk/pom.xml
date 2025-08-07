@@ -10,9 +10,12 @@
     <packaging>pom</packaging>
 
     <modules>
-        <module>core</module>
-        <module>client</module>
-        <module>ok-http</module>
+        <module>packages/core</module>
+        <module>packages/client</module>
+        <module>packages/ok-http</module>
+        <module>packages/http</module>
+        <module>packages/spring</module>
+        <module>integrations/spring-ai</module>
     </modules>
 
     <properties>
