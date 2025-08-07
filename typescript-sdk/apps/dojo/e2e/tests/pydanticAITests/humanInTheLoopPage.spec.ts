@@ -1,15 +1,15 @@
 import { test, expect, waitForAIResponse, retryOnAIFailure } from "../../test-isolation-helper";
-import { HumanInLoopPage } from "../../pages/crewAIPages/HumanInLoopPage";
+import { HumanInLoopPage } from "../../pages/pydanticAIPages/HumanInLoopPage";
 
 test.describe("Human in the Loop Feature", () => {
-  test("[CrewAI] should interact with the chat and perform steps", async ({
+  test("[PydanticAI] should interact with the chat and perform steps", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
       const humanInLoop = new HumanInLoopPage(page);
 
       await page.goto(
-        "https://ag-ui-dojo-nine.vercel.app/crewai/feature/human_in_the_loop"
+        "https://ag-ui-dojo-nine.vercel.app/pydantic-ai/feature/human_in_the_loop"
       );
 
       await humanInLoop.openChat();
@@ -45,14 +45,14 @@ test.describe("Human in the Loop Feature", () => {
     });
   });
 
-  test("[CrewAI] should interact with the chat using predefined prompts and perform steps", async ({
+  test("[PydanticAI] should interact with the chat using predefined prompts and perform steps", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
       const humanInLoop = new HumanInLoopPage(page);
 
       await page.goto(
-        "https://ag-ui-dojo-nine.vercel.app/crewai/feature/human_in_the_loop"
+        "https://ag-ui-dojo-nine.vercel.app/pydantic-ai/feature/human_in_the_loop"
       );
 
       await humanInLoop.openChat();
