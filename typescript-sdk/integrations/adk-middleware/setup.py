@@ -14,7 +14,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="ag-ui-adk-middleware",
-    version="0.2.1",
+    version="0.6.0",
     author="AG-UI Protocol Contributors",
     description="ADK Middleware for AG-UI Protocol - Bridge Google ADK agents with AG-UI",
     long_description=long_description,
@@ -36,7 +36,7 @@ setup(
     python_requires=">=3.8",
     install_requires=[
         "ag-ui-protocol>=0.1.7",
-        "google-adk>=1.6.1",
+        "google-adk>=1.9.0",
         "pydantic>=2.11.7",
         "asyncio>=3.4.3",
         "fastapi>=0.115.2",

@@ -36,6 +36,6 @@ echo ""
 echo "Starting server..."
 echo ""
 
-# Run the complete setup example
+# Run the fastapi example
 cd examples
-python complete_setup.py
+python fastapi_server.py

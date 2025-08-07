@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2025-08-07
+
 ### Changed
 - **CONFIG**: Made ADK middleware base URL configurable via `ADK_MIDDLEWARE_URL` environment variable in dojo app
 - **CONFIG**: Added `adkMiddlewareUrl` configuration to environment variables (defaults to `http://localhost:8000`)
 - **DEPENDENCIES**: Upgraded Google ADK from 1.6.1 to 1.9.0 - all 271 tests pass without modification
+- **DOCUMENTATION**: Extensive documentation restructuring for improved organization and clarity
 
 ## [0.5.0] - 2025-08-05
 
@@ -228,7 +231,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **NEW**: Concurrent execution limits with configurable maximum concurrent executions and automatic cleanup
 - **NEW**: 138+ comprehensive tests covering all tool support scenarios with 100% pass rate
 - **NEW**: Advanced test coverage for tool timeouts, concurrent limits, error handling, and integration flows
-- **NEW**: `comprehensive_tool_demo.py` example demonstrating single tools, multi-tool scenarios, and complex operations
 - **NEW**: Production-ready error handling with proper resource cleanup and timeout management
 
 ### Enhanced
