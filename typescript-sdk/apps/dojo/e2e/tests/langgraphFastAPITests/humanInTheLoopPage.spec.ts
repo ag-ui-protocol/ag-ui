@@ -17,7 +17,7 @@ test.describe("Human in the Loop Feature", () => {
       await humanInLoop.agentGreeting.isVisible();
 
       await humanInLoop.sendMessage(
-        "give me a recipe for brownies, there should be only one step with eggs and one step with oven, this is a strict requirement so adhere"
+        "Give me a plan to make brownies, there should be only one step with eggs and one step with oven, this is a strict requirement so adhere"
       );
       await waitForAIResponse(page);
       await expect(humanInLoop.plan).toBeVisible({ timeout: 10000 });
