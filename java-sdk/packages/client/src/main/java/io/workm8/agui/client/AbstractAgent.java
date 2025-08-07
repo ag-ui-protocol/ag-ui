@@ -23,12 +23,12 @@ public abstract class AbstractAgent {
     private final List<AgentSubscriber> agentSubscribers = new ArrayList<>();
 
     public AbstractAgent(
-            final String agentId,
-            final String description,
-            final String threadId,
-            final List<BaseMessage> messages,
-            final State state,
-            final boolean debug
+        final String agentId,
+        final String description,
+        final String threadId,
+        final List<BaseMessage> messages,
+        final State state,
+        final boolean debug
     ) {
         this.agentId = agentId;
         this.description = Objects.nonNull(description) ? description : "";
@@ -43,7 +43,6 @@ public abstract class AbstractAgent {
         return () -> this.agentSubscribers.remove(subscriber);
     }
 
-    // New signature: CompletableFuture with event handler callback
     protected abstract CompletableFuture<Void> run(final RunAgentInput input, Consumer<BaseEvent> eventHandler);
 
     public CompletableFuture<Void> runAgent(RunAgentParameters parameters) {
@@ -61,10 +60,8 @@ public abstract class AbstractAgent {
 
         this.onInitialize(input, subscribers);
 
-        // Create the event handler that processes each event
         Consumer<BaseEvent> eventHandler = event -> {
             try {
-                // Notify all subscribers of the general event
                 subscribers.forEach(s -> {
                     try {
                         s.onEvent(event);
@@ -76,7 +73,6 @@ public abstract class AbstractAgent {
                     }
                 });
 
-                // Handle specific event types if subscriber is provided
                 if (Objects.nonNull(subscriber)) {
                     handleEventByType(event, subscriber);
                 }
@@ -88,18 +84,16 @@ public abstract class AbstractAgent {
             }
         };
 
-        // Run the agent and handle completion/errors
         return this.run(input, eventHandler)
                 .whenComplete((result, throwable) -> {
                     try {
-                        // Equivalent to RxJava's doFinally - always executed
                         subscribers.forEach(s -> {
                             try {
                                 var params = new AgentSubscriberParams(
-                                        this.messages,
-                                        this.state,
-                                        this,
-                                        input
+                                    this.messages,
+                                    this.state,
+                                    this,
+                                    input
                                 );
                                 s.onRunFinalized(params);
                             } catch (Exception e) {
@@ -111,8 +105,7 @@ public abstract class AbstractAgent {
                         });
 
                         if (debug) {
-                            System.out.println("Agent run completed - parameters = " + parameters +
-                                    ", subscriber = " + subscriber);
+                            System.out.println("Agent run completed - parameters = " + parameters + ", subscriber = " + subscriber);
                         }
 
                         if (throwable != null) {
@@ -132,15 +125,6 @@ public abstract class AbstractAgent {
 
     private List<AgentSubscriber> prepareSubscribers(AgentSubscriber subscriber) {
         List<AgentSubscriber> subscribers = new ArrayList<>();
-
-        // Add default subscriber for handling RunFinishedEvent
-        subscribers.add(new AgentSubscriber() {
-            @Override
-            public void onRunFinishedEvent(RunFinishedEvent event) {
-                // Handle result if needed
-                // Object result = event.getResult();
-            }
-        });
 
         if (Objects.nonNull(subscriber)) {
             subscribers.add(subscriber);
@@ -192,18 +176,18 @@ public abstract class AbstractAgent {
     }
 
     protected void onInitialize(
-            final RunAgentInput input,
-            final List<AgentSubscriber> subscribers
+        final RunAgentInput input,
+        final List<AgentSubscriber> subscribers
     ) {
         subscribers.forEach(subscriber -> {
             try {
                 subscriber.onRunInitialized(
-                        new AgentSubscriberParams(
-                                this.messages,
-                                this.state,
-                                this,
-                                input
-                        )
+                    new AgentSubscriberParams(
+                        this.messages,
+                        this.state,
+                        this,
+                        input
+                    )
                 );
             } catch (Exception e) {
                 System.err.println("Error in subscriber.onRunInitialized: " + e.getMessage());
@@ -248,7 +232,6 @@ public abstract class AbstractAgent {
         this.agentSubscribers.forEach(subscriber -> {
             try {
                 // TODO: Fire onMessagesChanged
-                // subscriber.onMessagesChanged(messages);
             } catch (Exception e) {
                 System.err.println("Error in messages changed subscriber: " + e.getMessage());
                 if (debug) {
@@ -264,7 +247,6 @@ public abstract class AbstractAgent {
         this.agentSubscribers.forEach(subscriber -> {
             try {
                 // TODO: Fire onStateChanged
-                // subscriber.onStateChanged(state);
             } catch (Exception e) {
                 System.err.println("Error in state changed subscriber: " + e.getMessage());
                 if (debug) {
@@ -276,13 +258,13 @@ public abstract class AbstractAgent {
 
     protected RunAgentInput prepareRunAgentInput(RunAgentParameters parameters) {
         return new RunAgentInput(
-                this.threadId,
-                parameters.getRunId().orElse(UUID.randomUUID().toString()),
-                this.state,
-                this.messages,
-                parameters.getTools().orElse(Collections.emptyList()),
-                parameters.getContext().orElse(Collections.emptyList()),
-                parameters.getForwardedProps().orElse(null)
+            this.threadId,
+            parameters.getRunId().orElse(UUID.randomUUID().toString()),
+            this.state,
+            this.messages,
+            parameters.getTools().orElse(Collections.emptyList()),
+            parameters.getContext().orElse(Collections.emptyList()),
+            parameters.getForwardedProps().orElse(null)
         );
     }
 
@@ -290,19 +272,4 @@ public abstract class AbstractAgent {
         return this.state;
     }
 
-    // Utility method for subclasses to easily emit events
-    protected void emitEvent(BaseEvent event, Consumer<BaseEvent> eventHandler) {
-        if (eventHandler != null) {
-            eventHandler.accept(event);
-        }
-    }
-
-    // Utility method for subclasses to handle errors in event emission
-    protected CompletableFuture<Void> handleEventEmissionError(Throwable throwable) {
-        System.err.println("Error during event emission: " + throwable.getMessage());
-        if (debug) {
-            throwable.printStackTrace();
-        }
-        return CompletableFuture.failedFuture(throwable);
-    }
 }

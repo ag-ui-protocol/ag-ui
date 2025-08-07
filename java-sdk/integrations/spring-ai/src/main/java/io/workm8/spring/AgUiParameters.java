@@ -1,8 +1,8 @@
-package com.agui.spring;
+package io.workm8.spring;
 
-import com.agui.message.BaseMessage;
-import com.agui.types.Context;
-import com.agui.types.Tool;
+import io.workm8.agui.message.BaseMessage;
+import io.workm8.agui.tool.Tool;
+import io.workm8.agui.type.Context;
 
 import java.util.List;
 
@@ -50,7 +50,7 @@ public class AgUiParameters {
         this.messages = messages;
     }
 
-    public List<BaseMessage> getMessages() {
+    public List<io.workm8.agui.message.BaseMessage> getMessages() {
         return this.messages;
     }
 }

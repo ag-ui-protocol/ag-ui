@@ -1,10 +1,10 @@
-package com.agui.spring;
+package io.workm8.spring;
 
 import io.workm8.agui.client.AbstractAgent;
-import com.agui.event.*;
-import com.agui.message.BaseMessage;
-import com.agui.types.RunAgentInput;
-import com.agui.types.State;
+import io.workm8.agui.event.*;
+import io.workm8.agui.message.BaseMessage;
+import io.workm8.agui.type.RunAgentInput;
+import io.workm8.agui.type.State;
 import org.springframework.ai.chat.messages.*;
 import org.springframework.ai.chat.model.ChatModel;
 
@@ -80,7 +80,7 @@ public class SpringAgent extends AbstractAgent {
                 textMessageEndEvent.setMessageId(messageId);
                 eventHandler.accept(textMessageEndEvent);
 
-                var assistantMessage = new com.agui.message.AssistantMessage();
+                var assistantMessage = new io.workm8.agui.message.AssistantMessage();
                 assistantMessage.setId(messageId);
                 assistantMessage.setContent(message.toString());
                 assistantMessage.setName("");
@@ -113,7 +113,7 @@ public class SpringAgent extends AbstractAgent {
         return messages.stream().map((message) -> {
             switch (message.getRole()) {
                 case "assistant":
-                    com.agui.message.AssistantMessage mappedAssistantMessage = (com.agui.message.AssistantMessage)message;
+                    io.workm8.agui.message.AssistantMessage mappedAssistantMessage = (io.workm8.agui.message.AssistantMessage)message;
 
                     return new AssistantMessage(
                         mappedAssistantMessage.getContent(),
@@ -134,7 +134,7 @@ public class SpringAgent extends AbstractAgent {
                     );
                 case "user":
                 default:
-                    com.agui.message.UserMessage mappedUserMessage = (com.agui.message.UserMessage)message;
+                    io.workm8.agui.message.UserMessage mappedUserMessage = (io.workm8.agui.message.UserMessage)message;
 
                     return UserMessage.builder()
                         .text(mappedUserMessage.getContent())
@@ -147,7 +147,7 @@ public class SpringAgent extends AbstractAgent {
                             )
                         ).build();
                 case "system":
-                    com.agui.message.SystemMessage mappedSystemMessage = (com.agui.message.SystemMessage)message;
+                    io.workm8.agui.message.SystemMessage mappedSystemMessage = (io.workm8.agui.message.SystemMessage)message;
 
                     return SystemMessage.builder()
                         .text(mappedSystemMessage.getContent())
@@ -160,7 +160,7 @@ public class SpringAgent extends AbstractAgent {
                             )
                         ).build();
                 case "developer":
-                    com.agui.message.DeveloperMessage mappedDeveloperMessage = (com.agui.message.DeveloperMessage)message;
+                    io.workm8.agui.message.DeveloperMessage mappedDeveloperMessage = (io.workm8.agui.message.DeveloperMessage)message;
 
                     return UserMessage.builder()
                         .text(mappedDeveloperMessage.getContent())
@@ -173,7 +173,7 @@ public class SpringAgent extends AbstractAgent {
                             )
                         ).build();
                 case "tool":
-                    com.agui.message.ToolMessage mappedToolMessage = (com.agui.message.ToolMessage)message;
+                    io.workm8.agui.message.ToolMessage mappedToolMessage = (io.workm8.agui.message.ToolMessage)message;
 
                     return new ToolResponseMessage(
                         asList(

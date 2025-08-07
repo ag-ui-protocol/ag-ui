@@ -5,9 +5,4 @@ import io.workm8.agui.message.BaseMessage;
 
 import java.util.List;
 
-public class AgentStateMutation {
-
-    private List<BaseMessage> messages;
-    private State state;
-    private boolean stopPropagation;
-}
+public record AgentStateMutation(List<BaseMessage> messages, State state, boolean stopPropagation) { }

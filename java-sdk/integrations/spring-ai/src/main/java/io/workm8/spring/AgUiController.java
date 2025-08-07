@@ -1,11 +1,11 @@
-package com.agui.spring;
+package io.workm8.spring;
 
 import io.workm8.agui.client.RunAgentParameters;
 import io.workm8.agui.client.subscriber.AgentSubscriber;
 import io.workm8.agui.client.subscriber.AgentSubscriberParams;
-import com.agui.event.BaseEvent;
-import com.agui.types.State;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.workm8.agui.event.BaseEvent;
+import io.workm8.agui.type.State;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.ai.ollama.OllamaChatModel;
 import org.springframework.ai.ollama.api.OllamaApi;

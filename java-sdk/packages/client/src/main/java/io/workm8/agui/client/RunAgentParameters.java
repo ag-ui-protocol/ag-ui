@@ -13,7 +13,6 @@ public class RunAgentParameters {
     private final Optional<List<Context>> context;
     private final Optional<Object> forwardedProps;
 
-    // Private constructor for builder pattern
     private RunAgentParameters(Builder builder) {
         this.runId = Optional.ofNullable(builder.runId);
         this.tools = Optional.ofNullable(builder.tools);
@@ -21,7 +20,6 @@ public class RunAgentParameters {
         this.forwardedProps = Optional.ofNullable(builder.forwardedProps);
     }
 
-    // Getters
     public Optional<String> getRunId() {
         return runId;
     }
@@ -38,7 +36,6 @@ public class RunAgentParameters {
         return forwardedProps;
     }
 
-    // Builder pattern for easy construction
     public static class Builder {
         private String runId;
         private List<Tool> tools;

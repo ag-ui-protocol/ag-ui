@@ -1,4 +1,4 @@
-package com.agui;
+package io.workm8;
 
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;

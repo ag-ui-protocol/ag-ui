@@ -1,13 +1,14 @@
 package com.agui;
 
 
+import io.workm8.agui.HttpAgent;
 import io.workm8.agui.client.RunAgentParameters;
 import io.workm8.agui.client.subscriber.AgentSubscriberParams;
-import com.agui.event.BaseEvent;
-import com.agui.message.UserMessage;
+import io.workm8.agui.event.BaseEvent;
+import io.workm8.agui.message.UserMessage;
 import io.workm8.agui.okhttp.HttpClient;
-import com.agui.types.State;
 import io.workm8.agui.client.subscriber.AgentSubscriber;
+import io.workm8.agui.type.State;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -23,7 +24,7 @@ public class HttpAgentTest {
     @Test
     public void itShouldCallEndpoint() throws InterruptedException {
         var message = new UserMessage();
-        message.setContent("Hi, what's the weather in Hilversum?");
+        message.setContent("Hi, what's the weather in Paris?");
 
         var agent = HttpAgent.withAgentId("simpleAgent")
             .threadId("THREAD")

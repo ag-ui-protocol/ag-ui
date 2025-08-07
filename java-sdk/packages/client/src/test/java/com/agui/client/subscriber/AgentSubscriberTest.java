@@ -36,15 +36,16 @@ class AgentSubscriberTest {
             new AgentSubscriber() {
                 @Override
                 public void onRunInitialized(AgentSubscriberParams params) {
-                    assertThat(params.getAgent()).isEqualTo(agent);
-                    assertThat(params.getInput().threadId()).isEqualTo("THREAD_ID");
-                    assertThat(params.getInput().runId()).isEqualTo("RUN_ID");
-                    assertThat(params.getInput().context()).hasSize(0);
-                    assertThat(params.getInput().messages()).hasSize(0);
-                    assertThat(params.getInput().tools()).hasSize(0);
 
-                    assertThat(params.getMessages()).hasSize(0);
-                    assertThat(params.getState()).isEqualTo(agent.getState());
+                    assertThat(params.agent()).isEqualTo(agent);
+                    assertThat(params.input().threadId()).isEqualTo("THREAD_ID");
+                    assertThat(params.input().runId()).isEqualTo("RUN_ID");
+                    assertThat(params.input().context()).hasSize(0);
+                    assertThat(params.input().messages()).hasSize(0);
+                    assertThat(params.input().tools()).hasSize(0);
+
+                    assertThat(params.messages()).hasSize(0);
+                    assertThat(params.state()).isEqualTo(agent.getState());
                 }
             }
         );

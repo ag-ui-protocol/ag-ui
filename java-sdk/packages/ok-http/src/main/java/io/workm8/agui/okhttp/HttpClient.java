@@ -76,9 +76,7 @@ public class HttpClient extends BaseHttpClient {
                                     System.err.println("Error parsing event: " + e.getMessage());
                                     // Optionally, you could fail the entire future here:
                                     // future.completeExceptionally(e);
-                                    // return;
-                                } catch (JsonMappingException e) {
-                                    throw new RuntimeException(e);
+                                     return;
                                 }
                             }
                         }
