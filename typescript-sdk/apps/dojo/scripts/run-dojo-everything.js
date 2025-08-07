@@ -45,7 +45,7 @@ const serverStarterAllFeatures = {
 
 // Agno
 const agno = {
-  command: 'uv run agent.py',
+  command: 'uv run dev',
   name: 'Agno',
   cwd: path.join(integrationsRoot, 'agno/examples'),
   env: {PORT: 8002},
@@ -63,8 +63,11 @@ const crewai = {
 const langgraphFastapi = {
   command: 'poetry run dev',
   name: 'LG FastAPI',
-  cwd: path.join(integrationsRoot, 'langgraph/python/ag_ui_langgraph/examples'),
-  env: {PORT: 8004},
+  cwd: path.join(integrationsRoot, 'langgraph/examples/python'),
+  env: {
+    PORT: 8004,
+    POETRY_VIRTUALENVS_IN_PROJECT: "false"
+  },
 }
 
 // Langgraph (Platform {python})
@@ -119,10 +122,8 @@ const dojo = {
     AGNO_URL: 'http://localhost:8002',
     CREW_AI_URL: 'http://localhost:8003',
     LANGGRAPH_FAST_API_URL: 'http://localhost:8004',
-    // TODO: Move this to run 2 platforms for testing.
-    LANGGRAPH_URL: 'http://localhost:8005',
-    // LANGGRAPH_PLATFORM_PYTHON_URL: 'http://localhost:8005',
-    // LANGGRAPH_PLATFORM_TYPESCRIPT_URL: 'http://localhost:8006',
+    LANGGRAPH_PYTHON_URL: 'http://localhost:8005',
+    LANGGRAPH_TYPESCRIPT_URL: 'http://localhost:8006',
     LLAMA_INDEX_URL: 'http://localhost:8007',
     MASTRA_URL: 'http://localhost:8008',
     PYDANTIC_AI_URL: 'http://localhost:8009',
@@ -135,9 +136,8 @@ const procs = [
   serverStarterAllFeatures,
   agno,
   crewai,
-  // langgraphFastapi, // Disabled until it runs
+  langgraphFastapi,
   langgraphPlatformPython,
-  // TODO: Also run the typescript version of langgraph.
   langgraphPlatformTypescript,
   llamaIndex,
   mastra,

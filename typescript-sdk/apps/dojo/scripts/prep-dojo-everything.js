@@ -45,7 +45,7 @@ const serverStarterAllFeatures = {
 
 // Agno
 const agno = {
-  command: 'uv venv --allow-existing && uv pip install -r requirements.txt',
+  command: 'uv sync',
   name: 'Agno',
   cwd: path.join(integrationsRoot, 'agno/examples'),
 }
@@ -61,7 +61,10 @@ const crewai = {
 const langgraphFastapi = {
   command: 'poetry install',
   name: 'LG FastAPI',
-  cwd: path.join(integrationsRoot, 'langgraph/python/ag_ui_langgraph/examples'),
+  cwd: path.join(integrationsRoot, 'langgraph/examples/python'),
+  env: {
+    POETRY_VIRTUALENVS_IN_PROJECT: "false"
+  }
 }
 
 // Langgraph (Platorm {typescript})
@@ -115,7 +118,7 @@ async function main() {
     serverStarterAllFeatures,
     agno,
     crewai,
-    // langgraphFastapi, // Disabled until build fixes
+    langgraphFastapi,
     langgraphPlatformTypescript,
     llamaIndex,
     mastra,

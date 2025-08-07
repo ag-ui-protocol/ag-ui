@@ -177,10 +177,12 @@ const VALID_IMAGE_NAMES = [
 
 function HaikuCard({generatedHaiku, setHaikus, haikus} : HaikuCardProps) {
   return (
-    <div className="suggestion-card text-left rounded-md p-4 mt-4 mb-4 flex flex-col bg-gray-100">
+    <div 
+     data-testid="haiku-card"
+     className="suggestion-card text-left rounded-md p-4 mt-4 mb-4 flex flex-col bg-gray-100">
       <div className="mb-4 pb-4">
         {generatedHaiku?.japanese?.map((line, index) => (
-          <div className="flex items-center gap-3 mb-2" key={index}>
+          <div className="flex items-center gap-3 mb-2"  data-testid="haiku-line" key={index}>
             <p className="text-lg font-bold">{line}</p>
             <p className="text-sm font-light">
               {generatedHaiku.english?.[index]}
@@ -289,6 +291,7 @@ function Haiku() {
 
   useCopilotAction({
     name: "generate_haiku",
+    available: "frontend",
     parameters: [
       {
         name: "japanese",
@@ -340,6 +343,7 @@ function Haiku() {
           {generatedHaikus.map((haiku, index) => (
             <div
               key={index}
+              data-testid="thumbnail-haiku"
               className={`haiku-card animated-fade-in mb-4 cursor-pointer ${index === activeIndex ? 'active' : ''}`}
               style={{
                 width: '80px',
@@ -395,6 +399,7 @@ function Haiku() {
           }).map((haiku, index) => (
             <div
               key={index}
+              data-testid="main-haiku-display"
               className={`haiku-card animated-fade-in ${isJustApplied && index === activeIndex ? 'applied-flash' : ''} ${index === activeIndex ? 'active' : ''}`}
               style={{
                 zIndex: index === activeIndex ? haikus.length : index,
@@ -403,6 +408,7 @@ function Haiku() {
             >
               {haiku.japanese.map((line, lineIndex) => (
                 <div
+                  data-testid="main-haiku-line"
                   className={`flex items-start mb-4 haiku-line ${
                     isMobile 
                       ? 'flex-col gap-1' 

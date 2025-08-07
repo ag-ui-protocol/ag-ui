@@ -8,14 +8,16 @@ from typing import Dict, List, Any, Optional
 import os
 
 # LangGraph imports
+from pydantic import BaseModel, Field
 from langchain_core.runnables import RunnableConfig
+from langchain_core.callbacks.manager import adispatch_custom_event
+from langchain_core.messages import SystemMessage
+from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END, START
 from langgraph.types import Command
-from langchain_core.callbacks.manager import adispatch_custom_event
 from langgraph.graph import MessagesState
-# OpenAI imports
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage
+from langgraph.checkpoint.memory import MemorySaver
 
 class SkillLevel(str, Enum):
     """
@@ -24,7 +26,6 @@ class SkillLevel(str, Enum):
     BEGINNER = "Beginner"
     INTERMEDIATE = "Intermediate"
     ADVANCED = "Advanced"
-
 
 class SpecialPreferences(str, Enum):
     """
@@ -38,7 +39,6 @@ class SpecialPreferences(str, Enum):
     VEGETARIAN = "Vegetarian"
     VEGAN = "Vegan"
 
-
 class CookingTime(str, Enum):
     """
     The cooking time of the recipe.
@@ -49,66 +49,50 @@ class CookingTime(str, Enum):
     FORTY_FIVE_MIN = "45 min"
     SIXTY_PLUS_MIN = "60+ min"
 
+class Ingredient(BaseModel):
+    """
+    An ingredient.
+    """
+    icon: str = Field(
+        description="Icon: the actual emoji like 🥕"
+    )
+    name: str = Field(description="The name of the ingredient")
+    amount: str = Field(description="The amount of the ingredient")
 
-GENERATE_RECIPE_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "generate_recipe",
-        "description": " ".join("""Using the existing (if any) ingredients and instructions, proceed with the recipe to finish it.
-        Make sure the recipe is complete. ALWAYS provide the entire recipe, not just the changes.""".split()),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "recipe": {
-                    "type": "object",
-                    "properties": {
-                        "skill_level": {
-                            "type": "string",
-                            "enum": [level.value for level in SkillLevel],
-                            "description": "The skill level required for the recipe"
-                        },
-                        "special_preferences": {
-                            "type": "array",
-                            "items": {
-                                "type": "string",
-                                "enum": [preference.value for preference in SpecialPreferences]
-                            },
-                            "description": "A list of special preferences for the recipe"
-                        },
-                        "cooking_time": {
-                            "type": "string",
-                            "enum": [time.value for time in CookingTime],
-                            "description": "The cooking time of the recipe"
-                        },
-                        "ingredients": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "icon": {"type": "string", "description": "The icon emoji (not emoji code like '\x1f35e', but the actual emoji like 🥕) of the ingredient"},
-                                    "name": {"type": "string"},
-                                    "amount": {"type": "string"}
-                                }
-                            },
-                            "description": "Entire list of ingredients for the recipe, including the new ingredients and the ones that are already in the recipe"
-                        },
-                        "instructions": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Entire list of instructions for the recipe, including the new instructions and the ones that are already there"
-                        },
-                        "changes": {
-                            "type": "string",
-                            "description": "A description of the changes made to the recipe"
-                        }
-                    },
-                }
-            },
-            "required": ["recipe"]
-        }
-    }
-}
+class Recipe(BaseModel):
+    """
+    A recipe.
+    """
+    skill_level: SkillLevel = \
+        Field(description="The skill level required for the recipe")
+    special_preferences: List[SpecialPreferences] = \
+        Field(description="A list of special preferences for the recipe")
+    cooking_time: CookingTime = \
+        Field(description="The cooking time of the recipe")
+    ingredients: List[Ingredient] = \
+        Field(description=
+              """Entire list of ingredients for the recipe, including the new ingredients
+              and the ones that are already in the recipe: Icon: the actual emoji like 🥕,
+              name and amount.
+              Like so: 🥕 Carrots (250g)"""
+        )
+    instructions: List[str] = \
+        Field(description=
+              """Entire list of instructions for the recipe,
+              including the new instructions and the ones that are already there"""
+        )
+    changes: str = \
+        Field(description="A description of the changes made to the recipe")
 
+class GenerateRecipeArgs(BaseModel): # pylint: disable=missing-class-docstring
+    recipe: Recipe
+
+@tool(args_schema=GenerateRecipeArgs)
+def generate_recipe(recipe: Recipe): # pylint: disable=unused-argument
+    """
+    Using the existing (if any) ingredients and instructions, proceed with the recipe to finish it.
+    Make sure the recipe is complete. ALWAYS provide the entire recipe, not just the changes.
+    """
 
 class AgentState(MessagesState):
     """
@@ -118,7 +102,7 @@ class AgentState(MessagesState):
     tools: List[Any]
 
 
-async def start_flow(state: Dict[str, Any], config: RunnableConfig):
+async def start_node(state: Dict[str, Any], config: RunnableConfig):
     """
     This is the entry point for the flow.
     """
@@ -138,7 +122,7 @@ async def start_flow(state: Dict[str, Any], config: RunnableConfig):
             state,
             config=config,
         )
-    
+
     return Command(
         goto="chat_node",
         update={
@@ -146,7 +130,6 @@ async def start_flow(state: Dict[str, Any], config: RunnableConfig):
             "recipe": state["recipe"]
         }
     )
-
 
 async def chat_node(state: Dict[str, Any], config: RunnableConfig):
     """
@@ -157,9 +140,9 @@ async def chat_node(state: Dict[str, Any], config: RunnableConfig):
     if "recipe" in state and state["recipe"] is not None:
         try:
             recipe_json = json.dumps(state["recipe"], indent=2)
-        except Exception as e:
+        except Exception as e: # pylint: disable=broad-exception-caught
             recipe_json = f"Error serializing recipe: {str(e)}"
-    
+
     system_prompt = f"""You are a helpful assistant for creating recipes. 
     This is the current state of the recipe: {recipe_json}
     You can improve the recipe by calling the generate_recipe tool.
@@ -176,7 +159,7 @@ async def chat_node(state: Dict[str, Any], config: RunnableConfig):
 
     # Define the model
     model = ChatOpenAI(model="gpt-4o-mini")
-    
+
     # Define config for the model
     if config is None:
         config = RunnableConfig(recursion_limit=25)
@@ -192,7 +175,7 @@ async def chat_node(state: Dict[str, Any], config: RunnableConfig):
     model_with_tools = model.bind_tools(
         [
             *state["tools"],
-            GENERATE_RECIPE_TOOL
+            generate_recipe
         ],
         # Disable parallel tool calls to avoid race conditions
         parallel_tool_calls=False,
@@ -206,34 +189,23 @@ async def chat_node(state: Dict[str, Any], config: RunnableConfig):
 
     # Update messages with the response
     messages = state["messages"] + [response]
-    
+
     # Handle tool calls
     if hasattr(response, "tool_calls") and response.tool_calls:
-        tool_call = response.tool_calls[0]
-        
-        # Handle tool_call as a dictionary or an object
-        if isinstance(tool_call, dict):
-            tool_call_id = tool_call["id"]
-            tool_call_name = tool_call["name"]
-            # Check if args is already a dict or needs to be parsed
-            if isinstance(tool_call["args"], dict):
-                tool_call_args = tool_call["args"]
-            else:
-                tool_call_args = json.loads(tool_call["args"])
-        else:
-            # Handle as an object
-            tool_call_id = tool_call.id
-            tool_call_name = tool_call.name
-            # Check if args is already a dict or needs to be parsed
-            if isinstance(tool_call.args, dict):
-                tool_call_args = tool_call.args
-            else:
-                tool_call_args = json.loads(tool_call.args)
+        # Handle dicts or object (backward compatibility)
+        tool_call = (response.tool_calls[0]
+                     if isinstance(response.tool_calls[0], dict)
+                     else vars(response.tool_calls[0]))
 
-        if tool_call_name == "generate_recipe":
+        # Check if args is already a dict or needs to be parsed
+        tool_call_args = (tool_call["args"]
+                          if isinstance(tool_call["args"], dict)
+                          else json.loads(tool_call["args"]))
+
+        if tool_call["name"] == "generate_recipe":
             # Update recipe state with tool_call_args
             recipe_data = tool_call_args["recipe"]
-            
+
             # If we have an existing recipe, update it
             if "recipe" in state and state["recipe"] is not None:
                 recipe = state["recipe"]
@@ -249,16 +221,16 @@ async def chat_node(state: Dict[str, Any], config: RunnableConfig):
                     "ingredients": recipe_data.get("ingredients", []),
                     "instructions": recipe_data.get("instructions", [])
                 }
-            
+
             # Add tool response to messages
             tool_response = {
                 "role": "tool",
                 "content": "Recipe generated.",
-                "tool_call_id": tool_call_id
+                "tool_call_id": tool_call["id"]
             }
-            
+
             messages = messages + [tool_response]
-            
+
             # Explicitly emit the updated state to ensure it's shared with frontend
             state["recipe"] = recipe
             await adispatch_custom_event(
@@ -266,10 +238,10 @@ async def chat_node(state: Dict[str, Any], config: RunnableConfig):
                 state,
                 config=config,
             )
-            
+
             # Return command with updated recipe
             return Command(
-                goto="start_flow",
+                goto="start_node",
                 update={
                     "messages": messages,
                     "recipe": recipe
@@ -287,15 +259,11 @@ async def chat_node(state: Dict[str, Any], config: RunnableConfig):
 
 # Define the graph
 workflow = StateGraph(AgentState)
-
-# Add nodes
-workflow.add_node("start_flow", start_flow)
+workflow.add_node("start_node", start_node)
 workflow.add_node("chat_node", chat_node)
-
-# Add edges
-workflow.set_entry_point("start_flow")
-workflow.add_edge(START, "start_flow")
-workflow.add_edge("start_flow", "chat_node")
+workflow.set_entry_point("start_node")
+workflow.add_edge(START, "start_node")
+workflow.add_edge("start_node", "chat_node")
 workflow.add_edge("chat_node", END)
 
 # Conditionally use a checkpointer based on the environment

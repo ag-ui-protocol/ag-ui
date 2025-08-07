@@ -43,12 +43,12 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   {
     id: "mastra",
     name: "Mastra",
-    features: ["agentic_chat"],
+    features: ["agentic_chat", "tool_based_generative_ui"],
   },
   {
     id: "mastra-agent-local",
     name: "Mastra Agent (Local)",
-    features: ["agentic_chat", "shared_state"],
+    features: ["agentic_chat", "shared_state", "tool_based_generative_ui"],
   },
   {
     id: "vercel-ai-sdk",
@@ -77,12 +77,13 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
       "tool_based_generative_ui",
       "predictive_state_updates",
       "shared_state",
+      "agentic_chat_reasoning",
     ],
   },
   {
     id: "agno",
     name: "Agno",
-    features: ["agentic_chat"],
+    features: ["agentic_chat", "tool_based_generative_ui"],
   },
   {
     id: "llama-index",
