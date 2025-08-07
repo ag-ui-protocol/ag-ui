@@ -8,7 +8,6 @@ test.describe("Human in the Loop Feature", () => {
     await retryOnAIFailure(async () => {
       const humanInLoop = new HumanInLoopPage(page);
 
-      // Update URL to new domain
       await page.goto(
         "https://ag-ui-dojo-nine.vercel.app/llama-index/feature/human_in_the_loop"
       );
@@ -25,28 +24,34 @@ test.describe("Human in the Loop Feature", () => {
       await expect(humanInLoop.plan).toBeVisible({ timeout: 10000 });
 
       const itemText = "eggs";
-      await page.waitForTimeout(5000)
+      await page.waitForTimeout(5000);
       await humanInLoop.uncheckItem(itemText);
-
       await humanInLoop.performSteps();
-      await waitForAIResponse(page);
-      //await humanInLoop.assertAgentReplyVisible(/oven/i);
+
+      await page.waitForFunction(
+        () => {
+          const messages = Array.from(document.querySelectorAll('.copilotKitAssistantMessage'));
+          const lastMessage = messages[messages.length - 1];
+          const content = lastMessage?.textContent?.trim() || '';
+          
+          return messages.length >= 3 && content.length > 0;
+        },
+        { timeout: 30000 }
+      );
 
       await humanInLoop.sendMessage(
         `Does the planner include ${itemText}? ⚠️ Reply with only words 'Yes' or 'No' (no explanation, no punctuation).`
       );
       await waitForAIResponse(page);
-      //await humanInLoop.assertAgentReplyVisible(/No/i);
     });
   });
 
-  test("should interact with the chat using predefined prompts and perform steps", async ({
+  test("[LlamaIndex] should interact with the chat using predefined prompts and perform steps", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
       const humanInLoop = new HumanInLoopPage(page);
 
-      // Update URL to new domain
       await page.goto(
         "https://ag-ui-dojo-nine.vercel.app/llama-index/feature/human_in_the_loop"
       );
@@ -56,7 +61,6 @@ test.describe("Human in the Loop Feature", () => {
       await humanInLoop.sendMessage("Hi");
       await humanInLoop.agentGreeting.isVisible();
 
-      // Send a natural planner request like in the first test
       await humanInLoop.sendMessage(
         "Plan a mission to Mars with multiple steps and the first step being 'Start The Planning'"
       );
@@ -65,17 +69,25 @@ test.describe("Human in the Loop Feature", () => {
 
       const uncheckedItem = "Start The Planning";
 
-      // Uncheck the item
-      await page.waitForTimeout(5000)
+      await page.waitForTimeout(5000);
       await humanInLoop.uncheckItem(uncheckedItem);
       await humanInLoop.performSteps();
-      await waitForAIResponse(page);
+      
+      await page.waitForFunction(
+        () => {
+          const messages = Array.from(document.querySelectorAll('.copilotKitAssistantMessage'));
+          const lastMessage = messages[messages.length - 1];
+          const content = lastMessage?.textContent?.trim() || '';
+        
+          return messages.length >= 3 && content.length > 0;
+        },
+        { timeout: 30000 }
+      );
 
       await humanInLoop.sendMessage(
         `Does the planner include ${uncheckedItem}? ⚠️ Reply with only words 'Yes' or 'No' (no explanation, no punctuation).`
       );
       await waitForAIResponse(page);
-      //await humanInLoop.assertAgentReplyVisible(/No/i);
     });
   });
 });
