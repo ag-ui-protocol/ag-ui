@@ -5,7 +5,6 @@ import io.workm8.agui.type.EventType;
 public class RunStartedEvent extends BaseEvent {
 
     private String threadId;
-
     private String runId;
 
     public RunStartedEvent() {

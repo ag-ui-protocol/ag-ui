@@ -1,12 +1,16 @@
 package io.workm8.agui.message;
 
+import java.util.UUID;
+
 public abstract class BaseMessage {
 
     private String id;
     private String content;
     private String name;
 
-    public BaseMessage() { }
+    public BaseMessage() {
+        this(UUID.randomUUID().toString(), "", "");
+    }
 
     public BaseMessage(final String id, final String content, final String name) {
         this.id = id;

@@ -1,6 +1,6 @@
 package io.workm8.agui.message;
 
-import io.workm8.agui.type.ToolCall;
+import io.workm8.agui.tool.ToolCall;
 
 import java.util.ArrayList;
 import java.util.List;

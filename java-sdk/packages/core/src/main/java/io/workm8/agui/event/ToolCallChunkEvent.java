@@ -4,33 +4,42 @@ import io.workm8.agui.type.EventType;
 
 public class ToolCallChunkEvent extends BaseEvent {
 
-    private final String toolCallId;
-    private final String toolCallName;
-    private final String parentMessageId;
-    private final String delta;
+    private String toolCallId;
+    private String toolCallName;
+    private String parentMessageId;
+    private String delta;
 
-    public ToolCallChunkEvent(final String toolCallId, final String toolCallName, final String parentMessageId, final String delta) {
+    public ToolCallChunkEvent() {
         super(EventType.TOOL_CALL_CHUNK);
+    }
 
+    public void setToolCallId(final String toolCallId) {
         this.toolCallId = toolCallId;
-        this.toolCallName = toolCallName;
-
-        this.parentMessageId = parentMessageId;
-        this.delta = delta;
     }
 
     public String getToolCallId() {
         return this.toolCallId;
     }
 
+    public void setToolCallName(final String toolCallName) {
+        this.toolCallName = toolCallName;
+    }
+
     public String getToolCallName() {
         return this.toolCallName;
+    }
+
+    public void setParentMessageId(final String parentMessageId) {
+        this.parentMessageId = parentMessageId;
     }
 
     public String getParentMessageId() {
         return this.parentMessageId;
     }
 
+    public void setDelta(final String delta) {
+        this.delta = delta;
+    }
     public String getDelta() {
         return this.delta;
     }

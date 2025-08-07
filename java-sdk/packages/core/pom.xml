@@ -7,7 +7,7 @@
         <groupId>io.workm8.ag-ui</groupId>
         <artifactId>ag-ui</artifactId>
         <version>0.0.1-SNAPSHOT</version>
-        <relativePath>../../</relativePath>
+        <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>core</artifactId>

@@ -1,7 +1,7 @@
 package io.workm8.agui.client;
 
 import io.workm8.agui.type.Context;
-import io.workm8.agui.type.Tool;
+import io.workm8.agui.tool.Tool;
 
 import java.util.List;
 import java.util.Optional;

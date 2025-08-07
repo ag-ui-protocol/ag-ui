@@ -1,7 +1,7 @@
 package io.workm8.agui.client.subscriber;
 
 import io.workm8.agui.message.BaseMessage;
-import io.workm8.agui.type.ToolCall;
+import io.workm8.agui.tool.ToolCall;
 import io.workm8.agui.event.*;
 
 public interface AgentSubscriber {
