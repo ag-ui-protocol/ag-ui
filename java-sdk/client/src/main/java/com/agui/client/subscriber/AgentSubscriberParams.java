@@ -2,7 +2,7 @@ package com.agui.client.subscriber;
 
 import com.agui.client.AbstractAgent;
 
-import com.agui.client.State;
+import com.agui.types.State;
 import com.agui.message.BaseMessage;
 import com.agui.types.RunAgentInput;
 

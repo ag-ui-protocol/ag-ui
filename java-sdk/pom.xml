@@ -12,6 +12,7 @@
     <modules>
         <module>core</module>
         <module>client</module>
+        <module>ok-http</module>
     </modules>
 
     <properties>

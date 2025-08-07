@@ -2,6 +2,8 @@ package com.agui.client;
 
 import com.agui.event.BaseEvent;
 import com.agui.message.BaseMessage;
+import com.agui.types.RunAgentInput;
+import com.agui.types.State;
 import io.reactivex.Observable;
 import io.reactivex.subjects.BehaviorSubject;
 
@@ -18,7 +20,7 @@ public class TestAgent extends AbstractAgent {
     }
 
     @Override
-    protected Observable<BaseEvent> run(com.agui.types.RunAgentInput input) {
+    protected Observable<BaseEvent> run(RunAgentInput input) {
         return this.subject;
     }
 

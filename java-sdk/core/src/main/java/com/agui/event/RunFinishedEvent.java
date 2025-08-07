@@ -4,28 +4,32 @@ import com.agui.types.EventType;
 
 public class RunFinishedEvent extends BaseEvent {
 
-    private final String threadId;
-    private final String runId;
-    private final Object result;
+    private String threadId;
+    private String runId;
+    private Object result;
 
-    public RunFinishedEvent(
-            final String threadId,
-            final String runId,
-            final Object result
-    ) {
+    public RunFinishedEvent() {
         super(EventType.RUN_FINISHED);
+    }
 
+    public void setThreadId(final String threadId) {
         this.threadId = threadId;
-        this.runId = runId;
-        this.result = result;
     }
 
     public String getThreadId() {
         return this.threadId;
     }
 
+    public void setRunId(final String runId) {
+        this.runId = runId;
+    }
+
     public String getRunId() {
         return this.runId;
+    }
+
+    public void setResult(final Object result) {
+        this.result = result;
     }
 
     public Object getResult() {

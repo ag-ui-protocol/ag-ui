@@ -2,18 +2,27 @@ package com.agui.message;
 
 public class ToolMessage extends BaseMessage {
 
-    private final String toolCallId;
-    private final String error;
-
-    public ToolMessage(final String id, final String content, final String name, final String toolCallId, final String error) {
-        super(id, content, name);
-
-        this.toolCallId = toolCallId;
-        this.error = error;
-    }
+    private String toolCallId;
+    private String error;
 
     public String getRole() {
         return "tool";
+    }
+
+    public void setToolCallId(final String toolCallId) {
+        this.toolCallId = toolCallId;
+    }
+
+    public String getToolCallId() {
+        return this.toolCallId;
+    }
+
+    public void setError(final String error) {
+        this.error = error;
+    }
+
+    public String getError() {
+        return this.error;
     }
 }
 

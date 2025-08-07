@@ -9,30 +9,35 @@
         <version>0.0.1-SNAPSHOT</version>
     </parent>
 
-    <artifactId>core</artifactId>
+    <artifactId>ok-http</artifactId>
 
     <properties>
-        <maven.compiler.source>18</maven.compiler.source>
-        <maven.compiler.target>18</maven.compiler.target>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
     <dependencies>
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-annotations</artifactId>
-            <version>2.19.0</version>
+            <groupId>com.ag-ui</groupId>
+            <artifactId>client</artifactId>
+            <version>0.0.1-SNAPSHOT</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <version>5.8.1</version>
-            <scope>test</scope>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+            <version>4.12.0</version>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
             <version>2.19.0</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.12.2</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -43,25 +48,4 @@
         </dependency>
     </dependencies>
 
-    <contributors>
-        <contributor>
-            <name>Pascal Wilbrink</name>
-            <email>pascal.wilbrink@gmail.com</email>
-            <url>https://github.com/pascalwilbrink</url>
-            <roles>
-                <role>Developer</role>
-            </roles>
-        </contributor>
-    </contributors>
-    <developers>
-        <developer>
-            <name>Pascal Wilbrink</name>
-            <email>pascal.wilbrink@gmail.com</email>
-            <url>https://github.com/pascalwilbrink</url>
-            <roles>
-                <role>Maintainer</role>
-                <role>Developer</role>
-            </roles>
-        </developer>
-    </developers>
 </project>

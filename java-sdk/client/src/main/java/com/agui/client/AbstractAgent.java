@@ -1,20 +1,14 @@
 package com.agui.client;
 
-import com.agui.client.subscriber.AgentStateMutation;
 import com.agui.client.subscriber.AgentSubscriber;
 import com.agui.client.subscriber.AgentSubscriberParams;
-import com.agui.event.BaseEvent;
-import com.agui.event.RunFinishedEvent;
+import com.agui.event.*;
 import com.agui.message.BaseMessage;
 import com.agui.types.RunAgentInput;
+import com.agui.types.State;
 import io.reactivex.Observable;
-import io.reactivex.internal.operators.observable.ObservableAny;
 
-import javax.swing.plaf.basic.BasicListUI;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-
-import static java.util.Arrays.asList;
 
 public abstract class AbstractAgent {
 
@@ -25,15 +19,15 @@ public abstract class AbstractAgent {
     private State state;
     private boolean debug = false;
 
-    private List<AgentSubscriber> agentSubscribers = new ArrayList<>();
+    private final List<AgentSubscriber> agentSubscribers = new ArrayList<>();
 
     public AbstractAgent(
-        String agentId,
-        String description,
-        String threadId,
-        List<BaseMessage> messages,
-        State state,
-        boolean debug
+        final String agentId,
+        final String description,
+        final String threadId,
+        final List<BaseMessage> messages,
+        final State state,
+        final boolean debug
     ) {
         this.agentId = agentId;
         this.description = Objects.nonNull(description) ? description : "";
@@ -53,7 +47,11 @@ public abstract class AbstractAgent {
     protected abstract Observable<BaseEvent> run(final RunAgentInput input);
 
 
-    public CompletableFuture<RunAgentResult> runAgent(
+    public void runAgent(RunAgentParameters parameters) {
+        this.runAgent(parameters, null);
+    }
+
+    public void runAgent(
         RunAgentParameters parameters,
         AgentSubscriber subscriber
     ) {
@@ -62,35 +60,90 @@ public abstract class AbstractAgent {
         var input = this.prepareRunAgentInput(parameters);
         Object result = null;
 
-        List<AgentSubscriber> subscribers = asList(
+        List<AgentSubscriber> subscribers = new ArrayList<>();
+        subscribers.add(
             new AgentSubscriber() {
                 @Override
-                public CompletableFuture<AgentStateMutation> onRunFinishedEvent(AgentSubscriberParams params, RunFinishedEvent event) {
+                public void onRunFinishedEvent(RunFinishedEvent event) {
                     //result = event.getResult();
-
-                    return CompletableFuture.completedFuture(null);
                 }
-            },
-            subscriber
+            }
         );
+
+        if (Objects.nonNull(subscriber)) {
+            subscribers.add(subscriber);
+        }
         subscribers.addAll(this.agentSubscribers);
 
         this.onInitialize(input, subscribers);
 
-        return null;
+        this.run(input)
+            .map((event) -> {
+                subscribers.forEach((s) -> {
+                    s.onEvent(event);
+                });
+
+                switch (event.getType()) {
+                    case RUN_STARTED -> subscriber.onRunStartedEvent((RunStartedEvent) event);
+                    case RUN_ERROR -> subscriber.onRunErrorEvent((RunErrorEvent) event);
+                    case RUN_FINISHED -> subscriber.onRunFinishedEvent((RunFinishedEvent) event);
+                    case STEP_STARTED -> subscriber.onStepStartedEvent((StepStartedEvent) event);
+                    case STEP_FINISHED -> subscriber.onStepFinishedEvent((StepFinishedEvent) event);
+                    case TEXT_MESSAGE_START -> subscriber.onTextMessageStartEvent((TextMessageStartEvent) event);
+                    case TEXT_MESSAGE_CONTENT -> subscriber.onTextMessageContentEvent((TextMessageContentEvent) event);
+                    case TEXT_MESSAGE_END -> subscriber.onTextMessageEndEvent((TextMessageEndEvent) event);
+                    case TOOL_CALL_START -> subscriber.onToolCallStartEvent((ToolCallStartEvent) event);
+                    case TOOL_CALL_ARGS -> subscriber.onToolCallArgsEvent((ToolCallArgsEvent) event);
+                    case TOOL_CALL_RESULT -> subscriber.onToolCallResultEvent((ToolCallResultEvent) event);
+                    case TOOL_CALL_END -> subscriber.onToolCallEndEvent((ToolCallEndEvent) event);
+                    case RAW -> subscriber.onRawEvent((RawEvent) event);
+                    case CUSTOM -> subscriber.onCustomEvent((CustomEvent) event);
+                    case MESSAGES_SNAPSHOT -> subscriber.onMessagesSnapshotEvent((MessagesSnapshotEvent) event);
+                    case STATE_SNAPSHOT -> subscriber.onStateSnapshotEvent((StateSnapshotEvent) event);
+                    case STATE_DELTA -> subscriber.onStateDeltaEvent((StateDeltaEvent) event);
+                }
+
+                return event;
+            })
+            .doFinally(() -> {
+                subscribers.forEach(s -> {
+                    var params = new AgentSubscriberParams(
+                        this.messages,
+                            this.state,
+                            this,
+                            input
+                    );
+                    s.onRunFinalized(params);
+                });
+                System.out.println("parameters = " + parameters + ", subscriber = " + subscriber);
+            }).subscribe();
+/*
+        () => this.run(input),
+                transformChunks(this.debug),
+                verifyEvents(this.debug),
+                (source$) => this.apply(input, source$, subscribers),
+                (source$) => this.processApplyEvents(input, source$, subscribers),
+                catchError((error) => {
+        return this.onError(input, error, subscribers);
+      }),
+        finalize(() => {
+        void this.onFinalize(input, subscribers);
+      }),
+*/
     }
+
 
     protected void onInitialize(
         final RunAgentInput input,
         final List<AgentSubscriber> subscribers
     ) {
         subscribers.forEach(subscriber -> subscriber.onRunInitialized(
-                new AgentSubscriberParams(
-                    this.messages,
-                    this.state,
-                    this,
-                    input
-                )
+            new AgentSubscriberParams(
+                this.messages,
+                this.state,
+                this,
+                input
+            )
         ));
     }
 
