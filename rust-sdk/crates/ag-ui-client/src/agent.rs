@@ -1,6 +1,5 @@
 use futures::stream::StreamExt;
 use std::collections::HashSet;
-use std::sync::Arc;
 use thiserror::Error;
 
 use ag_ui_core::types::context::Context;
@@ -12,7 +11,7 @@ use ag_ui_core::{AgentState, FwdProps, JsonValue};
 
 use crate::event_handler::EventHandler;
 use crate::stream::EventStream;
-use crate::subscriber::AgentSubscriber;
+use crate::subscriber::IntoSubscribers;
 
 #[derive(Debug, Clone)]
 pub struct AgentConfig<StateT = JsonValue> {
@@ -55,7 +54,7 @@ pub struct RunAgentParams<StateT: AgentState, FwdPropsT = JsonValue> {
 pub struct RunAgentResult<StateT: AgentState> {
     pub result: JsonValue,
     pub new_messages: Vec<Message>,
-    pub new_state: StateT
+    pub new_state: StateT,
 }
 
 pub type AgentRunState<StateT, FwdPropsT> = RunAgentInput<StateT, FwdPropsT>;
@@ -98,7 +97,6 @@ where
     StateT: AgentState,
     FwdPropsT: FwdProps,
 {
-
     async fn run(
         &self,
         input: &RunAgentInput<StateT, FwdPropsT>,
@@ -108,7 +106,7 @@ where
     async fn run_agent(
         &self,
         params: &RunAgentParams<StateT, FwdPropsT>,
-        subscribers: Vec<Arc<dyn AgentSubscriber<StateT, FwdPropsT>>>,
+        subscribers: impl IntoSubscribers<StateT, FwdPropsT>,
     ) -> Result<RunAgentResult<StateT>, AgentError> {
         // TODO: Use Agent ID?
         let _agent_id = AgentId::random();
@@ -127,6 +125,7 @@ where
             params.messages.iter().map(|m| m.id()).collect();
 
         // Initialize event handler with the current state
+        let subscribers = subscribers.into_subscribers();
         let mut event_handler = EventHandler::new(
             params.messages.clone(),
             params.state.clone(),
@@ -160,11 +159,10 @@ where
             .cloned()
             .collect();
 
-
         Ok(RunAgentResult {
             result: event_handler.result,
             new_messages,
-            new_state: event_handler.state
+            new_state: event_handler.state,
         })
     }
 }

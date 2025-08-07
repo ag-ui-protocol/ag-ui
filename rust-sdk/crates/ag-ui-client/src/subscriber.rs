@@ -1,13 +1,14 @@
 #![allow(unused)]
 
-use std::collections::HashMap;
-
 use ag_ui_core::event::*;
 use ag_ui_core::types::input::RunAgentInput;
 use ag_ui_core::types::message::Message;
 use ag_ui_core::types::tool::ToolCall;
 use ag_ui_core::{AgentState, FwdProps};
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
+use std::slice::Iter;
+use std::sync::Arc;
 
 use crate::agent::{AgentError, AgentStateMutation};
 
@@ -19,7 +20,7 @@ pub struct AgentSubscriberParams<'a, StateT: AgentState, FwdPropsT: FwdProps> {
 
 /// Subscriber trait for handling agent events
 #[async_trait::async_trait]
-pub trait AgentSubscriber<StateT, FwdPropsT>: Send + Sync
+pub trait AgentSubscriber<StateT = JsonValue, FwdPropsT = JsonValue>: Send + Sync
 where
     StateT: AgentState,
     FwdPropsT: FwdProps,
@@ -284,5 +285,140 @@ where
         params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<(), AgentError> {
         Ok(())
+    }
+}
+
+/// Wrapper for subscriber implementations.
+///
+/// Facilitates easy casting to and from types that implement [`AgentSubscriber`].
+///
+/// # Examples
+///
+/// ```
+/// # use ag_ui_client::subscriber::{Subscribers, AgentSubscriber};
+/// # use std::sync::Arc;
+/// # struct MySubscriber;
+/// # impl AgentSubscriber for MySubscriber {}
+///
+/// // Create from a single subscriber
+/// let subscriber = MySubscriber;
+/// let subscribers = Subscribers::from_subscriber(subscriber);
+///
+/// // Create from multiple subscribers
+/// let subscriber_vec = vec![MySubscriber, MySubscriber];
+/// let subscribers = Subscribers::from_iter(subscriber_vec);
+///
+/// // Create from pre-wrapped Arc subscribers
+/// let arc_subscribers: Vec<Arc<dyn AgentSubscriber>> = vec![
+///     Arc::new(MySubscriber)
+/// ];
+/// let subscribers = Subscribers::new(arc_subscribers);
+/// ```
+///
+#[derive(Clone)]
+pub struct Subscribers<StateT: AgentState = JsonValue, FwdPropsT: FwdProps = JsonValue> {
+    subs: Vec<Arc<dyn AgentSubscriber<StateT, FwdPropsT>>>,
+}
+
+impl<StateT: AgentState, FwdPropsT: FwdProps> Subscribers<StateT, FwdPropsT> {
+    pub fn new(subscribers: Vec<Arc<dyn AgentSubscriber<StateT, FwdPropsT>>>) -> Self {
+        Self { subs: subscribers }
+    }
+
+    /// Creates a new Subscribers collection from a single subscriber
+    pub fn from_subscriber<T>(subscriber: T) -> Self
+    where
+        T: AgentSubscriber<StateT, FwdPropsT> + 'static,
+    {
+        Self::new(vec![Arc::new(subscriber)])
+    }
+}
+
+impl<StateT, FwdPropsT, T> FromIterator<T> for Subscribers<StateT, FwdPropsT>
+where
+    StateT: AgentState,
+    FwdPropsT: FwdProps,
+    T: AgentSubscriber<StateT, FwdPropsT> + 'static,
+{
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        Self::new(
+            iter.into_iter()
+                .map(|s| Arc::new(s) as Arc<dyn AgentSubscriber<StateT, FwdPropsT>>)
+                .collect(),
+        )
+    }
+}
+
+
+impl<'a, StateT, FwdPropsT> IntoIterator for &'a Subscribers<StateT, FwdPropsT>
+where
+    StateT: AgentState,
+    FwdPropsT: FwdProps,
+{
+    type Item = &'a Arc<dyn AgentSubscriber<StateT, FwdPropsT>>;
+    type IntoIter = Iter<'a, Arc<dyn AgentSubscriber<StateT, FwdPropsT>>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.subs.iter()
+    }
+}
+
+/// Trait for types that can be converted into a Subscribers collection
+/// This allows for flexible input types in APIs that accept subscribers
+pub trait IntoSubscribers<StateT: AgentState, FwdPropsT: FwdProps>: Send {
+    fn into_subscribers(self) -> Subscribers<StateT, FwdPropsT>;
+}
+
+// Implementation for Subscribers itself (identity conversion)
+impl<StateT, FwdPropsT> IntoSubscribers<StateT, FwdPropsT> for Subscribers<StateT, FwdPropsT>
+where
+    StateT: AgentState,
+    FwdPropsT: FwdProps,
+{
+    fn into_subscribers(self) -> Subscribers<StateT, FwdPropsT> {
+        self
+    }
+}
+
+// Implementation for single subscribers, as a unit-sized tuple
+impl<StateT, FwdPropsT, T> IntoSubscribers<StateT, FwdPropsT> for (T,)
+where
+    StateT: AgentState,
+    FwdPropsT: FwdProps,
+    T: AgentSubscriber<StateT, FwdPropsT> + 'static,
+{
+    fn into_subscribers(self) -> Subscribers<StateT, FwdPropsT> {
+        Subscribers::from_subscriber(self.0)
+    }
+}
+
+// Implementation for Vec of subscribers
+impl<StateT, FwdPropsT, T> IntoSubscribers<StateT, FwdPropsT> for Vec<T>
+where
+    StateT: AgentState,
+    FwdPropsT: FwdProps,
+    T: AgentSubscriber<StateT, FwdPropsT> + 'static,
+{
+    fn into_subscribers(self) -> Subscribers<StateT, FwdPropsT> {
+        Subscribers::from_iter(self)
+    }
+}
+
+// Implementation for arrays of subscribers
+impl<StateT, FwdPropsT, T, const N: usize> IntoSubscribers<StateT, FwdPropsT> for [T; N]
+where
+    StateT: AgentState,
+    FwdPropsT: FwdProps,
+    T: AgentSubscriber<StateT, FwdPropsT> + 'static,
+{
+    fn into_subscribers(self) -> Subscribers<StateT, FwdPropsT> {
+        Subscribers::from_iter(self)
+    }
+}
+
+// Implementation for empty case (no subscribers)
+impl<StateT: AgentState, FwdPropsT: FwdProps> IntoSubscribers<StateT, FwdPropsT> for () {
+    fn into_subscribers(self) -> Subscribers<StateT, FwdPropsT> {
+        Subscribers::new(vec![])
     }
 }

@@ -19,6 +19,15 @@ pub enum Role {
     Tool,
 }
 
+// Utility methods for serde defaults
+impl Role {
+    pub(crate) fn developer() -> Self { Self::Developer }
+    pub(crate) fn system() -> Self { Self::System }
+    pub(crate) fn assistant() -> Self { Self::Assistant }
+    pub(crate) fn user() -> Self { Self::User }
+    pub(crate) fn tool() -> Self { Self::Tool }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BaseMessage {
     pub id: MessageId,
@@ -32,6 +41,7 @@ pub struct BaseMessage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeveloperMessage {
     pub id: MessageId,
+    #[serde(default = "Role::developer")]
     pub role: Role, // Always Role::Developer
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -57,6 +67,7 @@ impl DeveloperMessage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SystemMessage {
     pub id: MessageId,
+    #[serde(default = "Role::system")]
     pub role: Role, // Always Role::System
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -82,6 +93,7 @@ impl SystemMessage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssistantMessage {
     pub id: MessageId,
+    #[serde(default = "Role::assistant")]   
     pub role: Role, // Always Role::Assistant
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
@@ -121,6 +133,7 @@ impl AssistantMessage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserMessage {
     pub id: MessageId,
+    #[serde(default = "Role::user")]  
     pub role: Role, // Always Role::User
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -147,6 +160,7 @@ impl UserMessage {
 pub struct ToolMessage {
     pub id: MessageId,
     pub content: String,
+    #[serde(default = "Role::tool")] 
     pub role: Role, // Always Role::Tool
     #[serde(rename = "toolCallId")]
     pub tool_call_id: ToolCallId,

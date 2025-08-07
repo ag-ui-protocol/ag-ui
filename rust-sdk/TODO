@@ -1,0 +1,5 @@
+* Agent "state" handling
+* Run parameters DX improvements
+* More elaborate error handling (especially for deserialization errors)
+* Retries?
+* Documentation

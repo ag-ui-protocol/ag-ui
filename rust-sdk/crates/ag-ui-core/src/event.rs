@@ -109,8 +109,7 @@ pub struct TextMessageChunkEvent {
     pub base: BaseEvent,
     #[serde(rename = "messageId", skip_serializing_if = "Option::is_none")]
     pub message_id: Option<MessageId>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<String>,
+    pub role: Role,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delta: Option<String>,
 }
@@ -186,8 +185,8 @@ pub struct ToolCallResultEvent {
     #[serde(rename = "toolCallId")]
     pub tool_call_id: ToolCallId,
     pub content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<String>, // "tool"
+    #[serde(default = "Role::tool")]
+    pub role: Role, // "tool"
 }
 
 /// Event containing a chunk of tool call content.

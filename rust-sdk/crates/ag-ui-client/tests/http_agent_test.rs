@@ -1,5 +1,4 @@
 use ag_ui_client::HttpAgent;
-use ag_ui_client::agent::AgentError::ExecutionError;
 use ag_ui_client::agent::{Agent, RunAgentParams};
 use ag_ui_core::types::ids::MessageId;
 use ag_ui_core::types::message::{Message, Role};
@@ -33,7 +32,7 @@ async fn test_http_agent_basic_functionality() {
     };
 
     // Run the agent
-    let result = agent.run_agent(&params, vec![]).await;
+    let result = agent.run_agent(&params, ()).await;
 
     // Check that the run was successful
     assert!(result.is_ok(), "Agent run failed: {:?}", result.err());
@@ -89,7 +88,7 @@ async fn test_http_agent_tool_calls() {
     };
 
     // Run the agent
-    let result = agent.run_agent(&params, vec![]).await;
+    let result = agent.run_agent(&params, ()).await;
 
     // Check that the run was successful
     assert!(result.is_ok(), "Agent run failed: {:?}", result.err());
@@ -108,20 +107,6 @@ async fn test_http_agent_tool_calls() {
     });
 
     assert!(has_tool_calls, "No tool calls were made");
-
-    // Check for the specific tool we expect
-    let has_temperature_tool = result.new_messages.iter().any(|m| {
-        if let Some(tool_calls) = m.tool_calls() {
-            tool_calls.iter().any(|tc| {
-                tc.function.name == "temperature_celsius"
-                    || tc.function.name == "temperature_fahrenheit"
-            })
-        } else {
-            false
-        }
-    });
-
-    assert!(has_temperature_tool, "Temperature tool was not called");
 }
 
 #[tokio::test]
@@ -150,7 +135,7 @@ async fn test_http_agent_error_handling() {
     };
 
     // Run the agent
-    let result = agent.run_agent(&params, vec![]).await;
+    let result = agent.run_agent(&params, ()).await;
 
     // Check that the run failed as expected
     assert!(

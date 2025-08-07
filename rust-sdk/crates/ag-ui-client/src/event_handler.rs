@@ -1,7 +1,6 @@
 use json_patch::PatchOperation;
 use serde_json::Value as JsonValue;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use ag_ui_core::event::Event;
 use ag_ui_core::types::ids::MessageId;
@@ -11,7 +10,7 @@ use ag_ui_core::types::tool::ToolCall;
 use ag_ui_core::{AgentState, FwdProps};
 
 use crate::agent::{AgentError, AgentStateMutation};
-use crate::subscriber::{AgentSubscriber, AgentSubscriberParams};
+use crate::subscriber::{AgentSubscriberParams, Subscribers};
 
 /// Captures the run state and handles events
 #[derive(Clone)]
@@ -23,7 +22,7 @@ where
     pub messages: Vec<Message>,
     pub state: StateT,
     pub input: &'a RunAgentInput<StateT, FwdPropsT>,
-    pub subscribers: Vec<Arc<dyn AgentSubscriber<StateT, FwdPropsT>>>,
+    pub subscribers: Subscribers<StateT, FwdPropsT>,
     pub result: JsonValue,
 }
 
@@ -36,7 +35,7 @@ where
         messages: Vec<Message>,
         state: StateT,
         input: &'a RunAgentInput<StateT, FwdPropsT>,
-        subscribers: Vec<Arc<dyn AgentSubscriber<StateT, FwdPropsT>>>,
+        subscribers: Subscribers<StateT, FwdPropsT>,
     ) -> Self {
         Self {
             messages,
@@ -91,20 +90,13 @@ where
         event: &Event<StateT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         let mut current_mutation = AgentStateMutation::default();
+        let mut mutations = Vec::new();
 
-        // First, call the generic event handler for all subscribers
         // Clone subscribers to avoid borrowing issues
-        let subscribers = self.subscribers.clone();
-        for subscriber in subscribers {
+        for subscriber in &self.subscribers.clone() {
             let params = self.to_subscriber_params();
             let mutation = subscriber.on_event(event, params).await?;
-            if !mutation.stop_propagation {
-                self.process_mutation(mutation, &mut current_mutation);
-            } else {
-                // If stop_propagation is true, apply the mutation and return it immediately
-                self.update_from_mutation(&mutation);
-                return Ok(mutation);
-            }
+            mutations.push(mutation);
         }
 
         // Then handle specific event types
@@ -120,16 +112,10 @@ where
                 self.messages.push(new_message);
                 current_mutation.messages = Some(self.messages.clone());
 
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_text_message_start_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::TextMessageContent(e) => {
@@ -150,18 +136,12 @@ where
                     .unwrap_or_default()
                     .to_string(); // Clone to avoid borrowing issues
 
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber
                         .on_text_message_content_event(e, &text_message_buffer, params)
                         .await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::TextMessageEnd(e) => {
@@ -173,76 +153,46 @@ where
                     .unwrap_or_default()
                     .to_string(); // Clone to avoid borrowing issues
 
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber
                         .on_text_message_end_event(e, &text_message_buffer, params)
                         .await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::TextMessageChunk(e) => {
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_text_message_chunk_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::ThinkingTextMessageStart(e) => {
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber
                         .on_thinking_text_message_start_event(e, params)
                         .await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::ThinkingTextMessageContent(e) => {
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber
                         .on_thinking_text_message_content_event(e, params)
                         .await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::ThinkingTextMessageEnd(e) => {
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber
                         .on_thinking_text_message_end_event(e, params)
                         .await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::ToolCallStart(e) => {
@@ -278,16 +228,10 @@ where
                 }
                 current_mutation.messages = Some(self.messages.clone());
 
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_tool_call_start_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::ToolCallArgs(e) => {
@@ -327,8 +271,7 @@ where
                     (String::new(), String::new(), HashMap::new())
                 };
 
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber
                         .on_tool_call_args_event(
@@ -339,12 +282,7 @@ where
                             params,
                         )
                         .await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::ToolCallEnd(e) => {
@@ -369,70 +307,40 @@ where
                         (String::new(), HashMap::new())
                     };
 
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber
                         .on_tool_call_end_event(e, &tool_call_name, &tool_call_args, params)
                         .await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::ToolCallChunk(e) => {
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_tool_call_chunk_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::ToolCallResult(e) => {
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_tool_call_result_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::ThinkingStart(e) => {
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_thinking_start_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::ThinkingEnd(e) => {
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_thinking_end_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::StateSnapshot(e) => {
@@ -440,16 +348,10 @@ where
                 self.state = e.snapshot.clone();
                 current_mutation.state = Some(self.state.clone());
 
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_state_snapshot_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::StateDelta(e) => {
@@ -469,124 +371,79 @@ where
                 self.state = new_state;
                 current_mutation.state = Some(self.state.clone());
 
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_state_delta_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::MessagesSnapshot(e) => {
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_messages_snapshot_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::Raw(e) => {
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_raw_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::Custom(e) => {
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_custom_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::RunStarted(e) => {
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_run_started_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::RunFinished(e) => {
                 // Default behavior
                 self.result = e.result.clone().unwrap_or(JsonValue::Null);
 
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_run_finished_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::RunError(e) => {
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_run_error_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::StepStarted(e) => {
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_step_started_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
             }
             Event::StepFinished(e) => {
-                let subscribers = self.subscribers.clone();
-                for subscriber in subscribers {
+                for subscriber in &self.subscribers {
                     let params = self.to_subscriber_params();
                     let mutation = subscriber.on_step_finished_event(e, params).await?;
-                    if !mutation.stop_propagation {
-                        self.process_mutation(mutation, &mut current_mutation);
-                    } else {
-                        self.update_from_mutation(&mutation);
-                        return Ok(mutation);
-                    }
+                    mutations.push(mutation);
                 }
+            }
+        }
+
+        for mutation in mutations {
+            if mutation.stop_propagation {
+                self.update_from_mutation(&mutation);
+                return Ok(mutation);
+            } else {
+                self.process_mutation(mutation, &mut current_mutation);
             }
         }
 
