@@ -115,28 +115,31 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new LangGraphAgent({
-          deploymentUrl: envVars.langgraphUrl,
+          deploymentUrl: envVars.langgraphPythonUrl,
           graphId: "agentic_chat",
         }),
         agentic_generative_ui: new LangGraphAgent({
-          deploymentUrl: envVars.langgraphUrl,
+          deploymentUrl: envVars.langgraphPythonUrl,
           graphId: "agentic_generative_ui",
         }),
         human_in_the_loop: new LangGraphAgent({
-          deploymentUrl: envVars.langgraphUrl,
+          deploymentUrl: envVars.langgraphPythonUrl,
           graphId: "human_in_the_loop",
         }),
         predictive_state_updates: new LangGraphAgent({
-          deploymentUrl: envVars.langgraphUrl,
+          deploymentUrl: envVars.langgraphPythonUrl,
           graphId: "predictive_state_updates",
         }),
         shared_state: new LangGraphAgent({
-          deploymentUrl: envVars.langgraphUrl,
+          deploymentUrl: envVars.langgraphPythonUrl,
           graphId: "shared_state",
         }),
         tool_based_generative_ui: new LangGraphAgent({
-          deploymentUrl: envVars.langgraphUrl,
+          deploymentUrl: envVars.langgraphPythonUrl,
           graphId: "tool_based_generative_ui",
+        }),
+        agentic_chat_reasoning: new LangGraphHttpAgent({
+          url: `${envVars.langgraphPythonUrl}/agent/agentic_chat_reasoning`,
         }),
       };
     },
@@ -164,8 +167,39 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
           url: `${envVars.langgraphFastApiUrl}/agent/tool_based_generative_ui`,
         }),
         agentic_chat_reasoning: new LangGraphHttpAgent({
-          url: "http://localhost:8000/agent/agentic_chat_reasoning",
+          url: `${envVars.langgraphFastApiUrl}/agent/agentic_chat_reasoning`,
         }),
+      };
+    },
+  },
+  {
+    id: "langgraph-typescript",
+    agents: async () => {
+      return {
+        agentic_chat: new LangGraphAgent({
+          deploymentUrl: envVars.langgraphTypescriptUrl,
+          graphId: "agentic_chat",
+        }),
+        agentic_generative_ui: new LangGraphAgent({
+          deploymentUrl: envVars.langgraphTypescriptUrl,
+          graphId: "agentic_generative_ui",
+        }),
+        human_in_the_loop: new LangGraphAgent({
+          deploymentUrl: envVars.langgraphTypescriptUrl,
+          graphId: "human_in_the_loop",
+        }),
+        predictive_state_updates: new LangGraphAgent({
+          deploymentUrl: envVars.langgraphTypescriptUrl,
+          graphId: "predictive_state_updates",
+        }),
+        shared_state: new LangGraphAgent({
+          deploymentUrl: envVars.langgraphTypescriptUrl,
+          graphId: "shared_state",
+        }),
+        tool_based_generative_ui: new LangGraphAgent({
+          deploymentUrl: envVars.langgraphTypescriptUrl,
+          graphId: "tool_based_generative_ui",
+        })
       };
     },
   },
