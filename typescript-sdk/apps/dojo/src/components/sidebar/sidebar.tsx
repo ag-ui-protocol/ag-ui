@@ -106,7 +106,7 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
       ${isMobile ? 'w-80 shadow-xl bg-white z-99' : 'bg-white/50 w-74 min-w-[296px] flex-shrink-0 rounded-lg overflow-hidden'}
     `}>
       {/* Sidebar Header */}
-      <div className="p-4 border-b">
+      <div className="p-4">
         <div className="flex items-center justify-between ml-1">
           <div className="flex items-start flex-col">
             <h1 className={`text-lg font-light ${isDarkTheme ? "text-white" : "text-gray-900"}`}>
