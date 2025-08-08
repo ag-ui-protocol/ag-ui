@@ -1,14 +1,14 @@
 import { test, expect } from "@playwright/test";
-import { AgenticGenUIPage } from "../../pages/crewAIPages/AgenticUIGenPage";
+import { AgenticGenUIPage } from "../../pages/pydanticAIPages/AgenticUIGenPage";
 
 test.describe("Agent Generative UI Feature", () => {
-  test("[CrewAI] should interact with the chat to get a planner on prompt", async ({
+  test("[PydanticAI] should interact with the chat to get a planner on prompt", async ({
     page,
   }) => {
     const genUIAgent = new AgenticGenUIPage(page);
 
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/crewai/feature/agentic_generative_ui"
+      "https://ag-ui-dojo-nine.vercel.app/pydantic-ai/feature/agentic_generative_ui"
     );
 
     await genUIAgent.openChat();
@@ -16,7 +16,7 @@ test.describe("Agent Generative UI Feature", () => {
     await genUIAgent.sendButton.click();
     await genUIAgent.assertAgentReplyVisible(/Hello/);
 
-    await genUIAgent.sendMessage("Give me a plan to make brownies");
+    await genUIAgent.sendMessage("give me a plan to make brownies");
     await genUIAgent.sendButton.click();
     await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 15000 });
     await genUIAgent.plan();
@@ -33,13 +33,13 @@ test.describe("Agent Generative UI Feature", () => {
     );
   });
 
-  test("[CrewAI] should interact with the chat using predefined prompts and perform steps", async ({
+  test("[PydanticAI] should interact with the chat using predefined prompts and perform steps", async ({
     page,
   }) => {
     const genUIAgent = new AgenticGenUIPage(page);
 
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/crewai/feature/agentic_generative_ui"
+      "https://ag-ui-dojo-nine.vercel.app/pydantic-ai/feature/agentic_generative_ui"
     );
 
     await genUIAgent.openChat();

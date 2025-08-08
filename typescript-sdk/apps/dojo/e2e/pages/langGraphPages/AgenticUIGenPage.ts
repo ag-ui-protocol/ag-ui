@@ -14,17 +14,16 @@ export class AgenticGenUIPage {
     this.page = page;
     this.planTaskButton = page.getByRole('button', { name: 'Agentic Generative UI' });
 
-    // Remove iframe references
     this.chatInput = page.getByRole('textbox', { name: 'Type a message...' });
     this.sendButton = page.locator('[data-test-id="copilot-chat-ready"]');
     this.agentMessage = page.locator('.copilotKitAssistantMessage');
     this.userMessage = page.locator('.copilotKitUserMessage');
     this.agentGreeting = page.getByText('This agent demonstrates');
-    this.agentPlannerContainer = page.locator('div.bg-gray-100.rounded-lg.w-\\[500px\\].p-4.text-black.space-y-2');
+    this.agentPlannerContainer = page.getByTestId('task-progress');
   }
 
   async plan() {
-    const stepItems = this.agentPlannerContainer.locator('div.text-sm');
+    const stepItems = this.agentPlannerContainer.getByTestId('task-step-text');
     const count = await stepItems.count();
     expect(count).toBeGreaterThan(0);
     for (let i = 0; i < count; i++) {
@@ -44,16 +43,14 @@ export class AgenticGenUIPage {
   }
 
   getPlannerButton(name: string | RegExp) {
-    // Remove iframe reference
     return this.page.getByRole('button', { name });
   }
 
   async assertAgentReplyVisible(expectedText: RegExp) {
-    await expect(this.agentMessage.getByText(expectedText)).toBeVisible();
+    await expect(this.agentMessage.last().getByText(expectedText)).toBeVisible();
   }
 
   async getUserText(textOrRegex) {
-    // Remove iframe reference
     return await this.page.getByText(textOrRegex).isVisible();
   }
 

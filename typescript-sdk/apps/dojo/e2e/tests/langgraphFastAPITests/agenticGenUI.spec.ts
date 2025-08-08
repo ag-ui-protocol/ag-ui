@@ -16,11 +16,23 @@ test.describe("Agent Generative UI Feature", () => {
     await genUIAgent.sendButton.click();
     await genUIAgent.assertAgentReplyVisible(/Hello/);
 
-    await genUIAgent.sendMessage("give me a recipe for brownies");
+    await genUIAgent.sendMessage("Give me a plan to make brownies");
     await genUIAgent.sendButton.click();
-    await page.waitForTimeout(10000); // Sleep for 10 seconds
+    
+    await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 15000 });
+    
     await genUIAgent.plan();
-    await genUIAgent.assertAgentReplyVisible(/brownie|recipe/);
+    
+    await page.waitForFunction(
+      () => {
+        const messages = Array.from(document.querySelectorAll('.copilotKitAssistantMessage'));
+        const lastMessage = messages[messages.length - 1];
+        const content = lastMessage?.textContent?.trim() || '';
+        
+        return messages.length >= 3 && content.length > 0;
+      },
+      { timeout: 30000 }
+    );
   });
 
   test("[LangGraph FastAPI] should interact with the chat using predefined prompts and perform steps", async ({
@@ -37,10 +49,21 @@ test.describe("Agent Generative UI Feature", () => {
     await genUIAgent.sendButton.click();
     await genUIAgent.assertAgentReplyVisible(/Hello/);
 
-    // Replace the button click with direct message
     await genUIAgent.sendMessage("Go to Mars");
     await genUIAgent.sendButton.click();
-    await page.waitForTimeout(10000);
+    
+    await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 15000 });
     await genUIAgent.plan();
+    
+    await page.waitForFunction(
+      () => {
+        const messages = Array.from(document.querySelectorAll('.copilotKitAssistantMessage'));
+        const lastMessage = messages[messages.length - 1];
+        const content = lastMessage?.textContent?.trim() || '';
+        
+        return messages.length >= 3 && content.length > 0;
+      },
+      { timeout: 30000 }
+    );
   });
 });

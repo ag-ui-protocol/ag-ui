@@ -15,19 +15,16 @@ export class HumanInLoopPage {
     this.page = page;
     this.planTaskButton = page.getByRole('button', { name: 'Human in the loop Plan a task' });
     
-    // Update greeting text to match actual content from LlamaIndex
     this.agentGreeting = page.getByText("Hi, I'm an agent specialized in helping you with your tasks. How can I help you?");
     this.chatInput = page.getByRole('textbox', { name: 'Type a message...' });
     this.sendButton = page.locator('[data-test-id="copilot-chat-ready"]');
-    this.plan = page.locator("div.bg-gray-100.rounded-lg").last();
-    // Update button name to match actual DOM
+    this.plan = page.getByTestId('select-steps');
     this.performStepsButton = page.getByRole('button', { name: 'Confirm' });
     this.agentMessage = page.locator('.copilotKitAssistantMessage');
     this.userMessage = page.locator('.copilotKitUserMessage');
   }
 
   async openChat() {
-    // Chat is already open, just wait for it to be ready
     await this.agentGreeting.isVisible();
   }
 
@@ -47,34 +44,37 @@ export class HumanInLoopPage {
   }
 
   async uncheckItem(identifier: number | string): Promise<string> {
-    // Use the last planner (most recent one)
-    const plannerContainer = this.page.locator("div.bg-gray-100.rounded-lg").last();
-    const items = plannerContainer.locator('div.text-sm.flex.items-center');
+    const plannerContainer = this.page.getByTestId('select-steps');
+    const items = plannerContainer.getByTestId('step-item');
 
     let item;
     if (typeof identifier === 'number') {
       item = items.nth(identifier);
     } else {
-      item = items.filter({ hasText: identifier }).first();
+      item = items.filter({ 
+        has: this.page.getByTestId('step-text').filter({ hasText: identifier })
+      }).first();
     }
 
-    const text = await item.innerText();
+    const stepTextElement = item.getByTestId('step-text');
+    const text = await stepTextElement.innerText();
     
-    // Click the checkbox directly since they have checked="" attributes
-    const checkbox = item.locator('input[type="checkbox"]');
-    await checkbox.click();
+    await item.click();
 
     return text;
   }
 
   async isStepItemUnchecked(target: number | string): Promise<boolean> {
-    const items = this.page.locator('div.text-sm.flex.items-center');
+    const plannerContainer = this.page.getByTestId('select-steps');
+    const items = plannerContainer.getByTestId('step-item');
 
     let item;
     if (typeof target === 'number') {
       item = items.nth(target);
     } else {
-      item = items.filter({ hasText: target });
+      item = items.filter({ 
+        has: this.page.getByTestId('step-text').filter({ hasText: target })
+      }).first();
     }
 
     const checkbox = item.locator('input[type="checkbox"]');
@@ -86,7 +86,6 @@ export class HumanInLoopPage {
   }
 
   async assertAgentReplyVisible(expectedText: RegExp) {
-    // Use last() to get the most recent message and avoid strict mode violations
     await expect(this.agentMessage.last().getByText(expectedText)).toBeVisible();
   }
 

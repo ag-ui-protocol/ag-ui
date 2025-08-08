@@ -6,41 +6,37 @@ test.describe("Predictive Status Updates Feature", () => {
     await retryOnAIFailure(async () => {
       const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);
 
-      // Update URL to new domain
       await page.goto(
         "https://ag-ui-dojo-nine.vercel.app/server-starter-all-features/feature/predictive_state_updates"
       );
 
       await predictiveStateUpdates.openChat();
+      await page.waitForTimeout(2000);
       
-      // Send initial message "Hi"
       await predictiveStateUpdates.sendMessage("Hi");
       await waitForAIResponse(page);
+      await page.waitForTimeout(2000);
       
-      // Get initial response with dog story
       await predictiveStateUpdates.getPredictiveResponse();
       await predictiveStateUpdates.getUserApproval();
       await predictiveStateUpdates.confirmedChangesResponse.isVisible();
       
-      // Store the original content after first confirmation
       const originalContent = await predictiveStateUpdates.getResponseContent();
       expect(originalContent).not.toBeNull();
 
-      // Send update to change the dog name
+      await page.waitForTimeout(3000);
+
       await predictiveStateUpdates.sendMessage("Change the dog name");
       await waitForAIResponse(page);
+      await page.waitForTimeout(2000);
       
-      // Verify highlighted text (showing the change)
       await predictiveStateUpdates.verifyHighlightedText();
       
-      // Approve the change
       await predictiveStateUpdates.getUserApproval();
-      await predictiveStateUpdates.confirmedChangesResponse.nth(1).isVisible();
+      await predictiveStateUpdates.confirmedChangesResponse.isVisible();
       
-      // Get the updated content after approval
       const updatedContent = await predictiveStateUpdates.getResponseContent();
       
-      // Verify the content has changed
       expect(updatedContent).not.toBe(originalContent);
     });
   });
@@ -49,44 +45,37 @@ test.describe("Predictive Status Updates Feature", () => {
     await retryOnAIFailure(async () => {
       const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);
 
-      // Update URL to new domain
       await page.goto(
         "https://ag-ui-dojo-nine.vercel.app/server-starter-all-features/feature/predictive_state_updates"
       );
 
       await predictiveStateUpdates.openChat();
+      await page.waitForTimeout(2000);
       
-      // Send initial message "Hi"
       await predictiveStateUpdates.sendMessage("Hi");
       await waitForAIResponse(page);
+      await page.waitForTimeout(2000);
       
-      // Get initial response with dog story
       await predictiveStateUpdates.getPredictiveResponse();
       await predictiveStateUpdates.getUserApproval();
       await predictiveStateUpdates.confirmedChangesResponse.isVisible();
       
-      // Store the original content after first confirmation
       const originalContent = await predictiveStateUpdates.getResponseContent();
       expect(originalContent).not.toBeNull();
 
-      // Send update to change the dog name
+      await page.waitForTimeout(3000);
+
       await predictiveStateUpdates.sendMessage("Change the dog name");
       await waitForAIResponse(page);
+      await page.waitForTimeout(2000);
       
-      // Verify highlighted text (showing the proposed change)
       await predictiveStateUpdates.verifyHighlightedText();
       
-      // Reject the change
       await predictiveStateUpdates.getUserRejection();
-      await predictiveStateUpdates.confirmedChangesResponse.nth(1).isVisible();
+      await predictiveStateUpdates.rejectedChangesResponse.isVisible();
       
-      // Verify the agent response prompt is visible (indicating rejection handled)
-      await predictiveStateUpdates.agentResponsePrompt.isVisible();
-      
-      // Get the current content after rejection
       const currentContent = await predictiveStateUpdates.getResponseContent();
       
-      // Verify the content hasn't changed after rejection
       expect(currentContent).toBe(originalContent);
     });
   });
