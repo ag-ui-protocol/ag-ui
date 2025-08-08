@@ -99,11 +99,11 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
   }, []);
 
   return (
-    <div className={`flex flex-col h-full bg-background border-r
-      ${isMobile ? 'w-80 shadow-xl' : 'w-74 min-w-[296px] flex-shrink-0'}
+    <div className={`flex flex-col h-full bg-white/50 border-r
+      ${isMobile ? 'w-80 shadow-xl' : 'w-74 min-w-[296px] flex-shrink-0 rounded-lg'}
     `}>
       {/* Sidebar Header */}
-      <div className="p-4 border-b bg-background">
+      <div className="p-4 border-b">
         <div className="flex items-center justify-between ml-1">
           <div className="flex items-start flex-col">
             <h1 className={`text-lg font-light ${isDarkTheme ? "text-white" : "text-gray-900"}`}>
@@ -117,7 +117,7 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
 
       {/* Controls Section */}
       {(!frameworkPickerHidden|| !viewPickerHidden) && (
-      <div className="p-4 border-b bg-background">
+      <div className="p-4 border-b">
         {/* Integration picker */}
         {!frameworkPickerHidden&& (
           <div className="mb-1">
@@ -153,7 +153,7 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
             onValueChange={tab => setView(tab as View)}
             className="w-full"
           >
-            <TabsList className="w-full h-9 bg-background border shadow-sm rounded-lg p-1">
+            <TabsList className="w-full h-9 border shadow-sm rounded-lg p-1">
               <TabsTrigger
                 value="preview"
                 className="flex-1 h-7 px-2 text-sm font-medium gap-1 rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow"

@@ -40,7 +40,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <ViewerLayout>
-      <div className="flex h-full w-full overflow-hidden relative">
+      <div className="flex h-full w-full overflow-hidden relative gap-2">
         {/* Mobile Header with Hamburger Menu */}
         {isMobile && (
           <div className="absolute top-0 left-0 right-0 z-50 bg-background border-b p-2 md:hidden">
