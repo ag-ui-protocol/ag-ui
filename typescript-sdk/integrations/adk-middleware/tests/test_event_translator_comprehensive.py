@@ -50,6 +50,7 @@ class TestEventTranslatorComprehensive:
         event.partial = False
         event.turn_complete = True
         event.is_final_response = False
+        event.usage_metadata = {'tokens': 22}
         return event
     
     @pytest.mark.asyncio
@@ -275,7 +276,26 @@ class TestEventTranslatorComprehensive:
             events.append(event)
         
         assert len(events) == 0  # No events
-    
+
+    @pytest.mark.asyncio
+    async def test_translate_text_content_final_response_from_agent_callback(self, translator, mock_adk_event_with_content):
+        """Test final response when it was received from an agent callback function."""
+        mock_adk_event_with_content.is_final_response = True
+        mock_adk_event_with_content.usage_metadata = None
+
+        # Not streaming
+        translator._is_streaming = False
+
+        events = []
+        async for event in translator.translate(mock_adk_event_with_content, "thread_1", "run_1"):
+            events.append(event)
+
+        assert len(events) == 3  # START, CONTENT , END
+        assert isinstance(events[0], TextMessageStartEvent)
+        assert isinstance(events[1], TextMessageContentEvent)
+        assert events[1].delta == mock_adk_event_with_content.content.parts[0].text
+        assert isinstance(events[2], TextMessageEndEvent)
+
     @pytest.mark.asyncio
     async def test_translate_text_content_empty_text(self, translator, mock_adk_event):
         """Test text content with empty text."""
