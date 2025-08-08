@@ -4,7 +4,7 @@ import io.workm8.agui.event.BaseEvent;
 import io.workm8.agui.event.EventMixin;
 import io.workm8.agui.message.BaseMessage;
 import io.workm8.agui.message.MessageMixin;
-import io.workm8.agui.type.RunAgentInput;
+import io.workm8.agui.input.RunAgentInput;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
@@ -17,7 +17,6 @@ public abstract class BaseHttpClient {
     protected final ObjectMapper objectMapper;
 
     public BaseHttpClient() {
-
         this.objectMapper = new ObjectMapper();
         this.objectMapper.disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
 

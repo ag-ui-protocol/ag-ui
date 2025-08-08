@@ -1,9 +1,8 @@
 package io.workm8.agui.okhttp;
 
-import com.fasterxml.jackson.databind.JsonMappingException;
 import io.workm8.agui.BaseHttpClient;
 import io.workm8.agui.event.BaseEvent;
-import io.workm8.agui.type.RunAgentInput;
+import io.workm8.agui.input.RunAgentInput;
 import okhttp3.*;
 
 import java.io.BufferedReader;

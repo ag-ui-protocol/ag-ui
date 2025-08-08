@@ -1,15 +1,16 @@
 package io.workm8.agui;
 
 import io.workm8.agui.client.AbstractAgent;
-import io.workm8.agui.type.State;
+import io.workm8.agui.client.stream.IEventStream;
+import io.workm8.agui.state.State;
 import io.workm8.agui.message.BaseMessage;
-import io.workm8.agui.type.RunAgentInput;
+import io.workm8.agui.input.RunAgentInput;
 import io.workm8.agui.event.BaseEvent;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Consumer;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class HttpAgent extends AbstractAgent {
 
@@ -30,8 +31,26 @@ public class HttpAgent extends AbstractAgent {
     }
 
     @Override
-    protected CompletableFuture<Void> run(RunAgentInput input, Consumer<BaseEvent> eventHandler) {
-        return this.httpClient.streamEvents(input, eventHandler);
+    protected void run(RunAgentInput input, IEventStream<BaseEvent> stream) {
+        AtomicBoolean cancellationToken = new AtomicBoolean(false);
+
+        CompletableFuture<Void> httpFuture = httpClient.streamEventsWithCancellation(
+                input,
+                event -> {
+                    if (!stream.isCancelled()) {
+                        stream.next(event);  // Multiple .next() calls - one per HTTP event
+                    }
+                },
+                cancellationToken
+        );
+
+        httpFuture.whenComplete((result, error) -> {
+            if (error != null) {
+                stream.error(error);
+            } else {
+                stream.complete();  // Only call once when HTTP stream ends
+            }
+        });
     }
 
     /**

@@ -1,15 +1,19 @@
 package io.workm8.agui.client;
 
+import io.workm8.agui.client.message.MessageFactory;
+import io.workm8.agui.client.stream.EventStream;
+import io.workm8.agui.client.stream.IEventStream;
 import io.workm8.agui.client.subscriber.AgentSubscriber;
 import io.workm8.agui.client.subscriber.AgentSubscriberParams;
 import io.workm8.agui.message.BaseMessage;
-import io.workm8.agui.type.RunAgentInput;
-import io.workm8.agui.type.State;
+import io.workm8.agui.type.EventType;
+import io.workm8.agui.input.RunAgentInput;
+import io.workm8.agui.state.State;
 import io.workm8.agui.event.*;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Consumer;
+import java.util.concurrent.atomic.AtomicReference;
 
 public abstract class AbstractAgent {
 
@@ -21,6 +25,8 @@ public abstract class AbstractAgent {
     protected boolean debug = false;
 
     private final List<AgentSubscriber> agentSubscribers = new ArrayList<>();
+
+    private final MessageFactory messageFactory;
 
     public AbstractAgent(
         final String agentId,
@@ -36,6 +42,8 @@ public abstract class AbstractAgent {
         this.messages = Objects.nonNull(messages) ? messages : new ArrayList<>();
         this.state = Objects.nonNull(state) ? state : new State();
         this.debug = debug;
+
+        this.messageFactory = new MessageFactory();
     }
 
     public Subscription subscribe(final AgentSubscriber subscriber) {
@@ -43,7 +51,7 @@ public abstract class AbstractAgent {
         return () -> this.agentSubscribers.remove(subscriber);
     }
 
-    protected abstract CompletableFuture<Void> run(final RunAgentInput input, Consumer<BaseEvent> eventHandler);
+    protected abstract void run(RunAgentInput input, IEventStream<BaseEvent> stream);
 
     public CompletableFuture<Void> runAgent(RunAgentParameters parameters) {
         return this.runAgent(parameters, null);
@@ -60,67 +68,81 @@ public abstract class AbstractAgent {
 
         this.onInitialize(input, subscribers);
 
-        Consumer<BaseEvent> eventHandler = event -> {
-            try {
-                subscribers.forEach(s -> {
-                    try {
-                        s.onEvent(event);
-                    } catch (Exception e) {
-                        System.err.println("Error in subscriber.onEvent: " + e.getMessage());
-                        if (debug) {
-                            e.printStackTrace();
-                        }
-                    }
-                });
+        CompletableFuture<Void> future = new CompletableFuture<>();
 
-                if (Objects.nonNull(subscriber)) {
-                    handleEventByType(event, subscriber);
+        AtomicReference<IEventStream<BaseEvent>> streamRef = new AtomicReference<>();
+
+        // Create the stream with callbacks
+        IEventStream<BaseEvent> stream = new EventStream<>(
+            event -> {
+                handleEvent(event, subscribers);
+                if (event.getType().equals(EventType.RUN_FINISHED)) {
+                    streamRef.get().complete();
                 }
+            },
+            error -> {
+                handleError(error, subscribers);
+                future.completeExceptionally(error);
+            },
+            () -> {
+                handleComplete(subscribers, new AgentSubscriberParams(messages, state, this, input));
+                future.complete(null);
+            }
+        );
+
+        streamRef.set(stream);
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                run(input, stream);
             } catch (Exception e) {
-                System.err.println("Error handling event: " + e.getMessage());
+                stream.error(e);
+            }
+        });
+
+        return future;
+    }
+
+    private void handleEvent(BaseEvent event, List<AgentSubscriber> subscribers) {
+        subscribers.forEach(subscriber -> {
+            try {
+                subscriber.onEvent(event);
+                this.handleEventByType(event, subscriber);
+            } catch (Exception e) {
+                System.err.println("Error in subscriber: " + e.getMessage());
                 if (debug) {
                     e.printStackTrace();
                 }
             }
-        };
+        });
+    }
 
-        return this.run(input, eventHandler)
-                .whenComplete((result, throwable) -> {
-                    try {
-                        subscribers.forEach(s -> {
-                            try {
-                                var params = new AgentSubscriberParams(
-                                    this.messages,
-                                    this.state,
-                                    this,
-                                    input
-                                );
-                                s.onRunFinalized(params);
-                            } catch (Exception e) {
-                                System.err.println("Error in subscriber.onRunFinalized: " + e.getMessage());
-                                if (debug) {
-                                    e.printStackTrace();
-                                }
-                            }
-                        });
+    private void handleComplete(List<AgentSubscriber> subscribers, AgentSubscriberParams params) {
+        subscribers.forEach(subscriber -> {
+            try {
+                subscriber.onRunFinalized(params);
+            } catch (Exception e) {
+                System.err.println("Error in subscriber complete handler: " + e.getMessage());
+                if (debug) {
+                    e.printStackTrace();
+                }
+            }
+        });
+    }
 
-                        if (debug) {
-                            System.out.println("Agent run completed - parameters = " + parameters + ", subscriber = " + subscriber);
-                        }
-
-                        if (throwable != null) {
-                            System.err.println("Agent run completed with error: " + throwable.getMessage());
-                            if (debug) {
-                                throwable.printStackTrace();
-                            }
-                        }
-                    } catch (Exception e) {
-                        System.err.println("Error in completion handler: " + e.getMessage());
-                        if (debug) {
-                            e.printStackTrace();
-                        }
-                    }
-                });
+    private void handleError(Throwable error, List<AgentSubscriber> subscribers) {
+        subscribers.forEach(subscriber -> {
+            try {
+                var event = new RunErrorEvent();
+                event.setError(error.getMessage());
+                subscriber.onRunErrorEvent(event);
+            } catch (Exception e) {
+                System.err.println("Error in subscriber error handler: " + e.getMessage());
+                if (debug) {
+                    e.printStackTrace();
+                }
+            }
+        });
     }
 
     private List<AgentSubscriber> prepareSubscribers(AgentSubscriber subscriber) {
@@ -142,16 +164,34 @@ public abstract class AbstractAgent {
                 case RUN_FINISHED -> subscriber.onRunFinishedEvent((RunFinishedEvent) event);
                 case STEP_STARTED -> subscriber.onStepStartedEvent((StepStartedEvent) event);
                 case STEP_FINISHED -> subscriber.onStepFinishedEvent((StepFinishedEvent) event);
-                case TEXT_MESSAGE_START -> subscriber.onTextMessageStartEvent((TextMessageStartEvent) event);
-                case TEXT_MESSAGE_CONTENT -> subscriber.onTextMessageContentEvent((TextMessageContentEvent) event);
+                case TEXT_MESSAGE_START -> {
+                    var textMessageStartEvent = (TextMessageStartEvent)event;
+                    this.messageFactory.createMessage(textMessageStartEvent.getMessageId(), "assistant");
+                    subscriber.onTextMessageStartEvent(textMessageStartEvent);
+                }
+                case TEXT_MESSAGE_CONTENT -> {
+                    var textMessageContentEvent = (TextMessageContentEvent)event;
+
+                    this.messageFactory.addChunk(textMessageContentEvent.getMessageId(), textMessageContentEvent.getDelta());
+                    subscriber.onTextMessageContentEvent(textMessageContentEvent);
+                }
                 case TEXT_MESSAGE_CHUNK -> {
+                    var textMessageChunkEvent = (TextMessageChunkEvent)event;
                     var contentEvent = new TextMessageContentEvent();
-                    contentEvent.setMessageId(((TextMessageChunkEvent)event).getMessageId());
-                    contentEvent.setDelta(((TextMessageChunkEvent)event).getDelta());
+                    contentEvent.setMessageId(textMessageChunkEvent.getMessageId());
+                    contentEvent.setDelta(textMessageChunkEvent.getDelta());
                     contentEvent.setTimestamp(event.getTimestamp());
                     subscriber.onTextMessageContentEvent(contentEvent);
+
+                    this.messageFactory.addChunk(textMessageChunkEvent.getMessageId(), textMessageChunkEvent.getDelta());
                 }
-                case TEXT_MESSAGE_END -> subscriber.onTextMessageEndEvent((TextMessageEndEvent) event);
+                case TEXT_MESSAGE_END -> {
+                    var textMessageEndEvent = (TextMessageEndEvent)event;
+                    subscriber.onTextMessageEndEvent(textMessageEndEvent);
+                    var newMessage = this.messageFactory.getMessage(textMessageEndEvent.getMessageId());
+                    this.addMessage(newMessage);
+                    subscriber.onNewMessage(newMessage);
+                }
                 case TOOL_CALL_START -> subscriber.onToolCallStartEvent((ToolCallStartEvent) event);
                 case TOOL_CALL_ARGS -> subscriber.onToolCallArgsEvent((ToolCallArgsEvent) event);
                 case TOOL_CALL_RESULT -> subscriber.onToolCallResultEvent((ToolCallResultEvent) event);
@@ -259,12 +299,12 @@ public abstract class AbstractAgent {
     protected RunAgentInput prepareRunAgentInput(RunAgentParameters parameters) {
         return new RunAgentInput(
             this.threadId,
-            parameters.getRunId().orElse(UUID.randomUUID().toString()),
+            Optional.ofNullable(parameters.getRunId()).orElse(UUID.randomUUID().toString()),
             this.state,
             this.messages,
-            parameters.getTools().orElse(Collections.emptyList()),
-            parameters.getContext().orElse(Collections.emptyList()),
-            parameters.getForwardedProps().orElse(null)
+            Optional.ofNullable(parameters.getTools()).orElse(Collections.emptyList()),
+            Optional.ofNullable(parameters.getContext()).orElse(Collections.emptyList()),
+            parameters.getForwardedProps()
         );
     }
 

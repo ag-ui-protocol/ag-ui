@@ -1,6 +1,6 @@
 package io.workm8.agui.client;
 
-import io.workm8.agui.type.Context;
+import io.workm8.agui.context.Context;
 import io.workm8.agui.tool.Tool;
 
 import java.util.List;
@@ -8,31 +8,31 @@ import java.util.Optional;
 
 public class RunAgentParameters {
 
-    private final Optional<String> runId;
-    private final Optional<List<Tool>> tools;
-    private final Optional<List<Context>> context;
-    private final Optional<Object> forwardedProps;
+    private final String runId;
+    private final List<Tool> tools;
+    private final List<Context> context;
+    private final Object forwardedProps;
 
     private RunAgentParameters(Builder builder) {
-        this.runId = Optional.ofNullable(builder.runId);
-        this.tools = Optional.ofNullable(builder.tools);
-        this.context = Optional.ofNullable(builder.context);
-        this.forwardedProps = Optional.ofNullable(builder.forwardedProps);
+        this.runId = builder.runId;
+        this.tools = builder.tools;
+        this.context = builder.context;
+        this.forwardedProps = builder.forwardedProps;
     }
 
-    public Optional<String> getRunId() {
+    public String getRunId() {
         return runId;
     }
 
-    public Optional<List<Tool>> getTools() {
+    public List<Tool> getTools() {
         return tools;
     }
 
-    public Optional<List<Context>> getContext() {
+    public List<Context> getContext() {
         return context;
     }
 
-    public Optional<Object> getForwardedProps() {
+    public Object getForwardedProps() {
         return forwardedProps;
     }
 

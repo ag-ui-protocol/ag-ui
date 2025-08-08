@@ -2,7 +2,7 @@ package io.workm8.agui.spring;
 
 import io.workm8.agui.BaseHttpClient;
 import io.workm8.agui.event.BaseEvent;
-import io.workm8.agui.type.RunAgentInput;
+import io.workm8.agui.input.RunAgentInput;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.http.MediaType;

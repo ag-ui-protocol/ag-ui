@@ -5,7 +5,7 @@ import io.workm8.agui.client.subscriber.AgentSubscriber;
 import io.workm8.agui.client.subscriber.AgentSubscriberParams;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.workm8.agui.event.BaseEvent;
-import io.workm8.agui.type.State;
+import io.workm8.agui.state.State;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.ai.ollama.OllamaChatModel;
 import org.springframework.ai.ollama.api.OllamaApi;

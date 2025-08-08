@@ -5,10 +5,11 @@ import io.workm8.agui.HttpAgent;
 import io.workm8.agui.client.RunAgentParameters;
 import io.workm8.agui.client.subscriber.AgentSubscriberParams;
 import io.workm8.agui.event.BaseEvent;
+import io.workm8.agui.message.BaseMessage;
 import io.workm8.agui.message.UserMessage;
 import io.workm8.agui.okhttp.HttpClient;
 import io.workm8.agui.client.subscriber.AgentSubscriber;
-import io.workm8.agui.type.State;
+import io.workm8.agui.state.State;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -39,6 +40,8 @@ public class HttpAgentTest {
             .runId("1")
             .build();
 
+        var messages = new ArrayList<BaseMessage>();
+
         CountDownLatch latch = new CountDownLatch(1);
         List<BaseEvent> receivedEvents = new ArrayList<>();
         AtomicReference<Throwable> error = new AtomicReference<>();
@@ -48,6 +51,11 @@ public class HttpAgentTest {
             public void onEvent(BaseEvent event) {
                 receivedEvents.add(event);
                 System.out.println("Received event: " + event);
+            }
+
+            @Override
+            public void onNewMessage(BaseMessage m) {
+                messages.add(m);
             }
 
             @Override

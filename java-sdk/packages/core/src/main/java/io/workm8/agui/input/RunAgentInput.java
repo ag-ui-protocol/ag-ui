@@ -1,5 +1,6 @@
-package io.workm8.agui.type;
+package io.workm8.agui.input;
 
+import io.workm8.agui.context.Context;
 import io.workm8.agui.message.BaseMessage;
 import io.workm8.agui.tool.Tool;
 

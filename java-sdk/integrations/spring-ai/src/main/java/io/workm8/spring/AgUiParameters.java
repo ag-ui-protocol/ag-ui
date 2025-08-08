@@ -2,7 +2,7 @@ package io.workm8.spring;
 
 import io.workm8.agui.message.BaseMessage;
 import io.workm8.agui.tool.Tool;
-import io.workm8.agui.type.Context;
+import io.workm8.agui.context.Context;
 
 import java.util.List;
 
