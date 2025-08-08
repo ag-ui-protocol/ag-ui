@@ -1,6 +1,7 @@
 import React from "react";
 import { ViewerConfig } from "@/types/feature";
 import { cn } from "@/lib/utils";
+import { useMobileView } from "@/utils/use-mobile-view";
 
 interface ViewerLayoutProps extends ViewerConfig {
   className?: string;
@@ -14,12 +15,12 @@ export function ViewerLayout({
   className,
   children,
 }: ViewerLayoutProps) {
-  // return (
-  //
-  // );
+  const { isMobile } = useMobileView();
 
   return (
-    <div className={cn("relative flex h-screen overflow-hidden bg-palette-surface-main p-spacing-2", className)}>
+    <div className={cn("relative flex h-screen overflow-hidden bg-palette-surface-main", className, {
+      "p-spacing-2": !isMobile,
+    })}>
       <div className="flex flex-1 overflow-hidden z-1">
         <main className="flex-1 overflow-auto">
           <div className="h-full">{children}</div>

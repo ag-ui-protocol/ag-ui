@@ -102,8 +102,8 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
   const tabClass = `cursor-pointer flex-1 h-8 px-2 text-sm text-primary shadow-none bg-none border-none font-medium gap-1 rounded-lg data-[state=active]:bg-white data-[state=active]:text-primary data-[state=active]:shadow-none`
 
   return (
-    <div className={`flex flex-col h-full bg-white/50 border-2 overflow-hidden border-palette-border-default
-      ${isMobile ? 'w-80 shadow-xl' : 'w-74 min-w-[296px] flex-shrink-0 rounded-lg'}
+    <div className={`flex flex-col h-full border-2 border-palette-border-default
+      ${isMobile ? 'w-80 shadow-xl bg-white z-99' : 'bg-white/50 w-74 min-w-[296px] flex-shrink-0 rounded-lg overflow-hidden'}
     `}>
       {/* Sidebar Header */}
       <div className="p-4 border-b">
