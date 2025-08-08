@@ -14,7 +14,11 @@ export function DemoList({ demos, selectedDemo, onSelect, llmSelector }: DemoLis
   return (
     <div className="h-full">
       <div className="px-4 pt-3 pb-2">
-        <h2 className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-1">
+        <h2
+          className={cn(
+            "transition-all duration-300 ease-in-out inline-block whitespace-nowrap paragraphs-Small-Regular-Uppercase text-[10px] text-palette-text-secondary opacity-100 scale-100 w-fit",
+          )}
+        >
           Demos
         </h2>
         {llmSelector && <div className="mt-2">{llmSelector}</div>}

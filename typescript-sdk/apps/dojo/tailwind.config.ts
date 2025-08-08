@@ -50,6 +50,12 @@ const config = {
         sans: ['Plus Jakarta Sans', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         mono: ['Spline Sans Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
       },
+      boxShadow: {
+        'elevation-sm': 'var(--shadow-sm)',
+        'elevation-md': 'var(--shadow-md)',
+        'elevation-lg': 'var(--shadow-lg)',
+        'elevation-xl': 'var(--shadow-xl)',
+      },
       keyframes: {
         "accordion-down": {
           from: { height: "0" },
