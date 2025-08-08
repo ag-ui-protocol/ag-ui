@@ -263,7 +263,7 @@ public abstract class AbstractAgent {
     }
 
     public void addMessages(final List<BaseMessage> messages) {
-        messages.forEach(this::addMessage); // Fixed: was using this.messages instead of parameter
+        messages.forEach(this::addMessage);
     }
 
     public void setMessages(final List<BaseMessage> messages) {

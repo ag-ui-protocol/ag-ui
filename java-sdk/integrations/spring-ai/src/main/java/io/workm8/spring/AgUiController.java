@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 @RestController
 public class AgUiController {
@@ -43,7 +44,7 @@ public class AgUiController {
                     m.setName("");
                 }
                 return m;
-            }).toList(),
+            }).collect(Collectors.toList()),
             chatModel,
             new State(),
             true
