@@ -22,10 +22,8 @@
         <maven.compiler.source>18</maven.compiler.source>
         <maven.compiler.target>18</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <properties>
-            <sonar.organization>work-m8</sonar.organization>
-            <sonar.host.url>https://sonarcloud.io</sonar.host.url>
-        </properties>
+        <sonar.organization>work-m8</sonar.organization>
+        <sonar.host.url>https://sonarcloud.io</sonar.host.url>
     </properties>
 
     <contributors>
