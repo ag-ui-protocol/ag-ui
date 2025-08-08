@@ -10,7 +10,7 @@ name = "agents"
 version = "0.0.1"
 
 [tool.poetry.dependencies]
-python = ">=3.12,<3.13"
+python = ">=3.12,<3.14"
 uvicorn = "^0.34.0"
 dotenv = "^0.9.9"
 langchain = ">=0.1.0"
