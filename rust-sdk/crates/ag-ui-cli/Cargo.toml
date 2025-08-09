@@ -1,0 +1,10 @@
+[package]
+name = "ag-ui-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ag-ui-core = { path = "../ag-ui-core"}
+thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
