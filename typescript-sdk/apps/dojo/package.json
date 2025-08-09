@@ -38,6 +38,7 @@
     "@mdx-js/react": "^3.1.0",
     "@monaco-editor/react": "^4.7.0",
     "@next/mdx": "^15.2.3",
+    "@phosphor-icons/react": "^2.1.10",
     "@radix-ui/react-dropdown-menu": "^2.1.6",
     "@radix-ui/react-slot": "^1.1.2",
     "@radix-ui/react-tabs": "^1.1.3",

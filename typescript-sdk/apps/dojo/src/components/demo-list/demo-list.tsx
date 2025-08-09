@@ -14,19 +14,23 @@ export function DemoList({ demos, selectedDemo, onSelect, llmSelector }: DemoLis
   return (
     <div className="h-full">
       <div className="px-4 pt-3 pb-2">
-        <h2 className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-1">
+        <h2
+          className={cn(
+            "transition-all duration-300 ease-in-out inline-block whitespace-nowrap paragraphs-Small-Regular-Uppercase text-[10px] text-palette-text-secondary opacity-100 scale-100 w-fit",
+          )}
+        >
           Demos
         </h2>
         {llmSelector && <div className="mt-2">{llmSelector}</div>}
       </div>
-      <ul className="px-2 space-y-0.5">
+      <ul className="px-2 space-y-1">
         {demos.map((demo) => (
           <li key={demo.id}>
             <button
               className={cn(
-                "w-full text-left py-2 px-3 rounded-md hover:bg-accent/50 transition-colors",
+                "w-full text-left py-2 px-3 rounded-sm hover:bg-white/50 transition-colors",
                 "flex flex-col gap-0.5",
-                selectedDemo === demo.id && "bg-accent",
+                selectedDemo === demo.id && "bg-white/70",
               )}
               onClick={() => onSelect(demo.id)}
             >
@@ -39,11 +43,10 @@ export function DemoList({ demos, selectedDemo, onSelect, llmSelector }: DemoLis
                   {demo.tags.map((tag) => (
                     <Badge
                       key={tag}
-                      variant={selectedDemo === demo.id ? "default" : "secondary"}
                       className={cn(
-                        "text-xs px-1.5 py-0.5 rounded-full",
+                        "text-xs px-1.5 py-0.5 rounded-full bg-white/65 text-primary",
                         selectedDemo === demo.id &&
-                          "bg-primary text-primary-foreground border-transparent",
+                        "bg-primary text-primary-foreground border-transparent",
                       )}
                     >
                       {tag}

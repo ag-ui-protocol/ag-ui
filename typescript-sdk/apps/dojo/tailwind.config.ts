@@ -8,17 +8,10 @@ const config = {
     "./app/**/*.{ts,tsx}",
     "./src/**/*.{ts,tsx}",
   ],
-  prefix: "",
   theme: {
-    container: {
-      center: true,
-      padding: "2rem",
-      screens: {
-        "2xl": "1400px",
-      },
-    },
     extend: {
       colors: {
+        // Shadcn/ui colors
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -53,10 +46,15 @@ const config = {
           foreground: "hsl(var(--card-foreground))",
         },
       },
-      borderRadius: {
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+      fontFamily: {
+        sans: ['Plus Jakarta Sans', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        mono: ['Spline Sans Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+      },
+      boxShadow: {
+        'elevation-sm': 'var(--shadow-sm)',
+        'elevation-md': 'var(--shadow-md)',
+        'elevation-lg': 'var(--shadow-lg)',
+        'elevation-xl': 'var(--shadow-xl)',
       },
       keyframes: {
         "accordion-down": {
