@@ -55,5 +55,5 @@ export default function FeatureLayout({ children, params }: Props) {
     }
   }, [children, codeFiles, readme, view])
 
-  return <div className="bg-(--copilot-kit-background-color) w-full h-full">{content}</div>;
+  return <div className="bg-white rounded-lg overflow-hidden w-full h-full">{content}</div>;
 }
