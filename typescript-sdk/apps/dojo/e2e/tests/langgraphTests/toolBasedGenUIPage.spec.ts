@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { ToolBaseGenUIPage } from "../../pages/langGraphPages/ToolBaseGenUIPage";
 
 const pageURL =
-  "https://ag-ui-dojo-nine.vercel.app/langgraph/feature/tool_based_generative_ui";
+  "/langgraph/feature/tool_based_generative_ui";
 
 test('[LangGraph] Haiku generation and display verification', async ({
   page,

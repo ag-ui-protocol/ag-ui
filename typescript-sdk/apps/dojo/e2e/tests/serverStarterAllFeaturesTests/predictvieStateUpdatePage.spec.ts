@@ -7,7 +7,7 @@ test.describe("Predictive Status Updates Feature", () => {
       const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);
 
       await page.goto(
-        "https://ag-ui-dojo-nine.vercel.app/server-starter-all-features/feature/predictive_state_updates"
+        "/server-starter-all-features/feature/predictive_state_updates"
       );
 
       await predictiveStateUpdates.openChat();
@@ -46,7 +46,7 @@ test.describe("Predictive Status Updates Feature", () => {
       const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);
 
       await page.goto(
-        "https://ag-ui-dojo-nine.vercel.app/server-starter-all-features/feature/predictive_state_updates"
+        "/server-starter-all-features/feature/predictive_state_updates"
       );
 
       await predictiveStateUpdates.openChat();

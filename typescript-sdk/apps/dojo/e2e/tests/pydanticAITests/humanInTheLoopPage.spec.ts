@@ -9,7 +9,7 @@ test.describe("Human in the Loop Feature", () => {
       const humanInLoop = new HumanInLoopPage(page);
 
       await page.goto(
-        "https://ag-ui-dojo-nine.vercel.app/pydantic-ai/feature/human_in_the_loop"
+        "/pydantic-ai/feature/human_in_the_loop"
       );
 
       await humanInLoop.openChat();
@@ -52,7 +52,7 @@ test.describe("Human in the Loop Feature", () => {
       const humanInLoop = new HumanInLoopPage(page);
 
       await page.goto(
-        "https://ag-ui-dojo-nine.vercel.app/pydantic-ai/feature/human_in_the_loop"
+        "/pydantic-ai/feature/human_in_the_loop"
       );
 
       await humanInLoop.openChat();

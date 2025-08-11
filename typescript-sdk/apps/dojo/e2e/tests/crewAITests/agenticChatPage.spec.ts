@@ -11,7 +11,7 @@ test("[CrewAI] Agentic Chat sends and receives a message", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/crewai/feature/agentic_chat"
+      "/crewai/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -31,7 +31,7 @@ test("[CrewAI] Agentic Chat changes background on message and reset", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/crewai/feature/agentic_chat"
+      "/crewai/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -79,7 +79,7 @@ test("[CrewAI] Agentic Chat retains memory of user messages during a conversatio
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/crewai/feature/agentic_chat"
+      "/crewai/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);

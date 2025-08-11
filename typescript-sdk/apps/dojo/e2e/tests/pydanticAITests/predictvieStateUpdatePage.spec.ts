@@ -15,7 +15,7 @@ test.describe("Predictive Status Updates Feature", () => {
 
       // Update URL to new domain
       await page.goto(
-        "https://ag-ui-dojo-nine.vercel.app/pydantic-ai/feature/predictive_state_updates"
+        "/pydantic-ai/feature/predictive_state_updates"
       );
 
       await predictiveStateUpdates.openChat();
@@ -52,7 +52,7 @@ test.describe("Predictive Status Updates Feature", () => {
 
       // Update URL to new domain
       await page.goto(
-        "https://ag-ui-dojo-nine.vercel.app/pydantic-ai/feature/predictive_state_updates"
+        "/pydantic-ai/feature/predictive_state_updates"
       );
 
       await predictiveStateUpdates.openChat();

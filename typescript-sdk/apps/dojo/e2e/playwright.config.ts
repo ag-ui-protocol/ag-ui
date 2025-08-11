@@ -1,5 +1,63 @@
-import { defineConfig } from "@playwright/test";
+import { defineConfig, ReporterDescription } from "@playwright/test";
 import { generateSimpleLayout } from "./slack-layout-simple";
+
+
+
+function getReporters(): ReporterDescription[] {
+  const videoReporter: ReporterDescription = [
+    "./reporters/s3-video-reporter.ts",
+    {
+      outputFile: "test-results/video-urls.json",
+      uploadVideos: true,
+    },
+  ];
+
+  const s3Reporter: ReporterDescription = [
+      "./node_modules/playwright-slack-report/dist/src/SlackReporter.js",
+      {
+        slackWebHookUrl: process.env.SLACK_WEBHOOK_URL,
+        sendResults: "always", // always send results
+        maxNumberOfFailuresToShow: 10,
+        layout: generateSimpleLayout, // Use our simple layout
+      },
+    ];
+
+  let reporters: ReporterDescription[] = [];
+
+  const addVideoAndSlack = process.env.SLACK_WEBHOOK_URL && process.env.AWS_S3_BUCKET_NAME;
+  if (process.env.CI) {
+    reporters = [
+      ["github"],
+      ["html", { open: "never" }],
+    ];
+    if (addVideoAndSlack) {
+      reporters.push(videoReporter, s3Reporter);
+    }
+
+    return reporters;
+  }
+
+  if (addVideoAndSlack) {
+    return [
+      videoReporter,
+      s3Reporter,
+      ["html", { open: "never" }]
+    ];
+  }
+
+  return [
+    ["./clean-reporter.js"],
+    ["html", { open: "never" }],
+  ];
+}
+
+function getBaseUrl(): string {
+  if (process.env.BASE_URL) {
+    return new URL(process.env.BASE_URL).toString();
+  }
+  console.error("BASE_URL is not set");
+  process.exit(1);
+}
 
 export default defineConfig({
   timeout: process.env.CI ? 300_000 : 120_000, // 5min in CI, 2min locally for AI tests
@@ -20,6 +78,7 @@ export default defineConfig({
     actionTimeout: 60_000, // 1 minute for AI-driven actions (clicking, filling)
     // Test isolation - ensure clean state between tests
     testIdAttribute: "data-testid",
+    baseURL: getBaseUrl(),
   },
   expect: {
     timeout: 90_000, // 1.5 minutes for AI-generated content to appear
@@ -38,53 +97,5 @@ export default defineConfig({
       },
     },
   ],
-  reporter: process.env.CI
-    ? [
-        ["github"],
-        ["html", { open: "never" }],
-        // S3 video uploader (runs first to upload videos)
-        [
-          "./reporters/s3-video-reporter.ts",
-          {
-            outputFile: "test-results/video-urls.json",
-            uploadVideos: true,
-          },
-        ],
-        // Slack notifications (runs after videos are uploaded)
-        [
-          "./node_modules/playwright-slack-report/dist/src/SlackReporter.js",
-          {
-            slackWebHookUrl: process.env.SLACK_WEBHOOK_URL,
-            sendResults: "always", // always send results
-            maxNumberOfFailuresToShow: 10,
-            layout: generateSimpleLayout, // Use our simple layout
-          },
-        ],
-      ]
-    : process.env.SLACK_WEBHOOK_URL && process.env.AWS_S3_BUCKET_NAME
-    ? [
-        // Full local testing with S3 + Slack (when both are configured)
-        [
-          "./reporters/s3-video-reporter.ts",
-          {
-            outputFile: "test-results/video-urls.json",
-            uploadVideos: true,
-          },
-        ],
-        [
-          "./node_modules/playwright-slack-report/dist/src/SlackReporter.js",
-          {
-            slackWebHookUrl: process.env.SLACK_WEBHOOK_URL,
-            sendResults: "always",
-            maxNumberOfFailuresToShow: 10,
-            layout: generateSimpleLayout,
-          },
-        ],
-        ["html", { open: "never" }],
-      ]
-    : [
-        // Standard local testing
-        ["./clean-reporter.js"],
-        ["html", { open: "never" }],
-      ],
+  reporter: getReporters(),
 });

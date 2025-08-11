@@ -8,7 +8,7 @@ test.describe("Agent Generative UI Feature", () => {
     const genUIAgent = new AgenticGenUIPage(page);
 
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/server-starter-all-features/feature/agentic_generative_ui"
+      "/server-starter-all-features/feature/agentic_generative_ui"
     );
 
     await genUIAgent.openChat();

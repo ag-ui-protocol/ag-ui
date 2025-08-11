@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { ToolBaseGenUIPage } from "../../pages/mastraPages/ToolBaseGenUIPage";
 
 const pageURL =
-  "https://ag-ui-dojo-nine.vercel.app/mastra/feature/tool_based_generative_ui";
+  "/mastra/feature/tool_based_generative_ui";
 
 test('[Mastra] Haiku generation and display verification', async ({
   page,

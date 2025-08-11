@@ -8,7 +8,7 @@ test.describe("Agent Generative UI Feature", () => {
     const genUIAgent = new AgenticGenUIPage(page);
 
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/crewai/feature/agentic_generative_ui"
+      "/crewai/feature/agentic_generative_ui"
     );
 
     await genUIAgent.openChat();
@@ -39,7 +39,7 @@ test.describe("Agent Generative UI Feature", () => {
     const genUIAgent = new AgenticGenUIPage(page);
 
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/crewai/feature/agentic_generative_ui"
+      "/crewai/feature/agentic_generative_ui"
     );
 
     await genUIAgent.openChat();

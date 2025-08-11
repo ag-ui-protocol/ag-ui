@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { ToolBaseGenUIPage } from "../../pages/agnoPages/ToolBaseGenUIPage";
 
 const pageURL =
-  "https://ag-ui-dojo-nine.vercel.app/agno/feature/tool_based_generative_ui";
+  "/agno/feature/tool_based_generative_ui";
 
 test('[Agno] Haiku generation and display verification', async ({
   page,

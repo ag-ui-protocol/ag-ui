@@ -9,7 +9,7 @@ test.describe("Shared State Feature", () => {
 
     // Update URL to new domain
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/langgraph-fastapi/feature/shared_state"
+      "/langgraph-fastapi/feature/shared_state"
     );
 
     await sharedStateAgent.openChat();
@@ -27,7 +27,7 @@ test.describe("Shared State Feature", () => {
     const sharedStateAgent = new SharedStatePage(page);
 
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/langgraph-fastapi/feature/shared_state"
+      "/langgraph-fastapi/feature/shared_state"
     );
 
     await sharedStateAgent.openChat();

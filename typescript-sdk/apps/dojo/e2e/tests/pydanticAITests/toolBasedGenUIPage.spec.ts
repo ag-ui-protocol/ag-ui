@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { ToolBaseGenUIPage } from "../../pages/pydanticAIPages/ToolBaseGenUIPage";
 
 const pageURL =
-  "https://ag-ui-dojo-nine.vercel.app/pydantic-ai/feature/tool_based_generative_ui";
+  "/pydantic-ai/feature/tool_based_generative_ui";
 
 test('[PydanticAI] Haiku generation and display verification', async ({
   page,
