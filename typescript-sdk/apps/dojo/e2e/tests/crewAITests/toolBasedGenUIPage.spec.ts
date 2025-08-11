@@ -28,11 +28,11 @@ test('[CrewAI] Haiku generation and UI consistency for two different prompts', a
 
   const prompt1 = 'Generate Haiku for "I will always win"';
   await genAIAgent.generateHaiku(prompt1);
-  await genAIAgent.checkHaikuDisplay(page);
+  await genAIAgent.checkGeneratedHaiku();
   await genAIAgent.checkHaikuDisplay(page);
 
   const prompt2 = 'Generate Haiku for "The moon shines bright"';
   await genAIAgent.generateHaiku(prompt2);
-  await genAIAgent.checkHaikuDisplay(page);
-  await genAIAgent.checkHaikuDisplay(page);
+  await genAIAgent.checkGeneratedHaiku(); // Wait for second haiku to be generated
+  await genAIAgent.checkHaikuDisplay(page); // Now compare the second haiku
 });

@@ -4,14 +4,14 @@ import {
   waitForAIResponse,
   retryOnAIFailure,
 } from "../../test-isolation-helper";
-import { AgenticChatPage } from "../../pages/crewAIPages/AgenticChatPage";
+import { AgenticChatPage } from "../../pages/pydanticAIPages/AgenticChatPage";
 
-test("[CrewAI] Agentic Chat sends and receives a message", async ({
+test("[PydanticAI] Agentic Chat sends and receives a message", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/crewai/feature/agentic_chat"
+      "https://ag-ui-dojo-nine.vercel.app/pydantic-ai/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -26,12 +26,12 @@ test("[CrewAI] Agentic Chat sends and receives a message", async ({
   });
 });
 
-test("[CrewAI] Agentic Chat changes background on message and reset", async ({
+test("[PydanticAI] Agentic Chat changes background on message and reset", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/crewai/feature/agentic_chat"
+      "https://ag-ui-dojo-nine.vercel.app/pydantic-ai/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -74,12 +74,12 @@ test("[CrewAI] Agentic Chat changes background on message and reset", async ({
   });
 });
 
-test("[CrewAI] Agentic Chat retains memory of user messages during a conversation", async ({
+test("[PydanticAI] Agentic Chat retains memory of user messages during a conversation", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/crewai/feature/agentic_chat"
+      "https://ag-ui-dojo-nine.vercel.app/pydantic-ai/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
