@@ -8,6 +8,7 @@ import { toolBasedGenerativeUIAgent } from "./agents/tool-based-generative-ui";
 export const mastra = new Mastra({
   server: {
     port: process.env.PORT ? parseInt(process.env.PORT) : 4111,
+    host: "0.0.0.0",
   },
   agents: { agentic_chat: agenticChatAgent, tool_based_generative_ui: toolBasedGenerativeUIAgent },
   storage: new LibSQLStore({

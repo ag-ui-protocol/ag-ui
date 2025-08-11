@@ -14,7 +14,9 @@ test.describe("Agent Generative UI Feature", () => {
     await genUIAgent.openChat();
     await genUIAgent.sendMessage("Hi");
     await genUIAgent.sendButton.click();
-    await page.waitForTimeout(10000); // Sleep for 10 seconds
+    await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 15000 });
+    
     await genUIAgent.plan();
+    await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 8000 });
   });
 });

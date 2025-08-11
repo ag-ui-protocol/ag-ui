@@ -2,14 +2,14 @@
 
 [[package]]
 name = "ag-ui-langgraph"
-version = "0.0.5a0"
+version = "0.0.5"
 description = "Implementation of the AG-UI protocol for LangGraph."
 optional = false
 python-versions = "<3.14,>=3.10"
 groups = ["main"]
 files = [
-    {file = "ag_ui_langgraph-0.0.5a0-py3-none-any.whl", hash = "sha256:8a0784923235bc06748a966233f54e6b018a9d53792f6458b7eff4ce58b92a13"},
-    {file = "ag_ui_langgraph-0.0.5a0.tar.gz", hash = "sha256:d7e99ba29e66eea2e2c4cc0263276acf4c89939df5a2b0178575411a8ed1b9ee"},
+    {file = "ag_ui_langgraph-0.0.5-py3-none-any.whl", hash = "sha256:77ef1a3121818a95907f797972acd7290ec730ada57efeee7bdb6bc6ab24baed"},
+    {file = "ag_ui_langgraph-0.0.5.tar.gz", hash = "sha256:63bd4934bab95042d9095940321d3ee1930b662141e704617d942006943d2a07"},
 ]
 
 [package.dependencies]
@@ -674,7 +674,10 @@ files = [
 [package.dependencies]
 google-api-core = {version = ">=1.34.1,<2.0.dev0 || >=2.11.dev0,<3.0.0", extras = ["grpc"]}
 google-auth = ">=2.14.1,<2.24.0 || >2.24.0,<2.25.0 || >2.25.0,<3.0.0"
-proto-plus = ">=1.22.3,<2.0.0"
+proto-plus = [
+    {version = ">=1.22.3,<2.0.0"},
+    {version = ">=1.25.0,<2.0.0", markers = "python_version >= \"3.13\""},
+]
 protobuf = ">=3.20.2,<4.21.0 || >4.21.0,<4.21.1 || >4.21.1,<4.21.2 || >4.21.2,<4.21.3 || >4.21.3,<4.21.4 || >4.21.4,<4.21.5 || >4.21.5,<7.0.0"
 
 [[package]]
@@ -694,7 +697,10 @@ google-auth = ">=2.14.1,<3.0.0"
 googleapis-common-protos = ">=1.56.2,<2.0.0"
 grpcio = {version = ">=1.49.1,<2.0.0", optional = true, markers = "python_version >= \"3.11\" and extra == \"grpc\""}
 grpcio-status = {version = ">=1.49.1,<2.0.0", optional = true, markers = "python_version >= \"3.11\" and extra == \"grpc\""}
-proto-plus = ">=1.22.3,<2.0.0"
+proto-plus = [
+    {version = ">=1.22.3,<2.0.0"},
+    {version = ">=1.25.0,<2.0.0", markers = "python_version >= \"3.13\""},
+]
 protobuf = ">=3.19.5,<3.20.0 || >3.20.0,<3.20.1 || >3.20.1,<4.21.0 || >4.21.0,<4.21.1 || >4.21.1,<4.21.2 || >4.21.2,<4.21.3 || >4.21.3,<4.21.4 || >4.21.4,<4.21.5 || >4.21.5,<7.0.0"
 requests = ">=2.18.0,<3.0.0"
 
@@ -2963,5 +2969,5 @@ cffi = ["cffi (>=1.11)"]
 
 [metadata]
 lock-version = "2.1"
-python-versions = ">=3.12,<3.13"
-content-hash = "ba074a6c861bfabbc8f58a39b964451a4759734fbddfad104381c548a1105fcc"
+python-versions = ">=3.12,<3.14"
+content-hash = "d8bfe3601f3fc50ba1f596c05f61c98c24455bb6751c5d491a2b923bbf617a26"
