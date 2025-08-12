@@ -319,8 +319,6 @@ export const convertToLegacyEvents =
             ];
           }
           case EventType.RUN_ERROR: {
-            // legacy protocol does not have an event for errors
-            console.error("Run error", event);
             const errorEvent = event as RunErrorEvent;
             return [
               {
