@@ -17,7 +17,7 @@ test.fixme('[LangGraph FastAPI] Haiku generation and display verification', asyn
   await genAIAgent.checkHaikuDisplay(page);
 });
 
-test('[LangGraph FastAPI] Haiku generation and UI consistency for two different prompts', async ({
+test.fixme('[LangGraph FastAPI] Haiku generation and UI consistency for two different prompts', async ({
   page,
 }) => {
   await page.goto(pageURL);

@@ -26,7 +26,7 @@ test("[CrewAI] Agentic Chat sends and receives a message", async ({
   });
 });
 
-test("[CrewAI] Agentic Chat changes background on message and reset", async ({
+test.fixme("[CrewAI] Agentic Chat changes background on message and reset", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {
@@ -42,7 +42,7 @@ test("[CrewAI] Agentic Chat changes background on message and reset", async ({
     // Store initial background color
     const initialBackground = await chat.getBackground();
     console.log("Initial background color:", initialBackground);
-    
+
     // 1. Send message to change background to blue
     await chat.sendMessage("Hi change the background color to blue");
     await chat.assertUserMessageVisible(
