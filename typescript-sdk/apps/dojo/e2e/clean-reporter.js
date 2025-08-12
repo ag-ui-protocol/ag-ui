@@ -73,9 +73,6 @@ class CleanReporter {
     logStamp(`📊 TEST SUMMARY`);
     console.log("=".repeat(60));
 
-    console.log(`\n🔍 FAILURE ANALYSIS:`);
-    console.log(`• Most failures appear to be AI service related`);
-    console.log(`• Check API keys and service availability`);
     if (!process.env.CI) {
       console.log(
         `• Run 'pnpm exec playwright show-report' for detailed HTML report`
