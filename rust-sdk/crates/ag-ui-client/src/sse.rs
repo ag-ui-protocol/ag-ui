@@ -65,6 +65,7 @@ pub trait SseResponseExt {
 }
 
 impl SseResponseExt for Response {
+    #[allow(clippy::manual_async_fn)]
     fn event_source(
         self,
     ) -> impl Future<Output = impl Stream<Item = Result<SseEvent, SseError>>> + Send {
@@ -83,6 +84,7 @@ struct SseEventProcessor;
 
 impl SseEventProcessor {
     /// Creates a new SSE event processor
+    #[allow(clippy::new_ret_no_self)]
     fn new(
         stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + 'static,
     ) -> impl Stream<Item = Result<SseEvent, SseError>> {

@@ -349,7 +349,6 @@ where
     }
 }
 
-
 impl<'a, StateT, FwdPropsT> IntoIterator for &'a Subscribers<StateT, FwdPropsT>
 where
     StateT: AgentState,

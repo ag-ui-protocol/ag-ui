@@ -1,13 +1,13 @@
-use json_patch::PatchOperation;
-use serde_json::Value as JsonValue;
-use std::collections::{HashMap, HashSet};
-
 use ag_ui_core::event::Event;
 use ag_ui_core::types::ids::MessageId;
 use ag_ui_core::types::input::RunAgentInput;
 use ag_ui_core::types::message::{FunctionCall, Message, Role};
 use ag_ui_core::types::tool::ToolCall;
 use ag_ui_core::{AgentState, FwdProps};
+use json_patch::PatchOperation;
+use log::error;
+use serde_json::Value as JsonValue;
+use std::collections::{HashMap, HashSet};
 
 use crate::agent::{AgentError, AgentStateMutation};
 use crate::subscriber::{AgentSubscriberParams, Subscribers};
@@ -528,6 +528,7 @@ where
     }
 
     pub async fn on_error(&self, error: &AgentError) -> Result<(), AgentError> {
+        error!("Agent error: {error}");
         for subscriber in &self.subscribers {
             let _mutation = subscriber
                 .on_run_failed(error, self.to_subscriber_params())

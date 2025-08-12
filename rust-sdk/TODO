@@ -1,5 +1,9 @@
-* Agent "state" handling
-* Run parameters DX improvements
-* More elaborate error handling (especially for deserialization errors)
-* Retries?
-* Documentation
+- [ ] Agent "state" handling
+- [ ] Run parameters DX improvements
+- [ ] More elaborate error handling (especially for deserialization errors)
+- [ ] Retries?
+- [ ] Documentation
+- [ ] JSON Patch types in `ag-ui-core`
+- [ ] Builder patterns on most-used structs
+- [ ] Review EventHandler & Mutations
+- [ ] Subscriber + mutations DX improvement

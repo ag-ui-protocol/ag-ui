@@ -27,16 +27,14 @@ use std::fmt::Debug;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    // Create a base URL for the mock server
-    // Note: Make sure the mock server is running on this address
+
+    // Base URL for the mock server
+    // Run the following command to start the mock server:
+    // `uv run rust-sdk/crates/ag-ui-client/scripts/basic_agent.py`
     let base_url = Url::parse("http://127.0.0.1:3001/")?;
 
-    // Create headers
-    let mut headers = HeaderMap::new();
-    headers.insert("Content-Type", HeaderValue::from_static("application/json"));
-
     // Create the HTTP agent
-    let agent = HttpAgent::new(base_url, headers);
+    let agent = HttpAgent::builder().with_url(base_url).build()?;
 
     // Create a simple subscriber
     let subscriber = LoggingSubscriber::new(true);

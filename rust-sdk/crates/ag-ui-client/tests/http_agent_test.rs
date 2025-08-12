@@ -2,8 +2,6 @@ use ag_ui_client::HttpAgent;
 use ag_ui_client::agent::{Agent, RunAgentParams};
 use ag_ui_core::types::ids::MessageId;
 use ag_ui_core::types::message::{Message, Role};
-use reqwest::Url;
-use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -12,9 +10,11 @@ async fn test_http_agent_basic_functionality() {
     env_logger::init();
 
     // Create an HttpAgent
-    let mut headers = HeaderMap::new();
-    headers.insert("Content-Type", HeaderValue::from_static("application/json"));
-    let agent = HttpAgent::new(Url::parse("http://localhost:3001/").unwrap(), headers);
+    let agent = HttpAgent::builder()
+        .with_url_str("http://localhost:3001/")
+        .unwrap()
+        .build()
+        .unwrap();
 
     // Create a message asking about temperature
     let message = Message::User {
@@ -68,9 +68,11 @@ async fn test_http_agent_basic_functionality() {
 #[tokio::test]
 async fn test_http_agent_tool_calls() {
     // Create an HttpAgent
-    let mut headers = HeaderMap::new();
-    headers.insert("Content-Type", HeaderValue::from_static("application/json"));
-    let agent = HttpAgent::new(Url::parse("http://localhost:3001/").unwrap(), headers);
+    let agent = HttpAgent::builder()
+        .with_url_str("http://localhost:3001/")
+        .unwrap()
+        .build()
+        .unwrap();
 
     // Create a message that should trigger a tool call
     let message = Message::User {
@@ -112,12 +114,11 @@ async fn test_http_agent_tool_calls() {
 #[tokio::test]
 async fn test_http_agent_error_handling() {
     // Create an HttpAgent with an invalid URL
-    let mut headers = HeaderMap::new();
-    headers.insert("Content-Type", HeaderValue::from_static("application/json"));
-    let agent = HttpAgent::new(
-        Url::parse("http://localhost:9999/invalid").unwrap(), // Using a port that's likely not in use
-        headers,
-    );
+    let agent = HttpAgent::builder()
+        .with_url_str("http://localhost:9999/invalid")
+        .unwrap()
+        .build()
+        .unwrap();
 
     // Create a simple message
     let message = Message::User {

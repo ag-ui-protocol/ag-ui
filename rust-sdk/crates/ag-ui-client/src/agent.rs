@@ -41,7 +41,7 @@ where
 
 /// Parameters for running an agent.
 #[derive(Debug, Clone, Default)]
-pub struct RunAgentParams<StateT: AgentState, FwdPropsT = JsonValue> {
+pub struct RunAgentParams<StateT: AgentState = JsonValue, FwdPropsT: FwdProps = JsonValue> {
     pub run_id: Option<RunId>,
     pub tools: Option<Vec<Tool>>,
     pub context: Option<Vec<Context>>,
@@ -90,6 +90,7 @@ pub enum AgentError {
     },
 }
 
+// TODO: Expand documentation
 /// Agent trait
 #[async_trait::async_trait]
 pub trait Agent<StateT = JsonValue, FwdPropsT = JsonValue>: Send + Sync
@@ -102,6 +103,7 @@ where
         input: &RunAgentInput<StateT, FwdPropsT>,
     ) -> Result<EventStream<'async_trait, StateT>, AgentError>;
 
+    // TODO: Expand documentation
     /// The main execution method, containing the full pipeline logic.
     async fn run_agent(
         &self,

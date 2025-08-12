@@ -2,6 +2,9 @@
 name = "ag-ui-client"
 version = "0.1.0"
 edition = "2024"
+description = "Client library for the AG-UI protocol."
+license = "MIT"
+readme = "README.md"
 
 [dependencies]
 ag-ui-core = { path = "../ag-ui-core"}

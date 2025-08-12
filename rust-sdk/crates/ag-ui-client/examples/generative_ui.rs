@@ -152,13 +152,15 @@ where
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    env_logger::Builder::from_default_env().init();
 
+    // Base URL for the mock server
+    // Run the following command to start the mock server:
+    // `uv run rust-sdk/crates/ag-ui-client/scripts/generative_ui.py`
     let base_url = Url::parse("http://127.0.0.1:3001/")?;
-    let headers = HeaderMap::new();
 
     // Create the HTTP agent
-    let agent = HttpAgent::new(base_url, headers);
+    let agent = HttpAgent::builder().with_url(base_url).build()?;
 
     let subscriber = GenerativeUiSubscriber::new();
 

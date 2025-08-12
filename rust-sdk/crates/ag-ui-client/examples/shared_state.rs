@@ -6,13 +6,12 @@ use ag_ui_core::types::ids::MessageId;
 use ag_ui_core::types::message::Message;
 use ag_ui_core::{AgentState, FwdProps, JsonValue};
 use async_trait::async_trait;
+
 use log::info;
 use reqwest::Url;
-use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
-use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub enum SkillLevel {
@@ -146,13 +145,15 @@ where
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    env_logger::Builder::from_default_env().init();
 
+    // Base URL for the mock server
+    // Run the following command to start the mock server:
+    // `uv run rust-sdk/crates/ag-ui-client/scripts/shared_state.py`
     let base_url = Url::parse("http://127.0.0.1:3001/")?;
-    let headers = HeaderMap::new();
 
     // Create the HTTP agent
-    let agent = HttpAgent::new(base_url, headers);
+    let agent = HttpAgent::builder().with_url(base_url).build()?;
 
     let subscriber = RecipeSubscriber::new();
 

@@ -1,5 +1,4 @@
 use ag_ui_client::sse::SseResponseExt;
-use ag_ui_core::event::Event;
 use futures::StreamExt;
 use serde::Deserialize;
 use std::error::Error;

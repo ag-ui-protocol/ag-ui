@@ -2,6 +2,8 @@
 name = "ag-ui-core"
 version = "0.1.0"
 edition = "2024"
+description = "Core type library for the AG-UI protocol."
+license = "MIT"
 
 [dependencies]
 thiserror = { workspace = true }
