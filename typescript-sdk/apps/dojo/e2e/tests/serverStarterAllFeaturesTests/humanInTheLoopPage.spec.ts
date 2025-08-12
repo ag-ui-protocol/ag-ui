@@ -9,7 +9,7 @@ test.describe("Human in the Loop Feature", () => {
       const humanInLoop = new HumanInLoopPage(page);
 
       await page.goto(
-        "https://ag-ui-dojo-nine.vercel.app/server-starter-all-features/feature/human_in_the_loop"
+        "/server-starter-all-features/feature/human_in_the_loop"
       );
 
       await humanInLoop.openChat();

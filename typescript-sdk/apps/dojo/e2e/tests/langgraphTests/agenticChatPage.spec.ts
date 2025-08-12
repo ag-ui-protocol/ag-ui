@@ -11,7 +11,7 @@ test("[LangGraph] Agentic Chat sends and receives a message", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/langgraph/feature/agentic_chat"
+      "/langgraph/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -31,7 +31,7 @@ test("[LangGraph] Agentic Chat changes background on message and reset", async (
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/langgraph/feature/agentic_chat"
+      "/langgraph/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -74,7 +74,7 @@ test("[LangGraph] Agentic Chat retains memory of user messages during a conversa
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/langgraph/feature/agentic_chat"
+      "/langgraph/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);

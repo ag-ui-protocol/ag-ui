@@ -11,7 +11,7 @@ test("[MastraAgentLocal] Agentic Chat sends and receives a message", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/mastra-agent-local/feature/agentic_chat"
+      "/mastra-agent-local/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -31,7 +31,7 @@ test("[MastraAgentLocal] Agentic Chat changes background on message and reset", 
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/mastra-agent-local/feature/agentic_chat"
+      "/mastra-agent-local/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -79,7 +79,7 @@ test("[MastraAgentLocal] Agentic Chat retains memory of user messages during a c
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/mastra-agent-local/feature/agentic_chat"
+      "/mastra-agent-local/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);

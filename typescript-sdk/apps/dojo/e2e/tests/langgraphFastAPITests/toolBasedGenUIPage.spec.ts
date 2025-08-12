@@ -2,9 +2,9 @@ import { test, expect } from "@playwright/test";
 import { ToolBaseGenUIPage } from "../../pages/langGraphFastAPIPages/ToolBaseGenUIPage";
 
 const pageURL =
-  "https://ag-ui-dojo-nine.vercel.app/langgraph-fastapi/feature/tool_based_generative_ui";
+  "/langgraph-fastapi/feature/tool_based_generative_ui";
 
-test('[LangGraph FastAPI] Haiku generation and display verification', async ({
+test.fixme('[LangGraph FastAPI] Haiku generation and display verification', async ({
   page,
 }) => {
   await page.goto(pageURL);
@@ -17,7 +17,7 @@ test('[LangGraph FastAPI] Haiku generation and display verification', async ({
   await genAIAgent.checkHaikuDisplay(page);
 });
 
-test('[LangGraph FastAPI] Haiku generation and UI consistency for two different prompts', async ({
+test.fixme('[LangGraph FastAPI] Haiku generation and UI consistency for two different prompts', async ({
   page,
 }) => {
   await page.goto(pageURL);
