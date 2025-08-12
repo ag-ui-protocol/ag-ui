@@ -685,7 +685,15 @@ class LangGraphAgent:
                     empty_snapshot = snapshot
                     empty_snapshot.values["messages"] = []
                     return empty_snapshot
-                return history_list[idx - 1]  # return one snapshot *before* the one that includes the message
+
+                snapshot_values_without_messages = snapshot.values.copy()
+                del snapshot_values_without_messages["messages"]
+                checkpoint = history_list[idx - 1]
+
+                merged_values = {**checkpoint.values, **snapshot_values_without_messages}
+                checkpoint = checkpoint._replace(values=merged_values)
+
+                return checkpoint
 
         raise ValueError("Message ID not found in history")
 
