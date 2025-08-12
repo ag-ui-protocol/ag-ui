@@ -18,6 +18,7 @@ import {
   StateDeltaEvent,
   MessagesSnapshotEvent,
   ToolCall,
+  RunErrorEvent,
 } from "@ag-ui/core";
 import { Observable } from "rxjs";
 import {
@@ -36,6 +37,7 @@ import {
   LegacyActionExecutionMessage,
   LegacyResultMessage,
   LegacyActionExecutionResult,
+  LegacyRunError
 } from "./types";
 import untruncateJson from "untruncate-json";
 
@@ -319,7 +321,14 @@ export const convertToLegacyEvents =
           case EventType.RUN_ERROR: {
             // legacy protocol does not have an event for errors
             console.error("Run error", event);
-            return [];
+            const errorEvent = event as RunErrorEvent;
+            return [
+              {
+                type: LegacyRuntimeEventTypes.enum.RunError,
+                message: errorEvent.message,
+                code: errorEvent.code,
+              } as LegacyRunError,
+            ];
           }
           case EventType.STEP_STARTED: {
             const stepStarted = event as StepStartedEvent;
