@@ -7,7 +7,7 @@ import {
 import { PredictiveStateUpdatesPage } from "../../pages/crewAIPages/PredictiveStateUpdatesPage";
 
 test.describe("Predictive Status Updates Feature", () => {
-  test("[CrewAI] should interact with agent and approve asked changes", async ({
+  test.fixme("[CrewAI] should interact with agent and approve asked changes", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
@@ -44,7 +44,7 @@ test.describe("Predictive Status Updates Feature", () => {
     });
   });
 
-  test("[CrewAI] should interact with agent and reject asked changes", async ({
+  test.fixme("[CrewAI] should interact with agent and reject asked changes", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {

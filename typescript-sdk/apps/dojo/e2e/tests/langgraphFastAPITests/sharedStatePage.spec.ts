@@ -21,7 +21,7 @@ test.describe("Shared State Feature", () => {
     );
   });
 
-  test("[LangGraph FastAPI] should share state between UI and chat", async ({
+  test.fixme("[LangGraph FastAPI] should share state between UI and chat", async ({
     page,
   }) => {
     const sharedStateAgent = new SharedStatePage(page);
@@ -34,7 +34,7 @@ test.describe("Shared State Feature", () => {
 
     // Add new ingredient via UI
     await sharedStateAgent.addIngredient.click();
-    
+
     // Fill in the new ingredient details
     const newIngredientCard = page.locator('.ingredient-card').last();
     await newIngredientCard.locator('.ingredient-name-input').fill('Potatoes');

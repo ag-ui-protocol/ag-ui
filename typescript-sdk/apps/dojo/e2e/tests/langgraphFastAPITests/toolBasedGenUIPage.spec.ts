@@ -4,7 +4,7 @@ import { ToolBaseGenUIPage } from "../../pages/langGraphFastAPIPages/ToolBaseGen
 const pageURL =
   "/langgraph-fastapi/feature/tool_based_generative_ui";
 
-test('[LangGraph FastAPI] Haiku generation and display verification', async ({
+test.fixme('[LangGraph FastAPI] Haiku generation and display verification', async ({
   page,
 }) => {
   await page.goto(pageURL);

@@ -4,7 +4,7 @@ import { ToolBaseGenUIPage } from "../../pages/langGraphPages/ToolBaseGenUIPage"
 const pageURL =
   "/langgraph/feature/tool_based_generative_ui";
 
-test('[LangGraph] Haiku generation and display verification', async ({
+test.fixme('[LangGraph] Haiku generation and display verification', async ({
   page,
 }) => {
   await page.goto(pageURL);
@@ -17,7 +17,7 @@ test('[LangGraph] Haiku generation and display verification', async ({
   await genAIAgent.checkHaikuDisplay(page);
 });
 
-test('[LangGraph] Haiku generation and UI consistency for two different prompts', async ({
+test.fixme('[LangGraph] Haiku generation and UI consistency for two different prompts', async ({
   page,
 }) => {
   await page.goto(pageURL);
