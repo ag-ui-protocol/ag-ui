@@ -69,17 +69,33 @@ jobs:
         echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > python/ag_ui_langgraph/.env
         echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> python/ag_ui_langgraph/.env
 
-    - name: Run dojo+agents and tests
-      working-directory: typescript-sdk/apps/dojo/e2e
+    - name: Run dojo+agents
+      uses: JarvusInnovations/background-action@v1
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+      with:
+        run: |
+          node ../scripts/run-dojo-everything.js
+        working-directory: typescript-sdk/apps/dojo/e2e
+        wait-on: |
+          http://localhost:9999
+          tcp:localhost:8000
+          tcp:localhost:8001
+          tcp:localhost:8002
+          tcp:localhost:8003
+          tcp:localhost:8004
+          tcp:localhost:8005
+          tcp:localhost:8006
+          tcp:localhost:8007
+          tcp:localhost:8008
+          tcp:localhost:8009
+
+    - name: Run tests
+      working-directory: typescript-sdk/apps/dojo/e2e
+      env:
         BASE_URL: http://localhost:9999
-      run: |
-        node ../scripts/run-dojo-everything.js &
-        npx wait-port 9999
-        sleep 10
-        pnpm test
+      run: pnpm test
 
     - name: Upload traces
       if: always() # Uploads artifacts even if tests fail
