@@ -1,3 +1,13 @@
+function getTimestamp() {
+  return (process.env.CI || process.env.VERBOSE)
+    ? new Date().toLocaleTimeString('en-US', { hour12: false })
+    : '';
+}
+
+function logStamp(...args) {
+  console.log(getTimestamp(), ...args);
+}
+
 class CleanReporter {
   onBegin(config, suite) {
     console.log(`\n🎭 Running ${suite.allTests().length} tests...\n`);
@@ -15,9 +25,9 @@ class CleanReporter {
       .trim();
 
     if (result.status === "passed") {
-      console.log(`✅ ${cleanSuite}: ${testName}`);
+      logStamp(`✅ ${cleanSuite}: ${testName}`);
     } else if (result.status === "failed") {
-      console.log(`❌ ${cleanSuite}: ${testName}`);
+      logStamp(`❌ ${cleanSuite}: ${testName}`);
 
       // Extract the most relevant error info
       const error = result.error || result.errors?.[0];
@@ -60,15 +70,17 @@ class CleanReporter {
 
   onEnd(result) {
     console.log("\n" + "=".repeat(60));
-    console.log(`📊 TEST SUMMARY`);
+    logStamp(`📊 TEST SUMMARY`);
     console.log("=".repeat(60));
 
     console.log(`\n🔍 FAILURE ANALYSIS:`);
     console.log(`• Most failures appear to be AI service related`);
     console.log(`• Check API keys and service availability`);
-    console.log(
-      `• Run 'pnpm exec playwright show-report' for detailed HTML report`
-    );
+    if (!process.env.CI) {
+      console.log(
+        `• Run 'pnpm exec playwright show-report' for detailed HTML report`
+      );
+    }
 
     console.log("=".repeat(60) + "\n");
   }

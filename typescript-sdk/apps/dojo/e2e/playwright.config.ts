@@ -11,7 +11,6 @@ function getReporters(): ReporterDescription[] {
       uploadVideos: true,
     },
   ];
-
   const s3Reporter: ReporterDescription = [
       "./node_modules/playwright-slack-report/dist/src/SlackReporter.js",
       {
@@ -21,34 +20,19 @@ function getReporters(): ReporterDescription[] {
         layout: generateSimpleLayout, // Use our simple layout
       },
     ];
-
-  let reporters: ReporterDescription[] = [];
+  const githubReporter: ReporterDescription = ["github"];
+  const htmlReporter: ReporterDescription = ["html", { open: "never" }];
+  const cleanReporter: ReporterDescription = ["./clean-reporter.js"];
 
   const addVideoAndSlack = process.env.SLACK_WEBHOOK_URL && process.env.AWS_S3_BUCKET_NAME;
-  if (process.env.CI) {
-    reporters = [
-      ["github"],
-      ["html", { open: "never" }],
-    ];
-    if (addVideoAndSlack) {
-      reporters.push(videoReporter, s3Reporter);
-    }
-
-    return reporters;
-  }
-
-  if (addVideoAndSlack) {
-    return [
-      videoReporter,
-      s3Reporter,
-      ["html", { open: "never" }]
-    ];
-  }
 
   return [
-    ["./clean-reporter.js"],
-    ["html", { open: "never" }],
-  ];
+    process.env.CI ? githubReporter : undefined,
+    addVideoAndSlack ? videoReporter : undefined,
+    addVideoAndSlack ? s3Reporter : undefined,
+    htmlReporter,
+    cleanReporter,
+  ].filter(Boolean) as ReporterDescription[];
 }
 
 function getBaseUrl(): string {
@@ -61,10 +45,9 @@ function getBaseUrl(): string {
 
 export default defineConfig({
   timeout: process.env.CI ? 300_000 : 120_000, // 5min in CI, 2min locally for AI tests
-  workers: 1, // Serial execution to avoid race conditions and AI service conflicts
   testDir: "./tests",
-  retries: process.env.CI ? 3 : 0, // More retries for flaky AI tests in CI, 0 for local
-  fullyParallel: false, // Serial execution for deterministic AI test results
+  retries: process.env.CI ? 1 : 0, // More retries for flaky AI tests in CI, 0 for local
+  fullyParallel: true,
   use: {
     headless: true,
     viewport: { width: 1280, height: 720 },
