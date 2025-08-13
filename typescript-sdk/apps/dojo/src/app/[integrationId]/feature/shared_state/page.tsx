@@ -213,6 +213,7 @@ const INITIAL_STATE: RecipeAgentState = {
 };
 
 function Recipe() {
+  const { isMobile } = useMobileView();
   const { state: agentState, setState: setAgentState } = useCoAgent<RecipeAgentState>({
     name: "shared_state",
     initialState: INITIAL_STATE,
@@ -368,6 +369,7 @@ function Recipe() {
   return (
     <form 
     data-testid="recipe-card"
+    style={isMobile ? { marginBottom: "100px" } : {}}
     className="recipe-card">
       {/* Recipe Title */}
       <div className="recipe-header">
