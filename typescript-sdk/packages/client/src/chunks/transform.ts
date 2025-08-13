@@ -130,7 +130,7 @@ export const transformChunks =
               const textMessageStartEvent = {
                 type: EventType.TEXT_MESSAGE_START,
                 messageId: messageChunkEvent.messageId,
-                role: "assistant",
+                role: messageChunkEvent.role || "assistant",
               } as TextMessageStartEvent;
 
               textMessageResult.push(textMessageStartEvent);
