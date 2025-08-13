@@ -7,7 +7,7 @@ import {
 import { PredictiveStateUpdatesPage } from "../../pages/langGraphFastAPIPages/PredictiveStateUpdatesPage";
 
 test.describe("Predictive Status Updates Feature", () => {
-  test.fixme("[LangGraph FastAPI] should interact with agent and approve asked changes", async ({
+  test("[LangGraph FastAPI] should interact with agent and approve asked changes", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
@@ -50,7 +50,7 @@ test.describe("Predictive Status Updates Feature", () => {
     });
   });
 
-  test.fixme("[LangGraph FastAPI] should interact with agent and reject asked changes", async ({
+  test("[LangGraph FastAPI] should interact with agent and reject asked changes", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
