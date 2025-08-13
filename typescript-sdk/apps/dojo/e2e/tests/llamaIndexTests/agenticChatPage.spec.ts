@@ -11,7 +11,7 @@ test("[LlamaIndex] Agentic Chat sends and receives a message", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/llama-index/feature/agentic_chat"
+      "/llama-index/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -31,7 +31,7 @@ test("[LlamaIndex] Agentic Chat changes background on message and reset", async 
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/llama-index/feature/agentic_chat"
+      "/llama-index/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -79,7 +79,7 @@ test("[LlamaIndex] Agentic Chat retains memory of user messages during a convers
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/llama-index/feature/agentic_chat"
+      "/llama-index/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);

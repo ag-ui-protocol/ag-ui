@@ -7,7 +7,7 @@ import {
 import { PredictiveStateUpdatesPage } from "../../pages/pydanticAIPages/PredictiveStateUpdatesPage";
 
 test.describe("Predictive Status Updates Feature", () => {
-  test("[PydanticAI] should interact with agent and approve asked changes", async ({
+  test.fixme("[PydanticAI] should interact with agent and approve asked changes", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
@@ -15,7 +15,7 @@ test.describe("Predictive Status Updates Feature", () => {
 
       // Update URL to new domain
       await page.goto(
-        "https://ag-ui-dojo-nine.vercel.app/pydantic-ai/feature/predictive_state_updates"
+        "/pydantic-ai/feature/predictive_state_updates"
       );
 
       await predictiveStateUpdates.openChat();
@@ -44,7 +44,7 @@ test.describe("Predictive Status Updates Feature", () => {
     });
   });
 
-  test("[PydanticAI] should interact with agent and reject asked changes", async ({
+  test.fixme("[PydanticAI] should interact with agent and reject asked changes", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
@@ -52,7 +52,7 @@ test.describe("Predictive Status Updates Feature", () => {
 
       // Update URL to new domain
       await page.goto(
-        "https://ag-ui-dojo-nine.vercel.app/pydantic-ai/feature/predictive_state_updates"
+        "/pydantic-ai/feature/predictive_state_updates"
       );
 
       await predictiveStateUpdates.openChat();

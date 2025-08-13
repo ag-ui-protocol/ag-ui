@@ -9,7 +9,7 @@ test.describe("Human in the Loop Feature", () => {
       const humanInLoop = new HumanInLoopPage(page);
 
       await page.goto(
-        "https://ag-ui-dojo-nine.vercel.app/llama-index/feature/human_in_the_loop"
+        "/llama-index/feature/human_in_the_loop"
       );
 
       await humanInLoop.openChat();
@@ -53,7 +53,7 @@ test.describe("Human in the Loop Feature", () => {
       const humanInLoop = new HumanInLoopPage(page);
 
       await page.goto(
-        "https://ag-ui-dojo-nine.vercel.app/llama-index/feature/human_in_the_loop"
+        "/llama-index/feature/human_in_the_loop"
       );
 
       await humanInLoop.openChat();

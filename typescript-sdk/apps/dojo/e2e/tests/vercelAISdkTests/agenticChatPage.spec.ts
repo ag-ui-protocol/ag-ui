@@ -11,7 +11,7 @@ test("[verceAISdkPages] Agentic Chat sends and receives a message", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/vercel-ai-sdk/feature/agentic_chat"
+      "/vercel-ai-sdk/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -31,7 +31,7 @@ test("[Vercel AI SDK] Agentic Chat changes background on message and reset", asy
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/vercel-ai-sdk/feature/agentic_chat"
+      "/vercel-ai-sdk/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -79,7 +79,7 @@ test("[Vercel AI SDK] Agentic Chat retains memory of user messages during a conv
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/vercel-ai-sdk/feature/agentic_chat"
+      "/vercel-ai-sdk/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);

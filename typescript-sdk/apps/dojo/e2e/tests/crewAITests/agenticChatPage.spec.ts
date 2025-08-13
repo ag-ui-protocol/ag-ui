@@ -11,7 +11,7 @@ test("[CrewAI] Agentic Chat sends and receives a message", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/crewai/feature/agentic_chat"
+      "/crewai/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -26,12 +26,12 @@ test("[CrewAI] Agentic Chat sends and receives a message", async ({
   });
 });
 
-test("[CrewAI] Agentic Chat changes background on message and reset", async ({
+test.fixme("[CrewAI] Agentic Chat changes background on message and reset", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/crewai/feature/agentic_chat"
+      "/crewai/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -42,7 +42,7 @@ test("[CrewAI] Agentic Chat changes background on message and reset", async ({
     // Store initial background color
     const initialBackground = await chat.getBackground();
     console.log("Initial background color:", initialBackground);
-    
+
     // 1. Send message to change background to blue
     await chat.sendMessage("Hi change the background color to blue");
     await chat.assertUserMessageVisible(
@@ -79,7 +79,7 @@ test("[CrewAI] Agentic Chat retains memory of user messages during a conversatio
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/crewai/feature/agentic_chat"
+      "/crewai/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);

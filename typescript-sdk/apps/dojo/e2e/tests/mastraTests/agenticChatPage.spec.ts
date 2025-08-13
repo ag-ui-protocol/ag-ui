@@ -11,7 +11,7 @@ test("[Mastra] Agentic Chat sends and receives a greeting message", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/mastra/feature/agentic_chat"
+      "/mastra/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -31,7 +31,7 @@ test("[Mastra] Agentic Chat provides weather information", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/mastra/feature/agentic_chat"
+      "/mastra/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -54,7 +54,7 @@ test("[Mastra] Agentic Chat retains memory of previous questions", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/mastra/feature/agentic_chat"
+      "/mastra/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -82,7 +82,7 @@ test("[Mastra] Agentic Chat retains memory of user messages during a conversatio
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/mastra/feature/agentic_chat"
+      "/mastra/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);

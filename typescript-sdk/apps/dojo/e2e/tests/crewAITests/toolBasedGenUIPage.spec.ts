@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { ToolBaseGenUIPage } from "../../pages/crewAIPages/ToolBaseGenUIPage";
 
 const pageURL =
-  "https://ag-ui-dojo-nine.vercel.app/crewai/feature/tool_based_generative_ui";
+  "/crewai/feature/tool_based_generative_ui";
 
 test('[CrewAI] Haiku generation and display verification', async ({
   page,
