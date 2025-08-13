@@ -7,7 +7,7 @@ export const MarkdownComponents = {
     return (
       <h1
         className={cn(
-          "text-3xl font-bold mt-8 mb-6 text-gray-900 dark:text-gray-50 border-b pb-2",
+          "text-3xl font-bold mt-8 mb-6 text-gray-900 dark:text-gray-900 border-b pb-2",
           className,
         )}
         {...props}
@@ -20,7 +20,7 @@ export const MarkdownComponents = {
   h2: ({ className, children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
     return (
       <h2
-        className={cn("text-2xl font-bold mt-8 mb-4 text-gray-900 dark:text-gray-50", className)}
+        className={cn("text-2xl font-bold mt-8 mb-4 text-gray-900 dark:text-gray-900", className)}
         {...props}
       >
         {children}
@@ -31,7 +31,7 @@ export const MarkdownComponents = {
   h3: ({ className, children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
     return (
       <h3
-        className={cn("text-xl font-bold mt-6 mb-3 text-gray-900 dark:text-gray-50", className)}
+        className={cn("text-xl font-bold mt-6 mb-3 text-gray-900 dark:text-gray-900", className)}
         {...props}
       >
         {children}
@@ -43,7 +43,7 @@ export const MarkdownComponents = {
   p: ({ className, children, ...props }: React.HTMLAttributes<HTMLParagraphElement>) => {
     return (
       <p
-        className={cn("my-4 text-gray-700 dark:text-gray-300 leading-relaxed", className)}
+        className={cn("my-4 text-gray-700 dark:text-gray-800 leading-relaxed", className)}
         {...props}
       >
         {children}
@@ -70,7 +70,7 @@ export const MarkdownComponents = {
 
   li: ({ className, children, ...props }: React.HTMLAttributes<HTMLLIElement>) => {
     return (
-      <li className={cn("text-gray-700 dark:text-gray-300 my-1", className)} {...props}>
+      <li className={cn("text-gray-700 dark:text-gray-800 my-1", className)} {...props}>
         {children}
       </li>
     );
@@ -167,7 +167,7 @@ export const MarkdownComponents = {
     return (
       <blockquote
         className={cn(
-          "border-l-4 border-gray-300 dark:border-gray-700 pl-4 py-1 my-4 italic text-gray-700 dark:text-gray-300",
+          "border-l-4 border-gray-300 dark:border-gray-700 pl-4 py-1 my-4 italic text-gray-700 dark:text-gray-800",
           className,
         )}
         {...props}
@@ -190,7 +190,7 @@ export const MarkdownComponents = {
   // Strong/bold text
   strong: ({ className, children, ...props }: React.HTMLAttributes<HTMLElement>) => {
     return (
-      <strong className={cn("font-bold text-gray-900 dark:text-white", className)} {...props}>
+      <strong className={cn("font-bold text-gray-900 dark:text-gray-900", className)} {...props}>
         {children}
       </strong>
     );
@@ -199,7 +199,7 @@ export const MarkdownComponents = {
   // Emphasis/italic text
   em: ({ className, children, ...props }: React.HTMLAttributes<HTMLElement>) => {
     return (
-      <em className={cn("italic text-gray-800 dark:text-gray-200", className)} {...props}>
+      <em className={cn("italic text-gray-800 dark:text-gray-800", className)} {...props}>
         {children}
       </em>
     );

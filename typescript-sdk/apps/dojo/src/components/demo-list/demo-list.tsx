@@ -16,7 +16,7 @@ export function DemoList({ demos, selectedDemo, onSelect, llmSelector }: DemoLis
       <div className="px-4 pt-3 pb-2">
         <h2
           className={cn(
-            "transition-all duration-300 ease-in-out inline-block whitespace-nowrap paragraphs-Small-Regular-Uppercase text-[10px] text-palette-text-secondary opacity-100 scale-100 w-fit",
+            "transition-all duration-300 ease-in-out inline-block whitespace-nowrap paragraphs-Small-Regular-Uppercase text-[10px] text-palette-text-secondary dark:text-gray-400 opacity-100 scale-100 w-fit",
           )}
         >
           Demos
@@ -28,14 +28,14 @@ export function DemoList({ demos, selectedDemo, onSelect, llmSelector }: DemoLis
           <li key={demo.id}>
             <button
               className={cn(
-                "w-full text-left py-2 px-3 rounded-sm hover:bg-white/50 transition-colors",
+                "w-full text-left py-2 px-3 rounded-sm hover:bg-white/50 dark:hover:bg-gray-700/50 transition-colors",
                 "flex flex-col gap-0.5",
-                selectedDemo === demo.id && "bg-white/70",
+                selectedDemo === demo.id && "bg-white/70 dark:bg-gray-700/70",
               )}
               onClick={() => onSelect(demo.id)}
             >
-              <div className="text-sm font-medium leading-tight">{demo.name}</div>
-              <div className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+              <div className="text-sm font-medium leading-tight dark:text-gray-200">{demo.name}</div>
+              <div className="text-xs text-muted-foreground dark:text-gray-400 line-clamp-2 leading-relaxed">
                 {demo.description}
               </div>
               {demo.tags && demo.tags.length > 0 && (
@@ -44,7 +44,7 @@ export function DemoList({ demos, selectedDemo, onSelect, llmSelector }: DemoLis
                     <Badge
                       key={tag}
                       className={cn(
-                        "text-xs px-1.5 py-0.5 rounded-full bg-white/65 text-primary",
+                        "text-xs px-1.5 py-0.5 rounded-full bg-white/65 dark:bg-gray-600/50 text-primary dark:text-gray-200",
                         selectedDemo === demo.id &&
                         "bg-primary text-primary-foreground border-transparent",
                       )}

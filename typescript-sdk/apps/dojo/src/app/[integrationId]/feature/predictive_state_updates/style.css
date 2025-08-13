@@ -82,6 +82,11 @@
   padding: 0.25em 0.3em;
 }
 
+.dark .tiptap code {
+  background-color: hsl(217.2 32.6% 17.5%);
+  color: hsl(210 40% 98%);
+}
+
 .tiptap pre {
   background: var(--black);
   border-radius: 0.5rem;
@@ -117,11 +122,21 @@
   color: rgba(0, 0, 0, 0.7);
 }
 
+.dark .tiptap s {
+  background-color: rgba(248, 113, 113, 0.3);
+  color: rgba(255, 255, 255, 0.8);
+}
+
 .tiptap em {
   background-color: #b2f2bb;
   padding: 2px;
   font-weight: bold;
   font-style: normal;
+}
+
+.dark .tiptap em {
+  background-color: rgba(34, 197, 94, 0.3);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .copilotKitWindow {

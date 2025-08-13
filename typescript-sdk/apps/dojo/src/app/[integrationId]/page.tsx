@@ -47,8 +47,8 @@ export default function IntegrationPage({ params }: IntegrationPageProps) {
     return (
       <div className="flex-1 h-screen w-full flex flex-col items-center justify-start pt-16 px-8">
         <div className="w-full max-w-4xl">
-          <h1 className="text-4xl font-bold text-center">{integration.name}</h1>
-          <p className="text-muted-foreground mt-4 text-center">Integration ID: {integration.id}</p>
+          <h1 className="text-4xl font-bold text-center dark:text-gray-900">{integration.name}</h1>
+          <p className="text-muted-foreground dark:text-gray-600 mt-4 text-center">Integration ID: {integration.id}</p>
         </div>
       </div>
     );

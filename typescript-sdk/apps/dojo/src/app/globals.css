@@ -243,3 +243,8 @@
     @apply bg-background text-foreground font-sans;
   }
 }
+
+/* Essential CopilotKit Dark Mode Fixes - Only for visibility */
+.dark .copilotKitChat {
+  background-color: hsl(222.2 84% 4.9%) !important;
+}

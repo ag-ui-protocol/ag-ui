@@ -42,6 +42,12 @@
   overflow: hidden;
 }
 
+.dark .recipe-card {
+  background-color: rgba(17, 17, 19, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.5), 0 5px 15px rgba(0, 0, 0, 0.3);
+}
+
 .recipe-card:hover {
   transform: translateY(-5px);
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3), 0 10px 20px rgba(0, 0, 0, 0.2);
@@ -60,6 +66,12 @@
   outline: none;
   padding: 8px 0;
   margin-bottom: 0px;
+  background: transparent;
+  color: inherit;
+}
+
+.dark .recipe-title-input {
+  color: hsl(210 40% 98%);
 }
 
 .recipe-meta {
@@ -77,9 +89,17 @@
   color: #555;
 }
 
+.dark .meta-item {
+  color: hsl(215 20.2% 65.1%);
+}
+
 .meta-icon {
   font-size: 20px;
   color: #777;
+}
+
+.dark .meta-icon {
+  color: hsl(215 20.2% 65.1%);
 }
 
 .meta-text {
@@ -99,6 +119,10 @@
   font-weight: 500;
 }
 
+.dark .meta-item select {
+  color: hsl(215 20.2% 65.1%);
+}
+
 .meta-item select:hover,
 .meta-item select:focus {
   color: #FF5722;
@@ -115,6 +139,11 @@
   padding: 8px;
 }
 
+.dark .meta-item select option {
+  color: hsl(210 40% 98%);
+  background-color: hsl(222.2 84% 4.9%);
+}
+
 /* Section Container */
 .section-container {
   margin-bottom: 20px;
@@ -129,6 +158,10 @@
   color: #333;
   position: relative;
   display: inline-block;
+}
+
+.dark .section-title {
+  color: hsl(210 40% 98%);
 }
 
 .section-title:after {
@@ -158,6 +191,11 @@
   font-size: 14px;
   cursor: pointer;
   margin-bottom: 4px;
+  color: inherit;
+}
+
+.dark .dietary-option {
+  color: hsl(215 20.2% 65.1%);
 }
 
 .dietary-option input {
@@ -187,6 +225,12 @@
   border: 1px solid rgba(240, 240, 240, 0.8);
   width: calc(33.333% - 7px);
   box-sizing: border-box;
+}
+
+.dark .ingredient-card {
+  background-color: rgba(40, 40, 42, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
 }
 
 .ingredient-card:hover {
@@ -227,6 +271,10 @@
   flex-shrink: 0;
 }
 
+.dark .ingredient-icon {
+  background-color: hsl(217.2 32.6% 17.5%);
+}
+
 .ingredient-content {
   flex: 1;
   display: flex;
@@ -245,6 +293,12 @@
   text-overflow: ellipsis;
   overflow: hidden;
   white-space: nowrap;
+  color: inherit;
+}
+
+.dark .ingredient-name-input,
+.dark .ingredient-amount-input {
+  color: hsl(210 40% 98%);
 }
 
 .ingredient-name-input {
@@ -257,9 +311,18 @@
   color: #666;
 }
 
+.dark .ingredient-amount-input {
+  color: hsl(215 20.2% 65.1%);
+}
+
 .ingredient-name-input::placeholder,
 .ingredient-amount-input::placeholder {
   color: #aaa;
+}
+
+.dark .ingredient-name-input::placeholder,
+.dark .ingredient-amount-input::placeholder {
+  color: hsl(215 20.2% 65.1%);
 }
 
 .remove-button {
@@ -343,9 +406,19 @@
   align-items: center;
 }
 
+.dark .instruction-content {
+  background-color: hsl(217.2 32.6% 17.5%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
 .instruction-content-editing {
   background-color: #fff9f6;
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12), 0 0 0 2px rgba(255, 112, 67, 0.2);
+}
+
+.dark .instruction-content-editing {
+  background-color: rgba(255, 112, 67, 0.1);
 }
 
 .instruction-content:hover {
@@ -365,6 +438,11 @@
   outline: none;
   padding: 0;
   margin: 0;
+  color: inherit;
+}
+
+.dark .instruction-textarea {
+  color: hsl(210 40% 98%);
 }
 
 .instruction-delete-btn {

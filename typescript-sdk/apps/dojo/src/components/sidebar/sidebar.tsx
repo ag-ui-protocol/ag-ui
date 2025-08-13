@@ -99,11 +99,11 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
     }
   }, []);
 
-  const tabClass = `cursor-pointer flex-1 h-8 px-2 text-sm text-primary shadow-none bg-none border-none font-medium gap-1 rounded-lg data-[state=active]:bg-white data-[state=active]:text-primary data-[state=active]:shadow-none`
+  const tabClass = `cursor-pointer flex-1 h-8 px-2 text-sm text-primary shadow-none bg-none border-none font-medium gap-1 rounded-lg data-[state=active]:bg-white dark:data-[state=active]:bg-gray-800 data-[state=active]:text-primary dark:data-[state=active]:text-white data-[state=active]:shadow-none`
 
   return (
     <div className={`flex flex-col h-full border-2 border-palette-border-default
-      ${isMobile ? 'w-80 shadow-xl bg-white z-99' : 'bg-white/50 w-74 min-w-[296px] flex-shrink-0 rounded-lg overflow-hidden'}
+      ${isMobile ? 'w-80 shadow-xl bg-white dark:bg-gray-900 z-99' : 'bg-white/50 dark:bg-gray-900/95 w-74 min-w-[296px] flex-shrink-0 rounded-lg overflow-hidden'}
     `}>
       {/* Sidebar Header */}
       <div className="p-4">
@@ -120,26 +120,26 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
 
       {/* Controls Section */}
       {(!frameworkPickerHidden|| !viewPickerHidden) && (
-      <div className="p-4 border-b">
+      <div className="p-4 border-b dark:border-gray-700">
         {/* Integration picker */}
         {!frameworkPickerHidden&& (
           <div className="mb-spacing-4">
             <SectionTitle title="Integrations" />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <div className="flex items-center justify-between h-spacing-8 rounded-sm gap-spacing-2 px-spacing-3 transition-colors hover:bg-palette-surface-containerHovered cursor-pointer">
-                  <span className="pb-[2px] text-palette-text-primary font-medium leading-[22px] inline-block truncate">
+                <div className="flex items-center justify-between h-spacing-8 rounded-sm gap-spacing-2 px-spacing-3 transition-colors hover:bg-palette-surface-containerHovered dark:hover:bg-gray-700 cursor-pointer">
+                  <span className="pb-[2px] text-palette-text-primary dark:text-white font-medium leading-[22px] inline-block truncate">
                     {currentIntegration ? currentIntegration.name : "Select Integration"}
                   </span>
-                  <ChevronDown className="text-palette-icon-default transition-transform" size={16} />
+                  <ChevronDown className="text-palette-icon-default dark:text-gray-300 transition-transform" size={16} />
                 </div>
               </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-64 bg-palette-surface-container border-palette-border-container shadow-elevation-md">
+              <DropdownMenuContent className="w-64 bg-palette-surface-container dark:bg-gray-800 border-palette-border-container dark:border-gray-600 shadow-elevation-md">
                 {menuIntegrations.map((integration) => (
                   <DropdownMenuItem
                     key={integration.id}
                     onClick={() => handleIntegrationSelect(integration.id)}
-                    className="cursor-pointer hover:bg-palette-grey-200 text-palette-text-primary text-base h-10 rounded-sm"
+                    className="cursor-pointer hover:bg-palette-grey-200 dark:hover:bg-gray-700 text-palette-text-primary dark:text-gray-200 text-base h-10 rounded-sm"
                   >
                     <span>{integration.name}</span>
                   </DropdownMenuItem>
@@ -215,14 +215,14 @@ function SectionTitle({ title }: { title: string }) {
     >
       <label
         className={cn(
-          "transition-all duration-300 ease-in-out inline-block whitespace-nowrap paragraphs-Small-Regular-Uppercase text-[10px] text-palette-text-secondary opacity-100 scale-100 w-fit",
+          "transition-all duration-300 ease-in-out inline-block whitespace-nowrap paragraphs-Small-Regular-Uppercase text-[10px] text-palette-text-secondary dark:text-gray-400 opacity-100 scale-100 w-fit",
         )}
       >
         {title}
       </label>
       <div
         className={cn(
-          "h-[1px] bg-palette-border-container transition-all duration-300 ease-[cubic-bezier(0.36,0.01,0.22,1)]",
+          "h-[1px] bg-palette-border-container dark:bg-gray-600 transition-all duration-300 ease-[cubic-bezier(0.36,0.01,0.22,1)]",
           "w-full",
         )}
       />
