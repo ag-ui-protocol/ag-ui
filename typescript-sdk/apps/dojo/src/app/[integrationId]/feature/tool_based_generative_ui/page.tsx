@@ -180,6 +180,45 @@ const VALID_IMAGE_NAMES = [
   "Mount_Fuji_Lake_Reflection_Cherry_Blossoms_Sakura_Spring.jpg"
 ];
 
+const validateAndCorrectImageNames = (rawNames: string[] | undefined): string[] | null => {
+  if (!rawNames || rawNames.length !== 3) {
+    return null;
+  }
+
+  const correctedNames: string[] = [];
+  const usedValidNames = new Set<string>();
+
+  for (const name of rawNames) {
+    if (VALID_IMAGE_NAMES.includes(name) && !usedValidNames.has(name)) {
+      correctedNames.push(name);
+      usedValidNames.add(name);
+      if (correctedNames.length === 3) break;
+    }
+  }
+
+  if (correctedNames.length < 3) {
+    const availableFallbacks = VALID_IMAGE_NAMES.filter(name => !usedValidNames.has(name));
+    for (let i = availableFallbacks.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [availableFallbacks[i], availableFallbacks[j]] = [availableFallbacks[j], availableFallbacks[i]];
+    }
+
+    while (correctedNames.length < 3 && availableFallbacks.length > 0) {
+      const fallbackName = availableFallbacks.pop();
+      if (fallbackName) {
+        correctedNames.push(fallbackName);
+      }
+    }
+  }
+
+  while (correctedNames.length < 3 && VALID_IMAGE_NAMES.length > 0) {
+    const fallbackName = VALID_IMAGE_NAMES[Math.floor(Math.random() * VALID_IMAGE_NAMES.length)];
+    correctedNames.push(fallbackName);
+  }
+
+  return correctedNames.slice(0, 3);
+};
+
 function HaikuCard({ generatedHaiku, setHaikus, haikus }: HaikuCardProps) {
   return (
     <div
@@ -254,45 +293,6 @@ function Haiku() {
   }])
   const [activeIndex, setActiveIndex] = useState(0);
   const [isJustApplied, setIsJustApplied] = useState(false);
-
-  const validateAndCorrectImageNames = (rawNames: string[] | undefined): string[] | null => {
-    if (!rawNames || rawNames.length !== 3) {
-      return null;
-    }
-
-    const correctedNames: string[] = [];
-    const usedValidNames = new Set<string>();
-
-    for (const name of rawNames) {
-      if (VALID_IMAGE_NAMES.includes(name) && !usedValidNames.has(name)) {
-        correctedNames.push(name);
-        usedValidNames.add(name);
-        if (correctedNames.length === 3) break;
-      }
-    }
-
-    if (correctedNames.length < 3) {
-      const availableFallbacks = VALID_IMAGE_NAMES.filter(name => !usedValidNames.has(name));
-      for (let i = availableFallbacks.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [availableFallbacks[i], availableFallbacks[j]] = [availableFallbacks[j], availableFallbacks[i]];
-      }
-
-      while (correctedNames.length < 3 && availableFallbacks.length > 0) {
-        const fallbackName = availableFallbacks.pop();
-        if (fallbackName) {
-          correctedNames.push(fallbackName);
-        }
-      }
-    }
-
-    while (correctedNames.length < 3 && VALID_IMAGE_NAMES.length > 0) {
-      const fallbackName = VALID_IMAGE_NAMES[Math.floor(Math.random() * VALID_IMAGE_NAMES.length)];
-      correctedNames.push(fallbackName);
-    }
-
-    return correctedNames.slice(0, 3);
-  };
 
   useCopilotAction({
     name: "generate_haiku",
