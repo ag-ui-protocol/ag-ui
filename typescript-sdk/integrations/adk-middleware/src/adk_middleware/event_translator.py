@@ -11,11 +11,8 @@ from ag_ui.core import (
     BaseEvent, EventType,
     TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent,
     ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent,
-    ToolCallChunkEvent,ToolCallResultEvent,
-    StateSnapshotEvent, StateDeltaEvent,
-    MessagesSnapshotEvent,
-    CustomEvent,
-    Message, AssistantMessage, UserMessage, ToolMessage
+    ToolCallResultEvent, StateSnapshotEvent, StateDeltaEvent,
+    CustomEvent
 )
 import json
 from google.adk.events import Event as ADKEvent
@@ -71,7 +68,7 @@ class EventTranslator:
             # Determine action based on ADK streaming pattern
             should_send_end = turn_complete and not is_partial
             
-            logger.info(f"📥 ADK Event: partial={is_partial}, turn_complete={turn_complete}, "
+            logger.debug(f"📥 ADK Event: partial={is_partial}, turn_complete={turn_complete}, "
                        f"is_final_response={is_final_response}, should_send_end={should_send_end}")
             
             # Skip user events (already in the conversation)
@@ -86,9 +83,6 @@ class EventTranslator:
                 ):
                     yield event
             
-
-            
-
             # call _translate_function_calls function to yield Tool Events
             if hasattr(adk_event, 'get_function_calls'):               
                 function_calls = adk_event.get_function_calls()

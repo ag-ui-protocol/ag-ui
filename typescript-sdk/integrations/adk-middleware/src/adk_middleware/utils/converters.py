@@ -74,7 +74,7 @@ def convert_ag_ui_messages_to_adk(messages: List[Message]) -> List[ADKEvent]:
                     role="function",
                     parts=[types.Part(
                         function_response=types.FunctionResponse(
-                            name=message.tool_call_id,  # This might need adjustment
+                            name=message.tool_call_id, 
                             response={"result": message.content} if isinstance(message.content, str) else message.content,
                             id=message.tool_call_id
                         )
@@ -115,7 +115,7 @@ def convert_adk_event_to_ag_ui_message(event: ADKEvent) -> Optional[Message]:
                     content="\n".join(text_parts)
                 )
         
-        elif event.author != "user":  # Assistant/model response
+        else:  # Assistant/model response
             # Extract text and tool calls
             text_parts = []
             tool_calls = []
