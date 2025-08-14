@@ -113,7 +113,7 @@ AG-UI was born from CopilotKit's initial partnership with LangGraph and CrewAI -
 | [Nim]()                                                            | 🛠️ In Progress            | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/29)                     |
 | [Golang]()                                                         | 🛠️ In Progress            | ➡️ [Issue](https://github.com/ag-ui-protocol/ag-ui/issues/156)               |
 | [Rust]()                                                           | 🛠️ In Progress            | ➡️ [Issue](https://github.com/ag-ui-protocol/ag-ui/issues/239)               |
-| [Java]()                                                           | 💡 Open to Contributions  | ➡️ [Issue](https://github.com/ag-ui-protocol/ag-ui/issues/20)                |
+| [Java]()                                                           | 🛠️ In Progress            | ➡️ [GitHub Source](https://github.com/work-m8/ag-ui-4j)                      |
 
 
 [View all supported frameworks →](https://ag-ui.com/frameworks)
