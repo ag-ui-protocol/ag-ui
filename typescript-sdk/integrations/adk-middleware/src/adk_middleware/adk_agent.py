@@ -862,10 +862,9 @@ class ADKAgent:
             ):
 
                 final_response = adk_event.is_final_response()
-                no_usage_response = not adk_event.usage_metadata
                 has_content = adk_event.content and hasattr(adk_event.content, 'parts') and adk_event.content.parts
 
-                if not final_response or (no_usage_response and has_content):
+                if not final_response or (not adk_event.usage_metadata and has_content):
                     # Translate and emit events
                     async for ag_ui_event in event_translator.translate(
                         adk_event,
