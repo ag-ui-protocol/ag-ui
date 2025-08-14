@@ -858,8 +858,12 @@ class ADKAgent:
                 new_message=new_message,
                 run_config=run_config
             ):
-                if not adk_event.is_final_response():
-                # Translate and emit events
+
+                final_response = adk_event.is_final_response()
+                has_content = adk_event.content and hasattr(adk_event.content, 'parts') and adk_event.content.parts
+
+                if not final_response or (not adk_event.usage_metadata and has_content):
+                    # Translate and emit events
                     async for ag_ui_event in event_translator.translate(
                         adk_event,
                         input.thread_id,

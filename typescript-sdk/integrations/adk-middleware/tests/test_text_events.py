@@ -10,6 +10,7 @@ import pytest
 from ag_ui.core import RunAgentInput, UserMessage
 from adk_middleware import ADKAgent
 from google.adk.agents import Agent
+from google.genai import types
 
 
 async def test_message_events():
@@ -85,6 +86,142 @@ async def test_message_events():
     print(f"   CONTENT events: {content_count}")
     
     return validate_message_event_pattern(start_count, end_count, content_count, text_message_events)
+
+
+async def test_message_events_from_before_agent_callback():
+    """Test that we get proper message events with correct START/CONTENT/END patterns,
+    even if we return the message from before_agent_callback.
+    """
+
+    if not os.getenv("GOOGLE_API_KEY"):
+        print("⚠️ GOOGLE_API_KEY not set - using mock test")
+        return await test_with_mock()
+
+    print("🧪 Testing with real Google ADK agent...")
+
+    event_message = "This message was not generated."
+    def return_predefined_message(callback_context):
+        return types.Content(
+            parts=[types.Part(text=event_message)],
+            role="model"  # Assign model role to the overriding response
+        )
+
+    # Create real agent
+    agent = Agent(
+        name="test_agent",
+        instruction="You are a helpful assistant. Keep responses brief.",
+        before_agent_callback=return_predefined_message
+    )
+
+    # Create middleware with direct agent embedding
+    adk_agent = ADKAgent(
+        adk_agent=agent,
+        app_name="test_app",
+        user_id="test_user",
+        use_in_memory_services=True,
+    )
+
+    # Test input
+    test_input = RunAgentInput(
+        thread_id="test_thread",
+        run_id="test_run",
+        messages=[
+            UserMessage(
+                id="msg_1",
+                role="user",
+                content="Say hello in exactly 3 words."
+            )
+        ],
+        state={},
+        context=[],
+        tools=[],
+        forwarded_props={}
+    )
+
+    print("🚀 Running test request...")
+
+    events = []
+    text_message_events = []
+
+    try:
+        async for event in adk_agent.run(test_input):
+            events.append(event)
+            event_type = str(event.type)
+            print(f"📧 {event_type}")
+
+            # Track text message events specifically
+            if "TEXT_MESSAGE" in event_type:
+                text_message_events.append(event_type)
+
+    except Exception as e:
+        print(f"❌ Error during test: {e}")
+        return False
+
+    print(f"\n📊 Results:")
+    print(f"   Total events: {len(events)}")
+    print(f"   Text message events: {text_message_events}")
+
+    # Analyze message event patterns
+    start_count = text_message_events.count("EventType.TEXT_MESSAGE_START")
+    end_count = text_message_events.count("EventType.TEXT_MESSAGE_END")
+    content_count = text_message_events.count("EventType.TEXT_MESSAGE_CONTENT")
+
+    print(f"   START events: {start_count}")
+    print(f"   END events: {end_count}")
+    print(f"   CONTENT events: {content_count}")
+
+    pattern_is_valid = validate_message_event_pattern(start_count, end_count, content_count, text_message_events)
+    if not pattern_is_valid:
+        return False
+
+    expected_text_events = [
+        {
+            "type": "EventType.TEXT_MESSAGE_START",
+        },
+        {
+            "type": "EventType.TEXT_MESSAGE_CONTENT",
+            "delta": event_message
+        },
+        {
+            "type": "EventType.TEXT_MESSAGE_END",
+        }
+    ]
+    return validate_message_events(events, expected_text_events)
+
+
+def validate_message_events(events, expected_events):
+    """Compare expected events by type and delta (if delta exists)."""
+    # Filter events to only those specified in expected_events
+    event_types_to_check = {expected["type"] for expected in expected_events}
+    
+    filtered_events = []
+    for event in events:
+        event_type_str = f"EventType.{event.type.value}"
+        if event_type_str in event_types_to_check:
+            filtered_events.append(event)
+    
+    if len(filtered_events) != len(expected_events):
+        print(f"❌ Event count mismatch: expected {len(expected_events)}, got {len(filtered_events)}")
+        return False
+    
+    for i, (event, expected) in enumerate(zip(filtered_events, expected_events)):
+        # Check event type
+        event_type_str = f"EventType.{event.type.value}"
+        if event_type_str != expected["type"]:
+            print(f"❌ Event {i}: type mismatch - expected {expected['type']}, got {event_type_str}")
+            return False
+        
+        # Check delta if specified
+        if "delta" in expected:
+            if not hasattr(event, 'delta'):
+                print(f"❌ Event {i}: expected delta field but event has none")
+                return False
+            if event.delta != expected["delta"]:
+                print(f"❌ Event {i}: delta mismatch - expected '{expected['delta']}', got '{event.delta}'")
+                return False
+    
+    print("✅ All expected events validated successfully")
+    return True
 
 
 def validate_message_event_pattern(start_count, end_count, content_count, text_message_events):
@@ -317,6 +454,13 @@ async def test_text_message_events():
     """Test that we get proper message events with correct START/CONTENT/END patterns."""
     result = await test_message_events()
     assert result, "Text message events test failed"
+
+
+@pytest.mark.asyncio
+async def test_text_message_events_from_before_agent_callback():
+    """Test that we get proper message events with correct START/CONTENT/END patterns."""
+    result = await test_message_events_from_before_agent_callback()
+    assert result, "Text message events for before_agent_callback test failed"
 
 
 @pytest.mark.asyncio 
