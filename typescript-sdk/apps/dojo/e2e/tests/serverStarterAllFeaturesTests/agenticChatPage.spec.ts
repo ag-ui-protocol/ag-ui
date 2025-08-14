@@ -11,7 +11,7 @@ test("[Server Starter all features] Agentic Chat displays countdown from 10 to 1
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/server-starter-all-features/feature/agentic_chat"
+      "/server-starter-all-features/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);

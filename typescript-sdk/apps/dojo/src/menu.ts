@@ -57,7 +57,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   },
   {
     id: "langgraph",
-    name: "LangGraph",
+    name: "LangGraph (Python)",
     features: [
       "agentic_chat",
       "human_in_the_loop",
@@ -69,7 +69,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   },
   {
     id: "langgraph-fastapi",
-    name: "LangGraph FastAPI",
+    name: "LangGraph (FastAPI)",
     features: [
       "agentic_chat",
       "human_in_the_loop",
@@ -78,6 +78,19 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
       "predictive_state_updates",
       "shared_state",
       "agentic_chat_reasoning",
+    ],
+  },
+
+  {
+    id: "langgraph-typescript",
+    name: "LangGraph (Typescript)",
+    features: [
+      "agentic_chat",
+      "human_in_the_loop",
+      "agentic_generative_ui",
+      "tool_based_generative_ui",
+      "predictive_state_updates",
+      "shared_state"
     ],
   },
   {

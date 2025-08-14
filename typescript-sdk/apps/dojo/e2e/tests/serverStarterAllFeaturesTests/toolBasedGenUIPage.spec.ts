@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { ToolBaseGenUIPage } from "../../pages/serverStarterAllFeaturesPages/ToolBaseGenUIPage";
 
 const pageURL =
-  "https://ag-ui-dojo-nine.vercel.app/server-starter-all-features/feature/tool_based_generative_ui";
+  "/server-starter-all-features/feature/tool_based_generative_ui";
 
 test('[Server Starter all features] Haiku generation and display verification', async ({
   page,

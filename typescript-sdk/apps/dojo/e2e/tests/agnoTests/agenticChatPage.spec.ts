@@ -11,7 +11,7 @@ test("[Agno] Agentic Chat sends and receives a greeting message", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/agno/feature/agentic_chat"
+      "/agno/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -31,7 +31,7 @@ test("[Agno] Agentic Chat provides stock price information", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/agno/feature/agentic_chat"
+      "/agno/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -54,7 +54,7 @@ test("[Agno] Agentic Chat retains memory of previous questions", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/agno/feature/agentic_chat"
+      "/agno/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -72,7 +72,7 @@ test("[Agno] Agentic Chat retains memory of previous questions", async ({
     await chat.sendMessage("What was my first question");
     await chat.assertUserMessageVisible("What was my first question");
     await waitForAIResponse(page);
-    
+
     // Check if the agent remembers the first question about AAPL stock price
     await chat.assertAgentReplyVisible(/Hi/i);
   });
@@ -83,7 +83,7 @@ test("[Agno] Agentic Chat retains memory of user messages during a conversation"
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/agno/feature/agentic_chat"
+      "/agno/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);

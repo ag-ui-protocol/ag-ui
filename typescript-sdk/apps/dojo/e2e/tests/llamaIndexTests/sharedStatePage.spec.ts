@@ -9,7 +9,7 @@ test.describe("Shared State Feature", () => {
 
     // Update URL to new domain
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/llama-index/feature/shared_state"
+      "/llama-index/feature/shared_state"
     );
 
     await sharedStateAgent.openChat();
@@ -27,7 +27,7 @@ test.describe("Shared State Feature", () => {
     const sharedStateAgent = new SharedStatePage(page);
 
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/llama-index/feature/shared_state"
+      "/llama-index/feature/shared_state"
     );
 
     await sharedStateAgent.openChat();

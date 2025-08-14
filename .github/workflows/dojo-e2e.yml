@@ -9,7 +9,7 @@ on:
 jobs:
   e2e:
     name: E2E Tests
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest-8
 
     steps:
     - name: Checkout code
@@ -52,10 +52,9 @@ jobs:
       run: node ./scripts/prep-dojo-everything.js -e2e
 
     - name: Install e2e dependencies
-      working-directory: typescript-sdk/apps/dojo/e2e2
+      working-directory: typescript-sdk/apps/dojo/e2e
       run: |
-        pnpm install --frozen-lockfile
-        pnpm dlx playwright install --with-deps
+        pnpm install
 
     - name: write langgraph env files
       working-directory: typescript-sdk/integrations/langgraph
@@ -70,21 +69,38 @@ jobs:
         echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > python/ag_ui_langgraph/.env
         echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> python/ag_ui_langgraph/.env
 
-    - name: Run dojo+agents and tests
-      working-directory: typescript-sdk/apps/dojo/e2e2
+    - name: Run dojo+agents
+      uses: JarvusInnovations/background-action@v1
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
-      run: |
-        node ../scripts/run-dojo-everything.js &
-        npx wait-port 9999
-        sleep 10
-        pnpm exec playwright test --reporter=dot
+      with:
+        run: |
+          node ../scripts/run-dojo-everything.js
+        working-directory: typescript-sdk/apps/dojo/e2e
+        wait-on: |
+          http://localhost:9999
+          tcp:localhost:8000
+          tcp:localhost:8001
+          tcp:localhost:8002
+          tcp:localhost:8003
+          tcp:localhost:8004
+          tcp:localhost:8005
+          tcp:localhost:8006
+          tcp:localhost:8007
+          tcp:localhost:8008
+          tcp:localhost:8009
+
+    - name: Run tests
+      working-directory: typescript-sdk/apps/dojo/e2e
+      env:
+        BASE_URL: http://localhost:9999
+      run: pnpm test
 
     - name: Upload traces
       if: always() # Uploads artifacts even if tests fail
       uses: actions/upload-artifact@v4
       with:
         name: playwright-traces
-        path: typescript-sdk/apps/dojo/e2e2/test-results/
+        path: typescript-sdk/apps/dojo/e2e/test-results/
         retention-days: 7

@@ -992,7 +992,9 @@ export class LangGraphAgent extends AbstractAgent {
 
     const targetStateIndex = reversed.indexOf(targetState);
 
-    return reversed[targetStateIndex - 1] ?? { ...targetState, values: {} };
+    const { messages, ...targetStateValuesWithoutMessages } = targetState.values as State
+    const selectedCheckpoint = reversed[targetStateIndex - 1] ?? { ...targetState, values: {} }
+    return { ...selectedCheckpoint, values: { ...selectedCheckpoint.values, ...targetStateValuesWithoutMessages } };
   }
 }
 
