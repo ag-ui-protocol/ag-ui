@@ -1,6 +1,7 @@
-use crate::types::ids::{MessageId, RunId, ThreadId, ToolCallId};
-use crate::types::message::{Message, Role};
-use crate::{AgentState, JsonValue};
+use crate::JsonValue;
+use crate::state::AgentState;
+use crate::types::{Message, Role};
+use crate::types::{MessageId, RunId, ThreadId, ToolCallId};
 use serde::{Deserialize, Serialize};
 
 /// Event types for AG-UI protocol

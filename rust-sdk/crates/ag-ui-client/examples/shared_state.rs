@@ -1,12 +1,11 @@
 use ag_ui_client::agent::{AgentError, AgentStateMutation, RunAgentParams};
+use ag_ui_client::core::event::{StateDeltaEvent, StateSnapshotEvent};
+use ag_ui_client::core::types::Message;
 use ag_ui_client::subscriber::{AgentSubscriber, AgentSubscriberParams};
 use ag_ui_client::{Agent, HttpAgent};
-use ag_ui_core::event::{StateDeltaEvent, StateSnapshotEvent};
-use ag_ui_core::types::ids::MessageId;
-use ag_ui_core::types::message::Message;
-use ag_ui_core::{AgentState, FwdProps, JsonValue};
 use async_trait::async_trait;
 
+use ag_ui_client::core::AgentState;
 use log::info;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -112,14 +111,11 @@ impl RecipeSubscriber {
 }
 
 #[async_trait]
-impl<FwdPropsT> AgentSubscriber<RecipeSnapshot, FwdPropsT> for RecipeSubscriber
-where
-    FwdPropsT: FwdProps + Debug,
-{
+impl AgentSubscriber<RecipeSnapshot, ()> for RecipeSubscriber {
     async fn on_state_snapshot_event(
         &self,
         event: &StateSnapshotEvent<RecipeSnapshot>,
-        _params: AgentSubscriberParams<'async_trait, RecipeSnapshot, FwdPropsT>,
+        _params: AgentSubscriberParams<'async_trait, RecipeSnapshot, ()>,
     ) -> Result<AgentStateMutation<RecipeSnapshot>, AgentError> {
         info!("Received state snapshot update: {:#?}", event.snapshot);
         Ok(AgentStateMutation::default())
@@ -128,7 +124,7 @@ where
     async fn on_state_delta_event(
         &self,
         event: &StateDeltaEvent,
-        _params: AgentSubscriberParams<'async_trait, RecipeSnapshot, FwdPropsT>,
+        _params: AgentSubscriberParams<'async_trait, RecipeSnapshot, ()>,
     ) -> Result<AgentStateMutation<RecipeSnapshot>, AgentError> {
         info!("Received state delta event {:#?}", event.delta);
         Ok(AgentStateMutation::default())
@@ -136,7 +132,7 @@ where
 
     async fn on_state_changed(
         &self,
-        params: AgentSubscriberParams<'async_trait, RecipeSnapshot, FwdPropsT>,
+        params: AgentSubscriberParams<'async_trait, RecipeSnapshot, ()>,
     ) -> Result<(), AgentError> {
         info!("Received state changed event: {:?}", params.state);
         Ok(())
@@ -158,15 +154,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let subscriber = RecipeSubscriber::new();
 
     // Create run parameters
-    let params = RunAgentParams {
-        forwarded_props: Some(JsonValue::Null),
-        messages: vec![Message::User {
-            id: MessageId::random(),
-            content: "I want to bake a loaf of bread, can you give me a recipe?".into(),
-            name: None,
-        }],
-        ..Default::default()
-    };
+    // State & FwdProps types are defined by RecipeSubscriber
+    let params = RunAgentParams::new_typed().add_message(Message::new_user(
+        "I want to bake a loaf of bread, can you give me a recipe?",
+    ));
 
     info!("Starting agent run with input: {:#?}", params);
 

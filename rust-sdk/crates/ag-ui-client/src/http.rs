@@ -5,13 +5,12 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client as HttpClient, Url};
 use std::str::FromStr;
 
-use ag_ui_core::event::Event;
-use ag_ui_core::types::input::RunAgentInput;
-use ag_ui_core::{AgentState, FwdProps};
-
 use crate::Agent;
 use crate::agent::AgentError;
 use crate::agent::AgentError::SerializationError;
+use crate::core::event::Event;
+use crate::core::types::RunAgentInput;
+use crate::core::{AgentState, FwdProps};
 use crate::sse::SseResponseExt;
 use crate::stream::EventStream;
 

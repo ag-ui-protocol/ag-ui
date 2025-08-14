@@ -1,7 +1,6 @@
 use ag_ui_client::agent::{AgentError, AgentStateMutation, RunAgentParams};
-use ag_ui_client::http::HttpAgent;
-use ag_ui_client::subscriber::{AgentSubscriber, AgentSubscriberParams};
-use ag_ui_core::event::{
+use ag_ui_client::core::JsonValue;
+use ag_ui_client::core::event::{
     CustomEvent, Event, MessagesSnapshotEvent, RawEvent, RunErrorEvent, RunFinishedEvent,
     RunStartedEvent, StateDeltaEvent, StateSnapshotEvent, StepFinishedEvent, StepStartedEvent,
     TextMessageChunkEvent, TextMessageContentEvent, TextMessageEndEvent, TextMessageStartEvent,
@@ -9,17 +8,16 @@ use ag_ui_core::event::{
     ThinkingTextMessageEndEvent, ThinkingTextMessageStartEvent, ToolCallArgsEvent,
     ToolCallChunkEvent, ToolCallEndEvent, ToolCallResultEvent, ToolCallStartEvent,
 };
-use ag_ui_core::{AgentState, FwdProps, JsonValue};
+use ag_ui_client::http::HttpAgent;
+use ag_ui_client::subscriber::{AgentSubscriber, AgentSubscriberParams};
 use async_trait::async_trait;
 use reqwest::Url;
-use reqwest::header::{HeaderMap, HeaderValue};
 use std::error::Error;
 
 // Import our simple subscriber implementation
 use ag_ui_client::Agent;
-use ag_ui_core::types::ids::MessageId;
-use ag_ui_core::types::message::Message;
-use ag_ui_core::types::tool::ToolCall;
+use ag_ui_client::core::types::{Message, ToolCall};
+use ag_ui_client::core::{AgentState, FwdProps};
 use log::info;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -40,18 +38,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let subscriber = LoggingSubscriber::new(true);
 
     // Create run parameters
-    let params = RunAgentParams {
-        run_id: None,
-        tools: None,
-        context: None,
-        forwarded_props: Some(serde_json::json!({})),
-        messages: vec![Message::User {
-            id: MessageId::random(),
-            content: "Can you give me the current temperature in New York?".into(),
-            name: None,
-        }],
-        state: serde_json::json!({}),
-    };
+    let params = RunAgentParams::new().add_message(Message::new_user(
+        "Can you give me the current temperature in New York?",
+    ));
 
     info!("Running agent with simple subscriber...");
 

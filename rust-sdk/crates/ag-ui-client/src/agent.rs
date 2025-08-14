@@ -2,13 +2,11 @@ use futures::stream::StreamExt;
 use std::collections::HashSet;
 use thiserror::Error;
 
-use ag_ui_core::types::context::Context;
-use ag_ui_core::types::ids::{AgentId, MessageId, RunId, ThreadId};
-use ag_ui_core::types::input::RunAgentInput;
-use ag_ui_core::types::message::Message;
-use ag_ui_core::types::tool::Tool;
-use ag_ui_core::{AgentState, FwdProps, JsonValue};
-
+use crate::core::JsonValue;
+use crate::core::types::{
+    AgentId, Context, Message, MessageId, RunAgentInput, RunId, ThreadId, Tool,
+};
+use crate::core::{AgentState, FwdProps};
 use crate::event_handler::EventHandler;
 use crate::stream::EventStream;
 use crate::subscriber::IntoSubscribers;
@@ -43,11 +41,68 @@ where
 #[derive(Debug, Clone, Default)]
 pub struct RunAgentParams<StateT: AgentState = JsonValue, FwdPropsT: FwdProps = JsonValue> {
     pub run_id: Option<RunId>,
-    pub tools: Option<Vec<Tool>>,
-    pub context: Option<Vec<Context>>,
-    pub forwarded_props: Option<FwdPropsT>,
+    pub tools: Vec<Tool>,
+    pub context: Vec<Context>,
+    pub forwarded_props: FwdPropsT,
     pub messages: Vec<Message>,
     pub state: StateT,
+}
+
+impl<StateT: AgentState + Default, FwdPropsT: FwdProps + Default>
+    RunAgentParams<StateT, FwdPropsT>
+{
+    pub fn new_typed() -> Self {
+        Self {
+            run_id: None,
+            tools: Vec::new(),
+            context: Vec::new(),
+            forwarded_props: FwdPropsT::default(),
+            messages: Vec::new(),
+            state: StateT::default(),
+        }
+    }
+
+    pub fn with_run_id(mut self, run_id: RunId) -> Self {
+        self.run_id = Some(run_id);
+        self
+    }
+    pub fn add_tool(mut self, tool: Tool) -> Self {
+        self.tools.push(tool);
+        self
+    }
+    pub fn add_context(mut self, ctx: Context) -> Self {
+        self.context.push(ctx);
+        self
+    }
+    pub fn with_forwarded_props(mut self, props: FwdPropsT) -> Self {
+        self.forwarded_props = props;
+        self
+    }
+    pub fn with_state(mut self, state: StateT) -> Self {
+        self.state = state;
+        self
+    }
+    pub fn add_message(mut self, msg: Message) -> Self {
+        self.messages.push(msg);
+        self
+    }
+    pub fn user(mut self, content: impl Into<String>) -> Self {
+        self.messages.push(Message::User {
+            id: MessageId::random(),
+            content: content.into(),
+            name: None,
+        });
+        self
+    }
+}
+
+impl RunAgentParams<JsonValue, JsonValue> {
+    /// Construct an empty parameter object with JSON Values for state and forwarded props.
+    ///
+    /// If you want typed state and/or fwd props, use [Self::new_typed]
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -118,10 +173,10 @@ where
             run_id: params.run_id.clone().unwrap_or_else(RunId::random),
             state: params.state.clone(),
             messages: params.messages.clone(),
-            tools: params.tools.clone().unwrap_or_default(),
-            context: params.context.clone().unwrap_or_default(),
+            tools: params.tools.clone(),
+            context: params.context.clone(),
             // TODO: Find suitable default value
-            forwarded_props: params.forwarded_props.clone().unwrap(),
+            forwarded_props: params.forwarded_props.clone(),
         };
         let current_message_ids: HashSet<&MessageId> =
             params.messages.iter().map(|m| m.id()).collect();

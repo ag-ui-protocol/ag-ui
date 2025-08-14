@@ -1,14 +1,11 @@
 #[cfg(test)]
 mod tests {
     use ag_ui_core::error::AguiError;
-    use ag_ui_core::types::context::Context;
-    use ag_ui_core::types::ids::{MessageId, RunId, ThreadId, ToolCallId};
-    use ag_ui_core::types::input::*;
-    use ag_ui_core::types::message::{
-        AssistantMessage, DeveloperMessage, FunctionCall, Message, Role, SystemMessage,
-        ToolMessage, UserMessage,
+    use ag_ui_core::types::{
+        AssistantMessage, Context, DeveloperMessage, FunctionCall, Message, MessageId, Role,
+        RunAgentInput, RunId, SystemMessage, ThreadId, Tool, ToolCall, ToolCallId, ToolMessage,
+        UserMessage,
     };
-    use ag_ui_core::types::tool::{Tool, ToolCall};
     use serde::{Deserialize, Serialize};
     use serde_json::json;
     use uuid::Uuid;

@@ -1,5 +1,5 @@
-- [ ] Agent "state" handling
-- [ ] Run parameters DX improvements
+- [ ] Agent "state" handling (possibly with actor model)
+- [X] Run parameters DX improvements
 - [ ] More elaborate error handling (especially for deserialization errors)
 - [ ] Retries?
 - [ ] Documentation
@@ -7,3 +7,5 @@
 - [ ] Builder patterns on most-used structs
 - [ ] Review EventHandler & Mutations
 - [ ] Subscriber + mutations DX improvement
+- [ ] Not all messages are being saved?
+- [ ] SSE review

@@ -1,6 +1,7 @@
 use crate::types::ids::ToolCallId;
 use crate::types::message::FunctionCall;
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
@@ -32,7 +33,7 @@ pub struct Tool {
 }
 
 impl Tool {
-    pub fn new(name: String, description: String, parameters: serde_json::Value) -> Self {
+    pub fn new(name: String, description: String, parameters: JsonValue) -> Self {
         Self {
             name,
             description,

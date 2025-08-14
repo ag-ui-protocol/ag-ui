@@ -24,9 +24,6 @@ tokio = "1.36.0"
 env_logger = "0.11.8"
 tokio = { version = "1.36.0", features = ["full"] }
 
-[patch.crates-io]
-ag-ui-core = { path = "../ag-ui-core" }
-
 [[example]]
 name = "http-agent"
 path = "examples/basic_agent.rs"

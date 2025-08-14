@@ -240,37 +240,63 @@ pub enum Message {
 }
 
 impl Message {
-    pub fn new(role: Role, id: impl Into<MessageId>, content: String) -> Self {
+    pub fn new<S: AsRef<str>>(role: Role, id: impl Into<MessageId>, content: S) -> Self {
         match role {
             Role::Developer => Self::Developer {
                 id: id.into(),
-                content,
+                content: content.as_ref().to_string(),
                 name: None,
             },
             Role::System => Self::System {
                 id: id.into(),
-                content,
+                content: content.as_ref().to_string(),
                 name: None,
             },
             Role::Assistant => Self::Assistant {
                 id: id.into(),
-                content: None,
+                content: Some(content.as_ref().to_string()),
                 name: None,
                 tool_calls: None,
             },
             Role::User => Self::User {
                 id: id.into(),
-                content,
+                content: content.as_ref().to_string(),
                 name: None,
             },
             Role::Tool => Self::Tool {
                 id: id.into(),
-                content,
+                content: content.as_ref().to_string(),
                 tool_call_id: ToolCallId::random(),
                 error: None,
             },
         }
     }
+
+    /// Returns a User message with a random ID and the given content
+    pub fn new_user<S: AsRef<str>>(content: S) -> Self {
+        Self::new(Role::User, MessageId::random(), content)
+    }
+
+    /// Returns a Tool message with a random ID and the given content
+    pub fn new_tool<S: AsRef<str>>(content: S) -> Self {
+        Self::new(Role::Tool, MessageId::random(), content)
+    }
+
+    /// Returns a System message with a random ID and the given content
+    pub fn new_system<S: AsRef<str>>(content: S) -> Self {
+        Self::new(Role::System, MessageId::random(), content)
+    }
+
+    /// Returns an Assistant message with a random ID and the given content
+    pub fn new_assistant<S: AsRef<str>>(content: S) -> Self {
+        Self::new(Role::Assistant, MessageId::random(), content)
+    }
+
+    /// Returns a Developer message with a random ID and the given content
+    pub fn new_developer<S: AsRef<str>>(content: S) -> Self {
+        Self::new(Role::Developer, MessageId::random(), content)
+    }
+
     pub fn id(&self) -> &MessageId {
         match self {
             Message::Developer { id, .. } => id,

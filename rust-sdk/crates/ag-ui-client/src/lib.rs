@@ -4,6 +4,7 @@ pub mod http;
 pub mod sse;
 pub(crate) mod stream;
 pub mod subscriber;
-
-pub use agent::Agent;
+pub use agent::{Agent, RunAgentParams};
 pub use http::HttpAgent;
+
+pub use ag_ui_core as core;

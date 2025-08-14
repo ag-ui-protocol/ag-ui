@@ -1,35 +1,23 @@
 use std::error::Error;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::Debug;
 
 use async_trait::async_trait;
 use log::info;
 use reqwest::Url;
-use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
 
 use ag_ui_client::agent::{AgentError, AgentStateMutation, RunAgentParams};
+use ag_ui_client::core::AgentState;
+use ag_ui_client::core::event::{StateDeltaEvent, StateSnapshotEvent};
+use ag_ui_client::core::types::Message;
 use ag_ui_client::subscriber::{AgentSubscriber, AgentSubscriberParams};
 use ag_ui_client::{Agent, HttpAgent};
-use ag_ui_core::event::{StateDeltaEvent, StateSnapshotEvent};
-use ag_ui_core::types::ids::MessageId;
-use ag_ui_core::types::message::Message;
-use ag_ui_core::{AgentState, FwdProps, JsonValue};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
 pub enum StepStatus {
-    #[serde(rename = "pending")]
     Pending,
-    #[serde(rename = "completed")]
     Completed,
-}
-
-impl Display for StepStatus {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            StepStatus::Pending => write!(f, "pending"),
-            StepStatus::Completed => write!(f, "completed"),
-        }
-    }
 }
 
 impl Default for StepStatus {
@@ -71,14 +59,11 @@ impl GenerativeUiSubscriber {
 }
 
 #[async_trait]
-impl<FwdPropsT> AgentSubscriber<Plan, FwdPropsT> for GenerativeUiSubscriber
-where
-    FwdPropsT: FwdProps + Debug,
-{
+impl AgentSubscriber<Plan, ()> for GenerativeUiSubscriber {
     async fn on_state_snapshot_event(
         &self,
         event: &StateSnapshotEvent<Plan>,
-        _params: AgentSubscriberParams<'async_trait, Plan, FwdPropsT>,
+        _params: AgentSubscriberParams<'async_trait, Plan, ()>,
     ) -> Result<AgentStateMutation<Plan>, AgentError> {
         info!("State snapshot received:");
         let plan = &event.snapshot;
@@ -96,7 +81,7 @@ where
     async fn on_state_delta_event(
         &self,
         event: &StateDeltaEvent,
-        _params: AgentSubscriberParams<'async_trait, Plan, FwdPropsT>,
+        _params: AgentSubscriberParams<'async_trait, Plan, ()>,
     ) -> Result<AgentStateMutation<Plan>, AgentError> {
         info!("State delta received:");
         for patch in &event.delta {
@@ -131,7 +116,7 @@ where
 
     async fn on_state_changed(
         &self,
-        params: AgentSubscriberParams<'async_trait, Plan, FwdPropsT>,
+        params: AgentSubscriberParams<'async_trait, Plan, ()>,
     ) -> Result<(), AgentError> {
         info!("Overall state changed");
         let completed_steps = params
@@ -162,20 +147,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Create the HTTP agent
     let agent = HttpAgent::builder().with_url(base_url).build()?;
 
+    let message = Message::new_user(
+        "I need to organize a birthday party for my friend. Can you help me \
+				create a plan? When you have created the plan, please fully execute it.",
+    );
+
     let subscriber = GenerativeUiSubscriber::new();
 
     // Create run parameters for testing generative UI with planning
-    let params = RunAgentParams {
-        messages: vec![Message::User {
-            id: MessageId::random(),
-            content: "I need to organize a birthday party for my friend. Can you help me \
-				create a plan? When you have created the plan, please fully execute it."
-                .into(),
-            name: None,
-        }],
-        forwarded_props: Some(JsonValue::Null),
-        ..Default::default()
-    };
+    // State & FwdProps types are defined by GenerativeUiSubscriber
+    let params = RunAgentParams::new_typed().add_message(message);
 
     info!("Starting generative UI agent run...");
     info!("Testing planning functionality with state snapshots and deltas");

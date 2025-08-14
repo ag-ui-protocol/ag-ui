@@ -1,9 +1,6 @@
 use ag_ui_client::HttpAgent;
 use ag_ui_client::agent::{Agent, RunAgentParams};
-use ag_ui_core::types::ids::MessageId;
-use ag_ui_core::types::message::{Message, Role};
-use serde_json::json;
-use uuid::Uuid;
+use ag_ui_client::core::types::{Message, Role};
 
 #[tokio::test]
 async fn test_http_agent_basic_functionality() {
@@ -17,19 +14,10 @@ async fn test_http_agent_basic_functionality() {
         .unwrap();
 
     // Create a message asking about temperature
-    let message = Message::User {
-        id: MessageId::from(Uuid::new_v4()),
-        content: "What's the temperature in Amsterdam?".to_string(),
-        name: None,
-    };
+    let message = Message::new_user("What's the temperature in Amsterdam?");
 
     // Set up the run parameters
-    let params = RunAgentParams {
-        messages: vec![message],
-        state: json!({}),
-        forwarded_props: Some(json!({})),
-        ..Default::default()
-    };
+    let params = RunAgentParams::new().add_message(message);
 
     // Run the agent
     let result = agent.run_agent(&params, ()).await;
@@ -75,19 +63,10 @@ async fn test_http_agent_tool_calls() {
         .unwrap();
 
     // Create a message that should trigger a tool call
-    let message = Message::User {
-        id: MessageId::from(Uuid::new_v4()),
-        content: "What's the temperature in Amsterdam in Celsius?".to_string(),
-        name: None,
-    };
+    let message = Message::new_user("What's the temperature in Amsterdam in Celsius?");
 
     // Set up the run parameters
-    let params = RunAgentParams {
-        messages: vec![message],
-        state: json!({}),
-        forwarded_props: Some(json!({})),
-        ..Default::default()
-    };
+    let params = RunAgentParams::new().add_message(message);
 
     // Run the agent
     let result = agent.run_agent(&params, ()).await;
@@ -121,19 +100,10 @@ async fn test_http_agent_error_handling() {
         .unwrap();
 
     // Create a simple message
-    let message = Message::User {
-        id: MessageId::from(Uuid::new_v4()),
-        content: "Hello".to_string(),
-        name: None,
-    };
+    let message = Message::new_user("Hello.");
 
     // Set up the run parameters
-    let params = RunAgentParams {
-        messages: vec![message],
-        state: json!({}),
-        forwarded_props: Some(json!({})),
-        ..Default::default()
-    };
+    let params = RunAgentParams::new().add_message(message);
 
     // Run the agent
     let result = agent.run_agent(&params, ()).await;
