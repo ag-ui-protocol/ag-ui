@@ -320,7 +320,7 @@ function Haiku() {
         image_names: finalCorrectedImages || [],
         selectedImage: finalCorrectedImages?.[0] || null,
       };
-      setHaikus(prev => [...prev, newHaiku]);
+      setHaikus(prev => [...prev, newHaiku].filter(h => h.english[0] !== "A placeholder verse—"));
       setActiveIndex(haikus.length - 1);
       setIsJustApplied(true);
       setTimeout(() => setIsJustApplied(false), 600);
@@ -333,15 +333,11 @@ function Haiku() {
     },
   }, [haikus]);
 
-  const generatedHaikus = useMemo(() => (
-    haikus.filter((haiku) => haiku.english[0] !== "A placeholder verse—")
-  ), [haikus]);
-
   const { isMobile } = useMobileView();
 
   return (
     <div className="flex h-full w-full">
-      <Thumbnails generatedHaikus={generatedHaikus} activeIndex={activeIndex} setActiveIndex={setActiveIndex} isMobile={isMobile} />
+      <Thumbnails haikus={haikus} activeIndex={activeIndex} setActiveIndex={setActiveIndex} isMobile={isMobile} />
 
       {/* Main Display */}
       <div className={`flex-1 flex items-center justify-center h-full ${isMobile
@@ -414,11 +410,11 @@ function Haiku() {
   );
 }
 
-function Thumbnails({ generatedHaikus, activeIndex, setActiveIndex, isMobile }: { generatedHaikus: Haiku[], activeIndex: number, setActiveIndex: (index: number) => void, isMobile: boolean }) {
+function Thumbnails({ haikus, activeIndex, setActiveIndex, isMobile }: { haikus: Haiku[], activeIndex: number, setActiveIndex: (index: number) => void, isMobile: boolean }) {
   return (
-    generatedHaikus.length > 0 && !isMobile && (
+    haikus.length > 0 && !isMobile && (
       <div className="w-40 p-4 border-r border-gray-200 overflow-y-auto overflow-x-hidden">
-        {generatedHaikus.map((haiku, index) => (
+        {haikus.map((haiku, index) => (
           <div
             key={index}
             data-testid="thumbnail-haiku"
