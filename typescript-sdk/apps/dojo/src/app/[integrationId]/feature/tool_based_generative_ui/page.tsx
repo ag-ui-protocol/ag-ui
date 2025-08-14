@@ -396,6 +396,7 @@ function Haiku() {
                         width: isMobile ? '90px' : '130px',
                         height: isMobile ? '90px' : '130px',
                         objectFit: 'cover',
+                        marginTop: 0,
                       }}
                       className={(haiku.selectedImage === imageName) ? `suggestion-card-image-focus` : `haiku-card-image`}
                     />
