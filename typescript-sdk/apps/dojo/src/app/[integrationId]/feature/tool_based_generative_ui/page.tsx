@@ -14,31 +14,23 @@ interface ToolBasedGenerativeUIProps {
   }>;
 }
 
-interface GenerateHaiku{
-  japanese : string[] | [],
-  english : string[] | [],
-  image_names : string[] | [],
-  selectedImage : string | null,
+interface GenerateHaiku {
+  japanese: string[] | [],
+  english: string[] | [],
+  image_names: string[] | [],
+  selectedImage: string | null,
 }
 
-interface HaikuCardProps{
-  generatedHaiku : GenerateHaiku | Partial<GenerateHaiku>
-  setHaikus : Dispatch<SetStateAction<GenerateHaiku[]>>
-  haikus : GenerateHaiku[]
+interface HaikuCardProps {
+  generatedHaiku: GenerateHaiku | Partial<GenerateHaiku>
+  setHaikus: Dispatch<SetStateAction<GenerateHaiku[]>>
+  haikus: GenerateHaiku[]
 }
 
 export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIProps) {
   const { integrationId } = React.use(params);
   const { isMobile } = useMobileView();
-  const defaultChatHeight = 50
-  const {
-    isChatOpen,
-    setChatHeight,
-    setIsChatOpen,
-    isDragging,
-    chatHeight,
-    handleDragStart
-  } = useMobileChat(defaultChatHeight)
+
 
   const chatTitle = 'Haiku Generator'
   const chatDescription = 'Ask me to create haikus'
@@ -74,92 +66,105 @@ export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIP
         )}
 
         {/* Mobile Pull-Up Chat */}
-        {isMobile && (
-          <>
-            {/* Chat Toggle Button */}
-            <div className="fixed bottom-0 left-0 right-0 z-50">
-              <div className="bg-gradient-to-t from-white via-white to-transparent h-6"></div>
-              <div
-                className="bg-white border-t border-gray-200 px-4 py-3 flex items-center justify-between cursor-pointer shadow-lg"
-                onClick={() => {
-                  if (!isChatOpen) {
-                    setChatHeight(defaultChatHeight); // Reset to good default when opening
-                  }
-                  setIsChatOpen(!isChatOpen);
-                }}
-              >
-                <div className="flex items-center gap-3">
-                  <div>
-                    <div className="font-medium text-gray-900">{chatTitle}</div>
-                    <div className="text-sm text-gray-500">{chatDescription}</div>
-                  </div>
-                </div>
-                <div className={`transform transition-transform duration-300 ${isChatOpen ? 'rotate-180' : ''}`}>
-                  <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                  </svg>
-                </div>
-              </div>
-            </div>
-
-            {/* Pull-Up Chat Container */}
-            <div
-              className={`fixed inset-x-0 bottom-0 z-40 bg-white rounded-t-2xl shadow-[0px_0px_20px_0px_rgba(0,0,0,0.15)] transform transition-all duration-300 ease-in-out flex flex-col ${
-                isChatOpen ? 'translate-y-0' : 'translate-y-full'
-              } ${isDragging ? 'transition-none' : ''}`}
-              style={{
-                height: `${chatHeight}vh`,
-                paddingBottom: 'env(safe-area-inset-bottom)' // Handle iPhone bottom padding
-              }}
-            >
-              {/* Drag Handle Bar */}
-              <div
-                className="flex justify-center pt-3 pb-2 flex-shrink-0 cursor-grab active:cursor-grabbing"
-                onMouseDown={handleDragStart}
-              >
-                <div className="w-12 h-1 bg-gray-400 rounded-full hover:bg-gray-500 transition-colors"></div>
-              </div>
-
-              {/* Chat Header */}
-              <div className="px-4 py-3 border-b border-gray-100 flex-shrink-0">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <h3 className="font-semibold text-gray-900">{chatTitle}</h3>
-                  </div>
-                  <button
-                    onClick={() => setIsChatOpen(false)}
-                    className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-                  >
-                    <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-              {/* Chat Content - Flexible container for messages and input */}
-              <div className="flex-1 flex flex-col min-h-0 overflow-hidden pb-16">
-                <CopilotChat
-                  className="h-full flex flex-col"
-                  labels={{
-                    initial: initialLabel,
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Backdrop */}
-            {isChatOpen && (
-              <div
-                className="fixed inset-0 z-30"
-                onClick={() => setIsChatOpen(false)}
-              />
-            )}
-          </>
-        )}
+        {isMobile && <MobileChat chatTitle={chatTitle} chatDescription={chatDescription} initialLabel={initialLabel} />}
       </div>
     </CopilotKit>
   );
+}
+
+function MobileChat({ chatTitle, chatDescription, initialLabel }: { chatTitle: string, chatDescription: string, initialLabel: string }) {
+  const defaultChatHeight = 50
+
+  const {
+    isChatOpen,
+    setChatHeight,
+    setIsChatOpen,
+    isDragging,
+    chatHeight,
+    handleDragStart
+  } = useMobileChat(defaultChatHeight)
+  return (
+    <>
+      {/* Chat Toggle Button */}
+      <div className="fixed bottom-0 left-0 right-0 z-50">
+        <div className="bg-gradient-to-t from-white via-white to-transparent h-6"></div>
+        <div
+          className="bg-white border-t border-gray-200 px-4 py-3 flex items-center justify-between cursor-pointer shadow-lg"
+          onClick={() => {
+            if (!isChatOpen) {
+              setChatHeight(defaultChatHeight); // Reset to good default when opening
+            }
+            setIsChatOpen(!isChatOpen);
+          }}
+        >
+          <div className="flex items-center gap-3">
+            <div>
+              <div className="font-medium text-gray-900">{chatTitle}</div>
+              <div className="text-sm text-gray-500">{chatDescription}</div>
+            </div>
+          </div>
+          <div className={`transform transition-transform duration-300 ${isChatOpen ? 'rotate-180' : ''}`}>
+            <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      {/* Pull-Up Chat Container */}
+      <div
+        className={`fixed inset-x-0 bottom-0 z-40 bg-white rounded-t-2xl shadow-[0px_0px_20px_0px_rgba(0,0,0,0.15)] transform transition-all duration-300 ease-in-out flex flex-col ${isChatOpen ? 'translate-y-0' : 'translate-y-full'
+          } ${isDragging ? 'transition-none' : ''}`}
+        style={{
+          height: `${chatHeight}vh`,
+          paddingBottom: 'env(safe-area-inset-bottom)' // Handle iPhone bottom padding
+        }}
+      >
+        {/* Drag Handle Bar */}
+        <div
+          className="flex justify-center pt-3 pb-2 flex-shrink-0 cursor-grab active:cursor-grabbing"
+          onMouseDown={handleDragStart}
+        >
+          <div className="w-12 h-1 bg-gray-400 rounded-full hover:bg-gray-500 transition-colors"></div>
+        </div>
+
+        {/* Chat Header */}
+        <div className="px-4 py-3 border-b border-gray-100 flex-shrink-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <h3 className="font-semibold text-gray-900">{chatTitle}</h3>
+            </div>
+            <button
+              onClick={() => setIsChatOpen(false)}
+              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+            >
+              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Chat Content - Flexible container for messages and input */}
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden pb-16">
+          <CopilotChat
+            className="h-full flex flex-col"
+            labels={{
+              initial: initialLabel,
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Backdrop */}
+      {isChatOpen && (
+        <div
+          className="fixed inset-0 z-30"
+          onClick={() => setIsChatOpen(false)}
+        />
+      )}
+    </>
+  )
 }
 
 const VALID_IMAGE_NAMES = [
@@ -175,14 +180,14 @@ const VALID_IMAGE_NAMES = [
   "Mount_Fuji_Lake_Reflection_Cherry_Blossoms_Sakura_Spring.jpg"
 ];
 
-function HaikuCard({generatedHaiku, setHaikus, haikus} : HaikuCardProps) {
+function HaikuCard({ generatedHaiku, setHaikus, haikus }: HaikuCardProps) {
   return (
     <div
-     data-testid="haiku-card"
-     className="suggestion-card text-left rounded-md p-4 mt-4 mb-4 flex flex-col bg-gray-100">
+      data-testid="haiku-card"
+      className="suggestion-card text-left rounded-md p-4 mt-4 mb-4 flex flex-col bg-gray-100">
       <div className="mb-4 pb-4">
         {generatedHaiku?.japanese?.map((line, index) => (
-          <div className="flex items-center gap-3 mb-2"  data-testid="haiku-line" key={index}>
+          <div className="flex items-center gap-3 mb-2" data-testid="haiku-line" key={index}>
             <p className="text-lg font-bold">{line}</p>
             <p className="text-sm font-light">
               {generatedHaiku.english?.[index]}
@@ -386,11 +391,10 @@ function Haiku() {
       )}
 
       {/* Main Display */}
-      <div className={`flex-1 flex items-center justify-center h-full ${
-        isMobile
+      <div className={`flex-1 flex items-center justify-center h-full ${isMobile
           ? 'px-6'
           : 'p-8'
-      }`} style={{ marginLeft: isMobile ? '0' : '-48px' }}>
+        }`} style={{ marginLeft: isMobile ? '0' : '-48px' }}>
         <div className="haiku-stack w-full max-w-lg">
           {haikus.filter((_haiku: Haiku, index: number) => {
             if (haikus.length == 1) return true;
@@ -408,36 +412,32 @@ function Haiku() {
               {haiku.japanese.map((line, lineIndex) => (
                 <div
                   data-testid="main-haiku-line"
-                  className={`flex items-start mb-4 haiku-line ${
-                    isMobile
+                  className={`flex items-start mb-4 haiku-line ${isMobile
                       ? 'flex-col gap-1'
                       : 'gap-4'
-                  }`}
+                    }`}
                   key={lineIndex}
                   style={{ animationDelay: `${lineIndex * 0.1}s` }}
                 >
-                  <p className={`font-bold text-gray-600 w-auto ${
-                    isMobile
+                  <p className={`font-bold text-gray-600 w-auto ${isMobile
                       ? 'text-2xl leading-tight'
                       : 'text-4xl'
-                  }`}>
+                    }`}>
                     {line}
                   </p>
-                  <p className={`font-light text-gray-500 w-auto ${
-                    isMobile
+                  <p className={`font-light text-gray-500 w-auto ${isMobile
                       ? 'text-sm ml-2'
                       : 'text-base'
-                  }`}>
+                    }`}>
                     {haiku.english?.[lineIndex]}
                   </p>
                 </div>
               ))}
               {haiku.image_names && haiku.image_names.length === 3 && (
-                <div className={`flex justify-center ${
-                  isMobile
+                <div className={`flex justify-center ${isMobile
                     ? 'mt-4 gap-2 flex-wrap'
                     : 'mt-6 gap-4'
-                }`}>
+                  }`}>
                   {haiku.image_names.map((imageName, imgIndex) => (
                     <img
                       key={imageName}
