@@ -398,7 +398,17 @@ function Haiku() {
                         objectFit: 'cover',
                         marginTop: 0,
                       }}
-                      className={(haiku.selectedImage === imageName) ? `suggestion-card-image-focus` : `haiku-card-image`}
+                      className={(haiku.selectedImage === imageName) ? `suggestion-card-image-focus ` : `haiku-card-image`}
+                      onClick={() => setHaikus((prevHaikus) => {
+                        return prevHaikus.map((h, idx) => {
+                          console.log("clicked", imageName, index, idx);
+                          if (idx === index) {
+                            return { ...h, selectedImage: imageName }
+                          } else {
+                            return { ...h }
+                          }
+                        })
+                      })}
                     />
                   ))}
                 </div>
