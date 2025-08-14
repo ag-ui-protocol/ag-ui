@@ -6,6 +6,7 @@ from typing import Optional, Dict, Callable, Any, AsyncGenerator, List
 import time
 import json
 import asyncio
+import inspect
 from datetime import datetime
 
 from ag_ui.core import (
@@ -705,11 +706,25 @@ class ADKAgent:
 
                 if callable(current_instruction):
                     # Handle instructions provider
-                    async def instruction_provider_wrapper(*args, **kwargs):
-                        original_instructions = await current_instruction(*args, **kwargs)
-                        return f"{original_instructions}\n\n{system_content}"
+                    if inspect.iscoroutinefunction(current_instruction):
+                        # Async instruction provider
+                        async def instruction_provider_wrapper_async(*args, **kwargs):
+                            instructions = system_content
+                            original_instructions = await current_instruction(*args, **kwargs) or ''
+                            if original_instructions:
+                                instructions = f"{original_instructions}\n\n{instructions}"
+                            return instructions
+                        new_instruction = instruction_provider_wrapper_async
+                    else:
+                        # Sync instruction provider
+                        def instruction_provider_wrapper_sync(*args, **kwargs):
+                            instructions = system_content
+                            original_instructions = current_instruction(*args, **kwargs) or ''
+                            if original_instructions:
+                                instructions = f"{original_instructions}\n\n{instructions}"
+                            return instructions
+                        new_instruction = instruction_provider_wrapper_sync
 
-                    new_instruction = instruction_provider_wrapper
                     logger.debug(
                         f"Will wrap callable InstructionProvider and append SystemMessage: '{system_content[:100]}...'")
                 else:
