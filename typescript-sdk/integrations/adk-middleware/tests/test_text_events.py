@@ -102,9 +102,9 @@ async def test_message_events_from_before_agent_callback():
     event_message = "This message was not generated."
     def return_predefined_message(callback_context):
         return types.Content(
-                parts=[types.Part(text=event_message)],
-                role="model"  # Assign model role to the overriding response
-            )
+            parts=[types.Part(text=event_message)],
+            role="model"  # Assign model role to the overriding response
+        )
 
     # Create real agent
     agent = Agent(
