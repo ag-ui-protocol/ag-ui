@@ -11,9 +11,7 @@ from datetime import datetime
 from ag_ui.core import (
     RunAgentInput, BaseEvent, EventType,
     RunStartedEvent, RunFinishedEvent, RunErrorEvent,
-    TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent,
-    StateSnapshotEvent, StateDeltaEvent,
-    Context, ToolMessage, ToolCallEndEvent, SystemMessage,ToolCallResultEvent
+    ToolCallEndEvent, SystemMessage,ToolCallResultEvent
 )
 
 from google.adk import Runner
@@ -406,7 +404,7 @@ class ADKAgent:
         # Extract tool results that is send by the frontend 
         tool_results = await self._extract_tool_results(input)
         
-        # if the tool results are not send by the fronted then call the tool function
+        # if the tool results are not sent by the fronted then call the tool function
         if not tool_results:
             logger.error(f"Tool result submission without tool results for thread {thread_id}")
             yield RunErrorEvent(
@@ -476,7 +474,7 @@ class ADKAgent:
             tool_name = tool_call_map.get(most_recent_tool_message.tool_call_id, "unknown")
             
             # Debug: Log the extracted tool message
-            logger.info(f"Extracted most recent ToolMessage: role={most_recent_tool_message.role}, tool_call_id={most_recent_tool_message.tool_call_id}, content='{most_recent_tool_message.content}'")
+            logger.debug(f"Extracted most recent ToolMessage: role={most_recent_tool_message.role}, tool_call_id={most_recent_tool_message.tool_call_id}, content='{most_recent_tool_message.content}'")
             
             return [{
                 'tool_name': tool_name,
@@ -819,7 +817,7 @@ class ADKAgent:
                     content = tool_msg['message'].content
                     
                     # Debug: Log the actual tool message content we received
-                    logger.info(f"Received tool result for call {tool_call_id}: content='{content}', type={type(content)}")
+                    logger.debug(f"Received tool result for call {tool_call_id}: content='{content}', type={type(content)}")
                     
                     # Parse JSON content, handling empty or invalid JSON gracefully
                     try:
