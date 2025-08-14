@@ -6,6 +6,7 @@ from typing import Optional, Dict, Callable, Any, AsyncGenerator, List
 import time
 import json
 import asyncio
+import inspect
 from datetime import datetime
 
 from ag_ui.core import (
@@ -699,18 +700,41 @@ class ADKAgent:
         if input.messages and isinstance(input.messages[0], SystemMessage):
             system_content = input.messages[0].content
             if system_content:
-                # Get existing instruction (may be None or empty)
                 current_instruction = getattr(adk_agent, 'instruction', '') or ''
-                
-                # Append SystemMessage content to existing instructions
-                if current_instruction:
-                    new_instruction = f"{current_instruction}\n\n{system_content}"
+
+                if callable(current_instruction):
+                    # Handle instructions provider
+                    if inspect.iscoroutinefunction(current_instruction):
+                        # Async instruction provider
+                        async def instruction_provider_wrapper_async(*args, **kwargs):
+                            instructions = system_content
+                            original_instructions = await current_instruction(*args, **kwargs) or ''
+                            if original_instructions:
+                                instructions = f"{original_instructions}\n\n{instructions}"
+                            return instructions
+                        new_instruction = instruction_provider_wrapper_async
+                    else:
+                        # Sync instruction provider
+                        def instruction_provider_wrapper_sync(*args, **kwargs):
+                            instructions = system_content
+                            original_instructions = current_instruction(*args, **kwargs) or ''
+                            if original_instructions:
+                                instructions = f"{original_instructions}\n\n{instructions}"
+                            return instructions
+                        new_instruction = instruction_provider_wrapper_sync
+
+                    logger.debug(
+                        f"Will wrap callable InstructionProvider and append SystemMessage: '{system_content[:100]}...'")
                 else:
-                    new_instruction = system_content
-                
+                    # Handle string instructions
+                    if current_instruction:
+                        new_instruction = f"{current_instruction}\n\n{system_content}"
+                    else:
+                        new_instruction = system_content
+                    logger.debug(f"Will append SystemMessage to string instructions: '{system_content[:100]}...'")
+
                 agent_updates['instruction'] = new_instruction
-                logger.debug(f"Will append SystemMessage to agent instructions: '{system_content[:100]}...'")
-        
+
         # Create dynamic toolset if tools provided and prepare tool updates
         toolset = None
         if input.tools:
