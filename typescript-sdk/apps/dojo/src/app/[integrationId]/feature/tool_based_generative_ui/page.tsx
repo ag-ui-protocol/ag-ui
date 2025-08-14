@@ -180,6 +180,10 @@ const VALID_IMAGE_NAMES = [
   "Mount_Fuji_Lake_Reflection_Cherry_Blossoms_Sakura_Spring.jpg"
 ];
 
+function getRandomImage(): string {
+  return VALID_IMAGE_NAMES[Math.floor(Math.random() * VALID_IMAGE_NAMES.length)];
+}
+
 const validateAndCorrectImageNames = (rawNames: string[] | undefined): string[] | null => {
   if (!rawNames || rawNames.length !== 3) {
     return null;
@@ -196,24 +200,12 @@ const validateAndCorrectImageNames = (rawNames: string[] | undefined): string[] 
     }
   }
 
-  if (correctedNames.length < 3) {
-    const availableFallbacks = VALID_IMAGE_NAMES.filter(name => !usedValidNames.has(name));
-    for (let i = availableFallbacks.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [availableFallbacks[i], availableFallbacks[j]] = [availableFallbacks[j], availableFallbacks[i]];
+  while (correctedNames.length < 3) {
+    const nextImage = getRandomImage();
+    if (!usedValidNames.has(nextImage)) {
+      correctedNames.push(nextImage);
+      usedValidNames.add(nextImage);
     }
-
-    while (correctedNames.length < 3 && availableFallbacks.length > 0) {
-      const fallbackName = availableFallbacks.pop();
-      if (fallbackName) {
-        correctedNames.push(fallbackName);
-      }
-    }
-  }
-
-  while (correctedNames.length < 3 && VALID_IMAGE_NAMES.length > 0) {
-    const fallbackName = VALID_IMAGE_NAMES[Math.floor(Math.random() * VALID_IMAGE_NAMES.length)];
-    correctedNames.push(fallbackName);
   }
 
   return correctedNames.slice(0, 3);
