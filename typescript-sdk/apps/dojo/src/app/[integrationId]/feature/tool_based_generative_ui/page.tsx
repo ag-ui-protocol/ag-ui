@@ -107,19 +107,19 @@ export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIP
               className={`fixed inset-x-0 bottom-0 z-40 bg-white rounded-t-2xl shadow-[0px_0px_20px_0px_rgba(0,0,0,0.15)] transform transition-all duration-300 ease-in-out flex flex-col ${
                 isChatOpen ? 'translate-y-0' : 'translate-y-full'
               } ${isDragging ? 'transition-none' : ''}`}
-              style={{ 
+              style={{
                 height: `${chatHeight}vh`,
                 paddingBottom: 'env(safe-area-inset-bottom)' // Handle iPhone bottom padding
               }}
             >
               {/* Drag Handle Bar */}
-              <div 
+              <div
                 className="flex justify-center pt-3 pb-2 flex-shrink-0 cursor-grab active:cursor-grabbing"
                 onMouseDown={handleDragStart}
               >
                 <div className="w-12 h-1 bg-gray-400 rounded-full hover:bg-gray-500 transition-colors"></div>
               </div>
-              
+
               {/* Chat Header */}
               <div className="px-4 py-3 border-b border-gray-100 flex-shrink-0">
                 <div className="flex items-center justify-between">
@@ -177,7 +177,7 @@ const VALID_IMAGE_NAMES = [
 
 function HaikuCard({generatedHaiku, setHaikus, haikus} : HaikuCardProps) {
   return (
-    <div 
+    <div
      data-testid="haiku-card"
      className="suggestion-card text-left rounded-md p-4 mt-4 mb-4 flex flex-col bg-gray-100">
       <div className="mb-4 pb-4">
@@ -388,8 +388,8 @@ function Haiku() {
 
       {/* Main Display */}
       <div className={`flex-1 flex items-center justify-center h-full ${
-        isMobile 
-          ? 'px-6' 
+        isMobile
+          ? 'px-6'
           : 'p-8'
       }`} style={{ marginLeft: isMobile ? '0' : '-48px' }}>
         <div className="haiku-stack w-full max-w-lg">
@@ -410,23 +410,23 @@ function Haiku() {
                 <div
                   data-testid="main-haiku-line"
                   className={`flex items-start mb-4 haiku-line ${
-                    isMobile 
-                      ? 'flex-col gap-1' 
+                    isMobile
+                      ? 'flex-col gap-1'
                       : 'gap-4'
                   }`}
                   key={lineIndex}
                   style={{ animationDelay: `${lineIndex * 0.1}s` }}
                 >
                   <p className={`font-bold text-gray-600 w-auto ${
-                    isMobile 
-                      ? 'text-2xl leading-tight' 
+                    isMobile
+                      ? 'text-2xl leading-tight'
                       : 'text-4xl'
                   }`}>
                     {line}
                   </p>
                   <p className={`font-light text-gray-500 w-auto ${
-                    isMobile 
-                      ? 'text-sm ml-2' 
+                    isMobile
+                      ? 'text-sm ml-2'
                       : 'text-base'
                   }`}>
                     {haiku.english?.[lineIndex]}
@@ -435,8 +435,8 @@ function Haiku() {
               ))}
               {haiku.image_names && haiku.image_names.length === 3 && (
                 <div className={`flex justify-center ${
-                  isMobile 
-                    ? 'mt-4 gap-2 flex-wrap' 
+                  isMobile
+                    ? 'mt-4 gap-2 flex-wrap'
                     : 'mt-6 gap-4'
                 }`}>
                   {haiku.image_names.map((imageName, imgIndex) => (
