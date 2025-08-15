@@ -2,7 +2,7 @@ import { test, expect, waitForAIResponse, retryOnAIFailure, } from "../../test-i
 import { PredictiveStateUpdatesPage } from "../../pages/serverStarterAllFeaturesPages/PredictiveStateUpdatesPage";
 
 test.describe("Predictive Status Updates Feature", () => {
-  test.fixme("[Server Starter all features] should interact with agent and approve asked changes", async ({ page, }) => {
+  test("[Server Starter all features] should interact with agent and approve asked changes", async ({ page, }) => {
     await retryOnAIFailure(async () => {
       const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);
 
@@ -41,7 +41,7 @@ test.describe("Predictive Status Updates Feature", () => {
     });
   });
 
-  test.fixme("[Server Starter all features] should interact with agent and reject asked changes", async ({ page, }) => {
+  test("[Server Starter all features] should interact with agent and reject asked changes", async ({ page, }) => {
     await retryOnAIFailure(async () => {
       const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);
 
