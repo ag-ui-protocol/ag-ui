@@ -300,7 +300,7 @@ function Haiku() {
       {
         name: "image_names",
         type: "string[]",
-        description: "Names of 3 relevant images",
+        description: `Names of 3 relevant images selected from the following: \n  -${VALID_IMAGE_NAMES.join('\n  -')}`,
       },
     ],
     followUp: false,
