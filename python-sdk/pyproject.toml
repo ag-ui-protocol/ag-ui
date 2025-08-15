@@ -1,5 +1,5 @@
 [project]
-name = "ag-ui-protocol"
+name = "ag-ui"
 version = "0.1.9"
 description = ""
 authors = [
@@ -10,13 +10,6 @@ requires-python = ">=3.9,<4.0"
 dependencies = [
     "pydantic>=2.11.2,<3.0.0",
 ]
-packages = [
-    { include = "ag_ui", from = "ag_ui" }
-]
-
-[tool.hatch.build.targets.wheel]
-packages = ["ag_ui"]
-
 
 [build-system]
 requires = ["hatchling"]
