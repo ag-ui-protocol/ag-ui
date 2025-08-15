@@ -340,70 +340,70 @@ function Haiku() {
           {haikus.map((haiku, index) => (
             (haikus.length == 1 || index == activeIndex) && (
 
-            <div
-              key={index}
-              data-testid="main-haiku-display"
-              className={`haiku-card animated-fade-in ${isJustApplied && index === activeIndex ? 'applied-flash' : ''} ${index === activeIndex ? 'active' : ''}`}
-              style={{
-                zIndex: index === activeIndex ? haikus.length : index,
-                transform: `translateY(${index === activeIndex ? '0' : `${(index - activeIndex) * 20}px`}) scale(${index === activeIndex ? '1' : '0.95'})`,
-              }}
-            >
-              {haiku.japanese.map((line, lineIndex) => (
-                <div
-                  data-testid="main-haiku-line"
-                  className={`flex items-start mb-4 haiku-line ${isMobile
-                    ? 'flex-col gap-1'
-                    : 'gap-4'
-                    }`}
-                  key={lineIndex}
-                  style={{ animationDelay: `${lineIndex * 0.1}s` }}
-                >
-                  <p className={`font-bold text-gray-600 w-auto ${isMobile
-                    ? 'text-2xl leading-tight'
-                    : 'text-4xl'
+              <div
+                key={index}
+                data-testid="main-haiku-display"
+                className={`haiku-card animated-fade-in ${isJustApplied && index === activeIndex ? 'applied-flash' : ''} ${index === activeIndex ? 'active' : ''}`}
+                style={{
+                  zIndex: index === activeIndex ? haikus.length : index,
+                  transform: `translateY(${index === activeIndex ? '0' : `${(index - activeIndex) * 20}px`}) scale(${index === activeIndex ? '1' : '0.95'})`,
+                }}
+              >
+                {haiku.japanese.map((line, lineIndex) => (
+                  <div
+                    data-testid="main-haiku-line"
+                    className={`flex items-start mb-4 haiku-line ${isMobile
+                      ? 'flex-col gap-1'
+                      : 'gap-4'
+                      }`}
+                    key={lineIndex}
+                    style={{ animationDelay: `${lineIndex * 0.1}s` }}
+                  >
+                    <p className={`font-bold text-gray-600 w-auto ${isMobile
+                      ? 'text-2xl leading-tight'
+                      : 'text-4xl'
+                      }`}>
+                      {line}
+                    </p>
+                    <p className={`font-light text-gray-500 w-auto ${isMobile
+                      ? 'text-sm ml-2'
+                      : 'text-base'
+                      }`}>
+                      {haiku.english?.[lineIndex]}
+                    </p>
+                  </div>
+                ))}
+                {haiku.image_names && haiku.image_names.length === 3 && (
+                  <div className={`flex justify-center ${isMobile
+                    ? 'mt-4 gap-2 flex-wrap'
+                    : 'mt-6 gap-4'
                     }`}>
-                    {line}
-                  </p>
-                  <p className={`font-light text-gray-500 w-auto ${isMobile
-                    ? 'text-sm ml-2'
-                    : 'text-base'
-                    }`}>
-                    {haiku.english?.[lineIndex]}
-                  </p>
-                </div>
-              ))}
-              {haiku.image_names && haiku.image_names.length === 3 && (
-                <div className={`flex justify-center ${isMobile
-                  ? 'mt-4 gap-2 flex-wrap'
-                  : 'mt-6 gap-4'
-                  }`}>
-                  {haiku.image_names.map((imageName, imgIndex) => (
-                    <img
-                      key={imageName}
-                      src={`/images/${imageName}`}
-                      alt={imageName || ""}
-                      style={{
-                        width: isMobile ? '90px' : '130px',
-                        height: isMobile ? '90px' : '130px',
-                        objectFit: 'cover',
-                        marginTop: 0,
-                      }}
-                      className={(haiku.selectedImage === imageName) ? `suggestion-card-image-focus ` : `haiku-card-image`}
-                      onClick={() => setHaikus((prevHaikus) => {
-                        return prevHaikus.map((h, idx) => {
-                          if (idx === index) {
-                            return { ...h, selectedImage: imageName }
-                          } else {
-                            return { ...h }
-                          }
-                        })
-                      })}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+                    {haiku.image_names.map((imageName, imgIndex) => (
+                      <img
+                        key={imageName}
+                        src={`/images/${imageName}`}
+                        alt={imageName || ""}
+                        style={{
+                          width: isMobile ? '90px' : '130px',
+                          height: isMobile ? '90px' : '130px',
+                          objectFit: 'cover',
+                          marginTop: 0,
+                        }}
+                        className={(haiku.selectedImage === imageName) ? `suggestion-card-image-focus ` : `haiku-card-image`}
+                        onClick={() => setHaikus((prevHaikus) => {
+                          return prevHaikus.map((h, idx) => {
+                            if (idx === index) {
+                              return { ...h, selectedImage: imageName }
+                            } else {
+                              return { ...h }
+                            }
+                          })
+                        })}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
             )
           ))}
         </div>
