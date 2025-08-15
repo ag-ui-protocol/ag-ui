@@ -6,10 +6,12 @@ from ag_ui.core.events import BaseEvent
 
 AGUI_MEDIA_TYPE = "application/vnd.ag-ui.event+proto"
 
+
 class EventEncoder:
     """
     Encodes Agent User Interaction events.
     """
+
     def __init__(self, accept: str | None = None):
         pass
 

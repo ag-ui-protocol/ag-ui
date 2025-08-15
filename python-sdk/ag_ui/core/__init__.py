@@ -29,7 +29,7 @@ from ag_ui.core.events import (
     RunErrorEvent,
     StepStartedEvent,
     StepFinishedEvent,
-    Event
+    Event,
 )
 
 from ag_ui.core.types import (
