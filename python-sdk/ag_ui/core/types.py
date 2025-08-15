@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 JSONValue = Union[str, int, float, bool, None, dict[str, Any], list[Any]]
-AgentStateT = TypeVar("AgentStateT", default=JSONValue, contravariant=True)
+StateT = TypeVar("StateT", default=JSONValue, contravariant=True)
 FwdPropsT = TypeVar("FwdPropsT", default=JSONValue, contravariant=True)
 
 
@@ -127,14 +127,14 @@ class Tool(ConfiguredBaseModel):
     parameters: Any  # JSON Schema for the tool parameters
 
 
-class RunAgentInput(ConfiguredBaseModel, Generic[AgentStateT, FwdPropsT]):
+class RunAgentInput(ConfiguredBaseModel, Generic[StateT, FwdPropsT]):
     """
     Input for running an agent.
     """
 
     thread_id: str
     run_id: str
-    state: AgentStateT
+    state: StateT
     messages: List[Message]
     tools: List[Tool]
     context: List[Context]

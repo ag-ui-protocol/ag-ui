@@ -7,7 +7,7 @@ from typing import Annotated, List, Literal, Optional, Union, Generic
 
 from pydantic import Field
 
-from .types import ConfiguredBaseModel, Message, AgentStateT, JSONValue
+from .types import ConfiguredBaseModel, Message, StateT, JSONValue
 
 
 class EventType(str, Enum):
@@ -193,13 +193,13 @@ class ThinkingEndEvent(BaseEvent):
     type: Literal[EventType.THINKING_END] = EventType.THINKING_END  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
-class StateSnapshotEvent(BaseEvent, Generic[AgentStateT]):
+class StateSnapshotEvent(BaseEvent, Generic[StateT]):
     """
     Event containing a snapshot of the state.
     """
 
     type: Literal[EventType.STATE_SNAPSHOT] = EventType.STATE_SNAPSHOT  # pyright: ignore[reportIncompatibleVariableOverride]
-    snapshot: AgentStateT
+    snapshot: StateT
 
 
 class StateDeltaEvent(BaseEvent):
