@@ -414,53 +414,53 @@ function Haiku() {
 }
 
 function Thumbnails({ haikus, activeIndex, setActiveIndex, isMobile }: { haikus: Haiku[], activeIndex: number, setActiveIndex: (index: number) => void, isMobile: boolean }) {
+  if (haikus.length == 0 || isMobile) { return null }
   return (
-    haikus.length > 0 && !isMobile && (
-      <div className="w-40 p-4 border-r border-gray-200 overflow-y-auto overflow-x-hidden">
-        {haikus.map((haiku, index) => (
-          <div
-            key={index}
-            data-testid="thumbnail-haiku"
-            className={`haiku-card animated-fade-in mb-4 cursor-pointer ${index === activeIndex ? 'active' : ''}`}
-            style={{
-              width: '80px',
-              transform: 'scale(0.2)',
-              transformOrigin: 'top left',
-              marginBottom: '-340px',
-              opacity: index === activeIndex ? 1 : 0.5,
-              transition: 'opacity 0.2s',
-            }}
-            onClick={() => setActiveIndex(index)}
-          >
-            {haiku.japanese.map((line, lineIndex) => (
-              <div
-                className="flex items-start gap-2 mb-2 haiku-line"
-                key={lineIndex}
-              >
-                <p className="text-2xl font-bold text-gray-600 w-auto">{line}</p>
-                <p className="text-xs font-light text-gray-500 w-auto">{haiku.english?.[lineIndex]}</p>
-              </div>
-            ))}
-            {haiku.image_names && haiku.image_names.length === 3 && (
-              <div className="mt-2 flex gap-2 justify-center">
-                {haiku.image_names.map((imageName, imgIndex) => (
-                  <img
-                    style={{
-                      width: '110px',
-                      height: '110px',
-                      objectFit: 'cover',
-                    }}
-                    key={imageName}
-                    src={`/images/${imageName}`}
-                    alt={imageName || ""}
-                    className="haiku-card-image w-12 h-12 object-cover"
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-    )
+    <div className="w-40 p-4 border-r border-gray-200 overflow-y-auto overflow-x-hidden">
+      {haikus.map((haiku, index) => (
+        <div
+          key={index}
+          data-testid="thumbnail-haiku"
+          className={`haiku-card animated-fade-in mb-4 cursor-pointer ${index === activeIndex ? 'active' : ''}`}
+          style={{
+            width: '80px',
+            transform: 'scale(0.2)',
+            transformOrigin: 'top left',
+            marginBottom: '-340px',
+            opacity: index === activeIndex ? 1 : 0.5,
+            transition: 'opacity 0.2s',
+          }}
+          onClick={() => setActiveIndex(index)}
+        >
+          {haiku.japanese.map((line, lineIndex) => (
+            <div
+              className="flex items-start gap-2 mb-2 haiku-line"
+              key={lineIndex}
+            >
+              <p className="text-2xl font-bold text-gray-600 w-auto">{line}</p>
+              <p className="text-xs font-light text-gray-500 w-auto">{haiku.english?.[lineIndex]}</p>
+            </div>
+          ))}
+          {haiku.image_names && haiku.image_names.length === 3 && (
+            <div className="mt-2 flex gap-2 justify-center">
+              {haiku.image_names.map((imageName, imgIndex) => (
+                <img
+                  style={{
+                    width: '110px',
+                    height: '110px',
+                    objectFit: 'cover',
+                  }}
+                  key={imageName}
+                  src={`/images/${imageName}`}
+                  alt={imageName || ""}
+                  className="haiku-card-image w-12 h-12 object-cover"
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
   )
+
 }
