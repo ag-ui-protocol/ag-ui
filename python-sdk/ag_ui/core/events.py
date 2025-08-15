@@ -3,11 +3,11 @@ This module contains the event types for the Agent User Interaction Protocol Pyt
 """
 
 from enum import Enum
-from typing import Annotated, Any, List, Literal, Optional, Union
+from typing import Annotated, List, Literal, Optional, Union, Generic
 
 from pydantic import Field
 
-from .types import ConfiguredBaseModel, Message, State
+from .types import ConfiguredBaseModel, Message, AgentStateT, JSONValue
 
 
 class EventType(str, Enum):
@@ -46,7 +46,7 @@ class BaseEvent(ConfiguredBaseModel):
     """
     type: EventType
     timestamp: Optional[int] = None
-    raw_event: Optional[Any] = None
+    raw_event: Optional[JSONValue] = None
 
 
 class TextMessageStartEvent(BaseEvent):
@@ -161,12 +161,12 @@ class ThinkingEndEvent(BaseEvent):
     """
     type: Literal[EventType.THINKING_END] = EventType.THINKING_END  # pyright: ignore[reportIncompatibleVariableOverride]
 
-class StateSnapshotEvent(BaseEvent):
+class StateSnapshotEvent(BaseEvent, Generic[AgentStateT]):
     """
     Event containing a snapshot of the state.
     """
     type: Literal[EventType.STATE_SNAPSHOT] = EventType.STATE_SNAPSHOT  # pyright: ignore[reportIncompatibleVariableOverride]
-    snapshot: State
+    snapshot: AgentStateT
 
 
 class StateDeltaEvent(BaseEvent):
@@ -174,7 +174,7 @@ class StateDeltaEvent(BaseEvent):
     Event containing a delta of the state.
     """
     type: Literal[EventType.STATE_DELTA] = EventType.STATE_DELTA  # pyright: ignore[reportIncompatibleVariableOverride]
-    delta: List[Any]  # JSON Patch (RFC 6902)
+    delta: JSONValue  # JSON Patch (RFC 6902)
 
 
 class MessagesSnapshotEvent(BaseEvent):
@@ -190,7 +190,7 @@ class RawEvent(BaseEvent):
     Event containing a raw event.
     """
     type: Literal[EventType.RAW] = EventType.RAW  # pyright: ignore[reportIncompatibleVariableOverride]
-    event: Any
+    event: JSONValue
     source: Optional[str] = None
 
 
@@ -200,7 +200,7 @@ class CustomEvent(BaseEvent):
     """
     type: Literal[EventType.CUSTOM] = EventType.CUSTOM  # pyright: ignore[reportIncompatibleVariableOverride]
     name: str
-    value: Any
+    value: JSONValue
 
 
 class RunStartedEvent(BaseEvent):
@@ -219,7 +219,7 @@ class RunFinishedEvent(BaseEvent):
     type: Literal[EventType.RUN_FINISHED] = EventType.RUN_FINISHED  # pyright: ignore[reportIncompatibleVariableOverride]
     thread_id: str
     run_id: str
-    result: Optional[Any] = None
+    result: JSONValue = None
 
 
 class RunErrorEvent(BaseEvent):

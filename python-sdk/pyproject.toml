@@ -1,15 +1,30 @@
-[tool.poetry]
+[project]
 name = "ag-ui-protocol"
-version = "0.1.8"
+version = "0.1.9"
 description = ""
-authors = ["Markus Ecker <markus.ecker@gmail.com>"]
+authors = [
+    { name = "Markus Ecker", email = "markus.ecker@gmail.com" },
+]
 readme = "README.md"
-packages = [{include = "ag_ui", from = "."}]
-[tool.poetry.dependencies]
-python = "^3.9"
-pydantic = "^2.11.2"
+requires-python = ">=3.9,<4.0"
+dependencies = [
+    "pydantic>=2.11.2,<3.0.0",
+]
+packages = [
+    { include = "ag_ui", from = "ag_ui" }
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["ag_ui"]
 
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.17.1",
+    "pyright>=1.1.403",
+    "ruff>=0.12.9",
+]

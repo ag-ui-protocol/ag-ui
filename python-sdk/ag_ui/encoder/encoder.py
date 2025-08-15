@@ -10,7 +10,7 @@ class EventEncoder:
     """
     Encodes Agent User Interaction events.
     """
-    def __init__(self, accept: str = None):
+    def __init__(self, accept: str | None = None):
         pass
 
     def get_content_type(self) -> str:

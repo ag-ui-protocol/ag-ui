@@ -2,10 +2,15 @@
 This module contains the types for the Agent User Interaction Protocol Python SDK.
 """
 
-from typing import Annotated, Any, List, Literal, Optional, Union
+from typing import Annotated, Any, List, Literal, Optional, Union, Generic
+from typing_extensions import TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+
+JSONValue = Union[str, int, float, bool, None, dict[str, Any], list[Any]]
+AgentStateT = TypeVar('AgentStateT', default=JSONValue, contravariant=True)
+FwdPropsT = TypeVar('FwdPropsT', default=JSONValue, contravariant=True)
 
 
 class ConfiguredBaseModel(BaseModel):
@@ -51,7 +56,6 @@ class DeveloperMessage(BaseMessage):
     A developer message.
     """
     role: Literal["developer"] = "developer"  # pyright: ignore[reportIncompatibleVariableOverride]
-    content: str
 
 
 class SystemMessage(BaseMessage):
@@ -59,7 +63,6 @@ class SystemMessage(BaseMessage):
     A system message.
     """
     role: Literal["system"] = "system"  # pyright: ignore[reportIncompatibleVariableOverride]
-    content: str
 
 
 class AssistantMessage(BaseMessage):
@@ -75,7 +78,6 @@ class UserMessage(BaseMessage):
     A user message.
     """
     role: Literal["user"] = "user" # pyright: ignore[reportIncompatibleVariableOverride]
-    content: str
 
 
 class ToolMessage(ConfiguredBaseModel):
@@ -114,18 +116,14 @@ class Tool(ConfiguredBaseModel):
     parameters: Any  # JSON Schema for the tool parameters
 
 
-class RunAgentInput(ConfiguredBaseModel):
+class RunAgentInput(ConfiguredBaseModel, Generic[AgentStateT, FwdPropsT]):
     """
     Input for running an agent.
     """
     thread_id: str
     run_id: str
-    state: Any
+    state: AgentStateT
     messages: List[Message]
     tools: List[Tool]
     context: List[Context]
-    forwarded_props: Any
-
-
-# State can be any type
-State = Any
+    forwarded_props: FwdPropsT

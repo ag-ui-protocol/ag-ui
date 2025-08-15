@@ -1,0 +1,41 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude_types: [ jupyter ]
+      - id: end-of-file-fixer
+        exclude_types: [ jupyter ]
+      - id: check-docstring-first
+      - id: debug-statements
+      - id: check-ast
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: v0.11.8
+    hooks:
+      - id: ruff
+        args: [
+          --fix
+        ]
+      - id: ruff-format
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.15.0
+    hooks:
+      - id: mypy
+        args: [
+          --python-version=3.12,
+          --disallow-untyped-calls,
+          --disallow-untyped-defs,
+          --disallow-incomplete-defs,
+          --check-untyped-defs,
+          --no-implicit-optional,
+          --warn-redundant-casts,
+          --ignore-missing-imports,
+        ]
+        additional_dependencies:
+          - "types-pytz"
+        exclude_types: [ jupyter ]
+        exclude: "tests"
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.8.1
+    hooks:
+      - id: nbstripout
