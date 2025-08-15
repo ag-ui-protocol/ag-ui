@@ -337,10 +337,9 @@ function Haiku() {
         : 'p-8'
         }`} style={{ marginLeft: isMobile ? '0' : '-48px' }}>
         <div className="haiku-stack w-full max-w-lg">
-          {haikus.filter((_haiku: Haiku, index: number) => {
-            if (haikus.length == 1) return true;
-            else return index == activeIndex + 1;
-          }).map((haiku, index) => (
+          {haikus.map((haiku, index) => (
+            (haikus.length == 1 || index == activeIndex) && (
+
             <div
               key={index}
               data-testid="main-haiku-display"
@@ -393,7 +392,6 @@ function Haiku() {
                       className={(haiku.selectedImage === imageName) ? `suggestion-card-image-focus ` : `haiku-card-image`}
                       onClick={() => setHaikus((prevHaikus) => {
                         return prevHaikus.map((h, idx) => {
-                          console.log("clicked", imageName, index, idx);
                           if (idx === index) {
                             return { ...h, selectedImage: imageName }
                           } else {
@@ -406,6 +404,7 @@ function Haiku() {
                 </div>
               )}
             </div>
+            )
           ))}
         </div>
       </div>
