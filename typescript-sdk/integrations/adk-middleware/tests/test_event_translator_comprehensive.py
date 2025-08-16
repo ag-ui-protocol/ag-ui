@@ -101,8 +101,9 @@ class TestEventTranslatorComprehensive:
             async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
                 events.append(event)
             
-            # Should log function calls detection
-            mock_logger.debug.assert_called_once_with("ADK function calls detected: 1 calls")
+            # Should log function calls detection (along with the ADK Event debug log)
+            debug_calls = [str(call) for call in mock_logger.debug.call_args_list]
+            assert any("ADK function calls detected: 1 calls" in call for call in debug_calls)
     
     @pytest.mark.asyncio
     async def test_translate_function_responses_handling(self, translator, mock_adk_event):
@@ -690,10 +691,14 @@ class TestEventTranslatorComprehensive:
             async for event in translator.translate(mock_adk_event_with_content, "thread_1", "run_1"):
                 events.append(event)
             
-            # Should log ADK event processing
+            # Should log ADK event processing (now in debug logs)
+            mock_logger.debug.assert_called()
+            debug_calls = [str(call) for call in mock_logger.debug.call_args_list]
+            assert any("ADK Event:" in call for call in debug_calls)
+            
+            # Text event logging remains in info
             mock_logger.info.assert_called()
             info_calls = [str(call) for call in mock_logger.info.call_args_list]
-            assert any("ADK Event:" in call for call in info_calls)
             assert any("Text event -" in call for call in info_calls)
             assert any("TEXT_MESSAGE_START:" in call for call in info_calls)
             assert any("TEXT_MESSAGE_CONTENT:" in call for call in info_calls)
