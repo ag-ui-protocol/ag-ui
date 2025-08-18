@@ -23,9 +23,12 @@ export async function waitForAIResponse(page: Page, timeout: number = 90000) {
   await page.waitForFunction(
     () => {
       // Look for common AI loading indicators
-      const loadingIndicators = document.querySelectorAll(
+      const loadingIndicators = [
+        ...document.querySelectorAll(
         '[data-testid*="loading"], .loading, .spinner'
-      );
+        ),
+        ...document.querySelectorAll('.copilotKitActivityDot')
+      ];
       return loadingIndicators.length === 0;
     },
     { timeout }
