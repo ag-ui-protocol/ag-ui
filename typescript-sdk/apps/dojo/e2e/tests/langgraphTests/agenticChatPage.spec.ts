@@ -16,7 +16,6 @@ test("[LangGraph] Agentic Chat sends and receives a message", async ({
 
     const chat = new AgenticChatPage(page);
 
-    await chat.openChat();
     await chat.agentGreeting.isVisible;
     await chat.sendMessage("Hi, I am duaa");
 
@@ -36,7 +35,6 @@ test("[LangGraph] Agentic Chat changes background on message and reset", async (
 
     const chat = new AgenticChatPage(page);
 
-    await chat.openChat();
     await chat.agentGreeting.waitFor({ state: "visible" });
 
     // Store initial background color
@@ -78,7 +76,6 @@ test("[LangGraph] Agentic Chat retains memory of user messages during a conversa
     );
 
     const chat = new AgenticChatPage(page);
-    await chat.openChat();
     await chat.agentGreeting.click();
 
     await chat.sendMessage("Hey there");

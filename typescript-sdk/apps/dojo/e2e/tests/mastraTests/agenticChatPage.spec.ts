@@ -16,7 +16,6 @@ test("[Mastra] Agentic Chat sends and receives a greeting message", async ({
 
     const chat = new AgenticChatPage(page);
 
-    await chat.openChat();
     await chat.agentGreeting.isVisible;
     await chat.sendMessage("Hi");
 
@@ -36,7 +35,6 @@ test("[Mastra] Agentic Chat provides weather information", async ({
 
     const chat = new AgenticChatPage(page);
 
-    await chat.openChat();
     await chat.agentGreeting.waitFor({ state: "visible" });
 
     // Ask for Islamabad weather
@@ -58,7 +56,6 @@ test("[Mastra] Agentic Chat retains memory of previous questions", async ({
     );
 
     const chat = new AgenticChatPage(page);
-    await chat.openChat();
     await chat.agentGreeting.waitFor({ state: "visible" });
 
     // First question about weather
@@ -86,7 +83,6 @@ test("[Mastra] Agentic Chat retains memory of user messages during a conversatio
     );
 
     const chat = new AgenticChatPage(page);
-    await chat.openChat();
     await chat.agentGreeting.click();
 
     await chat.sendMessage("Hey there");
