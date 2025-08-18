@@ -76,6 +76,7 @@ export const convertToLegacyEvents =
               {
                 type: LegacyRuntimeEventTypes.enum.TextMessageStart,
                 messageId: startEvent.messageId,
+                role: startEvent.role,
               } as LegacyTextMessageStart,
             ];
           }
