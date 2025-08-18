@@ -222,3 +222,28 @@
   width: 100%;
   height: 6.5rem;
 }
+
+/* Mobile responsive styles - matches useMobileView hook breakpoint */
+@media (max-width: 767px) {
+  .haiku-card {
+    padding: 1rem 1.5rem; /* Reduced from 2.5rem 3rem */
+    min-width: auto; /* Remove min-width constraint */
+    max-width: 100%; /* Full width on mobile */
+    margin: 1rem auto; /* Reduced margin */
+  }
+
+  .haiku-card-image {
+    width: 5.625rem; /* 90px - smaller on mobile */
+    height: 5.625rem; /* 90px - smaller on mobile */
+  }
+
+  .suggestion-card-image {
+    width: 5rem; /* Slightly smaller on mobile */
+    height: 5rem; /* Slightly smaller on mobile */
+  }
+
+  .suggestion-card-image-focus {
+    width: 5rem; /* Slightly smaller on mobile */
+    height: 5rem; /* Slightly smaller on mobile */
+  }
+}

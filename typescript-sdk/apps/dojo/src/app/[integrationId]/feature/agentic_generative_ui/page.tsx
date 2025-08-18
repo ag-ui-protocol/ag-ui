@@ -47,7 +47,9 @@ const Chat = () => {
 
       return (
         <div className="flex">
-          <div className={`relative rounded-xl w-[700px] p-6 shadow-lg backdrop-blur-sm ${
+          <div 
+          data-testid="task-progress"
+          className={`relative rounded-xl w-[700px] p-6 shadow-lg backdrop-blur-sm ${
             theme === "dark" 
               ? "bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white border border-slate-700/50 shadow-2xl"
               : "bg-gradient-to-br from-white via-gray-50 to-white text-gray-800 border border-gray-200/80"
@@ -132,7 +134,9 @@ const Chat = () => {
 
                     {/* Step Content */}
                     <div className="flex-1 min-w-0">
-                      <div className={`font-semibold transition-all duration-300 text-sm ${
+                      <div 
+                      data-testid="task-step-text"
+                      className={`font-semibold transition-all duration-300 text-sm ${
                         isCompleted 
                           ? theme === "dark" ? "text-green-300" : "text-green-700"
                           : isCurrentPending
@@ -182,7 +186,7 @@ const Chat = () => {
 
   return (
     <div className="flex justify-center items-center h-full w-full">
-      <div className="w-8/10 h-8/10 rounded-lg">
+      <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
         <CopilotChat
           className="h-full rounded-2xl"
           labels={{

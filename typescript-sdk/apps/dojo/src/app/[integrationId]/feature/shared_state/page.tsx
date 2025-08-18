@@ -1,10 +1,12 @@
 "use client";
 import { CopilotKit, useCoAgent, useCopilotChat } from "@copilotkit/react-core";
-import { CopilotSidebar } from "@copilotkit/react-ui";
+import { CopilotChat, CopilotSidebar } from "@copilotkit/react-ui";
 import React, { useState, useEffect, useRef } from "react";
 import { Role, TextMessage } from "@copilotkit/runtime-client-gql";
 import "@copilotkit/react-ui/styles.css";
 import "./style.css";
+import { useMobileView } from "@/utils/use-mobile-view";
+import { useMobileChat } from "@/utils/use-mobile-chat";
 
 interface SharedStateProps {
   params: Promise<{
@@ -14,6 +16,20 @@ interface SharedStateProps {
 
 export default function SharedState({ params }: SharedStateProps) {
   const { integrationId } = React.use(params);
+  const { isMobile } = useMobileView();
+  const defaultChatHeight = 50
+  const {
+    isChatOpen,
+    setChatHeight,
+    setIsChatOpen,
+    isDragging,
+    chatHeight,
+    handleDragStart
+  } = useMobileChat(defaultChatHeight)
+
+  const chatTitle = 'AI Recipe Assistant'
+  const chatDescription = 'Ask me to craft recipes'
+  const initialLabel = 'Hi 👋 How can I help with your recipe?'
 
   return (
     <CopilotKit
@@ -34,14 +50,98 @@ export default function SharedState({ params }: SharedStateProps) {
         }
       >
         <Recipe />
-        <CopilotSidebar
-          defaultOpen={true}
-          labels={{
-            title: "AI Recipe Assistant",
-            initial: "Hi 👋 How can I help with your recipe?",
-          }}
-          clickOutsideToClose={false}
-        />
+        {isMobile ? (
+          <>
+            {/* Chat Toggle Button */}
+            <div className="fixed bottom-0 left-0 right-0 z-50">
+              <div className="bg-gradient-to-t from-white via-white to-transparent h-6"></div>
+              <div
+                className="bg-white border-t border-gray-200 px-4 py-3 flex items-center justify-between cursor-pointer shadow-lg"
+                onClick={() => {
+                  if (!isChatOpen) {
+                    setChatHeight(defaultChatHeight); // Reset to good default when opening
+                  }
+                  setIsChatOpen(!isChatOpen);
+                }}
+              >
+                <div className="flex items-center gap-3">
+                  <div>
+                    <div className="font-medium text-gray-900">{chatTitle}</div>
+                    <div className="text-sm text-gray-500">{chatDescription}</div>
+                  </div>
+                </div>
+                <div className={`transform transition-transform duration-300 ${isChatOpen ? 'rotate-180' : ''}`}>
+                  <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+
+            {/* Pull-Up Chat Container */}
+            <div
+              className={`fixed inset-x-0 bottom-0 z-40 bg-white rounded-t-2xl shadow-[0px_0px_20px_0px_rgba(0,0,0,0.15)] transform transition-all duration-300 ease-in-out flex flex-col ${
+                isChatOpen ? 'translate-y-0' : 'translate-y-full'
+              } ${isDragging ? 'transition-none' : ''}`}
+              style={{
+                height: `${chatHeight}vh`,
+                paddingBottom: 'env(safe-area-inset-bottom)' // Handle iPhone bottom padding
+              }}
+            >
+              {/* Drag Handle Bar */}
+              <div
+                className="flex justify-center pt-3 pb-2 flex-shrink-0 cursor-grab active:cursor-grabbing"
+                onMouseDown={handleDragStart}
+              >
+                <div className="w-12 h-1 bg-gray-400 rounded-full hover:bg-gray-500 transition-colors"></div>
+              </div>
+
+              {/* Chat Header */}
+              <div className="px-4 py-3 border-b border-gray-100 flex-shrink-0">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <h3 className="font-semibold text-gray-900">{chatTitle}</h3>
+                  </div>
+                  <button
+                    onClick={() => setIsChatOpen(false)}
+                    className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+                  >
+                    <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* Chat Content - Flexible container for messages and input */}
+              <div className="flex-1 flex flex-col min-h-0 overflow-hidden pb-16">
+                <CopilotChat
+                  className="h-full flex flex-col"
+                  labels={{
+                    initial: initialLabel,
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Backdrop */}
+            {isChatOpen && (
+              <div
+                className="fixed inset-0 z-30"
+                onClick={() => setIsChatOpen(false)}
+              />
+            )}
+          </>
+        ) : (
+          <CopilotSidebar
+            defaultOpen={true}
+            labels={{
+              title: chatTitle,
+              initial: initialLabel,
+            }}
+            clickOutsideToClose={false}
+          />
+        )}
       </div>
     </CopilotKit>
   );
@@ -113,6 +213,7 @@ const INITIAL_STATE: RecipeAgentState = {
 };
 
 function Recipe() {
+  const { isMobile } = useMobileView();
   const { state: agentState, setState: setAgentState } = useCoAgent<RecipeAgentState>({
     name: "shared_state",
     initialState: INITIAL_STATE,
@@ -266,7 +367,10 @@ function Recipe() {
   };
 
   return (
-    <form className="recipe-card">
+    <form 
+    data-testid="recipe-card"
+    style={isMobile ? { marginBottom: "100px" } : {}}
+    className="recipe-card">
       {/* Recipe Title */}
       <div className="recipe-header">
         <input
@@ -352,13 +456,23 @@ function Recipe() {
         {changedKeysRef.current.includes("ingredients") && <Ping />}
         <div className="section-header">
           <h2 className="section-title">Ingredients</h2>
-          <button type="button" className="add-button" onClick={addIngredient}>
+          <button
+            data-testid="add-ingredient-button"
+            type="button"
+            className="add-button"
+            onClick={addIngredient}
+          >
             + Add Ingredient
           </button>
         </div>
-        <div className="ingredients-container">
+        <div
+          data-testid="ingredients-container"
+          className="ingredients-container"
+        >
           {recipe.ingredients.map((ingredient, index) => (
-            <div key={index} className="ingredient-card">
+            <div key={index} 
+             data-testid="ingredient-card"
+             className="ingredient-card">
               <div className="ingredient-icon">{getProperIcon(ingredient.icon)}</div>
               <div className="ingredient-content">
                 <input
@@ -398,7 +512,9 @@ function Recipe() {
             + Add Step
           </button>
         </div>
-        <div className="instructions-container">
+        <div 
+          data-testid="instructions-container"
+          className="instructions-container">
           {recipe.instructions.map((instruction, index) => (
             <div key={index} className="instruction-item">
               {/* Number Circle */}
@@ -455,6 +571,7 @@ function Recipe() {
       {/* Improve with AI Button */}
       <div className="action-container">
         <button
+          data-testid="improve-button"
           className={isLoading ? "improve-button loading" : "improve-button"}
           type="button"
           onClick={() => {

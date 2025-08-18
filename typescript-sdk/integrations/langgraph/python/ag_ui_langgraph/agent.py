@@ -106,7 +106,6 @@ class LangGraphAgent:
             "thinking_process": None,
         }
 
-        messages = input.messages or []
         forwarded_props = input.forwarded_props
         node_name_input = forwarded_props.get('node_name', None) if forwarded_props else None
 
@@ -119,30 +118,24 @@ class LangGraphAgent:
         config["configurable"] = {**(config.get('configurable', {})), "thread_id": thread_id}
 
         agent_state = await self.graph.aget_state(config)
-        self.active_run["mode"] = "continue" if thread_id and self.active_run.get("node_name") != "__end__" and self.active_run.get("node_name") else "start"
+        resume_input = forwarded_props.get('command', {}).get('resume', None)
+
+        if resume_input is None and thread_id and self.active_run.get("node_name") != "__end__" and self.active_run.get("node_name"):
+            self.active_run["mode"] = "continue"
+        else:
+            self.active_run["mode"] = "start"
+
         prepared_stream_response = await self.prepare_stream(input=input, agent_state=agent_state, config=config)
 
         yield self._dispatch_event(
             RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["id"])
         )
 
-        langchain_messages = agui_messages_to_langchain(messages)
-        non_system_messages = [msg for msg in langchain_messages if not isinstance(msg, SystemMessage)]
-
-        if len(agent_state.values.get("messages", [])) > len(non_system_messages):
-            # Find the last user message by working backwards from the last message
-            last_user_message = None
-            for i in range(len(langchain_messages) - 1, -1, -1):
-                if isinstance(langchain_messages[i], HumanMessage):
-                    last_user_message = langchain_messages[i]
-                    break
-
-            if last_user_message:
-                prepared_stream_response = await self.prepare_regenerate_stream(
-                    input=input,
-                    message_checkpoint=last_user_message,
-                    config=config
-                )
+        # In case of resume (interrupt), re-start resumed step
+        if resume_input and self.active_run.get("node_name"):
+            yield self._dispatch_event(
+                StepStartedEvent(type=EventType.STEP_STARTED, step_name=self.active_run.get("node_name"))
+            )
 
         state = prepared_stream_response["state"]
         stream = prepared_stream_response["stream"]
@@ -274,7 +267,7 @@ class LangGraphAgent:
         thread_id = input.thread_id
 
         state_input["messages"] = agent_state.values.get("messages", [])
-        self.active_run["current_graph_state"] = agent_state.values
+        self.active_run["current_graph_state"] = agent_state.values.copy()
         langchain_messages = agui_messages_to_langchain(messages)
         state = self.langgraph_default_merge_state(state_input, langchain_messages, tools)
         self.active_run["current_graph_state"].update(state)
@@ -282,6 +275,24 @@ class LangGraphAgent:
         interrupts = agent_state.tasks[0].interrupts if agent_state.tasks and len(agent_state.tasks) > 0 else []
         has_active_interrupts = len(interrupts) > 0
         resume_input = forwarded_props.get('command', {}).get('resume', None)
+
+        self.active_run["schema_keys"] = self.get_schema_keys(config)
+
+        non_system_messages = [msg for msg in langchain_messages if not isinstance(msg, SystemMessage)]
+        if len(agent_state.values.get("messages", [])) > len(non_system_messages):
+            # Find the last user message by working backwards from the last message
+            last_user_message = None
+            for i in range(len(langchain_messages) - 1, -1, -1):
+                if isinstance(langchain_messages[i], HumanMessage):
+                    last_user_message = langchain_messages[i]
+                    break
+
+            if last_user_message:
+                return await self.prepare_regenerate_stream(
+                    input=input,
+                    message_checkpoint=last_user_message,
+                    config=config
+                )
 
         events_to_dispatch = []
         if has_active_interrupts and not resume_input:
@@ -311,8 +322,6 @@ class LangGraphAgent:
 
         if self.active_run["mode"] == "continue":
             await self.graph.aupdate_state(config, state, as_node=self.active_run.get("node_name"))
-
-        self.active_run["schema_keys"] = self.get_schema_keys(config)
 
         if resume_input:
             stream_input = Command(resume=resume_input)
@@ -676,7 +685,15 @@ class LangGraphAgent:
                     empty_snapshot = snapshot
                     empty_snapshot.values["messages"] = []
                     return empty_snapshot
-                return history_list[idx - 1]  # return one snapshot *before* the one that includes the message
+
+                snapshot_values_without_messages = snapshot.values.copy()
+                del snapshot_values_without_messages["messages"]
+                checkpoint = history_list[idx - 1]
+
+                merged_values = {**checkpoint.values, **snapshot_values_without_messages}
+                checkpoint = checkpoint._replace(values=merged_values)
+
+                return checkpoint
 
         raise ValueError("Message ID not found in history")
 

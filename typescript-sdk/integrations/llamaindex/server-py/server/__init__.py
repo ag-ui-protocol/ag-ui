@@ -1,3 +1,4 @@
+import os
 import uvicorn
 from fastapi import FastAPI
 
@@ -14,8 +15,11 @@ app.include_router(agentic_generative_ui_router, prefix="/agentic_generative_ui"
 app.include_router(shared_state_router, prefix="/shared_state")
 
 def main():
+
     """Main function to start the FastAPI server."""
-    uvicorn.run(app, host="0.0.0.0", port=9000)
+    port = int(os.getenv("PORT", "9000"))
+
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
     main()

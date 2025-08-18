@@ -10,7 +10,9 @@ import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useState } from "react";
 import { CopilotKit, useCoAgent, useCopilotAction, useCopilotChat } from "@copilotkit/react-core";
-import { CopilotSidebar } from "@copilotkit/react-ui";
+import { CopilotChat, CopilotSidebar } from "@copilotkit/react-ui";
+import { useMobileView } from "@/utils/use-mobile-view";
+import { useMobileChat } from "@/utils/use-mobile-chat";
 
 const extensions = [StarterKit];
 
@@ -22,6 +24,19 @@ interface PredictiveStateUpdatesProps {
 
 export default function PredictiveStateUpdates({ params }: PredictiveStateUpdatesProps) {
   const { integrationId } = React.use(params);
+  const { isMobile } = useMobileView();
+  const defaultChatHeight = 50
+  const {
+    isChatOpen,
+    setChatHeight,
+    setIsChatOpen,
+    isDragging,
+    chatHeight,
+    handleDragStart
+  } = useMobileChat(defaultChatHeight)
+  const chatTitle = 'AI Document Editor'
+  const chatDescription = 'Ask me to create or edit a document'
+  const initialLabel = 'Hi 👋 How can I help with your document?'
 
   return (
     <CopilotKit
@@ -39,16 +54,99 @@ export default function PredictiveStateUpdates({ params }: PredictiveStateUpdate
           } as React.CSSProperties
         }
       >
-        <CopilotSidebar
-          defaultOpen={true}
-          labels={{
-            title: "AI Document Editor",
-            initial: "Hi 👋 How can I help with your document?",
-          }}
-          clickOutsideToClose={false}
-        >
-          <DocumentEditor />
-        </CopilotSidebar>
+        {isMobile ? (
+          <>
+            {/* Chat Toggle Button */}
+            <div className="fixed bottom-0 left-0 right-0 z-50">
+              <div className="bg-gradient-to-t from-white via-white to-transparent h-6"></div>
+              <div
+                className="bg-white border-t border-gray-200 px-4 py-3 flex items-center justify-between cursor-pointer shadow-lg"
+                onClick={() => {
+                  if (!isChatOpen) {
+                    setChatHeight(defaultChatHeight); // Reset to good default when opening
+                  }
+                  setIsChatOpen(!isChatOpen);
+                }}
+              >
+                <div className="flex items-center gap-3">
+                  <div>
+                    <div className="font-medium text-gray-900">{chatTitle}</div>
+                    <div className="text-sm text-gray-500">{chatDescription}</div>
+                  </div>
+                </div>
+                <div className={`transform transition-transform duration-300 ${isChatOpen ? 'rotate-180' : ''}`}>
+                  <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+
+            {/* Pull-Up Chat Container */}
+            <div
+              className={`fixed inset-x-0 bottom-0 z-40 bg-white rounded-t-2xl shadow-[0px_0px_20px_0px_rgba(0,0,0,0.15)] transform transition-all duration-300 ease-in-out flex flex-col ${
+                isChatOpen ? 'translate-y-0' : 'translate-y-full'
+              } ${isDragging ? 'transition-none' : ''}`}
+              style={{
+                height: `${chatHeight}vh`,
+                paddingBottom: 'env(safe-area-inset-bottom)' // Handle iPhone bottom padding
+              }}
+            >
+              {/* Drag Handle Bar */}
+              <div
+                className="flex justify-center pt-3 pb-2 flex-shrink-0 cursor-grab active:cursor-grabbing"
+                onMouseDown={handleDragStart}
+              >
+                <div className="w-12 h-1 bg-gray-400 rounded-full hover:bg-gray-500 transition-colors"></div>
+              </div>
+
+              {/* Chat Header */}
+              <div className="px-4 py-3 border-b border-gray-100 flex-shrink-0">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <h3 className="font-semibold text-gray-900">{chatTitle}</h3>
+                  </div>
+                  <button
+                    onClick={() => setIsChatOpen(false)}
+                    className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+                  >
+                    <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* Chat Content - Flexible container for messages and input */}
+              <div className="flex-1 flex flex-col min-h-0 overflow-hidden pb-16">
+                <CopilotChat
+                  className="h-full flex flex-col"
+                  labels={{
+                    initial: initialLabel,
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Backdrop */}
+            {isChatOpen && (
+              <div
+                className="fixed inset-0 z-30"
+                onClick={() => setIsChatOpen(false)}
+              />
+            )}
+          </>
+        ) : (
+          <CopilotSidebar
+            defaultOpen={true}
+            labels={{
+              title: chatTitle,
+              initial: initialLabel,
+            }}
+            clickOutsideToClose={false}
+          />
+        )}
+        <DocumentEditor />
       </div>
     </CopilotKit>
   );
@@ -146,7 +244,7 @@ const DocumentEditor = () => {
         }}
       />
     ),
-  });
+  }, [agentState?.document]);
 
   // Action to write the document.
   useCopilotAction({
@@ -180,7 +278,7 @@ const DocumentEditor = () => {
       }
       return <></>;
     },
-  });
+  }, [agentState?.document]);
 
   return (
     <div className="relative min-h-screen w-full">
@@ -205,12 +303,15 @@ interface ConfirmChangesProps {
 function ConfirmChanges({ args, respond, status, onReject, onConfirm }: ConfirmChangesProps) {
   const [accepted, setAccepted] = useState<boolean | null>(null);
   return (
-    <div className="bg-white p-6 rounded shadow-lg border border-gray-200 mt-5 mb-5">
+    <div 
+    data-testid="confirm-changes-modal"
+    className="bg-white p-6 rounded shadow-lg border border-gray-200 mt-5 mb-5">
       <h2 className="text-lg font-bold mb-4">Confirm Changes</h2>
       <p className="mb-6">Do you want to accept the changes?</p>
       {accepted === null && (
         <div className="flex justify-end space-x-4">
           <button
+            data-testid="reject-button"
             className={`bg-gray-200 text-black py-2 px-4 rounded disabled:opacity-50 ${
               status === "executing" ? "cursor-pointer" : "cursor-default"
             }`}
@@ -226,6 +327,7 @@ function ConfirmChanges({ args, respond, status, onReject, onConfirm }: ConfirmC
             Reject
           </button>
           <button
+            data-testid="confirm-button"
             className={`bg-black text-white py-2 px-4 rounded disabled:opacity-50 ${
               status === "executing" ? "cursor-pointer" : "cursor-default"
             }`}
@@ -244,7 +346,9 @@ function ConfirmChanges({ args, respond, status, onReject, onConfirm }: ConfirmC
       )}
       {accepted !== null && (
         <div className="flex justify-end">
-          <div className="mt-4 bg-gray-200 text-black py-2 px-4 rounded inline-block">
+          <div 
+          data-testid="status-display"
+          className="mt-4 bg-gray-200 text-black py-2 px-4 rounded inline-block">
             {accepted ? "✓ Accepted" : "✗ Rejected"}
           </div>
         </div>
