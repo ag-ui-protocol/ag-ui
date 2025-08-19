@@ -173,8 +173,12 @@ class SessionManager:
                 user_id=user_id
             )
             
-            if not (session and state_updates):
-                logger.warning(f"Session not found: {app_name}:{session_id}")
+            if not session:
+                logger.debug(f"Session not found for update: {app_name}:{session_id} - this may be normal if session is still being created")
+                return False
+            
+            if not state_updates:
+                logger.debug(f"No state updates provided for session: {app_name}:{session_id}")
                 return False
             
             # Apply state updates using EventActions
@@ -235,7 +239,7 @@ class SessionManager:
             )
             
             if not session:
-                logger.warning(f"Session not found: {app_name}:{session_id}")
+                logger.debug(f"Session not found when getting state: {app_name}:{session_id}")
                 return None
             
             # Return state as dictionary
@@ -277,7 +281,7 @@ class SessionManager:
             )
             
             if not session:
-                logger.warning(f"Session not found: {app_name}:{session_id}")
+                logger.debug(f"Session not found when getting state value: {app_name}:{session_id}")
                 return default
             
             if hasattr(session.state, 'get'):
