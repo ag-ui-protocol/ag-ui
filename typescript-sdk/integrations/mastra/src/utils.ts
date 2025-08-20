@@ -1,11 +1,6 @@
 import type { Message } from "@ag-ui/client";
 import { AbstractAgent } from "@ag-ui/client";
-import {
-  CopilotRuntime,
-  copilotRuntimeNodeHttpEndpoint,
-  CopilotServiceAdapter,
-  ExperimentalEmptyAdapter,
-} from "@copilotkit/runtime";
+
 import type { CoreMessage } from "@mastra/core";
 import { registerApiRoute } from "@mastra/core/server";
 import type { Mastra } from "@mastra/core";
@@ -66,22 +61,31 @@ export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] 
   return result;
 }
 
+let copilotRuntimeModule: any = null;
+
 export function registerCopilotKit<T extends Record<string, any> | unknown = unknown>({
   path,
   resourceId,
-  serviceAdapter = new ExperimentalEmptyAdapter(),
+  serviceAdapter,
   agents,
   setContext,
 }: {
   path: string;
   resourceId: string;
-  serviceAdapter?: CopilotServiceAdapter;
+  serviceAdapter?: any;
   agents?: Record<string, AbstractAgent>;
   setContext?: (c: any, runtimeContext: RuntimeContext<T>) => void | Promise<void>;
 }) {
   return registerApiRoute(path, {
     method: `ALL`,
     handler: async (c) => {
+      if (!copilotRuntimeModule) {
+        copilotRuntimeModule = await import("@copilotkit/runtime");
+      }
+      if (!serviceAdapter) {
+        serviceAdapter = new copilotRuntimeModule.ExperimentalEmptyAdapter();
+      }
+
       const mastra = c.get("mastra");
 
       const runtimeContext = new RuntimeContext<T>();
@@ -98,11 +102,11 @@ export function registerCopilotKit<T extends Record<string, any> | unknown = unk
           runtimeContext,
         });
 
-      const runtime = new CopilotRuntime({
+      const runtime = new copilotRuntimeModule.CopilotRuntime({
         agents: aguiAgents,
       });
 
-      const handler = copilotRuntimeNodeHttpEndpoint({
+      const handler = copilotRuntimeModule.copilotRuntimeNodeHttpEndpoint({
         endpoint: path,
         runtime,
         serviceAdapter,
