@@ -1,0 +1,56 @@
+name: Lint & Test
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "crates/**"
+      - ".github/workflows/rust.yml"
+      - "tests/**"
+      - "Cargo.toml"
+      - ".cargo/**"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "rust-sdk/crates/**"
+      - "rust-sdk/**/tests/**"
+      - "rust-sdk/Cargo.toml"
+      - "rust-sdk/.cargo/**"
+      - ".github/workflows/rust-lint-test.yml"
+
+defaults:
+  run:
+    working-directory: ./rust-sdk
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+
+    name: Test multiple workspaces on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Check clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Publish dry-run
+        run: cargo publish -p ag-ui-core --dry-run
+
+      - name: Run tests
+        run: cargo test --verbose
