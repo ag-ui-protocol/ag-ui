@@ -33,7 +33,6 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
   const isDarkTheme = theme === "dark"
-  console.log(isDarkTheme)
   const { view, frameworkPickerHidden, viewPickerHidden, featurePickerHidden, setView} = useURLParams();
 
   // Extract the current integration ID from the pathname
