@@ -1,17 +1,9 @@
 import type { Message } from "@ag-ui/client";
 import { AbstractAgent } from "@ag-ui/client";
-import {
-  CopilotRuntime,
-  copilotRuntimeNodeHttpEndpoint,
-  CopilotServiceAdapter,
-  ExperimentalEmptyAdapter,
-} from "@copilotkit/runtime";
-import type { CoreMessage } from "@mastra/core";
-import { registerApiRoute } from "@mastra/core/server";
-import type { Mastra } from "@mastra/core";
+import { MastraClient } from "@mastra/client-js";
+import type { CoreMessage, Mastra } from "@mastra/core";
 import { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RuntimeContext } from "@mastra/core/runtime-context";
-import { MastraClient } from "@mastra/client-js";
 import { MastraAgent } from "./mastra";
 
 export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] {
@@ -64,53 +56,6 @@ export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] 
   }
 
   return result;
-}
-
-export function registerCopilotKit<T extends Record<string, any> | unknown = unknown>({
-  path,
-  resourceId,
-  serviceAdapter = new ExperimentalEmptyAdapter(),
-  agents,
-  setContext,
-}: {
-  path: string;
-  resourceId: string;
-  serviceAdapter?: CopilotServiceAdapter;
-  agents?: Record<string, AbstractAgent>;
-  setContext?: (c: any, runtimeContext: RuntimeContext<T>) => void | Promise<void>;
-}) {
-  return registerApiRoute(path, {
-    method: `ALL`,
-    handler: async (c) => {
-      const mastra = c.get("mastra");
-
-      const runtimeContext = new RuntimeContext<T>();
-
-      if (setContext) {
-        await setContext(c, runtimeContext);
-      }
-
-      const aguiAgents =
-        agents ||
-        MastraAgent.getLocalAgents({
-          resourceId,
-          mastra,
-          runtimeContext,
-        });
-
-      const runtime = new CopilotRuntime({
-        agents: aguiAgents,
-      });
-
-      const handler = copilotRuntimeNodeHttpEndpoint({
-        endpoint: path,
-        runtime,
-        serviceAdapter,
-      });
-
-      return handler.handle(c.req.raw, {});
-    },
-  });
 }
 
 export interface GetRemoteAgentsOptions {
