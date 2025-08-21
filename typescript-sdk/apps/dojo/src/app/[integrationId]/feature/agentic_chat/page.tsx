@@ -2,7 +2,7 @@
 import React, { useState } from "react";
 import "@copilotkit/react-ui/styles.css";
 import "./style.css";
-import { CopilotKit, useCoAgent, useCopilotAction, useCopilotChat } from "@copilotkit/react-core";
+import { CopilotKit, useCoAgent, useCopilotAction, useCoAgentStateRender } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 
 interface AgenticChatProps {
@@ -26,6 +26,47 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
   );
 };
 
+interface CurrentThoughtsState {
+  current_thoughts: { thought_text: string }[];
+}
+
+const ThinkingDisplay: React.FC<{ state: CurrentThoughtsState }> = ({ state }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  
+  if (!state.current_thoughts?.length) return null;
+  
+  return (
+    <div className="my-2">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="flex items-center gap-2 text-slate-600 hover:text-slate-800 animate-pulse"
+      >
+        <span>Thinking</span>
+        <svg
+          className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      
+      {isExpanded && (
+        <div className="px-4">
+          <div className="text-xs text-slate-500 py-1 px-4 border-l gap-1.5 max-w-md mt-2 flex flex-col">
+            {state.current_thoughts?.map((t, idx) => (
+              <div key={idx} className={idx === state.current_thoughts.length - 1 ? 'animate-pulse' : ''}>
+                {t.thought_text}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const Chat = () => {
   const [background, setBackground] = useState<string>("--copilot-kit-background-color");
 
@@ -46,6 +87,14 @@ const Chat = () => {
         status: "success",
         message: `Background changed to ${background}`,
       };
+    },
+  });
+
+  useCoAgentStateRender({
+    name: "agentic_chat",
+    render: ({ state }: { state: CurrentThoughtsState }) => {
+      console.log(state)
+      return <ThinkingDisplay state={state} />;
     },
   });
 
