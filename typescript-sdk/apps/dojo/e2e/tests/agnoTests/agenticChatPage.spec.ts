@@ -16,6 +16,7 @@ test("[Agno] Agentic Chat sends and receives a greeting message", async ({
 
     const chat = new AgenticChatPage(page);
 
+    await chat.openChat();
     await chat.agentGreeting.isVisible;
     await chat.sendMessage("Hi");
 
@@ -35,6 +36,7 @@ test("[Agno] Agentic Chat provides stock price information", async ({
 
     const chat = new AgenticChatPage(page);
 
+    await chat.openChat();
     await chat.agentGreeting.waitFor({ state: "visible" });
 
     // Ask for AAPL stock price
@@ -56,6 +58,7 @@ test("[Agno] Agentic Chat retains memory of previous questions", async ({
     );
 
     const chat = new AgenticChatPage(page);
+    await chat.openChat();
     await chat.agentGreeting.waitFor({ state: "visible" });
 
     // First question
@@ -84,6 +87,7 @@ test("[Agno] Agentic Chat retains memory of user messages during a conversation"
     );
 
     const chat = new AgenticChatPage(page);
+    await chat.openChat();
     await chat.agentGreeting.click();
 
     await chat.sendMessage("Hey there");

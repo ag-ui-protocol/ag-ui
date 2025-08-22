@@ -2,6 +2,7 @@ import { Page, Locator, expect } from "@playwright/test";
 
 export class AgenticChatPage {
   readonly page: Page;
+  readonly openChatButton: Locator;
   readonly agentGreeting: Locator;
   readonly chatInput: Locator;
   readonly sendButton: Locator;
@@ -11,6 +12,9 @@ export class AgenticChatPage {
 
   constructor(page: Page) {
     this.page = page;
+    this.openChatButton = page.getByRole("button", {
+      name: /chat/i,
+    });
     this.agentGreeting = page
       .getByText("Hi, I'm an agent. Want to chat?");
     this.chatInput = page
@@ -30,6 +34,14 @@ export class AgenticChatPage {
       .locator(".copilotKitAssistantMessage");
     this.userMessage = page
       .locator(".copilotKitUserMessage");
+  }
+
+  async openChat() {
+    try {
+      await this.openChatButton.click({ timeout: 3000 });
+    } catch (error) {
+      // Chat might already be open
+    }
   }
 
   async sendMessage(message: string) {

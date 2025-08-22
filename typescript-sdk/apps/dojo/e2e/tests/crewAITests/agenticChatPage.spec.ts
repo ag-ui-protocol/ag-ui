@@ -16,6 +16,7 @@ test("[CrewAI] Agentic Chat sends and receives a message", async ({
 
     const chat = new AgenticChatPage(page);
 
+    await chat.openChat();
     await chat.agentGreeting.isVisible;
     await chat.sendMessage("Hi, I am duaa");
 
@@ -35,6 +36,7 @@ test.fixme("[CrewAI] Agentic Chat changes background on message and reset", asyn
 
     const chat = new AgenticChatPage(page);
 
+    await chat.openChat();
     await chat.agentGreeting.waitFor({ state: "visible" });
 
     // Store initial background color
@@ -81,6 +83,7 @@ test("[CrewAI] Agentic Chat retains memory of user messages during a conversatio
     );
 
     const chat = new AgenticChatPage(page);
+    await chat.openChat();
     await chat.agentGreeting.click();
 
     await chat.sendMessage("Hey there");

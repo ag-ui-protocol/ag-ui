@@ -15,6 +15,7 @@ test("[Server Starter] Testing Agentic Chat", async ({
     );
 
     const chat = new AgenticChatPage(page);
+    await chat.openChat();
     await chat.agentGreeting.waitFor({ state: "visible" });
     await chat.sendMessage("Hey there");
     await chat.assertUserMessageVisible("Hey there");

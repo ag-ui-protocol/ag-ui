@@ -16,6 +16,7 @@ test("[LangGraph FastAPI] Agentic Chat sends and receives a message", async ({
 
     const chat = new AgenticChatPage(page);
 
+    await chat.openChat();
     await chat.agentGreeting.isVisible;
     await chat.sendMessage("Hi, I am duaa");
 
@@ -35,6 +36,7 @@ test("[LangGraph FastAPI] Agentic Chat changes background on message and reset",
 
     const chat = new AgenticChatPage(page);
 
+    await chat.openChat();
     await chat.agentGreeting.waitFor({ state: "visible" });
 
     // Store initial background color
@@ -46,7 +48,6 @@ test("[LangGraph FastAPI] Agentic Chat changes background on message and reset",
     await chat.assertUserMessageVisible(
       "Hi change the background color to blue"
     );
-
     await waitForAIResponse(page);
 
     const backgroundBlue = await chat.getBackground();
@@ -82,6 +83,7 @@ test("[LangGraph FastAPI] Agentic Chat retains memory of user messages during a 
     );
 
     const chat = new AgenticChatPage(page);
+    await chat.openChat();
     await chat.agentGreeting.click();
 
     await chat.sendMessage("Hey there");
