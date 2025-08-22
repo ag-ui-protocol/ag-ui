@@ -36,7 +36,7 @@ describe("verifyEvents general validation", () => {
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
         expect(err.message).toContain(
-          `Cannot send 'TEXT_MESSAGE_CONTENT' event: Message ID mismatch. The ID 'different-id' doesn't match the active message ID 'msg1'.`,
+          `Cannot send 'TEXT_MESSAGE_CONTENT' event: No active text message found with ID 'different-id'. Start a text message with 'TEXT_MESSAGE_START' first.`,
         );
         subscription.unsubscribe();
       },
@@ -80,7 +80,7 @@ describe("verifyEvents general validation", () => {
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
         expect(err.message).toContain(
-          `Cannot send 'TEXT_MESSAGE_END' event: No active text message found. A 'TEXT_MESSAGE_START' event must be sent first.`,
+          `Cannot send 'TEXT_MESSAGE_END' event: No active text message found with ID 'msg1'. A 'TEXT_MESSAGE_START' event must be sent first.`,
         );
         subscription.unsubscribe();
       },
@@ -119,7 +119,7 @@ describe("verifyEvents general validation", () => {
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
         expect(err.message).toContain(
-          `Cannot send 'TOOL_CALL_ARGS' event: Tool call ID mismatch. The ID 'different-id' doesn't match the active tool call ID 't1'.`,
+          `Cannot send 'TOOL_CALL_ARGS' event: No active tool call found with ID 'different-id'. Start a tool call with 'TOOL_CALL_START' first.`,
         );
         subscription.unsubscribe();
       },
@@ -164,7 +164,7 @@ describe("verifyEvents general validation", () => {
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
         expect(err.message).toContain(
-          `Cannot send 'TOOL_CALL_END' event: No active tool call found. A 'TOOL_CALL_START' event must be sent first.`,
+          `Cannot send 'TOOL_CALL_END' event: No active tool call found with ID 't1'. A 'TOOL_CALL_START' event must be sent first.`,
         );
         subscription.unsubscribe();
       },
@@ -399,7 +399,7 @@ describe("verifyEvents events", () => {
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
         expect(err.message).toContain(
-          `Cannot send 'TEXT_MESSAGE_CONTENT' event: Message ID mismatch. The ID 'different-id' doesn't match the active message ID 'msg1'.`,
+          `Cannot send 'TEXT_MESSAGE_CONTENT' event: No active text message found with ID 'different-id'. Start a text message with 'TEXT_MESSAGE_START' first.`,
         );
         subscription.unsubscribe();
       },
@@ -443,7 +443,7 @@ describe("verifyEvents events", () => {
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
         expect(err.message).toContain(
-          `Cannot send 'TEXT_MESSAGE_END' event: No active text message found. A 'TEXT_MESSAGE_START' event must be sent first.`,
+          `Cannot send 'TEXT_MESSAGE_END' event: No active text message found with ID 'msg1'. A 'TEXT_MESSAGE_START' event must be sent first.`,
         );
         subscription.unsubscribe();
       },
@@ -482,7 +482,7 @@ describe("verifyEvents events", () => {
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
         expect(err.message).toContain(
-          `Cannot send 'TOOL_CALL_ARGS' event: Tool call ID mismatch. The ID 'different-id' doesn't match the active tool call ID 't1'.`,
+          `Cannot send 'TOOL_CALL_ARGS' event: No active tool call found with ID 'different-id'. Start a tool call with 'TOOL_CALL_START' first.`,
         );
         subscription.unsubscribe();
       },
@@ -527,7 +527,7 @@ describe("verifyEvents events", () => {
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
         expect(err.message).toContain(
-          `Cannot send 'TOOL_CALL_END' event: No active tool call found. A 'TOOL_CALL_START' event must be sent first.`,
+          `Cannot send 'TOOL_CALL_END' event: No active tool call found with ID 't1'. A 'TOOL_CALL_START' event must be sent first.`,
         );
         subscription.unsubscribe();
       },
