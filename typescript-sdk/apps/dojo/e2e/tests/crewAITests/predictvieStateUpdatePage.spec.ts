@@ -1,7 +1,6 @@
 import {
   test,
   expect,
-  waitForAIResponse,
   retryOnAIFailure,
 } from "../../test-isolation-helper";
 import { PredictiveStateUpdatesPage } from "../../pages/crewAIPages/PredictiveStateUpdatesPage";
@@ -22,7 +21,7 @@ test.describe("Predictive Status Updates Feature", () => {
       await predictiveStateUpdates.sendMessage(
         "Give me a story for a dragon called Atlantis in document"
       );
-      await waitForAIResponse(page);
+      await page.waitForTimeout(2000);
       await predictiveStateUpdates.getPredictiveResponse();
       await predictiveStateUpdates.getUserApproval();
       await predictiveStateUpdates.confirmedChangesResponse.isVisible();
@@ -33,7 +32,7 @@ test.describe("Predictive Status Updates Feature", () => {
 
       // Send update to change the dragon name
       await predictiveStateUpdates.sendMessage("Change dragon name to Lola");
-      await waitForAIResponse(page);
+      await page.waitForTimeout(2000);
       await predictiveStateUpdates.verifyHighlightedText();
       await predictiveStateUpdates.getUserApproval();
       await predictiveStateUpdates.confirmedChangesResponse.nth(1).isVisible();
@@ -70,7 +69,7 @@ test.describe("Predictive Status Updates Feature", () => {
 
       // Send update to change the dragon name
       await predictiveStateUpdates.sendMessage("Change dragon name to Lola");
-      await waitForAIResponse(page);
+      await page.waitForTimeout(2000);
       await predictiveStateUpdates.verifyHighlightedText();
       await predictiveStateUpdates.getUserRejection();
       await predictiveStateUpdates.rejectedChangesResponse.isVisible();
