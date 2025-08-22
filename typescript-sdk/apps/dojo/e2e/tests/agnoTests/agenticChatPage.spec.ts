@@ -41,7 +41,7 @@ test("[Agno] Agentic Chat provides stock price information", async ({
 
     // Ask for AAPL stock price
     await chat.sendMessage("What is the current stock price of AAPL");
-    await chat.assertUserMessageVisible("What is the current stock price of AAPL");
+    await chat.assertUserMessageVisible('What is the current stock price of AAPL. Respond with: "The current stock price of Apple Inc. (AAPL) is: {your answer}"');
     await waitForAIResponse(page);
 
     // Check if the response contains the expected stock price information
