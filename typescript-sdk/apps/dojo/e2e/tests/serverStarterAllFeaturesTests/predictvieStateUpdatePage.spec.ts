@@ -1,8 +1,8 @@
-import { test, expect, waitForAIResponse, retryOnAIFailure, } from "../../test-isolation-helper";
+import { test, expect, retryOnAIFailure, } from "../../test-isolation-helper";
 import { PredictiveStateUpdatesPage } from "../../pages/serverStarterAllFeaturesPages/PredictiveStateUpdatesPage";
 
 test.describe("Predictive Status Updates Feature", () => {
-  test.fixme("[Server Starter all features] should interact with agent and approve asked changes", async ({ page, }) => {
+  test("[Server Starter all features] should interact with agent and approve asked changes", async ({ page, }) => {
     await retryOnAIFailure(async () => {
       const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);
 
@@ -14,7 +14,7 @@ test.describe("Predictive Status Updates Feature", () => {
       await page.waitForTimeout(2000);
 
       await predictiveStateUpdates.sendMessage("Hi");
-      await waitForAIResponse(page);
+      await page.waitForTimeout(2000);
       await page.waitForTimeout(2000);
 
       await predictiveStateUpdates.getPredictiveResponse();
@@ -27,7 +27,7 @@ test.describe("Predictive Status Updates Feature", () => {
       await page.waitForTimeout(3000);
 
       await predictiveStateUpdates.sendMessage("Change the dog name");
-      await waitForAIResponse(page);
+      await page.waitForTimeout(2000);
       await page.waitForTimeout(2000);
 
       await predictiveStateUpdates.verifyHighlightedText();
@@ -41,7 +41,7 @@ test.describe("Predictive Status Updates Feature", () => {
     });
   });
 
-  test.fixme("[Server Starter all features] should interact with agent and reject asked changes", async ({ page, }) => {
+  test("[Server Starter all features] should interact with agent and reject asked changes", async ({ page, }) => {
     await retryOnAIFailure(async () => {
       const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);
 
@@ -53,7 +53,7 @@ test.describe("Predictive Status Updates Feature", () => {
       await page.waitForTimeout(2000);
 
       await predictiveStateUpdates.sendMessage("Hi");
-      await waitForAIResponse(page);
+      await page.waitForTimeout(2000);
       await page.waitForTimeout(2000);
 
       await predictiveStateUpdates.getPredictiveResponse();
@@ -66,7 +66,7 @@ test.describe("Predictive Status Updates Feature", () => {
       await page.waitForTimeout(3000);
 
       await predictiveStateUpdates.sendMessage("Change the dog name");
-      await waitForAIResponse(page);
+      await page.waitForTimeout(2000);
       await page.waitForTimeout(2000);
 
       await predictiveStateUpdates.verifyHighlightedText();
