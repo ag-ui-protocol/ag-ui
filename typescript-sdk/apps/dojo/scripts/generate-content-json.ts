@@ -147,7 +147,7 @@ const agentFilesMapper: Record<string, (agentKeys: string[]) => Record<string, s
   'pydantic-ai': (agentKeys: string[]) => {
     return agentKeys.reduce((acc, agentId) => ({
       ...acc,
-      [agentId]: [`https://github.com/pydantic/pydantic-ai/blob/main/examples/pydantic_ai_examples/ag_ui/api/${agentId}.py`]
+      [agentId]: [path.join(__dirname, integrationsFolderPath, `/pydantic-ai/examples/server/api/${agentId}.py`)]
     }), {})
   },
   'server-starter': () => ({
