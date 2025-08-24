@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material 3 Dynamic Color Palette -->
+    <color name="md_theme_primary">#6750A4</color>
+    <color name="md_theme_on_primary">#FFFFFF</color>
+    <color name="md_theme_primary_container">#EADDFF</color>
+    <color name="md_theme_on_primary_container">#21005D</color>
+    <color name="md_theme_secondary">#625B71</color>
+    <color name="md_theme_on_secondary">#FFFFFF</color>
+    <color name="md_theme_secondary_container">#E8DEF8</color>
+    <color name="md_theme_on_secondary_container">#1D192B</color>
+    <color name="md_theme_tertiary">#7D5260</color>
+    <color name="md_theme_on_tertiary">#FFFFFF</color>
+    <color name="md_theme_tertiary_container">#FFD8E4</color>
+    <color name="md_theme_on_tertiary_container">#31111D</color>
+    <color name="md_theme_error">#B3261E</color>
+    <color name="md_theme_on_error">#FFFFFF</color>
+    <color name="md_theme_error_container">#F9DEDC</color>
+    <color name="md_theme_on_error_container">#410E0B</color>
+    <color name="md_theme_outline">#79747E</color>
+    <color name="md_theme_outline_variant">#CAC4D0</color>
+    <color name="md_theme_surface">#FFFBFE</color>
+    <color name="md_theme_on_surface">#1C1B1F</color>
+    <color name="md_theme_surface_variant">#E7E0EC</color>
+    <color name="md_theme_on_surface_variant">#49454F</color>
+    <color name="md_theme_surface_inverse">#313033</color>
+    <color name="md_theme_on_surface_inverse">#F4EFF4</color>
+    <color name="md_theme_primary_inverse">#D0BCFF</color>
+    
+    <!-- Message bubble colors -->
+    <color name="user_message_background">#E3F2FD</color>
+    <color name="assistant_message_background">#F5F5F5</color>
+    <color name="system_message_background">#FFF3E0</color>
+    <color name="error_message_background">#FFEBEE</color>
+</resources>
