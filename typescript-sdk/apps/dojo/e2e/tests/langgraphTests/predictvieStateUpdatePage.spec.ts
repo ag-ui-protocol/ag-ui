@@ -1,13 +1,12 @@
 import {
   test,
   expect,
-  waitForAIResponse,
   retryOnAIFailure,
 } from "../../test-isolation-helper";
 import { PredictiveStateUpdatesPage } from "../../pages/langGraphPages/PredictiveStateUpdatesPage";
 
 test.describe("Predictive Status Updates Feature", () => {
-  test.fixme("[LangGraph] should interact with agent and approve asked changes", async ({
+  test("[LangGraph] should interact with agent and approve asked changes", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
@@ -23,7 +22,6 @@ test.describe("Predictive Status Updates Feature", () => {
       await predictiveStateUpdates.sendMessage(
         "Give me a story for a dragon called Atlantis in document"
       );
-      await waitForAIResponse(page);
       await page.waitForTimeout(2000);
 
       await predictiveStateUpdates.getPredictiveResponse();
@@ -37,7 +35,6 @@ test.describe("Predictive Status Updates Feature", () => {
       await page.waitForTimeout(3000);
 
       await predictiveStateUpdates.sendMessage("Change dragon name to Lola");
-      await waitForAIResponse(page);
       await page.waitForTimeout(2000);
 
       await predictiveStateUpdates.verifyHighlightedText();
@@ -50,7 +47,7 @@ test.describe("Predictive Status Updates Feature", () => {
     });
   });
 
-  test.fixme("[LangGraph] should interact with agent and reject asked changes", async ({
+  test("[LangGraph] should interact with agent and reject asked changes", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
@@ -66,7 +63,6 @@ test.describe("Predictive Status Updates Feature", () => {
       await predictiveStateUpdates.sendMessage(
         "Give me a story for a dragon called Atlantis in document"
       );
-      await waitForAIResponse(page);
       await page.waitForTimeout(2000);
 
       await predictiveStateUpdates.getPredictiveResponse();
@@ -80,7 +76,6 @@ test.describe("Predictive Status Updates Feature", () => {
       await page.waitForTimeout(3000);
 
       await predictiveStateUpdates.sendMessage("Change dragon name to Lola");
-      await waitForAIResponse(page);
       await page.waitForTimeout(2000);
 
       await predictiveStateUpdates.verifyHighlightedText();

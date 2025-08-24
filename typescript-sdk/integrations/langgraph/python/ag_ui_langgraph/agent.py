@@ -100,11 +100,13 @@ class LangGraphAgent:
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[str, None]:
         thread_id = input.thread_id or str(uuid.uuid4())
-        self.active_run = {
+        INITIAL_ACTIVE_RUN = {
             "id": input.run_id,
             "thread_id": thread_id,
             "thinking_process": None,
+            "node_name": None,
         }
+        self.active_run = INITIAL_ACTIVE_RUN
 
         forwarded_props = input.forwarded_props
         node_name_input = forwarded_props.get('node_name', None) if forwarded_props else None
@@ -256,7 +258,8 @@ class LangGraphAgent:
         yield self._dispatch_event(
             RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
         )
-        self.active_run = None
+        # Reset active run to how it was before the stream started
+        self.active_run = INITIAL_ACTIVE_RUN
 
 
     async def prepare_stream(self, input: RunAgentInput, agent_state: State, config: RunnableConfig):

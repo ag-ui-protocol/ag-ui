@@ -25,3 +25,13 @@ def add_langgraph_fastapi_endpoint(app: FastAPI, agent: LangGraphAgent, path: st
             event_generator(),
             media_type=encoder.get_content_type()
         )
+
+    @app.get(f"{path}/health")
+    def health():
+        """Health check."""
+        return {
+            "status": "ok",
+            "agent": {
+                "name": agent.name,
+            }
+        }
