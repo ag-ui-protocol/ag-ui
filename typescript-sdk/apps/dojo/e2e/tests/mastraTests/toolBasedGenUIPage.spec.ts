@@ -4,7 +4,7 @@ import { ToolBaseGenUIPage } from "../../pages/mastraPages/ToolBaseGenUIPage";
 const pageURL =
   "/mastra/feature/tool_based_generative_ui";
 
-test.fixme('[Mastra] Haiku generation and display verification', async ({
+test('[Mastra] Haiku generation and display verification', async ({
   page,
 }) => {
   await page.goto(pageURL);
@@ -17,7 +17,7 @@ test.fixme('[Mastra] Haiku generation and display verification', async ({
   await genAIAgent.checkHaikuDisplay(page);
 });
 
-test.fixme('[Mastra] Haiku generation and UI consistency for two different prompts', async ({
+test('[Mastra] Haiku generation and UI consistency for two different prompts', async ({
   page,
 }) => {
   await page.goto(pageURL);

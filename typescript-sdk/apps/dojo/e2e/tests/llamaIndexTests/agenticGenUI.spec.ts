@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { AgenticGenUIPage } from "../../pages/llamaIndexPages/AgenticUIGenPage";
 
 test.describe("Agent Generative UI Feature", () => {
-  test.fixme("[LlamaIndex] should interact with the chat to get a planner on prompt", async ({
+  test("[LlamaIndex] should interact with the chat to get a planner on prompt", async ({
     page,
   }) => {
     const genUIAgent = new AgenticGenUIPage(page);
@@ -35,7 +35,7 @@ test.describe("Agent Generative UI Feature", () => {
     );
   });
 
-  test.fixme("[LlamaIndex] should interact with the chat using predefined prompts and perform steps", async ({
+  test("[LlamaIndex] should interact with the chat using predefined prompts and perform steps", async ({
     page,
   }) => {
     const genUIAgent = new AgenticGenUIPage(page);

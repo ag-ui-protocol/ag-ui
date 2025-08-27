@@ -21,7 +21,7 @@ test.describe("Shared State Feature", () => {
     );
   });
 
-  test.fixme("[Server Starter all features] should share state between UI and chat", async ({
+  test("[Server Starter all features] should share state between UI and chat", async ({
     page,
   }) => {
     const sharedStateAgent = new SharedStatePage(page);
