@@ -97,7 +97,7 @@ AG-UI was born from CopilotKit's initial partnership with LangGraph and CrewAI -
 | [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/llamaindex)                             | 1st party                |
 | [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/pydantic-ai)                            | 1st party                |
 | [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            | Community                |
-| [Google ADK](https://google.github.io/adk-docs/get-started/)       | 🛠️ In Progress           | –                                                                            | Community                |
+| [Google ADK](https://google.github.io/adk-docs/get-started/)       | 🛠️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/274)           | –                                                                            | Community                |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress           | –                                                                            | Community                |
 | [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/)       | 🛠️ In Progress           | –                                                                            | 1st party                |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/)     | 💡 Open to Contributions | –                                                                            | Community                |
@@ -113,7 +113,7 @@ AG-UI was born from CopilotKit's initial partnership with LangGraph and CrewAI -
 | [Nim]()                                                            | 🛠️ In Progress            | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/29)                     |
 | [Golang]()                                                         | 🛠️ In Progress            | ➡️ [Issue](https://github.com/ag-ui-protocol/ag-ui/issues/156)               |
 | [Rust]()                                                           | 🛠️ In Progress            | ➡️ [Issue](https://github.com/ag-ui-protocol/ag-ui/issues/239)               |
-| [Java]()                                                           | 💡 Open to Contributions  | ➡️ [Issue](https://github.com/ag-ui-protocol/ag-ui/issues/20)                |
+| [Java]()                                                           | 🛠️ In Progress            | ➡️ [GitHub Source](https://github.com/work-m8/ag-ui-4j)                      |
 
 
 [View all supported frameworks →](https://ag-ui.com/frameworks)
@@ -153,4 +153,3 @@ Check out the [AG-UI Roadmap](https://github.com/orgs/ag-ui-protocol/projects/1)
 ## 📄 License
 
 AG-UI is open source software [licensed as MIT](https://opensource.org/licenses/MIT).  
-Maintained by [AG Protocol](https://www.agprotocol.ai).

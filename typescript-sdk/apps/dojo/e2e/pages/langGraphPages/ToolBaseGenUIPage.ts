@@ -1,4 +1,4 @@
-import { Page, Locator, expect} from '@playwright/test';
+import { Page, Locator, expect } from '@playwright/test';
 
 export class ToolBaseGenUIPage {
   readonly page: Page;
@@ -9,90 +9,115 @@ export class ToolBaseGenUIPage {
   readonly appliedButton: Locator;
   readonly haikuBlock: Locator;
   readonly japaneseLines: Locator;
-  
 
   constructor(page: Page) {
     this.page = page;
-    // Remove iframe references and use actual greeting text
     this.haikuAgentIntro = page.getByText("I'm a haiku generator 👋. How can I help you?");
     this.messageBox = page.getByRole('textbox', { name: 'Type a message...' });
     this.sendButton = page.locator('[data-test-id="copilot-chat-ready"]');
-    this.haikuBlock = page.locator('div.text-left.rounded-md.p-4');
+    this.haikuBlock = page.locator('[data-testid="haiku-card"]');
     this.applyButton = page.getByRole('button', { name: 'Apply' });
-    this.japaneseLines = page.locator(
-        'div.copilotKitMessage.copilotKitAssistantMessage ul'
-        ).first().locator('li');
+    this.japaneseLines = page.locator('[data-testid="haiku-line"]');
   }
+
+  async checkGeneratedHaiku() {
+    await this.page.locator('[data-testid="haiku-card"]').last().isVisible();
+    const mostRecentCard = this.page.locator('[data-testid="haiku-card"]').last();
+    await mostRecentCard.locator('[data-testid="haiku-line"]').first().waitFor({ state: 'visible', timeout: 10000 });
+  }
+
+  async extractChatHaikuContent(page: Page): Promise<string> {
+    await page.waitForTimeout(3000);
+    await page.locator('[data-testid="haiku-card"]').first().waitFor({ state: 'visible' });
+    const allHaikuCards = page.locator('[data-testid="haiku-card"]');
+    const cardCount = await allHaikuCards.count();
+    
+    const expectedCardCount = await this.getExpectedHaikuCount();
+    
+    if (cardCount < expectedCardCount) {
+      throw new Error(`Expected ${expectedCardCount} haiku cards but found ${cardCount} - haiku generation may have failed`);
+    }
+    
+    const mostRecentCard = allHaikuCards.last();
+    const chatHaikuLines = mostRecentCard.locator('[data-testid="haiku-line"]');
+    const linesCount = await chatHaikuLines.count();
+
+    if (linesCount === 0) {
+      throw new Error('Most recent haiku card has no visible lines - haiku generation failed');
+    }
+
+    try {
+      await chatHaikuLines.first().waitFor({ state: 'visible', timeout: 5000 });
+    } catch (error) {
+      throw new Error('Most recent haiku card lines are not visible - haiku generation failed');
+    }
+
+    const count = await chatHaikuLines.count();
+    const lines: string[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const haikuLine = chatHaikuLines.nth(i);
+      const japaneseText = await haikuLine.locator('p').first().innerText();
+      lines.push(japaneseText);
+    }
+
+    const chatHaikuContent = lines.join('').replace(/\s/g, '');
+    return chatHaikuContent;
+  }
+
+  private haikuGenerationCount = 0;
 
   async generateHaiku(message: string) {
     await this.messageBox.click();
     await this.messageBox.fill(message);
     await this.sendButton.click();
+    this.haikuGenerationCount++;
   }
 
-  async checkGeneratedHaiku(){
-    await this.haikuBlock.isVisible();
-    // Click apply to transfer haiku to main display
-    await this.applyButton.click();
+  async getExpectedHaikuCount(): Promise<number> {
+    return this.haikuGenerationCount;
   }
 
-  async extractJapaneseLines(page: Page): Promise<string[]> {
-    // Get Japanese text from chat sidebar using actual DOM structure
-    // From the DOM you shared, the chat haiku is in a specific container
-    const chatHaikuContainer = page.locator('div.text-left.rounded-md.p-4.mt-4.mb-4');
-    const chatHaikuLines = chatHaikuContainer.locator('div.border-b div.flex.items-center.gap-3.mb-2.pb-2');
-    
-    await chatHaikuLines.first().waitFor();
-    const count = await chatHaikuLines.count();
+  async extractMainDisplayHaikuContent(page: Page): Promise<string> {
+    const mainDisplayLines = page.locator('[data-testid="main-haiku-line"]');
+    const mainCount = await mainDisplayLines.count();
     const lines: string[] = [];
 
-    for (let i = 0; i < count; i++) {
-      // Get the Japanese text (first p element - the bold one)
-      const japaneseText = await chatHaikuLines.nth(i).locator('p').first().innerText();
-      lines.push(japaneseText);
+    if (mainCount > 0) {
+      for (let i = 0; i < mainCount; i++) {
+        const haikuLine = mainDisplayLines.nth(i);
+        const japaneseText = await haikuLine.locator('p').first().innerText();
+        lines.push(japaneseText);
+      }
     }
 
-    return lines;
+    const mainHaikuContent = lines.join('').replace(/\s/g, '');
+    return mainHaikuContent;
   }
 
   async checkHaikuDisplay(page: Page): Promise<void> {
-    // Get the current chat haiku first
-    const chatLines = await this.extractJapaneseLines(page);
-    console.log(`Chat haiku lines:`, chatLines);
-    
-    // Wait a reasonable time for main display to update
-    await page.waitForTimeout(3000);
-    
-    // Get the main display lines without waiting for specific content
-    const mainLines: string[] = [];
-    const mainDisplayLines = page.locator('div.min-h-full div.text-left div.flex.items-center.gap-6.mb-2');
-    
-    const mainCount = await mainDisplayLines.count();
-    console.log(`Main display found ${mainCount} lines`);
-    
-    for (let i = 0; i < mainCount; i++) {
-      // Get the Japanese text (first p element - the large bold one)
-      const japaneseText = await mainDisplayLines.nth(i).locator('p.text-4xl.font-bold').innerText();
-      mainLines.push(japaneseText);
+    const chatHaikuContent = await this.extractChatHaikuContent(page);
+
+    await page.waitForTimeout(5000);
+
+    const mainHaikuContent = await this.extractMainDisplayHaikuContent(page);
+
+    if (mainHaikuContent === '') {
+      throw new Error('Main display haiku content is empty - haiku was not properly generated or applied');
     }
-    
-    console.log(`Main display haiku lines:`, mainLines);
-    
-    // If main display hasn't updated, just verify chat has content
-    if (mainLines.length === 0 || mainLines[0] === "仮の句よ") {
-      console.log("Main display hasn't updated yet or is showing placeholder. Just verifying chat has haiku.");
-      expect(chatLines.length).toBeGreaterThan(0);
-      return;
-    }
-    
-    // Compare they have same number of lines and content
-    expect(mainLines.length).toBe(chatLines.length);
-    expect(mainLines.length).toBeGreaterThan(0); // Ensure we found some haiku
-    
-    // Compare each line matches exactly
-    for (let i = 0; i < chatLines.length; i++) {
-      console.log(`Comparing line ${i+1}: "${chatLines[i]}" vs "${mainLines[i]}"`);
-      expect(mainLines[i]).toBe(chatLines[i]);
+
+    if (chatHaikuContent === mainHaikuContent) {
+      expect(mainHaikuContent).toBe(chatHaikuContent);
+    } else {
+      await page.waitForTimeout(3000);
+
+      const updatedMainContent = await this.extractMainDisplayHaikuContent(page);
+      
+      if (updatedMainContent === '') {
+        throw new Error('Main display haiku content is still empty after additional wait - haiku generation failed');
+      }
+
+      expect(updatedMainContent).toBe(chatHaikuContent);
     }
   }
 }

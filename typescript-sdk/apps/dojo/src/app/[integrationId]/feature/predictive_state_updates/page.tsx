@@ -244,7 +244,7 @@ const DocumentEditor = () => {
         }}
       />
     ),
-  });
+  }, [agentState?.document]);
 
   // Action to write the document.
   useCopilotAction({
@@ -278,7 +278,7 @@ const DocumentEditor = () => {
       }
       return <></>;
     },
-  });
+  }, [agentState?.document]);
 
   return (
     <div className="relative min-h-screen w-full">

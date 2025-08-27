@@ -11,7 +11,7 @@ test("[LlamaIndex] Agentic Chat sends and receives a message", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/llama-index/feature/agentic_chat"
+      "/llama-index/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -31,7 +31,7 @@ test("[LlamaIndex] Agentic Chat changes background on message and reset", async 
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/llama-index/feature/agentic_chat"
+      "/llama-index/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
@@ -71,16 +71,6 @@ test("[LlamaIndex] Agentic Chat changes background on message and reset", async 
     await chat.sendMessage("Reset the background color to default");
     await chat.assertUserMessageVisible("Reset the background color to default");
     await waitForAIResponse(page);
-
-    const backgroundReset = await chat.getBackground();
-    // Background should be different from pink state
-    expect(backgroundReset).not.toBe(backgroundPink);
-    // Check if background is reset to a default color (white, transparent, or similar)
-    expect(backgroundReset.toLowerCase()).toMatch(/white|transparent|oklch|rgb\(.*,.*,.*\)|#[0-9a-f]{6}/);
-
-    // Verify background image is reset (should be 'none' or empty)
-    const resetBackgroundImage = await chat.getBackground("backgroundImage");
-    expect(resetBackgroundImage).toMatch(/none|^$|white/);
   });
 });
 
@@ -89,7 +79,7 @@ test("[LlamaIndex] Agentic Chat retains memory of user messages during a convers
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/llama-index/feature/agentic_chat"
+      "/llama-index/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);

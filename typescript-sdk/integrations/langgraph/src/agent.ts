@@ -200,7 +200,7 @@ export class LangGraphAgent extends AbstractAgent {
         checkpointId: fork.checkpoint.checkpoint_id!,
         streamMode,
       }),
-      state: timeTravelCheckpoint,
+      state: timeTravelCheckpoint as ThreadState<State>,
       streamMode,
     };
   }
@@ -486,7 +486,7 @@ export class LangGraphAgent extends AbstractAgent {
       this.endStep()
       this.dispatchEvent({
         type: EventType.STATE_SNAPSHOT,
-        snapshot: this.getStateSnapshot(state.values),
+        snapshot: this.getStateSnapshot(state),
       });
       this.dispatchEvent({
         type: EventType.MESSAGES_SNAPSHOT,
@@ -707,7 +707,7 @@ export class LangGraphAgent extends AbstractAgent {
           this.activeRun!.manuallyEmittedState = event.data;
           this.dispatchEvent({
             type: EventType.STATE_SNAPSHOT,
-            snapshot: this.getStateSnapshot(this.activeRun!.manuallyEmittedState!),
+            snapshot: this.getStateSnapshot({ values: this.activeRun!.manuallyEmittedState! } as ThreadState<State>),
             rawEvent: event,
           });
         }
@@ -767,7 +767,8 @@ export class LangGraphAgent extends AbstractAgent {
     }
   }
 
-  getStateSnapshot(state: State) {
+  getStateSnapshot(threadState: ThreadState<State>) {
+    let state = threadState.values
     const schemaKeys = this.activeRun!.schemaKeys!;
     // Do not emit state keys that are not part of the output schema
     if (schemaKeys?.output) {
@@ -992,7 +993,9 @@ export class LangGraphAgent extends AbstractAgent {
 
     const targetStateIndex = reversed.indexOf(targetState);
 
-    return reversed[targetStateIndex - 1] ?? { ...targetState, values: {} };
+    const { messages, ...targetStateValuesWithoutMessages } = targetState.values as State
+    const selectedCheckpoint = reversed[targetStateIndex - 1] ?? { ...targetState, values: {} }
+    return { ...selectedCheckpoint, values: { ...selectedCheckpoint.values, ...targetStateValuesWithoutMessages } };
   }
 }
 

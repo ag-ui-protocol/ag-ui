@@ -11,7 +11,7 @@ test("[Server Starter] Testing Agentic Chat", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "https://ag-ui-dojo-nine.vercel.app/server-starter/feature/agentic_chat"
+      "/server-starter/feature/agentic_chat"
     );
 
     const chat = new AgenticChatPage(page);
