@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/mastra",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "license": "Apache-2.0",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -31,7 +31,7 @@
   },
   "peerDependencies": {
     "@copilotkit/runtime": "^1.9.3",
-    "@mastra/core": "^0.11.1 || ^0.12.1 || ^0.13.0",
+    "@mastra/core": ">=0.11.1",
     "zod": "^3.25.67"
   },
   "devDependencies": {
