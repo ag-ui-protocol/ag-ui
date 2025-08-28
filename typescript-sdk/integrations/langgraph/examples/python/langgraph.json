@@ -9,7 +9,8 @@
     "predictive_state_updates": "./agents/predictive_state_updates/agent.py:graph",
     "shared_state": "./agents/shared_state/agent.py:graph",
     "tool_based_generative_ui": "./agents/tool_based_generative_ui/agent.py:graph",
-    "agentic_chat_reasoning": "./agents/agentic_chat_reasoning/agent.py:graph"
+    "agentic_chat_reasoning": "./agents/agentic_chat_reasoning/agent.py:graph",
+    "subgraphs": "./agents/subgraphs/agent.py:graph"
   },
   "env": ".env"
 }
