@@ -306,7 +306,7 @@ function Haiku() {
         image_names: finalCorrectedImages || [],
         selectedImage: finalCorrectedImages?.[0] || null,
       };
-      setHaikus(prev => [...prev, newHaiku].filter(h => h.english[0] !== "A placeholder verse—"));
+      setHaikus(prev => [newHaiku, ...prev].filter(h => h.english[0] !== "A placeholder verse—"));
       setActiveIndex(haikus.length - 1);
       setIsJustApplied(true);
       setTimeout(() => setIsJustApplied(false), 600);

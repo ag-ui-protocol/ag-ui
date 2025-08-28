@@ -2,6 +2,7 @@
 An example demonstrating tool-based generative UI using LangGraph.
 """
 
+import os
 from typing import Any, List
 from typing_extensions import Literal
 from langchain_openai import ChatOpenAI
@@ -61,5 +62,19 @@ workflow.add_node("chat_node", chat_node)
 # This is required even though we don't have any backend tools to pass in.
 workflow.add_node("tool_node", ToolNode(tools=[]))
 workflow.set_entry_point("chat_node")
+workflow.add_edge("chat_node", END)
 
-graph = workflow.compile()
+
+# Conditionally use a checkpointer based on the environment
+# Check for multiple indicators that we're running in LangGraph dev/API mode
+is_fast_api = os.environ.get("LANGGRAPH_FAST_API", "false").lower() == "true"
+
+# Compile the graph
+if is_fast_api:
+    # For CopilotKit and other contexts, use MemorySaver
+    from langgraph.checkpoint.memory import MemorySaver
+    memory = MemorySaver()
+    graph = workflow.compile(checkpointer=memory)
+else:
+    # When running in LangGraph API/dev, don't use a custom checkpointer
+    graph = workflow.compile()
