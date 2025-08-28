@@ -5,6 +5,7 @@ This demo showcases **LangGraph subgraphs** through an interactive travel planni
 ## What are LangGraph Subgraphs? 🤖
 
 **Subgraphs** are the key to building modular, scalable AI systems in LangGraph. A subgraph is essentially "a graph that is used as a node in another graph" - enabling powerful encapsulation and reusability.
+For more info, check out the [LangGraph docs](https://langchain-ai.github.io/langgraph/concepts/subgraphs/).
 
 ### Key Concepts
 
@@ -15,172 +16,77 @@ This demo showcases **LangGraph subgraphs** through an interactive travel planni
 
 ## Demo Architecture 🗺️
 
-This travel planner demonstrates both **shared state** and **specialized routing** patterns:
+This travel planner demonstrates **supervisor-coordinated subgraphs** with **human-in-the-loop** decision making:
 
-### Parent Graph: Trip Coordinator
-- **Role**: Analyzes user requests and routes to appropriate travel specialists
-- **Intelligence**: Uses keyword analysis to determine which specialist to activate
-- **State Management**: Maintains the complete travel plan across all subgraphs
+### Parent Graph: Travel Supervisor
+- **Role**: Coordinates the travel planning process and routes to specialized agents
+- **State Management**: Maintains a shared itinerary object across all subgraphs
+- **Intelligence**: Determines what's needed and when each agent should be called
 
-### Subgraph 1: 🚗 Transportation Specialist
-- **Specialization**: Flights, trains, car rentals, buses, cruises, and travel logistics
-- **Triggers**: "flight", "train", "car rental", "transportation", "departure", "arrival"
-- **Tools**: `update_transportation()` with booking tips and cost optimization
+### Subgraph 1: ✈️ Flights Agent
+- **Specialization**: Finding and booking flight options
+- **Process**: Presents flight options from Amsterdam to San Francisco with recommendations
+- **Interaction**: Uses interrupts to let users choose their preferred flight
+- **Data**: Static flight options (KLM, United) with pricing and duration
 
-### Subgraph 2: 🏨 Accommodation Expert  
-- **Specialization**: Hotels, Airbnb, resorts, hostels, camping, and lodging options
-- **Triggers**: "hotel", "accommodation", "stay", "room", "airbnb", "resort"
-- **Tools**: `update_accommodation()` with location and amenities optimization
+### Subgraph 2: 🏨 Hotels Agent  
+- **Specialization**: Finding and booking accommodation
+- **Process**: Shows hotel options in San Francisco with different price points
+- **Interaction**: Uses interrupts for user to select their preferred hotel
+- **Data**: Static hotel options (Hotel Zephyr, Ritz-Carlton, Hotel Zoe)
 
-### Subgraph 3: 🎯 Activities Planner
-- **Specialization**: Attractions, restaurants, tours, cultural experiences, entertainment
-- **Triggers**: "activities", "attractions", "restaurant", "sightseeing", "tour", "experience"
-- **Tools**: `update_activities()` with local insights and time optimization
+### Subgraph 3: 🎯 Experiences Agent
+- **Specialization**: Curating restaurants and activities
+- **Process**: AI-powered recommendations based on selected flights and hotels
+- **Features**: Combines 2 restaurants and 2 activities with location-aware suggestions
+- **Data**: Static experiences (Pier 39, Golden Gate Bridge, Swan Oyster Depot, Tartine Bakery)
 
 ## How It Works 🔄
 
-1. **User Input**: "Plan a 5-day trip to Paris for 2 people"
-2. **Coordinator Analysis**: Determines this requires all three subgraphs
-3. **Intelligent Routing**: Distributes specialized requests to each subgraph:
-   - Transportation: "Find flights to Paris and local transport"
-   - Accommodation: "Find hotels in central Paris for 2 guests"
-   - Activities: "Plan 5 days of Paris attractions and dining"
-4. **Parallel Processing**: All subgraphs work simultaneously 
-5. **State Synchronization**: Each subgraph updates its portion of the travel plan
-6. **Visual Feedback**: UI shows which subgraphs are active and updating
+1. **User Request**: "Help me plan a trip to San Francisco"
+2. **Supervisor Analysis**: Determines what travel components are needed
+3. **Sequential Routing**: Routes to each agent in logical order:
+   - First: Flights Agent (get transportation sorted)
+   - Then: Hotels Agent (book accommodation)  
+   - Finally: Experiences Agent (plan activities)
+4. **Human Decisions**: Each agent presents options and waits for user choice via interrupts
+5. **State Building**: Selected choices are stored in the shared itinerary object
+6. **Completion**: All agents report back to supervisor for final coordination
 
 ## State Communication Patterns 📊
 
 ### Shared State Schema
-```typescript
-interface TravelPlan {
-  destination: string;
-  travel_dates: string;
-  duration: string;
-  travelers: number;
-  budget: string;
-  transportation: Transportation;    // Owned by Transportation subgraph
-  accommodation: Accommodation;      // Owned by Accommodation subgraph  
-  activities: Activity[];            // Owned by Activities subgraph
-  travel_notes: string[];            // Shared across all
-}
-```
+All subgraph agents share and contribute to a common state object. When any agent updates the shared state, these changes are immediately reflected in the frontend through real-time syncing. This ensures that:
 
-### Domain-Specific Updates
-Each subgraph only modifies its own domain while preserving the complete travel plan:
+- **Flight selections** from the Flights Agent are visible to subsequent agents
+- **Hotel choices** influence the Experiences Agent's recommendations  
+- **All updates** are synchronized with the frontend UI in real-time
+- **State persistence** maintains the travel itinerary throughout the workflow
 
-- **Transportation Subgraph**: Updates `travel_plan.transportation` object
-- **Accommodation Subgraph**: Updates `travel_plan.accommodation` object
-- **Activities Subgraph**: Updates `travel_plan.activities` array
+### Human-in-the-Loop Pattern
+Two of the specialist agents use **interrupts** to pause execution and gather user preferences:
+
+- **Flights Agent**: Presents options → interrupt → waits for selection → continues
+- **Hotels Agent**: Shows hotels → interrupt → waits for choice → continues
 
 ## Try These Examples! 💡
 
-### Transportation Focus
-- "Find me flights from New York to Tokyo"
-- "I want to take the train through Europe"
-- "Plan a road trip from Los Angeles to San Francisco"
+### Getting Started
+- "Help me plan a trip to San Francisco"
+- "I want to visit San Francisco from Amsterdam"
+- "Plan my travel itinerary"
 
-### Accommodation Focus  
-- "Find luxury hotels in downtown Manhattan"
-- "I want to camp in Yosemite National Park"
-- "Book an Airbnb near the Eiffel Tower"
+### During the Process
+When the Flights Agent presents options:
+- Choose between KLM ($650, 11h 30m) or United ($720, 12h 15m)
 
-### Activities Focus
-- "What are the must-see attractions in Rome?"
-- "Find the best restaurants in Tokyo"
-- "Plan adventure activities in Costa Rica"
+When the Hotels Agent shows accommodations:
+- Select from Hotel Zephyr, The Ritz-Carlton, or Hotel Zoe
 
-### Multi-Domain Requests
-- "Plan a romantic weekend in Santorini"
-- "Organize a family vacation to Disney World"
-- "Create a backpacking itinerary through Southeast Asia"
+The Experiences Agent will then provide tailored recommendations based on your choices!
 
-## Visual Features 👁️
+## Frontend Capabilities 👁️
 
-### Real-Time Subgraph Activity
-- **Glowing indicators** show which subgraph is currently active
-- **Animated routing paths** display request flow from coordinator to subgraphs
-- **Live travel plan updates** as each subgraph contributes
-
-### Travel Plan Visualization
-- **Dynamic travel overview** with destination and traveler indicators
-- **Comprehensive travel details** showing transportation, accommodation, and activities
-- **Smart destination emojis** that match popular travel destinations
-- **Planning progress tracking** across all travel aspects
-
-### Mobile Responsive
-- **Collapsible chat interface** for mobile users
-- **Touch-friendly controls** with gesture support
-- **Optimized layouts** for different screen sizes
-
-## Technical Implementation ⚙️
-
-### Backend (Python)
-- **LangGraph workflow** with embedded subgraphs
-- **Smart routing logic** using travel-specific keyword analysis
-- **State management** with shared travel plan object
-- **Tool definitions** for each travel domain specialist
-- **Event streaming** for real-time UI updates
-
-### Frontend (React + TypeScript)
-- **CopilotKit integration** for seamless chat experience
-- **Real-time state synchronization** with `useCoAgent`
-- **Animated UI components** showing subgraph activity
-- **Travel-themed design** with destination recognition
-- **Custom travel data models** for type safety
-
-## Learning Outcomes 🎯
-
-After exploring this demo, you'll understand:
-
-1. **Subgraph Architecture**: How to structure travel planning with specialized components
-2. **State Patterns**: When to use shared travel state vs. different schemas
-3. **Routing Logic**: How to intelligently direct travel requests to appropriate subgraphs  
-4. **Visual Representation**: Making AI travel planning visible to users
-5. **Real-World Applications**: Practical patterns for multi-specialist systems
-
-## Why Travel Planning Works So Well 🌟
-
-Travel planning is perfect for demonstrating subgraphs because:
-
-- **Clear Domain Separation**: Everyone understands transportation ≠ accommodation ≠ activities
-- **Real-World Relevance**: Everyone has planned a trip and can relate to the process
-- **Complex Coordination**: Shows how specialists must work together for optimal results
-- **Visual Appeal**: Travel plans are naturally visual and engaging
-- **Immediate Value**: Users can actually use this for real travel planning!
-
-## Next Steps 🚀
-
-Ready to build your own subgraph systems? Consider these patterns:
-
-- **E-commerce**: Product Finder → Inventory Checker → Price Calculator → Order Processor
-- **Healthcare**: Symptom Analyzer → Treatment Planner → Medication Manager → Appointment Scheduler
-- **Education**: Course Planner → Content Creator → Assessment Designer → Progress Tracker
-- **Content Creation**: Research → Writing → Editing → Publishing
-
-The possibilities are endless when you can compose specialized AI agents into powerful workflows! ⚡
-
-## Example Conversations 💬
-
-### Complete Trip Planning
-**User**: "Plan a 7-day trip to Japan for my honeymoon"
-
-**Trip Coordinator**: *Routes to Transportation Specialist*
-**🚗 Transportation**: "I'll find flights to Tokyo and plan your internal travel"
-
-**Trip Coordinator**: *Routes to Accommodation Specialist*  
-**🏨 Accommodation**: "Let me find romantic hotels and ryokans for your stay"
-
-**Trip Coordinator**: *Routes to Activities Specialist*
-**🎯 Activities**: "I'll curate amazing experiences from temples to cuisine"
-
-### Specific Domain Updates
-**User**: "Actually, let's fly business class"
-**Trip Coordinator**: *Routes to Transportation Specialist*
-**🚗 Transportation**: "Upgrading your flights to business class with better timing"
-
-**User**: "Find activities near our hotel"
-**Trip Coordinator**: *Routes to Activities Specialist*  
-**🎯 Activities**: "Adding nearby attractions and restaurants to your itinerary"
-
-This natural conversation flow demonstrates how subgraphs enable truly intelligent, specialized assistance! 🎉
+- **Human-in-the-loop with interrupts** from subgraphs for user decision making
+- **Subgraphs detection and streaming** to show which agent is currently active
+- **Real-time state updates** as the shared itinerary is built across agents
