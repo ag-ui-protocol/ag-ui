@@ -57,5 +57,11 @@ export default function FeatureLayout({ children, params }: Props) {
     }
   }, [children, codeFiles, readme, view])
 
-  return <div className="bg-white rounded-lg w-full h-full">{content}</div>;
+  return (
+    <div className="bg-white rounded-lg w-full h-full overflow-hidden">
+      <div className="flex flex-col h-full overflow-auto">
+        {content}
+      </div>
+    </div>
+  );
 }
