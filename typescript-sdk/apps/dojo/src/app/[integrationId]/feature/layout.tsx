@@ -34,8 +34,10 @@ export default function FeatureLayout({ children, params }: Props) {
 
   const files = (filesJSON as FilesJsonType)[`${integrationId}::${featureId}`] || [];
 
-  const readme = files.find(file => file.name.includes('.mdx'));
-  const codeFiles = files.filter(file => !file.name.includes('.mdx'));
+  const readme = files.find((file) => file?.name?.includes(".mdx")) || null;
+  const codeFiles = files.filter(
+    (file) => file && Object.keys(file).length > 0 && !file.name?.includes(".mdx"),
+  );
 
 
   const content = useMemo(() => {
