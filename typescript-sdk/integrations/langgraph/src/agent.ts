@@ -194,13 +194,15 @@ export class LangGraphAgent extends AbstractAgent {
       }
     );
 
+      const payload = {
+          ...(input.forwardedProps ?? {}),
+          input: this.langGraphDefaultMergeState(timeTravelCheckpoint.values, [messageCheckpoint], tools),
+          // @ts-ignore
+          checkpointId: fork.checkpoint.checkpoint_id!,
+          streamMode,
+      };
     return {
-      streamResponse: this.client.runs.stream(threadId, this.assistant.assistant_id, {
-        input: this.langGraphDefaultMergeState(timeTravelCheckpoint.values, [messageCheckpoint], tools),
-        // @ts-ignore
-        checkpointId: fork.checkpoint.checkpoint_id!,
-        streamMode,
-      }),
+      streamResponse: this.client.runs.stream(threadId, this.assistant.assistant_id, payload),
       state: timeTravelCheckpoint as ThreadState<State>,
       streamMode,
     };
@@ -360,8 +362,14 @@ export class LangGraphAgent extends AbstractAgent {
       }
 
       for await (let streamResponseChunk of streamResponse) {
+          const subgraphsStreamEnabled = input.forwardedProps?.streamSubgraphs
+          const isSubgraphStream = (subgraphsStreamEnabled && (
+              streamResponseChunk.event.startsWith("events") ||
+              streamResponseChunk.event.startsWith("values")
+          ))
+
         // @ts-ignore
-        if (!streamMode.includes(streamResponseChunk.event as StreamMode)) {
+        if (!streamMode.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream) {
           continue;
         }
 
@@ -391,6 +399,12 @@ export class LangGraphAgent extends AbstractAgent {
         if (streamResponseChunk.event === "values") {
           latestStateValues = chunk.data;
           continue;
+        } else if (subgraphsStreamEnabled && chunk.event.startsWith("values|")) {
+            latestStateValues = {
+                ...latestStateValues,
+                ...chunk.data,
+            };
+            continue;
         }
 
         const chunkData = chunk.data;

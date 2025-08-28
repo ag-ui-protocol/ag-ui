@@ -155,6 +155,11 @@ class LangGraphAgent:
         current_graph_state = state
         
         async for event in stream:
+            subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs') if input.forwarded_props else False
+            is_subgraph_stream = (subgraphs_stream_enabled and (
+                event.get("event", "").startswith("events") or 
+                event.get("event", "").startswith("values")
+            ))
             if event["event"] == "error":
                 yield self._dispatch_event(
                     RunErrorEvent(type=EventType.RUN_ERROR, message=event["data"]["message"], raw_event=event)
@@ -323,8 +328,18 @@ class LangGraphAgent:
             )
             stream_input = {**forwarded_props, **payload_input} if payload_input else None
 
+
+        subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs') if input.forwarded_props else False
+
+        stream = self.graph.astream_events(
+            stream_input,
+            config=config,
+            subgraps=bool(subgraphs_stream_enabled),
+            version="v2"
+        )
+
         return {
-            "stream": self.graph.astream_events(stream_input, config, version="v2"),
+            "stream": stream,
             "state": state,
             "config": config
         }
@@ -349,7 +364,13 @@ class LangGraphAgent:
         )
 
         stream_input = self.langgraph_default_merge_state(time_travel_checkpoint.values, [message_checkpoint], tools)
-        stream = self.graph.astream_events(stream_input, fork, version="v2")
+        subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs') if input.forwarded_props else False
+        stream = self.graph.astream_events(
+            stream_input,
+            fork,
+            subgraps=bool(subgraphs_stream_enabled),
+            version="v2"
+        )
 
         return {
             "stream": stream,
