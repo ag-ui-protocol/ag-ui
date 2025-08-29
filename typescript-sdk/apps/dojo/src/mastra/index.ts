@@ -13,11 +13,11 @@ import { z } from "zod";
 function getStorage(): LibSQLStore | DynamoDBStore {
   if (process.env.DYNAMODB_TABLE_NAME) {
     return new DynamoDBStore({
-    name: "dynamodb",
-    config: {
-      tableName: process.env.DYNAMODB_TABLE_NAME
-    },
-  });
+      name: "dynamodb",
+      config: {
+        tableName: process.env.DYNAMODB_TABLE_NAME
+      },
+    });
   } else {
     return new LibSQLStore({ url: "file::memory:" });
   }
@@ -38,9 +38,7 @@ export const mastra = new Mastra({
         - If giving a location with multiple parts (e.g. "New York, NY"), use the most relevant part (e.g. "New York")
         - Include relevant details like humidity, wind conditions, and precipitation
         - Keep responses concise but informative
-
-        Use the weatherTool to fetch current weather data.
-  `,
+    `,
       model: openai("gpt-4o"),
       memory: new Memory({
         storage: getStorage(),
