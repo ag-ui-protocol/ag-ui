@@ -35,7 +35,7 @@ test.describe("Agent Generative UI Feature", () => {
     );
   });
 
-  test.fixme("[LangGraph FastAPI] should interact with the chat using predefined prompts and perform steps", async ({
+  test("[LangGraph FastAPI] should interact with the chat using predefined prompts and perform steps", async ({
     page,
   }) => {
     const genUIAgent = new AgenticGenUIPage(page);

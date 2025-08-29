@@ -21,7 +21,7 @@ test.describe("Shared State Feature", () => {
     );
   });
 
-  test.fixme("[LangGraph FastAPI] should share state between UI and chat", async ({
+  test("[LangGraph FastAPI] should share state between UI and chat", async ({
     page,
   }) => {
     const sharedStateAgent = new SharedStatePage(page);

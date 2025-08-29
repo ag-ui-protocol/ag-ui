@@ -4,6 +4,7 @@ import { ToolBaseGenUIPage } from "../../pages/mastraPages/ToolBaseGenUIPage";
 const pageURL =
   "/mastra/feature/tool_based_generative_ui";
 
+// Fails. Not a test issue, issue with the integration or cpk.
 test.fixme('[Mastra] Haiku generation and display verification', async ({
   page,
 }) => {
@@ -17,6 +18,7 @@ test.fixme('[Mastra] Haiku generation and display verification', async ({
   await genAIAgent.checkHaikuDisplay(page);
 });
 
+// Fails. Not a test issue, issue with the integration or cpk.
 test.fixme('[Mastra] Haiku generation and UI consistency for two different prompts', async ({
   page,
 }) => {

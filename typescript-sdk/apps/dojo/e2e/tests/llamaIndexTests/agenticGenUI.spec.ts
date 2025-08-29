@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { AgenticGenUIPage } from "../../pages/llamaIndexPages/AgenticUIGenPage";
 
 test.describe("Agent Generative UI Feature", () => {
+  // Fails. Issue with integration or something.
   test.fixme("[LlamaIndex] should interact with the chat to get a planner on prompt", async ({
     page,
   }) => {
@@ -35,6 +36,7 @@ test.describe("Agent Generative UI Feature", () => {
     );
   });
 
+  // Fails. Issue with integration or something.
   test.fixme("[LlamaIndex] should interact with the chat using predefined prompts and perform steps", async ({
     page,
   }) => {

@@ -14,31 +14,23 @@ interface ToolBasedGenerativeUIProps {
   }>;
 }
 
-interface GenerateHaiku{
-  japanese : string[] | [],
-  english : string[] | [],
-  image_names : string[] | [],
-  selectedImage : string | null,
+interface GenerateHaiku {
+  japanese: string[] | [],
+  english: string[] | [],
+  image_names: string[] | [],
+  selectedImage: string | null,
 }
 
-interface HaikuCardProps{
-  generatedHaiku : GenerateHaiku | Partial<GenerateHaiku>
-  setHaikus : Dispatch<SetStateAction<GenerateHaiku[]>>
-  haikus : GenerateHaiku[]
+interface HaikuCardProps {
+  generatedHaiku: GenerateHaiku | Partial<GenerateHaiku>
+  setHaikus: Dispatch<SetStateAction<GenerateHaiku[]>>
+  haikus: GenerateHaiku[]
 }
 
 export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIProps) {
   const { integrationId } = React.use(params);
   const { isMobile } = useMobileView();
-  const defaultChatHeight = 50
-  const {
-    isChatOpen,
-    setChatHeight,
-    setIsChatOpen,
-    isDragging,
-    chatHeight,
-    handleDragStart
-  } = useMobileChat(defaultChatHeight)
+
 
   const chatTitle = 'Haiku Generator'
   const chatDescription = 'Ask me to create haikus'
@@ -52,12 +44,6 @@ export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIP
     >
       <div
         className={`${isMobile ? 'h-screen' : 'min-h-full flex'} w-full relative overflow-hidden`}
-        style={
-          {
-            // "--copilot-kit-primary-color": "#222",
-            // "--copilot-kit-separator-color": "#CCC",
-          } as CopilotKitCSSProperties
-        }
       >
         <Haiku />
 
@@ -74,92 +60,105 @@ export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIP
         )}
 
         {/* Mobile Pull-Up Chat */}
-        {isMobile && (
-          <>
-            {/* Chat Toggle Button */}
-            <div className="fixed bottom-0 left-0 right-0 z-50">
-              <div className="bg-gradient-to-t from-white via-white to-transparent h-6"></div>
-              <div
-                className="bg-white border-t border-gray-200 px-4 py-3 flex items-center justify-between cursor-pointer shadow-lg"
-                onClick={() => {
-                  if (!isChatOpen) {
-                    setChatHeight(defaultChatHeight); // Reset to good default when opening
-                  }
-                  setIsChatOpen(!isChatOpen);
-                }}
-              >
-                <div className="flex items-center gap-3">
-                  <div>
-                    <div className="font-medium text-gray-900">{chatTitle}</div>
-                    <div className="text-sm text-gray-500">{chatDescription}</div>
-                  </div>
-                </div>
-                <div className={`transform transition-transform duration-300 ${isChatOpen ? 'rotate-180' : ''}`}>
-                  <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                  </svg>
-                </div>
-              </div>
-            </div>
-
-            {/* Pull-Up Chat Container */}
-            <div
-              className={`fixed inset-x-0 bottom-0 z-40 bg-white rounded-t-2xl shadow-[0px_0px_20px_0px_rgba(0,0,0,0.15)] transform transition-all duration-300 ease-in-out flex flex-col ${
-                isChatOpen ? 'translate-y-0' : 'translate-y-full'
-              } ${isDragging ? 'transition-none' : ''}`}
-              style={{ 
-                height: `${chatHeight}vh`,
-                paddingBottom: 'env(safe-area-inset-bottom)' // Handle iPhone bottom padding
-              }}
-            >
-              {/* Drag Handle Bar */}
-              <div 
-                className="flex justify-center pt-3 pb-2 flex-shrink-0 cursor-grab active:cursor-grabbing"
-                onMouseDown={handleDragStart}
-              >
-                <div className="w-12 h-1 bg-gray-400 rounded-full hover:bg-gray-500 transition-colors"></div>
-              </div>
-              
-              {/* Chat Header */}
-              <div className="px-4 py-3 border-b border-gray-100 flex-shrink-0">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <h3 className="font-semibold text-gray-900">{chatTitle}</h3>
-                  </div>
-                  <button
-                    onClick={() => setIsChatOpen(false)}
-                    className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-                  >
-                    <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-              {/* Chat Content - Flexible container for messages and input */}
-              <div className="flex-1 flex flex-col min-h-0 overflow-hidden pb-16">
-                <CopilotChat
-                  className="h-full flex flex-col"
-                  labels={{
-                    initial: initialLabel,
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Backdrop */}
-            {isChatOpen && (
-              <div
-                className="fixed inset-0 z-30"
-                onClick={() => setIsChatOpen(false)}
-              />
-            )}
-          </>
-        )}
+        {isMobile && <MobileChat chatTitle={chatTitle} chatDescription={chatDescription} initialLabel={initialLabel} />}
       </div>
     </CopilotKit>
   );
+}
+
+function MobileChat({ chatTitle, chatDescription, initialLabel }: { chatTitle: string, chatDescription: string, initialLabel: string }) {
+  const defaultChatHeight = 50
+
+  const {
+    isChatOpen,
+    setChatHeight,
+    setIsChatOpen,
+    isDragging,
+    chatHeight,
+    handleDragStart
+  } = useMobileChat(defaultChatHeight)
+  return (
+    <>
+      {/* Chat Toggle Button */}
+      <div className="fixed bottom-0 left-0 right-0 z-50">
+        <div className="bg-gradient-to-t from-white via-white to-transparent h-6"></div>
+        <div
+          className="bg-white border-t border-gray-200 px-4 py-3 flex items-center justify-between cursor-pointer shadow-lg"
+          onClick={() => {
+            if (!isChatOpen) {
+              setChatHeight(defaultChatHeight); // Reset to good default when opening
+            }
+            setIsChatOpen(!isChatOpen);
+          }}
+        >
+          <div className="flex items-center gap-3">
+            <div>
+              <div className="font-medium text-gray-900">{chatTitle}</div>
+              <div className="text-sm text-gray-500">{chatDescription}</div>
+            </div>
+          </div>
+          <div className={`transform transition-transform duration-300 ${isChatOpen ? 'rotate-180' : ''}`}>
+            <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      {/* Pull-Up Chat Container */}
+      <div
+        className={`fixed inset-x-0 bottom-0 z-40 bg-white rounded-t-2xl shadow-[0px_0px_20px_0px_rgba(0,0,0,0.15)] transform transition-all duration-300 ease-in-out flex flex-col ${isChatOpen ? 'translate-y-0' : 'translate-y-full'
+          } ${isDragging ? 'transition-none' : ''}`}
+        style={{
+          height: `${chatHeight}vh`,
+          paddingBottom: 'env(safe-area-inset-bottom)' // Handle iPhone bottom padding
+        }}
+      >
+        {/* Drag Handle Bar */}
+        <div
+          className="flex justify-center pt-3 pb-2 flex-shrink-0 cursor-grab active:cursor-grabbing"
+          onMouseDown={handleDragStart}
+        >
+          <div className="w-12 h-1 bg-gray-400 rounded-full hover:bg-gray-500 transition-colors"></div>
+        </div>
+
+        {/* Chat Header */}
+        <div className="px-4 py-3 border-b border-gray-100 flex-shrink-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <h3 className="font-semibold text-gray-900">{chatTitle}</h3>
+            </div>
+            <button
+              onClick={() => setIsChatOpen(false)}
+              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+            >
+              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Chat Content - Flexible container for messages and input */}
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden pb-16">
+          <CopilotChat
+            className="h-full flex flex-col"
+            labels={{
+              initial: initialLabel,
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Backdrop */}
+      {isChatOpen && (
+        <div
+          className="fixed inset-0 z-30"
+          onClick={() => setIsChatOpen(false)}
+        />
+      )}
+    </>
+  )
 }
 
 const VALID_IMAGE_NAMES = [
@@ -175,14 +174,45 @@ const VALID_IMAGE_NAMES = [
   "Mount_Fuji_Lake_Reflection_Cherry_Blossoms_Sakura_Spring.jpg"
 ];
 
-function HaikuCard({generatedHaiku, setHaikus, haikus} : HaikuCardProps) {
+function getRandomImage(): string {
+  return VALID_IMAGE_NAMES[Math.floor(Math.random() * VALID_IMAGE_NAMES.length)];
+}
+
+const validateAndCorrectImageNames = (rawNames: string[] | undefined): string[] | null => {
+  if (!rawNames || rawNames.length !== 3) {
+    return null;
+  }
+
+  const correctedNames: string[] = [];
+  const usedValidNames = new Set<string>();
+
+  for (const name of rawNames) {
+    if (VALID_IMAGE_NAMES.includes(name) && !usedValidNames.has(name)) {
+      correctedNames.push(name);
+      usedValidNames.add(name);
+      if (correctedNames.length === 3) break;
+    }
+  }
+
+  while (correctedNames.length < 3) {
+    const nextImage = getRandomImage();
+    if (!usedValidNames.has(nextImage)) {
+      correctedNames.push(nextImage);
+      usedValidNames.add(nextImage);
+    }
+  }
+
+  return correctedNames.slice(0, 3);
+};
+
+function HaikuCard({ generatedHaiku, setHaikus, haikus }: HaikuCardProps) {
   return (
-    <div 
-     data-testid="haiku-card"
-     className="suggestion-card text-left rounded-md p-4 mt-4 mb-4 flex flex-col bg-gray-100">
+    <div
+      data-testid="haiku-card"
+      className="suggestion-card text-left rounded-md p-4 mt-4 mb-4 flex flex-col bg-gray-100">
       <div className="mb-4 pb-4">
         {generatedHaiku?.japanese?.map((line, index) => (
-          <div className="flex items-center gap-3 mb-2"  data-testid="haiku-line" key={index}>
+          <div className="flex items-center gap-3 mb-2" data-testid="haiku-line" key={index}>
             <p className="text-lg font-bold">{line}</p>
             <p className="text-sm font-light">
               {generatedHaiku.english?.[index]}
@@ -250,48 +280,8 @@ function Haiku() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [isJustApplied, setIsJustApplied] = useState(false);
 
-  const validateAndCorrectImageNames = (rawNames: string[] | undefined): string[] | null => {
-    if (!rawNames || rawNames.length !== 3) {
-      return null;
-    }
-
-    const correctedNames: string[] = [];
-    const usedValidNames = new Set<string>();
-
-    for (const name of rawNames) {
-      if (VALID_IMAGE_NAMES.includes(name) && !usedValidNames.has(name)) {
-        correctedNames.push(name);
-        usedValidNames.add(name);
-        if (correctedNames.length === 3) break;
-      }
-    }
-
-    if (correctedNames.length < 3) {
-      const availableFallbacks = VALID_IMAGE_NAMES.filter(name => !usedValidNames.has(name));
-      for (let i = availableFallbacks.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [availableFallbacks[i], availableFallbacks[j]] = [availableFallbacks[j], availableFallbacks[i]];
-      }
-
-      while (correctedNames.length < 3 && availableFallbacks.length > 0) {
-        const fallbackName = availableFallbacks.pop();
-        if (fallbackName) {
-          correctedNames.push(fallbackName);
-        }
-      }
-    }
-
-    while (correctedNames.length < 3 && VALID_IMAGE_NAMES.length > 0) {
-      const fallbackName = VALID_IMAGE_NAMES[Math.floor(Math.random() * VALID_IMAGE_NAMES.length)];
-      correctedNames.push(fallbackName);
-    }
-
-    return correctedNames.slice(0, 3);
-  };
-
   useCopilotAction({
     name: "generate_haiku",
-    available: "frontend",
     parameters: [
       {
         name: "japanese",
@@ -304,7 +294,7 @@ function Haiku() {
       {
         name: "image_names",
         type: "string[]",
-        description: "Names of 3 relevant images",
+        description: `Names of 3 relevant images selected from the following: \n  -${VALID_IMAGE_NAMES.join('\n  -')}`,
       },
     ],
     followUp: false,
@@ -316,7 +306,7 @@ function Haiku() {
         image_names: finalCorrectedImages || [],
         selectedImage: finalCorrectedImages?.[0] || null,
       };
-      setHaikus(prev => [...prev, newHaiku]);
+      setHaikus(prev => [newHaiku, ...prev].filter(h => h.english[0] !== "A placeholder verse—"));
       setActiveIndex(haikus.length - 1);
       setIsJustApplied(true);
       setTimeout(() => setIsJustApplied(false), 600);
@@ -329,135 +319,141 @@ function Haiku() {
     },
   }, [haikus]);
 
-  const generatedHaikus = useMemo(() => (
-    haikus.filter((haiku) => haiku.english[0] !== "A placeholder verse—")
-  ), [haikus]);
-
   const { isMobile } = useMobileView();
 
   return (
     <div className="flex h-full w-full">
-      {/* Thumbnail List */}
-      {Boolean(generatedHaikus.length) && !isMobile && (
-        <div className="w-40 p-4 border-r border-gray-200 overflow-y-auto overflow-x-hidden">
-          {generatedHaikus.map((haiku, index) => (
-            <div
-              key={index}
-              data-testid="thumbnail-haiku"
-              className={`haiku-card animated-fade-in mb-4 cursor-pointer ${index === activeIndex ? 'active' : ''}`}
-              style={{
-                width: '80px',
-                transform: 'scale(0.2)',
-                transformOrigin: 'top left',
-                marginBottom: '-340px',
-                opacity: index === activeIndex ? 1 : 0.5,
-                transition: 'opacity 0.2s',
-              }}
-              onClick={() => setActiveIndex(index)}
-            >
-              {haiku.japanese.map((line, lineIndex) => (
-                <div
-                  className="flex items-start gap-2 mb-2 haiku-line"
-                  key={lineIndex}
-                >
-                  <p className="text-2xl font-bold text-gray-600 w-auto">{line}</p>
-                  <p className="text-xs font-light text-gray-500 w-auto">{haiku.english?.[lineIndex]}</p>
-                </div>
-              ))}
-              {haiku.image_names && haiku.image_names.length === 3 && (
-                <div className="mt-2 flex gap-2 justify-center">
-                  {haiku.image_names.map((imageName, imgIndex) => (
-                    <img
-                      style={{
-                        width: '110px',
-                        height: '110px',
-                        objectFit: 'cover',
-                      }}
-                      key={imageName}
-                      src={`/images/${imageName}`}
-                      alt={imageName || ""}
-                      className="haiku-card-image w-12 h-12 object-cover"
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      <Thumbnails haikus={haikus} activeIndex={activeIndex} setActiveIndex={setActiveIndex} isMobile={isMobile} />
 
       {/* Main Display */}
-      <div className={`flex-1 flex items-center justify-center h-full ${
-        isMobile 
-          ? 'px-6' 
-          : 'p-8'
-      }`} style={{ marginLeft: isMobile ? '0' : '-48px' }}>
+      <div className={`flex-1 flex items-center justify-center h-full ${isMobile
+        ? 'px-6'
+        : 'p-8'
+        }`} style={{ marginLeft: isMobile ? '0' : '-48px' }}>
         <div className="haiku-stack w-full max-w-lg">
-          {haikus.filter((_haiku: Haiku, index: number) => {
-            if (haikus.length == 1) return true;
-            else return index == activeIndex + 1;
-          }).map((haiku, index) => (
-            <div
-              key={index}
-              data-testid="main-haiku-display"
-              className={`haiku-card animated-fade-in ${isJustApplied && index === activeIndex ? 'applied-flash' : ''} ${index === activeIndex ? 'active' : ''}`}
-              style={{
-                zIndex: index === activeIndex ? haikus.length : index,
-                transform: `translateY(${index === activeIndex ? '0' : `${(index - activeIndex) * 20}px`}) scale(${index === activeIndex ? '1' : '0.95'})`,
-              }}
-            >
-              {haiku.japanese.map((line, lineIndex) => (
-                <div
-                  data-testid="main-haiku-line"
-                  className={`flex items-start mb-4 haiku-line ${
-                    isMobile 
-                      ? 'flex-col gap-1' 
+          {haikus.map((haiku, index) => (
+            (haikus.length == 1 || index == activeIndex) && (
+
+              <div
+                key={index}
+                data-testid="main-haiku-display"
+                className={`haiku-card animated-fade-in ${isJustApplied && index === activeIndex ? 'applied-flash' : ''} ${index === activeIndex ? 'active' : ''}`}
+                style={{
+                  zIndex: index === activeIndex ? haikus.length : index,
+                  transform: `translateY(${index === activeIndex ? '0' : `${(index - activeIndex) * 20}px`}) scale(${index === activeIndex ? '1' : '0.95'})`,
+                }}
+              >
+                {haiku.japanese.map((line, lineIndex) => (
+                  <div
+                    data-testid="main-haiku-line"
+                    className={`flex items-start mb-4 haiku-line ${isMobile
+                      ? 'flex-col gap-1'
                       : 'gap-4'
-                  }`}
-                  key={lineIndex}
-                  style={{ animationDelay: `${lineIndex * 0.1}s` }}
-                >
-                  <p className={`font-bold text-gray-600 w-auto ${
-                    isMobile 
-                      ? 'text-2xl leading-tight' 
+                      }`}
+                    key={lineIndex}
+                    style={{ animationDelay: `${lineIndex * 0.1}s` }}
+                  >
+                    <p className={`font-bold text-gray-600 w-auto ${isMobile
+                      ? 'text-2xl leading-tight'
                       : 'text-4xl'
-                  }`}>
-                    {line}
-                  </p>
-                  <p className={`font-light text-gray-500 w-auto ${
-                    isMobile 
-                      ? 'text-sm ml-2' 
+                      }`}>
+                      {line}
+                    </p>
+                    <p className={`font-light text-gray-500 w-auto ${isMobile
+                      ? 'text-sm ml-2'
                       : 'text-base'
-                  }`}>
-                    {haiku.english?.[lineIndex]}
-                  </p>
-                </div>
-              ))}
-              {haiku.image_names && haiku.image_names.length === 3 && (
-                <div className={`flex justify-center ${
-                  isMobile 
-                    ? 'mt-4 gap-2 flex-wrap' 
+                      }`}>
+                      {haiku.english?.[lineIndex]}
+                    </p>
+                  </div>
+                ))}
+                {haiku.image_names && haiku.image_names.length === 3 && (
+                  <div className={`flex justify-center ${isMobile
+                    ? 'mt-4 gap-2 flex-wrap'
                     : 'mt-6 gap-4'
-                }`}>
-                  {haiku.image_names.map((imageName, imgIndex) => (
-                    <img
-                      key={imageName}
-                      src={`/images/${imageName}`}
-                      alt={imageName || ""}
-                      style={{
-                        width: isMobile ? '90px' : '130px',
-                        height: isMobile ? '90px' : '130px',
-                        objectFit: 'cover',
-                      }}
-                      className={(haiku.selectedImage === imageName) ? `suggestion-card-image-focus` : `haiku-card-image`}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+                    }`}>
+                    {haiku.image_names.map((imageName, imgIndex) => (
+                      <img
+                        key={imageName}
+                        src={`/images/${imageName}`}
+                        alt={imageName || ""}
+                        style={{
+                          width: isMobile ? '90px' : '130px',
+                          height: isMobile ? '90px' : '130px',
+                          objectFit: 'cover',
+                          marginTop: 0,
+                        }}
+                        className={(haiku.selectedImage === imageName) ? `suggestion-card-image-focus ` : `haiku-card-image`}
+                        onClick={() => setHaikus((prevHaikus) => {
+                          return prevHaikus.map((h, idx) => {
+                            if (idx === index) {
+                              return { ...h, selectedImage: imageName }
+                            } else {
+                              return { ...h }
+                            }
+                          })
+                        })}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
           ))}
         </div>
       </div>
     </div>
   );
+}
+
+function Thumbnails({ haikus, activeIndex, setActiveIndex, isMobile }: { haikus: Haiku[], activeIndex: number, setActiveIndex: (index: number) => void, isMobile: boolean }) {
+  if (haikus.length == 0 || isMobile) { return null }
+  return (
+    <div className="w-40 p-4 border-r border-gray-200 overflow-y-auto overflow-x-hidden">
+      {haikus.map((haiku, index) => (
+        <div
+          key={index}
+          data-testid="thumbnail-haiku"
+          className={`haiku-card animated-fade-in mb-4 cursor-pointer ${index === activeIndex ? 'active' : ''}`}
+          style={{
+            width: '80px',
+            transform: 'scale(0.2)',
+            transformOrigin: 'top left',
+            marginBottom: '-340px',
+            opacity: index === activeIndex ? 1 : 0.5,
+            transition: 'opacity 0.2s',
+          }}
+          onClick={() => setActiveIndex(index)}
+        >
+          {haiku.japanese.map((line, lineIndex) => (
+            <div
+              className="flex items-start gap-2 mb-2 haiku-line"
+              key={lineIndex}
+            >
+              <p className="text-2xl font-bold text-gray-600 w-auto">{line}</p>
+              <p className="text-xs font-light text-gray-500 w-auto">{haiku.english?.[lineIndex]}</p>
+            </div>
+          ))}
+          {haiku.image_names && haiku.image_names.length === 3 && (
+            <div className="mt-2 flex gap-2 justify-center">
+              {haiku.image_names.map((imageName, imgIndex) => (
+                <img
+                  style={{
+                    width: '110px',
+                    height: '110px',
+                    objectFit: 'cover',
+                  }}
+                  key={imageName}
+                  src={`/images/${imageName}`}
+                  alt={imageName || ""}
+                  className="haiku-card-image w-12 h-12 object-cover"
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+
 }

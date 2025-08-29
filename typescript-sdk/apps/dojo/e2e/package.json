@@ -6,7 +6,8 @@
   "scripts": {
     "postinstall": "playwright install --with-deps",
     "test": "playwright test",
-    "test:ui": "playwright test --ui"
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report"
   },
   "devDependencies": {
     "@playwright/test": "^1.43.1",
