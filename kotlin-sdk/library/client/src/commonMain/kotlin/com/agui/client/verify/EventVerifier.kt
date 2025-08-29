@@ -18,7 +18,8 @@ class AGUIError(message: String) : Exception(message)
  * Verifies that events follow the AG-UI protocol rules.
  * Implements a state machine to track valid event sequences.
  * Ensures proper event ordering, validates message and tool call lifecycles,
- * and prevents protocol violations like multiple RUN_STARTED events.
+ * thinking step lifecycles, and prevents protocol violations like 
+ * multiple RUN_STARTED events or thinking events outside thinking steps.
  * 
  * @param debug Whether to enable debug logging for event verification
  * @return Flow<BaseEvent> the same event flow after validation
@@ -32,6 +33,8 @@ fun Flow<BaseEvent>.verifyEvents(debug: Boolean = false): Flow<BaseEvent> {
     var runError = false
     var firstEventReceived = false
     val activeSteps = mutableMapOf<String, Boolean>()
+    var activeThinkingStep = false
+    var activeThinkingStepMessage = false
     
     return transform { event ->
         val eventType = event.eventType
@@ -65,6 +68,21 @@ fun Flow<BaseEvent>.verifyEvents(debug: Boolean = false): Flow<BaseEvent> {
             if (eventType !in allowedInMessage) {
                 throw AGUIError(
                     "Cannot send event type '$eventType' after 'TEXT_MESSAGE_START': Send 'TEXT_MESSAGE_END' first."
+                )
+            }
+        }
+        
+        // Validate events inside thinking text messages
+        if (activeThinkingStepMessage) {
+            val allowedInThinkingMessage = setOf(
+                EventType.THINKING_TEXT_MESSAGE_CONTENT,
+                EventType.THINKING_TEXT_MESSAGE_END,
+                EventType.RAW
+            )
+            
+            if (eventType !in allowedInThinkingMessage) {
+                throw AGUIError(
+                    "Cannot send event type '$eventType' after 'THINKING_TEXT_MESSAGE_START': Send 'THINKING_TEXT_MESSAGE_END' first."
                 )
             }
         }
@@ -203,6 +221,56 @@ fun Flow<BaseEvent>.verifyEvents(debug: Boolean = false): Flow<BaseEvent> {
             
             is RunErrorEvent -> {
                 runError = true
+            }
+            
+            // Thinking Events Validation
+            is ThinkingStartEvent -> {
+                if (activeThinkingStep) {
+                    throw AGUIError(
+                        "Cannot send 'THINKING_START' event: A thinking step is already in progress. Complete it with 'THINKING_END' first."
+                    )
+                }
+                activeThinkingStep = true
+            }
+            
+            is ThinkingEndEvent -> {
+                if (!activeThinkingStep) {
+                    throw AGUIError(
+                        "Cannot send 'THINKING_END' event: No active thinking step found. A 'THINKING_START' event must be sent first."
+                    )
+                }
+                activeThinkingStep = false
+            }
+            
+            is ThinkingTextMessageStartEvent -> {
+                if (!activeThinkingStep) {
+                    throw AGUIError(
+                        "Cannot send 'THINKING_TEXT_MESSAGE_START' event: No active thinking step found. A 'THINKING_START' event must be sent first."
+                    )
+                }
+                if (activeThinkingStepMessage) {
+                    throw AGUIError(
+                        "Cannot send 'THINKING_TEXT_MESSAGE_START' event: A thinking text message is already in progress. Complete it with 'THINKING_TEXT_MESSAGE_END' first."
+                    )
+                }
+                activeThinkingStepMessage = true
+            }
+            
+            is ThinkingTextMessageContentEvent -> {
+                if (!activeThinkingStepMessage) {
+                    throw AGUIError(
+                        "Cannot send 'THINKING_TEXT_MESSAGE_CONTENT' event: No active thinking text message found. Start a thinking text message with 'THINKING_TEXT_MESSAGE_START' first."
+                    )
+                }
+            }
+            
+            is ThinkingTextMessageEndEvent -> {
+                if (!activeThinkingStepMessage) {
+                    throw AGUIError(
+                        "Cannot send 'THINKING_TEXT_MESSAGE_END' event: No active thinking text message found. A 'THINKING_TEXT_MESSAGE_START' event must be sent first."
+                    )
+                }
+                activeThinkingStepMessage = false
             }
             
             else -> {

@@ -415,6 +415,135 @@ class EventSerializationTest {
         assertTrue(decoded[4] is RunFinishedEvent)
     }
 
+    // ========== Thinking Events Tests ==========
+
+    @Test
+    fun testThinkingStartEventSerialization() {
+        val event = ThinkingStartEvent(
+            title = "Analyzing the problem",
+            timestamp = 1234567890L
+        )
+
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        assertEquals("THINKING_START", jsonObj["type"]?.jsonPrimitive?.content)
+        assertEquals("Analyzing the problem", jsonObj["title"]?.jsonPrimitive?.content)
+        assertEquals(1234567890L, jsonObj["timestamp"]?.jsonPrimitive?.long)
+
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ThinkingStartEvent)
+        assertEquals(event, decoded)
+    }
+
+    @Test
+    fun testThinkingStartEventWithoutTitle() {
+        val event = ThinkingStartEvent()
+
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        assertEquals("THINKING_START", jsonObj["type"]?.jsonPrimitive?.content)
+        assertFalse(jsonObj.containsKey("title")) // null title should not be serialized
+
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ThinkingStartEvent)
+        assertEquals(event, decoded)
+    }
+
+    @Test
+    fun testThinkingEndEventSerialization() {
+        val event = ThinkingEndEvent(timestamp = 1234567890L)
+
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        assertEquals("THINKING_END", jsonObj["type"]?.jsonPrimitive?.content)
+        assertEquals(1234567890L, jsonObj["timestamp"]?.jsonPrimitive?.long)
+
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ThinkingEndEvent)
+        assertEquals(event, decoded)
+    }
+
+    @Test
+    fun testThinkingTextMessageStartEventSerialization() {
+        val event = ThinkingTextMessageStartEvent(timestamp = 1234567890L)
+
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        assertEquals("THINKING_TEXT_MESSAGE_START", jsonObj["type"]?.jsonPrimitive?.content)
+        assertEquals(1234567890L, jsonObj["timestamp"]?.jsonPrimitive?.long)
+
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ThinkingTextMessageStartEvent)
+        assertEquals(event, decoded)
+    }
+
+    @Test
+    fun testThinkingTextMessageContentEventSerialization() {
+        val event = ThinkingTextMessageContentEvent(
+            delta = "I need to think about this step by step..."
+        )
+
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        assertEquals("THINKING_TEXT_MESSAGE_CONTENT", jsonObj["type"]?.jsonPrimitive?.content)
+        assertEquals("I need to think about this step by step...", jsonObj["delta"]?.jsonPrimitive?.content)
+
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ThinkingTextMessageContentEvent)
+        assertEquals(event.delta, decoded.delta)
+    }
+
+    @Test
+    fun testThinkingTextMessageContentEmptyDeltaValidation() {
+        assertFailsWith<IllegalArgumentException> {
+            ThinkingTextMessageContentEvent(delta = "")
+        }
+    }
+
+    @Test
+    fun testThinkingTextMessageEndEventSerialization() {
+        val event = ThinkingTextMessageEndEvent()
+
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        assertEquals("THINKING_TEXT_MESSAGE_END", jsonObj["type"]?.jsonPrimitive?.content)
+
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ThinkingTextMessageEndEvent)
+        assertEquals(event, decoded)
+    }
+
+    @Test
+    fun testThinkingEventsWithRawEvent() {
+        val rawEventData = buildJsonObject {
+            put("modelProvider", "anthropic")
+            put("model", "claude-3.5-sonnet")
+            put("thinkingMode", "active")
+        }
+
+        val events = listOf(
+            ThinkingStartEvent(title = "Problem solving", rawEvent = rawEventData),
+            ThinkingTextMessageStartEvent(rawEvent = rawEventData),
+            ThinkingTextMessageContentEvent(delta = "Let me analyze...", rawEvent = rawEventData),
+            ThinkingTextMessageEndEvent(rawEvent = rawEventData),
+            ThinkingEndEvent(rawEvent = rawEventData)
+        )
+
+        events.forEach { event ->
+            val jsonString = json.encodeToString<BaseEvent>(event)
+            val decoded = json.decodeFromString<BaseEvent>(jsonString)
+            
+            assertEquals(rawEventData, decoded.rawEvent)
+            assertEquals("anthropic", decoded.rawEvent?.jsonObject?.get("modelProvider")?.jsonPrimitive?.content)
+        }
+    }
+
     // ========== Protocol Compliance Tests ==========
 
     @Test
@@ -436,7 +565,13 @@ class EventSerializationTest {
             StateDeltaEvent(delta = buildJsonArray { }) to "STATE_DELTA",  // Changed to JsonArray
             MessagesSnapshotEvent(messages = emptyList()) to "MESSAGES_SNAPSHOT",
             RawEvent(event = JsonNull) to "RAW",
-            CustomEvent(name = "n", value = JsonNull) to "CUSTOM"
+            CustomEvent(name = "n", value = JsonNull) to "CUSTOM",
+            // Thinking Events
+            ThinkingStartEvent() to "THINKING_START",
+            ThinkingEndEvent() to "THINKING_END",
+            ThinkingTextMessageStartEvent() to "THINKING_TEXT_MESSAGE_START",
+            ThinkingTextMessageContentEvent(delta = "thinking...") to "THINKING_TEXT_MESSAGE_CONTENT",
+            ThinkingTextMessageEndEvent() to "THINKING_TEXT_MESSAGE_END"
         )
 
         testCases.forEach { (event, expectedType) ->
