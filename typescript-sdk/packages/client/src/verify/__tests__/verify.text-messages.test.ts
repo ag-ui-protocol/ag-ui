@@ -25,8 +25,8 @@ import {
 } from "@ag-ui/core";
 
 describe("verifyEvents text messages", () => {
-  // Test: Cannot send lifecycle events inside a text message
-  it("should not allow lifecycle events inside a text message", async () => {
+  // Test: Cannot send TEXT_MESSAGE_CONTENT before TEXT_MESSAGE_START
+  it("should not allow TEXT_MESSAGE_CONTENT before TEXT_MESSAGE_START", async () => {
     const source$ = new Subject<BaseEvent>();
     const events: BaseEvent[] = [];
 
@@ -36,40 +36,37 @@ describe("verifyEvents text messages", () => {
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
         expect(err.message).toContain(
-          `Cannot send event type 'STEP_STARTED' after 'TEXT_MESSAGE_START'`,
+          `Cannot send 'TEXT_MESSAGE_CONTENT' event: No active text message found with ID '1'`,
         );
         subscription.unsubscribe();
       },
     });
 
-    // Start a valid run and open a text message
+    // Start a valid run
     source$.next({
       type: EventType.RUN_STARTED,
       threadId: "test-thread-id",
       runId: "test-run-id",
     } as RunStartedEvent);
-    source$.next({
-      type: EventType.TEXT_MESSAGE_START,
-      messageId: "1",
-    } as TextMessageStartEvent);
 
-    // Try to send a lifecycle event inside the text message
+    // Try to send content without starting a text message
     source$.next({
-      type: EventType.STEP_STARTED,
-      stepName: "step1",
-    } as StepStartedEvent);
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "1",
+      delta: "content 1",
+    } as TextMessageContentEvent);
 
     // Complete the source and wait a bit for processing
     source$.complete();
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     // Verify only events before the error were processed
-    expect(events.length).toBe(2);
-    expect(events[1].type).toBe(EventType.TEXT_MESSAGE_START);
+    expect(events.length).toBe(1);
+    expect(events[0].type).toBe(EventType.RUN_STARTED);
   });
 
-  // Test: Cannot send tool-related events inside a text message
-  it("should not allow tool-related events inside a text message", async () => {
+  // Test: Cannot send TEXT_MESSAGE_END before TEXT_MESSAGE_START
+  it("should not allow TEXT_MESSAGE_END before TEXT_MESSAGE_START", async () => {
     const source$ = new Subject<BaseEvent>();
     const events: BaseEvent[] = [];
 
@@ -79,37 +76,32 @@ describe("verifyEvents text messages", () => {
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
         expect(err.message).toContain(
-          `Cannot send event type 'TOOL_CALL_START' after 'TEXT_MESSAGE_START'`,
+          `Cannot send 'TEXT_MESSAGE_END' event: No active text message found with ID '1'`,
         );
         subscription.unsubscribe();
       },
     });
 
-    // Start a valid run and open a text message
+    // Start a valid run
     source$.next({
       type: EventType.RUN_STARTED,
       threadId: "test-thread-id",
       runId: "test-run-id",
     } as RunStartedEvent);
-    source$.next({
-      type: EventType.TEXT_MESSAGE_START,
-      messageId: "1",
-    } as TextMessageStartEvent);
 
-    // Try to send a tool-related event inside the text message
+    // Try to end a text message without starting it
     source$.next({
-      type: EventType.TOOL_CALL_START,
-      toolCallId: "t1",
-      toolCallName: "test-tool",
-    } as ToolCallStartEvent);
+      type: EventType.TEXT_MESSAGE_END,
+      messageId: "1",
+    } as TextMessageEndEvent);
 
     // Complete the source and wait a bit for processing
     source$.complete();
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     // Verify only events before the error were processed
-    expect(events.length).toBe(2);
-    expect(events[1].type).toBe(EventType.TEXT_MESSAGE_START);
+    expect(events.length).toBe(1);
+    expect(events[0].type).toBe(EventType.RUN_STARTED);
   });
 
   // Test: Should allow TEXT_MESSAGE_CONTENT inside a text message
@@ -219,505 +211,8 @@ describe("verifyEvents text messages", () => {
     expect(result[3].type).toBe(EventType.RAW);
   });
 
-  // Test: Should not allow CUSTOM inside a text message
-  it("should not allow CUSTOM inside a text message", async () => {
-    const source$ = new Subject<BaseEvent>();
-    const events: BaseEvent[] = [];
-
-    // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(false)(source$).subscribe({
-      next: (event) => events.push(event),
-      error: (err) => {
-        expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain(`Cannot send event type 'CUSTOM' after 'TEXT_MESSAGE_START'`);
-        subscription.unsubscribe();
-      },
-    });
-
-    // Start a valid run and open a text message
-    source$.next({
-      type: EventType.RUN_STARTED,
-      threadId: "test-thread-id",
-      runId: "test-run-id",
-    } as RunStartedEvent);
-    source$.next({
-      type: EventType.TEXT_MESSAGE_START,
-      messageId: "1",
-    } as TextMessageStartEvent);
-
-    // Try to send a meta event inside the text message
-    source$.next({
-      type: EventType.CUSTOM,
-      name: "PredictState",
-      value: [{ state_key: "test", tool: "test-tool" }],
-    } as CustomEvent);
-
-    // Complete the source and wait a bit for processing
-    source$.complete();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Verify only events before the error were processed
-    expect(events.length).toBe(2);
-    expect(events[1].type).toBe(EventType.TEXT_MESSAGE_START);
-  });
-
-  // Test: Should not allow STATE_SNAPSHOT inside a text message
-  it("should not allow STATE_SNAPSHOT inside a text message", async () => {
-    const source$ = new Subject<BaseEvent>();
-    const events: BaseEvent[] = [];
-
-    // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(false)(source$).subscribe({
-      next: (event) => events.push(event),
-      error: (err) => {
-        expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain(
-          `Cannot send event type 'STATE_SNAPSHOT' after 'TEXT_MESSAGE_START'`,
-        );
-        subscription.unsubscribe();
-      },
-    });
-
-    // Start a valid run and open a text message
-    source$.next({
-      type: EventType.RUN_STARTED,
-      threadId: "test-thread-id",
-      runId: "test-run-id",
-    } as RunStartedEvent);
-    source$.next({
-      type: EventType.TEXT_MESSAGE_START,
-      messageId: "1",
-    } as TextMessageStartEvent);
-
-    // Try to send a state snapshot inside the text message
-    source$.next({
-      type: EventType.STATE_SNAPSHOT,
-      snapshot: { test: true },
-    } as StateSnapshotEvent);
-
-    // Complete the source and wait a bit for processing
-    source$.complete();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Verify only events before the error were processed
-    expect(events.length).toBe(2);
-    expect(events[1].type).toBe(EventType.TEXT_MESSAGE_START);
-  });
-
-  // Test: Should not allow STATE_DELTA inside a text message
-  it("should not allow STATE_DELTA inside a text message", async () => {
-    const source$ = new Subject<BaseEvent>();
-    const events: BaseEvent[] = [];
-
-    // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(false)(source$).subscribe({
-      next: (event) => events.push(event),
-      error: (err) => {
-        expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain(
-          `Cannot send event type 'STATE_DELTA' after 'TEXT_MESSAGE_START'`,
-        );
-        subscription.unsubscribe();
-      },
-    });
-
-    // Start a valid run and open a text message
-    source$.next({
-      type: EventType.RUN_STARTED,
-      threadId: "test-thread-id",
-      runId: "test-run-id",
-    } as RunStartedEvent);
-    source$.next({
-      type: EventType.TEXT_MESSAGE_START,
-      messageId: "1",
-    } as TextMessageStartEvent);
-
-    // Try to send a state delta inside the text message
-    source$.next({
-      type: EventType.STATE_DELTA,
-      delta: [{ op: "add", path: "/test", value: true }],
-    } as StateDeltaEvent);
-
-    // Complete the source and wait a bit for processing
-    source$.complete();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Verify only events before the error were processed
-    expect(events.length).toBe(2);
-    expect(events[1].type).toBe(EventType.TEXT_MESSAGE_START);
-  });
-
-  // Test: Should not allow MESSAGES_SNAPSHOT inside a text message
-  it("should not allow MESSAGES_SNAPSHOT inside a text message", async () => {
-    const source$ = new Subject<BaseEvent>();
-    const events: BaseEvent[] = [];
-
-    // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(false)(source$).subscribe({
-      next: (event) => events.push(event),
-      error: (err) => {
-        expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain(
-          `Cannot send event type 'MESSAGES_SNAPSHOT' after 'TEXT_MESSAGE_START'`,
-        );
-        subscription.unsubscribe();
-      },
-    });
-
-    // Start a valid run and open a text message
-    source$.next({
-      type: EventType.RUN_STARTED,
-      threadId: "test-thread-id",
-      runId: "test-run-id",
-    } as RunStartedEvent);
-    source$.next({
-      type: EventType.TEXT_MESSAGE_START,
-      messageId: "1",
-    } as TextMessageStartEvent);
-
-    // Try to send a messages snapshot inside the text message
-    source$.next({
-      type: EventType.MESSAGES_SNAPSHOT,
-      messages: [{ role: "user", content: "test" }],
-    } as MessagesSnapshotEvent);
-
-    // Complete the source and wait a bit for processing
-    source$.complete();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Verify only events before the error were processed
-    expect(events.length).toBe(2);
-    expect(events[1].type).toBe(EventType.TEXT_MESSAGE_START);
-  });
-
-  // Test: Cannot send RUN_FINISHED inside a text message
-  it("should not allow RUN_FINISHED inside a text message", async () => {
-    const source$ = new Subject<BaseEvent>();
-    const events: BaseEvent[] = [];
-
-    // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(false)(source$).subscribe({
-      next: (event) => events.push(event),
-      error: (err) => {
-        expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain(
-          `Cannot send event type 'RUN_FINISHED' after 'TEXT_MESSAGE_START'`,
-        );
-        subscription.unsubscribe();
-      },
-    });
-
-    // Start a valid run and open a text message
-    source$.next({
-      type: EventType.RUN_STARTED,
-      threadId: "test-thread-id",
-      runId: "test-run-id",
-    } as RunStartedEvent);
-    source$.next({
-      type: EventType.TEXT_MESSAGE_START,
-      messageId: "1",
-    } as TextMessageStartEvent);
-
-    // Try to send RUN_FINISHED inside the text message
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
-
-    // Complete the source and wait a bit for processing
-    source$.complete();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Verify only events before the error were processed
-    expect(events.length).toBe(2);
-    expect(events[1].type).toBe(EventType.TEXT_MESSAGE_START);
-  });
-
-  // NEW TEST: Missing TEXT_MESSAGE_END
-  it("should not allow RUN_FINISHED when a text message hasn't been closed", async () => {
-    const source$ = new Subject<BaseEvent>();
-    const events: BaseEvent[] = [];
-
-    // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(false)(source$).subscribe({
-      next: (event) => events.push(event),
-      error: (err) => {
-        expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain(
-          "Cannot send event type 'RUN_FINISHED' after 'TEXT_MESSAGE_START': Send 'TEXT_MESSAGE_END' first.",
-        );
-        subscription.unsubscribe();
-      },
-    });
-
-    // Start a valid run and open a text message
-    source$.next({
-      type: EventType.RUN_STARTED,
-      threadId: "test-thread-id",
-      runId: "test-run-id",
-    } as RunStartedEvent);
-    source$.next({
-      type: EventType.TEXT_MESSAGE_START,
-      messageId: "1",
-    } as TextMessageStartEvent);
-    source$.next({
-      type: EventType.TEXT_MESSAGE_CONTENT,
-      messageId: "1",
-      delta: "content 1",
-    } as TextMessageContentEvent);
-
-    // Try to end the run without closing the text message
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
-
-    // Complete the source and wait a bit for processing
-    source$.complete();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Verify only events before the error were processed
-    expect(events.length).toBe(3);
-    expect(events[2].type).toBe(EventType.TEXT_MESSAGE_CONTENT);
-  });
-
-  // NEW TEST: Nesting text messages
-  it("should not allow nested text messages", async () => {
-    const source$ = new Subject<BaseEvent>();
-    const events: BaseEvent[] = [];
-
-    // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(false)(source$).subscribe({
-      next: (event) => events.push(event),
-      error: (err) => {
-        expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain(
-          "Cannot send event type 'TEXT_MESSAGE_START' after 'TEXT_MESSAGE_START': Send 'TEXT_MESSAGE_END' first.",
-        );
-        subscription.unsubscribe();
-      },
-    });
-
-    // Start a valid run and open a text message
-    source$.next({
-      type: EventType.RUN_STARTED,
-      threadId: "test-thread-id",
-      runId: "test-run-id",
-    } as RunStartedEvent);
-    source$.next({
-      type: EventType.TEXT_MESSAGE_START,
-      messageId: "1",
-    } as TextMessageStartEvent);
-
-    // Try to start a nested text message
-    source$.next({
-      type: EventType.TEXT_MESSAGE_START,
-      messageId: "2",
-    } as TextMessageStartEvent);
-
-    // Complete the source and wait a bit for processing
-    source$.complete();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Verify only events before the error were processed
-    expect(events.length).toBe(2);
-    expect(events[1].type).toBe(EventType.TEXT_MESSAGE_START);
-  });
-
-  // NEW TEST: Mismatched message IDs
-  it("should not allow text message content with mismatched IDs", async () => {
-    const source$ = new Subject<BaseEvent>();
-    const events: BaseEvent[] = [];
-
-    // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(false)(source$).subscribe({
-      next: (event) => events.push(event),
-      error: (err) => {
-        expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain(
-          "Cannot send 'TEXT_MESSAGE_CONTENT' event: Message ID mismatch. The ID '2' doesn't match the active message ID '1'.",
-        );
-        subscription.unsubscribe();
-      },
-    });
-
-    // Start a valid run and open a text message with ID "1"
-    source$.next({
-      type: EventType.RUN_STARTED,
-      threadId: "test-thread-id",
-      runId: "test-run-id",
-    } as RunStartedEvent);
-    source$.next({
-      type: EventType.TEXT_MESSAGE_START,
-      messageId: "1",
-    } as TextMessageStartEvent);
-
-    // Try to send content with a different ID
-    source$.next({
-      type: EventType.TEXT_MESSAGE_CONTENT,
-      messageId: "2",
-      delta: "content 2",
-    } as TextMessageContentEvent);
-
-    // Complete the source and wait a bit for processing
-    source$.complete();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Verify only events before the error were processed
-    expect(events.length).toBe(2);
-    expect(events[1].type).toBe(EventType.TEXT_MESSAGE_START);
-  });
-
-  // NEW TEST: TEXT_MESSAGE_CONTENT before START
-  it("should not allow text message content without a prior start event", async () => {
-    const source$ = new Subject<BaseEvent>();
-    const events: BaseEvent[] = [];
-
-    // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(false)(source$).subscribe({
-      next: (event) => events.push(event),
-      error: (err) => {
-        expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain(
-          "Cannot send 'TEXT_MESSAGE_CONTENT' event: No active text message found. Start a text message with 'TEXT_MESSAGE_START' first.",
-        );
-        subscription.unsubscribe();
-      },
-    });
-
-    // Start a valid run but skip starting a text message
-    source$.next({
-      type: EventType.RUN_STARTED,
-      threadId: "test-thread-id",
-      runId: "test-run-id",
-    } as RunStartedEvent);
-
-    // Try to send content without starting a message
-    source$.next({
-      type: EventType.TEXT_MESSAGE_CONTENT,
-      messageId: "1",
-      delta: "content 1",
-    } as TextMessageContentEvent);
-
-    // Complete the source and wait a bit for processing
-    source$.complete();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Verify only events before the error were processed
-    expect(events.length).toBe(1);
-    expect(events[0].type).toBe(EventType.RUN_STARTED);
-  });
-
-  // NEW TEST: TEXT_MESSAGE_END before START
-  it("should not allow ending a text message that was never started", async () => {
-    const source$ = new Subject<BaseEvent>();
-    const events: BaseEvent[] = [];
-
-    // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(false)(source$).subscribe({
-      next: (event) => events.push(event),
-      error: (err) => {
-        expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain(
-          "Cannot send 'TEXT_MESSAGE_END' event: No active text message found. A 'TEXT_MESSAGE_START' event must be sent first.",
-        );
-        subscription.unsubscribe();
-      },
-    });
-
-    // Start a valid run but skip starting a text message
-    source$.next({
-      type: EventType.RUN_STARTED,
-      threadId: "test-thread-id",
-      runId: "test-run-id",
-    } as RunStartedEvent);
-
-    // Try to end a message that was never started
-    source$.next({
-      type: EventType.TEXT_MESSAGE_END,
-      messageId: "1",
-    } as TextMessageEndEvent);
-
-    // Complete the source and wait a bit for processing
-    source$.complete();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Verify only events before the error were processed
-    expect(events.length).toBe(1);
-    expect(events[0].type).toBe(EventType.RUN_STARTED);
-  });
-
-  // NEW TEST: Starting text message outside of a run
-  it("should not allow starting a text message before RUN_STARTED", async () => {
-    const source$ = new Subject<BaseEvent>();
-    const events: BaseEvent[] = [];
-
-    // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(false)(source$).subscribe({
-      next: (event) => events.push(event),
-      error: (err) => {
-        expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain("First event must be 'RUN_STARTED'");
-        subscription.unsubscribe();
-      },
-    });
-
-    // Try to start a text message before RUN_STARTED
-    source$.next({
-      type: EventType.TEXT_MESSAGE_START,
-      messageId: "1",
-    } as TextMessageStartEvent);
-
-    // Complete the source and wait a bit for processing
-    source$.complete();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Verify no events were processed
-    expect(events.length).toBe(0);
-  });
-
-  // NEW TEST: Mismatched IDs for TEXT_MESSAGE_END
-  it("should not allow text message end with mismatched ID", async () => {
-    const source$ = new Subject<BaseEvent>();
-    const events: BaseEvent[] = [];
-
-    // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(false)(source$).subscribe({
-      next: (event) => events.push(event),
-      error: (err) => {
-        expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain("Cannot send 'TEXT_MESSAGE_END' event: Message ID mismatch");
-        subscription.unsubscribe();
-      },
-    });
-
-    // Start a valid run and open a text message with ID "1"
-    source$.next({
-      type: EventType.RUN_STARTED,
-      threadId: "test-thread-id",
-      runId: "test-run-id",
-    } as RunStartedEvent);
-    source$.next({
-      type: EventType.TEXT_MESSAGE_START,
-      messageId: "1",
-    } as TextMessageStartEvent);
-    source$.next({
-      type: EventType.TEXT_MESSAGE_CONTENT,
-      messageId: "1",
-      delta: "content 1",
-    } as TextMessageContentEvent);
-
-    // Try to end with a different ID
-    source$.next({
-      type: EventType.TEXT_MESSAGE_END,
-      messageId: "2",
-    } as TextMessageEndEvent);
-
-    // Complete the source and wait a bit for processing
-    source$.complete();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Verify only events before the error were processed
-    expect(events.length).toBe(3);
-    expect(events[2].type).toBe(EventType.TEXT_MESSAGE_CONTENT);
-  });
-
-  // NEW TEST: Empty text messages (no content)
-  it("should allow empty text messages with no content", async () => {
+  // Test: Should allow CUSTOM inside a text message
+  it("should allow CUSTOM inside a text message", async () => {
     const source$ = new Subject<BaseEvent>();
 
     // Set up subscription and collect events
@@ -730,7 +225,7 @@ describe("verifyEvents text messages", () => {
       ),
     );
 
-    // Send a valid sequence with an empty text message
+    // Send a valid sequence with a custom event inside a text message
     source$.next({
       type: EventType.RUN_STARTED,
       threadId: "test-thread-id",
@@ -740,6 +235,16 @@ describe("verifyEvents text messages", () => {
       type: EventType.TEXT_MESSAGE_START,
       messageId: "1",
     } as TextMessageStartEvent);
+    source$.next({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "1",
+      delta: "test content",
+    } as TextMessageContentEvent);
+    source$.next({
+      type: EventType.CUSTOM,
+      name: "test_event",
+      value: "test_value",
+    } as CustomEvent);
     source$.next({
       type: EventType.TEXT_MESSAGE_END,
       messageId: "1",
@@ -753,51 +258,286 @@ describe("verifyEvents text messages", () => {
     const result = await promise;
 
     // Verify all events were processed
-    expect(result.length).toBe(4);
-    expect(result[1].type).toBe(EventType.TEXT_MESSAGE_START);
-    expect(result[2].type).toBe(EventType.TEXT_MESSAGE_END);
+    expect(result.length).toBe(6);
+    expect(result[3].type).toBe(EventType.CUSTOM);
   });
 
-  // NEW TEST: Missing/undefined IDs for TEXT_MESSAGE_START
-  it("should not allow text messages with undefined or null IDs", async () => {
+  // Test: Should allow STATE_SNAPSHOT inside a text message
+  it("should allow STATE_SNAPSHOT inside a text message", async () => {
     const source$ = new Subject<BaseEvent>();
-    const events: BaseEvent[] = [];
 
-    // Create a subscription that will complete only after an error
-    const subscription = verifyEvents(false)(source$).subscribe({
-      next: (event) => events.push(event),
-      error: (err) => {
-        expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain("requires a valid message ID");
-        subscription.unsubscribe();
-      },
-    });
+    // Set up subscription and collect events
+    const promise = firstValueFrom(
+      verifyEvents(false)(source$).pipe(
+        toArray(),
+        catchError((err) => {
+          throw err;
+        }),
+      ),
+    );
 
-    // Start a valid run
+    // Send a valid sequence with a state snapshot inside a text message
     source$.next({
       type: EventType.RUN_STARTED,
       threadId: "test-thread-id",
       runId: "test-run-id",
     } as RunStartedEvent);
-
-    // Try to start a text message with undefined ID
     source$.next({
       type: EventType.TEXT_MESSAGE_START,
-      messageId: "undefined-id",
-      role: "assistant",
+      messageId: "1",
     } as TextMessageStartEvent);
+    source$.next({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "1",
+      delta: "test content",
+    } as TextMessageContentEvent);
+    source$.next({
+      type: EventType.STATE_SNAPSHOT,
+      snapshot: {
+        state: "test_state",
+        data: { foo: "bar" },
+      },
+    } as StateSnapshotEvent);
+    source$.next({
+      type: EventType.TEXT_MESSAGE_END,
+      messageId: "1",
+    } as TextMessageEndEvent);
+    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
 
-    // Complete the source and wait a bit for processing
+    // Complete the source
     source$.complete();
-    await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Verify events processed before the error
-    expect(events.length).toBe(2);
-    expect(events[0].type).toBe(EventType.RUN_STARTED);
-    expect(events[1].type).toBe(EventType.TEXT_MESSAGE_START);
+    // Await the promise and expect no errors
+    const result = await promise;
+
+    // Verify all events were processed
+    expect(result.length).toBe(6);
+    expect(result[3].type).toBe(EventType.STATE_SNAPSHOT);
   });
 
-  // NEW TEST: Sequential text messages
+  // Test: Should allow STATE_DELTA inside a text message
+  it("should allow STATE_DELTA inside a text message", async () => {
+    const source$ = new Subject<BaseEvent>();
+
+    // Set up subscription and collect events
+    const promise = firstValueFrom(
+      verifyEvents(false)(source$).pipe(
+        toArray(),
+        catchError((err) => {
+          throw err;
+        }),
+      ),
+    );
+
+    // Send a valid sequence with a state delta inside a text message
+    source$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test-thread-id",
+      runId: "test-run-id",
+    } as RunStartedEvent);
+    source$.next({
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "1",
+    } as TextMessageStartEvent);
+    source$.next({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "1",
+      delta: "test content",
+    } as TextMessageContentEvent);
+    source$.next({
+      type: EventType.STATE_DELTA,
+      delta: [{ op: "add", path: "/result", value: "success" }],
+    } as StateDeltaEvent);
+    source$.next({
+      type: EventType.TEXT_MESSAGE_END,
+      messageId: "1",
+    } as TextMessageEndEvent);
+    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+
+    // Complete the source
+    source$.complete();
+
+    // Await the promise and expect no errors
+    const result = await promise;
+
+    // Verify all events were processed
+    expect(result.length).toBe(6);
+    expect(result[3].type).toBe(EventType.STATE_DELTA);
+  });
+
+  // Test: Should allow MESSAGES_SNAPSHOT inside a text message
+  it("should allow MESSAGES_SNAPSHOT inside a text message", async () => {
+    const source$ = new Subject<BaseEvent>();
+
+    // Set up subscription and collect events
+    const promise = firstValueFrom(
+      verifyEvents(false)(source$).pipe(
+        toArray(),
+        catchError((err) => {
+          throw err;
+        }),
+      ),
+    );
+
+    // Send a valid sequence with a messages snapshot inside a text message
+    source$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test-thread-id",
+      runId: "test-run-id",
+    } as RunStartedEvent);
+    source$.next({
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "1",
+    } as TextMessageStartEvent);
+    source$.next({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "1",
+      delta: "test content",
+    } as TextMessageContentEvent);
+    source$.next({
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: [{ role: "user", content: "test", id: "test-id" }],
+    } as MessagesSnapshotEvent);
+    source$.next({
+      type: EventType.TEXT_MESSAGE_END,
+      messageId: "1",
+    } as TextMessageEndEvent);
+    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+
+    // Complete the source
+    source$.complete();
+
+    // Await the promise and expect no errors
+    const result = await promise;
+
+    // Verify all events were processed
+    expect(result.length).toBe(6);
+    expect(result[3].type).toBe(EventType.MESSAGES_SNAPSHOT);
+  });
+
+  // Test: Should allow lifecycle events (STEP_STARTED/STEP_FINISHED) during text messages
+  it("should allow lifecycle events during text messages", async () => {
+    const source$ = new Subject<BaseEvent>();
+
+    // Set up subscription and collect events
+    const promise = firstValueFrom(
+      verifyEvents(false)(source$).pipe(
+        toArray(),
+        catchError((err) => {
+          throw err;
+        }),
+      ),
+    );
+
+    // Send a valid sequence with lifecycle events inside a text message
+    source$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test-thread-id",
+      runId: "test-run-id",
+    } as RunStartedEvent);
+    source$.next({
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "1",
+    } as TextMessageStartEvent);
+    source$.next({
+      type: EventType.STEP_STARTED,
+      stepName: "test-step",
+    } as StepStartedEvent);
+    source$.next({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "1",
+      delta: "test content",
+    } as TextMessageContentEvent);
+    source$.next({
+      type: EventType.STEP_FINISHED,
+      stepName: "test-step",
+    } as StepFinishedEvent);
+    source$.next({
+      type: EventType.TEXT_MESSAGE_END,
+      messageId: "1",
+    } as TextMessageEndEvent);
+    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+
+    // Complete the source
+    source$.complete();
+
+    // Await the promise and expect no errors
+    const result = await promise;
+
+    // Verify all events were processed
+    expect(result.length).toBe(7);
+    expect(result[2].type).toBe(EventType.STEP_STARTED);
+    expect(result[4].type).toBe(EventType.STEP_FINISHED);
+  });
+
+  // Test: Should allow tool calls to start during text messages
+  it("should allow tool calls to start during text messages", async () => {
+    const source$ = new Subject<BaseEvent>();
+
+    // Set up subscription and collect events
+    const promise = firstValueFrom(
+      verifyEvents(false)(source$).pipe(
+        toArray(),
+        catchError((err) => {
+          throw err;
+        }),
+      ),
+    );
+
+    // Send a valid sequence with tool calls inside a text message
+    source$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test-thread-id",
+      runId: "test-run-id",
+    } as RunStartedEvent);
+    source$.next({
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "1",
+    } as TextMessageStartEvent);
+    source$.next({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "1",
+      delta: "Starting search...",
+    } as TextMessageContentEvent);
+    source$.next({
+      type: EventType.TOOL_CALL_START,
+      toolCallId: "tool1",
+      toolCallName: "search",
+    } as ToolCallStartEvent);
+    source$.next({
+      type: EventType.TOOL_CALL_ARGS,
+      toolCallId: "tool1",
+      delta: '{"query":"test"}',
+    } as ToolCallArgsEvent);
+    source$.next({
+      type: EventType.TOOL_CALL_END,
+      toolCallId: "tool1",
+    } as ToolCallEndEvent);
+    source$.next({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "1",
+      delta: "Search completed.",
+    } as TextMessageContentEvent);
+    source$.next({
+      type: EventType.TEXT_MESSAGE_END,
+      messageId: "1",
+    } as TextMessageEndEvent);
+    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+
+    // Complete the source
+    source$.complete();
+
+    // Await the promise and expect no errors
+    const result = await promise;
+
+    // Verify all events were processed
+    expect(result.length).toBe(9);
+    expect(result[3].type).toBe(EventType.TOOL_CALL_START);
+    expect(result[4].type).toBe(EventType.TOOL_CALL_ARGS);
+    expect(result[5].type).toBe(EventType.TOOL_CALL_END);
+  });
+
+  // Test: Sequential text messages
   it("should allow multiple sequential text messages", async () => {
     const source$ = new Subject<BaseEvent>();
 
@@ -866,7 +606,7 @@ describe("verifyEvents text messages", () => {
     expect(result[6].type).toBe(EventType.TEXT_MESSAGE_END);
   });
 
-  // NEW TEST: Text message at run boundaries
+  // Test: Text message at run boundaries
   it("should allow text messages immediately after RUN_STARTED and before RUN_FINISHED", async () => {
     const source$ = new Subject<BaseEvent>();
 
@@ -913,5 +653,34 @@ describe("verifyEvents text messages", () => {
     expect(result[1].type).toBe(EventType.TEXT_MESSAGE_START);
     expect(result[3].type).toBe(EventType.TEXT_MESSAGE_END);
     expect(result[4].type).toBe(EventType.RUN_FINISHED);
+  });
+
+  // Test: Starting text message before RUN_STARTED
+  it("should not allow starting a text message before RUN_STARTED", async () => {
+    const source$ = new Subject<BaseEvent>();
+    const events: BaseEvent[] = [];
+
+    // Create a subscription that will complete only after an error
+    const subscription = verifyEvents(false)(source$).subscribe({
+      next: (event) => events.push(event),
+      error: (err) => {
+        expect(err).toBeInstanceOf(AGUIError);
+        expect(err.message).toContain("First event must be 'RUN_STARTED'");
+        subscription.unsubscribe();
+      },
+    });
+
+    // Try to start a text message before RUN_STARTED
+    source$.next({
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "1",
+    } as TextMessageStartEvent);
+
+    // Complete the source and wait a bit for processing
+    source$.complete();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Verify no events were processed
+    expect(events.length).toBe(0);
   });
 });
