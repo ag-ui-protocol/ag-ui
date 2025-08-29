@@ -2,34 +2,17 @@
 An example demonstrating tool-based generative UI using LangGraph.
 """
 
-from typing import List, Any, Optional, Annotated
 import os
-
-# LangGraph imports
+from typing import Any, List
+from typing_extensions import Literal
 from langchain_openai import ChatOpenAI
-from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import SystemMessage
-from langchain_core.tools import tool
-from langgraph.graph import StateGraph, END, START
+from langchain_core.runnables import RunnableConfig
+from langgraph.graph import StateGraph, END
 from langgraph.types import Command
 from langgraph.graph import MessagesState
 from langgraph.prebuilt import ToolNode
 
-@tool
-def generate_haiku(
-    japanese: Annotated[ # pylint: disable=unused-argument
-        List[str],
-        "An array of three lines of the haiku in Japanese"
-    ],
-    english: Annotated[ # pylint: disable=unused-argument
-        List[str],
-        "An array of three lines of the haiku in English"
-    ]
-):
-    """
-    Generate a haiku in Japanese and its English translation.
-    Also select exactly 3 relevant images from the provided list based on the haiku's theme.
-    """
 
 class AgentState(MessagesState):
     """
@@ -37,63 +20,49 @@ class AgentState(MessagesState):
     """
     tools: List[Any]
 
-async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
+async def chat_node(state: AgentState, config: RunnableConfig) -> Command[Literal["tool_node", "__end__"]]:
     """
-    The main function handling chat and tool calls.
+    Standard chat node based on the ReAct design pattern. It handles:
+    - The model to use (and binds in CopilotKit actions and the tools defined above)
+    - The system prompt
+    - Getting a response from the model
+    - Handling tool calls
+
+    For more about the ReAct design pattern, see:
+    https://www.perplexity.ai/search/react-agents-NcXLQhreS0WDzpVaS4m9Cg
     """
 
-    system_prompt = """
-        You assist the user in generating a haiku.
-        When generating a haiku using the 'generate_haiku' tool.
-    """
-
-    # Define the model
     model = ChatOpenAI(model="gpt-4o")
 
-    # Define config for the model
-    if config is None:
-        config = RunnableConfig(recursion_limit=25)
-
-    # Bind the tools to the model
     model_with_tools = model.bind_tools(
-        [generate_haiku],
-        # Disable parallel tool calls to avoid race conditions
+        [
+            *state.get("tools", []), # bind tools defined by ag-ui
+        ],
         parallel_tool_calls=False,
     )
 
-    # Run the model to generate a response
+    system_message = SystemMessage(
+        content=f"Help the user with writing Haikus. If the user asks for a haiku, use the generate_haiku tool to display the haiku to the user."
+    )
+
     response = await model_with_tools.ainvoke([
-        SystemMessage(content=system_prompt),
+        system_message,
         *state["messages"],
     ], config)
 
-    if response.tool_calls:
-        return Command(
-            goto="tool_node",
-            update={
-                "messages": state["messages"] + [response]
-            }
-        )
-    # Return Command to end with updated messages
     return Command(
         goto=END,
         update={
-            "messages": state["messages"] + [response]
+            "messages": [response],
         }
     )
 
-# Define the graph
 workflow = StateGraph(AgentState)
-
-# Add nodes
 workflow.add_node("chat_node", chat_node)
-workflow.add_node("tool_node", ToolNode([generate_haiku]))
-
-# Add edges
+# This is required even though we don't have any backend tools to pass in.
+workflow.add_node("tool_node", ToolNode(tools=[]))
 workflow.set_entry_point("chat_node")
-workflow.add_edge(START, "chat_node")
 workflow.add_edge("chat_node", END)
-workflow.add_edge("tool_node", END)
 
 
 # Conditionally use a checkpointer based on the environment
@@ -109,4 +78,3 @@ if is_fast_api:
 else:
     # When running in LangGraph API/dev, don't use a custom checkpointer
     graph = workflow.compile()
-
