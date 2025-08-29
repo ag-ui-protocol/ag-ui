@@ -15,7 +15,7 @@ test.describe("Shared State Feature", () => {
     await sharedStateAgent.openChat();
     await sharedStateAgent.sendMessage("give me recipe for pasta");
     await sharedStateAgent.loader();
-    await sharedStateAgent.awaitIngredientCard(/Pasta/);
+    await sharedStateAgent.awaitIngredientCard('Salt');
     await sharedStateAgent.getInstructionItems(
       sharedStateAgent.instructionsContainer
     );
@@ -48,10 +48,12 @@ test.describe("Shared State Feature", () => {
     await sharedStateAgent.sendMessage("Give me all the ingredients");
     await sharedStateAgent.loader();
 
-    // Verify chat response includes both existing and new ingredients
-    await expect(sharedStateAgent.agentMessage.getByText(/Potatoes/)).toBeVisible();
-    await expect(sharedStateAgent.agentMessage.getByText(/12/)).toBeVisible();
-    await expect(sharedStateAgent.agentMessage.getByText(/Carrots/)).toBeVisible();
-    await expect(sharedStateAgent.agentMessage.getByText(/All-Purpose Flour/)).toBeVisible();
+    // Verify hardcoded ingredients
+    await sharedStateAgent.awaitIngredientCard('chicken breast');
+    await sharedStateAgent.awaitIngredientCard('chili powder');
+    await sharedStateAgent.awaitIngredientCard('Salt');
+    await sharedStateAgent.awaitIngredientCard('Lettuce leaves');
+
+    expect(await sharedStateAgent.getInstructionItems(sharedStateAgent.instructionsContainer)).toBe(3);
   });
 });

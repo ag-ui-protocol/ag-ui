@@ -47,8 +47,10 @@ export class SharedStatePage {
     ]);
   }
 
-  async awaitIngredientCard(name: string | RegExp) {
-     return this.page.locator(`.ingredient-card:has(input.ingredient-name-input[value="${name.toString}"])`);
+  async awaitIngredientCard(name: string) {
+    const selector = `.ingredient-card:has(input.ingredient-name-input[value="${name}"])`;
+    const cardLocator = this.page.locator(selector);
+    await expect(cardLocator).toBeVisible();
   }
 
   async addNewIngredient(placeholderText: string) {
