@@ -21,6 +21,7 @@ test.describe("Shared State Feature", () => {
     );
   });
 
+  // Fails. Issue with the test, most likely
   test.fixme("[Server Starter all features] should share state between UI and chat", async ({
     page,
   }) => {

@@ -30,7 +30,7 @@ export class PredictiveStateUpdatesPage {
     this.userMessage = page.locator('.copilotKitUserMessage');
   }
 
-  async openChat() {   
+  async openChat() {
     await this.agentGreeting.isVisible();
   }
 
@@ -54,13 +54,13 @@ export class PredictiveStateUpdatesPage {
   }
 
   async getUserApproval() {
-    await this.userApprovalModal.isVisible();
+    await this.userApprovalModal.last().isVisible();
     await this.getButton(this.page, "Confirm");
-    const acceptedLabel = this.userApprovalModal.locator('text=✓ Accepted');
+    const acceptedLabel = this.userApprovalModal.last().locator('text=✓ Accepted');
   }
 
   async getUserRejection() {
-    await this.userApprovalModal.isVisible();
+    await this.userApprovalModal.last().isVisible();
     await this.getButton(this.page, "Reject");
     const rejectedLabel = await this.getStatusLabelOfButton(this.page, "✕ Rejected");
     await rejectedLabel.isVisible();
@@ -85,7 +85,7 @@ export class PredictiveStateUpdatesPage {
       'div.tiptap em',
       'div.tiptap s'
     ];
-    
+
     let count = 0;
     for (const selector of highlightSelectors) {
       count = await this.page.locator(selector).count();
@@ -93,7 +93,7 @@ export class PredictiveStateUpdatesPage {
         break;
       }
     }
-    
+
     if (count > 0) {
       expect(count).toBeGreaterThan(0);
     } else {
