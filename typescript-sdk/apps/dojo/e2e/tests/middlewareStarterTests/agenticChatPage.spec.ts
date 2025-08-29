@@ -4,7 +4,7 @@ import {
   waitForAIResponse,
   retryOnAIFailure,
 } from "../../test-isolation-helper";
-import { AgenticChatPage } from "../../pages/middlewareStarterPages/AgenticChatPage";
+import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
 
 test("[Middleware Starter] Testing Agentic Chat", async ({
   page,
