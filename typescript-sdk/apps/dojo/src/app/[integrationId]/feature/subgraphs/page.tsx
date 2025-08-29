@@ -302,13 +302,13 @@ function TravelPlanner() {
             <span>Amsterdam → San Francisco</span>
           </div>
           {selectedFlight && (
-            <div className="itinerary-item">
+            <div className="itinerary-item" data-testid="selected-flight">
               <span className="item-icon">✈️</span>
               <span>{selectedFlight.airline} - {selectedFlight.price}</span>
             </div>
           )}
           {selectedHotel && (
-            <div className="itinerary-item">
+            <div className="itinerary-item" data-testid="selected-hotel">
               <span className="item-icon">🏨</span>
               <span>{selectedHotel.name}</span>
             </div>
@@ -340,19 +340,19 @@ function TravelPlanner() {
       <div className="agent-status">
         <div className="status-label">Active Agent:</div>
         <div className="agent-indicators">
-          <div className={`agent-indicator ${activeAgent === 'supervisor' ? 'active' : ''}`}>
+          <div className={`agent-indicator ${activeAgent === 'supervisor' ? 'active' : ''}`} data-testid="supervisor-indicator">
             <span>👨‍💼</span>
             <span>Supervisor</span>
           </div>
-          <div className={`agent-indicator ${activeAgent === 'flights' ? 'active' : ''}`}>
+          <div className={`agent-indicator ${activeAgent === 'flights' ? 'active' : ''}`} data-testid="flights-agent-indicator">
             <span>✈️</span>
             <span>Flights</span>
           </div>
-          <div className={`agent-indicator ${activeAgent === 'hotels' ? 'active' : ''}`}>
+          <div className={`agent-indicator ${activeAgent === 'hotels' ? 'active' : ''}`} data-testid="hotels-agent-indicator">
             <span>🏨</span>
             <span>Hotels</span>
           </div>
-          <div className={`agent-indicator ${activeAgent === 'experiences' ? 'active' : ''}`}>
+          <div className={`agent-indicator ${activeAgent === 'experiences' ? 'active' : ''}`} data-testid="experiences-agent-indicator">
             <span>🎯</span>
             <span>Experiences</span>
           </div>
