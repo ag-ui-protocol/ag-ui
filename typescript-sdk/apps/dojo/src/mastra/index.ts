@@ -4,7 +4,7 @@ import { Memory } from "@mastra/memory";
 import { LibSQLStore } from "@mastra/libsql";
 import { DynamoDBStore } from "@mastra/dynamodb";
 
-import { Mastra } from "@mastra/core";
+import { createStep, createWorkflow, Mastra } from "@mastra/core";
 import { createTool } from "@mastra/core";
 import { z } from "zod";
 
@@ -22,6 +22,54 @@ if (process.env.DYNAMODB_TABLE_NAME) {
   storage = new LibSQLStore({ url: "file::memory:" });
 }
 
+export const weatherInfo = createTool({
+  id: "Get Weather Information",
+  description: `Fetches the current weather information for a given city`,
+  inputSchema: z.object({
+    city: z.string(),
+  }),
+  outputSchema: z.object({
+    text: z.string(),
+  }),
+  execute: async ({ writer }) => {
+    const step = createStep({
+      id: "weather-info",
+      inputSchema: z.object({}),
+      outputSchema: z.object({
+        text: z.string(),
+      }),
+      execute: async () => {
+        return {
+          text: "70 degrees"
+        }
+      }
+    })
+
+    const workflow = createWorkflow({
+      id: "weather-info",
+      inputSchema: z.object({}),
+      outputSchema: z.object({}),
+      steps: [step],
+    }).then(step).commit();
+
+    const run = await workflow.createRunAsync()
+
+    const stream = run.streamVNext()
+
+    for await (const chunk of stream) {
+      console.log('WORKFLOW CHUNK', chunk)
+      if ('payload' in chunk) {
+        await writer!.write({
+          type: `${chunk.from}-${chunk.type}`,
+          payload: chunk.payload,
+        })
+      }
+    }
+
+    return await stream.result as any;
+  },
+});
+
 export const mastra = new Mastra({
   agents: {
     agentic_chat: new Agent({
@@ -37,6 +85,9 @@ export const mastra = new Mastra({
         - Keep responses concise but informative
     `,
       model: openai("gpt-4o"),
+      tools: {
+        weatherInfo
+      },
       memory: new Memory({
         storage: storage,
         options: {

@@ -249,14 +249,11 @@ export class MastraAgent extends AbstractAgent {
     );
     const resourceId = this.resourceId ?? threadId;
 
-    console.log('MESSAGES', JSON.stringify(messages, null, 2))
 
     const convertedMessages = convertAGUIMessagesToMastra(messages);
     const runtimeContext = this.runtimeContext;
 
     if (this.isLocalMastraAgent(this.agent)) {
-
-      console.log('CLIENT TOOLS', JSON.stringify(clientTools, null, 2))
 
       // Local agent - use the agent's stream method directly
       try {
@@ -278,7 +275,6 @@ export class MastraAgent extends AbstractAgent {
                 break;
               }
               case 'tool-call': {
-                console.log('tool-call', chunk.payload);
                 onToolCallPart?.({
                   toolCallId: chunk.payload.toolCallId,
                   toolName: chunk.payload.toolName,
@@ -301,6 +297,11 @@ export class MastraAgent extends AbstractAgent {
 
               case 'finish': {
                 onFinishMessagePart?.();
+                break;
+              }
+
+              case 'tool-output': {
+                console.log(JSON.stringify(chunk.payload, null, 2))
                 break;
               }
             }
