@@ -59,6 +59,12 @@ export const featureConfig: FeatureConfig[] = [
     description: "Chat with a reasoning Copilot and call frontend tools",
     tags: ["Chat", "Tools", "Streaming", "Reasoning"],
   }),
+  createFeatureConfig({
+    id: "subgraphs",
+    name: "Subgraphs",
+    description: "Have your tasks performed by multiple agents, working together",
+    tags: ["Chat", "Multi-agent architecture", "Streaming", "Subgraphs"],
+  }),
 ];
 
 export default featureConfig;
