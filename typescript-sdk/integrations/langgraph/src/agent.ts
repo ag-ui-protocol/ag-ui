@@ -123,6 +123,7 @@ export class LangGraphAgent extends AbstractAgent {
   // @ts-expect-error no need to initialize subscriber right now
   subscriber: Subscriber<ProcessedEvents>;
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
+  activeStep?: string;
 
   constructor(config: LangGraphAgentConfig) {
     super(config);
@@ -383,7 +384,9 @@ export class LangGraphAgent extends AbstractAgent {
           break;
         }
 
-        if (streamResponseChunk.event === "updates") continue;
+        if (streamResponseChunk.event === "updates") {
+          continue;
+        }
 
         if (streamResponseChunk.event === "values") {
           latestStateValues = chunk.data;
@@ -466,7 +469,6 @@ export class LangGraphAgent extends AbstractAgent {
       if (!interrupts?.length) {
         newNodeName = isEndNode ? '__end__' : (state.next[0] ?? Object.keys(writes)[0]);
       }
-
 
       interrupts.forEach((interrupt) => {
         this.dispatchEvent({
@@ -944,15 +946,19 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   startStep(nodeName: string) {
+    if (this.activeStep) {
+      this.endStep()
+    }
     this.dispatchEvent({
       type: EventType.STEP_STARTED,
       stepName: nodeName,
     });
     this.activeRun!.nodeName = nodeName;
+    this.activeStep = nodeName;
   }
 
   endStep() {
-    if (!this.activeRun!.nodeName) {
+    if (!this.activeStep) {
       throw new Error("No active step to end");
     }
     this.dispatchEvent({
@@ -960,6 +966,7 @@ export class LangGraphAgent extends AbstractAgent {
       stepName: this.activeRun!.nodeName!,
     });
     this.activeRun!.nodeName = undefined;
+    this.activeStep = undefined;
   }
 
   async getCheckpointByMessage(
