@@ -13,7 +13,7 @@ test.describe("Shared State Feature", () => {
     );
 
     await sharedStateAgent.openChat();
-    await sharedStateAgent.sendMessage("give me recipe for pasta");
+    await sharedStateAgent.sendMessage('Please give me a pasta recipe of your choosing, but one of the ingredients should be "Pasta"');
     await sharedStateAgent.loader();
     await sharedStateAgent.awaitIngredientCard('Pasta');
     await sharedStateAgent.getInstructionItems(
