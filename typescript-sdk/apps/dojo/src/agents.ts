@@ -116,14 +116,15 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
       return MastraAgent.getLocalAgents({ mastra });
     },
   },
-  {
-    id: "vercel-ai-sdk",
-    agents: async () => {
-      return {
-        agentic_chat: new VercelAISDKAgent({ model: openai("gpt-4o") }),
-      };
-    },
-  },
+  // Disabled until we can support Vercel AI SDK v5
+  // {
+  //   id: "vercel-ai-sdk",
+  //   agents: async () => {
+  //     return {
+  //       agentic_chat: new VercelAISDKAgent({ model: openai("gpt-4o") }),
+  //     };
+  //   },
+  // },
   {
     id: "langgraph",
     agents: async () => {
