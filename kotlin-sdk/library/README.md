@@ -55,8 +55,6 @@ When developing:
 2. Use `./gradlew` instead of system gradle
 3. IDE should open this directory as the project root
 
-## Modules
+## Documentation
 
-- `com.agui.core` - Core protocol types and base abstractions
-- `com.agui.client` - Client implementations and HTTP transport
-- `com.agui.tools` - Tool execution framework
+For detailed API documentation and usage guides, see the **[complete SDK documentation](../../../docs/sdk/kotlin/)**.
