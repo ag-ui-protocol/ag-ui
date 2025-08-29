@@ -93,7 +93,7 @@ temp/
 
 # Package files
 *.jar
-!gradle/wrapper/gradle-wrapper.jar
+!**/gradle/wrapper/gradle-wrapper.jar
 *.war
 *.ear
 *.zip
