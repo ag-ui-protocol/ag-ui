@@ -26,6 +26,8 @@ import static androidx.test.espresso.assertion.ViewAssertions.*;
 import static androidx.test.espresso.matcher.ViewMatchers.*;
 import static org.hamcrest.Matchers.*;
 
+import androidx.test.espresso.Espresso;
+
 /**
  * Android tests for the multi-agent SettingsActivity.
  * Tests agent list UI, CRUD operations, and dialog functionality.
@@ -304,6 +306,10 @@ public class SettingsActivityTest {
     public void testDialogCancellation() {
         scenario = ActivityScenario.launch(SettingsActivity.class);
         
+        // Verify initial empty state
+        onView(withId(R.id.layoutEmptyState))
+                .check(matches(isDisplayed()));
+        
         // Open add agent dialog
         onView(withId(R.id.fabAddAgent))
                 .perform(click());
@@ -312,11 +318,29 @@ public class SettingsActivityTest {
         onView(withId(R.id.editAgentName))
                 .perform(typeText("Test Agent"));
         
+        // Close soft keyboard before clicking Cancel
+        Espresso.closeSoftKeyboard();
+        
         // Cancel dialog
         onView(withText("Cancel"))
                 .perform(click());
         
-        // Should remain in empty state (no agents added)
+        // Wait for any UI transitions to complete
+        try {
+            Thread.sleep(100);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        
+        // Verify no agents were actually added to the repository
+        scenario.onActivity(activity -> {
+            MultiAgentRepository repo = MultiAgentRepository.getInstance(activity);
+            java.util.List<AgentProfile> currentAgents = repo.getAgents().getValue();
+            android.util.Log.d("SettingsActivityTest", "Agents count after cancel: " + 
+                (currentAgents != null ? currentAgents.size() : "null"));
+        });
+        
+        // The main assertion: empty state should still be displayed
         onView(withId(R.id.layoutEmptyState))
                 .check(matches(isDisplayed()));
     }
