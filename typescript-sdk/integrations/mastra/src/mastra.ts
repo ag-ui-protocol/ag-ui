@@ -12,7 +12,6 @@ import type {
   ToolCallStartEvent,
 } from "@ag-ui/client";
 import { AbstractAgent, EventType } from "@ag-ui/client";
-import { processDataStream } from "@ai-sdk/ui-utils";
 import type { StorageThreadType } from "@mastra/core";
 import { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RuntimeContext } from "@mastra/core/runtime-context";
@@ -212,7 +211,7 @@ export class MastraAgent extends AbstractAgent {
 
       run();
 
-      return () => {};
+      return () => { };
     });
   }
 
@@ -249,13 +248,19 @@ export class MastraAgent extends AbstractAgent {
       {} as Record<string, any>,
     );
     const resourceId = this.resourceId ?? threadId;
+
+    console.log('MESSAGES', JSON.stringify(messages, null, 2))
+
     const convertedMessages = convertAGUIMessagesToMastra(messages);
     const runtimeContext = this.runtimeContext;
 
     if (this.isLocalMastraAgent(this.agent)) {
+
+      console.log('CLIENT TOOLS', JSON.stringify(clientTools, null, 2))
+
       // Local agent - use the agent's stream method directly
       try {
-        const response = await this.agent.stream(convertedMessages, {
+        const response = await this.agent.streamVNext(convertedMessages, {
           threadId,
           resourceId,
           runId,
@@ -266,35 +271,42 @@ export class MastraAgent extends AbstractAgent {
         // For local agents, the response should already be a stream
         // Process it using the agent's built-in streaming mechanism
         if (response && typeof response === "object") {
-          // If the response has a toDataStreamResponse method, use it
-          if (
-            "toDataStreamResponse" in response &&
-            typeof response.toDataStreamResponse === "function"
-          ) {
-            const dataStreamResponse = response.toDataStreamResponse();
-            if (dataStreamResponse && dataStreamResponse.body) {
-              await processDataStream({
-                stream: dataStreamResponse.body,
-                onTextPart,
-                onToolCallPart,
-                onToolResultPart,
-                onFinishMessagePart,
-              });
-              await onRunFinished?.();
-            } else {
-              throw new Error("Invalid data stream response from local agent");
+          for await (const chunk of response.fullStream) {
+            switch (chunk.type) {
+              case 'text-delta': {
+                onTextPart?.(chunk.payload.text);
+                break;
+              }
+              case 'tool-call': {
+                console.log('tool-call', chunk.payload);
+                onToolCallPart?.({
+                  toolCallId: chunk.payload.toolCallId,
+                  toolName: chunk.payload.toolName,
+                  args: chunk.payload.args,
+                });
+                break;
+              }
+              case 'tool-result': {
+                onToolResultPart?.({
+                  toolCallId: chunk.payload.toolCallId,
+                  result: chunk.payload.result,
+                });
+                break;
+              }
+
+              case 'error': {
+                onError?.(new Error(chunk.payload.error as string));
+                break;
+              }
+
+              case 'finish': {
+                onFinishMessagePart?.();
+                break;
+              }
             }
-          } else {
-            // If it's already a readable stream, process it directly
-            await processDataStream({
-              stream: response as any,
-              onTextPart,
-              onToolCallPart,
-              onToolResultPart,
-              onFinishMessagePart,
-            });
-            await onRunFinished?.();
           }
+
+          await onRunFinished?.();
         } else {
           throw new Error("Invalid response from local agent");
         }
@@ -304,7 +316,7 @@ export class MastraAgent extends AbstractAgent {
     } else {
       // Remote agent - use the remote agent's stream method
       try {
-        const response = await this.agent.stream({
+        const response = await this.agent.streamVNext({
           threadId,
           resourceId,
           runId,
@@ -315,10 +327,35 @@ export class MastraAgent extends AbstractAgent {
         // Remote agents should have a processDataStream method
         if (response && typeof response.processDataStream === "function") {
           await response.processDataStream({
-            onTextPart,
-            onToolCallPart,
-            onToolResultPart,
-            onFinishMessagePart,
+            onChunk: async (chunk) => {
+              switch (chunk.type) {
+                case 'text-delta': {
+                  onTextPart?.(chunk.payload.text);
+                  break;
+                }
+                case 'tool-call': {
+
+                  onToolCallPart?.({
+                    toolCallId: chunk.payload.toolCallId,
+                    toolName: chunk.payload.toolName,
+                    args: chunk.payload.args,
+                  });
+                  break;
+                }
+                case 'tool-result': {
+                  onToolResultPart?.({
+                    toolCallId: chunk.payload.toolCallId,
+                    result: chunk.payload.result,
+                  });
+                  break;
+                }
+
+                case 'finish': {
+                  onFinishMessagePart?.();
+                  break;
+                }
+              }
+            },
           });
           await onRunFinished?.();
         } else {
