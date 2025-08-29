@@ -28,9 +28,9 @@ echo
 # Check shared module iOS support
 echo "🔄 Checking shared module iOS support:"
 shared_files=(
-    "shared/src/iosMain/kotlin/com/contextable/agui4k/example/chatapp/util/IosPlatform.kt"
-    "shared/src/iosMain/kotlin/com/contextable/agui4k/example/chatapp/util/MainViewController.kt"
-    "shared/src/iosTest/kotlin/com/contextable/agui4k/example/chatapp/IosPlatformTest.kt"
+    "shared/src/iosMain/kotlin/com/agui/example/chatapp/util/IosPlatform.kt"
+    "shared/src/iosMain/kotlin/com/agui/example/chatapp/util/MainViewController.kt"
+    "shared/src/iosTest/kotlin/com/agui/example/chatapp/IosPlatformTest.kt"
 )
 
 for file in "${shared_files[@]}"; do
@@ -46,8 +46,8 @@ echo
 # Check tools module iOS support
 echo "🛠️ Checking tools module iOS support:"
 tools_files=(
-    "../tools/src/iosMain/kotlin/com/contextable/agui4k/example/tools/IosLocationProvider.kt"
-    "../tools/src/iosTest/kotlin/com/contextable/agui4k/example/tools/IosLocationProviderTest.kt"
+    "../tools/src/iosMain/kotlin/com/agui/example/tools/IosLocationProvider.kt"
+    "../tools/src/iosTest/kotlin/com/agui/example/tools/IosLocationProviderTest.kt"
 )
 
 for file in "${tools_files[@]}"; do

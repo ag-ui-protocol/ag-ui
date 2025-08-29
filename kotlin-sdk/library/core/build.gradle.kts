@@ -135,7 +135,7 @@ publishing {
             pom {
                 name.set("kotlin-core")
                 description.set("Core types and protocol definitions for the Agent User Interaction Protocol")
-                url.set("https://github.com/contextable/ag-ui-4k")
+                url.set("https://github.com/ag-ui-protocol/ag-ui")
 
                 licenses {
                     license {
@@ -146,16 +146,16 @@ publishing {
 
                 developers {
                     developer {
-                        id.set("contextable")
-                        name.set("Contextable Team")
-                        email.set("dev@contextable.com")
+                        id.set("contextablemark")
+                        name.set("Mark Fogle")
+                        email.set("mark@contextable.com")
                     }
                 }
 
                 scm {
-                    url.set("https://github.com/contextable/ag-ui-4k")
-                    connection.set("scm:git:git://github.com/contextable/ag-ui-4k.git")
-                    developerConnection.set("scm:git:ssh://github.com:contextable/ag-ui-4k.git")
+                    url.set("https://github.com/ag-ui-protocol/ag-ui")
+                    connection.set("scm:git:git://github.com/ag-ui-protocol/ag-ui.git")
+                    developerConnection.set("scm:git:ssh://github.com:ag-ui-protocol/ag-ui.git")
                 }
             }
         }

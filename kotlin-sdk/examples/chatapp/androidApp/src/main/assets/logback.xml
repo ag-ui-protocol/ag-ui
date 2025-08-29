@@ -10,7 +10,7 @@
     </appender>
 
     <!-- Set log levels -->
-    <logger name="com.contextable.agui4k" level="DEBUG" />
+    <logger name="com.agui" level="DEBUG" />
     <logger name="io.ktor" level="INFO" />
     <logger name="io.ktor.client.HttpClient" level="DEBUG" />
 
