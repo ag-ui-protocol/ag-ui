@@ -10,16 +10,17 @@ import kotlinx.serialization.json.JsonElement
 
 /**
  * Enum defining all possible event types in the AG-UI protocol.
- * Exactly 16 event types as specified in the protocol.
+ * 21 event types as currently implemented.
  *
  * Events are grouped by category:
  * - Lifecycle Events (5): RUN_STARTED, RUN_FINISHED, RUN_ERROR, STEP_STARTED, STEP_FINISHED
  * - Text Message Events (3): TEXT_MESSAGE_START, TEXT_MESSAGE_CONTENT, TEXT_MESSAGE_END
  * - Tool Call Events (3): TOOL_CALL_START, TOOL_CALL_ARGS, TOOL_CALL_END
  * - State Management Events (3): STATE_SNAPSHOT, STATE_DELTA, MESSAGES_SNAPSHOT
+ * - Thinking Events (5): THINKING_START, THINKING_END, THINKING_TEXT_MESSAGE_START, THINKING_TEXT_MESSAGE_CONTENT, THINKING_TEXT_MESSAGE_END
  * - Special Events (2): RAW, CUSTOM
  *
- * Total: 16 events
+ * Total: 21 events
  */
 
 @Serializable
@@ -60,6 +61,18 @@ enum class EventType {
     @SerialName("MESSAGES_SNAPSHOT")
     MESSAGES_SNAPSHOT,
 
+    // Thinking Events
+    @SerialName("THINKING_START")
+    THINKING_START,
+    @SerialName("THINKING_END")
+    THINKING_END,
+    @SerialName("THINKING_TEXT_MESSAGE_START")
+    THINKING_TEXT_MESSAGE_START,
+    @SerialName("THINKING_TEXT_MESSAGE_CONTENT")
+    THINKING_TEXT_MESSAGE_CONTENT,
+    @SerialName("THINKING_TEXT_MESSAGE_END")
+    THINKING_TEXT_MESSAGE_END,
+
     // Special Events
     @SerialName("RAW")
     RAW,
@@ -67,18 +80,10 @@ enum class EventType {
     CUSTOM
 
     // Note: The protocol definitions (i.e., events.py and  events.ts) in the current version of
-    // the offical AG-UI Python and Typescript SDKs have several additional event types. Specifically
+    // the offical AG-UI Python and Typescript SDKs have additional event types that will be added later:
     //
     // TEXT_MESSAGE_CHUNK
     // TOOL_CALL_CHUNK
-    // THINKING_TEXT_MESSAGE_START
-    // THINKING_TEXT_MESSAGE_CONTENT
-    // THINKING_TEXT_MESSAGE_END
-    // THINKING_START
-    // THINKING_END
-    //
-    // These are left out for now as they do not appear in the actual protocol documentation,
-    // but could be added if needed.
 }
 
 /**
@@ -533,4 +538,113 @@ data class CustomEvent(
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.CUSTOM
+}
+
+// ============== Thinking Events (5) ==============
+
+/**
+ * Event indicating the start of a thinking step.
+ * 
+ * This event is emitted when an agent begins a thinking/reasoning phase.
+ * Thinking steps allow agents to process information and reason internally
+ * before generating their response to the user.
+ * 
+ * @param title Optional title or description for the thinking step
+ * @param timestamp Optional timestamp when the thinking started
+ * @param rawEvent Optional raw JSON representation of the event
+ */
+@Serializable
+@SerialName("THINKING_START")
+data class ThinkingStartEvent(
+    val title: String? = null,
+    override val timestamp: Long? = null,
+    override val rawEvent: JsonElement? = null
+) : BaseEvent() {
+    @Transient
+    override val eventType: EventType = EventType.THINKING_START
+}
+
+/**
+ * Event indicating the end of a thinking step.
+ * 
+ * This event is emitted when an agent completes a thinking/reasoning phase.
+ * It signals that the agent has finished processing information internally
+ * and may now proceed to generate a user-facing response.
+ * 
+ * @param timestamp Optional timestamp when the thinking ended
+ * @param rawEvent Optional raw JSON representation of the event
+ */
+@Serializable
+@SerialName("THINKING_END")
+data class ThinkingEndEvent(
+    override val timestamp: Long? = null,
+    override val rawEvent: JsonElement? = null
+) : BaseEvent() {
+    @Transient
+    override val eventType: EventType = EventType.THINKING_END
+}
+
+/**
+ * Event indicating the start of a thinking text message.
+ * 
+ * This event is emitted when an agent begins generating internal reasoning
+ * text during a thinking step. Unlike regular text messages, thinking messages
+ * represent the agent's internal thought process.
+ * 
+ * @param timestamp Optional timestamp when thinking message generation started
+ * @param rawEvent Optional raw JSON representation of the event
+ */
+@Serializable
+@SerialName("THINKING_TEXT_MESSAGE_START")
+data class ThinkingTextMessageStartEvent(
+    override val timestamp: Long? = null,
+    override val rawEvent: JsonElement? = null
+) : BaseEvent() {
+    @Transient
+    override val eventType: EventType = EventType.THINKING_TEXT_MESSAGE_START
+}
+
+/**
+ * Event containing incremental content for a thinking text message.
+ * 
+ * This event is emitted multiple times during thinking message generation
+ * to provide chunks of internal reasoning text. The delta field contains
+ * the new text to append to the thinking message.
+ * 
+ * @param delta The thinking text content to append (must not be empty)
+ * @param timestamp Optional timestamp when this thinking content was generated
+ * @param rawEvent Optional raw JSON representation of the event
+ */
+@Serializable
+@SerialName("THINKING_TEXT_MESSAGE_CONTENT")
+data class ThinkingTextMessageContentEvent(
+    val delta: String,
+    override val timestamp: Long? = null,
+    override val rawEvent: JsonElement? = null
+) : BaseEvent() {
+    @Transient
+    override val eventType: EventType = EventType.THINKING_TEXT_MESSAGE_CONTENT
+    init {
+        require(delta.isNotEmpty()) { "Thinking text message content delta cannot be empty" }
+    }
+}
+
+/**
+ * Event indicating the completion of a thinking text message.
+ * 
+ * This event is emitted when an agent has finished generating internal
+ * reasoning text during a thinking step. No more thinking content events
+ * will be sent until a new thinking text message is started.
+ * 
+ * @param timestamp Optional timestamp when thinking message generation completed
+ * @param rawEvent Optional raw JSON representation of the event
+ */
+@Serializable
+@SerialName("THINKING_TEXT_MESSAGE_END")
+data class ThinkingTextMessageEndEvent(
+    override val timestamp: Long? = null,
+    override val rawEvent: JsonElement? = null
+) : BaseEvent() {
+    @Transient
+    override val eventType: EventType = EventType.THINKING_TEXT_MESSAGE_END
 }
