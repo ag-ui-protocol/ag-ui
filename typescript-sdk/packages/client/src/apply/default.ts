@@ -116,6 +116,15 @@ export const defaultApplyEvents = (
         }
 
         case EventType.TEXT_MESSAGE_CONTENT: {
+          const { messageId, delta } = event as TextMessageContentEvent;
+
+          // Find the target message by ID
+          const targetMessage = messages.find((m) => m.id === messageId);
+          if (!targetMessage) {
+            console.warn(`TEXT_MESSAGE_CONTENT: No message found with ID '${messageId}'`);
+            return emitUpdates();
+          }
+
           const mutation = await runSubscribersWithMutation(
             subscribers,
             messages,
@@ -127,17 +136,14 @@ export const defaultApplyEvents = (
                 state,
                 agent,
                 input,
-                textMessageBuffer: messages[messages.length - 1].content ?? "",
+                textMessageBuffer: targetMessage.content ?? "",
               }),
           );
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { delta } = event as TextMessageContentEvent;
-
-            // Get the last message and append the content
-            const lastMessage = messages[messages.length - 1];
-            lastMessage.content = lastMessage.content! + delta;
+            // Append content to the correct message by ID
+            targetMessage.content = (targetMessage.content || "") + delta;
             applyMutation({ messages });
           }
 
@@ -145,6 +151,15 @@ export const defaultApplyEvents = (
         }
 
         case EventType.TEXT_MESSAGE_END: {
+          const { messageId } = event as TextMessageEndEvent;
+
+          // Find the target message by ID
+          const targetMessage = messages.find((m) => m.id === messageId);
+          if (!targetMessage) {
+            console.warn(`TEXT_MESSAGE_END: No message found with ID '${messageId}'`);
+            return emitUpdates();
+          }
+
           const mutation = await runSubscribersWithMutation(
             subscribers,
             messages,
@@ -156,7 +171,7 @@ export const defaultApplyEvents = (
                 state,
                 agent,
                 input,
-                textMessageBuffer: messages[messages.length - 1].content ?? "",
+                textMessageBuffer: targetMessage.content ?? "",
               }),
           );
           applyMutation(mutation);
@@ -164,7 +179,7 @@ export const defaultApplyEvents = (
           await Promise.all(
             subscribers.map((subscriber) => {
               subscriber.onNewMessage?.({
-                message: messages[messages.length - 1],
+                message: targetMessage,
                 messages,
                 state,
                 agent,
@@ -233,17 +248,34 @@ export const defaultApplyEvents = (
         }
 
         case EventType.TOOL_CALL_ARGS: {
+          const { toolCallId, delta } = event as ToolCallArgsEvent;
+
+          // Find the message containing this tool call
+          const targetMessage = messages.find((m) =>
+            (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
+          ) as AssistantMessage;
+
+          if (!targetMessage) {
+            console.warn(
+              `TOOL_CALL_ARGS: No message found containing tool call with ID '${toolCallId}'`,
+            );
+            return emitUpdates();
+          }
+
+          // Find the specific tool call
+          const targetToolCall = targetMessage.toolCalls!.find((tc) => tc.id === toolCallId);
+          if (!targetToolCall) {
+            console.warn(`TOOL_CALL_ARGS: No tool call found with ID '${toolCallId}'`);
+            return emitUpdates();
+          }
+
           const mutation = await runSubscribersWithMutation(
             subscribers,
             messages,
             state,
             (subscriber, messages, state) => {
-              const toolCalls =
-                (messages[messages.length - 1] as AssistantMessage)?.toolCalls ?? [];
-              const toolCallBuffer =
-                toolCalls.length > 0 ? toolCalls[toolCalls.length - 1].function.arguments : "";
-              const toolCallName =
-                toolCalls.length > 0 ? toolCalls[toolCalls.length - 1].function.name : "";
+              const toolCallBuffer = targetToolCall.function.arguments;
+              const toolCallName = targetToolCall.function.name;
               let partialToolCallArgs = {};
               try {
                 // Parse from toolCallBuffer only (before current delta is applied)
@@ -265,17 +297,8 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { delta } = event as ToolCallArgsEvent;
-
-            // Get the last message
-            const lastMessage = messages[messages.length - 1] as AssistantMessage;
-
-            // Get the last tool call
-            const lastToolCall = lastMessage.toolCalls![lastMessage.toolCalls!.length - 1];
-
-            // Append the arguments
-            lastToolCall.function.arguments += delta;
-
+            // Append the arguments to the correct tool call by ID
+            targetToolCall.function.arguments += delta;
             applyMutation({ messages });
           }
 
@@ -283,17 +306,34 @@ export const defaultApplyEvents = (
         }
 
         case EventType.TOOL_CALL_END: {
+          const { toolCallId } = event as ToolCallEndEvent;
+
+          // Find the message containing this tool call
+          const targetMessage = messages.find((m) =>
+            (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
+          ) as AssistantMessage;
+
+          if (!targetMessage) {
+            console.warn(
+              `TOOL_CALL_END: No message found containing tool call with ID '${toolCallId}'`,
+            );
+            return emitUpdates();
+          }
+
+          // Find the specific tool call
+          const targetToolCall = targetMessage.toolCalls!.find((tc) => tc.id === toolCallId);
+          if (!targetToolCall) {
+            console.warn(`TOOL_CALL_END: No tool call found with ID '${toolCallId}'`);
+            return emitUpdates();
+          }
+
           const mutation = await runSubscribersWithMutation(
             subscribers,
             messages,
             state,
             (subscriber, messages, state) => {
-              const toolCalls =
-                (messages[messages.length - 1] as AssistantMessage)?.toolCalls ?? [];
-              const toolCallArgsString =
-                toolCalls.length > 0 ? toolCalls[toolCalls.length - 1].function.arguments : "";
-              const toolCallName =
-                toolCalls.length > 0 ? toolCalls[toolCalls.length - 1].function.name : "";
+              const toolCallArgsString = targetToolCall.function.arguments;
+              const toolCallName = targetToolCall.function.name;
               let toolCallArgs = {};
               try {
                 toolCallArgs = JSON.parse(toolCallArgsString);
@@ -314,9 +354,7 @@ export const defaultApplyEvents = (
           await Promise.all(
             subscribers.map((subscriber) => {
               subscriber.onNewToolCall?.({
-                toolCall: (messages[messages.length - 1] as AssistantMessage).toolCalls![
-                  (messages[messages.length - 1] as AssistantMessage).toolCalls!.length - 1
-                ],
+                toolCall: targetToolCall,
                 messages,
                 state,
                 agent,
