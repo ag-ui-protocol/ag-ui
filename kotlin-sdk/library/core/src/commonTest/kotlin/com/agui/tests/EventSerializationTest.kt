@@ -193,6 +193,44 @@ class EventSerializationTest {
         assertEquals(event, decoded)
     }
 
+    @Test
+    fun testToolCallResultEventSerialization() {
+        val event = ToolCallResultEvent(
+            messageId = "msg_456",
+            toolCallId = "tool_789",
+            content = "Tool execution result",
+            role = "tool",
+            timestamp = 1234567890L
+        )
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        
+        assertTrue(decoded is ToolCallResultEvent)
+        assertEquals(event, decoded)
+        assertEquals(EventType.TOOL_CALL_RESULT, decoded.eventType)
+        assertEquals("msg_456", decoded.messageId)
+        assertEquals("tool_789", decoded.toolCallId)
+        assertEquals("Tool execution result", decoded.content)
+        assertEquals("tool", decoded.role)
+    }
+
+    @Test
+    fun testToolCallResultEventMinimalSerialization() {
+        val event = ToolCallResultEvent(
+            messageId = "msg_123",
+            toolCallId = "tool_456",
+            content = "result"
+        )
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        
+        assertTrue(decoded is ToolCallResultEvent)
+        assertEquals(event, decoded)
+        assertEquals(EventType.TOOL_CALL_RESULT, decoded.eventType)
+        assertNull(decoded.role)
+        assertNull(decoded.timestamp)
+    }
+
     // ========== State Management Events Tests ==========
 
     @Test
@@ -1090,5 +1128,92 @@ class EventSerializationTest {
         // But other fields should be present
         assertEquals("initialization", jsonObj["stepName"]?.jsonPrimitive?.content)
         assertEquals(1700000000000L, jsonObj["timestamp"]?.jsonPrimitive?.long)
+    }
+
+    // ========== Chunk Events Tests ==========
+
+    @Test
+    fun testTextMessageChunkEventSerialization() {
+        val event = TextMessageChunkEvent(
+            messageId = "msg_123",
+            delta = "Hello world",
+            timestamp = 1234567890L
+        )
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        
+        assertTrue(decoded is TextMessageChunkEvent)
+        assertEquals(event, decoded)
+        assertEquals(EventType.TEXT_MESSAGE_CHUNK, decoded.eventType)
+    }
+
+    @Test
+    fun testTextMessageChunkEventMinimalSerialization() {
+        val event = TextMessageChunkEvent()
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        
+        assertTrue(decoded is TextMessageChunkEvent)
+        assertEquals(event, decoded)
+        assertNull(decoded.messageId)
+        assertNull(decoded.delta)
+    }
+
+    @Test
+    fun testToolCallChunkEventSerialization() {
+        val event = ToolCallChunkEvent(
+            toolCallId = "tool_456",
+            toolCallName = "calculate",
+            delta = "{\"param\":",
+            parentMessageId = "msg_parent",
+            timestamp = 1234567890L
+        )
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        
+        assertTrue(decoded is ToolCallChunkEvent)
+        assertEquals(event, decoded)
+        assertEquals(EventType.TOOL_CALL_CHUNK, decoded.eventType)
+    }
+
+    @Test
+    fun testToolCallChunkEventMinimalSerialization() {
+        val event = ToolCallChunkEvent()
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        
+        assertTrue(decoded is ToolCallChunkEvent)
+        assertEquals(event, decoded)
+        assertNull(decoded.toolCallId)
+        assertNull(decoded.toolCallName)
+        assertNull(decoded.delta)
+        assertNull(decoded.parentMessageId)
+    }
+
+    @Test
+    fun testChunkEventJsonStructure() {
+        val textChunk = TextMessageChunkEvent(
+            messageId = "msg_123",
+            delta = "Hello"
+        )
+        val jsonString = json.encodeToString<BaseEvent>(textChunk)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+        
+        assertEquals("TEXT_MESSAGE_CHUNK", jsonObj["type"]?.jsonPrimitive?.content)
+        assertEquals("msg_123", jsonObj["messageId"]?.jsonPrimitive?.content)
+        assertEquals("Hello", jsonObj["delta"]?.jsonPrimitive?.content)
+        
+        val toolChunk = ToolCallChunkEvent(
+            toolCallId = "tool_456",
+            toolCallName = "test_tool",
+            delta = "args"
+        )
+        val toolJsonString = json.encodeToString<BaseEvent>(toolChunk)
+        val toolJsonObj = json.parseToJsonElement(toolJsonString).jsonObject
+        
+        assertEquals("TOOL_CALL_CHUNK", toolJsonObj["type"]?.jsonPrimitive?.content)
+        assertEquals("tool_456", toolJsonObj["toolCallId"]?.jsonPrimitive?.content)
+        assertEquals("test_tool", toolJsonObj["toolCallName"]?.jsonPrimitive?.content)
+        assertEquals("args", toolJsonObj["delta"]?.jsonPrimitive?.content)
     }
 }
