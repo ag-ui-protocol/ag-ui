@@ -1,0 +1,38 @@
+<resources>
+    <string name="app_name">AG-UI Chat Java</string>
+    
+    <!-- Chat Activity -->
+    <string name="send">Send</string>
+    <string name="type_message">Type a message...</string>
+    <string name="settings">Settings</string>
+    <string name="no_agent_configured">No agent configured. Go to settings to set up an agent.</string>
+    <string name="connecting">Connecting...</string>
+    <string name="connection_error">Connection error: %1$s</string>
+    
+    <!-- Settings Activity -->
+    <string name="agent_settings">Agent Settings</string>
+    <string name="agent_url">Agent URL</string>
+    <string name="agent_url_hint">https://your-agent-api.com/agent</string>
+    <string name="authentication">Authentication</string>
+    <string name="auth_type">Authentication Type</string>
+    <string name="bearer_token">Bearer Token</string>
+    <string name="api_key">API Key</string>
+    <string name="bearer_token_hint">Enter your bearer token</string>
+    <string name="api_key_hint">Enter your API key</string>
+    <string name="system_prompt">System Prompt</string>
+    <string name="system_prompt_hint">You are a helpful AI assistant</string>
+    <string name="save">Save</string>
+    <string name="test_connection">Test Connection</string>
+    <string name="connection_successful">Connection successful!</string>
+    
+    <!-- Auth Types -->
+    <string name="auth_none">None</string>
+    <string name="auth_bearer">Bearer Token</string>
+    <string name="auth_api_key">API Key</string>
+    
+    <!-- Messages -->
+    <string name="user_message">You</string>
+    <string name="assistant_message">Assistant</string>
+    <string name="system_message">System</string>
+    <string name="error_message">Error</string>
+</resources>
