@@ -15,7 +15,7 @@ test.describe("Shared State Feature", () => {
     await sharedStateAgent.openChat();
     await sharedStateAgent.sendMessage("give me recipe for pasta");
     await sharedStateAgent.loader();
-    await sharedStateAgent.getIngredientCard(/Pasta/);
+    await sharedStateAgent.awaitIngredientCard(/Pasta/);
     await sharedStateAgent.getInstructionItems(
       sharedStateAgent.instructionsContainer
     );

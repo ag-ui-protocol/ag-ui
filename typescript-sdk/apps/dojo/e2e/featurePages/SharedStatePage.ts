@@ -47,16 +47,16 @@ export class SharedStatePage {
     ]);
   }
 
-  async getIngredientCard(name) {
-     return this.page.locator(`.ingredient-card:has(input.ingredient-name-input[value="${name}"])`);
+  async awaitIngredientCard(name: string | RegExp) {
+     return this.page.locator(`.ingredient-card:has(input.ingredient-name-input[value="${name.toString}"])`);
   }
 
-  async addNewIngredient(placeholderText) {
+  async addNewIngredient(placeholderText: string) {
       this.addIngredient.click();
       this.page.locator(`input[placeholder="${placeholderText}"]`);
   }
 
-  async getInstructionItems(containerLocator) {
+  async getInstructionItems(containerLocator: Locator ) {
     const count = await containerLocator.locator('.instruction-item').count();
     if (count <= 0) {
       throw new Error('No instruction items found in the container.');
