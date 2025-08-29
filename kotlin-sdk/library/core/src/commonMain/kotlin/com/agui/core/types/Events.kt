@@ -10,17 +10,18 @@ import kotlinx.serialization.json.JsonElement
 
 /**
  * Enum defining all possible event types in the AG-UI protocol.
- * 21 event types as currently implemented.
+ * 24 event types as currently implemented.
  *
  * Events are grouped by category:
  * - Lifecycle Events (5): RUN_STARTED, RUN_FINISHED, RUN_ERROR, STEP_STARTED, STEP_FINISHED
  * - Text Message Events (3): TEXT_MESSAGE_START, TEXT_MESSAGE_CONTENT, TEXT_MESSAGE_END
- * - Tool Call Events (3): TOOL_CALL_START, TOOL_CALL_ARGS, TOOL_CALL_END
+ * - Tool Call Events (4): TOOL_CALL_START, TOOL_CALL_ARGS, TOOL_CALL_END, TOOL_CALL_RESULT
  * - State Management Events (3): STATE_SNAPSHOT, STATE_DELTA, MESSAGES_SNAPSHOT
  * - Thinking Events (5): THINKING_START, THINKING_END, THINKING_TEXT_MESSAGE_START, THINKING_TEXT_MESSAGE_CONTENT, THINKING_TEXT_MESSAGE_END
  * - Special Events (2): RAW, CUSTOM
+ * - Chunk Events (2): TEXT_MESSAGE_CHUNK, TOOL_CALL_CHUNK
  *
- * Total: 21 events
+ * Total: 24 events
  */
 
 @Serializable
@@ -52,6 +53,8 @@ enum class EventType {
     TOOL_CALL_ARGS,
     @SerialName("TOOL_CALL_END")
     TOOL_CALL_END,
+    @SerialName("TOOL_CALL_RESULT")
+    TOOL_CALL_RESULT,
 
     // State Management Events
     @SerialName("STATE_SNAPSHOT")
@@ -77,13 +80,13 @@ enum class EventType {
     @SerialName("RAW")
     RAW,
     @SerialName("CUSTOM")
-    CUSTOM
+    CUSTOM,
 
-    // Note: The protocol definitions (i.e., events.py and  events.ts) in the current version of
-    // the offical AG-UI Python and Typescript SDKs have additional event types that will be added later:
-    //
-    // TEXT_MESSAGE_CHUNK
-    // TOOL_CALL_CHUNK
+    // Chunk Events
+    @SerialName("TEXT_MESSAGE_CHUNK")
+    TEXT_MESSAGE_CHUNK,
+    @SerialName("TOOL_CALL_CHUNK")
+    TOOL_CALL_CHUNK
 }
 
 /**
@@ -412,6 +415,36 @@ data class ToolCallEndEvent(
     override val eventType: EventType = EventType.TOOL_CALL_END
 }
 
+/**
+ * Event containing the result of a completed tool call execution.
+ * 
+ * This event represents the output/result returned by a tool after
+ * it has finished executing. It contains the tool call identifier
+ * to correlate with the original tool call request, a message ID
+ * for tracking purposes, and the actual content/result produced
+ * by the tool execution.
+ * 
+ * @param messageId The identifier for this result message
+ * @param toolCallId The identifier of the tool call that produced this result
+ * @param content The result content returned by the tool execution
+ * @param role Optional role identifier (typically "tool")
+ * @param timestamp Optional timestamp when the result was generated
+ * @param rawEvent Optional raw JSON representation of the event
+ */
+@Serializable
+@SerialName("TOOL_CALL_RESULT")
+data class ToolCallResultEvent(
+    val messageId: String,
+    val toolCallId: String,
+    val content: String,
+    val role: String? = null,
+    override val timestamp: Long? = null,
+    override val rawEvent: JsonElement? = null
+) : BaseEvent() {
+    @Transient
+    override val eventType: EventType = EventType.TOOL_CALL_RESULT
+}
+
 // ============== State Management Events (3) ==============
 
 /**
@@ -647,4 +680,60 @@ data class ThinkingTextMessageEndEvent(
 ) : BaseEvent() {
     @Transient
     override val eventType: EventType = EventType.THINKING_TEXT_MESSAGE_END
+}
+
+// ============== Chunk Events (2) ==============
+
+/**
+ * Chunk event for streaming text message content.
+ * 
+ * This event represents a single chunk of streaming text message content.
+ * Unlike TEXT_MESSAGE_CONTENT which requires an active text message sequence,
+ * TEXT_MESSAGE_CHUNK can automatically start and end text message sequences
+ * when no text message is currently active.
+ * 
+ * @param messageId The identifier for the message (required for the first chunk)
+ * @param delta The text content delta for this chunk
+ * @param timestamp Optional timestamp when the chunk was generated
+ * @param rawEvent Optional raw JSON representation of the event
+ */
+@Serializable
+@SerialName("TEXT_MESSAGE_CHUNK")
+data class TextMessageChunkEvent(
+    val messageId: String? = null,
+    val delta: String? = null,
+    override val timestamp: Long? = null,
+    override val rawEvent: JsonElement? = null
+) : BaseEvent() {
+    @Transient
+    override val eventType: EventType = EventType.TEXT_MESSAGE_CHUNK
+}
+
+/**
+ * Chunk event for streaming tool call arguments.
+ * 
+ * This event represents a single chunk of streaming tool call arguments.
+ * Unlike TOOL_CALL_ARGS which requires an active tool call sequence,
+ * TOOL_CALL_CHUNK can automatically start and end tool call sequences
+ * when no tool call is currently active.
+ * 
+ * @param toolCallId The identifier for the tool call (required for the first chunk)
+ * @param toolCallName The name of the tool being called (required for the first chunk)
+ * @param delta The arguments content delta for this chunk
+ * @param parentMessageId Optional identifier for the parent message containing this tool call
+ * @param timestamp Optional timestamp when the chunk was generated
+ * @param rawEvent Optional raw JSON representation of the event
+ */
+@Serializable
+@SerialName("TOOL_CALL_CHUNK")
+data class ToolCallChunkEvent(
+    val toolCallId: String? = null,
+    val toolCallName: String? = null,
+    val delta: String? = null,
+    val parentMessageId: String? = null,
+    override val timestamp: Long? = null,
+    override val rawEvent: JsonElement? = null
+) : BaseEvent() {
+    @Transient
+    override val eventType: EventType = EventType.TOOL_CALL_CHUNK
 }

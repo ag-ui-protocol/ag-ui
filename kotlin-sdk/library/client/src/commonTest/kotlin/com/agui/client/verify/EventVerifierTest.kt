@@ -629,4 +629,43 @@ class EventVerifierTest {
         val result = events.verifyEvents().toList()
         assertEquals(2, result.size)
     }
+
+    @Test
+    fun testToolCallResultEventAllowed() = runTest {
+        val events = flowOf(
+            RunStartedEvent(threadId = "t1", runId = "r1"),
+            ToolCallResultEvent(
+                messageId = "msg1",
+                toolCallId = "tool1",
+                content = "Tool result content"
+            ),
+            RunFinishedEvent(threadId = "t1", runId = "r1")
+        )
+
+        val result = events.verifyEvents().toList()
+        assertEquals(3, result.size)
+        assertTrue(result[1] is ToolCallResultEvent)
+        assertEquals("Tool result content", (result[1] as ToolCallResultEvent).content)
+    }
+
+    @Test 
+    fun testSequenceWithToolCallAndResult() = runTest {
+        val events = flowOf(
+            RunStartedEvent(threadId = "t1", runId = "r1"),
+            ToolCallStartEvent(toolCallId = "tool1", toolCallName = "test_tool"),
+            ToolCallArgsEvent(toolCallId = "tool1", delta = "{\"param\":\"value\"}"),
+            ToolCallEndEvent(toolCallId = "tool1"),
+            ToolCallResultEvent(
+                messageId = "msg1", 
+                toolCallId = "tool1",
+                content = "Success: processed param=value"
+            ),
+            RunFinishedEvent(threadId = "t1", runId = "r1")
+        )
+
+        val result = events.verifyEvents().toList()
+        assertEquals(6, result.size)
+        assertTrue(result[4] is ToolCallResultEvent)
+        assertEquals("Success: processed param=value", (result[4] as ToolCallResultEvent).content)
+    }
 }
