@@ -4,7 +4,7 @@ import {
   waitForAIResponse,
   retryOnAIFailure,
 } from "../../test-isolation-helper";
-import { AgenticChatPage } from "../../pages/vercelAISdkPages/AgenticChatPage";
+import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
 
 test("[verceAISdkPages] Agentic Chat sends and receives a message", async ({
   page,
@@ -42,7 +42,7 @@ test("[Vercel AI SDK] Agentic Chat changes background on message and reset", asy
     // Store initial background color
     const initialBackground = await chat.getBackground();
     console.log("Initial background color:", initialBackground);
-    
+
     // 1. Send message to change background to blue
     await chat.sendMessage("Hi change the background color to blue");
     await chat.assertUserMessageVisible(

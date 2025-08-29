@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { SharedStatePage } from "../../pages/pydanticAIPages/SharedStatePage";
+import { SharedStatePage } from "../../featurePages/SharedStatePage";
 
 test.describe("Shared State Feature", () => {
   test("[PydanticAI] should interact with the chat to get a recipe on prompt", async ({
@@ -13,9 +13,9 @@ test.describe("Shared State Feature", () => {
     );
 
     await sharedStateAgent.openChat();
-    await sharedStateAgent.sendMessage("give me recipe for pasta");
+    await sharedStateAgent.sendMessage('Please give me a pasta recipe of your choosing, but one of the ingredients should be "Pasta"');
     await sharedStateAgent.loader();
-    await sharedStateAgent.getIngredientCard(/Pasta/);
+    await sharedStateAgent.awaitIngredientCard('Pasta');
     await sharedStateAgent.getInstructionItems(
       sharedStateAgent.instructionsContainer
     );
@@ -34,7 +34,7 @@ test.describe("Shared State Feature", () => {
 
     // Add new ingredient via UI
     await sharedStateAgent.addIngredient.click();
-    
+
     // Fill in the new ingredient details
     const newIngredientCard = page.locator('.ingredient-card').last();
     await newIngredientCard.locator('.ingredient-name-input').fill('Potatoes');
