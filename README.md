@@ -68,9 +68,8 @@ AG-UI is complementary to the other 2 top agentic protocols
 - AG-UI brings agents into user-facing applications
 
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/0c1ec566-050b-4ef8-ab89-15be41abe64f"  />
+  <img width="2048" height="1182" alt="The Agent Protocol Stack" src="https://github.com/user-attachments/assets/41138f71-50be-4812-98aa-20e0ad595716" />
 </div>  
-
    
 ## 🚀 Features
 
