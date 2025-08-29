@@ -23,6 +23,7 @@ export class SharedStatePage {
     this.addIngredient = page.getByRole('button', { name: '+ Add Ingredient' });
     this.agentMessage = page.locator('.copilotKitAssistantMessage');
     this.userMessage = page.locator('.copilotKitUserMessage');
+    this.ingredientCards = page.locator('.ingredient-card');
   }
 
   async openChat() {
@@ -63,7 +64,7 @@ export class SharedStatePage {
     console.log(`✅ Found ${count} instruction items.`);
     return count;
   }
-  
+
   async assertAgentReplyVisible(expectedText: RegExp) {
     await expect(this.agentMessage.getByText(expectedText)).toBeVisible();
   }

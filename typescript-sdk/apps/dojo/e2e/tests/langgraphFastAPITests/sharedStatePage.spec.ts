@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { SharedStatePage } from "../../pages/langGraphFastAPIPages/SharedStatePage";
+import { SharedStatePage } from "../../featurePages/SharedStatePage";
 
 test.describe("Shared State Feature", () => {
   test("[LangGraph FastAPI] should interact with the chat to get a recipe on prompt", async ({

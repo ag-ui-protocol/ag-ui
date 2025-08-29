@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { SharedStatePage } from "../../pages/serverStarterAllFeaturesPages/SharedStatePage";
+import { SharedStatePage } from "../../featurePages/SharedStatePage";
 
 test.describe("Shared State Feature", () => {
   test("[Server Starter all features] should interact with the chat to get a recipe on prompt", async ({

@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { SharedStatePage } from "../../pages/crewAIPages/SharedStatePage";
+import { SharedStatePage } from "../../featurePages/SharedStatePage";
 
 test.describe("Shared State Feature", () => {
   test("[CrewAI] should interact with the chat to get a recipe on prompt", async ({
@@ -34,7 +34,7 @@ test.describe("Shared State Feature", () => {
 
     // Add new ingredient via UI
     await sharedStateAgent.addIngredient.click();
-    
+
     // Fill in the new ingredient details
     const newIngredientCard = page.locator('.ingredient-card').last();
     await newIngredientCard.locator('.ingredient-name-input').fill('Potatoes');
