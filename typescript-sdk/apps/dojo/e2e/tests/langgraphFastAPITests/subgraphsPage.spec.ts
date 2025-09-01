@@ -3,8 +3,8 @@ import { SubgraphsPage } from "../../pages/langGraphPages/SubgraphsPage";
 
 test.describe("Subgraphs Travel Agent Feature", () => {
   test("[LangGraph] should complete full travel planning flow with feature validation", async ({
-                                                                                                 page,
-                                                                                               }) => {
+    page,
+  }) => {
     await retryOnAIFailure(async () => {
       const subgraphsPage = new SubgraphsPage(page);
 
@@ -81,7 +81,7 @@ test.describe("Subgraphs Travel Agent Feature", () => {
     await retryOnAIFailure(async () => {
       const subgraphsPage = new SubgraphsPage(page);
 
-      await page.goto("/langgraph-fastapi/feature/subgraphs");
+      await page.goto("/langgraph/feature/subgraphs");
 
       await subgraphsPage.openChat();
 
