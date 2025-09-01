@@ -977,7 +977,7 @@ export class LangGraphAgent extends AbstractAgent {
     }
     this.dispatchEvent({
       type: EventType.STEP_FINISHED,
-      stepName: this.activeRun!.nodeName!,
+      stepName: this.activeRun!.nodeName! ?? this.activeStep,
     });
     this.activeRun!.nodeName = undefined;
     this.activeStep = undefined;

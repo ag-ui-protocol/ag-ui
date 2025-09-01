@@ -728,7 +728,7 @@ class LangGraphAgent:
         dispatch = self._dispatch_event(
             StepFinishedEvent(
                 type=EventType.STEP_FINISHED,
-                step_name=self.active_run["node_name"]
+                step_name=self.active_run["node_name"] or self.active_step
             )
         )
 
