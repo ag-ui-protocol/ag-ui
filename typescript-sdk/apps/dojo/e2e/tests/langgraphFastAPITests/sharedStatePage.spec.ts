@@ -44,7 +44,7 @@ test.describe("Shared State Feature", () => {
     await page.waitForTimeout(1000);
 
     // Ask chat for all ingredients
-    await sharedStateAgent.sendMessage("Give me all the ingredients");
+    await sharedStateAgent.sendMessage("Give me all the ingredients, also list them in your message");
     await sharedStateAgent.loader();
 
     // Verify chat response includes both existing and new ingredients
