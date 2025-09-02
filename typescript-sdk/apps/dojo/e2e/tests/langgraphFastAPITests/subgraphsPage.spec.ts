@@ -81,7 +81,7 @@ test.describe("Subgraphs Travel Agent Feature", () => {
     await retryOnAIFailure(async () => {
       const subgraphsPage = new SubgraphsPage(page);
 
-      await page.goto("/langgraph/feature/subgraphs");
+      await page.goto("/langgraph-fastapi/feature/subgraphs");
 
       await subgraphsPage.openChat();
 
@@ -102,6 +102,7 @@ test.describe("Subgraphs Travel Agent Feature", () => {
 
       await subgraphsPage.verifyStaticFlightData();
 
+      await page.waitForTimeout(3000);
       // FEATURE TEST: Test different selection - United instead of KLM
       await subgraphsPage.selectFlight('United');
 
@@ -117,6 +118,11 @@ test.describe("Subgraphs Travel Agent Feature", () => {
       await expect(subgraphsPage.hotelsAgentIndicator).toBeVisible({ timeout: 10000 }).catch(() => {
         console.log("Hotels agent indicator not found, checking content instead");
       });
+
+      await subgraphsPage.verifyStaticHotelData();
+
+      // FEATURE TEST: Test interrupt pause behavior again
+      await page.waitForTimeout(3000);
 
       // FEATURE TEST: Test different hotel selection - Ritz-Carlton
       await subgraphsPage.selectHotel('Ritz-Carlton');
