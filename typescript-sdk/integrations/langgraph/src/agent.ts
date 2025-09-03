@@ -268,27 +268,27 @@ export class LangGraphAgent extends AbstractAgent {
     let stateValues = threadState.values;
     this.activeRun!.schemaKeys = await this.getSchemaKeys();
 
-    if (
-      (agentState.values.messages ?? []).length > messages.filter((m) => m.role !== "system").length
-    ) {
-      let lastUserMessage: LangGraphMessage | null = null;
-      // Find the first user message by working backwards from the last message
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === "user") {
-          lastUserMessage = aguiMessagesToLangChain([messages[i]])[0];
-          break;
-        }
-      }
+    // if (
+    //   (agentState.values.messages ?? []).length > messages.filter((m) => m.role !== "system").length
+    // ) {
+    //   let lastUserMessage: LangGraphMessage | null = null;
+    //   // Find the first user message by working backwards from the last message
+    //   for (let i = messages.length - 1; i >= 0; i--) {
+    //     if (messages[i].role === "user") {
+    //       lastUserMessage = aguiMessagesToLangChain([messages[i]])[0];
+    //       break;
+    //     }
+    //   }
 
-      if (!lastUserMessage) {
-        return this.subscriber.error("No user message found in messages to regenerate");
-      }
+    //   if (!lastUserMessage) {
+    //     return this.subscriber.error("No user message found in messages to regenerate");
+    //   }
 
-      return this.prepareRegenerateStream(
-        { ...input, messageCheckpoint: lastUserMessage },
-        streamMode,
-      );
-    }
+    //   return this.prepareRegenerateStream(
+    //     { ...input, messageCheckpoint: lastUserMessage },
+    //     streamMode,
+    //   );
+    // }
     this.activeRun!.graphInfo = await this.client.assistants.getGraph(this.assistant.assistant_id);
 
     const mode =
