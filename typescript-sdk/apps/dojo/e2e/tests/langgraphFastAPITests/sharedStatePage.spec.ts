@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { SharedStatePage } from "../../pages/langGraphFastAPIPages/SharedStatePage";
+import { SharedStatePage } from "../../featurePages/SharedStatePage";
 
 test.describe("Shared State Feature", () => {
   test("[LangGraph FastAPI] should interact with the chat to get a recipe on prompt", async ({
@@ -13,9 +13,9 @@ test.describe("Shared State Feature", () => {
     );
 
     await sharedStateAgent.openChat();
-    await sharedStateAgent.sendMessage("give me recipe for pasta");
+    await sharedStateAgent.sendMessage('Please give me a pasta recipe of your choosing, but one of the ingredients should be "Pasta"');
     await sharedStateAgent.loader();
-    await sharedStateAgent.getIngredientCard(/Pasta/);
+    await sharedStateAgent.awaitIngredientCard('Pasta');
     await sharedStateAgent.getInstructionItems(
       sharedStateAgent.instructionsContainer
     );
@@ -44,7 +44,7 @@ test.describe("Shared State Feature", () => {
     await page.waitForTimeout(1000);
 
     // Ask chat for all ingredients
-    await sharedStateAgent.sendMessage("Give me all the ingredients");
+    await sharedStateAgent.sendMessage("Give me all the ingredients, also list them in your message");
     await sharedStateAgent.loader();
 
     // Verify chat response includes both existing and new ingredients

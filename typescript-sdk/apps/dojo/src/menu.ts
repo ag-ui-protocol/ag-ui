@@ -56,6 +56,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
       "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "subgraphs",
     ],
   },
   {
@@ -69,6 +70,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
       "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "subgraphs",
     ],
   },
   {
@@ -80,7 +82,8 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
       "agentic_generative_ui",
       "predictive_state_updates",
       "shared_state",
-      "tool_based_generative_ui"
+      "tool_based_generative_ui",
+      "subgraphs",
     ],
   },
   {

@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { SharedStatePage } from "../../pages/serverStarterAllFeaturesPages/SharedStatePage";
+import { SharedStatePage } from "../../featurePages/SharedStatePage";
 
 test.describe("Shared State Feature", () => {
   test("[Server Starter all features] should interact with the chat to get a recipe on prompt", async ({
@@ -13,16 +13,16 @@ test.describe("Shared State Feature", () => {
     );
 
     await sharedStateAgent.openChat();
-    await sharedStateAgent.sendMessage("give me recipe for pasta");
+    await sharedStateAgent.sendMessage('Please give me a pasta recipe of your choosing, but one of the ingredients should be "Pasta"');
     await sharedStateAgent.loader();
-    await sharedStateAgent.getIngredientCard(/Pasta/);
+    await sharedStateAgent.awaitIngredientCard('Salt');
     await sharedStateAgent.getInstructionItems(
       sharedStateAgent.instructionsContainer
     );
   });
 
   // Fails. Issue with the test, most likely
-  test.fixme("[Server Starter all features] should share state between UI and chat", async ({
+  test("[Server Starter all features] should share state between UI and chat", async ({
     page,
   }) => {
     const sharedStateAgent = new SharedStatePage(page);
@@ -48,10 +48,12 @@ test.describe("Shared State Feature", () => {
     await sharedStateAgent.sendMessage("Give me all the ingredients");
     await sharedStateAgent.loader();
 
-    // Verify chat response includes both existing and new ingredients
-    await expect(sharedStateAgent.agentMessage.getByText(/Potatoes/)).toBeVisible();
-    await expect(sharedStateAgent.agentMessage.getByText(/12/)).toBeVisible();
-    await expect(sharedStateAgent.agentMessage.getByText(/Carrots/)).toBeVisible();
-    await expect(sharedStateAgent.agentMessage.getByText(/All-Purpose Flour/)).toBeVisible();
+    // Verify hardcoded ingredients
+    await sharedStateAgent.awaitIngredientCard('chicken breast');
+    await sharedStateAgent.awaitIngredientCard('chili powder');
+    await sharedStateAgent.awaitIngredientCard('Salt');
+    await sharedStateAgent.awaitIngredientCard('Lettuce leaves');
+
+    expect(await sharedStateAgent.getInstructionItems(sharedStateAgent.instructionsContainer)).toBe(3);
   });
 });

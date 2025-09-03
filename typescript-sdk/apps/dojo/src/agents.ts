@@ -153,6 +153,10 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         agentic_chat_reasoning: new LangGraphHttpAgent({
           url: `${envVars.langgraphPythonUrl}/agent/agentic_chat_reasoning`,
         }),
+        subgraphs: new LangGraphAgent({
+          deploymentUrl: envVars.langgraphPythonUrl,
+          graphId: "subgraphs",
+        }),
       };
     },
   },
@@ -180,6 +184,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         }),
         agentic_chat_reasoning: new LangGraphHttpAgent({
           url: `${envVars.langgraphFastApiUrl}/agent/agentic_chat_reasoning`,
+        }),
+        subgraphs: new LangGraphHttpAgent({
+          url: `${envVars.langgraphFastApiUrl}/agent/subgraphs`,
         }),
       };
     },
@@ -211,6 +218,10 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         tool_based_generative_ui: new LangGraphAgent({
           deploymentUrl: envVars.langgraphTypescriptUrl,
           graphId: "tool_based_generative_ui",
+        }),
+        subgraphs: new LangGraphAgent({
+          deploymentUrl: envVars.langgraphTypescriptUrl,
+          graphId: "subgraphs",
         })
       };
     },

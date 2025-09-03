@@ -23,6 +23,7 @@ export class SharedStatePage {
     this.addIngredient = page.getByRole('button', { name: '+ Add Ingredient' });
     this.agentMessage = page.locator('.copilotKitAssistantMessage');
     this.userMessage = page.locator('.copilotKitUserMessage');
+    this.ingredientCards = page.locator('.ingredient-card');
   }
 
   async openChat() {
@@ -46,16 +47,18 @@ export class SharedStatePage {
     ]);
   }
 
-  async getIngredientCard(name) {
-     return this.page.locator(`.ingredient-card:has(input.ingredient-name-input[value="${name}"])`);
+  async awaitIngredientCard(name: string) {
+    const selector = `.ingredient-card:has(input.ingredient-name-input[value="${name}"])`;
+    const cardLocator = this.page.locator(selector);
+    await expect(cardLocator).toBeVisible();
   }
 
-  async addNewIngredient(placeholderText) {
+  async addNewIngredient(placeholderText: string) {
       this.addIngredient.click();
       this.page.locator(`input[placeholder="${placeholderText}"]`);
   }
 
-  async getInstructionItems(containerLocator) {
+  async getInstructionItems(containerLocator: Locator ) {
     const count = await containerLocator.locator('.instruction-item').count();
     if (count <= 0) {
       throw new Error('No instruction items found in the container.');
@@ -63,7 +66,7 @@ export class SharedStatePage {
     console.log(`✅ Found ${count} instruction items.`);
     return count;
   }
-  
+
   async assertAgentReplyVisible(expectedText: RegExp) {
     await expect(this.agentMessage.getByText(expectedText)).toBeVisible();
   }
