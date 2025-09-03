@@ -7,7 +7,8 @@ export type Feature =
   | "predictive_state_updates"
   | "shared_state"
   | "tool_based_generative_ui"
-  | "agentic_chat_reasoning";
+  | "agentic_chat_reasoning"
+  | "subgraphs";
 
 export interface MenuIntegrationConfig {
   id: string;

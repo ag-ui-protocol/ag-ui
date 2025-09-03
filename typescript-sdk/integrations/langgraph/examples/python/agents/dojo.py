@@ -15,6 +15,7 @@ from .tool_based_generative_ui.agent import graph as tool_based_generative_ui_gr
 from .agentic_chat.agent import graph as agentic_chat_graph
 from .agentic_generative_ui.agent import graph as agentic_generative_ui_graph
 from .agentic_chat_reasoning.agent import graph as agentic_chat_reasoning_graph
+from .subgraphs.agent import graph as subgraphs_graph
 
 app = FastAPI(title="LangGraph Dojo Example Server")
 
@@ -54,6 +55,11 @@ agents = {
         name="agentic_chat_reasoning",
         description="An example for a reasoning chat.",
         graph=agentic_chat_reasoning_graph,
+    ),
+    "subgraphs": LangGraphAgent(
+        name="subgraphs",
+        description="A demo of LangGraph subgraphs using a Game Character Creator.",
+        graph=subgraphs_graph,
     ),
 }
 
@@ -97,6 +103,12 @@ add_langgraph_fastapi_endpoint(
     app=app,
     agent=agents["agentic_chat_reasoning"],
     path="/agent/agentic_chat_reasoning"
+)
+
+add_langgraph_fastapi_endpoint(
+    app=app,
+    agent=agents["subgraphs"],
+    path="/agent/subgraphs"
 )
 
 def main():

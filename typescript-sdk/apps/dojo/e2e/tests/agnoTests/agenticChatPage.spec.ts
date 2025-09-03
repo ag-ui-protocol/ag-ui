@@ -4,7 +4,7 @@ import {
   waitForAIResponse,
   retryOnAIFailure,
 } from "../../test-isolation-helper";
-import { AgenticChatPage } from "../../pages/agnoPages/AgenticChatPage";
+import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
 
 const appleAsk = "What is the current stock price of AAPL? Please respond in the format of 'The current stock price of Apple Inc. (AAPL) is {{price}}'"
 

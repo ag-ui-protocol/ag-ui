@@ -123,6 +123,7 @@ export class LangGraphAgent extends AbstractAgent {
   // @ts-expect-error no need to initialize subscriber right now
   subscriber: Subscriber<ProcessedEvents>;
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
+  activeStep?: string;
 
   constructor(config: LangGraphAgentConfig) {
     super(config);
@@ -193,13 +194,15 @@ export class LangGraphAgent extends AbstractAgent {
       }
     );
 
+      const payload = {
+          ...(input.forwardedProps ?? {}),
+          input: this.langGraphDefaultMergeState(timeTravelCheckpoint.values, [messageCheckpoint], tools),
+          // @ts-ignore
+          checkpointId: fork.checkpoint.checkpoint_id!,
+          streamMode,
+      };
     return {
-      streamResponse: this.client.runs.stream(threadId, this.assistant.assistant_id, {
-        input: this.langGraphDefaultMergeState(timeTravelCheckpoint.values, [messageCheckpoint], tools),
-        // @ts-ignore
-        checkpointId: fork.checkpoint.checkpoint_id!,
-        streamMode,
-      }),
+      streamResponse: this.client.runs.stream(threadId, this.assistant.assistant_id, payload),
       state: timeTravelCheckpoint as ThreadState<State>,
       streamMode,
     };
@@ -359,8 +362,14 @@ export class LangGraphAgent extends AbstractAgent {
       }
 
       for await (let streamResponseChunk of streamResponse) {
+          const subgraphsStreamEnabled = input.forwardedProps?.streamSubgraphs
+          const isSubgraphStream = (subgraphsStreamEnabled && (
+              streamResponseChunk.event.startsWith("events") ||
+              streamResponseChunk.event.startsWith("values")
+          ))
+
         // @ts-ignore
-        if (!streamMode.includes(streamResponseChunk.event as StreamMode)) {
+        if (!streamMode.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream) {
           continue;
         }
 
@@ -383,11 +392,19 @@ export class LangGraphAgent extends AbstractAgent {
           break;
         }
 
-        if (streamResponseChunk.event === "updates") continue;
+        if (streamResponseChunk.event === "updates") {
+          continue;
+        }
 
         if (streamResponseChunk.event === "values") {
           latestStateValues = chunk.data;
           continue;
+        } else if (subgraphsStreamEnabled && chunk.event.startsWith("values|")) {
+            latestStateValues = {
+                ...latestStateValues,
+                ...chunk.data,
+            };
+            continue;
         }
 
         const chunkData = chunk.data;
@@ -466,7 +483,6 @@ export class LangGraphAgent extends AbstractAgent {
       if (!interrupts?.length) {
         newNodeName = isEndNode ? '__end__' : (state.next[0] ?? Object.keys(writes)[0]);
       }
-
 
       interrupts.forEach((interrupt) => {
         this.dispatchEvent({
@@ -944,22 +960,27 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   startStep(nodeName: string) {
+    if (this.activeStep) {
+      this.endStep()
+    }
     this.dispatchEvent({
       type: EventType.STEP_STARTED,
       stepName: nodeName,
     });
     this.activeRun!.nodeName = nodeName;
+    this.activeStep = nodeName;
   }
 
   endStep() {
-    if (!this.activeRun!.nodeName) {
+    if (!this.activeStep) {
       throw new Error("No active step to end");
     }
     this.dispatchEvent({
       type: EventType.STEP_FINISHED,
-      stepName: this.activeRun!.nodeName!,
+      stepName: this.activeRun!.nodeName! ?? this.activeStep,
     });
     this.activeRun!.nodeName = undefined;
+    this.activeStep = undefined;
   }
 
   async getCheckpointByMessage(

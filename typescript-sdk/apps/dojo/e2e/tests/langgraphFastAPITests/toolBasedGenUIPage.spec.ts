@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { ToolBaseGenUIPage } from "../../pages/langGraphFastAPIPages/ToolBaseGenUIPage";
+import { ToolBaseGenUIPage } from "../../featurePages/ToolBaseGenUIPage";
 
 const pageURL =
   "/langgraph-fastapi/feature/tool_based_generative_ui";

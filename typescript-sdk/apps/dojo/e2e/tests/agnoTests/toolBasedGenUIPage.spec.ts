@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { ToolBaseGenUIPage } from "../../pages/agnoPages/ToolBaseGenUIPage";
+import { ToolBaseGenUIPage } from "../../featurePages/ToolBaseGenUIPage";
 
 const pageURL =
   "/agno/feature/tool_based_generative_ui";
