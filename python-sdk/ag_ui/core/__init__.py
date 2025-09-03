@@ -29,7 +29,7 @@ from ag_ui.core.events import (
     RunErrorEvent,
     StepStartedEvent,
     StepFinishedEvent,
-    Event
+    Event,
 )
 
 from ag_ui.core.types import (
@@ -46,7 +46,6 @@ from ag_ui.core.types import (
     Context,
     Tool,
     RunAgentInput,
-    State
 )
 
 __all__ = [
@@ -92,5 +91,4 @@ __all__ = [
     "Context",
     "Tool",
     "RunAgentInput",
-    "State"
 ]

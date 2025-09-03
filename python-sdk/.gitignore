@@ -63,3 +63,4 @@ venv.bak/
 
 # Project specific
 .DS_Store
+/uv.lock
