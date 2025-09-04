@@ -297,6 +297,11 @@ export const convertToLegacyEvents =
               currentState.messages = syncedMessages;
             }
 
+            // Only do an update if state is not empty
+            if (Object.keys(currentState).length === 0) {
+              return [];
+            }
+
             return [
               {
                 type: LegacyRuntimeEventTypes.enum.AgentStateMessage,
