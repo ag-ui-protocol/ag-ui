@@ -5,12 +5,13 @@ Agno agent with the AG-UI protocol. It includes examples for
 AG-UI dojo features:
 - Agentic Chat (Investment Analyst with Finance tools)
 """
-
 from __future__ import annotations
 
 from fastapi import FastAPI
 import uvicorn
 import os
+from dotenv import load_dotenv
+load_dotenv()
 
 from .api import (
     agentic_chat_app,

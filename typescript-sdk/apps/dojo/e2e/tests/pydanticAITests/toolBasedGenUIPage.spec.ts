@@ -1,10 +1,10 @@
 import { test, expect } from "@playwright/test";
-import { ToolBaseGenUIPage } from "../../pages/pydanticAIPages/ToolBaseGenUIPage";
+import { ToolBaseGenUIPage } from "../../featurePages/ToolBaseGenUIPage";
 
 const pageURL =
   "/pydantic-ai/feature/tool_based_generative_ui";
 
-test.fixme('[PydanticAI] Haiku generation and display verification', async ({
+test('[PydanticAI] Haiku generation and display verification', async ({
   page,
 }) => {
   await page.goto(pageURL);
@@ -17,7 +17,7 @@ test.fixme('[PydanticAI] Haiku generation and display verification', async ({
   await genAIAgent.checkHaikuDisplay(page);
 });
 
-test.fixme('[PydanticAI] Haiku generation and UI consistency for two different prompts', async ({
+test('[PydanticAI] Haiku generation and UI consistency for two different prompts', async ({
   page,
 }) => {
   await page.goto(pageURL);

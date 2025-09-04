@@ -185,6 +185,8 @@ export const EventSchemas = z.discriminatedUnion("type", [
   TextMessageContentEventSchema,
   TextMessageEndEventSchema,
   TextMessageChunkEventSchema,
+  ThinkingStartEventSchema,
+  ThinkingEndEventSchema,
   ThinkingTextMessageStartEventSchema,
   ThinkingTextMessageContentEventSchema,
   ThinkingTextMessageEndEventSchema,

@@ -4,7 +4,7 @@ import {
   waitForAIResponse,
   retryOnAIFailure,
 } from "../../test-isolation-helper";
-import { AgenticChatPage } from "../../pages/serverStarterAllFeaturesPages/AgenticChatPage";
+import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
 
 test("[Server Starter all features] Agentic Chat displays countdown from 10 to 1 with tick mark", async ({
   page,
@@ -24,13 +24,13 @@ test("[Server Starter all features] Agentic Chat displays countdown from 10 to 1
     const countdownMessage = page
       .locator('.copilotKitAssistantMessage')
       .filter({ hasText: 'counting down:' });
-    
+
     await expect(countdownMessage).toBeVisible({ timeout: 30000 });
-    
+
     // Wait for countdown to complete by checking for the tick mark
     await expect(countdownMessage.locator('.copilotKitMarkdownElement'))
       .toContainText('✓', { timeout: 15000 });
-    
+
     const countdownText = await countdownMessage
       .locator('.copilotKitMarkdownElement')
       .textContent();
