@@ -1,6 +1,14 @@
 import { z } from "zod";
 import { MessageSchema, StateSchema } from "./types";
 
+// Text messages can have any role except "tool"
+const TextMessageRoleSchema = z.union([
+  z.literal("developer"),
+  z.literal("system"),
+  z.literal("assistant"),
+  z.literal("user"),
+]);
+
 export enum EventType {
   TEXT_MESSAGE_START = "TEXT_MESSAGE_START",
   TEXT_MESSAGE_CONTENT = "TEXT_MESSAGE_CONTENT",
@@ -28,7 +36,7 @@ export enum EventType {
   STEP_FINISHED = "STEP_FINISHED",
 }
 
-const BaseEventSchema = z.object({
+export const BaseEventSchema = z.object({
   type: z.nativeEnum(EventType),
   timestamp: z.number().optional(),
   rawEvent: z.any().optional(),
@@ -37,7 +45,7 @@ const BaseEventSchema = z.object({
 export const TextMessageStartEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TEXT_MESSAGE_START),
   messageId: z.string(),
-  role: z.literal("assistant"),
+  role: TextMessageRoleSchema.default("assistant"),
 });
 
 export const TextMessageContentEventSchema = BaseEventSchema.extend({
@@ -54,7 +62,7 @@ export const TextMessageEndEventSchema = BaseEventSchema.extend({
 export const TextMessageChunkEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TEXT_MESSAGE_CHUNK),
   messageId: z.string().optional(),
-  role: z.literal("assistant").optional(),
+  role: TextMessageRoleSchema.optional(),
   delta: z.string().optional(),
 });
 

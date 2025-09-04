@@ -58,7 +58,7 @@ describe("verifyEvents lifecycle", () => {
       next: (event) => events.push(event),
       error: (err) => {
         expect(err).toBeInstanceOf(AGUIError);
-        expect(err.message).toContain("Cannot send multiple 'RUN_STARTED' events");
+        expect(err.message).toContain("Cannot send 'RUN_STARTED' while a run is still active");
         subscription.unsubscribe();
       },
     });
