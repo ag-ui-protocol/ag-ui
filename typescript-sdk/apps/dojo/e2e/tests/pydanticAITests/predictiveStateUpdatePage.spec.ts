@@ -7,7 +7,7 @@ import { PredictiveStateUpdatesPage } from "../../pages/pydanticAIPages/Predicti
 
 test.describe("Predictive Status Updates Feature", () => {
   // Fails. Issue with integration or something.
-  test.fixme("[PydanticAI] should interact with agent and approve asked changes", async ({
+  test("[PydanticAI] should interact with agent and approve asked changes", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
