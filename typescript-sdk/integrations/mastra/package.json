@@ -14,6 +14,25 @@
     "dist/**",
     "README.md"
   ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./copilotkit": {
+      "types": "./dist/copilotkit.d.ts",
+      "import": "./dist/copilotkit.mjs",
+      "require": "./dist/copilotkit.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "copilotkit": [
+        "dist/copilotkit.d.ts"
+      ]
+    }
+  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -22,6 +41,20 @@
     "test": "jest",
     "link:global": "pnpm link --global",
     "unlink:global": "pnpm unlink --global"
+  },
+  "tsup": {
+    "entry": {
+      "index": "src/index.ts",
+      "copilotkit": "src/copilotkit.ts"
+    },
+    "dts": true,
+    "format": [
+      "cjs",
+      "esm"
+    ],
+    "splitting": false,
+    "sourcemap": true,
+    "clean": true
   },
   "dependencies": {
     "@ai-sdk/ui-utils": "^1.1.19",
