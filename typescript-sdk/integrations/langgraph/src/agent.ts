@@ -196,7 +196,7 @@ export class LangGraphAgent extends AbstractAgent {
     }
 
     const fork = await this.client.threads.updateState(threadId, {
-      values: this.langGraphDefaultMergeState(timeTravelCheckpoint.values, [], tools),
+      values: this.langGraphDefaultMergeState(timeTravelCheckpoint.values, [], input),
       checkpointId: timeTravelCheckpoint.checkpoint.checkpoint_id!,
       asNode: timeTravelCheckpoint.next?.[0] ?? "__start__",
     });
@@ -206,7 +206,7 @@ export class LangGraphAgent extends AbstractAgent {
       input: this.langGraphDefaultMergeState(
         timeTravelCheckpoint.values,
         [messageCheckpoint],
-        tools,
+        input,
       ),
       // @ts-ignore
       checkpointId: fork.checkpoint.checkpoint_id!,
@@ -255,7 +255,7 @@ export class LangGraphAgent extends AbstractAgent {
     const stateValuesDiff = this.langGraphDefaultMergeState(
       { ...inputState, messages: agentStateMessages },
       inputMessagesToLangchain,
-      tools,
+      input,
     );
     // Messages are a combination of existing messages in state + everything that was newly sent
     let threadState = {
@@ -968,7 +968,7 @@ export class LangGraphAgent extends AbstractAgent {
     }
   }
 
-  langGraphDefaultMergeState(state: State, messages: LangGraphMessage[], tools: any): State {
+  langGraphDefaultMergeState(state: State, messages: LangGraphMessage[], input: RunAgentExtendedInput): State {
     if (messages.length > 0 && "role" in messages[0] && messages[0].role === "system") {
       // remove system message
       messages = messages.slice(1);
@@ -980,7 +980,7 @@ export class LangGraphAgent extends AbstractAgent {
 
     const newMessages = messages.filter((message) => !existingMessageIds.has(message.id));
 
-    const langGraphTools = [...(state.tools ?? []), ...(tools ?? [])].map((tool) => {
+    const langGraphTools = [...(state.tools ?? []), ...(input.tools ?? [])].map((tool) => {
       if (tool.type) {
         return tool;
       }
@@ -999,6 +999,10 @@ export class LangGraphAgent extends AbstractAgent {
       ...state,
       messages: newMessages,
       tools: langGraphTools,
+      'ag-ui': {
+        tools: langGraphTools,
+        context: input.context,
+      }
     };
   }
 
