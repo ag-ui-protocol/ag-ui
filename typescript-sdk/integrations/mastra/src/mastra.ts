@@ -227,7 +227,7 @@ export class MastraAgent extends AbstractAgent {
    * @returns The stream of the mastra agent.
    */
   private async streamMastraAgent(
-    { threadId, runId, messages, tools }: RunAgentInput,
+    { threadId, runId, messages, tools, context: inputContext }: RunAgentInput,
     {
       onTextPart,
       onFinishMessagePart,
@@ -250,6 +250,7 @@ export class MastraAgent extends AbstractAgent {
     );
     const resourceId = this.resourceId ?? threadId;
     const convertedMessages = convertAGUIMessagesToMastra(messages);
+    this.runtimeContext?.set('ag-ui', inputContext);
     const runtimeContext = this.runtimeContext;
 
     if (this.isLocalMastraAgent(this.agent)) {
