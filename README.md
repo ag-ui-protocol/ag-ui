@@ -6,7 +6,6 @@ Built for simplicity and flexibility, it enables seamless integration between AI
 
 ---
 
-[📅 Upcoming Event: August 6th - AG-UI + Mastra: Build a Project Management Canvas](https://lu.ma/94688z7e)
 
 <br>
 
