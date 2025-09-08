@@ -11,7 +11,7 @@ library ag_ui;
 class AgUI {
   /// SDK version
   static const String version = '0.1.0';
-  
+
   /// Initialize the AG-UI SDK
   static void init() {
     // Initialization logic will be implemented in subsequent tasks
