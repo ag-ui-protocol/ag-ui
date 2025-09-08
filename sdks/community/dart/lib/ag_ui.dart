@@ -7,13 +7,10 @@ library ag_ui;
 // export 'src/client.dart';
 // export 'src/transport.dart';
 
-/// Placeholder class for initial setup
-class AgUI {
-  /// SDK version
-  static const String version = '0.1.0';
+/// SDK version
+const String agUiVersion = '0.1.0';
 
-  /// Initialize the AG-UI SDK
-  static void init() {
-    // Initialization logic will be implemented in subsequent tasks
-  }
+/// Initialize the AG-UI SDK
+void initAgUI() {
+  // Initialization logic will be implemented in subsequent tasks
 }

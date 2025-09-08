@@ -1,7 +1,4 @@
-include: package:lints/recommended.yaml
+# This file inherits analysis options from the parent package
+# to ensure consistent linting across the entire project.
 
-linter:
-  rules:
-    - prefer_single_quotes
-    - unawaited_futures
-    - always_declare_return_types
+include: ../analysis_options.yaml
