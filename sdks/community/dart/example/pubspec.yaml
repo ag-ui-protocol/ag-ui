@@ -1,14 +1,16 @@
 name: ag_ui_example
-description: Example application demonstrating AG-UI Dart SDK features
+description: Example CLI application demonstrating Tool Based Generative UI flow
 publish_to: 'none' # Example app, not published
 version: 0.1.0
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: '>=3.3.0 <4.0.0'
 
 dependencies:
   ag_ui:
     path: ../
+  args: ^2.4.0
+  http: ^1.2.0
 
 dev_dependencies:
   lints: ^3.0.0
