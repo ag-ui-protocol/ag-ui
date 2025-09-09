@@ -1,0 +1,21 @@
+# Dart/Flutter related
+.dart_tool/
+.packages
+build/
+pubspec.lock
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+
+# Testing
+coverage/
+*.lcov
+
+# Documentation
+doc/api/
+.dartdoc/
