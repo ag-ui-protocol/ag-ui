@@ -2,28 +2,16 @@
 library;
 
 import 'dart:convert';
-import '../client/client.dart';
+import '../client/client.dart' show SimpleRunAgentInput;
 import '../types/types.dart';
 
 /// Encoder extensions for client operations
 class Encoder {
   const Encoder();
 
-  /// Encode StartRunRequest to JSON
-  Map<String, dynamic> encodeStartRunRequest(StartRunRequest request) {
-    final json = <String, dynamic>{};
-    
-    if (request.input != null) {
-      json['input'] = request.input;
-    }
-    if (request.config != null) {
-      json['config'] = request.config;
-    }
-    if (request.metadata != null) {
-      json['metadata'] = request.metadata;
-    }
-    
-    return json;
+  /// Encode RunAgentInput to JSON
+  Map<String, dynamic> encodeRunAgentInput(SimpleRunAgentInput input) {
+    return input.toJson();
   }
 
   /// Encode UserMessage to JSON
@@ -45,31 +33,6 @@ class Encoder {
 /// Decoder extensions for client operations
 class Decoder {
   const Decoder();
-
-  /// Decode StartRunResponse from JSON
-  StartRunResponse decodeStartRunResponse(Map<String, dynamic> json) {
-    return StartRunResponse(
-      runId: json['runId'] as String? ?? json['run_id'] as String,
-      sessionId: json['sessionId'] as String? ?? json['session_id'] as String?,
-      metadata: json['metadata'] as Map<String, dynamic>?,
-    );
-  }
-
-  /// Decode SendMessageResponse from JSON
-  SendMessageResponse decodeSendMessageResponse(Map<String, dynamic> json) {
-    return SendMessageResponse(
-      messageId: json['messageId'] as String? ?? json['message_id'] as String?,
-      success: json['success'] as bool? ?? true,
-    );
-  }
-
-  /// Decode ToolResultResponse from JSON
-  ToolResultResponse decodeToolResultResponse(Map<String, dynamic> json) {
-    return ToolResultResponse(
-      success: json['success'] as bool? ?? true,
-      message: json['message'] as String?,
-    );
-  }
 }
 
 /// ToolResult model for submitting tool execution results

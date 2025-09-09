@@ -20,6 +20,7 @@ class AgUiClient {
   final codec.Decoder _decoder;
   final EventStreamAdapter _streamAdapter;
   final Map<String, SseClient> _activeStreams = {};
+  final Map<String, CancelToken> _requestTokens = {};
 
   AgUiClient({
     required this.config,
@@ -32,154 +33,200 @@ class AgUiClient {
         _decoder = decoder ?? const codec.Decoder(),
         _streamAdapter = streamAdapter ?? EventStreamAdapter();
 
-  /// Start a new run/session
-  Future<StartRunResponse> startRun(StartRunRequest request) async {
-    // Validate input
+  /// Run an agent with the given input and stream the response events
+  Stream<BaseEvent> runAgent(
+    String endpoint,
+    SimpleRunAgentInput input, {
+    CancelToken? cancelToken,
+  }) {
+    // Validate inputs
     Validators.validateUrl(config.baseUrl, 'baseUrl');
+    Validators.requireNonEmpty(endpoint, 'endpoint');
     
-    final endpoint = '${config.baseUrl}/runs';
-    try {
-      final response = await _sendRequest(
-        'POST',
-        endpoint,
-        body: _encoder.encodeStartRunRequest(request),
-      );
-      return _handleResponse<StartRunResponse>(
-        response,
-        endpoint,
-        (data) => _decoder.decodeStartRunResponse(data),
-      );
-    } on AgUiError {
-      rethrow;
-    } catch (e) {
-      throw TransportError(
-        'Failed to start run',
-        endpoint: endpoint,
-        cause: e,
-      );
-    }
+    final fullEndpoint = endpoint.startsWith('http') 
+        ? endpoint 
+        : '${config.baseUrl}/$endpoint';
+    
+    return _runAgentInternal(fullEndpoint, input, cancelToken: cancelToken);
   }
 
-  /// Send a user message to an active run
-  Future<SendMessageResponse> sendMessage(
-    String runId,
-    UserMessage message,
-  ) async {
-    // Validate inputs
-    Validators.validateRunId(runId);
-    Validators.validateMessageContent(message.content);
-    
-    final endpoint = '${config.baseUrl}/runs/$runId/messages';
-    try {
-      final response = await _sendRequest(
-        'POST',
-        endpoint,
-        body: _encoder.encodeUserMessage(message),
-      );
-      return _handleResponse<SendMessageResponse>(
-        response,
-        endpoint,
-        (data) => _decoder.decodeSendMessageResponse(data),
-      );
-    } on AgUiError {
-      rethrow;
-    } catch (e) {
-      throw TransportError(
-        'Failed to send message',
-        endpoint: endpoint,
-        cause: e,
-      );
-    }
+  /// Run the agentic chat agent
+  Stream<BaseEvent> runAgenticChat(
+    SimpleRunAgentInput input, {
+    CancelToken? cancelToken,
+  }) {
+    return runAgent('agentic_chat', input, cancelToken: cancelToken);
   }
 
-  /// Submit a tool result for a specific tool call
-  Future<ToolResultResponse> submitToolResult(
-    String runId,
-    String toolCallId,
-    codec.ToolResult result,
-  ) async {
-    // Validate inputs
-    Validators.validateRunId(runId);
-    Validators.requireNonEmpty(toolCallId, 'toolCallId');
-    
-    final endpoint = '${config.baseUrl}/runs/$runId/tools/$toolCallId/result';
-    try {
-      final response = await _sendRequest(
-        'POST',
-        endpoint,
-        body: _encoder.encodeToolResult(result),
-      );
-      return _handleResponse<ToolResultResponse>(
-        response,
-        endpoint,
-        (data) => _decoder.decodeToolResultResponse(data),
-      );
-    } on AgUiError {
-      rethrow;
-    } catch (e) {
-      throw TransportError(
-        'Failed to submit tool result',
-        endpoint: endpoint,
-        cause: e,
-      );
-    }
+  /// Run the human-in-the-loop agent
+  Stream<BaseEvent> runHumanInTheLoop(
+    SimpleRunAgentInput input, {
+    CancelToken? cancelToken,
+  }) {
+    return runAgent('human_in_the_loop', input, cancelToken: cancelToken);
   }
 
-  /// Cancel an active run
-  Future<void> cancelRun(String runId) async {
-    // Validate input
-    Validators.validateRunId(runId);
-    
-    final endpoint = '${config.baseUrl}/runs/$runId/cancel';
+  /// Run the agentic generative UI agent
+  Stream<BaseEvent> runAgenticGenerativeUi(
+    SimpleRunAgentInput input, {
+    CancelToken? cancelToken,
+  }) {
+    return runAgent('agentic_generative_ui', input, cancelToken: cancelToken);
+  }
+
+  /// Run the tool-based generative UI agent
+  Stream<BaseEvent> runToolBasedGenerativeUi(
+    SimpleRunAgentInput input, {
+    CancelToken? cancelToken,
+  }) {
+    return runAgent('tool_based_generative_ui', input, cancelToken: cancelToken);
+  }
+
+  /// Run the shared state agent
+  Stream<BaseEvent> runSharedState(
+    SimpleRunAgentInput input, {
+    CancelToken? cancelToken,
+  }) {
+    return runAgent('shared_state', input, cancelToken: cancelToken);
+  }
+
+  /// Run the predictive state updates agent
+  Stream<BaseEvent> runPredictiveStateUpdates(
+    SimpleRunAgentInput input, {
+    CancelToken? cancelToken,
+  }) {
+    return runAgent('predictive_state_updates', input, cancelToken: cancelToken);
+  }
+
+  /// Internal implementation for running an agent
+  Stream<BaseEvent> _runAgentInternal(
+    String endpoint,
+    SimpleRunAgentInput input, {
+    CancelToken? cancelToken,
+  }) async* {
+    final runId = input.runId ?? _generateRunId();
+    cancelToken ??= CancelToken();
+    _requestTokens[runId] = cancelToken;
+
     try {
-      final response = await _sendRequest('POST', endpoint);
-      if (response.statusCode != 200 && response.statusCode != 204) {
+      // Validate input
+      _validateRunAgentInput(input);
+
+      // Send POST request with RunAgentInput
+      final headers = _buildHeaders();
+      headers['Content-Type'] = 'application/json';
+      headers['Accept'] = 'text/event-stream';
+
+      final uri = Uri.parse(endpoint);
+      final request = http.Request('POST', uri)
+        ..headers.addAll(headers)
+        ..body = json.encode(_encoder.encodeRunAgentInput(input));
+
+      // Send with timeout and cancellation support
+      final streamedResponse = await _sendWithCancellation(
+        request,
+        cancelToken,
+        config.requestTimeout,
+      );
+
+      // Validate response status
+      if (streamedResponse.statusCode >= 400) {
+        final body = await streamedResponse.stream.bytesToString();
         throw TransportError(
-          'Failed to cancel run',
+          'Agent request failed',
           endpoint: endpoint,
-          statusCode: response.statusCode,
-          responseBody: response.body,
+          statusCode: streamedResponse.statusCode,
+          responseBody: _truncateBody(body),
         );
       }
-      // Also cancel any active stream for this run
-      await _closeStream(runId);
+
+      // Create SSE client from response stream
+      final sseClient = SseClient(
+        idleTimeout: config.connectionTimeout,
+        backoffStrategy: config.backoffStrategy,
+      );
+      _activeStreams[runId] = sseClient;
+
+      // Parse SSE from response stream
+      final sseStream = sseClient.parseStream(
+        streamedResponse.stream,
+        headers: streamedResponse.headers,
+      );
+
+      // Transform to AG-UI events
+      yield* _transformSseStream(sseStream, runId);
     } on AgUiError {
       rethrow;
     } catch (e) {
+      if (cancelToken.isCancelled) {
+        throw CancellationError('Request was cancelled', operation: endpoint);
+      }
+      if (e is TimeoutException) {
+        throw TimeoutError(
+          'Agent request timed out',
+          timeout: config.requestTimeout,
+          operation: endpoint,
+        );
+      }
       throw TransportError(
-        'Failed to cancel run',
+        'Failed to run agent',
         endpoint: endpoint,
         cause: e,
       );
+    } finally {
+      _requestTokens.remove(runId);
+      await _closeStream(runId);
     }
   }
 
-  /// Stream events for a run
-  Stream<BaseEvent> streamEvents(String runId) {
-    // Validate input
-    Validators.validateRunId(runId);
+  /// Send request with cancellation support
+  Future<http.StreamedResponse> _sendWithCancellation(
+    http.Request request,
+    CancelToken cancelToken,
+    Duration timeout,
+  ) async {
+    // Create completer for cancellation
+    final completer = Completer<http.StreamedResponse>();
     
-    final endpoint = '${config.baseUrl}/runs/$runId/events';
-    final uri = Uri.parse(endpoint);
+    // Start the request
+    final future = _httpClient.send(request).timeout(timeout);
     
-    // Create SSE client for this run
-    final sseClient = SseClient(
-      idleTimeout: config.connectionTimeout,
-      backoffStrategy: config.backoffStrategy,
+    // Listen for cancellation
+    cancelToken.onCancel.then((_) {
+      if (!completer.isCompleted) {
+        completer.completeError(
+          CancellationError('Request cancelled', operation: request.url.toString()),
+        );
+      }
+    });
+    
+    // Complete with result or error
+    future.then(
+      (response) {
+        if (!completer.isCompleted) {
+          completer.complete(response);
+        }
+      },
+      onError: (Object error) {
+        if (!completer.isCompleted) {
+          completer.completeError(error);
+        }
+      },
     );
     
-    // Store the client for cleanup
-    _activeStreams[runId] = sseClient;
+    return completer.future;
+  }
+
+  /// Cancel an active agent run
+  Future<void> cancelRun(String runId) async {
+    // Cancel the request token if it exists
+    final token = _requestTokens[runId];
+    if (token != null && !token.isCancelled) {
+      token.cancel();
+    }
     
-    // Connect and transform the stream
-    final sseStream = sseClient.connect(
-      uri,
-      headers: _buildHeaders(),
-      requestTimeout: config.requestTimeout,
-    );
-    
-    // Transform SSE messages to AG-UI events
-    return _transformSseStream(sseStream, runId);
+    // Close any active stream
+    await _closeStream(runId);
   }
 
   /// Transform SSE messages to typed AG-UI events
@@ -272,7 +319,7 @@ class AgUiClient {
             'Request failed after ${config.maxRetries} retries',
             endpoint: endpoint,
             statusCode: response.statusCode,
-            responseBody: response.body,
+            responseBody: _truncateBody(response.body),
           );
         }
       } on TimeoutException {
@@ -334,6 +381,36 @@ class AgUiClient {
     }
   }
 
+  /// Validate RunAgentInput
+  void _validateRunAgentInput(SimpleRunAgentInput input) {
+    // Validate thread ID if present
+    if (input.threadId != null) {
+      Validators.requireNonEmpty(input.threadId!, 'threadId');
+    }
+    
+    // Validate messages if present
+    if (input.messages != null) {
+      for (final message in input.messages!) {
+        if (message is UserMessage) {
+          Validators.validateMessageContent(message.content);
+        }
+      }
+    }
+  }
+
+  /// Generate a unique run ID
+  String _generateRunId() {
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final random = DateTime.now().microsecond;
+    return 'run_${timestamp}_$random';
+  }
+
+  /// Truncate response body for error messages
+  String _truncateBody(String body, {int maxLength = 500}) {
+    if (body.length <= maxLength) return body;
+    return '${body.substring(0, maxLength)}...';
+  }
+
   /// Build headers for requests
   Map<String, String> _buildHeaders() {
     return {
@@ -350,6 +427,12 @@ class AgUiClient {
 
   /// Close all resources
   Future<void> close() async {
+    // Cancel all active requests
+    for (final token in _requestTokens.values) {
+      token.cancel();
+    }
+    _requestTokens.clear();
+    
     // Close all active streams
     final closeOps = _activeStreams.values.map((c) => c.close());
     await Future.wait(closeOps);
@@ -360,47 +443,47 @@ class AgUiClient {
   }
 }
 
-/// Request/Response types for client operations
-class StartRunRequest {
-  final Map<String, dynamic>? input;
+/// Cancel token for request cancellation
+class CancelToken {
+  final _completer = Completer<void>();
+  bool _isCancelled = false;
+
+  bool get isCancelled => _isCancelled;
+  Future<void> get onCancel => _completer.future;
+
+  void cancel() {
+    if (!_isCancelled) {
+      _isCancelled = true;
+      if (!_completer.isCompleted) {
+        _completer.complete();
+      }
+    }
+  }
+}
+
+/// Simplified input for running an agent via HTTP endpoint
+class SimpleRunAgentInput {
+  final String? threadId;
+  final String? runId;
+  final List<Message>? messages;
   final Map<String, dynamic>? config;
   final Map<String, dynamic>? metadata;
 
-  const StartRunRequest({
-    this.input,
+  const SimpleRunAgentInput({
+    this.threadId,
+    this.runId,
+    this.messages,
     this.config,
     this.metadata,
   });
-}
 
-class StartRunResponse {
-  final String runId;
-  final String? sessionId;
-  final Map<String, dynamic>? metadata;
-
-  const StartRunResponse({
-    required this.runId,
-    this.sessionId,
-    this.metadata,
-  });
-}
-
-class SendMessageResponse {
-  final String? messageId;
-  final bool success;
-
-  const SendMessageResponse({
-    this.messageId,
-    this.success = true,
-  });
-}
-
-class ToolResultResponse {
-  final bool success;
-  final String? message;
-
-  const ToolResultResponse({
-    this.success = true,
-    this.message,
-  });
+  Map<String, dynamic> toJson() {
+    return {
+      if (threadId != null) 'thread_id': threadId,
+      if (runId != null) 'run_id': runId,
+      if (messages != null) 'messages': messages!.map((m) => m.toJson()).toList(),
+      if (config != null) 'config': config,
+      if (metadata != null) 'metadata': metadata,
+    };
+  }
 }
