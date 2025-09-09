@@ -26,6 +26,27 @@ class EventStreamAdapter {
   /// Creates a new stream adapter with an optional custom decoder.
   EventStreamAdapter({EventDecoder? decoder})
       : _decoder = decoder ?? const EventDecoder();
+  
+  /// Adapts JSON data to AG-UI events.
+  ///
+  /// Returns a list of events parsed from the JSON data.
+  /// If the JSON is a single event, returns a list with one event.
+  /// If the JSON is an array of events, returns all events.
+  List<BaseEvent> adaptJsonToEvents(dynamic jsonData) {
+    if (jsonData is Map<String, dynamic>) {
+      // Single event
+      return [_decoder.decodeJson(jsonData)];
+    } else if (jsonData is List) {
+      // Array of events
+      return jsonData
+          .whereType<Map<String, dynamic>>()
+          .map((json) => _decoder.decodeJson(json))
+          .toList();
+    } else {
+      // Invalid data
+      return [];
+    }
+  }
 
   /// Converts a stream of SSE messages to a stream of typed AG-UI events.
   ///

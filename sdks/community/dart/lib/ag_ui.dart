@@ -21,9 +21,16 @@ export 'src/sse/sse_client.dart';
 export 'src/sse/sse_message.dart';
 export 'src/sse/backoff_strategy.dart';
 
+// Client API
+export 'src/client/client.dart';
+export 'src/client/config.dart';
+export 'src/client/errors.dart';
+
+// Client codec (hide ToolResult since it's defined in types/tool.dart)
+export 'src/encoder/client_codec.dart' hide ToolResult;
+
 // Core exports will be added in subsequent tasks
 // export 'src/agent.dart';
-// export 'src/client.dart';
 // export 'src/transport.dart';
 
 /// SDK version

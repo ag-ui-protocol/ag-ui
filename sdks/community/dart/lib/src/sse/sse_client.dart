@@ -20,6 +20,7 @@ class SseClient {
   Duration? _serverRetryDuration;
   bool _isClosed = false;
   bool _isConnecting = false;
+  int _reconnectAttempt = 0;
 
   /// Creates a new SSE client.
   /// 
@@ -32,7 +33,7 @@ class SseClient {
     BackoffStrategy? backoffStrategy,
   })  : _httpClient = httpClient ?? http.Client(),
         _idleTimeout = idleTimeout,
-        _backoffStrategy = backoffStrategy ?? BackoffStrategy();
+        _backoffStrategy = backoffStrategy ?? LegacyBackoffStrategy();
 
   /// Connect to an SSE endpoint and return a stream of messages.
   /// 
@@ -101,6 +102,7 @@ class SseClient {
       
       // Reset backoff on successful connection
       _backoffStrategy.reset();
+      _reconnectAttempt = 0;
       
       // Create parser for this connection
       final parser = SseParser();
@@ -202,7 +204,8 @@ class SseClient {
     if (_isClosed) return;
     
     // Calculate delay (use server retry if available, otherwise backoff)
-    final delay = _serverRetryDuration ?? _backoffStrategy.nextDelay();
+    _reconnectAttempt++;
+    final delay = _serverRetryDuration ?? _backoffStrategy.nextDelay(_reconnectAttempt);
     
     // Schedule reconnection
     Timer(delay, () {
