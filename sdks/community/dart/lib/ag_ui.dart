@@ -14,7 +14,8 @@ export 'src/events/events.dart';
 export 'src/encoder/encoder.dart';
 export 'src/encoder/decoder.dart';
 export 'src/encoder/stream_adapter.dart';
-export 'src/encoder/errors.dart';
+// Hide ValidationError from encoder/errors.dart since we're using the one from client/errors.dart
+export 'src/encoder/errors.dart' hide ValidationError;
 
 // SSE client
 export 'src/sse/sse_client.dart';
@@ -25,6 +26,7 @@ export 'src/sse/backoff_strategy.dart';
 export 'src/client/client.dart';
 export 'src/client/config.dart';
 export 'src/client/errors.dart';
+export 'src/client/validators.dart';
 
 // Client codec (hide ToolResult since it's defined in types/tool.dart)
 export 'src/encoder/client_codec.dart' hide ToolResult;

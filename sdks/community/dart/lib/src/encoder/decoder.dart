@@ -6,9 +6,10 @@ library;
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../client/errors.dart';
+import '../client/validators.dart';
 import '../events/events.dart';
 import '../types/base.dart';
-import 'errors.dart';
 
 /// Decoder for AG-UI events.
 ///
@@ -26,17 +27,21 @@ class EventDecoder {
       final json = jsonDecode(data) as Map<String, dynamic>;
       return decodeJson(json);
     } on FormatException catch (e) {
-      throw DecodeError(
-        message: 'Invalid JSON format',
-        source: data,
+      throw DecodingError(
+        'Invalid JSON format',
+        field: 'data',
+        expectedType: 'JSON',
+        actualValue: data,
         cause: e,
       );
-    } on AGUIError {
+    } on AgUiError {
       rethrow;
     } catch (e) {
-      throw DecodeError(
-        message: 'Failed to decode event',
-        source: data,
+      throw DecodingError(
+        'Failed to decode event',
+        field: 'event',
+        expectedType: 'BaseEvent',
+        actualValue: data,
         cause: e,
       );
     }
@@ -45,13 +50,23 @@ class EventDecoder {
   /// Decodes an event from a JSON map.
   BaseEvent decodeJson(Map<String, dynamic> json) {
     try {
-      return BaseEvent.fromJson(json);
-    } on AGUIError {
+      // Validate required fields
+      Validators.requireNonEmpty(json['type'] as String?, 'type');
+      
+      final event = BaseEvent.fromJson(json);
+      
+      // Validate the created event
+      validate(event);
+      
+      return event;
+    } on AgUiError {
       rethrow;
     } catch (e) {
-      throw DecodeError(
-        message: 'Failed to create event from JSON',
-        source: json,
+      throw DecodingError(
+        'Failed to create event from JSON',
+        field: 'json',
+        expectedType: 'BaseEvent',
+        actualValue: json,
         cause: e,
       );
     }
@@ -74,9 +89,11 @@ class EventDecoder {
     }
     
     if (dataLines.isEmpty) {
-      throw DecodeError(
-        message: 'No data found in SSE message',
-        source: sseMessage,
+      throw DecodingError(
+        'No data found in SSE message',
+        field: 'sseMessage',
+        expectedType: 'SSE with data field',
+        actualValue: sseMessage,
       );
     }
     
@@ -85,9 +102,11 @@ class EventDecoder {
     
     // Handle special SSE comment for keep-alive
     if (data.trim() == ':') {
-      throw DecodeError(
-        message: 'SSE keep-alive comment, not an event',
-        source: sseMessage,
+      throw DecodingError(
+        'SSE keep-alive comment, not an event',
+        field: 'data',
+        expectedType: 'JSON event data',
+        actualValue: data,
       );
     }
     
@@ -110,9 +129,11 @@ class EventDecoder {
         return decode(string);
       }
     } on FormatException catch (e) {
-      throw DecodeError(
-        message: 'Invalid UTF-8 data',
-        source: data,
+      throw DecodingError(
+        'Invalid UTF-8 data',
+        field: 'binary',
+        expectedType: 'UTF-8 encoded data',
+        actualValue: data,
         cause: e,
       );
     }
@@ -123,69 +144,21 @@ class EventDecoder {
   /// Returns true if valid, throws [ValidationError] if not.
   bool validate(BaseEvent event) {
     // Basic validation - ensure type is set
-    if (event.type.isEmpty) {
-      throw ValidationError(
-        message: 'Event type cannot be empty',
-        field: 'type',
-        value: event.type,
-      );
-    }
+    Validators.validateEventType(event.type);
     
     // Type-specific validation
     switch (event) {
       case TextMessageStartEvent():
-        if (event.messageId.isEmpty) {
-          throw ValidationError(
-            message: 'Message ID cannot be empty',
-            field: 'messageId',
-            value: event.messageId,
-          );
-        }
+        Validators.requireNonEmpty(event.messageId, 'messageId');
       case TextMessageContentEvent():
-        if (event.messageId.isEmpty) {
-          throw ValidationError(
-            message: 'Message ID cannot be empty',
-            field: 'messageId',
-            value: event.messageId,
-          );
-        }
-        if (event.delta.isEmpty) {
-          throw ValidationError(
-            message: 'Delta cannot be empty',
-            field: 'delta',
-            value: event.delta,
-          );
-        }
+        Validators.requireNonEmpty(event.messageId, 'messageId');
+        Validators.requireNonEmpty(event.delta, 'delta');
       case ToolCallStartEvent():
-        if (event.toolCallId.isEmpty) {
-          throw ValidationError(
-            message: 'Tool call ID cannot be empty',
-            field: 'toolCallId',
-            value: event.toolCallId,
-          );
-        }
-        if (event.toolCallName.isEmpty) {
-          throw ValidationError(
-            message: 'Tool call name cannot be empty',
-            field: 'toolCallName',
-            value: event.toolCallName,
-          );
-        }
+        Validators.requireNonEmpty(event.toolCallId, 'toolCallId');
+        Validators.requireNonEmpty(event.toolCallName, 'toolCallName');
       case RunStartedEvent():
-        if (event.threadId.isEmpty) {
-          throw ValidationError(
-            message: 'Thread ID cannot be empty',
-            field: 'threadId',
-            value: event.threadId,
-          );
-        }
-        if (event.runId.isEmpty) {
-          throw ValidationError(
-            message: 'Run ID cannot be empty',
-            field: 'runId',
-            value: event.runId,
-          );
-        }
+        Validators.validateThreadId(event.threadId);
+        Validators.validateRunId(event.runId);
       default:
         // No specific validation for other event types
         break;
