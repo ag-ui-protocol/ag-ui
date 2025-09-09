@@ -156,6 +156,7 @@ class ToolBasedGenerativeUICLI {
   final bool autoTool;
 
   late final EventDecoder decoder;
+  final Set<String> processedToolCallIds = {};
 
   ToolBasedGenerativeUICLI({
     required this.baseUrl,
@@ -184,9 +185,11 @@ class ToolBasedGenerativeUICLI {
     final input = RunAgentInput(
       threadId: threadId,
       runId: runId,
+      state: {},
       messages: [userMessage],
       tools: [],
       context: [],
+      forwardedProps: {},
     );
 
     if (dryRun) {
@@ -210,7 +213,7 @@ class ToolBasedGenerativeUICLI {
   }
 
   Future<void> _streamRun(RunAgentInput input) async {
-    final url = Uri.parse('$baseUrl/tool-based-generative-ui');
+    final url = Uri.parse('$baseUrl/tool_based_generative_ui');
     
     // Prepare request
     final request = http.Request('POST', url)
@@ -243,6 +246,7 @@ class ToolBasedGenerativeUICLI {
 
       final allMessages = List<Message>.from(input.messages);
       final pendingToolCalls = <ToolCall>[];
+      bool runCompleted = false;
 
       await for (final sseMessage in sseStream) {
         if (sseMessage.data == null || sseMessage.data!.isEmpty) {
@@ -251,10 +255,27 @@ class ToolBasedGenerativeUICLI {
 
         try {
           final event = decoder.decode(sseMessage.data!);
-          await _handleEvent(event, allMessages, pendingToolCalls, input);
+          runCompleted = await _handleEvent(event, allMessages, pendingToolCalls, input);
+          if (runCompleted) {
+            break; // Exit the stream loop when run is finished
+          }
         } catch (e) {
           _log('error', 'Failed to decode event: $e');
           _log('debug', 'Raw data: ${sseMessage.data}');
+        }
+      }
+
+      // After run completes, process any pending tool calls that haven't been processed yet
+      if (runCompleted && pendingToolCalls.isNotEmpty) {
+        final unprocessedToolCalls = pendingToolCalls
+            .where((tc) => !processedToolCallIds.contains(tc.id))
+            .toList();
+        
+        if (unprocessedToolCalls.isNotEmpty) {
+          _log('info', 'Processing ${unprocessedToolCalls.length} pending tool calls');
+          await _processToolCalls(unprocessedToolCalls, allMessages, input);
+        } else {
+          _log('info', 'All tool calls already processed, run complete');
         }
       }
     } finally {
@@ -262,15 +283,15 @@ class ToolBasedGenerativeUICLI {
     }
   }
 
-  Future<void> _handleEvent(
+  Future<bool> _handleEvent(
     BaseEvent event,
     List<Message> allMessages,
     List<ToolCall> pendingToolCalls,
     RunAgentInput originalInput,
   ) async {
-    _log('event', event.type.toString().split('.').last);
+    _log('event', event.eventType.toString().split('.').last);
 
-    switch (event.type) {
+    switch (event.eventType) {
       case EventType.runStarted:
         final runStarted = event as RunStartedEvent;
         _log('info', 'Run started: ${runStarted.runId}');
@@ -281,14 +302,14 @@ class ToolBasedGenerativeUICLI {
         allMessages.clear();
         allMessages.addAll(snapshot.messages);
         
-        // Check for new tool calls
+        // Collect tool calls but DON'T process them yet
         for (final message in snapshot.messages) {
           if (message is AssistantMessage && message.toolCalls != null && message.toolCalls!.isNotEmpty) {
             for (final toolCall in message.toolCalls!) {
-              // Check if we've already processed this tool call
+              // Check if we've already collected this tool call
               if (!pendingToolCalls.any((tc) => tc.id == toolCall.id)) {
                 pendingToolCalls.add(toolCall);
-                await _handleToolCall(toolCall, allMessages, originalInput);
+                _log('info', 'Tool call detected: ${toolCall.function.name} (will process after run completes)');
               }
             }
           }
@@ -308,57 +329,69 @@ class ToolBasedGenerativeUICLI {
       case EventType.runFinished:
         final runFinished = event as RunFinishedEvent;
         _log('info', 'Run finished: ${runFinished.runId}');
-        break;
+        return true; // Signal that the run is complete
 
       default:
-        _log('debug', 'Unhandled event type: ${event.type}');
+        _log('debug', 'Unhandled event type: ${event.eventType}');
     }
+    return false; // Run is not complete yet
   }
 
-  Future<void> _handleToolCall(
-    ToolCall toolCall,
+  Future<void> _processToolCalls(
+    List<ToolCall> toolCalls,
     List<Message> allMessages,
     RunAgentInput originalInput,
   ) async {
-    _log('info', 'Tool call: ${toolCall.function.name}');
-    _log('debug', 'Arguments: ${toolCall.function.arguments}');
+    if (toolCalls.isEmpty) return;
 
-    String toolResult;
-    if (autoTool) {
-      // Auto-generate tool result
-      toolResult = _generateAutoToolResult(toolCall);
-      _log('info', 'Auto-generated tool result: $toolResult');
-    } else {
-      // Prompt user for tool result
-      // ignore: avoid_print
-      print('\nTool "${toolCall.function.name}" was called with:');
-      // ignore: avoid_print
-      print(toolCall.function.arguments);
-      // ignore: avoid_print
-      print('Enter tool result (or press Enter for default):');
-      final userInput = stdin.readLineSync();
-      toolResult = userInput?.isNotEmpty == true ? userInput! : 'thanks';
+    // Process each tool call and collect results
+    for (final toolCall in toolCalls) {
+      _log('info', 'Processing tool call: ${toolCall.function.name}');
+      _log('debug', 'Arguments: ${toolCall.function.arguments}');
+
+      String toolResult;
+      if (autoTool) {
+        // Auto-generate tool result
+        toolResult = _generateAutoToolResult(toolCall);
+        _log('info', 'Auto-generated tool result: $toolResult');
+      } else {
+        // Prompt user for tool result
+        // ignore: avoid_print
+        print('\nTool "${toolCall.function.name}" was called with:');
+        // ignore: avoid_print
+        print(toolCall.function.arguments);
+        // ignore: avoid_print
+        print('Enter tool result (or press Enter for default):');
+        final userInput = stdin.readLineSync();
+        toolResult = userInput?.isNotEmpty == true ? userInput! : 'thanks';
+      }
+
+      // Add tool result message
+      final toolMessage = ToolMessage(
+        id: 'msg_tool_${DateTime.now().millisecondsSinceEpoch}',
+        content: toolResult,
+        toolCallId: toolCall.id,
+      );
+      allMessages.add(toolMessage);
+      
+      // Mark this tool call as processed
+      processedToolCallIds.add(toolCall.id);
     }
 
-    // Add tool result message
-    final toolMessage = ToolMessage(
-      id: 'msg_tool_${DateTime.now().millisecondsSinceEpoch}',
-      content: toolResult,
-      toolCallId: toolCall.id,
-    );
-    allMessages.add(toolMessage);
-
-    // Send updated messages to continue the run
+    // Send a new request with all tool results
+    final newRunId = 'run_${DateTime.now().millisecondsSinceEpoch}';
     final updatedInput = RunAgentInput(
       threadId: originalInput.threadId,
-      runId: originalInput.runId,
+      runId: newRunId,  // Use a new run ID for the tool response
+      state: originalInput.state,
       messages: allMessages,
       tools: originalInput.tools,
       context: originalInput.context,
+      forwardedProps: originalInput.forwardedProps,
     );
 
     if (!dryRun) {
-      _log('info', 'Sending tool result to server...');
+      _log('info', 'Sending tool response(s) to server with new run...');
       await _streamRun(updatedInput);
     }
   }
