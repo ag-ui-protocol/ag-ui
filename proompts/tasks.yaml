@@ -1,0 +1,350 @@
+metadata:
+  project_name: "AG-UI Dart SDK + Example (Tool Based Generative UI)"
+  description: |
+    Build and publish a community Dart SDK for AG-UI with an example client that
+    reproduces the "Tool Based Generative UI" workflow against the Server Starter (All Features)
+    Python example server. The SDK provides a type-safe client, SSE-based streaming,
+    AG-UI event encoding/decoding, validation, and a documented public API. Distribution
+    is GitHub-only (no pub.dev). Clear usage instructions will be provided for consuming
+    the package via a Git dependency with optional version pinning to tagged releases.
+  repository_paths:
+    package_root: "/Users/punk1290/git/workspace1/ag-ui/sdks/community/dart"
+    example_root: "/Users/punk1290/git/workspace1/ag-ui/sdks/community/dart/example"
+    server_example_python: "/Users/punk1290/git/workspace1/ag-ui/typescript-sdk/integrations/server-starter-all-features/server/python/example_server/tool_based_generative_ui.py"
+    dojo_app: "/Users/punk1290/git/workspace1/ag-ui/typescript-sdk/apps/dojo"
+  tech_stack:
+    language: "Dart >=3.3.0 <4.0.0"
+    event_streaming: "SSE over HTTP"
+    http_client: "package:http"
+    json: "dart:convert"
+    testing: "dart test, integration tests vs Python example server"
+    linting: "analysis_options.yaml (effective-dart style)"
+    ci: "GitHub Actions (format, analyze, test, release)"
+    packaging: "Git repository dependency; GitHub Releases with tags"
+    docs: "README with usage and API overview"
+    dart_binary: "$HOME/development/flutter/bin/dart"
+
+phases:
+  - id: planning-and-repo-setup
+    name: "Planning and Repo Setup"
+    purpose: "Establish structure, constraints, and GitHub-only distribution strategy"
+    tasks:
+      - id: setup-dart-package-structure
+        name: "Initialize Dart package in sdks/community/dart"
+        description: |
+          Create a publishable Dart package at `sdks/community/dart` following Dart's
+          recommended package layout. Include `pubspec.yaml`, `lib/`, `example/`,
+          `README.md` (placeholder), and `CHANGELOG.md`. Wire up `analysis_options.yaml`.
+        priority: critical
+        status: complete
+        dependencies: []
+        references:
+          - "https://dart.dev/tools/pub/package-layout"
+          - "https://dart.dev/effective-dart/design"
+
+      - id: configure-analysis-options
+        name: "Adopt strict analysis options and format rules"
+        description: "Ensure `analysis_options.yaml` enforces effective Dart linting and formatting across the package and example."
+        priority: high
+        status: complete
+        dependencies: [setup-dart-package-structure]
+        references:
+          - "sdks/community/dart/analysis_options.yaml"
+
+      - id: define-github-only-publishing
+        name: "Define GitHub-only publishing + usage strategy"
+        description: |
+          We will not publish to pub.dev. Consumers will depend via Git repository
+          references and optional tags. Document this approach clearly in the README,
+          including examples for `pubspec.yaml` dependency entries.
+        priority: critical
+        status: complete
+        dependencies: [setup-dart-package-structure]
+        references:
+          - "https://dart.dev/tools/pub/dependencies#git-packages"
+
+  - id: core-sdk-architecture
+    name: "Core SDK Architecture"
+    purpose: "Design and implement the AG-UI Dart client with types, events, SSE, and validation"
+    tasks:
+      - id: define-agui-types
+        name: "Define core AG-UI types and event models"
+        description: |
+          Introduce strongly-typed Dart models mirroring AG-UI's types and event schema
+          (messages, runs, tools, tool calls, tool results, status transitions, etc.).
+          Include JSON serialization/deserialization using `dart:convert` and defensive
+          validation for unknown/extra fields.
+        priority: critical
+        status: pending
+        dependencies: [setup-dart-package-structure]
+        references:
+          - "https://docs.ag-ui.com"
+          - "https://github.com/ag-ui-protocol/specification"
+          - "typescript-sdk/packages/core/src/types.ts"
+          - "python-sdk/ag_ui/core/types.py"
+
+      - id: implement-event-encoder
+        name: "Implement event encoder/decoder"
+        description: |
+          Implement translation between Dart models and wire/event formats compatible
+          with AG-UI servers. Support chunked/streaming events and full snapshots.
+        priority: high
+        status: pending
+        dependencies: [define-agui-types]
+        references:
+          - "typescript-sdk/packages/encoder/src/encoder.ts"
+          - "python-sdk/ag_ui/encoder/encoder.py"
+
+      - id: implement-sse-client
+        name: "Implement SSE client with reconnect + backoff"
+        description: |
+          Build an SSE client using `package:http` that supports connection lifecycle,
+          reconnection with exponential backoff, heartbeat/keepalive, and cancellation.
+          Provide a simple async stream API for consumers.
+        priority: critical
+        status: pending
+        dependencies: [setup-dart-package-structure]
+        references:
+          - "https://html.spec.whatwg.org/multipage/server-sent-events.html"
+
+      - id: implement-public-client-api
+        name: "Implement public Dart client API"
+        description: |
+          Provide a high-level `AgUiClient` class that can:
+          - initiate runs/sessions
+          - send messages and tool usage requests
+          - consume SSE event streams and yield typed events
+          - manage timeouts, cancellation, and retries
+        priority: critical
+        status: pending
+        dependencies: [define-agui-types, implement-event-encoder, implement-sse-client]
+        references:
+          - "typescript-sdk/packages/client/src/index.ts"
+
+      - id: implement-validation
+        name: "Implement strict validation and error types"
+        description: |
+          Add input/output validation for all public APIs, with explicit error types
+          for transport failures, protocol violations, and server errors. Ensure helpful
+          messages and actionable remediation guidance.
+        priority: high
+        status: pending
+        dependencies: [define-agui-types]
+
+  - id: server-integration
+    name: "Server Integration (Server Starter - All Features)"
+    purpose: "Prove end-to-end behavior against the Python example server"
+    tasks:
+      - id: prepare-server-environment
+        name: "Prepare Python example server environment"
+        description: |
+          Use the provided container/runtime to run the Python example server:
+          `tool_based_generative_ui.py`. Provide scripts/make targets to start/stop
+          locally for integration tests.
+        priority: critical
+        status: pending
+        dependencies: []
+        references:
+          - 
+            "/Users/punk1290/git/workspace1/ag-ui/typescript-sdk/integrations/server-starter-all-features/server/python/example_server/tool_based_generative_ui.py"
+
+      - id: implement-http-endpoints
+        name: "Implement HTTP endpoints in client"
+        description: |
+          Implement the client-side requests to the Python server that mirror the
+          Dojo example flows (start run/session, send user/tool messages, stream events).
+        priority: critical
+        status: pending
+        dependencies: [implement-public-client-api, prepare-server-environment]
+        references:
+          - "typescript-sdk/apps/dojo"
+
+      - id: map-events-to-models
+        name: "Map server events to Dart models"
+        description: "Ensure all streamed events from the server correctly decode to the Dart models, with robust error handling."
+        priority: high
+        status: pending
+        dependencies: [define-agui-types, implement-event-encoder, implement-http-endpoints]
+
+  - id: example-application
+    name: "Example Application (Tool Based Generative UI)"
+    purpose: "Reproduce Dojo's Tool Based Generative UI example using the Dart SDK"
+    tasks:
+      - id: scaffold-example-app
+        name: "Scaffold example app at sdks/community/dart/example"
+        description: |
+          Create a runnable example that demonstrates the Tool Based Generative UI
+          flow: send user prompt, observe tool calls, provide tool results, and render
+          streamed tokens/events. Provide CLI UX for simplicity.
+        priority: high
+        status: pending
+        dependencies: [implement-public-client-api, implement-http-endpoints]
+        references:
+          - 
+            "/Users/punk1290/git/workspace1/ag-ui/typescript-sdk/integrations/server-starter-all-features/server/python/example_server/tool_based_generative_ui.py"
+          - 
+            "/Users/punk1290/git/workspace1/ag-ui/typescript-sdk/apps/dojo"
+
+      - id: parity-with-dojo
+        name: "Achieve behavior parity with Dojo example"
+        description: "Validate the example produces analogous flows and outputs as the TypeScript Dojo Tool Based Generative UI demo."
+        priority: high
+        status: pending
+        dependencies: [scaffold-example-app]
+
+  - id: testing-and-qa
+    name: "Testing and Quality Assurance"
+    purpose: "Ensure correctness, stability, and maintainability"
+    tasks:
+      - id: unit-tests-core
+        name: "Write unit tests for core types, encoder, and client"
+        description: "Cover serialization, validation, SSE parsing, backoff logic, and public API behavior."
+        priority: critical
+        status: pending
+        dependencies: [define-agui-types, implement-event-encoder, implement-sse-client, implement-public-client-api]
+
+      - id: integration-tests-server
+        name: "Add integration tests vs Python server"
+        description: |
+          Start the Python example server on local and run integration
+          tests exercising the full Tool Based Generative UI flow, including tools and
+          streaming. Collect logs and artifacts on failure.
+        priority: critical
+        status: pending
+        dependencies: [prepare-server-environment, implement-http-endpoints, scaffold-example-app]
+
+      - id: cross-platform-checks
+        name: "Cross-platform checks"
+        description: "Validate on macOS and Linux runners; ensure no platform-specific pathing or socket assumptions."
+        priority: medium
+        status: pending
+        dependencies: [unit-tests-core, integration-tests-server]
+
+  - id: documentation-and-usage
+    name: "Documentation and Usage"
+    purpose: "Deliver top-tier docs with GitHub-only consumption guidance"
+    tasks:
+      - id: write-readme
+        name: "Write comprehensive README for package root"
+        description: |
+          Include: project overview, supported features, quickstart, API overview, and
+          GitHub-only usage instructions. Provide `pubspec.yaml` examples for Git
+          dependencies with tag pinning.
+        priority: critical
+        status: pending
+        dependencies: [define-github-only-publishing, implement-public-client-api, scaffold-example-app]
+
+      - id: write-example-readme
+        name: "Write README for example app"
+        description: "Document how to run the example against the Python server, expected behavior, and troubleshooting."
+        priority: high
+        status: pending
+        dependencies: [scaffold-example-app]
+
+      - id: usage-snippets
+        name: "Add copy-paste usage snippets"
+        description: |
+          Provide minimal code examples for common flows: initialize client, start run,
+          send prompt, handle tool calls, stream tokens, return tool results.
+        priority: medium
+        status: pending
+        dependencies: [implement-public-client-api]
+
+  - id: ci-and-release
+    name: "CI, Versioning, and GitHub Release"
+    purpose: "Automate quality gates and GitHub-only distribution"
+    tasks:
+      - id: setup-github-actions
+        name: "Set up GitHub Actions for analyze/format/test"
+        description: "CI runs dart format --set-exit-if-changed, dart analyze, and dart test on macOS and Linux."
+        priority: high
+        status: pending
+        dependencies: [unit-tests-core]
+
+      - id: versioning-and-changelog
+        name: "Establish semantic versioning and CHANGELOG process"
+        description: "Adopt SemVer for package versions. Maintain a human-readable CHANGELOG per release."
+        priority: high
+        status: pending
+        dependencies: [write-readme]
+
+      - id: github-release-workflow
+        name: "Create GitHub Release workflow (no pub.dev)"
+        description: |
+          Create a release workflow that:
+          - validates CI status
+          - tags the repository (e.g., v0.1.0)
+          - creates a GitHub Release with release notes and CHANGELOG excerpt
+          Consumers will use Git dependencies pinned to tags.
+        priority: critical
+        status: pending
+        dependencies: [setup-github-actions, versioning-and-changelog]
+
+      - id: document-git-dependency-usage
+        name: "Document consumption via Git dependency"
+        description: |
+          In README, show how to depend on the package via Git and optional tag pinning:
+          
+          Example `pubspec.yaml`:
+          |
+            dependencies:
+              ag_ui:
+                git:
+                  url: https://github.com/ag-ui-protocol/ag-ui.git
+                  path: sdks/community/dart
+                  ref: v0.1.0
+          
+          Include instructions for updating to newer tags.
+        priority: critical
+        status: pending
+        dependencies: [github-release-workflow, write-readme]
+
+dependencies:
+  external_projects:
+    - name: "AG-UI Server Starter (All Features) - Python example"
+      path: 
+        "/Users/punk1290/git/workspace1/ag-ui/typescript-sdk/integrations/server-starter-all-features/server/python/example_server/tool_based_generative_ui.py"
+      purpose: "Integration tests and example runtime"
+    - name: "TypeScript Dojo (reference behavior)"
+      path: 
+        "/Users/punk1290/git/workspace1/ag-ui/typescript-sdk/apps/dojo"
+      purpose: "Behavior parity reference"
+    - name: "AG-UI Specification"
+      url: "https://github.com/ag-ui-protocol/specification"
+      purpose: "Protocol and types reference"
+    - name: "AG-UI Docs"
+      url: "https://docs.ag-ui.com"
+      purpose: "Concepts and expected behavior"
+    - name: "Dart SDK"
+      url: "https://dart.dev"
+      purpose: "Language and tooling"
+
+notes:
+  best_practices:
+    - "Follow Effective Dart for API design, naming, and documentation."
+    - "Prefer immutable models; validate external inputs."
+    - "Keep public API minimal and consistent; avoid leaking transport details."
+    - "Design for streaming first; handle backpressure and cancellation."
+    - "Implement exponential backoff for SSE reconnection with jitter."
+    - "Propagate meaningful errors with actionable messages."
+  technical_guidelines:
+    - "All network I/O should be cancellable with timeouts."
+    - "Treat server events as untrusted; validate before acting."
+    - "Ensure JSON decoding tolerates extra fields for forward-compatibility."
+    - "Avoid heavy dependencies; prefer stdlib + small libs."
+  quality_standards:
+    - "CI required: format clean, analyze clean, tests green."
+    - ">=90% unit coverage on encoder and validation logic."
+    - "Integration tests must pass against example server."
+  publishing_policy:
+    - "Do NOT publish to pub.dev."
+    - "Distribute via GitHub Releases and repository tags only."
+    - "README must include Git dependency usage instructions with tag pinning."
+
+updates:
+  - date: ""
+    author: ""
+    summary: ""
+    details: ""
+
+
