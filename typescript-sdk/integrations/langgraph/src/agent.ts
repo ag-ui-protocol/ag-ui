@@ -9,7 +9,7 @@ import {
   Message as LangGraphMessage,
   Config,
   Interrupt,
-  Thread
+  Thread,
 } from "@langchain/langgraph-sdk";
 import { randomUUID } from "node:crypto";
 import {
@@ -23,7 +23,7 @@ import {
   MessageInProgress,
   RunMetadata,
   PredictStateTool,
-  LangGraphReasoning
+  LangGraphReasoning,
 } from "./types";
 import {
   AbstractAgent,
@@ -61,7 +61,7 @@ import {
   getStreamPayloadInput,
   langchainMessagesToAgui,
   resolveMessageContent,
-  resolveReasoningContent
+  resolveReasoningContent,
 } from "@/utils";
 
 export type ProcessedEvents =
@@ -124,14 +124,16 @@ export class LangGraphAgent extends AbstractAgent {
   subscriber: Subscriber<ProcessedEvents>;
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
   activeStep?: string;
+  config: LangGraphAgentConfig;
 
   constructor(config: LangGraphAgentConfig) {
     super(config);
+    this.config = config;
     this.messagesInProcess = {};
     this.agentName = config.agentName;
     this.graphId = config.graphId;
     this.assistantConfig = config.assistantConfig;
-    this.thinkingProcess = null
+    this.thinkingProcess = null;
     this.client =
       config?.client ??
       new LangGraphClient({
@@ -139,6 +141,10 @@ export class LangGraphAgent extends AbstractAgent {
         apiKey: config.langsmithApiKey,
         defaultHeaders: { ...(config.propertyHeaders ?? {}) },
       });
+  }
+
+  public clone() {
+    return new LangGraphAgent(this.config);
   }
 
   dispatchEvent(event: ProcessedEvents) {
@@ -163,44 +169,49 @@ export class LangGraphAgent extends AbstractAgent {
       this.assistant = await this.getAssistant();
     }
     const threadId = input.threadId ?? randomUUID();
-    const streamMode = input.forwardedProps?.streamMode ?? (["events", "values", "updates"] satisfies StreamMode[])
-    const preparedStream = await this.prepareStream({ ...input, threadId }, streamMode)
+    const streamMode =
+      input.forwardedProps?.streamMode ?? (["events", "values", "updates"] satisfies StreamMode[]);
+    const preparedStream = await this.prepareStream({ ...input, threadId }, streamMode);
 
     if (!preparedStream) {
-      return subscriber.error('No stream to regenerate');
+      return subscriber.error("No stream to regenerate");
     }
 
-    await this.handleStreamEvents(preparedStream, threadId, subscriber, input, streamMode)
+    await this.handleStreamEvents(preparedStream, threadId, subscriber, input, streamMode);
   }
 
   async prepareRegenerateStream(input: RegenerateInput, streamMode: StreamMode | StreamMode[]) {
-    const { threadId, messageCheckpoint, tools } = input
+    const { threadId, messageCheckpoint, tools } = input;
 
-    const timeTravelCheckpoint = await this.getCheckpointByMessage(messageCheckpoint!.id!, threadId);
+    const timeTravelCheckpoint = await this.getCheckpointByMessage(
+      messageCheckpoint!.id!,
+      threadId,
+    );
     if (!this.assistant) {
       this.assistant = await this.getAssistant();
     }
 
     if (!timeTravelCheckpoint) {
-      return this.subscriber.error('No checkpoint found for message');
+      return this.subscriber.error("No checkpoint found for message");
     }
 
-    const fork = await this.client.threads.updateState(
-      threadId,
-      {
-        values: this.langGraphDefaultMergeState(timeTravelCheckpoint.values, [], tools),
-        checkpointId: timeTravelCheckpoint.checkpoint.checkpoint_id!,
-        asNode: timeTravelCheckpoint.next?.[0] ?? "__start__"
-      }
-    );
+    const fork = await this.client.threads.updateState(threadId, {
+      values: this.langGraphDefaultMergeState(timeTravelCheckpoint.values, [], tools),
+      checkpointId: timeTravelCheckpoint.checkpoint.checkpoint_id!,
+      asNode: timeTravelCheckpoint.next?.[0] ?? "__start__",
+    });
 
-      const payload = {
-          ...(input.forwardedProps ?? {}),
-          input: this.langGraphDefaultMergeState(timeTravelCheckpoint.values, [messageCheckpoint], tools),
-          // @ts-ignore
-          checkpointId: fork.checkpoint.checkpoint_id!,
-          streamMode,
-      };
+    const payload = {
+      ...(input.forwardedProps ?? {}),
+      input: this.langGraphDefaultMergeState(
+        timeTravelCheckpoint.values,
+        [messageCheckpoint],
+        tools,
+      ),
+      // @ts-ignore
+      checkpointId: fork.checkpoint.checkpoint_id!,
+      streamMode,
+    };
     return {
       streamResponse: this.client.runs.stream(threadId, this.assistant.assistant_id, payload),
       state: timeTravelCheckpoint as ThreadState<State>,
@@ -209,14 +220,21 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   async prepareStream(input: RunAgentExtendedInput, streamMode: StreamMode | StreamMode[]) {
-    let { threadId: inputThreadId, state: inputState, messages, tools, context, forwardedProps } = input;
+    let {
+      threadId: inputThreadId,
+      state: inputState,
+      messages,
+      tools,
+      context,
+      forwardedProps,
+    } = input;
     // If a manual emittance happens, it is the ultimate source of truth of state, unless a node has exited.
     // Therefore, this value should either hold null, or the only edition of state that should be used.
     this.activeRun!.manuallyEmittedState = null;
 
     const nodeNameInput = forwardedProps?.nodeName;
     this.activeRun!.nodeName = nodeNameInput;
-    if (this.activeRun!.nodeName === '__end__') {
+    if (this.activeRun!.nodeName === "__end__") {
       this.activeRun!.nodeName = undefined;
     }
 
@@ -229,19 +247,30 @@ export class LangGraphAgent extends AbstractAgent {
     const thread = await this.getOrCreateThread(threadId, forwardedProps?.threadMetadata);
     this.activeRun!.threadId = thread.thread_id;
 
-    const agentState: ThreadState<State> = await this.client.threads.getState(thread.thread_id) ?? { values: {} } as ThreadState<State>
-    const agentStateMessages = agentState.values.messages ?? []
-    const inputMessagesToLangchain = aguiMessagesToLangChain(messages)
-    const stateValuesDiff = this.langGraphDefaultMergeState({ ...inputState, messages: agentStateMessages }, inputMessagesToLangchain, tools);
+    const agentState: ThreadState<State> =
+      (await this.client.threads.getState(thread.thread_id)) ??
+      ({ values: {} } as ThreadState<State>);
+    const agentStateMessages = agentState.values.messages ?? [];
+    const inputMessagesToLangchain = aguiMessagesToLangChain(messages);
+    const stateValuesDiff = this.langGraphDefaultMergeState(
+      { ...inputState, messages: agentStateMessages },
+      inputMessagesToLangchain,
+      tools,
+    );
     // Messages are a combination of existing messages in state + everything that was newly sent
     let threadState = {
       ...agentState,
-      values: { ...stateValuesDiff, messages: [...agentStateMessages, ...stateValuesDiff.messages] },
-    }
+      values: {
+        ...stateValuesDiff,
+        messages: [...agentStateMessages, ...stateValuesDiff.messages],
+      },
+    };
     let stateValues = threadState.values;
     this.activeRun!.schemaKeys = await this.getSchemaKeys();
 
-    if ((agentState.values.messages ?? []).length > messages.filter((m) => m.role !== "system").length) {
+    if (
+      (agentState.values.messages ?? []).length > messages.filter((m) => m.role !== "system").length
+    ) {
       let lastUserMessage: LangGraphMessage | null = null;
       // Find the first user message by working backwards from the last message
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -252,20 +281,28 @@ export class LangGraphAgent extends AbstractAgent {
       }
 
       if (!lastUserMessage) {
-        return this.subscriber.error('No user message found in messages to regenerate');
+        return this.subscriber.error("No user message found in messages to regenerate");
       }
 
-      return this.prepareRegenerateStream({ ...input, messageCheckpoint: lastUserMessage }, streamMode)
+      return this.prepareRegenerateStream(
+        { ...input, messageCheckpoint: lastUserMessage },
+        streamMode,
+      );
     }
     this.activeRun!.graphInfo = await this.client.assistants.getGraph(this.assistant.assistant_id);
 
     const mode =
-      !forwardedProps?.command?.resume && threadId && this.activeRun!.nodeName != "__end__" && this.activeRun!.nodeName
+      !forwardedProps?.command?.resume &&
+      threadId &&
+      this.activeRun!.nodeName != "__end__" &&
+      this.activeRun!.nodeName
         ? "continue"
         : "start";
 
     if (mode === "continue") {
-      const nodeBefore = this.activeRun!.graphInfo.edges.find(e => e.target === this.activeRun!.nodeName);
+      const nodeBefore = this.activeRun!.graphInfo.edges.find(
+        (e) => e.target === this.activeRun!.nodeName,
+      );
       await this.client.threads.updateState(threadId, {
         values: inputState,
         asNode: nodeBefore?.source,
@@ -327,17 +364,19 @@ export class LangGraphAgent extends AbstractAgent {
       // @ts-ignore
       streamResponse: this.client.runs.stream(threadId, this.assistant.assistant_id, payload),
       state: threadState as ThreadState<State>,
-    }
+    };
   }
 
   async handleStreamEvents(
-    stream: Awaited<ReturnType<typeof this.prepareStream> | ReturnType<typeof this.prepareRegenerateStream>>,
+    stream: Awaited<
+      ReturnType<typeof this.prepareStream> | ReturnType<typeof this.prepareRegenerateStream>
+    >,
     threadId: string,
     subscriber: Subscriber<ProcessedEvents>,
     input: RunAgentExtendedInput,
-    streamMode: StreamMode | StreamMode[]
+    streamMode: StreamMode | StreamMode[],
   ) {
-    const { forwardedProps } = input
+    const { forwardedProps } = input;
     const nodeNameInput = forwardedProps?.nodeName;
     this.subscriber = subscriber;
     let shouldExit = false;
@@ -358,15 +397,15 @@ export class LangGraphAgent extends AbstractAgent {
 
       // In case of resume (interrupt), re-start resumed step
       if (forwardedProps?.command?.resume && this.activeRun!.nodeName) {
-        this.startStep(this.activeRun!.nodeName)
+        this.startStep(this.activeRun!.nodeName);
       }
 
       for await (let streamResponseChunk of streamResponse) {
-          const subgraphsStreamEnabled = input.forwardedProps?.streamSubgraphs
-          const isSubgraphStream = (subgraphsStreamEnabled && (
-              streamResponseChunk.event.startsWith("events") ||
-              streamResponseChunk.event.startsWith("values")
-          ))
+        const subgraphsStreamEnabled = input.forwardedProps?.streamSubgraphs;
+        const isSubgraphStream =
+          subgraphsStreamEnabled &&
+          (streamResponseChunk.event.startsWith("events") ||
+            streamResponseChunk.event.startsWith("values"));
 
         // @ts-ignore
         if (!streamMode.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream) {
@@ -400,11 +439,11 @@ export class LangGraphAgent extends AbstractAgent {
           latestStateValues = chunk.data;
           continue;
         } else if (subgraphsStreamEnabled && chunk.event.startsWith("values|")) {
-            latestStateValues = {
-                ...latestStateValues,
-                ...chunk.data,
-            };
-            continue;
+          latestStateValues = {
+            ...latestStateValues,
+            ...chunk.data,
+          };
+          continue;
         }
 
         const chunkData = chunk.data;
@@ -416,10 +455,10 @@ export class LangGraphAgent extends AbstractAgent {
 
         if (currentNodeName && currentNodeName !== this.activeRun!.nodeName) {
           if (this.activeRun!.nodeName && this.activeRun!.nodeName !== nodeNameInput) {
-            this.endStep()
+            this.endStep();
           }
 
-          this.startStep(currentNodeName)
+          this.startStep(currentNodeName);
         }
 
         shouldExit =
@@ -437,7 +476,7 @@ export class LangGraphAgent extends AbstractAgent {
         // we only want to update the node name under certain conditions
         // since we don't need any internal node names to be sent to the frontend
         if (this.activeRun!.graphInfo?.["nodes"].some((node) => node.id === currentNodeName)) {
-          this.activeRun!.nodeName = currentNodeName
+          this.activeRun!.nodeName = currentNodeName;
         }
 
         updatedState.values = this.activeRun!.manuallyEmittedState ?? latestStateValues;
@@ -473,15 +512,15 @@ export class LangGraphAgent extends AbstractAgent {
       }
 
       state = await this.client.threads.getState(threadId);
-      const tasks = state.tasks
+      const tasks = state.tasks;
       const interrupts = (tasks?.[0]?.interrupts ?? []) as Interrupt[];
-      const isEndNode = state.next.length === 0
-      const writes = state.metadata?.writes ?? {}
+      const isEndNode = state.next.length === 0;
+      const writes = state.metadata?.writes ?? {};
 
-      let newNodeName = this.activeRun!.nodeName!
+      let newNodeName = this.activeRun!.nodeName!;
 
       if (!interrupts?.length) {
-        newNodeName = isEndNode ? '__end__' : (state.next[0] ?? Object.keys(writes)[0]);
+        newNodeName = isEndNode ? "__end__" : (state.next[0] ?? Object.keys(writes)[0]);
       }
 
       interrupts.forEach((interrupt) => {
@@ -495,11 +534,11 @@ export class LangGraphAgent extends AbstractAgent {
       });
 
       if (this.activeRun!.nodeName != newNodeName) {
-        this.endStep()
-        this.startStep(newNodeName)
+        this.endStep();
+        this.startStep(newNodeName);
       }
 
-      this.endStep()
+      this.endStep();
       this.dispatchEvent({
         type: EventType.STATE_SNAPSHOT,
         snapshot: this.getStateSnapshot(state),
@@ -548,17 +587,17 @@ export class LangGraphAgent extends AbstractAgent {
           hasCurrentStream && !currentStream?.toolCallId && !isMessageContentEvent;
 
         if (reasoningData) {
-          this.handleThinkingEvent(reasoningData)
+          this.handleThinkingEvent(reasoningData);
           break;
         }
 
         if (!reasoningData && this.thinkingProcess) {
           this.dispatchEvent({
             type: EventType.THINKING_TEXT_MESSAGE_END,
-          })
+          });
           this.dispatchEvent({
             type: EventType.THINKING_END,
-          })
+          });
           this.thinkingProcess = null;
         }
 
@@ -723,7 +762,9 @@ export class LangGraphAgent extends AbstractAgent {
           this.activeRun!.manuallyEmittedState = event.data;
           this.dispatchEvent({
             type: EventType.STATE_SNAPSHOT,
-            snapshot: this.getStateSnapshot({ values: this.activeRun!.manuallyEmittedState! } as ThreadState<State>),
+            snapshot: this.getStateSnapshot({
+              values: this.activeRun!.manuallyEmittedState!,
+            } as ThreadState<State>),
             rawEvent: event,
           });
         }
@@ -749,11 +790,11 @@ export class LangGraphAgent extends AbstractAgent {
       if (this.thinkingProcess.type) {
         this.dispatchEvent({
           type: EventType.THINKING_TEXT_MESSAGE_END,
-        })
+        });
       }
       this.dispatchEvent({
         type: EventType.THINKING_END,
-      })
+      });
       this.thinkingProcess = null;
     }
 
@@ -761,30 +802,29 @@ export class LangGraphAgent extends AbstractAgent {
       // No thinking step yet. Start a new one
       this.dispatchEvent({
         type: EventType.THINKING_START,
-      })
+      });
       this.thinkingProcess = {
         index: thinkingStepIndex,
       };
     }
 
-
     if (this.thinkingProcess.type !== reasoningData.type) {
       this.dispatchEvent({
         type: EventType.THINKING_TEXT_MESSAGE_START,
-      })
-      this.thinkingProcess.type = reasoningData.type
+      });
+      this.thinkingProcess.type = reasoningData.type;
     }
 
     if (this.thinkingProcess.type) {
       this.dispatchEvent({
         type: EventType.THINKING_TEXT_MESSAGE_CONTENT,
-        delta: reasoningData.text
-      })
+        delta: reasoningData.text,
+      });
     }
   }
 
   getStateSnapshot(threadState: ThreadState<State>) {
-    let state = threadState.values
+    let state = threadState.values;
     const schemaKeys = this.activeRun!.schemaKeys!;
     // Do not emit state keys that are not part of the output schema
     if (schemaKeys?.output) {
@@ -802,7 +842,7 @@ export class LangGraphAgent extends AbstractAgent {
       } catch (error) {
         thread = await this.createThread({
           threadId,
-          metadata: threadMetadata
+          metadata: threadMetadata,
         });
       }
     } catch (error: unknown) {
@@ -821,10 +861,10 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   async mergeConfigs({
-                       configs,
-                       assistant,
-                       schemaKeys,
-                     }: {
+    configs,
+    assistant,
+    schemaKeys,
+  }: {
     configs: Config[];
     assistant: Assistant;
     schemaKeys: SchemaKeys;
@@ -835,9 +875,9 @@ export class LangGraphAgent extends AbstractAgent {
       if (cfg.configurable) {
         filteredConfigurable = schemaKeys?.config
           ? filterObjectBySchemaKeys(cfg?.configurable, [
-            ...this.constantSchemaKeys,
-            ...(schemaKeys?.config ?? []),
-          ])
+              ...this.constantSchemaKeys,
+              ...(schemaKeys?.config ?? []),
+            ])
           : cfg?.configurable;
       }
 
@@ -857,7 +897,7 @@ export class LangGraphAgent extends AbstractAgent {
       const isOnlyRecursionLimitDifferent =
         isRecursionLimitSetToDefault &&
         JSON.stringify({ ...newConfig, recursion_limit: null }) ===
-        JSON.stringify({ ...acc, recursion_limit: null });
+          JSON.stringify({ ...acc, recursion_limit: null });
 
       if (configsAreDifferent && !isOnlyRecursionLimitDifferent) {
         return {
@@ -887,8 +927,7 @@ export class LangGraphAgent extends AbstractAgent {
   async getAssistant(): Promise<Assistant> {
     const assistants = await this.client.assistants.search();
     const retrievedAssistant = assistants.find(
-      (searchResult) =>
-        searchResult.graph_id === this.graphId,
+      (searchResult) => searchResult.graph_id === this.graphId,
     );
     if (!retrievedAssistant) {
       console.error(`
@@ -916,8 +955,12 @@ export class LangGraphAgent extends AbstractAgent {
       const outputSchema = Object.keys(graphSchema.output_schema.properties);
 
       return {
-        input: inputSchema && inputSchema.length ? [...inputSchema, ...this.constantSchemaKeys] : null,
-        output: outputSchema && outputSchema.length ? [...outputSchema, ...this.constantSchemaKeys] : null,
+        input:
+          inputSchema && inputSchema.length ? [...inputSchema, ...this.constantSchemaKeys] : null,
+        output:
+          outputSchema && outputSchema.length
+            ? [...outputSchema, ...this.constantSchemaKeys]
+            : null,
         config: configSchema,
       };
     } catch (e) {
@@ -937,9 +980,9 @@ export class LangGraphAgent extends AbstractAgent {
 
     const newMessages = messages.filter((message) => !existingMessageIds.has(message.id));
 
-    const langGraphTools = [...(state.tools ?? []), ...(tools ?? [])].map(tool => {
+    const langGraphTools = [...(state.tools ?? []), ...(tools ?? [])].map((tool) => {
       if (tool.type) {
-        return tool
+        return tool;
       }
 
       return {
@@ -948,9 +991,9 @@ export class LangGraphAgent extends AbstractAgent {
           name: tool.name,
           description: tool.description,
           parameters: tool.parameters,
-        }
-      }
-    })
+        },
+      };
+    });
 
     return {
       ...state,
@@ -961,7 +1004,7 @@ export class LangGraphAgent extends AbstractAgent {
 
   startStep(nodeName: string) {
     if (this.activeStep) {
-      this.endStep()
+      this.endStep();
     }
     this.dispatchEvent({
       type: EventType.STEP_STARTED,
@@ -989,11 +1032,13 @@ export class LangGraphAgent extends AbstractAgent {
     checkpoint?: null | {
       checkpoint_id?: null | string;
       checkpoint_ns: string;
-    }
+    },
   ): Promise<ThreadState> {
-    const options = checkpoint?.checkpoint_id ? {
-      checkpoint: { checkpoint_id: checkpoint.checkpoint_id }
-    } : undefined
+    const options = checkpoint?.checkpoint_id
+      ? {
+          checkpoint: { checkpoint_id: checkpoint.checkpoint_id },
+        }
+      : undefined;
     const history = await this.client.threads.getHistory(threadId, options);
     const reversed = [...history].reverse(); // oldest → newest
 
@@ -1009,14 +1054,17 @@ export class LangGraphAgent extends AbstractAgent {
     );
     const messagesAfter = targetStateMessages.slice(messageIndex + 1);
     if (messagesAfter.length) {
-      return this.getCheckpointByMessage(messageId, threadId, targetState.parent_checkpoint)
+      return this.getCheckpointByMessage(messageId, threadId, targetState.parent_checkpoint);
     }
 
     const targetStateIndex = reversed.indexOf(targetState);
 
-    const { messages, ...targetStateValuesWithoutMessages } = targetState.values as State
-    const selectedCheckpoint = reversed[targetStateIndex - 1] ?? { ...targetState, values: {} }
-    return { ...selectedCheckpoint, values: { ...selectedCheckpoint.values, ...targetStateValuesWithoutMessages } };
+    const { messages, ...targetStateValuesWithoutMessages } = targetState.values as State;
+    const selectedCheckpoint = reversed[targetStateIndex - 1] ?? { ...targetState, values: {} };
+    return {
+      ...selectedCheckpoint,
+      values: { ...selectedCheckpoint.values, ...targetStateValuesWithoutMessages },
+    };
   }
 }
 

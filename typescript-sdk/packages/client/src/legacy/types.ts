@@ -28,6 +28,7 @@ export const LegacyTextMessageStart = z.object({
   type: z.literal(LegacyRuntimeEventTypes.enum.TextMessageStart),
   messageId: z.string(),
   parentMessageId: z.string().optional(),
+  role: z.string().optional(),
 });
 
 export const LegacyTextMessageContent = z.object({
