@@ -78,6 +78,7 @@ export const convertToLegacyEvents =
               {
                 type: LegacyRuntimeEventTypes.enum.TextMessageStart,
                 messageId: startEvent.messageId,
+                role: startEvent.role,
               } as LegacyTextMessageStart,
             ];
           }
@@ -127,7 +128,13 @@ export const convertToLegacyEvents =
           case EventType.TOOL_CALL_ARGS: {
             const argsEvent = event as ToolCallArgsEvent;
 
-            const currentToolCall = currentToolCalls[currentToolCalls.length - 1];
+            // Find the tool call by ID instead of using the last one
+            const currentToolCall = currentToolCalls.find((tc) => tc.id === argsEvent.toolCallId);
+            if (!currentToolCall) {
+              console.warn(`TOOL_CALL_ARGS: No tool call found with ID '${argsEvent.toolCallId}'`);
+              return [];
+            }
+
             currentToolCall.function.arguments += argsEvent.delta;
             let didUpdateState = false;
 
@@ -295,6 +302,11 @@ export const convertToLegacyEvents =
           case EventType.RUN_FINISHED: {
             if (syncedMessages) {
               currentState.messages = syncedMessages;
+            }
+
+            // Only do an update if state is not empty
+            if (Object.keys(currentState).length === 0) {
+              return [];
             }
 
             return [
