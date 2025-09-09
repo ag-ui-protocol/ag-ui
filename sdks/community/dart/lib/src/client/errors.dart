@@ -104,11 +104,15 @@ class TimeoutError extends AgUiError {
 
 /// Error when operation is cancelled
 class CancellationError extends AgUiError {
+  /// Operation that was cancelled
+  final String? operation;
+  
   /// Reason for cancellation
   final String? reason;
 
   const CancellationError(
     super.message, {
+    this.operation,
     this.reason,
     super.details,
     super.cause,
@@ -118,6 +122,9 @@ class CancellationError extends AgUiError {
   String toString() {
     final buffer = StringBuffer();
     buffer.write('CancellationError: $message');
+    if (operation != null) {
+      buffer.write(' (operation: $operation)');
+    }
     if (reason != null) {
       buffer.write(' (reason: $reason)');
     }

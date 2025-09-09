@@ -60,6 +60,18 @@ class SseClient {
     return _controller!.stream;
   }
 
+  /// Parse an existing byte stream as SSE messages.
+  /// 
+  /// [stream] - The byte stream to parse.
+  /// [headers] - Optional response headers for context.
+  Stream<SseMessage> parseStream(
+    Stream<List<int>> stream, {
+    Map<String, String>? headers,
+  }) {
+    final parser = SseParser();
+    return parser.parseBytes(stream);
+  }
+
   /// Internal connection method that handles reconnection.
   Future<void> _connect(
     Uri url,
