@@ -24,6 +24,8 @@ import {
   RunMetadata,
   PredictStateTool,
   LangGraphReasoning,
+  StateEnrichment,
+  LangGraphTool,
 } from "./types";
 import {
   AbstractAgent,
@@ -181,7 +183,7 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   async prepareRegenerateStream(input: RegenerateInput, streamMode: StreamMode | StreamMode[]) {
-    const { threadId, messageCheckpoint, tools } = input;
+    const { threadId, messageCheckpoint } = input;
 
     const timeTravelCheckpoint = await this.getCheckpointByMessage(
       messageCheckpoint!.id!,
@@ -262,7 +264,7 @@ export class LangGraphAgent extends AbstractAgent {
       ...agentState,
       values: {
         ...stateValuesDiff,
-        messages: [...agentStateMessages, ...stateValuesDiff.messages],
+        messages: [...agentStateMessages, ...(stateValuesDiff.messages ?? [])],
       },
     };
     let stateValues = threadState.values;
@@ -968,7 +970,7 @@ export class LangGraphAgent extends AbstractAgent {
     }
   }
 
-  langGraphDefaultMergeState(state: State, messages: LangGraphMessage[], input: RunAgentExtendedInput): State {
+  langGraphDefaultMergeState(state: State, messages: LangGraphMessage[], input: RunAgentExtendedInput): State<StateEnrichment> {
     if (messages.length > 0 && "role" in messages[0] && messages[0].role === "system") {
       // remove system message
       messages = messages.slice(1);
@@ -980,7 +982,7 @@ export class LangGraphAgent extends AbstractAgent {
 
     const newMessages = messages.filter((message) => !existingMessageIds.has(message.id));
 
-    const langGraphTools = [...(state.tools ?? []), ...(input.tools ?? [])].map((tool) => {
+    const langGraphTools: LangGraphTool[] = [...(state.tools ?? []), ...(input.tools ?? [])].map((tool) => {
       if (tool.type) {
         return tool;
       }
