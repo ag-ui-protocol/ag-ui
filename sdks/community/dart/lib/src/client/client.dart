@@ -10,6 +10,7 @@ import '../sse/sse_message.dart';
 import '../types/types.dart';
 import 'config.dart';
 import 'errors.dart';
+import 'validators.dart';
 
 /// Main client for interacting with AG-UI servers
 class AgUiClient {
@@ -33,6 +34,9 @@ class AgUiClient {
 
   /// Start a new run/session
   Future<StartRunResponse> startRun(StartRunRequest request) async {
+    // Validate input
+    Validators.validateUrl(config.baseUrl, 'baseUrl');
+    
     final endpoint = '${config.baseUrl}/runs';
     try {
       final response = await _sendRequest(
@@ -45,8 +49,14 @@ class AgUiClient {
         endpoint,
         (data) => _decoder.decodeStartRunResponse(data),
       );
+    } on AgUiError {
+      rethrow;
     } catch (e) {
-      throw AgUiClientException('Failed to start run', e);
+      throw TransportError(
+        'Failed to start run',
+        endpoint: endpoint,
+        cause: e,
+      );
     }
   }
 
@@ -55,6 +65,10 @@ class AgUiClient {
     String runId,
     UserMessage message,
   ) async {
+    // Validate inputs
+    Validators.validateRunId(runId);
+    Validators.validateMessageContent(message.content);
+    
     final endpoint = '${config.baseUrl}/runs/$runId/messages';
     try {
       final response = await _sendRequest(
@@ -67,8 +81,14 @@ class AgUiClient {
         endpoint,
         (data) => _decoder.decodeSendMessageResponse(data),
       );
+    } on AgUiError {
+      rethrow;
     } catch (e) {
-      throw AgUiClientException('Failed to send message', e);
+      throw TransportError(
+        'Failed to send message',
+        endpoint: endpoint,
+        cause: e,
+      );
     }
   }
 
@@ -78,6 +98,10 @@ class AgUiClient {
     String toolCallId,
     codec.ToolResult result,
   ) async {
+    // Validate inputs
+    Validators.validateRunId(runId);
+    Validators.requireNonEmpty(toolCallId, 'toolCallId');
+    
     final endpoint = '${config.baseUrl}/runs/$runId/tools/$toolCallId/result';
     try {
       final response = await _sendRequest(
@@ -90,18 +114,27 @@ class AgUiClient {
         endpoint,
         (data) => _decoder.decodeToolResultResponse(data),
       );
+    } on AgUiError {
+      rethrow;
     } catch (e) {
-      throw AgUiClientException('Failed to submit tool result', e);
+      throw TransportError(
+        'Failed to submit tool result',
+        endpoint: endpoint,
+        cause: e,
+      );
     }
   }
 
   /// Cancel an active run
   Future<void> cancelRun(String runId) async {
+    // Validate input
+    Validators.validateRunId(runId);
+    
     final endpoint = '${config.baseUrl}/runs/$runId/cancel';
     try {
       final response = await _sendRequest('POST', endpoint);
       if (response.statusCode != 200 && response.statusCode != 204) {
-        throw AgUiHttpException(
+        throw TransportError(
           'Failed to cancel run',
           endpoint: endpoint,
           statusCode: response.statusCode,
@@ -110,13 +143,22 @@ class AgUiClient {
       }
       // Also cancel any active stream for this run
       await _closeStream(runId);
+    } on AgUiError {
+      rethrow;
     } catch (e) {
-      throw AgUiClientException('Failed to cancel run', e);
+      throw TransportError(
+        'Failed to cancel run',
+        endpoint: endpoint,
+        cause: e,
+      );
     }
   }
 
   /// Stream events for a run
   Stream<BaseEvent> streamEvents(String runId) {
+    // Validate input
+    Validators.validateRunId(runId);
+    
     final endpoint = '${config.baseUrl}/runs/$runId/events';
     final uri = Uri.parse(endpoint);
     
@@ -161,9 +203,18 @@ class AgUiClient {
           for (final event in events) {
             yield event;
           }
+        } on AgUiError catch (e) {
+          // Re-throw AG-UI errors to the stream
+          yield* Stream.error(e);
         } catch (e) {
-          // Log decode errors but continue stream
-          print('Error decoding SSE message: $e');
+          // Wrap other errors
+          yield* Stream.error(DecodingError(
+            'Failed to decode SSE message',
+            field: 'message.data',
+            expectedType: 'BaseEvent',
+            actualValue: message.data,
+            cause: e,
+          ));
         }
       }
     } finally {
@@ -217,7 +268,7 @@ class AgUiClient {
         if (attempts <= config.maxRetries) {
           nextDelay = config.backoffStrategy.nextDelay(attempts);
         } else {
-          throw AgUiHttpException(
+          throw TransportError(
             'Request failed after ${config.maxRetries} retries',
             endpoint: endpoint,
             statusCode: response.statusCode,
@@ -227,27 +278,32 @@ class AgUiClient {
       } on TimeoutException {
         attempts++;
         if (attempts > config.maxRetries) {
-          throw AgUiTimeoutException(
+          throw TimeoutError(
             'Request timed out after ${config.maxRetries} attempts',
             timeout: config.requestTimeout,
+            operation: '$method $endpoint',
           );
         }
         nextDelay = config.backoffStrategy.nextDelay(attempts);
       } catch (e) {
-        if (e is AgUiClientException) rethrow;
+        if (e is AgUiError) rethrow;
         
         attempts++;
         if (attempts > config.maxRetries) {
-          throw AgUiConnectionException(
+          throw TransportError(
             'Connection failed after ${config.maxRetries} attempts',
-            e,
+            endpoint: endpoint,
+            cause: e,
           );
         }
         nextDelay = config.backoffStrategy.nextDelay(attempts);
       }
     }
 
-    throw AgUiClientException('Unexpected error in request retry logic');
+    throw TransportError(
+      'Unexpected error in request retry logic',
+      endpoint: endpoint,
+    );
   }
 
   /// Handle HTTP response and decode
@@ -256,21 +312,26 @@ class AgUiClient {
     String endpoint,
     T Function(Map<String, dynamic>) decoder,
   ) {
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      try {
-        final data = json.decode(response.body) as Map<String, dynamic>;
-        return decoder(data);
-      } catch (e) {
-        throw AgUiClientException('Failed to decode response', e);
-      }
+    // Validate status code
+    Validators.validateStatusCode(response.statusCode, endpoint, response.body);
+    
+    try {
+      final data = Validators.validateJson(
+        json.decode(response.body),
+        'response',
+      );
+      return decoder(data);
+    } on AgUiError {
+      rethrow;
+    } catch (e) {
+      throw DecodingError(
+        'Failed to decode response',
+        field: 'response.body',
+        expectedType: 'JSON object',
+        actualValue: response.body,
+        cause: e,
+      );
     }
-
-    throw AgUiHttpException(
-      'Request failed',
-      endpoint: endpoint,
-      statusCode: response.statusCode,
-      responseBody: response.body,
-    );
   }
 
   /// Build headers for requests

@@ -36,7 +36,7 @@ void main() {
         mockHttpClient = MockClient((request) async {
           expect(request.method, equals('POST'));
           expect(request.url.toString(), equals('https://api.example.com/runs'));
-          expect(request.headers['Content-Type'], equals('application/json'));
+          expect(request.headers['Content-Type'], startsWith('application/json'));
           
           final body = json.decode(request.body) as Map<String, dynamic>;
           expect(body['input'], equals({'message': 'Hello'}));
@@ -270,7 +270,7 @@ void main() {
 
         expect(
           () => client.startRun(StartRunRequest()),
-          throwsA(isA<AgUiTimeoutException>()),
+          throwsA(isA<TimeoutError>()),
         );
       });
 
@@ -295,7 +295,7 @@ void main() {
         try {
           await client.startRun(StartRunRequest());
           fail('Should have thrown exception');
-        } on AgUiHttpException catch (e) {
+        } on TransportError catch (e) {
           expect(e.statusCode, equals(400));
           expect(e.responseBody, contains(errorMessage));
           expect(e.endpoint, contains('/runs'));

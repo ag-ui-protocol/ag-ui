@@ -3,6 +3,8 @@ library;
 
 import 'dart:async';
 
+import '../client/errors.dart';
+import '../client/validators.dart';
 import '../events/events.dart';
 import '../sse/sse_message.dart';
 import 'decoder.dart';
@@ -33,18 +35,47 @@ class EventStreamAdapter {
   /// If the JSON is a single event, returns a list with one event.
   /// If the JSON is an array of events, returns all events.
   List<BaseEvent> adaptJsonToEvents(dynamic jsonData) {
-    if (jsonData is Map<String, dynamic>) {
-      // Single event
-      return [_decoder.decodeJson(jsonData)];
-    } else if (jsonData is List) {
-      // Array of events
-      return jsonData
-          .whereType<Map<String, dynamic>>()
-          .map((json) => _decoder.decodeJson(json))
-          .toList();
-    } else {
-      // Invalid data
-      return [];
+    try {
+      if (jsonData is Map<String, dynamic>) {
+        // Single event
+        return [_decoder.decodeJson(jsonData)];
+      } else if (jsonData is List) {
+        // Array of events
+        final events = <BaseEvent>[];
+        for (var i = 0; i < jsonData.length; i++) {
+          if (jsonData[i] is Map<String, dynamic>) {
+            try {
+              events.add(_decoder.decodeJson(jsonData[i] as Map<String, dynamic>));
+            } catch (e) {
+              throw DecodingError(
+                'Failed to decode event at index $i',
+                field: 'jsonData[$i]',
+                expectedType: 'BaseEvent',
+                actualValue: jsonData[i],
+                cause: e,
+              );
+            }
+          }
+        }
+        return events;
+      } else {
+        throw DecodingError(
+          'Invalid JSON data type',
+          field: 'jsonData',
+          expectedType: 'Map<String, dynamic> or List',
+          actualValue: jsonData,
+        );
+      }
+    } on AgUiError {
+      rethrow;
+    } catch (e) {
+      throw DecodingError(
+        'Failed to adapt JSON to events',
+        field: 'jsonData',
+        expectedType: 'BaseEvent or List<BaseEvent>',
+        actualValue: jsonData,
+        cause: e,
+      );
     }
   }
 
@@ -67,17 +98,34 @@ class EventStreamAdapter {
             // Only process data messages
             final data = message.data;
             if (data != null && data.isNotEmpty) {
+              // Skip keep-alive messages
+              if (data.trim() == ':') {
+                return;
+              }
+              
               final event = _decoder.decode(data);
-              sink.add(event);
+              
+              // Validate event before adding to stream
+              if (_decoder.validate(event)) {
+                sink.add(event);
+              }
             }
             // Ignore non-data messages (id, event, retry, comments)
           } catch (e, stack) {
+            final error = e is AgUiError ? e : DecodingError(
+              'Failed to process SSE message',
+              field: 'message',
+              expectedType: 'BaseEvent',
+              actualValue: message.data,
+              cause: e,
+            );
+            
             if (skipInvalidEvents) {
               // Log error but continue processing
-              onError?.call(e, stack);
+              onError?.call(error, stack);
             } else {
               // Propagate error to stream
-              sink.addError(e, stack);
+              sink.addError(error, stack);
             }
           }
         },
@@ -183,15 +231,25 @@ class EventStreamAdapter {
         _buffer.clear();
         _inDataBlock = false;
         
-        if (data.isNotEmpty) {
+        if (data.isNotEmpty && data.trim() != ':') {
           try {
             final event = _decoder.decode(data);
-            controller.add(event);
+            if (_decoder.validate(event)) {
+              controller.add(event);
+            }
           } catch (e, stack) {
+            final error = e is AgUiError ? e : DecodingError(
+              'Failed to decode SSE data',
+              field: 'data',
+              expectedType: 'BaseEvent',
+              actualValue: data,
+              cause: e,
+            );
+            
             if (!skipInvalidEvents) {
-              controller.addError(e, stack);
+              controller.addError(error, stack);
             } else {
-              onError?.call(e, stack);
+              onError?.call(error, stack);
             }
           }
         }
