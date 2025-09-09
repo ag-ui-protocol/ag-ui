@@ -10,6 +10,12 @@ export 'src/types/types.dart';
 // Event types
 export 'src/events/events.dart';
 
+// Encoder/Decoder
+export 'src/encoder/encoder.dart';
+export 'src/encoder/decoder.dart';
+export 'src/encoder/stream_adapter.dart';
+export 'src/encoder/errors.dart';
+
 // SSE client
 export 'src/sse/sse_client.dart';
 export 'src/sse/sse_message.dart';

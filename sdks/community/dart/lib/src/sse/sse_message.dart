@@ -7,7 +7,7 @@ class SseMessage {
   final String? id;
 
   /// The event data.
-  final String data;
+  final String? data;
 
   /// The retry duration suggested by the server.
   final Duration? retry;
@@ -15,7 +15,7 @@ class SseMessage {
   const SseMessage({
     this.event,
     this.id,
-    required this.data,
+    this.data,
     this.retry,
   });
 

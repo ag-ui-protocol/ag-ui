@@ -29,13 +29,13 @@ enum MessageRole {
 
 /// Base message class for all message types
 sealed class Message extends AGUIModel with TypeDiscriminator {
-  final String id;
+  final String? id;
   final MessageRole role;
   final String? content;
   final String? name;
 
   const Message({
-    required this.id,
+    this.id,
     required this.role,
     this.content,
     this.name,
@@ -65,7 +65,7 @@ sealed class Message extends AGUIModel with TypeDiscriminator {
 
   @override
   Map<String, dynamic> toJson() => {
-    'id': id,
+    if (id != null) 'id': id,
     'role': role.value,
     if (content != null) 'content': content,
     if (name != null) 'name': name,
@@ -229,7 +229,7 @@ class ToolMessage extends Message {
   final String? error;
 
   const ToolMessage({
-    required super.id,
+    super.id,
     required this.content,
     required this.toolCallId,
     this.error,
@@ -248,7 +248,7 @@ class ToolMessage extends Message {
     }
     
     return ToolMessage(
-      id: JsonDecoder.requireField<String>(json, 'id'),
+      id: JsonDecoder.optionalField<String>(json, 'id'),
       content: JsonDecoder.requireField<String>(json, 'content'),
       toolCallId: toolCallId,
       error: JsonDecoder.optionalField<String>(json, 'error'),
