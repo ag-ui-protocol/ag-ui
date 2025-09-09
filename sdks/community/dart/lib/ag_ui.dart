@@ -10,6 +10,11 @@ export 'src/types/types.dart';
 // Event types
 export 'src/events/events.dart';
 
+// SSE client
+export 'src/sse/sse_client.dart';
+export 'src/sse/sse_message.dart';
+export 'src/sse/backoff_strategy.dart';
+
 // Core exports will be added in subsequent tasks
 // export 'src/agent.dart';
 // export 'src/client.dart';

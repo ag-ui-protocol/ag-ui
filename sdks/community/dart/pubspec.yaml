@@ -7,7 +7,7 @@ environment:
   sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
-  # Core dependencies will be added in subsequent tasks
+  http: ^1.1.0
 
 dev_dependencies:
   lints: ^3.0.0
