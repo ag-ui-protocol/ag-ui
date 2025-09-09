@@ -39,9 +39,10 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         human_in_the_loop: new PydanticAIAgent({
           url: `${envVars.pydanticAIUrl}/human_in_the_loop/`,
         }),
-        predictive_state_updates: new PydanticAIAgent({
-          url: `${envVars.pydanticAIUrl}/predictive_state_updates/`,
-        }),
+        // Disabled until we can figure out why production builds break
+        // predictive_state_updates: new PydanticAIAgent({
+        //   url: `${envVars.pydanticAIUrl}/predictive_state_updates/`,
+        // }),
         shared_state: new PydanticAIAgent({
           url: `${envVars.pydanticAIUrl}/shared_state/`,
         }),
