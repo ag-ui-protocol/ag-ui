@@ -22,6 +22,9 @@ class EventStreamAdapter {
   /// Buffer for accumulating partial SSE data.
   final StringBuffer _buffer = StringBuffer();
   
+  /// Buffer for accumulating data field values (without "data: " prefix).
+  final StringBuffer _dataBuffer = StringBuffer();
+  
   /// Whether we're currently in a multi-line data block.
   bool _inDataBlock = false;
 
@@ -151,7 +154,7 @@ class EventStreamAdapter {
     bool skipInvalidEvents = false,
     void Function(Object error, StackTrace stackTrace)? onError,
   }) {
-    final controller = StreamController<BaseEvent>();
+    final controller = StreamController<BaseEvent>(sync: true);
     
     rawStream.listen(
       (chunk) {
@@ -173,11 +176,38 @@ class EventStreamAdapter {
         }
       },
       onDone: () {
-        // Process any remaining buffered data
+        // Process any remaining incomplete line in buffer
         final remaining = _buffer.toString();
-        if (remaining.isNotEmpty && _inDataBlock) {
+        if (remaining.isNotEmpty) {
+          // Treat remaining content as a complete line
+          if (remaining.startsWith('data: ')) {
+            final value = remaining.substring(6);
+            if (_inDataBlock) {
+              _dataBuffer.write('\n');
+              _dataBuffer.write(value);
+            } else {
+              _dataBuffer.clear();
+              _dataBuffer.write(value);
+              _inDataBlock = true;
+            }
+          } else if (remaining.startsWith('data:')) {
+            final value = remaining.substring(5);
+            if (_inDataBlock) {
+              _dataBuffer.write('\n');
+              _dataBuffer.write(value);
+            } else {
+              _dataBuffer.clear();
+              _dataBuffer.write(value);
+              _inDataBlock = true;
+            }
+          }
+        }
+        
+        // Process any accumulated data
+        if (_inDataBlock && _dataBuffer.isNotEmpty) {
+          final data = _dataBuffer.toString();
           try {
-            final event = _decoder.decode(remaining);
+            final event = _decoder.decode(data);
             controller.add(event);
           } catch (e, stack) {
             if (!skipInvalidEvents) {
@@ -187,6 +217,10 @@ class EventStreamAdapter {
             }
           }
         }
+        // Clear buffers
+        _buffer.clear();
+        _dataBuffer.clear();
+        _inDataBlock = false;
         controller.close();
       },
       cancelOnError: false,
@@ -202,56 +236,80 @@ class EventStreamAdapter {
     bool skipInvalidEvents,
     void Function(Object error, StackTrace stackTrace)? onError,
   ) {
-    final lines = chunk.split('\n');
+    // Add chunk to buffer to handle partial lines
+    _buffer.write(chunk);
     
+    // Process complete lines only
+    String bufferStr = _buffer.toString();
+    final lines = <String>[];
+    
+    // Extract complete lines (those ending with \n)
+    while (bufferStr.contains('\n')) {
+      final lineEnd = bufferStr.indexOf('\n');
+      final line = bufferStr.substring(0, lineEnd);
+      lines.add(line);
+      bufferStr = bufferStr.substring(lineEnd + 1);
+    }
+    
+    // Keep any incomplete line in the buffer
+    _buffer.clear();
+    _buffer.write(bufferStr);
+    
+    // Process each complete line
     for (final line in lines) {
-      if (line.startsWith('data: ')) {
-        final data = line.substring(6);
+      if (line.isEmpty) {
+        // Empty line signals end of SSE message
         if (_inDataBlock) {
-          // Continue accumulating multi-line data
-          _buffer.writeln(data);
+          final data = _dataBuffer.toString();
+          _dataBuffer.clear();
+          _inDataBlock = false;
+          
+          if (data.isNotEmpty && data.trim() != ':') {
+            try {
+              final event = _decoder.decode(data);
+              if (_decoder.validate(event)) {
+                controller.add(event);
+              }
+            } catch (e, stack) {
+              final error = e is AgUiError ? e : DecodingError(
+                'Failed to decode SSE data',
+                field: 'data',
+                expectedType: 'BaseEvent',
+                actualValue: data,
+                cause: e,
+              );
+              
+              if (!skipInvalidEvents) {
+                controller.addError(error, stack);
+              } else {
+                onError?.call(error, stack);
+              }
+            }
+          }
+        }
+      } else if (line.startsWith('data: ')) {
+        // Extract data value (after "data: ")
+        final value = line.substring(6);
+        if (_inDataBlock) {
+          // Multi-line data: add newline between lines
+          _dataBuffer.write('\n');
+          _dataBuffer.write(value);
         } else {
           // Start new data block
-          _buffer.clear();
-          _buffer.write(data);
+          _dataBuffer.clear();
+          _dataBuffer.write(value);
           _inDataBlock = true;
         }
       } else if (line.startsWith('data:')) {
-        final data = line.substring(5);
+        // Handle no space after colon
+        final value = line.substring(5);
         if (_inDataBlock) {
-          _buffer.writeln(data);
+          _dataBuffer.write('\n');
+          _dataBuffer.write(value);
         } else {
-          _buffer.clear();
-          _buffer.write(data);
+          _dataBuffer.clear();
+          _dataBuffer.write(value);
           _inDataBlock = true;
-        }
-      } else if (line.isEmpty && _inDataBlock) {
-        // Empty line signals end of SSE message
-        final data = _buffer.toString();
-        _buffer.clear();
-        _inDataBlock = false;
-        
-        if (data.isNotEmpty && data.trim() != ':') {
-          try {
-            final event = _decoder.decode(data);
-            if (_decoder.validate(event)) {
-              controller.add(event);
-            }
-          } catch (e, stack) {
-            final error = e is AgUiError ? e : DecodingError(
-              'Failed to decode SSE data',
-              field: 'data',
-              expectedType: 'BaseEvent',
-              actualValue: data,
-              cause: e,
-            );
-            
-            if (!skipInvalidEvents) {
-              controller.addError(error, stack);
-            } else {
-              onError?.call(error, stack);
-            }
-          }
         }
       }
       // Ignore other lines (comments, event:, id:, retry:, etc.)
@@ -272,7 +330,7 @@ class EventStreamAdapter {
   static Stream<List<BaseEvent>> groupRelatedEvents(
     Stream<BaseEvent> eventStream,
   ) {
-    final controller = StreamController<List<BaseEvent>>();
+    final controller = StreamController<List<BaseEvent>>(sync: true);
     final Map<String, List<BaseEvent>> activeGroups = {};
     
     eventStream.listen(
