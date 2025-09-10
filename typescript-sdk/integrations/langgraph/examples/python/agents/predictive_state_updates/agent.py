@@ -34,7 +34,7 @@ class AgentState(MessagesState):
     The state of the agent.
     """
     document: Optional[str] = None
-    tools: List[Any]
+    tools: List[Any] = []
 
 
 async def start_node(state: AgentState, config: RunnableConfig): # pylint: disable=unused-argument

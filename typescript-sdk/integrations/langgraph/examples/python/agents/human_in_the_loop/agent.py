@@ -39,7 +39,7 @@ class AgentState(MessagesState):
     State of the agent.
     """
     steps: List[Dict[str, str]] = []
-    tools: List[Any]
+    tools: List[Any] = []
 
 async def start_node(state: Dict[str, Any], config: RunnableConfig): # pylint: disable=unused-argument
     """

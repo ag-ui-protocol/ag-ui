@@ -99,7 +99,7 @@ class AgentState(MessagesState):
     The state of the recipe.
     """
     recipe: Optional[Dict[str, Any]] = None
-    tools: List[Any]
+    tools: List[Any] = []
 
 
 async def start_node(state: Dict[str, Any], config: RunnableConfig):

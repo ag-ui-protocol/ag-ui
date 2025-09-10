@@ -19,7 +19,7 @@ class AgentState(MessagesState):
     """
     State of our graph.
     """
-    tools: List[Any]
+    tools: List[Any] = []
     model: str
 
 async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
