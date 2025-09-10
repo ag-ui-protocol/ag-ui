@@ -4,7 +4,6 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 
 import 'package:ag_ui/src/client/client.dart';
 import 'package:ag_ui/src/client/config.dart';
@@ -13,15 +12,30 @@ import 'package:ag_ui/src/events/events.dart';
 import 'package:ag_ui/src/types/types.dart';
 import 'package:ag_ui/src/sse/backoff_strategy.dart';
 
+// Custom mock client that supports streaming responses
+class MockStreamingClient extends http.BaseClient {
+  final Future<http.StreamedResponse> Function(http.BaseRequest) _handler;
+  
+  MockStreamingClient(this._handler);
+  
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    return _handler(request);
+  }
+}
+
 void main() {
   group('AgUiClient HTTP Endpoints', () {
     late AgUiClient client;
-    late MockClient mockHttpClient;
+    late MockStreamingClient mockHttpClient;
     
     setUp(() {
-      mockHttpClient = MockClient((request) async {
+      mockHttpClient = MockStreamingClient((request) async {
         // Default 404 response
-        return http.Response('Not Found', 404);
+        return http.StreamedResponse(
+          Stream.value(utf8.encode('Not Found')),
+          404,
+        );
       });
       
       client = AgUiClient(
@@ -47,7 +61,6 @@ void main() {
           messages: [
             UserMessage(
               id: 'msg_789',
-              role: 'user',
               content: 'Hello, agent!',
             ),
           ],
@@ -58,8 +71,10 @@ void main() {
         String? capturedBody;
         Map<String, String>? capturedHeaders;
         
-        mockHttpClient = MockClient((request) async {
-          capturedBody = request.body;
+        mockHttpClient = MockStreamingClient((request) async {
+          if (request is http.Request) {
+            capturedBody = request.body;
+          }
           capturedHeaders = request.headers;
           
           // Return SSE stream with a simple event
@@ -105,7 +120,7 @@ void main() {
       
       test('handles 4xx errors correctly', () async {
         // Arrange
-        mockHttpClient = MockClient((request) async {
+        mockHttpClient = MockStreamingClient((request) async {
           return http.StreamedResponse(
             Stream.value(utf8.encode('{"error": "Invalid input"}')),
             400,
@@ -133,7 +148,7 @@ void main() {
       
       test('handles 5xx errors correctly', () async {
         // Arrange
-        mockHttpClient = MockClient((request) async {
+        mockHttpClient = MockStreamingClient((request) async {
           return http.StreamedResponse(
             Stream.value(utf8.encode('Internal Server Error')),
             500,
@@ -160,10 +175,13 @@ void main() {
       
       test('handles timeout correctly', () async {
         // Arrange
-        mockHttpClient = MockClient((request) async {
+        mockHttpClient = MockStreamingClient((request) async {
           // Simulate a slow response
           await Future.delayed(const Duration(seconds: 10));
-          return http.Response('', 200);
+          return http.StreamedResponse(
+            Stream.empty(),
+            200,
+          );
         });
         
         client = AgUiClient(
@@ -188,7 +206,7 @@ void main() {
         // Arrange
         final completer = Completer<http.StreamedResponse>();
         
-        mockHttpClient = MockClient((request) async {
+        mockHttpClient = MockStreamingClient((request) async {
           return completer.future;
         });
         
@@ -229,7 +247,7 @@ void main() {
     
     group('specific agent endpoints', () {
       setUp(() {
-        mockHttpClient = MockClient((request) async {
+        mockHttpClient = MockStreamingClient((request) async {
           // Return a minimal SSE response
           return http.StreamedResponse(
             Stream.fromIterable([
@@ -253,7 +271,7 @@ void main() {
       test('runAgenticChat calls correct endpoint', () async {
         String? capturedUrl;
         
-        mockHttpClient = MockClient((request) async {
+        mockHttpClient = MockStreamingClient((request) async {
           capturedUrl = request.url.toString();
           return http.StreamedResponse(
             Stream.fromIterable([
@@ -279,7 +297,7 @@ void main() {
       test('runHumanInTheLoop calls correct endpoint', () async {
         String? capturedUrl;
         
-        mockHttpClient = MockClient((request) async {
+        mockHttpClient = MockStreamingClient((request) async {
           capturedUrl = request.url.toString();
           return http.StreamedResponse(
             Stream.fromIterable([
@@ -305,7 +323,7 @@ void main() {
       test('runToolBasedGenerativeUi calls correct endpoint', () async {
         String? capturedUrl;
         
-        mockHttpClient = MockClient((request) async {
+        mockHttpClient = MockStreamingClient((request) async {
           capturedUrl = request.url.toString();
           return http.StreamedResponse(
             Stream.fromIterable([
@@ -345,8 +363,11 @@ void main() {
       });
       
       test('validates thread ID when present', () async {
-        mockHttpClient = MockClient((request) async {
-          return http.Response('', 200);
+        mockHttpClient = MockStreamingClient((request) async {
+          return http.StreamedResponse(
+            Stream.empty(),
+            200,
+          );
         });
         
         client = AgUiClient(
@@ -366,7 +387,7 @@ void main() {
       });
       
       test('handles malformed SSE data gracefully', () async {
-        mockHttpClient = MockClient((request) async {
+        mockHttpClient = MockStreamingClient((request) async {
           return http.StreamedResponse(
             Stream.fromIterable([
               utf8.encode('data: not-valid-json\n\n'),
@@ -408,14 +429,20 @@ void main() {
         int attemptCount = 0;
         final attemptTimes = <DateTime>[];
         
-        mockHttpClient = MockClient((request) async {
+        mockHttpClient = MockStreamingClient((request) async {
           attemptCount++;
           attemptTimes.add(DateTime.now());
           
           if (attemptCount < 3) {
-            return http.Response('Server Error', 500);
+            return http.StreamedResponse(
+              Stream.value(utf8.encode('Server Error')),
+              500,
+            );
           }
-          return http.Response('{"success": true}', 200);
+          return http.StreamedResponse(
+            Stream.value(utf8.encode('{"success": true}')),
+            200,
+          );
         });
         
         client = AgUiClient(
@@ -448,9 +475,12 @@ void main() {
       test('does not retry on 4xx errors', () async {
         int attemptCount = 0;
         
-        mockHttpClient = MockClient((request) async {
+        mockHttpClient = MockStreamingClient((request) async {
           attemptCount++;
-          return http.Response('Bad Request', 400);
+          return http.StreamedResponse(
+            Stream.value(utf8.encode('Bad Request')),
+            400,
+          );
         });
         
         client = AgUiClient(

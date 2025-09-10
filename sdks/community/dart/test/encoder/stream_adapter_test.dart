@@ -373,13 +373,18 @@ void main() {
         final grouped = EventStreamAdapter.groupRelatedEvents(controller.stream);
         
         final groups = <List<BaseEvent>>[];
-        final subscription = grouped.listen(groups.add);
+        final completer = Completer<void>();
+        final subscription = grouped.listen(
+          groups.add,
+          onDone: completer.complete,
+        );
         
         // Incomplete message (no END event)
         controller.add(TextMessageStartEvent(messageId: 'msg1'));
         controller.add(TextMessageContentEvent(messageId: 'msg1', delta: 'Hello'));
         
         await controller.close();
+        await completer.future;  // Wait for stream to complete
         await subscription.cancel();
         
         expect(groups.length, equals(1));
