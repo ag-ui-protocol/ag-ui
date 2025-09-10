@@ -6,6 +6,7 @@ import { CopilotKit, useCoAgent, useLangGraphInterrupt } from "@copilotkit/react
 import { CopilotSidebar } from "@copilotkit/react-ui";
 import { useMobileView } from "@/utils/use-mobile-view";
 import { useMobileChat } from "@/utils/use-mobile-chat";
+import { cloudAgents } from "@/cloudAgents";
 
 interface SubgraphsProps {
   params: Promise<{
@@ -42,15 +43,15 @@ interface Itinerary {
   experiences?: Experience[];
 }
 
-type AvailableAgents = 'flights' | 'hotels' | 'experiences' | 'supervisor'
+type AvailableAgents = "flights" | "hotels" | "experiences" | "supervisor";
 
 interface TravelAgentState {
-  experiences: Experience[],
-  flights: Flight[],
-  hotels: Hotel[],
-  itinerary: Itinerary
-  planning_step: string
-  active_agent: AvailableAgents
+  experiences: Experience[];
+  flights: Flight[];
+  hotels: Hotel[];
+  itinerary: Itinerary;
+  planning_step: string;
+  active_agent: AvailableAgents;
 }
 
 const INITIAL_STATE: TravelAgentState = {
@@ -59,14 +60,14 @@ const INITIAL_STATE: TravelAgentState = {
   flights: [],
   hotels: [],
   planning_step: "start",
-  active_agent: 'supervisor'
+  active_agent: "supervisor",
 };
 
 interface InterruptEvent<TAgent extends AvailableAgents> {
   message: string;
-  options: TAgent extends 'flights' ? Flight[] : TAgent extends 'hotels' ? Hotel[] : never,
-  recommendation: TAgent extends 'flights' ? Flight : TAgent extends 'hotels' ? Hotel : never,
-  agent: TAgent
+  options: TAgent extends "flights" ? Flight[] : TAgent extends "hotels" ? Hotel[] : never;
+  recommendation: TAgent extends "flights" ? Flight : TAgent extends "hotels" ? Hotel : never;
+  agent: TAgent;
 }
 
 function InterruptHumanInTheLoop<TAgent extends AvailableAgents>({
@@ -81,10 +82,14 @@ function InterruptHumanInTheLoop<TAgent extends AvailableAgents>({
   // Format agent name with emoji
   const formatAgentName = (agent: string) => {
     switch (agent) {
-      case 'flights': return 'Flights Agent';
-      case 'hotels': return 'Hotels Agent';
-      case 'experiences': return 'Experiences Agent';
-      default: return `${agent} Agent`;
+      case "flights":
+        return "Flights Agent";
+      case "hotels":
+        return "Hotels Agent";
+      case "experiences":
+        return "Experiences Agent";
+      default:
+        return `${agent} Agent`;
     }
   };
 
@@ -94,17 +99,19 @@ function InterruptHumanInTheLoop<TAgent extends AvailableAgents>({
 
   return (
     <div className="interrupt-container">
-      <p>{formatAgentName(agent)}: {message}</p>
+      <p>
+        {formatAgentName(agent)}: {message}
+      </p>
 
       <div className="interrupt-options">
         {options.map((opt, idx) => {
-          if ('airline' in opt) {
+          if ("airline" in opt) {
             const isRecommended = (recommendation as Flight).airline === opt.airline;
             // Flight options
             return (
               <button
                 key={idx}
-                className={`option-card flight-option ${isRecommended ? 'recommended' : ''}`}
+                className={`option-card flight-option ${isRecommended ? "recommended" : ""}`}
                 onClick={() => handleOptionSelect(opt)}
               >
                 {isRecommended && <span className="recommendation-badge">⭐ Recommended</span>}
@@ -115,9 +122,7 @@ function InterruptHumanInTheLoop<TAgent extends AvailableAgents>({
                 <div className="route-info">
                   {opt.departure} → {opt.arrival}
                 </div>
-                <div className="duration-info">
-                  {opt.duration}
-                </div>
+                <div className="duration-info">{opt.duration}</div>
               </button>
             );
           }
@@ -127,7 +132,7 @@ function InterruptHumanInTheLoop<TAgent extends AvailableAgents>({
           return (
             <button
               key={idx}
-              className={`option-card hotel-option ${isRecommended ? 'recommended' : ''}`}
+              className={`option-card hotel-option ${isRecommended ? "recommended" : ""}`}
               onClick={() => handleOptionSelect(opt)}
             >
               {isRecommended && <span className="recommendation-badge">⭐ Recommended</span>}
@@ -135,41 +140,39 @@ function InterruptHumanInTheLoop<TAgent extends AvailableAgents>({
                 <span className="hotel-name">{opt.name}</span>
                 <span className="rating">{opt.rating}</span>
               </div>
-              <div className="location-info">
-                📍 {opt.location}
-              </div>
-              <div className="price-info">
-                {opt.price_per_night}
-              </div>
+              <div className="location-info">📍 {opt.location}</div>
+              <div className="price-info">{opt.price_per_night}</div>
             </button>
           );
         })}
       </div>
     </div>
-  )
+  );
 }
 
 export default function Subgraphs({ params }: SubgraphsProps) {
   const { integrationId } = React.use(params);
+  let runtimeUrl = `/api/copilotkit/${integrationId}`;
+  let publicApiKey: string | undefined = undefined;
+  if (process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL) {
+    runtimeUrl = process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL;
+    publicApiKey = cloudAgents.find((agent) => agent.id === integrationId)?.publicApiKey;
+  }
   const { isMobile } = useMobileView();
   const defaultChatHeight = 50;
-  const {
-    isChatOpen,
-    setChatHeight,
-    setIsChatOpen,
-    isDragging,
-    chatHeight,
-    handleDragStart
-  } = useMobileChat(defaultChatHeight);
+  const { isChatOpen, setChatHeight, setIsChatOpen, isDragging, chatHeight, handleDragStart } =
+    useMobileChat(defaultChatHeight);
 
-  const chatTitle = 'Travel Planning Assistant';
-  const chatDescription = 'Plan your perfect trip with AI specialists';
-  const initialLabel = 'Hi! ✈️ Ready to plan an amazing trip? Try saying "Plan a trip to Paris" or "Find me flights to Tokyo"';
+  const chatTitle = "Travel Planning Assistant";
+  const chatDescription = "Plan your perfect trip with AI specialists";
+  const initialLabel =
+    'Hi! ✈️ Ready to plan an amazing trip? Try saying "Plan a trip to Paris" or "Find me flights to Tokyo"';
 
   return (
     <CopilotKit
-      runtimeUrl={`/api/copilotkit/${integrationId}`}
+      runtimeUrl={runtimeUrl}
       showDevConsole={false}
+      publicApiKey={publicApiKey}
       agent="subgraphs"
     >
       <div className="travel-planner-container">
@@ -194,9 +197,21 @@ export default function Subgraphs({ params }: SubgraphsProps) {
                     <div className="text-sm text-gray-500">{chatDescription}</div>
                   </div>
                 </div>
-                <div className={`transform transition-transform duration-300 ${isChatOpen ? 'rotate-180' : ''}`}>
-                  <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                <div
+                  className={`transform transition-transform duration-300 ${isChatOpen ? "rotate-180" : ""}`}
+                >
+                  <svg
+                    className="w-6 h-6 text-gray-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M5 15l7-7 7 7"
+                    />
                   </svg>
                 </div>
               </div>
@@ -205,11 +220,11 @@ export default function Subgraphs({ params }: SubgraphsProps) {
             {/* Pull-Up Chat Container */}
             <div
               className={`fixed inset-x-0 bottom-0 z-40 bg-white rounded-t-2xl shadow-[0px_0px_20px_0px_rgba(0,0,0,0.15)] transform transition-all duration-300 ease-in-out flex flex-col ${
-                isChatOpen ? 'translate-y-0' : 'translate-y-full'
-              } ${isDragging ? 'transition-none' : ''}`}
+                isChatOpen ? "translate-y-0" : "translate-y-full"
+              } ${isDragging ? "transition-none" : ""}`}
               style={{
                 height: `${chatHeight}vh`,
-                paddingBottom: 'env(safe-area-inset-bottom)'
+                paddingBottom: "env(safe-area-inset-bottom)",
               }}
             >
               {/* Drag Handle Bar */}
@@ -230,8 +245,18 @@ export default function Subgraphs({ params }: SubgraphsProps) {
                     onClick={() => setIsChatOpen(false)}
                     className="p-2 hover:bg-gray-100 rounded-full transition-colors"
                   >
-                    <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    <svg
+                      className="w-5 h-5 text-gray-500"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M6 18L18 6M6 6l12 12"
+                      />
                     </svg>
                   </button>
                 </div>
@@ -252,10 +277,7 @@ export default function Subgraphs({ params }: SubgraphsProps) {
 
             {/* Backdrop */}
             {isChatOpen && (
-              <div
-                className="fixed inset-0 z-30"
-                onClick={() => setIsChatOpen(false)}
-              />
+              <div className="fixed inset-0 z-30" onClick={() => setIsChatOpen(false)} />
             )}
           </>
         ) : (
@@ -280,7 +302,7 @@ function TravelPlanner() {
     initialState: INITIAL_STATE,
     config: {
       streamSubgraphs: true,
-    }
+    },
   });
 
   useLangGraphInterrupt({
@@ -304,7 +326,9 @@ function TravelPlanner() {
           {selectedFlight && (
             <div className="itinerary-item" data-testid="selected-flight">
               <span className="item-icon">✈️</span>
-              <span>{selectedFlight.airline} - {selectedFlight.price}</span>
+              <span>
+                {selectedFlight.airline} - {selectedFlight.price}
+              </span>
             </div>
           )}
           {selectedHotel && (
@@ -326,39 +350,51 @@ function TravelPlanner() {
 
   // Compact agent status
   const AgentStatus = () => {
-    let activeAgent = 'supervisor';
-    if (nodeName?.includes('flights_agent')) {
-      activeAgent = 'flights';
+    let activeAgent = "supervisor";
+    if (nodeName?.includes("flights_agent")) {
+      activeAgent = "flights";
     }
-    if (nodeName?.includes('hotels_agent')) {
-      activeAgent = 'hotels';
+    if (nodeName?.includes("hotels_agent")) {
+      activeAgent = "hotels";
     }
-    if (nodeName?.includes('experiences_agent')) {
-      activeAgent = 'experiences';
+    if (nodeName?.includes("experiences_agent")) {
+      activeAgent = "experiences";
     }
     return (
       <div className="agent-status">
         <div className="status-label">Active Agent:</div>
         <div className="agent-indicators">
-          <div className={`agent-indicator ${activeAgent === 'supervisor' ? 'active' : ''}`} data-testid="supervisor-indicator">
+          <div
+            className={`agent-indicator ${activeAgent === "supervisor" ? "active" : ""}`}
+            data-testid="supervisor-indicator"
+          >
             <span>👨‍💼</span>
             <span>Supervisor</span>
           </div>
-          <div className={`agent-indicator ${activeAgent === 'flights' ? 'active' : ''}`} data-testid="flights-agent-indicator">
+          <div
+            className={`agent-indicator ${activeAgent === "flights" ? "active" : ""}`}
+            data-testid="flights-agent-indicator"
+          >
             <span>✈️</span>
             <span>Flights</span>
           </div>
-          <div className={`agent-indicator ${activeAgent === 'hotels' ? 'active' : ''}`} data-testid="hotels-agent-indicator">
+          <div
+            className={`agent-indicator ${activeAgent === "hotels" ? "active" : ""}`}
+            data-testid="hotels-agent-indicator"
+          >
             <span>🏨</span>
             <span>Hotels</span>
           </div>
-          <div className={`agent-indicator ${activeAgent === 'experiences' ? 'active' : ''}`} data-testid="experiences-agent-indicator">
+          <div
+            className={`agent-indicator ${activeAgent === "experiences" ? "active" : ""}`}
+            data-testid="experiences-agent-indicator"
+          >
             <span>🎯</span>
             <span>Experiences</span>
           </div>
         </div>
       </div>
-    )
+    );
   };
 
   // Travel details component
@@ -371,7 +407,9 @@ function TravelPlanner() {
             agentState.flights.map((flight, index) => (
               <div key={index} className="detail-item">
                 <strong>{flight.airline}:</strong>
-                <span>{flight.departure} → {flight.arrival} ({flight.duration}) - {flight.price}</span>
+                <span>
+                  {flight.departure} → {flight.arrival} ({flight.duration}) - {flight.price}
+                </span>
               </div>
             ))
           ) : (
@@ -379,7 +417,8 @@ function TravelPlanner() {
           )}
           {agentState?.itinerary?.flight && (
             <div className="detail-tips">
-              <strong>Selected:</strong> {agentState.itinerary.flight.airline} - {agentState.itinerary.flight.price}
+              <strong>Selected:</strong> {agentState.itinerary.flight.airline} -{" "}
+              {agentState.itinerary.flight.price}
             </div>
           )}
         </div>
@@ -392,7 +431,9 @@ function TravelPlanner() {
             agentState.hotels.map((hotel, index) => (
               <div key={index} className="detail-item">
                 <strong>{hotel.name}:</strong>
-                <span>{hotel.location} - {hotel.price_per_night} ({hotel.rating})</span>
+                <span>
+                  {hotel.location} - {hotel.price_per_night} ({hotel.rating})
+                </span>
               </div>
             ))
           ) : (
@@ -400,7 +441,8 @@ function TravelPlanner() {
           )}
           {agentState?.itinerary?.hotel && (
             <div className="detail-tips">
-              <strong>Selected:</strong> {agentState.itinerary.hotel.name} - {agentState.itinerary.hotel.price_per_night}
+              <strong>Selected:</strong> {agentState.itinerary.hotel.name} -{" "}
+              {agentState.itinerary.hotel.price_per_night}
             </div>
           )}
         </div>

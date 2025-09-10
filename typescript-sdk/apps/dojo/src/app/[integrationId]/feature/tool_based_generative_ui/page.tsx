@@ -7,6 +7,7 @@ import "./style.css";
 import React, { useMemo } from "react";
 import { useMobileView } from "@/utils/use-mobile-view";
 import { useMobileChat } from "@/utils/use-mobile-chat";
+import { cloudAgents } from "@/cloudAgents";
 
 interface ToolBasedGenerativeUIProps {
   params: Promise<{
@@ -15,35 +16,42 @@ interface ToolBasedGenerativeUIProps {
 }
 
 interface GenerateHaiku {
-  japanese: string[] | [],
-  english: string[] | [],
-  image_names: string[] | [],
-  selectedImage: string | null,
+  japanese: string[] | [];
+  english: string[] | [];
+  image_names: string[] | [];
+  selectedImage: string | null;
 }
 
 interface HaikuCardProps {
-  generatedHaiku: GenerateHaiku | Partial<GenerateHaiku>
-  setHaikus: Dispatch<SetStateAction<GenerateHaiku[]>>
-  haikus: GenerateHaiku[]
+  generatedHaiku: GenerateHaiku | Partial<GenerateHaiku>;
+  setHaikus: Dispatch<SetStateAction<GenerateHaiku[]>>;
+  haikus: GenerateHaiku[];
 }
 
 export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIProps) {
   const { integrationId } = React.use(params);
   const { isMobile } = useMobileView();
 
+  const chatTitle = "Haiku Generator";
+  const chatDescription = "Ask me to create haikus";
+  const initialLabel = "I'm a haiku generator 👋. How can I help you?";
 
-  const chatTitle = 'Haiku Generator'
-  const chatDescription = 'Ask me to create haikus'
-  const initialLabel = 'I\'m a haiku generator 👋. How can I help you?'
+  let runtimeUrl = `/api/copilotkit/${integrationId}`;
+  let publicApiKey: string | undefined = undefined;
+  if (process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL) {
+    runtimeUrl = process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL;
+    publicApiKey = cloudAgents.find((agent) => agent.id === integrationId)?.publicApiKey;
+  }
 
   return (
     <CopilotKit
-      runtimeUrl={`/api/copilotkit/${integrationId}`}
+      runtimeUrl={runtimeUrl}
       showDevConsole={false}
+      publicApiKey={publicApiKey}
       agent="tool_based_generative_ui"
     >
       <div
-        className={`${isMobile ? 'h-screen' : 'min-h-full flex'} w-full relative overflow-hidden`}
+        className={`${isMobile ? "h-screen" : "min-h-full flex"} w-full relative overflow-hidden`}
       >
         <Haiku />
 
@@ -60,23 +68,31 @@ export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIP
         )}
 
         {/* Mobile Pull-Up Chat */}
-        {isMobile && <MobileChat chatTitle={chatTitle} chatDescription={chatDescription} initialLabel={initialLabel} />}
+        {isMobile && (
+          <MobileChat
+            chatTitle={chatTitle}
+            chatDescription={chatDescription}
+            initialLabel={initialLabel}
+          />
+        )}
       </div>
     </CopilotKit>
   );
 }
 
-function MobileChat({ chatTitle, chatDescription, initialLabel }: { chatTitle: string, chatDescription: string, initialLabel: string }) {
-  const defaultChatHeight = 50
+function MobileChat({
+  chatTitle,
+  chatDescription,
+  initialLabel,
+}: {
+  chatTitle: string;
+  chatDescription: string;
+  initialLabel: string;
+}) {
+  const defaultChatHeight = 50;
 
-  const {
-    isChatOpen,
-    setChatHeight,
-    setIsChatOpen,
-    isDragging,
-    chatHeight,
-    handleDragStart
-  } = useMobileChat(defaultChatHeight)
+  const { isChatOpen, setChatHeight, setIsChatOpen, isDragging, chatHeight, handleDragStart } =
+    useMobileChat(defaultChatHeight);
   return (
     <>
       {/* Chat Toggle Button */}
@@ -97,9 +113,21 @@ function MobileChat({ chatTitle, chatDescription, initialLabel }: { chatTitle: s
               <div className="text-sm text-gray-500">{chatDescription}</div>
             </div>
           </div>
-          <div className={`transform transition-transform duration-300 ${isChatOpen ? 'rotate-180' : ''}`}>
-            <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+          <div
+            className={`transform transition-transform duration-300 ${isChatOpen ? "rotate-180" : ""}`}
+          >
+            <svg
+              className="w-6 h-6 text-gray-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 15l7-7 7 7"
+              />
             </svg>
           </div>
         </div>
@@ -107,11 +135,12 @@ function MobileChat({ chatTitle, chatDescription, initialLabel }: { chatTitle: s
 
       {/* Pull-Up Chat Container */}
       <div
-        className={`fixed inset-x-0 bottom-0 z-40 bg-white rounded-t-2xl shadow-[0px_0px_20px_0px_rgba(0,0,0,0.15)] transform transition-all duration-300 ease-in-out flex flex-col ${isChatOpen ? 'translate-y-0' : 'translate-y-full'
-          } ${isDragging ? 'transition-none' : ''}`}
+        className={`fixed inset-x-0 bottom-0 z-40 bg-white rounded-t-2xl shadow-[0px_0px_20px_0px_rgba(0,0,0,0.15)] transform transition-all duration-300 ease-in-out flex flex-col ${
+          isChatOpen ? "translate-y-0" : "translate-y-full"
+        } ${isDragging ? "transition-none" : ""}`}
         style={{
           height: `${chatHeight}vh`,
-          paddingBottom: 'env(safe-area-inset-bottom)' // Handle iPhone bottom padding
+          paddingBottom: "env(safe-area-inset-bottom)", // Handle iPhone bottom padding
         }}
       >
         {/* Drag Handle Bar */}
@@ -132,8 +161,18 @@ function MobileChat({ chatTitle, chatDescription, initialLabel }: { chatTitle: s
               onClick={() => setIsChatOpen(false)}
               className="p-2 hover:bg-gray-100 rounded-full transition-colors"
             >
-              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              <svg
+                className="w-5 h-5 text-gray-500"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
               </svg>
             </button>
           </div>
@@ -151,14 +190,9 @@ function MobileChat({ chatTitle, chatDescription, initialLabel }: { chatTitle: s
       </div>
 
       {/* Backdrop */}
-      {isChatOpen && (
-        <div
-          className="fixed inset-0 z-30"
-          onClick={() => setIsChatOpen(false)}
-        />
-      )}
+      {isChatOpen && <div className="fixed inset-0 z-30" onClick={() => setIsChatOpen(false)} />}
     </>
-  )
+  );
 }
 
 const VALID_IMAGE_NAMES = [
@@ -171,7 +205,7 @@ const VALID_IMAGE_NAMES = [
   "Ginkaku-ji_Silver_Pavilion_Kyoto_Japanese_Garden_Pond_Reflection.jpg",
   "Senso-ji_Temple_Asakusa_Cherry_Blossoms_Kimono_Umbrella.jpg",
   "Cherry_Blossoms_Sakura_Night_View_City_Lights_Japan.jpg",
-  "Mount_Fuji_Lake_Reflection_Cherry_Blossoms_Sakura_Spring.jpg"
+  "Mount_Fuji_Lake_Reflection_Cherry_Blossoms_Sakura_Spring.jpg",
 ];
 
 function getRandomImage(): string {
@@ -209,14 +243,13 @@ function HaikuCard({ generatedHaiku, setHaikus, haikus }: HaikuCardProps) {
   return (
     <div
       data-testid="haiku-card"
-      className="suggestion-card text-left rounded-md p-4 mt-4 mb-4 flex flex-col bg-gray-100">
+      className="suggestion-card text-left rounded-md p-4 mt-4 mb-4 flex flex-col bg-gray-100"
+    >
       <div className="mb-4 pb-4">
         {generatedHaiku?.japanese?.map((line, index) => (
           <div className="flex items-center gap-3 mb-2" data-testid="haiku-line" key={index}>
             <p className="text-lg font-bold">{line}</p>
-            <p className="text-sm font-light">
-              {generatedHaiku.english?.[index]}
-            </p>
+            <p className="text-sm font-light">{generatedHaiku.english?.[index]}</p>
           </div>
         ))}
         {generatedHaiku?.japanese && generatedHaiku.japanese.length >= 2 && (
@@ -236,12 +269,12 @@ function HaikuCard({ generatedHaiku, setHaikus, haikus }: HaikuCardProps) {
                   tabIndex={0}
                   className={`${haiku.selectedImage === imageName ? "suggestion-card-image-focus" : "suggestion-card-image"}`}
                   onClick={() => {
-                    setHaikus(prevHaikus => {
+                    setHaikus((prevHaikus) => {
                       const newHaikus = prevHaikus.map((h, idx) => {
                         if (idx === haikuIndex) {
                           return {
                             ...h,
-                            selectedImage: imageName
+                            selectedImage: imageName,
                           };
                         }
                         return h;
@@ -267,171 +300,204 @@ interface Haiku {
 }
 
 function Haiku() {
-  const [haikus, setHaikus] = useState<Haiku[]>([{
-    japanese: ["仮の句よ", "まっさらながら", "花を呼ぶ"],
-    english: [
-      "A placeholder verse—",
-      "even in a blank canvas,",
-      "it beckons flowers.",
-    ],
-    image_names: [],
-    selectedImage: null,
-  }])
+  const [haikus, setHaikus] = useState<Haiku[]>([
+    {
+      japanese: ["仮の句よ", "まっさらながら", "花を呼ぶ"],
+      english: ["A placeholder verse—", "even in a blank canvas,", "it beckons flowers."],
+      image_names: [],
+      selectedImage: null,
+    },
+  ]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [isJustApplied, setIsJustApplied] = useState(false);
 
-  useCopilotAction({
-    name: "generate_haiku",
-    parameters: [
-      {
-        name: "japanese",
-        type: "string[]",
+  useCopilotAction(
+    {
+      name: "generate_haiku",
+      parameters: [
+        {
+          name: "japanese",
+          type: "string[]",
+        },
+        {
+          name: "english",
+          type: "string[]",
+        },
+        {
+          name: "image_names",
+          type: "string[]",
+          description: `Names of 3 relevant images selected from the following: \n  -${VALID_IMAGE_NAMES.join("\n  -")}`,
+        },
+      ],
+      followUp: false,
+      handler: async ({
+        japanese,
+        english,
+        image_names,
+      }: {
+        japanese: string[];
+        english: string[];
+        image_names: string[];
+      }) => {
+        const finalCorrectedImages = validateAndCorrectImageNames(image_names);
+        const newHaiku = {
+          japanese: japanese || [],
+          english: english || [],
+          image_names: finalCorrectedImages || [],
+          selectedImage: finalCorrectedImages?.[0] || null,
+        };
+        setHaikus((prev) =>
+          [newHaiku, ...prev].filter((h) => h.english[0] !== "A placeholder verse—"),
+        );
+        setActiveIndex(haikus.length - 1);
+        setIsJustApplied(true);
+        setTimeout(() => setIsJustApplied(false), 600);
+        return "Haiku generated.";
       },
-      {
-        name: "english",
-        type: "string[]",
+      render: ({ args: generatedHaiku }: { args: Partial<GenerateHaiku> }) => {
+        return <HaikuCard generatedHaiku={generatedHaiku} setHaikus={setHaikus} haikus={haikus} />;
       },
-      {
-        name: "image_names",
-        type: "string[]",
-        description: `Names of 3 relevant images selected from the following: \n  -${VALID_IMAGE_NAMES.join('\n  -')}`,
-      },
-    ],
-    followUp: false,
-    handler: async ({ japanese, english, image_names }: { japanese: string[], english: string[], image_names: string[] }) => {
-      const finalCorrectedImages = validateAndCorrectImageNames(image_names);
-      const newHaiku = {
-        japanese: japanese || [],
-        english: english || [],
-        image_names: finalCorrectedImages || [],
-        selectedImage: finalCorrectedImages?.[0] || null,
-      };
-      setHaikus(prev => [newHaiku, ...prev].filter(h => h.english[0] !== "A placeholder verse—"));
-      setActiveIndex(haikus.length - 1);
-      setIsJustApplied(true);
-      setTimeout(() => setIsJustApplied(false), 600);
-      return "Haiku generated.";
     },
-    render: ({ args: generatedHaiku }: { args: Partial<GenerateHaiku> }) => {
-      return (
-        <HaikuCard generatedHaiku={generatedHaiku} setHaikus={setHaikus} haikus={haikus} />
-      );
-    },
-  }, [haikus]);
+    [haikus],
+  );
 
   const { isMobile } = useMobileView();
 
   return (
     <div className="flex h-full w-full">
-      <Thumbnails haikus={haikus} activeIndex={activeIndex} setActiveIndex={setActiveIndex} isMobile={isMobile} />
+      <Thumbnails
+        haikus={haikus}
+        activeIndex={activeIndex}
+        setActiveIndex={setActiveIndex}
+        isMobile={isMobile}
+      />
 
       {/* Main Display */}
-      <div className={`flex-1 flex items-center justify-center h-full ${isMobile
-        ? 'px-6'
-        : 'p-8'
-        }`} style={{ marginLeft: isMobile ? '0' : '-48px' }}>
+      <div
+        className={`flex-1 flex items-center justify-center h-full ${isMobile ? "px-6" : "p-8"}`}
+        style={{ marginLeft: isMobile ? "0" : "-48px" }}
+      >
         <div className="haiku-stack w-full max-w-lg">
-          {haikus.map((haiku, index) => (
-            (haikus.length == 1 || index == activeIndex) && (
-
-              <div
-                key={index}
-                data-testid="main-haiku-display"
-                className={`haiku-card animated-fade-in ${isJustApplied && index === activeIndex ? 'applied-flash' : ''} ${index === activeIndex ? 'active' : ''}`}
-                style={{
-                  zIndex: index === activeIndex ? haikus.length : index,
-                  transform: `translateY(${index === activeIndex ? '0' : `${(index - activeIndex) * 20}px`}) scale(${index === activeIndex ? '1' : '0.95'})`,
-                }}
-              >
-                {haiku.japanese.map((line, lineIndex) => (
-                  <div
-                    data-testid="main-haiku-line"
-                    className={`flex items-start mb-4 haiku-line ${isMobile
-                      ? 'flex-col gap-1'
-                      : 'gap-4'
+          {haikus.map(
+            (haiku, index) =>
+              (haikus.length == 1 || index == activeIndex) && (
+                <div
+                  key={index}
+                  data-testid="main-haiku-display"
+                  className={`haiku-card animated-fade-in ${isJustApplied && index === activeIndex ? "applied-flash" : ""} ${index === activeIndex ? "active" : ""}`}
+                  style={{
+                    zIndex: index === activeIndex ? haikus.length : index,
+                    transform: `translateY(${index === activeIndex ? "0" : `${(index - activeIndex) * 20}px`}) scale(${index === activeIndex ? "1" : "0.95"})`,
+                  }}
+                >
+                  {haiku.japanese.map((line, lineIndex) => (
+                    <div
+                      data-testid="main-haiku-line"
+                      className={`flex items-start mb-4 haiku-line ${
+                        isMobile ? "flex-col gap-1" : "gap-4"
                       }`}
-                    key={lineIndex}
-                    style={{ animationDelay: `${lineIndex * 0.1}s` }}
-                  >
-                    <p className={`font-bold text-gray-600 w-auto ${isMobile
-                      ? 'text-2xl leading-tight'
-                      : 'text-4xl'
-                      }`}>
-                      {line}
-                    </p>
-                    <p className={`font-light text-gray-500 w-auto ${isMobile
-                      ? 'text-sm ml-2'
-                      : 'text-base'
-                      }`}>
-                      {haiku.english?.[lineIndex]}
-                    </p>
-                  </div>
-                ))}
-                {haiku.image_names && haiku.image_names.length === 3 && (
-                  <div className={`flex justify-center ${isMobile
-                    ? 'mt-4 gap-2 flex-wrap'
-                    : 'mt-6 gap-4'
-                    }`}>
-                    {haiku.image_names.map((imageName, imgIndex) => (
-                      <img
-                        key={imageName}
-                        src={`/images/${imageName}`}
-                        alt={imageName || ""}
-                        style={{
-                          width: isMobile ? '90px' : '130px',
-                          height: isMobile ? '90px' : '130px',
-                          objectFit: 'cover',
-                          marginTop: 0,
-                        }}
-                        className={(haiku.selectedImage === imageName) ? `suggestion-card-image-focus ` : `haiku-card-image`}
-                        onClick={() => setHaikus((prevHaikus) => {
-                          return prevHaikus.map((h, idx) => {
-                            if (idx === index) {
-                              return { ...h, selectedImage: imageName }
-                            } else {
-                              return { ...h }
-                            }
-                          })
-                        })}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )
-          ))}
+                      key={lineIndex}
+                      style={{ animationDelay: `${lineIndex * 0.1}s` }}
+                    >
+                      <p
+                        className={`font-bold text-gray-600 w-auto ${
+                          isMobile ? "text-2xl leading-tight" : "text-4xl"
+                        }`}
+                      >
+                        {line}
+                      </p>
+                      <p
+                        className={`font-light text-gray-500 w-auto ${
+                          isMobile ? "text-sm ml-2" : "text-base"
+                        }`}
+                      >
+                        {haiku.english?.[lineIndex]}
+                      </p>
+                    </div>
+                  ))}
+                  {haiku.image_names && haiku.image_names.length === 3 && (
+                    <div
+                      className={`flex justify-center ${
+                        isMobile ? "mt-4 gap-2 flex-wrap" : "mt-6 gap-4"
+                      }`}
+                    >
+                      {haiku.image_names.map((imageName, imgIndex) => (
+                        <img
+                          key={imageName}
+                          src={`/images/${imageName}`}
+                          alt={imageName || ""}
+                          style={{
+                            width: isMobile ? "90px" : "130px",
+                            height: isMobile ? "90px" : "130px",
+                            objectFit: "cover",
+                            marginTop: 0,
+                          }}
+                          className={
+                            haiku.selectedImage === imageName
+                              ? `suggestion-card-image-focus `
+                              : `haiku-card-image`
+                          }
+                          onClick={() =>
+                            setHaikus((prevHaikus) => {
+                              return prevHaikus.map((h, idx) => {
+                                if (idx === index) {
+                                  return { ...h, selectedImage: imageName };
+                                } else {
+                                  return { ...h };
+                                }
+                              });
+                            })
+                          }
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ),
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function Thumbnails({ haikus, activeIndex, setActiveIndex, isMobile }: { haikus: Haiku[], activeIndex: number, setActiveIndex: (index: number) => void, isMobile: boolean }) {
-  if (haikus.length == 0 || isMobile) { return null }
+function Thumbnails({
+  haikus,
+  activeIndex,
+  setActiveIndex,
+  isMobile,
+}: {
+  haikus: Haiku[];
+  activeIndex: number;
+  setActiveIndex: (index: number) => void;
+  isMobile: boolean;
+}) {
+  if (haikus.length == 0 || isMobile) {
+    return null;
+  }
   return (
     <div className="w-40 p-4 border-r border-gray-200 overflow-y-auto overflow-x-hidden">
       {haikus.map((haiku, index) => (
         <div
           key={index}
           data-testid="thumbnail-haiku"
-          className={`haiku-card animated-fade-in mb-4 cursor-pointer ${index === activeIndex ? 'active' : ''}`}
+          className={`haiku-card animated-fade-in mb-4 cursor-pointer ${index === activeIndex ? "active" : ""}`}
           style={{
-            width: '80px',
-            transform: 'scale(0.2)',
-            transformOrigin: 'top left',
-            marginBottom: '-340px',
+            width: "80px",
+            transform: "scale(0.2)",
+            transformOrigin: "top left",
+            marginBottom: "-340px",
             opacity: index === activeIndex ? 1 : 0.5,
-            transition: 'opacity 0.2s',
+            transition: "opacity 0.2s",
           }}
           onClick={() => setActiveIndex(index)}
         >
           {haiku.japanese.map((line, lineIndex) => (
-            <div
-              className="flex items-start gap-2 mb-2 haiku-line"
-              key={lineIndex}
-            >
+            <div className="flex items-start gap-2 mb-2 haiku-line" key={lineIndex}>
               <p className="text-2xl font-bold text-gray-600 w-auto">{line}</p>
-              <p className="text-xs font-light text-gray-500 w-auto">{haiku.english?.[lineIndex]}</p>
+              <p className="text-xs font-light text-gray-500 w-auto">
+                {haiku.english?.[lineIndex]}
+              </p>
             </div>
           ))}
           {haiku.image_names && haiku.image_names.length === 3 && (
@@ -439,9 +505,9 @@ function Thumbnails({ haikus, activeIndex, setActiveIndex, isMobile }: { haikus:
               {haiku.image_names.map((imageName, imgIndex) => (
                 <img
                   style={{
-                    width: '110px',
-                    height: '110px',
-                    objectFit: 'cover',
+                    width: "110px",
+                    height: "110px",
+                    objectFit: "cover",
                   }}
                   key={imageName}
                   src={`/images/${imageName}`}
@@ -454,6 +520,5 @@ function Thumbnails({ haikus, activeIndex, setActiveIndex, isMobile }: { haikus:
         </div>
       ))}
     </div>
-  )
-
+  );
 }
