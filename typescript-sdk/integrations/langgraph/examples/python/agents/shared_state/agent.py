@@ -116,6 +116,8 @@ async def start_node(state: Dict[str, Any], config: RunnableConfig):
             "ingredients": [{"icon": "🍴", "name": "Sample Ingredient", "amount": "1 unit"}],
             "instructions": ["First step instruction"]
         }
+    if "tools" not in state:
+        state["tools"] = []
         # Emit the initial state to ensure it's properly shared with the frontend
         await adispatch_custom_event(
             "manually_emit_intermediate_state",
@@ -127,7 +129,8 @@ async def start_node(state: Dict[str, Any], config: RunnableConfig):
         goto="chat_node",
         update={
             "messages": state["messages"],
-            "recipe": state["recipe"]
+            "recipe": state["recipe"],
+            "tools": state["tools"]
         }
     )
 

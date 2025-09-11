@@ -56,12 +56,15 @@ async def start_node(state: AgentState, config: RunnableConfig): # pylint: disab
 
     if "steps" not in state:
         state["steps"] = []
+    if "tools" not in state:
+        state["tools"] = []
 
     return Command(
         goto="chat_node",
         update={
             "messages": state["messages"],
-            "steps": state["steps"]
+            "steps": state["steps"],
+            "tools": state["tools"]
         }
     )
 

@@ -49,6 +49,8 @@ async def start_node(state: Dict[str, Any], config: RunnableConfig): # pylint: d
     # Initialize steps list if not exists
     if "steps" not in state:
         state["steps"] = []
+    if "tools" not in state:
+        state["tools"] = []
 
     # Return command to route to chat_node
     return Command(
@@ -56,6 +58,7 @@ async def start_node(state: Dict[str, Any], config: RunnableConfig): # pylint: d
         update={
             "messages": state["messages"],
             "steps": state["steps"],
+            "tools": state["tools"]
         }
     )
 
