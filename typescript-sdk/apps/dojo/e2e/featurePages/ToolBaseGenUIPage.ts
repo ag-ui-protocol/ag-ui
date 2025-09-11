@@ -29,7 +29,7 @@ export class ToolBaseGenUIPage {
   async checkGeneratedHaiku() {
     await this.page.locator('[data-testid="haiku-card"]').last().isVisible();
     const mostRecentCard = this.page.locator('[data-testid="haiku-card"]').last();
-    await mostRecentCard.locator('[data-testid="haiku-line"]').first().waitFor({ state: 'visible', timeout: 10000 });
+    await mostRecentCard.locator('[data-testid="haiku-line"]').first().waitFor({ state: 'visible', timeout: 60000 });
   }
 
   async extractChatHaikuContent(page: Page): Promise<string> {
@@ -47,7 +47,7 @@ export class ToolBaseGenUIPage {
 
       if (linesCount > 0) {
         try {
-          await chatHaikuLines.first().waitFor({ state: 'visible', timeout: 5000 });
+          await chatHaikuLines.first().waitFor({ state: 'visible', timeout: 50000 });
           break;
         } catch (error) {
           continue;

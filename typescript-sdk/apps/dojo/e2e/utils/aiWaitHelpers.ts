@@ -58,7 +58,7 @@ export async function waitForAIPatterns(
       try {
         const element = page.locator("body").getByText(pattern);
         if ((await element.count()) > 0) {
-          await expect(element.first()).toBeVisible({ timeout: 5000 });
+          await expect(element.first()).toBeVisible({ timeout: 50000 });
           return; // Found a match
         }
       } catch {

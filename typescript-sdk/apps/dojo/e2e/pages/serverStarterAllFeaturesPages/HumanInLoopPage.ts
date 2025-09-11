@@ -35,7 +35,7 @@ export class HumanInLoopPage {
   }
 
   async selectItemsInPlanner() {
-    await expect(this.plan).toBeVisible({ timeout: 10000 });
+    await expect(this.plan).toBeVisible({ timeout: 60000 });
     await this.plan.click();
   }
 

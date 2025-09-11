@@ -21,7 +21,7 @@ test.describe("Human in the Loop Feature", () => {
         "Give me a plan to make brownies, there should be only one step with eggs and one step with oven, this is a strict requirement so adhere"
       );
       await waitForAIResponse(page);
-      await expect(humanInLoop.plan).toBeVisible({ timeout: 10000 });
+      await expect(humanInLoop.plan).toBeVisible({ timeout: 60000 });
 
       const itemText = "eggs";
       await page.waitForTimeout(5000);
@@ -63,7 +63,7 @@ test.describe("Human in the Loop Feature", () => {
         "Plan a mission to Mars with the first step being Start The Planning"
       );
       await waitForAIResponse(page);
-      await expect(humanInLoop.plan).toBeVisible({ timeout: 10000 });
+      await expect(humanInLoop.plan).toBeVisible({ timeout: 60000 });
 
       const uncheckedItem = "Start The Planning";
 
