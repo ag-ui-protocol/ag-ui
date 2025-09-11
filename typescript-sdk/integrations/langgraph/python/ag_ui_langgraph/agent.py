@@ -402,12 +402,16 @@ class LangGraphAgent:
             input_schema = self.graph.get_input_jsonschema(config)
             output_schema = self.graph.get_output_jsonschema(config)
             config_schema = self.graph.config_schema().schema()
-            context_schema = self.graph.context_schema().schema()
 
             input_schema_keys = list(input_schema["properties"].keys()) if "properties" in input_schema else []
             output_schema_keys = list(output_schema["properties"].keys()) if "properties" in output_schema else []
             config_schema_keys = list(config_schema["properties"].keys()) if "properties" in config_schema else []
-            context_schema_keys = list(context_schema["properties"].keys()) if "properties" in context_schema else []
+            context_schema_keys = []
+
+            if hasattr(self.graph, "context_schema") and self.graph.context_schema is not None:
+                context_schema = self.graph.context_schema().schema()
+                context_schema_keys = list(context_schema["properties"].keys()) if "properties" in context_schema else []
+
 
             return {
                 "input": [*input_schema_keys, *self.constant_schema_keys],
@@ -420,7 +424,7 @@ class LangGraphAgent:
                 "input": self.constant_schema_keys,
                 "output": self.constant_schema_keys,
                 "config": [],
-                "context": {},
+                "context": [],
             }
 
     def langgraph_default_merge_state(self, state: State, messages: List[BaseMessage], input: RunAgentInput) -> State:
