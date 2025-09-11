@@ -156,15 +156,15 @@ void main() {
             .first;
         expect(thinkingStart.title, equals('Analyzing request'));
         
-        // ThinkingContentEvent doesn't exist, use the raw events
+        // Use the new ThinkingContentEvent class
         final thinkingEvents = decodedEvents
-            .where((e) => e.eventType.value == 'THINKING_CONTENT')
+            .whereType<ThinkingContentEvent>()
             .toList();
         expect(thinkingEvents.length, equals(2));
         
-        // Extract delta from raw JSON
+        // Extract delta from the events
         final fullContent = thinkingEvents
-            .map((e) => (e.toJson()['delta'] ?? '') as String)
+            .map((e) => e.delta)
             .join();
         expect(fullContent, contains('Let me think about this'));
         expect(fullContent, contains('The user is asking about'));
