@@ -1,6 +1,9 @@
 import { test, expect, retryOnAIFailure, } from "../../test-isolation-helper";
 import { PredictiveStateUpdatesPage } from "../../pages/serverStarterAllFeaturesPages/PredictiveStateUpdatesPage";
 
+// Skip all tests in this file when CLOUD_AGENTS is set
+test.skip(!!process.env.CLOUD_AGENTS, 'Skipping Server Starter all features tests when CLOUD_AGENTS is set');
+
 test.describe("Predictive Status Updates Feature", () => {
   test("[Server Starter all features] should interact with agent and approve asked changes", async ({ page, }) => {
     await retryOnAIFailure(async () => {

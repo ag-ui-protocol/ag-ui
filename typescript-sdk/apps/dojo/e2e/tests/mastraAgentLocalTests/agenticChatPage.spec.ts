@@ -6,6 +6,9 @@ import {
 } from "../../test-isolation-helper";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
 
+// Skip all tests in this file when CLOUD_AGENTS is set
+test.skip(!!process.env.CLOUD_AGENTS, 'Skipping MastraAgentLocal tests when CLOUD_AGENTS is set');
+
 test("[MastraAgentLocal] Agentic Chat sends and receives a message", async ({
   page,
 }) => {
