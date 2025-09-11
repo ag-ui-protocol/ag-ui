@@ -163,7 +163,7 @@ Open `apps/dojo/package.json` and add the package `@ag-ui/openai-server`:
     "@ag-ui/server-starter": "workspace:*",
     "@ag-ui/server-starter-all-features": "workspace:*",
     "@ag-ui/vercel-ai-sdk": "workspace:*",
-    "@ag-ui/openai-server": "workspace:*", <- Add this line
+    "@ag-ui/openai-server": "workspace:*", // Add this line
 
   ... rest of package.json
 }
@@ -390,6 +390,8 @@ from ag_ui.core import (
     RunStartedEvent,
     RunFinishedEvent,
     RunErrorEvent,
+    TextMessageChunkEvent,
+    ToolCallChunkEvent,
 )
 from ag_ui.encoder import EventEncoder
 from openai import OpenAI
@@ -451,22 +453,26 @@ async def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):
             for chunk in stream:
                 # Handle text content chunks
                 if chunk.choices[0].delta.content:
-                    yield encoder.encode({
-                        "type": EventType.TEXT_MESSAGE_CHUNK,
-                        "message_id": message_id,
-                        "delta": chunk.choices[0].delta.content,
-                    })
+                    yield encoder.encode(
+                        TextMessageChunkEvent(
+                            type=EventType.TEXT_MESSAGE_CHUNK,
+                            message_id=message_id,
+                            delta=chunk.choices[0].delta.content,
+                        )
+                    )
                 # Handle tool call chunks
                 elif chunk.choices[0].delta.tool_calls:
                     tool_call = chunk.choices[0].delta.tool_calls[0]
 
-                    yield encoder.encode({
-                        "type": EventType.TOOL_CALL_CHUNK,
-                        "tool_call_id": tool_call.id,
-                        "tool_call_name": tool_call.function.name if tool_call.function else None,
-                        "parent_message_id": message_id,
-                        "delta": tool_call.function.arguments if tool_call.function else None,
-                    })
+                    yield encoder.encode(
+                        ToolCallChunkEvent(
+                            type=EventType.TOOL_CALL_CHUNK,
+                            tool_call_id=tool_call.id,
+                            tool_call_name=tool_call.function.name if tool_call.function else None,
+                            parent_message_id=message_id,
+                            delta=tool_call.function.arguments if tool_call.function else None,
+                        )
+                    )
 
             yield encoder.encode(
                 RunFinishedEvent(
@@ -516,7 +522,7 @@ Let's break down what your server is doing:
 
 Test your endpoint with:
 ```bash
-curl -X POST http://localhost:8000/awp \                
+curl -X POST http://localhost:8000/awp \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -d '{
