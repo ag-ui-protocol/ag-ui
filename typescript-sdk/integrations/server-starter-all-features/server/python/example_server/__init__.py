@@ -33,6 +33,10 @@ app.post("/shared_state")(shared_state_endpoint)
 app.post("/predictive_state_updates")(predictive_state_updates_endpoint)
 
 
+# Health check endpoint
+from .health import router as health_router
+app.include_router(health_router)
+
 def main():
     """Run the uvicorn server."""
     port = int(os.getenv("PORT", "8000"))

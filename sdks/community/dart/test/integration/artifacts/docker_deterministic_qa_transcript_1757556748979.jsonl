@@ -1,0 +1,16 @@
+{"type":"RUN_STARTED","timestamp":"2025-09-10T22:12:28.979954","data":{"type":"RUN_STARTED","threadId":"test-thread-1757556745945","runId":"test-run-1757556745945"}}
+{"type":"TEXT_MESSAGE_START","timestamp":"2025-09-10T22:12:28.980027","data":{"type":"TEXT_MESSAGE_START"}}
+{"type":"TEXT_MESSAGE_CONTENT","timestamp":"2025-09-10T22:12:28.980050","data":{"type":"TEXT_MESSAGE_CONTENT"}}
+{"type":"TEXT_MESSAGE_CONTENT","timestamp":"2025-09-10T22:12:28.980069","data":{"type":"TEXT_MESSAGE_CONTENT"}}
+{"type":"TEXT_MESSAGE_CONTENT","timestamp":"2025-09-10T22:12:28.980088","data":{"type":"TEXT_MESSAGE_CONTENT"}}
+{"type":"TEXT_MESSAGE_CONTENT","timestamp":"2025-09-10T22:12:28.980106","data":{"type":"TEXT_MESSAGE_CONTENT"}}
+{"type":"TEXT_MESSAGE_CONTENT","timestamp":"2025-09-10T22:12:28.980125","data":{"type":"TEXT_MESSAGE_CONTENT"}}
+{"type":"TEXT_MESSAGE_CONTENT","timestamp":"2025-09-10T22:12:28.980143","data":{"type":"TEXT_MESSAGE_CONTENT"}}
+{"type":"TEXT_MESSAGE_CONTENT","timestamp":"2025-09-10T22:12:28.980161","data":{"type":"TEXT_MESSAGE_CONTENT"}}
+{"type":"TEXT_MESSAGE_CONTENT","timestamp":"2025-09-10T22:12:28.980179","data":{"type":"TEXT_MESSAGE_CONTENT"}}
+{"type":"TEXT_MESSAGE_CONTENT","timestamp":"2025-09-10T22:12:28.980199","data":{"type":"TEXT_MESSAGE_CONTENT"}}
+{"type":"TEXT_MESSAGE_CONTENT","timestamp":"2025-09-10T22:12:28.980216","data":{"type":"TEXT_MESSAGE_CONTENT"}}
+{"type":"TEXT_MESSAGE_CONTENT","timestamp":"2025-09-10T22:12:28.980234","data":{"type":"TEXT_MESSAGE_CONTENT"}}
+{"type":"TEXT_MESSAGE_CONTENT","timestamp":"2025-09-10T22:12:28.980252","data":{"type":"TEXT_MESSAGE_CONTENT"}}
+{"type":"TEXT_MESSAGE_END","timestamp":"2025-09-10T22:12:28.980270","data":{"type":"TEXT_MESSAGE_END"}}
+{"type":"RUN_FINISHED","timestamp":"2025-09-10T22:12:28.980287","data":{"type":"RUN_FINISHED","threadId":"test-thread-1757556745945","runId":"test-run-1757556745945"}}
