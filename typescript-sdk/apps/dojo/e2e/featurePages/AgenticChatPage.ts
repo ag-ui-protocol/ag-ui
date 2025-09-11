@@ -115,28 +115,28 @@ export class AgenticChatPage {
     const agentMessage = this.page.locator(".copilotKitAssistantMessage", {
       hasText: expectedText,
     });
-    await expect(agentMessage.last()).toBeVisible({ timeout: 60000 });
+    await expect(agentMessage.last()).toBeVisible({ timeout: 10000 });
   }
 
   async assertAgentReplyContains(expectedText: string) {
     const agentMessage = this.page.locator(".copilotKitAssistantMessage").last();
-    await expect(agentMessage).toContainText(expectedText, { timeout: 60000 });
+    await expect(agentMessage).toContainText(expectedText, { timeout: 10000 });
   }
 
   async assertWeatherResponseStructure() {
     const agentMessage = this.page.locator(".copilotKitAssistantMessage").last();
 
     // Check for main weather response structure
-    await expect(agentMessage).toContainText("The current weather in Islamabad is as follows:", { timeout: 60000 });
+    await expect(agentMessage).toContainText("The current weather in Islamabad is as follows:", { timeout: 10000 });
 
     // Check for temperature information
-    await expect(agentMessage).toContainText("Temperature:", { timeout: 50000 });
+    await expect(agentMessage).toContainText("Temperature:", { timeout: 5000 });
     // Check for humidity
-    await expect(agentMessage).toContainText("Humidity:", { timeout: 50000 });
+    await expect(agentMessage).toContainText("Humidity:", { timeout: 5000 });
 
     // Check for wind speed
-    await expect(agentMessage).toContainText("Wind Speed:", { timeout: 50000 });
+    await expect(agentMessage).toContainText("Wind Speed:", { timeout: 5000 });
     // Check for conditions
-    await expect(agentMessage).toContainText("Conditions:", { timeout: 50000 });
+    await expect(agentMessage).toContainText("Conditions:", { timeout: 5000 });
   }
 }

@@ -41,7 +41,7 @@ export class PredictiveStateUpdatesPage {
   }
 
   async getPredictiveResponse() {
-    await expect(this.agentResponsePrompt).toBeVisible({ timeout: 60000 });
+    await expect(this.agentResponsePrompt).toBeVisible({ timeout: 10000 });
     await this.agentResponsePrompt.click();
   }
 

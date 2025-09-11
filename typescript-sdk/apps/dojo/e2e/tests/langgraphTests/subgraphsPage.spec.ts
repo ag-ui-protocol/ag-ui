@@ -18,13 +18,13 @@ test.describe("Subgraphs Travel Agent Feature", () => {
       
       // FEATURE TEST: Wait for supervisor coordination
       await subgraphsPage.waitForSupervisorCoordination();
-      await expect(subgraphsPage.supervisorIndicator).toBeVisible({ timeout: 60000 }).catch(() => {
+      await expect(subgraphsPage.supervisorIndicator).toBeVisible({ timeout: 10000 }).catch(() => {
         console.log("Supervisor indicator not found, verifying through content");
       });
 
       // FEATURE TEST: Flights Agent - verify agent indicator becomes active
       await subgraphsPage.waitForFlightsAgent();
-      await expect(subgraphsPage.flightsAgentIndicator).toBeVisible({ timeout: 60000 }).catch(() => {
+      await expect(subgraphsPage.flightsAgentIndicator).toBeVisible({ timeout: 10000 }).catch(() => {
         console.log("Flights agent indicator not found, checking content instead");
       });
       
@@ -46,7 +46,7 @@ test.describe("Subgraphs Travel Agent Feature", () => {
 
       // FEATURE TEST: Hotels Agent - verify agent indicator switches  
       await subgraphsPage.waitForHotelsAgent();
-      await expect(subgraphsPage.hotelsAgentIndicator).toBeVisible({ timeout: 60000 }).catch(() => {
+      await expect(subgraphsPage.hotelsAgentIndicator).toBeVisible({ timeout: 10000 }).catch(() => {
         console.log("Hotels agent indicator not found, checking content instead");
       });
       
@@ -67,7 +67,7 @@ test.describe("Subgraphs Travel Agent Feature", () => {
 
       // FEATURE TEST: Experiences Agent - verify agent indicator becomes active
       await subgraphsPage.waitForExperiencesAgent();
-      await expect(subgraphsPage.experiencesAgentIndicator).toBeVisible({ timeout: 60000 }).catch(() => {
+      await expect(subgraphsPage.experiencesAgentIndicator).toBeVisible({ timeout: 10000 }).catch(() => {
         console.log("Experiences agent indicator not found, checking content instead");
       });
       
@@ -90,13 +90,13 @@ test.describe("Subgraphs Travel Agent Feature", () => {
       
       // FEATURE TEST: Wait for supervisor coordination
       await subgraphsPage.waitForSupervisorCoordination();
-      await expect(subgraphsPage.supervisorIndicator).toBeVisible({ timeout: 60000 }).catch(() => {
+      await expect(subgraphsPage.supervisorIndicator).toBeVisible({ timeout: 10000 }).catch(() => {
         console.log("Supervisor indicator not found, verifying through content");
       });
 
       // FEATURE TEST: Flights Agent - verify agent indicator becomes active
       await subgraphsPage.waitForFlightsAgent();
-      await expect(subgraphsPage.flightsAgentIndicator).toBeVisible({ timeout: 60000 }).catch(() => {
+      await expect(subgraphsPage.flightsAgentIndicator).toBeVisible({ timeout: 10000 }).catch(() => {
         console.log("Flights agent indicator not found, checking content instead");
       });
       
@@ -114,7 +114,7 @@ test.describe("Subgraphs Travel Agent Feature", () => {
 
       // FEATURE TEST: Hotels Agent - verify agent indicator switches  
       await subgraphsPage.waitForHotelsAgent();
-      await expect(subgraphsPage.hotelsAgentIndicator).toBeVisible({ timeout: 60000 }).catch(() => {
+      await expect(subgraphsPage.hotelsAgentIndicator).toBeVisible({ timeout: 10000 }).catch(() => {
         console.log("Hotels agent indicator not found, checking content instead");
       });
       
@@ -130,7 +130,7 @@ test.describe("Subgraphs Travel Agent Feature", () => {
 
       // FEATURE TEST: Experiences Agent - verify agent indicator becomes active
       await subgraphsPage.waitForExperiencesAgent();
-      await expect(subgraphsPage.experiencesAgentIndicator).toBeVisible({ timeout: 60000 }).catch(() => {
+      await expect(subgraphsPage.experiencesAgentIndicator).toBeVisible({ timeout: 10000 }).catch(() => {
         console.log("Experiences agent indicator not found, checking content instead");
       });
 
