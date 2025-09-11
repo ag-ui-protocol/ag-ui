@@ -21,7 +21,7 @@ langchain-experimental = ">=0.0.11"
 langchain-google-genai = ">=2.1.9"
 langchain-openai = ">=0.0.1"
 langgraph = "^0.6.1"
-ag-ui-langgraph = { version = "0.0.10", extras = ["fastapi"] }
+ag-ui-langgraph = { version = "0.0.12a0", extras = ["fastapi"] }
 python-dotenv = "^1.0.0"
 fastapi = "^0.115.12"
 
