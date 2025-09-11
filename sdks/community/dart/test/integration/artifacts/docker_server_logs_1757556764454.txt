@@ -1,0 +1,15 @@
+[STDERR] INFO:     Will watch for changes in these directories: ['/app']
+
+[STDERR] INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [1] using StatReload
+
+[STDERR] INFO:     Started server process [12]
+INFO:     Waiting for application startup.
+
+[STDERR] INFO:     Application startup complete.
+
+[STDOUT] INFO:     192.168.65.1:48080 - "GET /docs HTTP/1.1" 200 OK
+
+[STDOUT] INFO:     192.168.65.1:18888 - "POST /agentic_chat HTTP/1.1" 200 OK
+
+[STDOUT] INFO:     192.168.65.1:38017 - "POST /agentic_chat HTTP/1.1" 200 OK

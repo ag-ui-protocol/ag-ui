@@ -138,10 +138,12 @@ void main() {
           'type': 'MESSAGES_SNAPSHOT',
           'messages': [
             {
+              'id': 'msg-1',
               'role': 'user',
               'content': 'Hello',
             },
             {
+              'id': 'msg-2',
               'role': 'assistant',
               'content': 'Hi there!',
             },
@@ -153,8 +155,10 @@ void main() {
         expect(event, isA<MessagesSnapshotEvent>());
         final messagesEvent = event as MessagesSnapshotEvent;
         expect(messagesEvent.messages.length, equals(2));
+        expect(messagesEvent.messages[0].id, equals('msg-1'));
         expect(messagesEvent.messages[0].role, equals(MessageRole.user));
         expect(messagesEvent.messages[0].content, equals('Hello'));
+        expect(messagesEvent.messages[1].id, equals('msg-2'));
         expect(messagesEvent.messages[1].role, equals(MessageRole.assistant));
         expect(messagesEvent.messages[1].content, equals('Hi there!'));
       });

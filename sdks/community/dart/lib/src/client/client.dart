@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:meta/meta.dart';
 
 import '../encoder/client_codec.dart' as codec;
 import '../encoder/stream_adapter.dart' show EventStreamAdapter;
@@ -271,7 +272,10 @@ class AgUiClient {
   }
 
   /// Send an HTTP request with retries
-  Future<http.Response> _sendRequest(
+  /// 
+  /// Exposed for testing HTTP retry logic
+  @visibleForTesting
+  Future<http.Response> sendRequest(
     String method,
     String endpoint, {
     Map<String, dynamic>? body,
@@ -466,22 +470,34 @@ class SimpleRunAgentInput {
   final String? threadId;
   final String? runId;
   final List<Message>? messages;
+  final List<Tool>? tools;
+  final List<Context>? context;
+  final dynamic state;
   final Map<String, dynamic>? config;
   final Map<String, dynamic>? metadata;
+  final dynamic forwardedProps;
 
   const SimpleRunAgentInput({
     this.threadId,
     this.runId,
     this.messages,
+    this.tools,
+    this.context,
+    this.state,
     this.config,
     this.metadata,
+    this.forwardedProps,
   });
 
   Map<String, dynamic> toJson() {
     return {
       if (threadId != null) 'thread_id': threadId,
       if (runId != null) 'run_id': runId,
-      if (messages != null) 'messages': messages!.map((m) => m.toJson()).toList(),
+      'state': state ?? {},
+      'messages': messages?.map((m) => m.toJson()).toList() ?? [],
+      'tools': tools?.map((t) => t.toJson()).toList() ?? [],
+      'context': context?.map((c) => c.toJson()).toList() ?? [],
+      'forwardedProps': forwardedProps ?? {},
       if (config != null) 'config': config,
       if (metadata != null) 'metadata': metadata,
     };
