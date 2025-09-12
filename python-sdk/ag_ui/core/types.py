@@ -44,6 +44,7 @@ class BaseMessage(ConfiguredBaseModel):
     role: str
     content: Optional[str] = None
     name: Optional[str] = None
+    timestamp: Optional[int] = None
 
 
 class DeveloperMessage(BaseMessage):
@@ -88,13 +89,19 @@ class ToolMessage(ConfiguredBaseModel):
     tool_call_id: str
     error: Optional[str] = None
 
+class ThinkingMessage(BaseMessage):
+    """
+    A thinking message.
+    """
+    role: Literal["thinking"] = "thinking"
+    content: str
 
 Message = Annotated[
-    Union[DeveloperMessage, SystemMessage, AssistantMessage, UserMessage, ToolMessage],
+    Union[DeveloperMessage, SystemMessage, AssistantMessage, UserMessage, ToolMessage, ThinkingMessage],
     Field(discriminator="role")
 ]
 
-Role = Literal["developer", "system", "assistant", "user", "tool"]
+Role = Literal["developer", "system", "assistant", "user", "tool", "thinking"]
 
 
 class Context(ConfiguredBaseModel):

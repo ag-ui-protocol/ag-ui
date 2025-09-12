@@ -10,6 +10,9 @@ from ag_ui.core.events import (
     TextMessageStartEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
+    ThinkingTextMessageStartEvent,
+    ThinkingTextMessageContentEvent,
+    ThinkingTextMessageEndEvent,
     ToolCallStartEvent,
     ToolCallArgsEvent,
     ToolCallEndEvent,
@@ -89,6 +92,105 @@ class TestEvents(unittest.TestCase):
         serialized = event.model_dump(by_alias=True)
         self.assertEqual(serialized["type"], "TEXT_MESSAGE_END")
         self.assertEqual(serialized["messageId"], "msg_123")
+
+    def test_thinking_text_message_start(self):
+        """Test creating and serializing a ThinkingTextMessageStartEvent event"""
+        event = ThinkingTextMessageStartEvent(
+            thinking_id="think_123",
+            timestamp=1648214400000
+        )
+        self.assertEqual(event.thinking_id, "think_123")
+        
+        # Test serialization
+        serialized = event.model_dump(by_alias=True)
+        self.assertEqual(serialized["type"], "THINKING_TEXT_MESSAGE_START")
+        self.assertEqual(serialized["thinkingId"], "think_123")
+        self.assertEqual(serialized["timestamp"], 1648214400000)
+
+    def test_thinking_text_message_content(self):
+        """Test creating and serializing a ThinkingTextMessageContentEvent event"""
+        event = ThinkingTextMessageContentEvent(
+            thinking_id="think_123",
+            delta="Let me think about this...",
+            timestamp=1648214400000
+        )
+        self.assertEqual(event.thinking_id, "think_123")
+        self.assertEqual(event.delta, "Let me think about this...")
+        
+        # Test serialization
+        serialized = event.model_dump(by_alias=True)
+        self.assertEqual(serialized["type"], "THINKING_TEXT_MESSAGE_CONTENT")
+        self.assertEqual(serialized["thinkingId"], "think_123")
+        self.assertEqual(serialized["delta"], "Let me think about this...")
+
+    def test_thinking_text_message_end(self):
+        """Test creating and serializing a ThinkingTextMessageEndEvent event"""
+        event = ThinkingTextMessageEndEvent(
+            thinking_id="think_123",
+            timestamp=1648214400000
+        )
+        self.assertEqual(event.thinking_id, "think_123")
+        
+        # Test serialization
+        serialized = event.model_dump(by_alias=True)
+        self.assertEqual(serialized["type"], "THINKING_TEXT_MESSAGE_END")
+        self.assertEqual(serialized["thinkingId"], "think_123")
+
+    def test_thinking_message_event_lifecycle(self):
+        """Test a complete thinking message event lifecycle"""
+        thinking_id = "think_lifecycle_456"
+        timestamp_base = 1648214400000
+        
+        # Start event
+        start_event = ThinkingTextMessageStartEvent(
+            thinking_id=thinking_id,
+            timestamp=timestamp_base
+        )
+        
+        # Content events
+        content_events = [
+            ThinkingTextMessageContentEvent(
+                thinking_id=thinking_id,
+                delta="First, I need to understand the problem...",
+                timestamp=timestamp_base + 100
+            ),
+            ThinkingTextMessageContentEvent(
+                thinking_id=thinking_id,
+                delta=" Then I should consider the constraints...",
+                timestamp=timestamp_base + 200
+            ),
+            ThinkingTextMessageContentEvent(
+                thinking_id=thinking_id,
+                delta=" Finally, I can formulate a solution.",
+                timestamp=timestamp_base + 300
+            )
+        ]
+        
+        # End event
+        end_event = ThinkingTextMessageEndEvent(
+            thinking_id=thinking_id,
+            timestamp=timestamp_base + 400
+        )
+        
+        # Verify all events have the same thinking_id
+        all_events = [start_event] + content_events + [end_event]
+        for event in all_events:
+            self.assertEqual(event.thinking_id, thinking_id)
+        
+        # Verify event types
+        self.assertEqual(start_event.type, EventType.THINKING_TEXT_MESSAGE_START)
+        for content_event in content_events:
+            self.assertEqual(content_event.type, EventType.THINKING_TEXT_MESSAGE_CONTENT)
+        self.assertEqual(end_event.type, EventType.THINKING_TEXT_MESSAGE_END)
+
+    def test_thinking_content_validation(self):
+        """Test validation constraints for thinking content events"""
+        # Content delta cannot be empty
+        with self.assertRaises(ValueError):
+            ThinkingTextMessageContentEvent(
+                thinking_id="think_invalid",
+                delta=""  # Empty delta, should fail
+            )
 
     def test_tool_call_start(self):
         """Test creating and serializing a ToolCallStartEvent event"""
@@ -328,6 +430,22 @@ class TestEvents(unittest.TestCase):
                 "timestamp": 1648214400000
             },
             {
+                "type": "THINKING_TEXT_MESSAGE_START",
+                "thinkingId": "think_start",
+                "timestamp": 1648214400000
+            },
+            {
+                "type": "THINKING_TEXT_MESSAGE_CONTENT",
+                "thinkingId": "think_content",
+                "delta": "Let me think...",
+                "timestamp": 1648214400000
+            },
+            {
+                "type": "THINKING_TEXT_MESSAGE_END",
+                "thinkingId": "think_end",
+                "timestamp": 1648214400000
+            },
+            {
                 "type": "TOOL_CALL_START",
                 "toolCallId": "call_start",
                 "toolCallName": "get_info",
@@ -349,6 +467,9 @@ class TestEvents(unittest.TestCase):
         expected_types = [
             TextMessageStartEvent,
             TextMessageContentEvent,
+            ThinkingTextMessageStartEvent,
+            ThinkingTextMessageContentEvent,
+            ThinkingTextMessageEndEvent,
             ToolCallStartEvent,
             StateSnapshotEvent,
             RunErrorEvent
@@ -379,6 +500,16 @@ class TestEvents(unittest.TestCase):
             TextMessageContentEvent(
                 message_id="msg_123",
                 delta="Hello, world!"
+            ),
+            ThinkingTextMessageStartEvent(
+                thinking_id="think_123"
+            ),
+            ThinkingTextMessageContentEvent(
+                thinking_id="think_123",
+                delta="Let me consider this..."
+            ),
+            ThinkingTextMessageEndEvent(
+                thinking_id="think_123"
             ),
             ToolCallStartEvent(
                 tool_call_id="call_123",
@@ -419,6 +550,13 @@ class TestEvents(unittest.TestCase):
             elif isinstance(original_event, TextMessageContentEvent):
                 self.assertEqual(deserialized_event.message_id, original_event.message_id)
                 self.assertEqual(deserialized_event.delta, original_event.delta)
+            elif isinstance(original_event, ThinkingTextMessageStartEvent):
+                self.assertEqual(deserialized_event.thinking_id, original_event.thinking_id)
+            elif isinstance(original_event, ThinkingTextMessageContentEvent):
+                self.assertEqual(deserialized_event.thinking_id, original_event.thinking_id)
+                self.assertEqual(deserialized_event.delta, original_event.delta)
+            elif isinstance(original_event, ThinkingTextMessageEndEvent):
+                self.assertEqual(deserialized_event.thinking_id, original_event.thinking_id)
             elif isinstance(original_event, ToolCallStartEvent):
                 self.assertEqual(deserialized_event.tool_call_id, original_event.tool_call_id)
                 self.assertEqual(deserialized_event.tool_call_name, original_event.tool_call_name)
