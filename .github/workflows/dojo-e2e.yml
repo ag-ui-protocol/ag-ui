@@ -8,8 +8,42 @@ on:
 
 jobs:
   e2e:
-    name: E2E Tests
-    runs-on: depot-ubuntu-latest-8
+    name: e2e/${{ matrix.suite }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: smoke
+            test_path: tests/smoke-only
+          - suite: integration
+            test_path: tests/integration
+          - suite: copilotkit-home
+            test_path: tests/copilotkit-home.spec.ts
+          - suite: agno
+            test_path: tests/agnoTests
+          - suite: crew-ai
+            test_path: tests/crewAITests
+          - suite: langgraph
+            test_path: tests/langgraphTests
+          - suite: langgraph-fastapi
+            test_path: tests/langgraphFastAPITests
+          - suite: llama-index
+            test_path: tests/llamaIndexTests
+          - suite: mastra
+            test_path: tests/mastraTests
+          - suite: mastra-agent-local
+            test_path: tests/mastraAgentLocalTests
+          - suite: middleware-starter
+            test_path: tests/middlewareStarterTests
+          - suite: pydantic-ai
+            test_path: tests/pydanticAITests
+          - suite: server-starter
+            test_path: tests/serverStarterTests
+          - suite: server-starter-all
+            test_path: tests/serverStarterAllFeaturesTests
+          - suite: vercel-ai-sdk
+            test_path: tests/vercelAISdkTests
 
     steps:
     - name: Checkout code
@@ -91,16 +125,17 @@ jobs:
           tcp:localhost:8008
           tcp:localhost:8009
 
-    - name: Run tests
+    - name: Run tests – ${{ matrix.suite }}
       working-directory: typescript-sdk/apps/dojo/e2e
       env:
         BASE_URL: http://localhost:9999
-      run: pnpm test
+      run: |
+        pnpm test -- ${{ matrix.test_path }}
 
-    - name: Upload traces
+    - name: Upload traces – ${{ matrix.suite }}
       if: always() # Uploads artifacts even if tests fail
       uses: actions/upload-artifact@v4
       with:
-        name: playwright-traces
+        name: playwright-traces-${{ matrix.suite }}
         path: typescript-sdk/apps/dojo/e2e/test-results/
         retention-days: 7
