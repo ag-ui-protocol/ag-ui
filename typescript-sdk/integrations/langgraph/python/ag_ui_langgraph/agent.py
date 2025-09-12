@@ -1,6 +1,7 @@
 import uuid
 import json
-from typing import Optional, List, Any, Union, AsyncGenerator, Generator
+from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Literal, Dict
+import inspect
 
 from langgraph.graph.state import CompiledStateGraph
 from langchain.schema import BaseMessage, SystemMessage
@@ -335,12 +336,14 @@ class LangGraphAgent:
 
         subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs') if input.forwarded_props else False
 
-        stream = self.graph.astream_events(
-            stream_input,
+        kwargs = self.get_stream_kwargs(
+            input=stream_input,
             config=config,
-            subgraps=bool(subgraphs_stream_enabled),
-            version="v2"
+            subgraphs=bool(subgraphs_stream_enabled),
+            version="v2",
         )
+
+        stream = self.graph.astream_events(**kwargs)
 
         return {
             "stream": stream,
@@ -369,12 +372,14 @@ class LangGraphAgent:
 
         stream_input = self.langgraph_default_merge_state(time_travel_checkpoint.values, [message_checkpoint], input)
         subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs') if input.forwarded_props else False
-        stream = self.graph.astream_events(
-            stream_input,
-            fork,
-            subgraps=bool(subgraphs_stream_enabled),
-            version="v2"
+
+        kwargs = self.get_stream_kwargs(
+            input=stream_input,
+            fork=fork,
+            subgraphs=bool(subgraphs_stream_enabled),
+            version="v2",
         )
+        stream = self.graph.astream_events(**kwargs)
 
         return {
             "stream": stream,
@@ -401,17 +406,25 @@ class LangGraphAgent:
             input_schema_keys = list(input_schema["properties"].keys()) if "properties" in input_schema else []
             output_schema_keys = list(output_schema["properties"].keys()) if "properties" in output_schema else []
             config_schema_keys = list(config_schema["properties"].keys()) if "properties" in config_schema else []
+            context_schema_keys = []
+
+            if hasattr(self.graph, "context_schema") and self.graph.context_schema is not None:
+                context_schema = self.graph.context_schema().schema()
+                context_schema_keys = list(context_schema["properties"].keys()) if "properties" in context_schema else []
+
 
             return {
                 "input": [*input_schema_keys, *self.constant_schema_keys],
                 "output": [*output_schema_keys, *self.constant_schema_keys],
                 "config": config_schema_keys,
+                "context": context_schema_keys,
             }
         except Exception:
             return {
                 "input": self.constant_schema_keys,
                 "output": self.constant_schema_keys,
                 "config": [],
+                "context": [],
             }
 
     def langgraph_default_merge_state(self, state: State, messages: List[BaseMessage], input: RunAgentInput) -> State:
@@ -744,3 +757,38 @@ class LangGraphAgent:
         self.active_run["node_name"] = None
         self.active_step = None
         return dispatch
+
+    # Check if some kwargs are enabled per LG version, to "catch all versions" and backwards compatibility
+    def get_stream_kwargs(
+            self,
+            input: Any,
+            subgraphs: bool = False,
+            version: Literal["v1", "v2"] = "v2",
+            config: Optional[RunnableConfig] = None,
+            context: Optional[Dict[str, Any]] = None,
+            fork: Optional[Any] = None,
+    ):
+        kwargs = dict(
+            input=input,
+            subgraphs=subgraphs,
+            version=version,
+        )
+
+        # Only add context if supported
+        sig = inspect.signature(self.graph.astream_events)
+        if 'context' in sig.parameters:
+            base_context = {}
+            if isinstance(config, dict) and 'configurable' in config and isinstance(config['configurable'], dict):
+                base_context.update(config['configurable'])
+            if context:  # context might be None or {}
+                base_context.update(context)
+            if base_context:  # only add if there's something to pass
+                kwargs['context'] = base_context
+
+        if config:
+            kwargs['config'] = config
+
+        if fork:
+            kwargs.update(fork)
+
+        return kwargs
