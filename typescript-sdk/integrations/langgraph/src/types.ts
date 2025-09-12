@@ -39,6 +39,7 @@ export interface StateEnrichment {
 export type SchemaKeys = {
   input: string[] | null;
   output: string[] | null;
+  context: string[] | null;
   config: string[] | null;
 } | null;
 

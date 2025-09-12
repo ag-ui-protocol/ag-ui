@@ -333,6 +333,10 @@ export class LangGraphAgent extends AbstractAgent {
       streamMode,
       input: payloadInput,
       config: payloadConfig,
+      context: {
+        ...context,
+        ...(payloadConfig?.configurable ?? {}),
+      }
     };
 
     // If there are still outstanding unresolved interrupts, we must force resolution of them before moving forward
@@ -947,11 +951,15 @@ export class LangGraphAgent extends AbstractAgent {
     try {
       const graphSchema = await this.client.assistants.getSchemas(this.assistant!.assistant_id);
       let configSchema = null;
+      let contextSchema: string[] = []
+      if ('context_schema' in graphSchema && graphSchema.context_schema?.properties) {
+        contextSchema = Object.keys(graphSchema.context_schema.properties);
+      }
       if (graphSchema.config_schema?.properties) {
         configSchema = Object.keys(graphSchema.config_schema.properties);
       }
       if (!graphSchema.input_schema?.properties || !graphSchema.output_schema?.properties) {
-        return { config: [], input: null, output: null };
+        return { config: [], input: null, output: null, context: contextSchema };
       }
       const inputSchema = Object.keys(graphSchema.input_schema.properties);
       const outputSchema = Object.keys(graphSchema.output_schema.properties);
@@ -963,10 +971,11 @@ export class LangGraphAgent extends AbstractAgent {
           outputSchema && outputSchema.length
             ? [...outputSchema, ...this.constantSchemaKeys]
             : null,
+        context: contextSchema,
         config: configSchema,
       };
     } catch (e) {
-      return { config: [], input: this.constantSchemaKeys, output: this.constantSchemaKeys };
+      return { config: [], input: this.constantSchemaKeys, output: this.constantSchemaKeys, context: [] };
     }
   }
 
