@@ -10,7 +10,7 @@ jobs:
   e2e:
     name: ${{ matrix.suite }}
     runs-on: depot-ubuntu-24.04
-  strategy:
+    strategy:
       fail-fast: false
       matrix:
         include:
