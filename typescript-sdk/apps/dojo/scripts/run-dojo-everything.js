@@ -81,13 +81,13 @@ const ALL_SERVICES = {
     },
   },
   'langgraph-platform-python': {
-    command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --port 8005',
+    command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8005',
     name: 'LG Platform Py',
     cwd: path.join(integrationsRoot, 'langgraph/examples/python'),
     env: { PORT: 8005 },
   },
   'langgraph-platform-typescript': {
-    command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --port 8006',
+    command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8006',
     name: 'LG Platform TS',
     cwd: path.join(integrationsRoot, 'langgraph/examples/typescript/'),
     env: { PORT: 8006 },
