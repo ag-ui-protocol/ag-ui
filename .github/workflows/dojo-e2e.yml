@@ -17,51 +17,51 @@ jobs:
           - suite: agno
             test_path: tests/agnoTests
             services: ["dojo","agno"]
-            wait_on: ["http://localhost:9999","tcp:localhost:8002"]
+            wait_on: "http://localhost:9999,tcp:localhost:8002"
           - suite: crew-ai
             test_path: tests/crewAITests
             services: ["dojo","crew-ai"]
-            wait_on: ["http://localhost:9999","tcp:localhost:8003"]
+            wait_on: "http://localhost:9999,tcp:localhost:8003"
           - suite: langgraph
             test_path: tests/langgraphTests
             services: ["dojo","langgraph-platform-python","langgraph-platform-typescript"]
-            wait_on: ["http://localhost:9999","tcp:localhost:8005","tcp:localhost:8006"]
+            wait_on: "http://localhost:9999,tcp:localhost:8005,tcp:localhost:8006"
           - suite: langgraph-fastapi
             test_path: tests/langgraphFastAPITests
             services: ["dojo","langgraph-fastapi"]
-            wait_on: ["http://localhost:9999","tcp:localhost:8004"]
+            wait_on: "http://localhost:9999,tcp:localhost:8004"
           - suite: llama-index
             test_path: tests/llamaIndexTests
             services: ["dojo","llama-index"]
-            wait_on: ["http://localhost:9999","tcp:localhost:8007"]
+            wait_on: "http://localhost:9999,tcp:localhost:8007"
           - suite: mastra
             test_path: tests/mastraTests
             services: ["dojo","mastra"]
-            wait_on: ["http://localhost:9999","tcp:localhost:8008"]
+            wait_on: "http://localhost:9999,tcp:localhost:8008"
           - suite: mastra-agent-local
             test_path: tests/mastraAgentLocalTests
             services: ["dojo"]
-            wait_on: ["http://localhost:9999"]
+            wait_on: "http://localhost:9999"
           - suite: middleware-starter
             test_path: tests/middlewareStarterTests
             services: ["dojo"]
-            wait_on: ["http://localhost:9999"]
+            wait_on: "http://localhost:9999"
           - suite: pydantic-ai
             test_path: tests/pydanticAITests
             services: ["dojo","pydantic-ai"]
-            wait_on: ["http://localhost:9999","tcp:localhost:8009"]
+            wait_on: "http://localhost:9999,tcp:localhost:8009"
           - suite: server-starter
             test_path: tests/serverStarterTests
             services: ["dojo","server-starter"]
-            wait_on: ["http://localhost:9999","tcp:localhost:8000"]
+            wait_on: "http://localhost:9999,tcp:localhost:8000"
           - suite: server-starter-all
             test_path: tests/serverStarterAllFeaturesTests
             services: ["dojo","server-starter-all"]
-            wait_on: ["http://localhost:9999","tcp:localhost:8001"]
+            wait_on: "http://localhost:9999,tcp:localhost:8001"
           - suite: vercel-ai-sdk
             test_path: tests/vercelAISdkTests
             services: ["dojo"]
-            wait_on: ["http://localhost:9999"]
+            wait_on: "http://localhost:9999"
 
     steps:
     - name: Checkout code
@@ -90,19 +90,10 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-pnpm-store-
 
-    - name: Install Poetry
-      uses: snok/install-poetry@v1
-      with:
-        version: latest
-        virtualenvs-create: true
-        virtualenvs-in-project: true
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v6
-
-    # Cache Python tool caches and virtualenvs for Poetry/uv-based projects
-    - name: Cache Python dependencies
-      uses: actions/cache@v4
+    # Cache Python tool caches and virtualenvs; restore only to avoid long saves
+    - name: Cache Python dependencies (restore-only)
+      id: cache-python
+      uses: actions/cache/restore@v4
       with:
         path: |
           ~/.cache/pip
@@ -112,6 +103,16 @@ jobs:
         key: ${{ runner.os }}-pydeps-${{ hashFiles('**/poetry.lock', '**/pyproject.toml') }}
         restore-keys: |
           ${{ runner.os }}-pydeps-
+
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: latest
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
 
     - name: Install dependencies
       working-directory: typescript-sdk
@@ -165,7 +166,7 @@ jobs:
         run: |
           node ../scripts/run-dojo-everything.js --only ${{ join(matrix.services, ',') }}
         working-directory: typescript-sdk/apps/dojo/e2e
-        wait-on: ${{ join(matrix.wait_on, '\n') }}
+        wait-on: ${{ matrix.wait_on }}
         wait-for: 300000
 
     - name: Run tests – ${{ matrix.suite }}
