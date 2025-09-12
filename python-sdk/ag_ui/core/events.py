@@ -7,7 +7,7 @@ from typing import Annotated, Any, List, Literal, Optional, Union
 
 from pydantic import Field
 
-from .types import ConfiguredBaseModel, Message, State, Role
+from .types import ConfiguredBaseModel, Message, State
 
 # Text messages can have any role except "tool"
 TextMessageRole = Literal["developer", "system", "assistant", "user"]
@@ -91,6 +91,7 @@ class ThinkingTextMessageStartEvent(BaseEvent):
     Event indicating the start of a thinking text message.
     """
     type: Literal[EventType.THINKING_TEXT_MESSAGE_START] = EventType.THINKING_TEXT_MESSAGE_START  # pyright: ignore[reportIncompatibleVariableOverride]
+    thinking_id: str
 
 class ThinkingTextMessageContentEvent(BaseEvent):
     """
@@ -98,12 +99,14 @@ class ThinkingTextMessageContentEvent(BaseEvent):
     """
     type: Literal[EventType.THINKING_TEXT_MESSAGE_CONTENT] = EventType.THINKING_TEXT_MESSAGE_CONTENT  # pyright: ignore[reportIncompatibleVariableOverride]
     delta: str = Field(min_length=1)
+    thinking_id: str
 
 class ThinkingTextMessageEndEvent(BaseEvent):
     """
     Event indicating the end of a thinking text message.
     """
     type: Literal[EventType.THINKING_TEXT_MESSAGE_END] = EventType.THINKING_TEXT_MESSAGE_END  # pyright: ignore[reportIncompatibleVariableOverride]
+    thinking_id: str
 
 class ToolCallStartEvent(BaseEvent):
     """
