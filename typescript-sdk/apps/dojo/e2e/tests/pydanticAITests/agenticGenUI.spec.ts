@@ -3,7 +3,7 @@ import { AgenticGenUIPage } from "../../pages/pydanticAIPages/AgenticUIGenPage";
 
 test.describe("Agent Generative UI Feature", () => {
   // Flaky. Sometimes the steps render but never process.
-  test.fixme("[PydanticAI] should interact with the chat to get a planner on prompt", async ({
+  test("[PydanticAI] should interact with the chat to get a planner on prompt", async ({
     page,
   }) => {
     const genUIAgent = new AgenticGenUIPage(page);

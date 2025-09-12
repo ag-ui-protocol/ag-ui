@@ -58,6 +58,7 @@ agent = Agent(
         - Do NOT repeat the plan or summarise it in a message
         - Do NOT confirm the creation or updates in a message
         - Do NOT ask the user for additional information or next steps
+        - Do NOT leave a plan hanging, always complete the plan via `update_plan_step` if one is ongoing.
 
         Only one plan can be active at a time, so do not call the `create_plan` tool
         again until all the steps in current plan are completed.
