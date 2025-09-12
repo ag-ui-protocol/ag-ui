@@ -1,6 +1,7 @@
 import type {
   AgentConfig,
   BaseEvent,
+  Message,
   RunAgentInput,
   RunFinishedEvent,
   RunStartedEvent,
@@ -34,6 +35,7 @@ import {
 
 export interface MastraAgentConfig extends AgentConfig {
   agent: LocalMastraAgent | RemoteMastraAgent;
+  messagesMapper?: (messages: Message[]) => Message[];
   resourceId?: string;
   runtimeContext?: RuntimeContext;
 }
@@ -51,12 +53,14 @@ export class MastraAgent extends AbstractAgent {
   agent: LocalMastraAgent | RemoteMastraAgent;
   resourceId?: string;
   runtimeContext?: RuntimeContext;
+  messagesMapper?: (messages: Message[]) => Message[];
 
-  constructor({ agent, resourceId, runtimeContext, ...rest }: MastraAgentConfig) {
+  constructor({ agent, resourceId, runtimeContext, messagesMapper, ...rest }: MastraAgentConfig) {
     super(rest);
     this.agent = agent;
     this.resourceId = resourceId;
     this.runtimeContext = runtimeContext ?? new RuntimeContext();
+    this.messagesMapper = messagesMapper;
   }
 
   protected run(input: RunAgentInput): Observable<BaseEvent> {
@@ -249,7 +253,7 @@ export class MastraAgent extends AbstractAgent {
       {} as Record<string, any>,
     );
     const resourceId = this.resourceId ?? threadId;
-    const convertedMessages = convertAGUIMessagesToMastra(messages);
+    const convertedMessages = convertAGUIMessagesToMastra(this.messagesMapper ? this.messagesMapper(messages) : messages);
     this.runtimeContext?.set('ag-ui', { context: inputContext });
     const runtimeContext = this.runtimeContext;
 
