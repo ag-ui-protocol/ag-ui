@@ -22,6 +22,9 @@ class EventType(str, Enum):
     TEXT_MESSAGE_START = "TEXT_MESSAGE_START"
     TEXT_MESSAGE_CONTENT = "TEXT_MESSAGE_CONTENT"
     TEXT_MESSAGE_END = "TEXT_MESSAGE_END"
+    THINKING_TEXT_MESSAGE_START = "THINKING_TEXT_MESSAGE_START"
+    THINKING_TEXT_MESSAGE_CONTENT = "THINKING_TEXT_MESSAGE_CONTENT"
+    THINKING_TEXT_MESSAGE_END = "THINKING_TEXT_MESSAGE_END"
     TOOL_CALL_START = "TOOL_CALL_START"
     TOOL_CALL_ARGS = "TOOL_CALL_ARGS"
     TOOL_CALL_END = "TOOL_CALL_END"
@@ -210,6 +213,64 @@ class TextMessageEndEvent(BaseEvent):
 | ------------ | ----- | ----------------------------------------- |
 | `message_id` | `str` | Matches the ID from TextMessageStartEvent |
 
+## Thinking Message Events
+
+These events represent the lifecycle of thinking messages that show an agent's internal reasoning process.
+
+### ThinkingTextMessageStartEvent
+
+`from ag_ui.core import ThinkingTextMessageStartEvent`
+
+Signals the start of a thinking message.
+
+```python
+class ThinkingTextMessageStartEvent(BaseEvent):
+    type: Literal[EventType.THINKING_TEXT_MESSAGE_START]
+    thinking_id: str
+```
+
+| Property      | Type  | Description                           |
+| ------------- | ----- | ------------------------------------- |
+| `thinking_id` | `str` | Unique identifier for the thinking sequence |
+
+### ThinkingTextMessageContentEvent
+
+`from ag_ui.core import ThinkingTextMessageContentEvent`
+
+Represents a chunk of content in a streaming thinking message.
+
+```python
+class ThinkingTextMessageContentEvent(BaseEvent):
+    type: Literal[EventType.THINKING_TEXT_MESSAGE_CONTENT]
+    thinking_id: str
+    delta: str  # Non-empty string
+
+    def model_post_init(self, __context):
+        if len(self.delta) == 0:
+            raise ValueError("Delta must not be an empty string")
+```
+
+| Property      | Type  | Description                                        |
+| ------------- | ----- | -------------------------------------------------- |
+| `thinking_id` | `str` | Matches the ID from ThinkingTextMessageStartEvent |
+| `delta`       | `str` | Thinking content chunk (non-empty)                |
+
+### ThinkingTextMessageEndEvent
+
+`from ag_ui.core import ThinkingTextMessageEndEvent`
+
+Signals the end of a thinking message.
+
+```python
+class ThinkingTextMessageEndEvent(BaseEvent):
+    type: Literal[EventType.THINKING_TEXT_MESSAGE_END]
+    thinking_id: str
+```
+
+| Property      | Type  | Description                                        |
+| ------------- | ----- | -------------------------------------------------- |
+| `thinking_id` | `str` | Matches the ID from ThinkingTextMessageStartEvent |
+
 ## Tool Call Events
 
 These events represent the lifecycle of tool calls made by agents.
@@ -392,6 +453,9 @@ Event = Annotated[
         TextMessageStartEvent,
         TextMessageContentEvent,
         TextMessageEndEvent,
+        ThinkingTextMessageStartEvent,
+        ThinkingTextMessageContentEvent,
+        ThinkingTextMessageEndEvent,
         ToolCallStartEvent,
         ToolCallArgsEvent,
         ToolCallEndEvent,

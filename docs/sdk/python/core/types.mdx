@@ -51,7 +51,7 @@ messages in the system.
 Represents the possible roles a message sender can have.
 
 ```python
-Role = Literal["developer", "system", "assistant", "user", "tool"]
+Role = Literal["developer", "system", "assistant", "user", "tool", "thinking"]
 ```
 
 ### DeveloperMessage
@@ -155,6 +155,26 @@ class ToolMessage(ConfiguredBaseModel):
 | `tool_call_id` | `str`             | ID of the tool call this message responds to |
 | `error`        | `Optional[str]`   | Error message if the tool call failed        |
 
+### ThinkingMessage
+
+`from ag_ui.core import ThinkingMessage`
+
+Represents a thinking message that shows an agent's internal reasoning process.
+
+```python
+class ThinkingMessage(BaseMessage):
+    role: Literal["thinking"]
+    content: str
+```
+
+| Property    | Type                  | Description                                     |
+| ----------- | --------------------- | ----------------------------------------------- |
+| `id`        | `str`                 | Unique identifier for the message               |
+| `role`      | `Literal["thinking"]` | Role of the message sender, fixed as "thinking" |
+| `content`   | `str`                 | Text content of the thinking (required)         |
+| `name`      | `Optional[str]`       | Optional name of the sender                     |
+| `timestamp` | `Optional[int]`       | Optional timestamp for temporal tracking        |
+
 ### Message
 
 `from ag_ui.core import Message`
@@ -163,7 +183,7 @@ A union type representing any type of message in the system.
 
 ```python
 Message = Annotated[
-    Union[DeveloperMessage, SystemMessage, AssistantMessage, UserMessage, ToolMessage],
+    Union[DeveloperMessage, SystemMessage, AssistantMessage, UserMessage, ToolMessage, ThinkingMessage],
     Field(discriminator="role")
 ]
 ```
