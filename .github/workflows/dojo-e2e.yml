@@ -10,40 +10,70 @@ jobs:
   e2e:
     name: ${{ matrix.suite }}
     runs-on: depot-ubuntu-24.04
-    strategy:
+  strategy:
       fail-fast: false
       matrix:
         include:
           - suite: smoke
             test_path: tests/smoke-only
+            services: []
+            wait_on: []
           - suite: integration
             test_path: tests/integration
+            services: []
+            wait_on: []
           - suite: copilotkit-home
             test_path: tests/copilotkit-home.spec.ts
+            services: []
+            wait_on: []
           - suite: agno
             test_path: tests/agnoTests
+            services: ["dojo","agno"]
+            wait_on: ["http://localhost:9999","tcp:localhost:8002"]
           - suite: crew-ai
             test_path: tests/crewAITests
+            services: ["dojo","crew-ai"]
+            wait_on: ["http://localhost:9999","tcp:localhost:8003"]
           - suite: langgraph
             test_path: tests/langgraphTests
+            services: ["dojo","langgraph-platform-python","langgraph-platform-typescript"]
+            wait_on: ["http://localhost:9999","tcp:localhost:8005","tcp:localhost:8006"]
           - suite: langgraph-fastapi
             test_path: tests/langgraphFastAPITests
+            services: ["dojo","langgraph-fastapi"]
+            wait_on: ["http://localhost:9999","tcp:localhost:8004"]
           - suite: llama-index
             test_path: tests/llamaIndexTests
+            services: ["dojo","llama-index"]
+            wait_on: ["http://localhost:9999","tcp:localhost:8007"]
           - suite: mastra
             test_path: tests/mastraTests
+            services: ["dojo","mastra"]
+            wait_on: ["http://localhost:9999","tcp:localhost:8008"]
           - suite: mastra-agent-local
             test_path: tests/mastraAgentLocalTests
+            services: ["dojo"]
+            wait_on: ["http://localhost:9999"]
           - suite: middleware-starter
             test_path: tests/middlewareStarterTests
+            services: ["dojo"]
+            wait_on: ["http://localhost:9999"]
           - suite: pydantic-ai
             test_path: tests/pydanticAITests
+            services: ["dojo","pydantic-ai"]
+            wait_on: ["http://localhost:9999","tcp:localhost:8009"]
           - suite: server-starter
             test_path: tests/serverStarterTests
+            services: ["dojo","server-starter"]
+            wait_on: ["http://localhost:9999","tcp:localhost:8000"]
           - suite: server-starter-all
             test_path: tests/serverStarterAllFeaturesTests
+            services: ["dojo","server-starter-all"]
+            wait_on: ["http://localhost:9999","tcp:localhost:8001"]
           - suite: vercel-ai-sdk
             test_path: tests/vercelAISdkTests
+            services: ["dojo"]
+            wait_on: ["http://localhost:9999"]
 
     steps:
     - name: Checkout code
@@ -83,7 +113,8 @@ jobs:
 
     - name: Prepare dojo for e2e
       working-directory: typescript-sdk/apps/dojo
-      run: node ./scripts/prep-dojo-everything.js -e2e
+      if: ${{ join(matrix.services, ',') != '' }}
+      run: node ./scripts/prep-dojo-everything.js --only ${{ join(matrix.services, ',') }}
 
     - name: Install e2e dependencies
       working-directory: typescript-sdk/apps/dojo/e2e
@@ -95,6 +126,7 @@ jobs:
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+      if: ${{ contains(join(matrix.services, ','), 'langgraph-fastapi') || contains(join(matrix.services, ','), 'langgraph-platform-python') || contains(join(matrix.services, ','), 'langgraph-platform-typescript') }}
       run: |
         echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > examples/python/.env
         echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> examples/python/.env
@@ -108,22 +140,12 @@ jobs:
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+      if: ${{ join(matrix.services, ',') != '' && contains(join(matrix.services, ','), 'dojo') }}
       with:
         run: |
-          node ../scripts/run-dojo-everything.js
+          node ../scripts/run-dojo-everything.js --only ${{ join(matrix.services, ',') }}
         working-directory: typescript-sdk/apps/dojo/e2e
-        wait-on: |
-          http://localhost:9999
-          tcp:localhost:8000
-          tcp:localhost:8001
-          tcp:localhost:8002
-          tcp:localhost:8003
-          tcp:localhost:8004
-          tcp:localhost:8005
-          tcp:localhost:8006
-          tcp:localhost:8007
-          tcp:localhost:8008
-          tcp:localhost:8009
+        wait-on: ${{ join(matrix.wait_on, '\n') }}
 
     - name: Run tests – ${{ matrix.suite }}
       working-directory: typescript-sdk/apps/dojo/e2e
