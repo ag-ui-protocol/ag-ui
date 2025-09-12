@@ -8,8 +8,8 @@ on:
 
 jobs:
   e2e:
-    name: e2e/${{ matrix.suite }}
-    runs-on: ubuntu-latest
+    name: ${{ matrix.suite }}
+    runs-on: depot-ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
