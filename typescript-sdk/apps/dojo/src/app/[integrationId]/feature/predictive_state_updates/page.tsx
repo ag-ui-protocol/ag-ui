@@ -13,6 +13,7 @@ import { CopilotKit, useCoAgent, useCopilotAction, useCopilotChat } from "@copil
 import { CopilotChat, CopilotSidebar } from "@copilotkit/react-ui";
 import { useMobileView } from "@/utils/use-mobile-view";
 import { useMobileChat } from "@/utils/use-mobile-chat";
+import { cloudAgents } from "@/cloudAgents";
 
 const extensions = [StarterKit];
 
@@ -24,24 +25,25 @@ interface PredictiveStateUpdatesProps {
 
 export default function PredictiveStateUpdates({ params }: PredictiveStateUpdatesProps) {
   const { integrationId } = React.use(params);
+  let runtimeUrl = `/api/copilotkit/${integrationId}`;
+  let publicApiKey: string | undefined = undefined;
+  if (process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL) {
+    runtimeUrl = process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL;
+    publicApiKey = cloudAgents.find((agent) => agent.id === integrationId)?.publicApiKey;
+  }
   const { isMobile } = useMobileView();
-  const defaultChatHeight = 50
-  const {
-    isChatOpen,
-    setChatHeight,
-    setIsChatOpen,
-    isDragging,
-    chatHeight,
-    handleDragStart
-  } = useMobileChat(defaultChatHeight)
-  const chatTitle = 'AI Document Editor'
-  const chatDescription = 'Ask me to create or edit a document'
-  const initialLabel = 'Hi 👋 How can I help with your document?'
+  const defaultChatHeight = 50;
+  const { isChatOpen, setChatHeight, setIsChatOpen, isDragging, chatHeight, handleDragStart } =
+    useMobileChat(defaultChatHeight);
+  const chatTitle = "AI Document Editor";
+  const chatDescription = "Ask me to create or edit a document";
+  const initialLabel = "Hi 👋 How can I help with your document?";
 
   return (
     <CopilotKit
-      runtimeUrl={`/api/copilotkit/${integrationId}`}
+      runtimeUrl={runtimeUrl}
       showDevConsole={false}
+      publicApiKey={publicApiKey}
       // agent lock to the relevant agent
       agent="predictive_state_updates"
     >
@@ -74,9 +76,21 @@ export default function PredictiveStateUpdates({ params }: PredictiveStateUpdate
                     <div className="text-sm text-gray-500">{chatDescription}</div>
                   </div>
                 </div>
-                <div className={`transform transition-transform duration-300 ${isChatOpen ? 'rotate-180' : ''}`}>
-                  <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                <div
+                  className={`transform transition-transform duration-300 ${isChatOpen ? "rotate-180" : ""}`}
+                >
+                  <svg
+                    className="w-6 h-6 text-gray-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M5 15l7-7 7 7"
+                    />
                   </svg>
                 </div>
               </div>
@@ -85,11 +99,11 @@ export default function PredictiveStateUpdates({ params }: PredictiveStateUpdate
             {/* Pull-Up Chat Container */}
             <div
               className={`fixed inset-x-0 bottom-0 z-40 bg-white rounded-t-2xl shadow-[0px_0px_20px_0px_rgba(0,0,0,0.15)] transform transition-all duration-300 ease-in-out flex flex-col ${
-                isChatOpen ? 'translate-y-0' : 'translate-y-full'
-              } ${isDragging ? 'transition-none' : ''}`}
+                isChatOpen ? "translate-y-0" : "translate-y-full"
+              } ${isDragging ? "transition-none" : ""}`}
               style={{
                 height: `${chatHeight}vh`,
-                paddingBottom: 'env(safe-area-inset-bottom)' // Handle iPhone bottom padding
+                paddingBottom: "env(safe-area-inset-bottom)", // Handle iPhone bottom padding
               }}
             >
               {/* Drag Handle Bar */}
@@ -110,8 +124,18 @@ export default function PredictiveStateUpdates({ params }: PredictiveStateUpdate
                     onClick={() => setIsChatOpen(false)}
                     className="p-2 hover:bg-gray-100 rounded-full transition-colors"
                   >
-                    <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    <svg
+                      className="w-5 h-5 text-gray-500"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M6 18L18 6M6 6l12 12"
+                      />
                     </svg>
                   </button>
                 </div>
@@ -130,10 +154,7 @@ export default function PredictiveStateUpdates({ params }: PredictiveStateUpdate
 
             {/* Backdrop */}
             {isChatOpen && (
-              <div
-                className="fixed inset-0 z-30"
-                onClick={() => setIsChatOpen(false)}
-              />
+              <div className="fixed inset-0 z-30" onClick={() => setIsChatOpen(false)} />
             )}
           </>
         ) : (
@@ -226,59 +247,65 @@ const DocumentEditor = () => {
   }, [text]);
 
   // TODO(steve): Remove this when all agents have been updated to use write_document tool.
-  useCopilotAction({
-    name: "confirm_changes",
-    renderAndWaitForResponse: ({ args, respond, status }) => (
-      <ConfirmChanges
-        args={args}
-        respond={respond}
-        status={status}
-        onReject={() => {
-          editor?.commands.setContent(fromMarkdown(currentDocument));
-          setAgentState({ document: currentDocument });
-        }}
-        onConfirm={() => {
-          editor?.commands.setContent(fromMarkdown(agentState?.document || ""));
-          setCurrentDocument(agentState?.document || "");
-          setAgentState({ document: agentState?.document || "" });
-        }}
-      />
-    ),
-  }, [agentState?.document]);
+  useCopilotAction(
+    {
+      name: "confirm_changes",
+      renderAndWaitForResponse: ({ args, respond, status }) => (
+        <ConfirmChanges
+          args={args}
+          respond={respond}
+          status={status}
+          onReject={() => {
+            editor?.commands.setContent(fromMarkdown(currentDocument));
+            setAgentState({ document: currentDocument });
+          }}
+          onConfirm={() => {
+            editor?.commands.setContent(fromMarkdown(agentState?.document || ""));
+            setCurrentDocument(agentState?.document || "");
+            setAgentState({ document: agentState?.document || "" });
+          }}
+        />
+      ),
+    },
+    [agentState?.document],
+  );
 
   // Action to write the document.
-  useCopilotAction({
-    name: "write_document",
-    description: `Present the proposed changes to the user for review`,
-    parameters: [
-      {
-        name: "document",
-        type: "string",
-        description: "The full updated document in markdown format",
+  useCopilotAction(
+    {
+      name: "write_document",
+      description: `Present the proposed changes to the user for review`,
+      parameters: [
+        {
+          name: "document",
+          type: "string",
+          description: "The full updated document in markdown format",
+        },
+      ],
+      renderAndWaitForResponse({ args, status, respond }) {
+        if (status === "executing") {
+          return (
+            <ConfirmChanges
+              args={args}
+              respond={respond}
+              status={status}
+              onReject={() => {
+                editor?.commands.setContent(fromMarkdown(currentDocument));
+                setAgentState({ document: currentDocument });
+              }}
+              onConfirm={() => {
+                editor?.commands.setContent(fromMarkdown(agentState?.document || ""));
+                setCurrentDocument(agentState?.document || "");
+                setAgentState({ document: agentState?.document || "" });
+              }}
+            />
+          );
+        }
+        return <></>;
       },
-    ],
-    renderAndWaitForResponse({ args, status, respond }) {
-      if (status === "executing") {
-        return (
-          <ConfirmChanges
-            args={args}
-            respond={respond}
-            status={status}
-            onReject={() => {
-              editor?.commands.setContent(fromMarkdown(currentDocument));
-              setAgentState({ document: currentDocument });
-            }}
-            onConfirm={() => {
-              editor?.commands.setContent(fromMarkdown(agentState?.document || ""));
-              setCurrentDocument(agentState?.document || "");
-              setAgentState({ document: agentState?.document || "" });
-            }}
-          />
-        );
-      }
-      return <></>;
     },
-  }, [agentState?.document]);
+    [agentState?.document],
+  );
 
   return (
     <div className="relative min-h-screen w-full">
@@ -303,9 +330,10 @@ interface ConfirmChangesProps {
 function ConfirmChanges({ args, respond, status, onReject, onConfirm }: ConfirmChangesProps) {
   const [accepted, setAccepted] = useState<boolean | null>(null);
   return (
-    <div 
-    data-testid="confirm-changes-modal"
-    className="bg-white p-6 rounded shadow-lg border border-gray-200 mt-5 mb-5">
+    <div
+      data-testid="confirm-changes-modal"
+      className="bg-white p-6 rounded shadow-lg border border-gray-200 mt-5 mb-5"
+    >
       <h2 className="text-lg font-bold mb-4">Confirm Changes</h2>
       <p className="mb-6">Do you want to accept the changes?</p>
       {accepted === null && (
@@ -346,9 +374,10 @@ function ConfirmChanges({ args, respond, status, onReject, onConfirm }: ConfirmC
       )}
       {accepted !== null && (
         <div className="flex justify-end">
-          <div 
-          data-testid="status-display"
-          className="mt-4 bg-gray-200 text-black py-2 px-4 rounded inline-block">
+          <div
+            data-testid="status-display"
+            className="mt-4 bg-gray-200 text-black py-2 px-4 rounded inline-block"
+          >
             {accepted ? "✓ Accepted" : "✗ Rejected"}
           </div>
         </div>

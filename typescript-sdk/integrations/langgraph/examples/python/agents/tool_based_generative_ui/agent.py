@@ -18,7 +18,7 @@ class AgentState(MessagesState):
     """
     State of the agent.
     """
-    tools: List[Any]
+    tools: List[Any] = []
 
 async def chat_node(state: AgentState, config: RunnableConfig) -> Command[Literal["tool_node", "__end__"]]:
     """

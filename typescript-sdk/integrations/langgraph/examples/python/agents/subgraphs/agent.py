@@ -73,7 +73,7 @@ class TravelAgentState(MessagesState):
     itinerary: Annotated[dict, merge_itinerary] = None
 
     # Tools available to all agents
-    tools: List[Any] = None
+    tools: List[Any] = []
 
     # Supervisor routing
     next_agent: Optional[str] = None
