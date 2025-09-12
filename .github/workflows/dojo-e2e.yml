@@ -127,6 +127,20 @@ jobs:
       run: |
         pnpm install
 
+    # Cache Playwright browsers to avoid re-downloading on each run
+    - name: Cache Playwright browsers
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-ms-playwright-${{ hashFiles('typescript-sdk/apps/dojo/e2e/package.json') }}
+        restore-keys: |
+          ${{ runner.os }}-ms-playwright-
+
+    - name: Install Playwright browsers
+      working-directory: typescript-sdk/apps/dojo/e2e
+      run: |
+        pnpm exec playwright install --with-deps
+
     - name: write langgraph env files
       working-directory: typescript-sdk/integrations/langgraph
       env:
@@ -152,13 +166,13 @@ jobs:
           node ../scripts/run-dojo-everything.js --only ${{ join(matrix.services, ',') }}
         working-directory: typescript-sdk/apps/dojo/e2e
         wait-on: ${{ join(matrix.wait_on, '\n') }}
-        wait-on-timeout: 300000
-        wait-on-interval: 1000
+        wait-for: 300000
 
     - name: Run tests – ${{ matrix.suite }}
       working-directory: typescript-sdk/apps/dojo/e2e
       env:
         BASE_URL: http://localhost:9999
+        PLAYWRIGHT_SUITE: ${{ matrix.suite }}
       run: |
         pnpm test -- ${{ matrix.test_path }}
 
@@ -166,6 +180,8 @@ jobs:
       if: always() # Uploads artifacts even if tests fail
       uses: actions/upload-artifact@v4
       with:
-        name: playwright-traces-${{ matrix.suite }}
-        path: typescript-sdk/apps/dojo/e2e/test-results/
+        name: ${{ matrix.suite }}-playwright-traces
+        path: |
+          typescript-sdk/apps/dojo/e2e/test-results/${{ matrix.suite }}/**/*
+          typescript-sdk/apps/dojo/e2e/playwright-report/**/*
         retention-days: 7
