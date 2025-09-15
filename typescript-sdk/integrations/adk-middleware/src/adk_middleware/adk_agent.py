@@ -139,11 +139,44 @@ class ADKAgent:
         self._tool_timeout = tool_timeout_seconds
         self._max_concurrent = max_concurrent_executions
         self._execution_lock = asyncio.Lock()
+
+        # Session lookup cache for efficient session ID to metadata mapping
+        # Maps session_id -> {"app_name": str, "user_id": str}
+        self._session_lookup_cache: Dict[str, Dict[str, str]] = {}
         
         # Event translator will be created per-session for thread safety
         
         # Cleanup is managed by the session manager
         # Will start when first async operation runs
+
+    def _get_session_metadata(self, session_id: str) -> Optional[Dict[str, str]]:
+        """Get session metadata (app_name, user_id) for a session ID efficiently.
+
+        Args:
+            session_id: The session ID to lookup
+
+        Returns:
+            Dictionary with app_name and user_id, or None if not found
+        """
+        # Try cache first for O(1) lookup
+        if session_id in self._session_lookup_cache:
+            return self._session_lookup_cache[session_id]
+
+        # Fallback to linear search if not in cache (for existing sessions)
+        # This maintains backward compatibility
+        try:
+            for uid, keys in self._session_manager._user_sessions.items():
+                for key in keys:
+                    if key.endswith(f":{session_id}"):
+                        app_name = key.split(':', 1)[0]
+                        metadata = {"app_name": app_name, "user_id": uid}
+                        # Cache for future lookups
+                        self._session_lookup_cache[session_id] = metadata
+                        return metadata
+        except Exception as e:
+            logger.error(f"Error during session metadata lookup for {session_id}: {e}")
+
+        return None
     
     def _get_app_name(self, input: RunAgentInput) -> str:
         """Resolve app name with clear precedence."""
@@ -217,30 +250,21 @@ class ADKAgent:
     
     async def _remove_pending_tool_call(self, session_id: str, tool_call_id: str):
         """Remove a tool call from the session's pending list.
-        
-        Uses session properties to find the session without needing explicit app_name/user_id.
-        
+
+        Uses efficient session lookup to find the session without needing explicit app_name/user_id.
+
         Args:
             session_id: The session ID (thread_id)
             tool_call_id: The tool call ID to remove
         """
         try:
-            # Search through tracked sessions to find this session_id
-            session_key = None
-            user_id = None
-            app_name = None
-            
-            for uid, keys in self._session_manager._user_sessions.items():
-                for key in keys:
-                    if key.endswith(f":{session_id}"):
-                        session_key = key
-                        user_id = uid
-                        app_name = key.split(':', 1)[0]
-                        break
-                if session_key:
-                    break
-            
-            if session_key and user_id and app_name:
+            # Use efficient session metadata lookup
+            metadata = self._get_session_metadata(session_id)
+
+            if metadata:
+                app_name = metadata["app_name"]
+                user_id = metadata["user_id"]
+
                 # Get current pending calls using SessionManager
                 pending_calls = await self._session_manager.get_state_value(
                     session_id=session_id,
@@ -249,11 +273,11 @@ class ADKAgent:
                     key="pending_tool_calls",
                     default=[]
                 )
-                
+
                 # Remove tool call if present
                 if tool_call_id in pending_calls:
                     pending_calls.remove(tool_call_id)
-                    
+
                     # Update the state using SessionManager
                     success = await self._session_manager.set_state_value(
                         session_id=session_id,
@@ -270,32 +294,33 @@ class ADKAgent:
     
     async def _has_pending_tool_calls(self, session_id: str) -> bool:
         """Check if session has pending tool calls (HITL scenario).
-        
+
         Args:
             session_id: The session ID (thread_id)
-            
+
         Returns:
             True if session has pending tool calls
         """
         try:
-            # Search through tracked sessions to find this session_id
-            for uid, keys in self._session_manager._user_sessions.items():
-                for key in keys:
-                    if key.endswith(f":{session_id}"):
-                        app_name = key.split(':', 1)[0]
-                        
-                        # Get pending calls using SessionManager
-                        pending_calls = await self._session_manager.get_state_value(
-                            session_id=session_id,
-                            app_name=app_name,
-                            user_id=uid,
-                            key="pending_tool_calls",
-                            default=[]
-                        )
-                        return len(pending_calls) > 0
+            # Use efficient session metadata lookup
+            metadata = self._get_session_metadata(session_id)
+
+            if metadata:
+                app_name = metadata["app_name"]
+                user_id = metadata["user_id"]
+
+                # Get pending calls using SessionManager
+                pending_calls = await self._session_manager.get_state_value(
+                    session_id=session_id,
+                    app_name=app_name,
+                    user_id=user_id,
+                    key="pending_tool_calls",
+                    default=[]
+                )
+                return len(pending_calls) > 0
         except Exception as e:
             logger.error(f"Failed to check pending tool calls for session {session_id}: {e}")
-        
+
         return False
     
     
@@ -351,6 +376,13 @@ class ADKAgent:
                 user_id=user_id,
                 initial_state=initial_state
             )
+
+            # Update session lookup cache for efficient session ID to metadata mapping
+            self._session_lookup_cache[session_id] = {
+                "app_name": app_name,
+                "user_id": user_id
+            }
+
             logger.debug(f"Session ready: {session_id} for user: {user_id}")
             return adk_session
         except Exception as e:
@@ -959,6 +991,9 @@ class ADKAgent:
             for execution in self._active_executions.values():
                 await execution.cancel()
             self._active_executions.clear()
-        
+
+        # Clear session lookup cache
+        self._session_lookup_cache.clear()
+
         # Stop session manager cleanup task
         await self._session_manager.stop_cleanup_task()
