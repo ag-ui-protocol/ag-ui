@@ -95,12 +95,12 @@ AG-UI was born from CopilotKit's initial partnership with LangGraph and CrewAI -
 | [Agno](https://github.com/agno-agi/agno)                           | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/agno/) [Demos](https://dojo.ag-ui.com/agno/feature/shared_state)                                  | 1st party                |
 | [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/llamaindex/) [Demos](https://dojo.ag-ui.com/llamaindex/feature/shared_state)                            | 1st party                |
 | [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/pydantic-ai/) [Demos](https://dojo.ag-ui.com/pydantic-ai/feature/shared_state)                           | 1st party                |
-| [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            | Community                |
-| [Google ADK](https://google.github.io/adk-docs/get-started/)       | 🛠️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/274)           | –                                                                            | Community                |
-| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress           | –                                                                            | Community                |
+| [Google ADK](https://google.github.io/adk-docs/get-started/)       | 🛠️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/274)           | –                                                                            | 1st party                |
 | [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/)       | 🛠️ In Progress           | –                                                                            | 1st party                |
+| [AWS Strands Agents](https://github.com/strands-agents/sdk-python) | 🛠️ In Progress           | –                                                                            | 1st Party                |   
+| [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            | Community                |
+| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress           | –                                                                            | Community                |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/)     | 💡 Open to Contributions | –                                                                            | Community                |
-| [Strands Agents SDK](https://github.com/strands-agents/sdk-python) | 💡 Open to Contributions | –                                                                            | Community                |   
 
 [View all supported frameworks →](https://ag-ui.com/frameworks)
 
