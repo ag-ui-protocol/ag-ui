@@ -6,7 +6,7 @@ import {
 import { PredictiveStateUpdatesPage } from "../../pages/pydanticAIPages/PredictiveStateUpdatesPage";
 
 test.describe("Predictive Status Updates Feature", () => {
-  // Fails. Issue with integration or something.
+  // Fails on a production build.
   test.fixme("[PydanticAI] should interact with agent and approve asked changes", async ({
     page,
   }) => {
@@ -44,7 +44,8 @@ test.describe("Predictive Status Updates Feature", () => {
     });
   });
 
-  test("[PydanticAI] should interact with agent and reject asked changes", async ({
+  // SKipped while the above test is failing, the entire feature is temporarily disabled
+  test.skip("[PydanticAI] should interact with agent and reject asked changes", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
