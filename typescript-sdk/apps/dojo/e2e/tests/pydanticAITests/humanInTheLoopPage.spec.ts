@@ -2,7 +2,7 @@ import { test, expect, waitForAIResponse, retryOnAIFailure } from "../../test-is
 import { HumanInLoopPage } from "../../pages/pydanticAIPages/HumanInLoopPage";
 
 test.describe("Human in the Loop Feature", () => {
-  test.fixme("[PydanticAI] should interact with the chat and perform steps", async ({
+  test("[PydanticAI] should interact with the chat and perform steps", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {

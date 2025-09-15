@@ -25,7 +25,8 @@ State = Dict[str, Any]
 SchemaKeys = TypedDict("SchemaKeys", {
     "input": NotRequired[Optional[List[str]]],
     "output": NotRequired[Optional[List[str]]],
-    "config": NotRequired[Optional[List[str]]]
+    "config": NotRequired[Optional[List[str]]],
+    "context": NotRequired[Optional[List[str]]]
 })
 
 ThinkingProcess = TypedDict("ThinkingProcess", {

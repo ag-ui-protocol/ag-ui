@@ -194,10 +194,10 @@ for an incoming message, such as creating a new message bubble with a loading
 indicator. The `role` property identifies whether the message is coming from the
 assistant or potentially another participant in the conversation.
 
-| Property    | Description                                    |
-| ----------- | ---------------------------------------------- |
-| `messageId` | Unique identifier for the message              |
-| `role`      | Role of the message sender (e.g., "assistant") |
+| Property    | Description                                                                       |
+| ----------- | --------------------------------------------------------------------------------- |
+| `messageId` | Unique identifier for the message                                                 |
+| `role`      | Role of the message sender ("developer", "system", "assistant", "user", "tool") |
 
 ### TextMessageContent
 
@@ -230,6 +230,22 @@ automatic scrolling to ensure the full message is visible.
 | Property    | Description                            |
 | ----------- | -------------------------------------- |
 | `messageId` | Matches the ID from `TextMessageStart` |
+
+### TextMessageChunk
+
+A self-contained text message event that combines start, content, and end.
+
+The `TextMessageChunk` event provides a convenient way to send complete text messages 
+in a single event instead of the three-event sequence (start, content, end). This is 
+particularly useful for simple messages or when the entire content is available at once. 
+The event includes both the message metadata and content, making it more efficient for 
+non-streaming scenarios.
+
+| Property    | Description                                                                           |
+| ----------- | ------------------------------------------------------------------------------------- |
+| `messageId` | Optional unique identifier for the message                                            |
+| `role`      | Optional role of the sender ("developer", "system", "assistant", "user", "tool")    |
+| `delta`     | Optional text content of the message                                                  |
 
 ## Tool Call Events
 
