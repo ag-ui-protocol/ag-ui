@@ -16,7 +16,7 @@ from ..sdk import (
 WRITE_DOCUMENT_TOOL = {
     "type": "function",
     "function": {
-        "name": "write_document",
+        "name": "write_document_local",
         "description": " ".join("""
             Write a document. Use markdown formatting to format the document.
             It's good to format the document extensively so it's easy to read.
@@ -63,19 +63,19 @@ class PredictiveStateUpdatesFlow(Flow[AgentState]):
         Standard chat node.
         """
         system_prompt = f"""
-        You are a helpful assistant for writing documents. 
-        To write the document, you MUST use the write_document tool.
+        You are a helpful assistant for writing documents.
+        To write the document, you MUST use the write_document_local tool.
         You MUST write the full document, even when changing only a few words.
         When you wrote the document, DO NOT repeat it as a message. 
         Just briefly summarize the changes you made. 2 sentences max.
         This is the current state of the document: ----\n {self.state.document}\n-----
         """
 
-        # 1. Here we specify that we want to stream the tool call to write_document
+        # 1. Here we specify that we want to stream the tool call to write_document_local
         #    to the frontend as state.
         await copilotkit_predict_state({
             "document": {
-                "tool_name": "write_document",
+                "tool_name": "write_document_local",
                 "tool_argument": "document"
             }
         })
@@ -122,7 +122,7 @@ class PredictiveStateUpdatesFlow(Flow[AgentState]):
             tool_call_name = tool_call["function"]["name"]
             tool_call_args = json.loads(tool_call["function"]["arguments"])
 
-            if tool_call_name == "write_document":
+            if tool_call_name == "write_document_local":
                 self.state.document = tool_call_args["document"]
 
                 # 4.1 Append the result to the messages in state

@@ -1,5 +1,6 @@
-import { Message } from "@langchain/langgraph-sdk";
+import { AssistantGraph, Message as LangGraphMessage, } from "@langchain/langgraph-sdk";
 import { MessageType } from "@langchain/core/messages";
+import { RunAgentInput } from "@ag-ui/core";
 
 export enum LangGraphEventTypes {
   OnChainStart = "on_chain_start",
@@ -14,11 +15,31 @@ export enum LangGraphEventTypes {
   OnInterrupt = "on_interrupt",
 }
 
-export type State = Record<string, any>;
+export type LangGraphTool = {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: any;
+  },
+}
+
+export type State<TDefinedState = Record<string, any>> = {
+  [k in keyof TDefinedState]: TDefinedState[k] | null;
+} & Record<string, any>;
+export interface StateEnrichment {
+  messages: LangGraphMessage[];
+  tools: LangGraphTool[];
+  'ag-ui': {
+    tools: LangGraphTool[];
+    context: RunAgentInput['context']
+  }
+}
 
 export type SchemaKeys = {
   input: string[] | null;
   output: string[] | null;
+  context: string[] | null;
   config: string[] | null;
 } | null;
 
@@ -41,6 +62,7 @@ export interface RunMetadata {
   exitingNode?: boolean;
   manuallyEmittedState?: State | null;
   threadId?: string;
+  graphInfo?: AssistantGraph
 }
 
 export type MessagesInProgressRecord = Record<string, MessageInProgress | null>;
@@ -53,7 +75,7 @@ export interface ToolCall {
 }
 
 type BaseLangGraphPlatformMessage = Omit<
-  Message,
+  LangGraphMessage,
   | "isResultMessage"
   | "isTextMessage"
   | "isImageMessage"

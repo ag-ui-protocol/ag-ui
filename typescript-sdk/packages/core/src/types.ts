@@ -44,6 +44,7 @@ export const ToolMessageSchema = z.object({
   content: z.string(),
   role: z.literal("tool"),
   toolCallId: z.string(),
+  error: z.string().optional(),
 });
 
 export const MessageSchema = z.discriminatedUnion("role", [

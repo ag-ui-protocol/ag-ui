@@ -56,7 +56,7 @@ export class MastraAgent extends AbstractAgent {
     super(rest);
     this.agent = agent;
     this.resourceId = resourceId;
-    this.runtimeContext = runtimeContext;
+    this.runtimeContext = runtimeContext ?? new RuntimeContext();
   }
 
   protected run(input: RunAgentInput): Observable<BaseEvent> {
@@ -73,8 +73,8 @@ export class MastraAgent extends AbstractAgent {
         subscriber.next(runStartedEvent);
 
         // Handle local agent memory management (from Mastra implementation)
-        if ("metrics" in this.agent) {
-          const memory = this.agent.getMemory();
+        if (this.isLocalMastraAgent(this.agent)) {
+          const memory = await this.agent.getMemory();
 
           if (memory && input.state && Object.keys(input.state || {}).length > 0) {
             let thread: StorageThreadType | null = await memory.getThreadById({
@@ -162,13 +162,12 @@ export class MastraAgent extends AbstractAgent {
               subscriber.error(error);
             },
             onRunFinished: async () => {
-              if ("metrics" in this.agent) {
+              if (this.isLocalMastraAgent(this.agent)) {
                 try {
-                  const memory = this.agent.getMemory();
+                  const memory = await this.agent.getMemory();
                   if (memory) {
                     const workingMemory = await memory.getWorkingMemory({
                       threadId: input.threadId,
-                      // @ts-ignore
                       memoryConfig: {
                         workingMemory: {
                           enabled: true,
@@ -217,6 +216,10 @@ export class MastraAgent extends AbstractAgent {
     });
   }
 
+  isLocalMastraAgent(agent: LocalMastraAgent | RemoteMastraAgent): agent is LocalMastraAgent {
+    return "getMemory" in agent;
+  }
+
   /**
    * Streams in process or remote mastra agent.
    * @param input - The input for the mastra agent.
@@ -224,7 +227,7 @@ export class MastraAgent extends AbstractAgent {
    * @returns The stream of the mastra agent.
    */
   private async streamMastraAgent(
-    { threadId, runId, messages, tools }: RunAgentInput,
+    { threadId, runId, messages, tools, context: inputContext }: RunAgentInput,
     {
       onTextPart,
       onFinishMessagePart,
@@ -247,15 +250,10 @@ export class MastraAgent extends AbstractAgent {
     );
     const resourceId = this.resourceId ?? threadId;
     const convertedMessages = convertAGUIMessagesToMastra(messages);
+    this.runtimeContext?.set('ag-ui', { context: inputContext });
     const runtimeContext = this.runtimeContext;
 
-    function isLocalMastraAgent(
-      agent: LocalMastraAgent | RemoteMastraAgent,
-    ): agent is LocalMastraAgent {
-      return "metrics" in agent;
-    }
-
-    if (isLocalMastraAgent(this.agent)) {
+    if (this.isLocalMastraAgent(this.agent)) {
       // Local agent - use the agent's stream method directly
       try {
         const response = await this.agent.stream(convertedMessages, {

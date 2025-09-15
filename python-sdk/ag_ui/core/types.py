@@ -86,6 +86,7 @@ class ToolMessage(ConfiguredBaseModel):
     role: Literal["tool"] = "tool"
     content: str
     tool_call_id: str
+    error: Optional[str] = None
 
 
 Message = Annotated[

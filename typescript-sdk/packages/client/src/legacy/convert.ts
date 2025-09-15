@@ -18,6 +18,7 @@ import {
   StateDeltaEvent,
   MessagesSnapshotEvent,
   ToolCall,
+  RunErrorEvent,
 } from "@ag-ui/core";
 import { Observable } from "rxjs";
 import {
@@ -36,6 +37,7 @@ import {
   LegacyActionExecutionMessage,
   LegacyResultMessage,
   LegacyActionExecutionResult,
+  LegacyRunError
 } from "./types";
 import untruncateJson from "untruncate-json";
 
@@ -76,6 +78,7 @@ export const convertToLegacyEvents =
               {
                 type: LegacyRuntimeEventTypes.enum.TextMessageStart,
                 messageId: startEvent.messageId,
+                role: startEvent.role,
               } as LegacyTextMessageStart,
             ];
           }
@@ -125,7 +128,13 @@ export const convertToLegacyEvents =
           case EventType.TOOL_CALL_ARGS: {
             const argsEvent = event as ToolCallArgsEvent;
 
-            const currentToolCall = currentToolCalls[currentToolCalls.length - 1];
+            // Find the tool call by ID instead of using the last one
+            const currentToolCall = currentToolCalls.find((tc) => tc.id === argsEvent.toolCallId);
+            if (!currentToolCall) {
+              console.warn(`TOOL_CALL_ARGS: No tool call found with ID '${argsEvent.toolCallId}'`);
+              return [];
+            }
+
             currentToolCall.function.arguments += argsEvent.delta;
             let didUpdateState = false;
 
@@ -295,6 +304,11 @@ export const convertToLegacyEvents =
               currentState.messages = syncedMessages;
             }
 
+            // Only do an update if state is not empty
+            if (Object.keys(currentState).length === 0) {
+              return [];
+            }
+
             return [
               {
                 type: LegacyRuntimeEventTypes.enum.AgentStateMessage,
@@ -317,9 +331,14 @@ export const convertToLegacyEvents =
             ];
           }
           case EventType.RUN_ERROR: {
-            // legacy protocol does not have an event for errors
-            console.error("Run error", event);
-            return [];
+            const errorEvent = event as RunErrorEvent;
+            return [
+              {
+                type: LegacyRuntimeEventTypes.enum.RunError,
+                message: errorEvent.message,
+                code: errorEvent.code,
+              } as LegacyRunError,
+            ];
           }
           case EventType.STEP_STARTED: {
             const stepStarted = event as StepStartedEvent;

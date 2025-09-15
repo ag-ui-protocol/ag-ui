@@ -2,21 +2,23 @@
 
 CLI tool for scaffolding **Agent-User Interaction (AG-UI) Protocol** applications.
 
-`create-ag-ui-app` provides an interactive setup wizard to quickly bootstrap AG-UI projects with your preferred client framework and agent backend. Choose from CopilotKit/Next.js for web apps or CLI clients for terminal-based interactions.
+`create-ag-ui-app` provides an interactive setup wizard to quickly bootstrap AG-UI projects with your preferred client framework and agent backend. 
 
-## Installation
+Choose from CopilotKit/Next.js for web apps or CLI clients for terminal-based interactions.
+
+## Usage
 
 ```bash
-npm create ag-ui-app@latest
-pnpm create ag-ui-app@latest
-yarn create ag-ui-app
+npx create-ag-ui-app@latest
+pnpx create-ag-ui-app@latest
+bunx create-ag-ui-app@latest
 ```
 
 ## Features
 
 - 🎯 **Interactive setup** – Guided prompts for client and framework selection
 - 🌐 **Multiple clients** – CopilotKit/Next.js web apps and CLI clients
-- 🔧 **Framework integration** – Built-in support for LangGraph, CrewAI, Mastra, AG2, and more
+- 🔧 **Framework integration** – Built-in support for LangGraph, CrewAI, Mastra, Agno, LlamaIndex, and more
 - 📦 **Zero config** – Automatically sets up dependencies and project structure
 - ⚡ **Quick start** – Get from idea to running app in minutes
 
@@ -24,21 +26,24 @@ yarn create ag-ui-app
 
 ```bash
 # Interactive setup
-npm create ag-ui-app@latest
+npx create-ag-ui-app@latest
 
 # With framework flags
-npm create ag-ui-app@latest -- --langgraph
-npm create ag-ui-app@latest -- --mastra
+npx create-ag-ui-app@latest --langgraph-py
+npx create-ag-ui-app@latest --mastra
+
+# See all options
+npx create-ag-ui-app@latest --help
 ```
 
 ## Documentation
 
 - Concepts & architecture: [`docs/concepts`](https://docs.ag-ui.com/concepts/architecture)
-- Full API reference: [`docs/quickstart`](https://docs.ag-ui.com/quickstart/introduction)
+- Full API reference: [`docs/events`](https://docs.ag-ui.com/concepts/events)
 
 ## Contributing
 
-Bug reports and pull requests are welcome! Please read our [contributing guide](https://docs.ag-ui.com/development/contributing) first.
+Bug reports and pull requests are welcome! Please read our [contributing guide](https://github.com/ag-ui-protocol/ag-ui/blob/main/CONTRIBUTING.md) first.
 
 ## License
 

@@ -1,0 +1,38 @@
+name: Check Generated Files
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-files-json:
+    name: Check files.json
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Regenerate files.json
+        working-directory: typescript-sdk/apps/dojo
+        run: npm run generate-content-json
+
+      - name: Check files.json
+        working-directory: typescript-sdk/apps/dojo
+        run: |
+          if git diff --exit-code src/files.json > /dev/null; then
+            echo "✅ No changes detected in dojo/src/files.json. Everything is up to date."
+          else
+            echo "❌ Detected changes in dojo/src/files.json."
+            echo ""
+            echo "Please run \`(p)npm run generate-content-json\` in the typescript-sdk/apps/dojo folder and commit the changes."
+            echo ""
+            echo "The detected diff was as follows:"
+            echo "::group::Diff for dojo/src/files.json"
+            git diff src/files.json
+            echo "::endgroup::"
+            exit 1
+          fi
+
+

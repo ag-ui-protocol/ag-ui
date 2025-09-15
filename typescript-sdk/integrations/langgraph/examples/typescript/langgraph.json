@@ -1,0 +1,13 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "agentic_chat": "./src/agents/agentic_chat/agent.ts:agenticChatGraph",
+    "agentic_generative_ui": "./src/agents/agentic_generative_ui/agent.ts:agenticGenerativeUiGraph",
+    "human_in_the_loop": "./src/agents/human_in_the_loop/agent.ts:humanInTheLoopGraph",
+    "predictive_state_updates": "./src/agents/predictive_state_updates/agent.ts:predictiveStateUpdatesGraph",
+    "shared_state": "./src/agents/shared_state/agent.ts:sharedStateGraph",
+    "tool_based_generative_ui": "./src/agents/tool_based_generative_ui/agent.ts:toolBasedGenerativeUiGraph",
+    "subgraphs": "./src/agents/subgraphs/agent.ts:subGraphsAgentGraph"
+  },
+  "env": ".env"
+}
