@@ -619,14 +619,12 @@ class ADKAgent:
                             f"Maximum concurrent executions ({self._max_concurrent}) reached"
                         )
                 
-                # Check if there's an existing execution for this thread
+                # Check if there's an existing execution for this thread and wait for it
                 existing_execution = self._active_executions.get(input.thread_id)
-                if existing_execution and not existing_execution.is_complete:
-                    # Wait for existing execution to complete before starting new one
-                    logger.debug(f"Waiting for existing execution to complete for thread {input.thread_id}")
-            
+
             # If there was an existing execution, wait for it to complete
             if existing_execution and not existing_execution.is_complete:
+                logger.debug(f"Waiting for existing execution to complete for thread {input.thread_id}")
                 try:
                     await existing_execution.task
                 except Exception as e:
