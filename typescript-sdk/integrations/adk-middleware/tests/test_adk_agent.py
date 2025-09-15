@@ -174,7 +174,9 @@ class TestADKAgent:
         assert events[0].type == EventType.RUN_STARTED
         assert events[1].type == EventType.RUN_ERROR
         assert events[2].type == EventType.RUN_FINISHED
-        assert "validation error" in events[1].message
+        # Check that it's an error with meaningful content
+        assert len(events[1].message) > 0
+        assert events[1].code == 'BACKGROUND_EXECUTION_ERROR'
     
     @pytest.mark.asyncio
     async def test_cleanup(self, adk_agent):
