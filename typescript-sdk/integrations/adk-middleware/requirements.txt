@@ -1,6 +1,6 @@
 # Core dependencies
 ag-ui-protocol>=0.1.7
-google-adk>=1.9.0
+google-adk>=1.14.0
 pydantic>=2.11.7
 asyncio>=3.4.3
 fastapi>=0.115.2
