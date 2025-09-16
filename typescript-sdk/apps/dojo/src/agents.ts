@@ -68,7 +68,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         tool_based_generative_ui: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-tool-based-generative-ui` }),
         human_in_the_loop: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-human-in-loop-agent` }),
         shared_state: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-shared-state-agent` }),
-        predictive_state_updates: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-predictive-state-agent` }),
+        // predictive_state_updates: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-predictive-state-agent` }),
       };
     },
   },
