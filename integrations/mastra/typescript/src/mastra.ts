@@ -51,14 +51,19 @@ export class MastraAgent extends AbstractAgent {
   resourceId?: string;
   runtimeContext?: RuntimeContext;
 
-  constructor({ agent, resourceId, runtimeContext, ...rest }: MastraAgentConfig) {
+  constructor(private config: MastraAgentConfig) {
+    const { agent, resourceId, runtimeContext, ...rest } = config;
     super(rest);
     this.agent = agent;
     this.resourceId = resourceId;
     this.runtimeContext = runtimeContext ?? new RuntimeContext();
   }
 
-  run(input: RunAgentInput): Observable<BaseEvent> {
+  public clone() {
+    return new MastraAgent(this.config);
+  }
+
+  protected run(input: RunAgentInput): Observable<BaseEvent> {
     let messageId = randomUUID();
 
     return new Observable<BaseEvent>((subscriber) => {

@@ -48,14 +48,19 @@ export class VercelAISDKAgent extends AbstractAgent {
   model: LanguageModelV1;
   maxSteps: number;
   toolChoice: ToolChoice<Record<string, unknown>>;
-  constructor({ model, maxSteps, toolChoice, ...rest }: VercelAISDKAgentConfig) {
+  constructor(private config: VercelAISDKAgentConfig) {
+    const { model, maxSteps, toolChoice, ...rest } = config;
     super({ ...rest });
     this.model = model;
     this.maxSteps = maxSteps ?? 1;
     this.toolChoice = toolChoice ?? "auto";
   }
 
-  run(input: RunAgentInput): Observable<BaseEvent> {
+  public clone() {
+    return new VercelAISDKAgent(this.config);
+  }
+
+  protected run(input: RunAgentInput): Observable<BaseEvent> {
     const finalMessages: Message[] = input.messages;
 
     return new Observable<ProcessedEvent>((subscriber) => {
