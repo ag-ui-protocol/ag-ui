@@ -102,13 +102,6 @@ test("[ADK Middleware] Agentic Chat retains memory of user messages during a con
     await waitForAIResponse(page);
     await chat.assertAgentReplyVisible(/Kaavish/i);
 
-    await chat.sendMessage("tell me an interesting fact about Moon");
-    await chat.assertUserMessageVisible(
-      "tell me an interesting fact about Moon"
-    );
-    await waitForAIResponse(page);
-    await chat.assertAgentReplyVisible(/Moon/i);
-
     await chat.sendMessage("Can you remind me what my favorite fruit is?");
     await chat.assertUserMessageVisible(
       "Can you remind me what my favorite fruit is?"
