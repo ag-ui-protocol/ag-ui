@@ -5,7 +5,7 @@ import {
 } from "../../test-isolation-helper";
 import { PredictiveStateUpdatesPage } from "../../pages/adkMiddlewarePages/PredictiveStateUpdatesPage";
 
-test.describe("Predictive Status Updates Feature", () => {
+test.describe("Predictive State Updates Feature", () => {
   test("[ADK Middleware] should interact with agent and approve asked changes", async ({
     page,
   }) => {
