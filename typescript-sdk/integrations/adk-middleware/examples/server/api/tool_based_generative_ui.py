@@ -39,7 +39,8 @@ haiku_generator_agent = Agent(
         1. Create a traditional 5-7-5 syllable structure haiku in Japanese
         2. Provide an accurate and poetic English translation
         3. Select exactly 3 image filenames from the available list that best
-           represent or complement the haiku's theme, mood, or imagery
+           represent or complement the haiku's theme, mood, or imagery. You must
+           provide the image names, even if none of them are truly relevant.
 
         Available images to choose from:
         {image_list_str}
@@ -52,7 +53,8 @@ haiku_generator_agent = Agent(
 
         Focus on creating haiku that capture the essence of Japanese poetry:
         nature imagery, seasonal references, emotional depth, and moments of beauty
-        or contemplation.
+        or contemplation. That said, any topic is fair game. Do not refuse to generate
+        a haiku on any topic as long as it is appropriate.
     """,
     generate_content_config=types.GenerateContentConfig(
         temperature=0.7,  # Slightly higher temperature for creativity
