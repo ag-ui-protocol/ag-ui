@@ -7,134 +7,61 @@ on:
     branches: [main]
 
 jobs:
-  changes:
-    name: Determine suites to run
-    runs-on: ubuntu-latest
-    outputs:
-      suites: ${{ steps.set-suites.outputs.suites }}
-      should_run: ${{ steps.set-suites.outputs.should_run }}
-      matrix: ${{ steps.set-suites.outputs.matrix }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Detect changes
-        id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            # Core changes that run ALL suites
-            core_changes:
-              - 'typescript-sdk/packages/**'
-              - 'typescript-sdk/package.json'
-              - 'typescript-sdk/pnpm-workspace.yaml'
-              - 'typescript-sdk/tsconfig.json'
-              - 'typescript-sdk/turbo.json'
-              - 'python-sdk/**'
-              - 'typescript-sdk/apps/dojo/e2e/**'
-              - '!typescript-sdk/apps/dojo/e2e/tests/**'
-              - 'typescript-sdk/apps/dojo/scripts/**'
-              - '.github/workflows/dojo-e2e.yml'
-
-            # Individual suite changes (source OR tests)
-            agno_changes:
-              - 'typescript-sdk/integrations/agno/**'
-              - 'typescript-sdk/apps/dojo/e2e/tests/agnoTests/**'
-            crew_ai_changes:
-              - 'typescript-sdk/integrations/crewai/**'
-              - 'typescript-sdk/apps/dojo/e2e/tests/crewAITests/**'
-            langgraph_changes:
-              - 'typescript-sdk/integrations/langgraph/**'
-              - 'typescript-sdk/apps/dojo/e2e/tests/langgraphTests/**'
-              - 'typescript-sdk/apps/dojo/e2e/tests/langgraphFastAPITests/**'
-            llama_index_changes:
-              - 'typescript-sdk/integrations/llamaindex/**'
-              - 'typescript-sdk/apps/dojo/e2e/tests/llamaIndexTests/**'
-            mastra_changes:
-              - 'typescript-sdk/integrations/mastra/**'
-              - 'typescript-sdk/apps/dojo/e2e/tests/mastraTests/**'
-              - 'typescript-sdk/apps/dojo/e2e/tests/mastraAgentLocalTests/**'
-            middleware_starter_changes:
-              - 'typescript-sdk/integrations/middleware-starter/**'
-              - 'typescript-sdk/apps/dojo/e2e/tests/middlewareStarterTests/**'
-            pydantic_ai_changes:
-              - 'typescript-sdk/integrations/pydantic-ai/**'
-              - 'typescript-sdk/apps/dojo/e2e/tests/pydanticAITests/**'
-            server_starter_changes:
-              - 'typescript-sdk/integrations/server-starter/**'
-              - 'typescript-sdk/apps/dojo/e2e/tests/serverStarterTests/**'
-            server_starter_all_changes:
-              - 'typescript-sdk/integrations/server-starter-all-features/**'
-              - 'typescript-sdk/apps/dojo/e2e/tests/serverStarterAllFeaturesTests/**'
-            vercel_ai_sdk_changes:
-              - 'typescript-sdk/integrations/vercel-ai-sdk/**'
-              - 'typescript-sdk/apps/dojo/e2e/tests/vercelAISdkTests/**'
-
-      - name: Set suites output
-        id: set-suites
-        run: |
-          set -euo pipefail
-          
-          # Define all possible matrix configurations
-          ALL_MATRIX='[
-            {"suite":"agno","test_path":"tests/agnoTests","services":["dojo","agno"],"wait_on":"http://localhost:9999,tcp:localhost:8002"},
-            {"suite":"crew-ai","test_path":"tests/crewAITests","services":["dojo","crew-ai"],"wait_on":"http://localhost:9999,tcp:localhost:8003"},
-            {"suite":"langgraph","test_path":"tests/langgraphTests","services":["dojo","langgraph-platform-python","langgraph-platform-typescript"],"wait_on":"http://localhost:9999,tcp:localhost:8005,tcp:localhost:8006"},
-            {"suite":"langgraph-fastapi","test_path":"tests/langgraphFastAPITests","services":["dojo","langgraph-fastapi"],"wait_on":"http://localhost:9999,tcp:localhost:8004"},
-            {"suite":"llama-index","test_path":"tests/llamaIndexTests","services":["dojo","llama-index"],"wait_on":"http://localhost:9999,tcp:localhost:8007"},
-            {"suite":"mastra","test_path":"tests/mastraTests","services":["dojo","mastra"],"wait_on":"http://localhost:9999,tcp:localhost:8008"},
-            {"suite":"mastra-agent-local","test_path":"tests/mastraAgentLocalTests","services":["dojo"],"wait_on":"http://localhost:9999"},
-            {"suite":"middleware-starter","test_path":"tests/middlewareStarterTests","services":["dojo"],"wait_on":"http://localhost:9999"},
-            {"suite":"pydantic-ai","test_path":"tests/pydanticAITests","services":["dojo","pydantic-ai"],"wait_on":"http://localhost:9999,tcp:localhost:8009"},
-            {"suite":"server-starter","test_path":"tests/serverStarterTests","services":["dojo","server-starter"],"wait_on":"http://localhost:9999,tcp:localhost:8000"},
-            {"suite":"server-starter-all","test_path":"tests/serverStarterAllFeaturesTests","services":["dojo","server-starter-all"],"wait_on":"http://localhost:9999,tcp:localhost:8001"},
-            {"suite":"vercel-ai-sdk","test_path":"tests/vercelAISdkTests","services":["dojo"],"wait_on":"http://localhost:9999"}
-          ]'
-          
-          # If core changes, run all suites
-          if [[ "${{ steps.filter.outputs.core_changes }}" == "true" ]]; then
-            SUITES="agno,crew-ai,langgraph,langgraph-fastapi,llama-index,mastra,mastra-agent-local,middleware-starter,pydantic-ai,server-starter,server-starter-all,vercel-ai-sdk"
-          else
-            # Build list of changed suites
-            SUITES=""
-            [[ "${{ steps.filter.outputs.agno_changes }}" == "true" ]] && SUITES="${SUITES:+$SUITES,}agno"
-            [[ "${{ steps.filter.outputs.crew_ai_changes }}" == "true" ]] && SUITES="${SUITES:+$SUITES,}crew-ai"
-            [[ "${{ steps.filter.outputs.langgraph_changes }}" == "true" ]] && SUITES="${SUITES:+$SUITES,}langgraph,langgraph-fastapi"
-            [[ "${{ steps.filter.outputs.llama_index_changes }}" == "true" ]] && SUITES="${SUITES:+$SUITES,}llama-index"
-            [[ "${{ steps.filter.outputs.mastra_changes }}" == "true" ]] && SUITES="${SUITES:+$SUITES,}mastra,mastra-agent-local"
-            [[ "${{ steps.filter.outputs.middleware_starter_changes }}" == "true" ]] && SUITES="${SUITES:+$SUITES,}middleware-starter"
-            [[ "${{ steps.filter.outputs.pydantic_ai_changes }}" == "true" ]] && SUITES="${SUITES:+$SUITES,}pydantic-ai"
-            [[ "${{ steps.filter.outputs.server_starter_changes }}" == "true" ]] && SUITES="${SUITES:+$SUITES,}server-starter"
-            [[ "${{ steps.filter.outputs.server_starter_all_changes }}" == "true" ]] && SUITES="${SUITES:+$SUITES,}server-starter-all"
-            [[ "${{ steps.filter.outputs.vercel_ai_sdk_changes }}" == "true" ]] && SUITES="${SUITES:+$SUITES,}vercel-ai-sdk"
-          fi
-          
-          echo "suites=${SUITES}" >> "$GITHUB_OUTPUT"
-          
-          # Generate dynamic matrix based on changed suites
-          if [[ -n "${SUITES}" ]]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-            
-            # Filter matrix to only include changed suites
-            FILTERED_MATRIX=$(echo "$ALL_MATRIX" | jq -c --arg suites "$SUITES" '
-              [.[] | select(.suite as $suite | ($suites | split(",") | index($suite)))]
-            ')
-            echo "matrix=${FILTERED_MATRIX}" >> "$GITHUB_OUTPUT"
-          else 
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "matrix=[]" >> "$GITHUB_OUTPUT"
-          fi
   e2e:
-    needs: changes
-    if: ${{ needs.changes.outputs.should_run == 'true' }}
     name: ${{ matrix.suite }}
     runs-on: depot-ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.changes.outputs.matrix) }}
+        include:
+          - suite: agno
+            test_path: tests/agnoTests
+            services: ["dojo","agno"]
+            wait_on: http://localhost:9999,tcp:localhost:8002
+          - suite: crew-ai
+            test_path: tests/crewAITests
+            services: ["dojo","crew-ai"]
+            wait_on: http://localhost:9999,tcp:localhost:8003
+          - suite: langgraph
+            test_path: tests/langgraphTests
+            services: ["dojo","langgraph-platform-python","langgraph-platform-typescript"]
+            wait_on: http://localhost:9999,tcp:localhost:8005,tcp:localhost:8006
+          - suite: langgraph-fastapi
+            test_path: tests/langgraphFastAPITests
+            services: ["dojo","langgraph-fastapi"]
+            wait_on: http://localhost:9999,tcp:localhost:8004
+          - suite: llama-index
+            test_path: tests/llamaIndexTests
+            services: ["dojo","llama-index"]
+            wait_on: http://localhost:9999,tcp:localhost:8007
+          - suite: mastra
+            test_path: tests/mastraTests
+            services: ["dojo","mastra"]
+            wait_on: http://localhost:9999,tcp:localhost:8008
+          - suite: mastra-agent-local
+            test_path: tests/mastraAgentLocalTests
+            services: ["dojo"]
+            wait_on: http://localhost:9999
+          - suite: middleware-starter
+            test_path: tests/middlewareStarterTests
+            services: ["dojo"]
+            wait_on: http://localhost:9999
+          - suite: pydantic-ai
+            test_path: tests/pydanticAITests
+            services: ["dojo","pydantic-ai"]
+            wait_on: http://localhost:9999,tcp:localhost:8009
+          - suite: server-starter
+            test_path: tests/serverStarterTests
+            services: ["dojo","server-starter"]
+            wait_on: http://localhost:9999,tcp:localhost:8000
+          - suite: server-starter-all
+            test_path: tests/serverStarterAllFeaturesTests
+            services: ["dojo","server-starter-all"]
+            wait_on: http://localhost:9999,tcp:localhost:8001
+          - suite: vercel-ai-sdk
+            test_path: tests/vercelAISdkTests
+            services: ["dojo"]
+            wait_on: http://localhost:9999
 
     steps:
     - name: Checkout code
