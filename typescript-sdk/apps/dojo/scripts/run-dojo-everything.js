@@ -110,6 +110,12 @@ const ALL_SERVICES = {
     cwd: path.join(integrationsRoot, 'pydantic-ai/examples'),
     env: { PORT: 8009 },
   },
+  'adk-middleware': {
+    command: 'uv run dev',
+    name: 'ADK Middleware',
+    cwd: path.join(integrationsRoot, 'adk-middleware/examples'),
+    env: { PORT: 8010 },
+  },
   'dojo': {
     command: 'pnpm run start',
     name: 'Dojo',
@@ -126,6 +132,7 @@ const ALL_SERVICES = {
       LLAMA_INDEX_URL: 'http://localhost:8007',
       MASTRA_URL: 'http://localhost:8008',
       PYDANTIC_AI_URL: 'http://localhost:8009',
+      ADK_MIDDLEWARE_URL: 'http://localhost:8010',
       NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: 'cpkdojo.local___CopilotKit Feature Viewer',
     },
   },
