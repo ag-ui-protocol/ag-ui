@@ -1,8 +1,7 @@
 import uuid
 import json
-from typing import Optional, List, Any, Union, AsyncGenerator, Generator
-from dataclasses import is_dataclass, asdict
-from datetime import date, datetime
+from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Literal, Dict
+import inspect
 
 from langgraph.graph.state import CompiledStateGraph
 from langchain.schema import BaseMessage, SystemMessage
@@ -29,7 +28,9 @@ from .utils import (
     langchain_messages_to_agui,
     resolve_reasoning_content,
     resolve_message_content,
-    camel_to_snake
+    camel_to_snake,
+    json_safe_stringify,
+    make_json_safe
 )
 
 from ag_ui.core import (
@@ -90,7 +91,12 @@ class LangGraphAgent:
         self.active_step = None
 
     def _dispatch_event(self, event: ProcessedEvents) -> str:
-        return event  # Fallback if no encoder
+        if event.type == EventType.RAW:
+            event.event = make_json_safe(event.event)
+        elif event.raw_event:
+            event.raw_event = make_json_safe(event.raw_event)
+
+        return event
 
     async def run(self, input: RunAgentInput) -> AsyncGenerator[str, None]:
         forwarded_props = {}
@@ -224,7 +230,7 @@ class LangGraphAgent:
                 CustomEvent(
                     type=EventType.CUSTOM,
                     name=LangGraphEventTypes.OnInterrupt.value,
-                    value=json.dumps(interrupt.value, default=make_json_safe) if not isinstance(interrupt.value, str) else interrupt.value,
+                    value=json.dumps(interrupt.value, default=json_safe_stringify) if not isinstance(interrupt.value, str) else interrupt.value,
                     raw_event=interrupt,
                 )
             )
@@ -257,14 +263,13 @@ class LangGraphAgent:
     async def prepare_stream(self, input: RunAgentInput, agent_state: State, config: RunnableConfig):
         state_input = input.state or {}
         messages = input.messages or []
-        tools = input.tools or []
         forwarded_props = input.forwarded_props or {}
         thread_id = input.thread_id
 
         state_input["messages"] = agent_state.values.get("messages", [])
         self.active_run["current_graph_state"] = agent_state.values.copy()
         langchain_messages = agui_messages_to_langchain(messages)
-        state = self.langgraph_default_merge_state(state_input, langchain_messages, tools)
+        state = self.langgraph_default_merge_state(state_input, langchain_messages, input)
         self.active_run["current_graph_state"].update(state)
         config["configurable"]["thread_id"] = thread_id
         interrupts = agent_state.tasks[0].interrupts if agent_state.tasks and len(agent_state.tasks) > 0 else []
@@ -331,12 +336,14 @@ class LangGraphAgent:
 
         subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs') if input.forwarded_props else False
 
-        stream = self.graph.astream_events(
-            stream_input,
+        kwargs = self.get_stream_kwargs(
+            input=stream_input,
             config=config,
-            subgraps=bool(subgraphs_stream_enabled),
-            version="v2"
+            subgraphs=bool(subgraphs_stream_enabled),
+            version="v2",
         )
+
+        stream = self.graph.astream_events(**kwargs)
 
         return {
             "stream": stream,
@@ -363,14 +370,16 @@ class LangGraphAgent:
             as_node=time_travel_checkpoint.next[0] if time_travel_checkpoint.next else "__start__"
         )
 
-        stream_input = self.langgraph_default_merge_state(time_travel_checkpoint.values, [message_checkpoint], tools)
+        stream_input = self.langgraph_default_merge_state(time_travel_checkpoint.values, [message_checkpoint], input)
         subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs') if input.forwarded_props else False
-        stream = self.graph.astream_events(
-            stream_input,
-            fork,
-            subgraps=bool(subgraphs_stream_enabled),
-            version="v2"
+
+        kwargs = self.get_stream_kwargs(
+            input=stream_input,
+            fork=fork,
+            subgraphs=bool(subgraphs_stream_enabled),
+            version="v2",
         )
+        stream = self.graph.astream_events(**kwargs)
 
         return {
             "stream": stream,
@@ -397,20 +406,28 @@ class LangGraphAgent:
             input_schema_keys = list(input_schema["properties"].keys()) if "properties" in input_schema else []
             output_schema_keys = list(output_schema["properties"].keys()) if "properties" in output_schema else []
             config_schema_keys = list(config_schema["properties"].keys()) if "properties" in config_schema else []
+            context_schema_keys = []
+
+            if hasattr(self.graph, "context_schema") and self.graph.context_schema is not None:
+                context_schema = self.graph.context_schema().schema()
+                context_schema_keys = list(context_schema["properties"].keys()) if "properties" in context_schema else []
+
 
             return {
                 "input": [*input_schema_keys, *self.constant_schema_keys],
                 "output": [*output_schema_keys, *self.constant_schema_keys],
                 "config": config_schema_keys,
+                "context": context_schema_keys,
             }
         except Exception:
             return {
                 "input": self.constant_schema_keys,
                 "output": self.constant_schema_keys,
                 "config": [],
+                "context": [],
             }
 
-    def langgraph_default_merge_state(self, state: State, messages: List[BaseMessage], tools: Any) -> State:
+    def langgraph_default_merge_state(self, state: State, messages: List[BaseMessage], input: RunAgentInput) -> State:
         if messages and isinstance(messages[0], SystemMessage):
             messages = messages[1:]
 
@@ -419,6 +436,7 @@ class LangGraphAgent:
 
         new_messages = [msg for msg in messages if msg.id not in existing_message_ids]
 
+        tools = input.tools or []
         tools_as_dicts = []
         if tools:
             for tool in tools:
@@ -433,6 +451,10 @@ class LangGraphAgent:
             **state,
             "messages": new_messages,
             "tools": [*state.get("tools", []), *tools_as_dicts],
+            "ag-ui": {
+                "tools": [*state.get("tools", []), *tools_as_dicts],
+                "context": input.context or []
+            }
         }
 
     def get_state_snapshot(self, state: State) -> State:
@@ -736,15 +758,37 @@ class LangGraphAgent:
         self.active_step = None
         return dispatch
 
-def make_json_safe(o):
-    if is_dataclass(o):          # dataclasses like Flight(...)
-        return asdict(o)
-    if hasattr(o, "model_dump"): # pydantic v2
-        return o.model_dump()
-    if hasattr(o, "dict"):       # pydantic v1
-        return o.dict()
-    if hasattr(o, "__dict__"):   # plain objects
-        return vars(o)
-    if isinstance(o, (datetime, date)):
-        return o.isoformat()
-    return str(o)                # last resort
+    # Check if some kwargs are enabled per LG version, to "catch all versions" and backwards compatibility
+    def get_stream_kwargs(
+            self,
+            input: Any,
+            subgraphs: bool = False,
+            version: Literal["v1", "v2"] = "v2",
+            config: Optional[RunnableConfig] = None,
+            context: Optional[Dict[str, Any]] = None,
+            fork: Optional[Any] = None,
+    ):
+        kwargs = dict(
+            input=input,
+            subgraphs=subgraphs,
+            version=version,
+        )
+
+        # Only add context if supported
+        sig = inspect.signature(self.graph.astream_events)
+        if 'context' in sig.parameters:
+            base_context = {}
+            if isinstance(config, dict) and 'configurable' in config and isinstance(config['configurable'], dict):
+                base_context.update(config['configurable'])
+            if context:  # context might be None or {}
+                base_context.update(context)
+            if base_context:  # only add if there's something to pass
+                kwargs['context'] = base_context
+
+        if config:
+            kwargs['config'] = config
+
+        if fork:
+            kwargs.update(fork)
+
+        return kwargs
