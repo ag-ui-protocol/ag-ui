@@ -58,6 +58,8 @@ sealed class BaseEvent extends AGUIModel with TypeDiscriminator {
         return ToolCallResultEvent.fromJson(json);
       case EventType.thinkingStart:
         return ThinkingStartEvent.fromJson(json);
+      case EventType.thinkingContent:
+        return ThinkingContentEvent.fromJson(json);
       case EventType.thinkingEnd:
         return ThinkingEndEvent.fromJson(json);
       case EventType.stateSnapshot:
@@ -338,6 +340,54 @@ final class ThinkingStartEvent extends BaseEvent {
   }) {
     return ThinkingStartEvent(
       title: title ?? this.title,
+      timestamp: timestamp ?? this.timestamp,
+      rawEvent: rawEvent ?? this.rawEvent,
+    );
+  }
+}
+
+/// Event containing thinking content
+final class ThinkingContentEvent extends BaseEvent {
+  final String delta;
+
+  const ThinkingContentEvent({
+    required this.delta,
+    super.timestamp,
+    super.rawEvent,
+  }) : super(eventType: EventType.thinkingContent);
+
+  factory ThinkingContentEvent.fromJson(Map<String, dynamic> json) {
+    final delta = JsonDecoder.requireField<String>(json, 'delta');
+    if (delta.isEmpty) {
+      throw AGUIValidationError(
+        message: 'Delta must not be an empty string',
+        field: 'delta',
+        value: delta,
+        json: json,
+      );
+    }
+    
+    return ThinkingContentEvent(
+      delta: delta,
+      timestamp: JsonDecoder.optionalField<int>(json, 'timestamp'),
+      rawEvent: json['rawEvent'],
+    );
+  }
+
+  @override
+  Map<String, dynamic> toJson() => {
+    ...super.toJson(),
+    'delta': delta,
+  };
+
+  @override
+  ThinkingContentEvent copyWith({
+    String? delta,
+    int? timestamp,
+    dynamic rawEvent,
+  }) {
+    return ThinkingContentEvent(
+      delta: delta ?? this.delta,
       timestamp: timestamp ?? this.timestamp,
       rawEvent: rawEvent ?? this.rawEvent,
     );

@@ -153,6 +153,8 @@ class EventDecoder {
       case TextMessageContentEvent():
         Validators.requireNonEmpty(event.messageId, 'messageId');
         Validators.requireNonEmpty(event.delta, 'delta');
+      case ThinkingContentEvent():
+        Validators.requireNonEmpty(event.delta, 'delta');
       case ToolCallStartEvent():
         Validators.requireNonEmpty(event.toolCallId, 'toolCallId');
         Validators.requireNonEmpty(event.toolCallName, 'toolCallName');

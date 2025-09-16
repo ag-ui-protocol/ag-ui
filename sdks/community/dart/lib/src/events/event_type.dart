@@ -16,6 +16,7 @@ enum EventType {
   toolCallChunk('TOOL_CALL_CHUNK'),
   toolCallResult('TOOL_CALL_RESULT'),
   thinkingStart('THINKING_START'),
+  thinkingContent('THINKING_CONTENT'),
   thinkingEnd('THINKING_END'),
   stateSnapshot('STATE_SNAPSHOT'),
   stateDelta('STATE_DELTA'),
