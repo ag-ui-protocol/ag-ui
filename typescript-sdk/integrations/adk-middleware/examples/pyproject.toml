@@ -1,0 +1,30 @@
+tool.uv.package = true
+
+[project]
+name = "adk-middleware-examples"
+version = "0.1.0"
+description = "Example usage of the ADK middleware with FastAPI"
+license = "MIT"
+
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+    "ag-ui-adk-middleware @ file:///Users/mk/Developer/work/ag-ui/typescript-sdk/integrations/adk-middleware",
+]
+
+[project.scripts]
+dev = "server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["server"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
