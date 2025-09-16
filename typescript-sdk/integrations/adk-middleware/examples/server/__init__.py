@@ -26,16 +26,28 @@ from .api import (
 )
 
 app = FastAPI(title='ADK Middleware Demo')
-app.mount('/chat', basic_chat_app, 'Basic Chat')
-app.mount('/adk-tool-based-generative-ui', tool_based_generative_ui_app, 'Tool Based Generative UI')
-app.mount('/adk-human-in-loop-agent', human_in_the_loop_app, 'Human in the Loop')
-app.mount('/adk-shared-state-agent', shared_state_app, 'Shared State')
-app.mount('/adk-predictive-state-agent', predictive_state_updates_app, 'Predictive State Updates')
+
+# Include routers instead of mounting apps to show routes in docs
+app.include_router(basic_chat_app.router, prefix='/chat', tags=['Basic Chat'])
+app.include_router(tool_based_generative_ui_app.router, prefix='/adk-tool-based-generative-ui', tags=['Tool Based Generative UI'])
+app.include_router(human_in_the_loop_app.router, prefix='/adk-human-in-loop-agent', tags=['Human in the Loop'])
+app.include_router(shared_state_app.router, prefix='/adk-shared-state-agent', tags=['Shared State'])
+app.include_router(predictive_state_updates_app.router, prefix='/adk-predictive-state-agent', tags=['Predictive State Updates'])
 
 
 @app.get("/")
 async def root():
-    return {"message": "ADK Middleware is running!", "endpoint": "/chat"}
+    return {
+        "message": "ADK Middleware is running!",
+        "endpoints": {
+            "chat": "/chat",
+            "tool_based_generative_ui": "/adk-tool-based-generative-ui",
+            "human_in_the_loop": "/adk-human-in-loop-agent",
+            "shared_state": "/adk-shared-state-agent",
+            "predictive_state_updates": "/adk-predictive-state-agent",
+            "docs": "/docs"
+        }
+    }
 
 
 def main():
@@ -66,8 +78,13 @@ def main():
 
     port = int(os.getenv("PORT", "8000"))
     print("Starting ADK Middleware server...")
-    print(f"Chat endpoint available at: http://localhost:{port}/chat")
-    print(f"API docs available at: http://localhost:{port}/docs")
+    print(f"Available endpoints:")
+    print(f"  • Chat: http://localhost:{port}/chat")
+    print(f"  • Tool Based Generative UI: http://localhost:{port}/adk-tool-based-generative-ui")
+    print(f"  • Human in the Loop: http://localhost:{port}/adk-human-in-loop-agent")
+    print(f"  • Shared State: http://localhost:{port}/adk-shared-state-agent")
+    print(f"  • Predictive State Updates: http://localhost:{port}/adk-predictive-state-agent")
+    print(f"  • API docs: http://localhost:{port}/docs")
     uvicorn.run(app, host="0.0.0.0", port=port)
 
 
