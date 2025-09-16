@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import { structuredClone_ } from "@/utils";
 import { catchError, map, tap } from "rxjs/operators";
 import { finalize } from "rxjs/operators";
-import { pipe, Observable, from, of } from "rxjs";
+import { pipe, Observable, ReplaySubject, from, of } from "rxjs";
 import { verifyEvents } from "@/verify";
 import { convertToLegacyEvents } from "@/legacy/convert";
 import { LegacyRuntimeProtocolEvent } from "@/legacy/types";
@@ -28,6 +28,8 @@ export abstract class AbstractAgent {
   public debug: boolean = false;
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
+  private readonly eventsSubject = new ReplaySubject<BaseEvent>();
+  public readonly events$ = this.eventsSubject.asObservable();
 
   constructor({
     agentId,
@@ -83,6 +85,9 @@ export abstract class AbstractAgent {
         () => this.run(input),
         transformChunks(this.debug),
         verifyEvents(this.debug),
+        tap((event) => {
+          this.eventsSubject.next(event);
+        }),
         (source$) => this.apply(input, source$, subscribers),
         (source$) => this.processApplyEvents(input, source$, subscribers),
         catchError((error) => {
@@ -427,6 +432,9 @@ export abstract class AbstractAgent {
     return this.run(input).pipe(
       transformChunks(this.debug),
       verifyEvents(this.debug),
+      tap((event) => {
+        this.eventsSubject.next(event);
+      }),
       convertToLegacyEvents(this.threadId, input.runId, this.agentId),
       (events$: Observable<LegacyRuntimeProtocolEvent>) => {
         return events$.pipe(
