@@ -7,9 +7,142 @@ on:
     branches: [main]
 
 jobs:
+  changes:
+    name: Determine suites to run
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      should_run: ${{ steps.set-matrix.outputs.should_run }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed areas
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            core_ts:
+              - 'typescript-sdk/packages/**'
+              - 'typescript-sdk/package.json'
+              - 'typescript-sdk/pnpm-lock.yaml'
+              - 'typescript-sdk/pnpm-workspace.yaml'
+              - 'typescript-sdk/tsconfig.json'
+              - 'typescript-sdk/turbo.json'
+            core_py:
+              - 'python-sdk/**'
+            e2e_tests:
+              - 'typescript-sdk/apps/dojo/e2e/**'
+              - 'typescript-sdk/apps/dojo/scripts/**'
+            workflow_self:
+              - '.github/workflows/dojo-e2e.yml'
+            agno:
+              - 'typescript-sdk/integrations/agno/**'
+            crew_ai:
+              - 'typescript-sdk/integrations/crewai/**'
+            langgraph:
+              - 'typescript-sdk/integrations/langgraph/**'
+            llama_index:
+              - 'typescript-sdk/integrations/llamaindex/**'
+            mastra:
+              - 'typescript-sdk/integrations/mastra/**'
+            middleware_starter:
+              - 'typescript-sdk/integrations/middleware-starter/**'
+            pydantic_ai:
+              - 'typescript-sdk/integrations/pydantic-ai/**'
+            server_starter:
+              - 'typescript-sdk/integrations/server-starter/**'
+            server_starter_all:
+              - 'typescript-sdk/integrations/server-starter-all-features/**'
+            vercel_ai_sdk:
+              - 'typescript-sdk/integrations/vercel-ai-sdk/**'
+
+      - name: Build dynamic matrix
+        id: set-matrix
+        env:
+          CORE_TS: ${{ steps.filter.outputs.core_ts }}
+          CORE_PY: ${{ steps.filter.outputs.core_py }}
+          E2E_TESTS: ${{ steps.filter.outputs.e2e_tests }}
+          WORKFLOW_SELF: ${{ steps.filter.outputs.workflow_self }}
+          AGNO: ${{ steps.filter.outputs.agno }}
+          CREW_AI: ${{ steps.filter.outputs.crew_ai }}
+          LANGGRAPH: ${{ steps.filter.outputs.langgraph }}
+          LLAMA_INDEX: ${{ steps.filter.outputs.llama_index }}
+          MASTRA: ${{ steps.filter.outputs.mastra }}
+          MIDDLEWARE_STARTER: ${{ steps.filter.outputs.middleware_starter }}
+          PYDANTIC_AI: ${{ steps.filter.outputs.pydantic_ai }}
+          SERVER_STARTER: ${{ steps.filter.outputs.server_starter }}
+          SERVER_STARTER_ALL: ${{ steps.filter.outputs.server_starter_all }}
+          VERCEL_AI_SDK: ${{ steps.filter.outputs.vercel_ai_sdk }}
+        run: |
+          python3 - << 'PY'
+          import os, json
+
+          all_entries = [
+            {"suite": "agno", "test_path": "tests/agnoTests", "services": ["dojo","agno"], "wait_on": "http://localhost:9999,tcp:localhost:8002"},
+            {"suite": "crew-ai", "test_path": "tests/crewAITests", "services": ["dojo","crew-ai"], "wait_on": "http://localhost:9999,tcp:localhost:8003"},
+            {"suite": "langgraph", "test_path": "tests/langgraphTests", "services": ["dojo","langgraph-platform-python","langgraph-platform-typescript"], "wait_on": "http://localhost:9999,tcp:localhost:8005,tcp:localhost:8006"},
+            {"suite": "langgraph-fastapi", "test_path": "tests/langgraphFastAPITests", "services": ["dojo","langgraph-fastapi"], "wait_on": "http://localhost:9999,tcp:localhost:8004"},
+            {"suite": "llama-index", "test_path": "tests/llamaIndexTests", "services": ["dojo","llama-index"], "wait_on": "http://localhost:9999,tcp:localhost:8007"},
+            {"suite": "mastra", "test_path": "tests/mastraTests", "services": ["dojo","mastra"], "wait_on": "http://localhost:9999,tcp:localhost:8008"},
+            {"suite": "mastra-agent-local", "test_path": "tests/mastraAgentLocalTests", "services": ["dojo"], "wait_on": "http://localhost:9999"},
+            {"suite": "middleware-starter", "test_path": "tests/middlewareStarterTests", "services": ["dojo"], "wait_on": "http://localhost:9999"},
+            {"suite": "pydantic-ai", "test_path": "tests/pydanticAITests", "services": ["dojo","pydantic-ai"], "wait_on": "http://localhost:9999,tcp:localhost:8009"},
+            {"suite": "server-starter", "test_path": "tests/serverStarterTests", "services": ["dojo","server-starter"], "wait_on": "http://localhost:9999,tcp:localhost:8000"},
+            {"suite": "server-starter-all", "test_path": "tests/serverStarterAllFeaturesTests", "services": ["dojo","server-starter-all"], "wait_on": "http://localhost:9999,tcp:localhost:8001"},
+            {"suite": "vercel-ai-sdk", "test_path": "tests/vercelAISdkTests", "services": ["dojo"], "wait_on": "http://localhost:9999"},
+          ]
+
+          entry_by_suite = {e["suite"]: e for e in all_entries}
+          core_changed = (
+            (os.environ.get('CORE_TS') == 'true') or
+            (os.environ.get('CORE_PY') == 'true') or
+            (os.environ.get('E2E_TESTS') == 'true') or
+            (os.environ.get('WORKFLOW_SELF') == 'true')
+          )
+
+          include = []
+          if core_changed:
+            include = all_entries
+          else:
+            if os.environ.get('AGNO') == 'true':
+              include.append(entry_by_suite['agno'])
+            if os.environ.get('CREW_AI') == 'true':
+              include.append(entry_by_suite['crew-ai'])
+            if os.environ.get('LANGGRAPH') == 'true':
+              include.append(entry_by_suite['langgraph'])
+              include.append(entry_by_suite['langgraph-fastapi'])
+            if os.environ.get('LLAMA_INDEX') == 'true':
+              include.append(entry_by_suite['llama-index'])
+            if os.environ.get('MASTRA') == 'true':
+              include.append(entry_by_suite['mastra'])
+              include.append(entry_by_suite['mastra-agent-local'])
+            if os.environ.get('MIDDLEWARE_STARTER') == 'true':
+              include.append(entry_by_suite['middleware-starter'])
+            if os.environ.get('PYDANTIC_AI') == 'true':
+              include.append(entry_by_suite['pydantic-ai'])
+            if os.environ.get('SERVER_STARTER') == 'true':
+              include.append(entry_by_suite['server-starter'])
+            if os.environ.get('SERVER_STARTER_ALL') == 'true':
+              include.append(entry_by_suite['server-starter-all'])
+            if os.environ.get('VERCEL_AI_SDK') == 'true':
+              include.append(entry_by_suite['vercel-ai-sdk'])
+
+          matrix = {"include": include}
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+            fh.write(f"matrix={json.dumps(matrix)}\n")
+            fh.write(f"should_run={'true' if include else 'false'}\n")
+          PY
   e2e:
-    name: E2E Tests
-    runs-on: depot-ubuntu-latest-8
+    needs: changes
+    if: ${{ needs.changes.outputs.should_run == 'true' }}
+    name: ${{ matrix.suite }}
+    runs-on: depot-ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
 
     steps:
     - name: Checkout code
@@ -25,6 +158,33 @@ jobs:
       with:
         version: 10.13.1
 
+    # Now that pnpm is available, cache its store to speed installs
+    - name: Resolve pnpm store path
+      id: pnpm-store
+      run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+    - name: Cache pnpm store
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.STORE_PATH }}
+        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-pnpm-store-
+
+    # Cache Python tool caches and virtualenvs; restore only to avoid long saves
+    - name: Cache Python dependencies (restore-only)
+      id: cache-python
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ~/.cache/pip
+          ~/.cache/pypoetry
+          ~/.cache/uv
+          **/.venv
+        key: ${{ runner.os }}-pydeps-${{ hashFiles('**/poetry.lock', '**/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-pydeps-
+
     - name: Install Poetry
       uses: snok/install-poetry@v1
       with:
@@ -35,21 +195,14 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v6
 
-    - name: Setup pnpm cache
-      uses: actions/cache@v4
-      with:
-        path: ~/.local/share/pnpm/store
-        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-        restore-keys: |
-          ${{ runner.os }}-pnpm-store-
-
     - name: Install dependencies
       working-directory: typescript-sdk
       run: pnpm install --frozen-lockfile
 
     - name: Prepare dojo for e2e
       working-directory: typescript-sdk/apps/dojo
-      run: node ./scripts/prep-dojo-everything.js -e2e
+      if: ${{ join(matrix.services, ',') != '' }}
+      run: node ./scripts/prep-dojo-everything.js --only ${{ join(matrix.services, ',') }}
 
     - name: Install e2e dependencies
       working-directory: typescript-sdk/apps/dojo/e2e
@@ -61,6 +214,7 @@ jobs:
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+      if: ${{ contains(join(matrix.services, ','), 'langgraph-fastapi') || contains(join(matrix.services, ','), 'langgraph-platform-python') || contains(join(matrix.services, ','), 'langgraph-platform-typescript') }}
       run: |
         echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > examples/python/.env
         echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> examples/python/.env
@@ -74,33 +228,28 @@ jobs:
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+      if: ${{ join(matrix.services, ',') != '' && contains(join(matrix.services, ','), 'dojo') }}
       with:
         run: |
-          node ../scripts/run-dojo-everything.js
+          node ../scripts/run-dojo-everything.js --only ${{ join(matrix.services, ',') }}
         working-directory: typescript-sdk/apps/dojo/e2e
-        wait-on: |
-          http://localhost:9999
-          tcp:localhost:8000
-          tcp:localhost:8001
-          tcp:localhost:8002
-          tcp:localhost:8003
-          tcp:localhost:8004
-          tcp:localhost:8005
-          tcp:localhost:8006
-          tcp:localhost:8007
-          tcp:localhost:8008
-          tcp:localhost:8009
+        wait-on: ${{ matrix.wait_on }}
+        wait-for: 300000
 
-    - name: Run tests
+    - name: Run tests – ${{ matrix.suite }}
       working-directory: typescript-sdk/apps/dojo/e2e
       env:
         BASE_URL: http://localhost:9999
-      run: pnpm test
+        PLAYWRIGHT_SUITE: ${{ matrix.suite }}
+      run: |
+        pnpm test -- ${{ matrix.test_path }}
 
-    - name: Upload traces
+    - name: Upload traces – ${{ matrix.suite }}
       if: always() # Uploads artifacts even if tests fail
       uses: actions/upload-artifact@v4
       with:
-        name: playwright-traces
-        path: typescript-sdk/apps/dojo/e2e/test-results/
+        name: ${{ matrix.suite }}-playwright-traces
+        path: |
+          typescript-sdk/apps/dojo/e2e/test-results/${{ matrix.suite }}/**/*
+          typescript-sdk/apps/dojo/e2e/playwright-report/**/*
         retention-days: 7

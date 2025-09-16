@@ -208,7 +208,7 @@ const agentFilesMapper: Record<string, (agentKeys: string[]) => Record<string, s
   'adk-middleware': (agentKeys: string[]) => {
     return agentKeys.reduce((acc, agentId) => ({
       ...acc,
-      [agentId]: [path.join(__dirname, integrationsFolderPath, `/adk-middleware/examples/fastapi_server.py`)]
+      [agentId]: [path.join(__dirname, integrationsFolderPath, `/adk-middleware/examples/server/api/${agentId}.py`)]
     }), {})
   }
 }

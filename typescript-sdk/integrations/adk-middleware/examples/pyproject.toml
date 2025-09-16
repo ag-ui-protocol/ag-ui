@@ -13,7 +13,7 @@ dependencies = [
     "uvicorn[standard]>=0.24.0",
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
-    "ag-ui-adk-middleware @ file:///Users/mk/Developer/work/ag-ui/typescript-sdk/integrations/adk-middleware",
+    "ag-ui-adk-middleware",
 ]
 
 [project.scripts]
@@ -28,3 +28,6 @@ packages = ["server"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+[tool.uv.sources]
+ag-ui-adk-middleware = { path = "../" }

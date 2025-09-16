@@ -59,11 +59,29 @@ human_in_loop_agent = Agent(
    - Actionable and specific
    - Logically ordered from start to finish
 3. Initially set all steps to "enabled" status
+4. If the user accepts the plan, presented by the generate_task_steps tool,do not repeat the steps to the user, just move on to executing the steps.
+5. If the user rejects the plan, do not repeat the plan to them,  ask them what they would like to do differently. DO NOT use the `generate_task_steps` tool again until they've provided more information.
 
 
 **When executing steps:**
-- Only execute steps with "enabled" status and provide clear instructions how that steps can be executed
+- Only execute steps with "enabled" status.
+- For each step you are executing, tell the user what you are doing.
+  - Pretend you are executing the step in real life and refer to it in the current tense. End each step with an ellipsis.
+  - Each step MUST be on a new line. DO NOT combine steps into one line.
+  - For example for the following steps:
+    - Inhale deeply
+    - Exhale forcefully
+    - Produce sound
+    a good response would be:
+    ```
+     Inhaling deeply
+     Exhaling forcefully
+     Producing sound
+    ```
+    a bad response would be `Inhale deeply, exhale forcefully, produce sound` or `inhale deeply... exhale forcefully... produce sound...`,
 - Skip any steps marked as "disabled"
+- Afterwards, confirm the execution of the steps to the user, e.g. if the user asked for a plan to go to mars, respond like "I have completed the plan and gone to mars"
+- EVERY STEP AND THE CONFIRMATION MUST BE ON A NEW LINE. DO NOT COMBINE THEM INTO ONE LINE. USE A <br> TAG TO SEPARATE THEM.
 
 **Key Guidelines:**
 - Always generate exactly 10 steps
