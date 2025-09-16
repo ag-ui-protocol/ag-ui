@@ -40,6 +40,30 @@ async def root():
 
 def main():
     """Main function to start the FastAPI server."""
+    # Check for authentication credentials
+    google_api_key = os.getenv("GOOGLE_API_KEY")
+    google_app_creds = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+
+    if not google_api_key and not google_app_creds:
+        print("⚠️  Warning: No Google authentication credentials found!")
+        print()
+        print("   Google ADK uses environment variables for authentication:")
+        print("   - API Key:")
+        print("     ```")
+        print("     export GOOGLE_API_KEY='your-api-key-here'")
+        print("     ```")
+        print("     Get a key from: https://makersuite.google.com/app/apikey")
+        print()
+        print("   - Or use Application Default Credentials (ADC):")
+        print("     ```")
+        print("     gcloud auth application-default login")
+        print("     export GOOGLE_APPLICATION_CREDENTIALS='path/to/service-account.json'")
+        print("     ```")
+        print("     See docs here: https://cloud.google.com/docs/authentication/application-default-credentials")
+        print()
+        print("   The credentials will be automatically picked up from the environment")
+        print()
+
     port = int(os.getenv("PORT", "8000"))
     print("Starting ADK Middleware server...")
     print(f"Chat endpoint available at: http://localhost:{port}/chat")
