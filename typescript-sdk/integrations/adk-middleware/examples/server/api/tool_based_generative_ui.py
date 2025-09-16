@@ -1,19 +1,11 @@
-# Copyright 2025 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""Tool Based Generative UI feature."""
+
+from __future__ import annotations
 
 from typing import Any, List
 
+from fastapi import FastAPI
+from adk_middleware import ADKAgent, add_adk_fastapi_endpoint
 from google.adk.agents import Agent
 from google.adk.tools import ToolContext
 from google.genai import types
@@ -32,8 +24,6 @@ IMAGE_LIST = [
     "Mount_Fuji_Lake_Reflection_Cherry_Blossoms_Sakura_Spring.jpg"
 ]
 
-
-
 # Prepare the image list string for the prompt
 image_list_str = "\n".join([f"- {img}" for img in IMAGE_LIST])
 
@@ -41,28 +31,30 @@ haiku_generator_agent = Agent(
     model='gemini-2.5-flash',
     name='haiku_generator_agent',
     instruction=f"""
-        You are an expert haiku generator that creates beautiful Japanese haiku poems 
-        and their English translations. You also have the ability to select relevant 
+        You are an expert haiku generator that creates beautiful Japanese haiku poems
+        and their English translations. You also have the ability to select relevant
         images that complement the haiku's theme and mood.
 
         When generating a haiku:
         1. Create a traditional 5-7-5 syllable structure haiku in Japanese
         2. Provide an accurate and poetic English translation
-        3. Select exactly 3 image filenames from the available list that best 
-           represent or complement the haiku's theme, mood, or imagery
+        3. Select exactly 3 image filenames from the available list that best
+           represent or complement the haiku's theme, mood, or imagery. You must
+           provide the image names, even if none of them are truly relevant.
 
         Available images to choose from:
         {image_list_str}
 
-        Always use the generate_haiku tool to create your haiku. The tool will handle 
+        Always use the generate_haiku tool to create your haiku. The tool will handle
         the formatting and validation of your response.
 
-        Do not mention the selected image names in your conversational response to 
+        Do not mention the selected image names in your conversational response to
         the user - let the tool handle that information.
 
-        Focus on creating haiku that capture the essence of Japanese poetry: 
-        nature imagery, seasonal references, emotional depth, and moments of beauty 
-        or contemplation.
+        Focus on creating haiku that capture the essence of Japanese poetry:
+        nature imagery, seasonal references, emotional depth, and moments of beauty
+        or contemplation. That said, any topic is fair game. Do not refuse to generate
+        a haiku on any topic as long as it is appropriate.
     """,
     generate_content_config=types.GenerateContentConfig(
         temperature=0.7,  # Slightly higher temperature for creativity
@@ -70,3 +62,18 @@ haiku_generator_agent = Agent(
         top_k=40
     ),
 )
+
+# Create ADK middleware agent instance
+adk_agent_haiku_generator = ADKAgent(
+    adk_agent=haiku_generator_agent,
+    app_name="demo_app",
+    user_id="demo_user",
+    session_timeout_seconds=3600,
+    use_in_memory_services=True
+)
+
+# Create FastAPI app
+app = FastAPI(title="ADK Middleware Tool Based Generative UI")
+
+# Add the ADK endpoint
+add_adk_fastapi_endpoint(app, adk_agent_haiku_generator, path="/")

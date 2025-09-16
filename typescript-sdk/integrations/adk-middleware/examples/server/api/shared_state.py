@@ -1,12 +1,15 @@
-"""
-A demo of shared state between the agent and CopilotKit using Google ADK.
-"""
+"""Shared State feature."""
+
+from __future__ import annotations
 
 from dotenv import load_dotenv
 load_dotenv()
 import json
 from enum import Enum
 from typing import Dict, List, Any, Optional
+from fastapi import FastAPI
+from adk_middleware import ADKAgent, add_adk_fastapi_endpoint
+
 # ADK imports
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
@@ -17,7 +20,6 @@ from google.adk.tools import FunctionTool, ToolContext
 from google.genai.types import Content, Part , FunctionDeclaration
 from google.adk.models import LlmResponse, LlmRequest
 from google.genai import types
-
 
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -52,17 +54,17 @@ class Ingredient(BaseModel):
 class Recipe(BaseModel):
     skill_level: SkillLevel = Field(..., description="The skill level required for the recipe")
     special_preferences: Optional[List[SpecialPreferences]] = Field(
-        None, 
+        None,
         description="A list of special preferences for the recipe"
     )
     cooking_time: Optional[CookingTime] = Field(
-        None, 
+        None,
         description="The cooking time of the recipe"
     )
     ingredients: List[Ingredient] = Field(..., description="Entire list of ingredients for the recipe")
     instructions: List[str] = Field(..., description="Entire list of instructions for the recipe")
     changes: Optional[str] = Field(
-        None, 
+        None,
         description="A description of the changes made to the recipe"
     )
 
@@ -78,7 +80,7 @@ def generate_recipe(
 ) -> Dict[str, str]:
     """
     Generate or update a recipe using the provided recipe data.
-    
+
     Args:
         "title": {
             "type": "string",
@@ -121,13 +123,13 @@ def generate_recipe(
             "type": "string",
             "description": "**OPTIONAL** - A brief description of what changes were made to the recipe compared to the previous version. Example: 'Added more spices for flavor', 'Reduced cooking time', 'Substituted ingredient X for Y'. Omit if this is a new recipe."
         }
-    
+
     Returns:
         Dict indicating success status and message
     """
     try:
 
-        
+
         # Create RecipeData object to validate structure
         recipe = {
             "title": title,
@@ -138,7 +140,7 @@ def generate_recipe(
             "instructions": instructions ,
             "changes": changes
         }
-        
+
         # Update the session state with the new recipe
         current_recipe = tool_context.state.get("recipe", {})
         if current_recipe:
@@ -148,19 +150,18 @@ def generate_recipe(
                     current_recipe[key] = value
         else:
             current_recipe = recipe
-        
-        tool_context.state["recipe"] = current_recipe
-        
 
-        
+        tool_context.state["recipe"] = current_recipe
+
+
+
         return {"status": "success", "message": "Recipe generated successfully"}
-        
+
     except Exception as e:
         return {"status": "error", "message": f"Error generating recipe: {str(e)}"}
 
 
 
-    
 def on_before_agent(callback_context: CallbackContext):
     """
     Initialize recipe state if it doesn't exist.
@@ -177,7 +178,7 @@ def on_before_agent(callback_context: CallbackContext):
             "instructions": ["First step instruction"]
         }
         callback_context.state["recipe"] = default_recipe
- 
+
 
     return None
 
@@ -199,7 +200,7 @@ def before_model_modifier(
         # --- Modification Example ---
         # Add a prefix to the system instruction
         original_instruction = llm_request.config.system_instruction or types.Content(role="system", parts=[])
-        prefix = f"""You are a helpful assistant for creating recipes. 
+        prefix = f"""You are a helpful assistant for creating recipes.
         This is the current state of the recipe: {recipe_json}
         You can improve the recipe by calling the generate_recipe tool."""
         # Ensure system_instruction is Content and parts list exists
@@ -233,7 +234,7 @@ def simple_after_model_modifier(
             if  llm_response.content.role=='model' and llm_response.content.parts[0].text:
                 original_text = llm_response.content.parts[0].text
                 callback_context._invocation_context.end_invocation = True
-        
+
         elif llm_response.error_message:
             return None
         else:
@@ -268,3 +269,18 @@ shared_state_agent = LlmAgent(
         before_model_callback=before_model_modifier,
         after_model_callback = simple_after_model_modifier
     )
+
+# Create ADK middleware agent instance
+adk_shared_state_agent = ADKAgent(
+    adk_agent=shared_state_agent,
+    app_name="demo_app",
+    user_id="demo_user",
+    session_timeout_seconds=3600,
+    use_in_memory_services=True
+)
+
+# Create FastAPI app
+app = FastAPI(title="ADK Middleware Shared State")
+
+# Add the ADK endpoint
+add_adk_fastapi_endpoint(app, adk_shared_state_agent, path="/")

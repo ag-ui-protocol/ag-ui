@@ -1,4 +1,9 @@
+"""Human in the Loop feature."""
 
+from __future__ import annotations
+
+from fastapi import FastAPI
+from adk_middleware import ADKAgent, add_adk_fastapi_endpoint
 from google.adk.agents import Agent
 from google.genai import types
 
@@ -35,7 +40,6 @@ DEFINE_TASK_TOOL = {
     }
 }
 
-
 human_in_loop_agent = Agent(
     model='gemini-2.5-flash',
     name='human_in_loop_agent',
@@ -58,7 +62,7 @@ human_in_loop_agent = Agent(
 
 
 **When executing steps:**
-- Only execute steps with "enabled" status and provide clear instructions how that steps can be executed 
+- Only execute steps with "enabled" status and provide clear instructions how that steps can be executed
 - Skip any steps marked as "disabled"
 
 **Key Guidelines:**
@@ -73,3 +77,18 @@ Tool reference: {DEFINE_TASK_TOOL}
         top_k=40
     ),
 )
+
+# Create ADK middleware agent instance
+adk_human_in_loop_agent = ADKAgent(
+    adk_agent=human_in_loop_agent,
+    app_name="demo_app",
+    user_id="demo_user",
+    session_timeout_seconds=3600,
+    use_in_memory_services=True
+)
+
+# Create FastAPI app
+app = FastAPI(title="ADK Middleware Human in the Loop")
+
+# Add the ADK endpoint
+add_adk_fastapi_endpoint(app, adk_human_in_loop_agent, path="/")

@@ -1,6 +1,6 @@
-"""
-A demo of predictive state updates using Google ADK.
-"""
+"""Predictive State Updates feature."""
+
+from __future__ import annotations
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -8,6 +8,9 @@ load_dotenv()
 import json
 import uuid
 from typing import Dict, List, Any, Optional
+from fastapi import FastAPI
+from adk_middleware import ADKAgent, add_adk_fastapi_endpoint
+
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.sessions import InMemorySessionService, Session
@@ -31,19 +34,19 @@ def write_document(
     You MUST write the full document, even when changing only a few words.
     When making edits to the document, try to make them minimal - do not change every word.
     Keep stories SHORT!
-    
+
     Args:
         document: The document content to write in markdown format
-        
+
     Returns:
         Dict indicating success status and message
     """
     try:
         # Update the session state with the new document
         tool_context.state["document"] = document
-        
+
         return {"status": "success", "message": "Document written successfully"}
-        
+
     except Exception as e:
         return {"status": "error", "message": f"Error writing document: {str(e)}"}
 
@@ -55,7 +58,7 @@ def on_before_agent(callback_context: CallbackContext):
     if "document" not in callback_context.state:
         # Initialize with empty document
         callback_context.state["document"] = None
-    
+
     return None
 
 
@@ -74,18 +77,18 @@ def before_model_modifier(
                 current_document = callback_context.state["document"]
             except Exception as e:
                 current_document = f"Error retrieving document: {str(e)}"
-        
+
         # Modify the system instruction to include current document state
         original_instruction = llm_request.config.system_instruction or types.Content(role="system", parts=[])
-        prefix = f"""You are a helpful assistant for writing documents. 
+        prefix = f"""You are a helpful assistant for writing documents.
         To write the document, you MUST use the write_document tool.
         You MUST write the full document, even when changing only a few words.
-        When you wrote the document, DO NOT repeat it as a message. 
+        When you wrote the document, DO NOT repeat it as a message.
         Just briefly summarize the changes you made. 2 sentences max.
         This is the current state of the document: ----
         {current_document}
         -----"""
-        
+
         # Ensure system_instruction is Content and parts list exists
         if not isinstance(original_instruction, types.Content):
             original_instruction = types.Content(role="system", parts=[types.Part(text=str(original_instruction))])
@@ -105,10 +108,10 @@ predictive_state_updates_agent = LlmAgent(
     name="DocumentAgent",
     model="gemini-2.5-pro",
     instruction="""
-    You are a helpful assistant for writing documents. 
+    You are a helpful assistant for writing documents.
     To write the document, you MUST use the write_document tool.
     You MUST write the full document, even when changing only a few words.
-    When you wrote the document, DO NOT repeat it as a message. 
+    When you wrote the document, DO NOT repeat it as a message.
     Just briefly summarize the changes you made. 2 sentences max.
 
     IMPORTANT RULES:
@@ -130,3 +133,18 @@ predictive_state_updates_agent = LlmAgent(
     before_agent_callback=on_before_agent,
     before_model_callback=before_model_modifier
 )
+
+# Create ADK middleware agent instance
+adk_predictive_state_agent = ADKAgent(
+    adk_agent=predictive_state_updates_agent,
+    app_name="demo_app",
+    user_id="demo_user",
+    session_timeout_seconds=3600,
+    use_in_memory_services=True
+)
+
+# Create FastAPI app
+app = FastAPI(title="ADK Middleware Predictive State Updates")
+
+# Add the ADK endpoint
+add_adk_fastapi_endpoint(app, adk_predictive_state_agent, path="/")
