@@ -3,7 +3,7 @@
 This provides a FastAPI application that demonstrates how to use the
 ADK middleware with various agent types. It includes examples for
 each of the ADK middleware features:
-- Basic Chat Agent
+- Agentic Chat Agent
 - Tool Based Generative UI
 - Human in the Loop
 - Shared State
@@ -18,7 +18,7 @@ import os
 
 
 from .api import (
-    basic_chat_app,
+    agentic_chat_app,
     tool_based_generative_ui_app,
     human_in_the_loop_app,
     shared_state_app,
@@ -28,7 +28,7 @@ from .api import (
 app = FastAPI(title='ADK Middleware Demo')
 
 # Include routers instead of mounting apps to show routes in docs
-app.include_router(basic_chat_app.router, prefix='/chat', tags=['Basic Chat'])
+app.include_router(agentic_chat_app.router, prefix='/chat', tags=['Agentic Chat'])
 app.include_router(tool_based_generative_ui_app.router, prefix='/adk-tool-based-generative-ui', tags=['Tool Based Generative UI'])
 app.include_router(human_in_the_loop_app.router, prefix='/adk-human-in-loop-agent', tags=['Human in the Loop'])
 app.include_router(shared_state_app.router, prefix='/adk-shared-state-agent', tags=['Shared State'])
