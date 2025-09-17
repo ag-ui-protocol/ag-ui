@@ -44,12 +44,6 @@ To use this integration you need to:
 4. Install the requirements for the `examples`, for example:
 
     ```bash
-    pip install -r requirements.txt
-    ```
-
-    or:
-
-    ```bash
     uv pip install -r requirements.txt
     ```
 
@@ -57,14 +51,9 @@ To use this integration you need to:
 
     ```bash
     export GOOGLE_API_KEY=<My API Key>
-    python -m examples.fastapi_server
-    ```
-
-    or
-
-    ```bash
-    export GOOGLE_API_KEY=<My API Key>
-    uv python -m examples.fastapi_server
+    cd examples
+    uv sync
+    uv run dev
     ```
 
 6. Open another terminal in the root directory of the ag-ui repository clone.
