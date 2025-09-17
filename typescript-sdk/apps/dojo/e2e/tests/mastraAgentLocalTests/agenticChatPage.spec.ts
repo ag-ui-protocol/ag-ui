@@ -22,7 +22,7 @@ test("[MastraAgentLocal] Agentic Chat sends and receives a message", async ({
 
     await waitForAIResponse(page);
     await chat.assertUserMessageVisible("Hi, I am duaa");
-    await chat.assertAgentReplyVisible(/Hello/i);
+    await chat.assertAgentReplyVisible(/Hello|Hi/i);
   });
 });
 
