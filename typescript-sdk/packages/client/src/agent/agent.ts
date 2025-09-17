@@ -6,13 +6,14 @@ import { v4 as uuidv4 } from "uuid";
 import { structuredClone_ } from "@/utils";
 import { catchError, map, tap } from "rxjs/operators";
 import { finalize } from "rxjs/operators";
-import { pipe, Observable, ReplaySubject, from, of } from "rxjs";
+import { pipe, Observable, ReplaySubject, from, of, EMPTY } from "rxjs";
 import { verifyEvents } from "@/verify";
 import { convertToLegacyEvents } from "@/legacy/convert";
 import { LegacyRuntimeProtocolEvent } from "@/legacy/types";
 import { lastValueFrom } from "rxjs";
 import { transformChunks } from "@/chunks";
 import { AgentStateMutation, AgentSubscriber, runSubscribersWithMutation } from "./subscriber";
+import { AGUIConnectNotImplementedError } from "@ag-ui/core";
 
 export interface RunAgentResult {
   result: any;
@@ -93,6 +94,65 @@ export abstract class AbstractAgent {
         catchError((error) => {
           this.isRunning = false;
           return this.onError(input, error, subscribers);
+        }),
+        finalize(() => {
+          this.isRunning = false;
+          void this.onFinalize(input, subscribers);
+        }),
+      );
+
+      return lastValueFrom(pipeline(of(null))).then(() => {
+        const newMessages = structuredClone_(this.messages).filter(
+          (message: Message) => !currentMessageIds.has(message.id),
+        );
+        return { result, newMessages };
+      });
+    } finally {
+      this.isRunning = false;
+    }
+  }
+
+  protected connect(input: RunAgentInput): Observable<BaseEvent> {
+    throw new AGUIConnectNotImplementedError();
+  }
+  public async connectAgent(
+    parameters?: RunAgentParameters,
+    subscriber?: AgentSubscriber,
+  ): Promise<RunAgentResult> {
+    try {
+      this.isRunning = true;
+      this.agentId = this.agentId ?? uuidv4();
+      const input = this.prepareRunAgentInput(parameters);
+      let result: any = undefined;
+      const currentMessageIds = new Set(this.messages.map((message) => message.id));
+
+      const subscribers: AgentSubscriber[] = [
+        {
+          onRunFinishedEvent: (params) => {
+            result = params.result;
+          },
+        },
+        ...this.subscribers,
+        subscriber ?? {},
+      ];
+
+      await this.onInitialize(input, subscribers);
+
+      const pipeline = pipe(
+        () => this.connect(input),
+        transformChunks(this.debug),
+        verifyEvents(this.debug),
+        tap((event) => {
+          this.eventsSubject.next(event);
+        }),
+        (source$) => this.apply(input, source$, subscribers),
+        (source$) => this.processApplyEvents(input, source$, subscribers),
+        catchError((error) => {
+          this.isRunning = false;
+          if (!(error instanceof AGUIConnectNotImplementedError)) {
+            return this.onError(input, error, subscribers);
+          }
+          return EMPTY;
         }),
         finalize(() => {
           this.isRunning = false;
