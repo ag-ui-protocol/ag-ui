@@ -98,6 +98,11 @@ const ALL_TARGETS = {
     name: 'Pydantic AI',
     cwd: path.join(integrationsRoot, 'pydantic-ai/examples'),
   },
+  'adk-middleware': {
+    command: 'uv sync',
+    name: 'ADK Middleware',
+    cwd: path.join(integrationsRoot, 'adk-middleware/examples'),
+  },
   'dojo': {
     command: 'pnpm install --no-frozen-lockfile && pnpm build --filter=demo-viewer...',
     name: 'Dojo',
