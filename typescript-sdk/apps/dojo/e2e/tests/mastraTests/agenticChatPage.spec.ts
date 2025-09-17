@@ -4,7 +4,7 @@ import {
   waitForAIResponse,
   retryOnAIFailure,
 } from "../../test-isolation-helper";
-import { AgenticChatPage } from "../../pages/mastraPages/AgenticChatPage";
+import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
 
 test("[Mastra] Agentic Chat sends and receives a greeting message", async ({
   page,
@@ -71,7 +71,7 @@ test("[Mastra] Agentic Chat retains memory of previous questions", async ({
     await chat.sendMessage("What was my first question");
     await chat.assertUserMessageVisible("What was my first question");
     await waitForAIResponse(page);
-    
+
     // Check if the agent remembers the first question about weather
     await chat.assertAgentReplyVisible(/weather|Islamabad/i);
   });

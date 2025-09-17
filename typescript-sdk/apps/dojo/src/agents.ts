@@ -39,9 +39,10 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         human_in_the_loop: new PydanticAIAgent({
           url: `${envVars.pydanticAIUrl}/human_in_the_loop/`,
         }),
-        predictive_state_updates: new PydanticAIAgent({
-          url: `${envVars.pydanticAIUrl}/predictive_state_updates/`,
-        }),
+        // Disabled until we can figure out why production builds break
+        // predictive_state_updates: new PydanticAIAgent({
+        //   url: `${envVars.pydanticAIUrl}/predictive_state_updates/`,
+        // }),
         shared_state: new PydanticAIAgent({
           url: `${envVars.pydanticAIUrl}/shared_state/`,
         }),
@@ -56,6 +57,18 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new ServerStarterAgent({ url: envVars.serverStarterUrl }),
+      };
+    },
+  },
+  {
+    id: "adk-middleware",
+    agents: async () => {
+      return {
+        agentic_chat: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/chat` }),
+        tool_based_generative_ui: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-tool-based-generative-ui` }),
+        human_in_the_loop: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-human-in-loop-agent` }),
+        shared_state: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-shared-state-agent` }),
+        // predictive_state_updates: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-predictive-state-agent` }),
       };
     },
   },
@@ -141,6 +154,10 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         agentic_chat_reasoning: new LangGraphHttpAgent({
           url: `${envVars.langgraphPythonUrl}/agent/agentic_chat_reasoning`,
         }),
+        subgraphs: new LangGraphAgent({
+          deploymentUrl: envVars.langgraphPythonUrl,
+          graphId: "subgraphs",
+        }),
       };
     },
   },
@@ -168,6 +185,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         }),
         agentic_chat_reasoning: new LangGraphHttpAgent({
           url: `${envVars.langgraphFastApiUrl}/agent/agentic_chat_reasoning`,
+        }),
+        subgraphs: new LangGraphHttpAgent({
+          url: `${envVars.langgraphFastApiUrl}/agent/subgraphs`,
         }),
       };
     },
@@ -199,6 +219,10 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         tool_based_generative_ui: new LangGraphAgent({
           deploymentUrl: envVars.langgraphTypescriptUrl,
           graphId: "tool_based_generative_ui",
+        }),
+        subgraphs: new LangGraphAgent({
+          deploymentUrl: envVars.langgraphTypescriptUrl,
+          graphId: "subgraphs",
         })
       };
     },

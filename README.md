@@ -6,7 +6,6 @@ Built for simplicity and flexibility, it enables seamless integration between AI
 
 ---
 
-[📅 Upcoming Event: August 6th - AG-UI + Mastra: Build a Project Management Canvas](https://lu.ma/94688z7e)
 
 <br>
 
@@ -68,9 +67,8 @@ AG-UI is complementary to the other 2 top agentic protocols
 - AG-UI brings agents into user-facing applications
 
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/0c1ec566-050b-4ef8-ab89-15be41abe64f"  />
+  <img width="2048" height="1182" alt="The Agent Protocol Stack" src="https://github.com/user-attachments/assets/41138f71-50be-4812-98aa-20e0ad595716" />
 </div>  
-
    
 ## 🚀 Features
 
@@ -86,22 +84,22 @@ AG-UI is complementary to the other 2 top agentic protocols
 
 AG-UI was born from CopilotKit's initial partnership with LangGraph and CrewAI - and brings the incredibly popular agent-user-interactivity infrastructure to the wider agentic ecosystem.
 
-| Framework                                                          | Status                   | AG-UI Resources                                                              | Integrations |
+| Framework                                                          | Status                   | AG-UI Resources                                                              | Integrations             | 
 | ------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------- | ------------------------ |
 | No-framework                                                       | ✅ Supported             | ➡️ Docs coming soon                                                          |                          |
-| [LangGraph](https://www.langchain.com/langgraph)                   | ✅ Supported             | ➡️ [Demo](https://v0-langgraph-land.vercel.app/)                             | Partnership              |
-| [CrewAI](https://crewai.com/)                                      | ✅ Supported             | ➡️ [Demo](https://v0-crew-land.vercel.app/)                                  | Partnership              |
-| [Mastra](https://mastra.ai/)                                       | ✅ Supported             | ➡️ [Demo](https://v0-mastra-land.vercel.app/)                                | 1st party                |
-| [AG2](https://ag2.ai/)                                             | ✅ Supported             | ➡️ [Demo](https://v0-ag2-land.vercel.app/)                                   | 1st party                |
-| [Agno](https://github.com/agno-agi/agno)                           | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/agno)                                   | 1st party                |
-| [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/llamaindex)                             | 1st party                |
-| [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/pydantic-ai)                            | 1st party                |
-| [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            | Community                |
-| [Google ADK](https://google.github.io/adk-docs/get-started/)       | 🛠️ In Progress           | –                                                                            | Community                |
-| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress           | –                                                                            | Community                |
+| [LangGraph](https://www.langchain.com/langgraph)                   | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/langgraph/) [Demos](https://dojo.ag-ui.com/langgraph-fastapi/feature/shared_state)                           | Partnership              |
+| [CrewAI](https://crewai.com/)                                      | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/crewai-flows) [Demos](https://dojo.ag-ui.com/crewai/feature/shared_state)                          | Partnership              |
+| [Mastra](https://mastra.ai/)                                       | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/mastra/) [Demos](https://dojo.ag-ui.com/mastra/feature/shared_state)                               | 1st party                |
+| [AG2](https://ag2.ai/)                                             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/ag2/) [Demos](https://dojo.ag-ui.com/ag2/feature/shared_state)                                   | 1st party                |
+| [Agno](https://github.com/agno-agi/agno)                           | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/agno/) [Demos](https://dojo.ag-ui.com/agno/feature/shared_state)                                  | 1st party                |
+| [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/llamaindex/) [Demos](https://dojo.ag-ui.com/llamaindex/feature/shared_state)                            | 1st party                |
+| [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/pydantic-ai/) [Demos](https://dojo.ag-ui.com/pydantic-ai/feature/shared_state)                           | 1st party                |
+| [Google ADK](https://google.github.io/adk-docs/get-started/)       | 🛠️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/274)           | –                                                                            | 1st party                |
 | [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/)       | 🛠️ In Progress           | –                                                                            | 1st party                |
+| [AWS Strands Agents](https://github.com/strands-agents/sdk-python) | 🛠️ In Progress           | –                                                                            | 1st Party                |   
+| [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            | Community                |
+| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress           | –                                                                            | Community                |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/)     | 💡 Open to Contributions | –                                                                            | Community                |
-| [Strands Agents SDK](https://github.com/strands-agents/sdk-python) | 💡 Open to Contributions | –                                                                            | Community                |   
 
 [View all supported frameworks →](https://ag-ui.com/frameworks)
 
@@ -131,7 +129,7 @@ https://agui-demo.vercel.app/
 
 
 ## 🧩 AG-UI Showcase: The AG-UI Dojo (Building-Blocks Viewer)
-The [AG-UI Dojo](https://copilotkit-feature-viewer.vercel.app/) showcases many of the building blocks that AG-UI supports ([AG-UI Dojo Source Code](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo)).
+The [AG-UI Dojo](https://dojo.ag-ui.com/langgraph-fastapi/feature/shared_state) showcases many of the building blocks that AG-UI supports ([AG-UI Dojo Source Code](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo)) with each Agent Framework integration.
 
 The building blocks are designed to be simple and focused -- between 50-200 lines of code.
 
@@ -142,7 +140,7 @@ https://github.com/user-attachments/assets/a67d3d54-36b2-4c7a-ac69-a0ca01365d5b
 
 Check out the [Contributing guide](https://github.com/ag-ui-protocol/ag-ui/blob/main/CONTRIBUTING.md)
 
-- **[Weekely AG-UI Working Group](https://lu.ma/CopilotKit?k=c)**  
+- **[Bi-Weekely AG-UI Working Group](https://lu.ma/CopilotKit?k=c)**  
   📅 Follow the CopilotKit Luma Events Calendar
 
 ## Roadmap

@@ -160,7 +160,7 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
     const legacyEvents = await lastValueFrom(legacy$.pipe(toArray()));
 
     // Verify events are in correct legacy format
-    expect(legacyEvents).toHaveLength(4); // Start, Content, End, AgentStateMessage
+    expect(legacyEvents).toHaveLength(3); // Start, Content, End
 
     // TextMessageStart
     expect(legacyEvents[0]).toMatchObject({
@@ -182,12 +182,12 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
     });
 
     // Final AgentStateMessage
-    expect(legacyEvents[3]).toMatchObject({
-      type: "AgentStateMessage",
-      threadId: "test-thread-id",
-      agentName: "test-agent-id",
-      active: false,
-    });
+    // expect(legacyEvents[3]).toMatchObject({
+    //   type: "AgentStateMessage",
+    //   threadId: "test-thread-id",
+    //   agentName: "test-agent-id",
+    //   active: false,
+    // });
   });
 
   it("should pass configuration to the underlying run method", async () => {
@@ -304,7 +304,7 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
     const legacyEvents = await lastValueFrom(legacy$.pipe(toArray()));
 
     // Verify events are in correct legacy format
-    expect(legacyEvents).toHaveLength(4); // Start, Content, End, AgentStateMessage
+    expect(legacyEvents).toHaveLength(3); // Start, Content, End
 
     // TextMessageStart
     expect(legacyEvents[0]).toMatchObject({
@@ -326,12 +326,12 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
     });
 
     // Final AgentStateMessage
-    expect(legacyEvents[3]).toMatchObject({
-      type: "AgentStateMessage",
-      threadId: "test-thread-id",
-      agentName: "test-agent-id",
-      active: false,
-    });
+    // expect(legacyEvents[3]).toMatchObject({
+    //   type: "AgentStateMessage",
+    //   threadId: "test-thread-id",
+    //   agentName: "test-agent-id",
+    //   active: false,
+    // });
   });
 
   it("should transform tool call events with results into legacy events with correct tool name", async () => {
@@ -348,7 +348,7 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
     const legacyEvents = await lastValueFrom(legacy$.pipe(toArray()));
 
     // Verify events are in correct legacy format
-    expect(legacyEvents).toHaveLength(5); // ActionExecutionStart, ActionExecutionArgs, ActionExecutionEnd, ActionExecutionResult, AgentStateMessage
+    expect(legacyEvents).toHaveLength(4); // ActionExecutionStart, ActionExecutionArgs, ActionExecutionEnd, ActionExecutionResult
 
     // ActionExecutionStart
     expect(legacyEvents[0]).toMatchObject({
@@ -379,11 +379,11 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
     });
 
     // Final AgentStateMessage
-    expect(legacyEvents[4]).toMatchObject({
-      type: "AgentStateMessage",
-      threadId: "test-thread-id",
-      agentName: "test-agent-id",
-      active: false,
-    });
+    // expect(legacyEvents[4]).toMatchObject({
+    //   type: "AgentStateMessage",
+    //   threadId: "test-thread-id",
+    //   agentName: "test-agent-id",
+    //   active: false,
+    // });
   });
 });

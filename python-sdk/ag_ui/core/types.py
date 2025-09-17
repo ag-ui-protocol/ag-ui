@@ -105,8 +105,6 @@ Message = Annotated[
     Field(discriminator="role"),
 ]
 
-Role = Literal["developer", "system", "assistant", "user", "tool"]
-
 
 class Context(ConfiguredBaseModel):
     """

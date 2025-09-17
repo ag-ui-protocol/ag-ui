@@ -44,4 +44,5 @@ packages/proto/src/generated
 **/**/.langgraph_api
 
 # Python
+venv
 __pycache__/

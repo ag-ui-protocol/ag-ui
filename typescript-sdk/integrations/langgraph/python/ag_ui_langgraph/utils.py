@@ -1,6 +1,8 @@
 import json
 import re
 from typing import List, Any, Dict, Union
+from dataclasses import is_dataclass, asdict
+from datetime import date, datetime
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from ag_ui.core import (
@@ -177,3 +179,60 @@ def resolve_message_content(content: Any) -> str | None:
 
 def camel_to_snake(name):
     return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
+
+def json_safe_stringify(o):
+    if is_dataclass(o):          # dataclasses like Flight(...)
+        return asdict(o)
+    if hasattr(o, "model_dump"): # pydantic v2
+        return o.model_dump()
+    if hasattr(o, "dict"):       # pydantic v1
+        return o.dict()
+    if hasattr(o, "__dict__"):   # plain objects
+        return vars(o)
+    if isinstance(o, (datetime, date)):
+        return o.isoformat()
+    return str(o)                # last resort
+
+def make_json_safe(value: Any) -> Any:
+    """
+    Recursively convert a value into a JSON-serializable structure.
+
+    - Handles Pydantic models via `model_dump`.
+    - Handles LangChain messages via `to_dict`.
+    - Recursively walks dicts, lists, and tuples.
+    - For arbitrary objects, falls back to `__dict__` if available, else `repr()`.
+    """
+    # Pydantic models
+    if hasattr(value, "model_dump"):
+        try:
+            return make_json_safe(value.model_dump(by_alias=True, exclude_none=True))
+        except Exception:
+            pass
+
+    # LangChain-style objects
+    if hasattr(value, "to_dict"):
+        try:
+            return make_json_safe(value.to_dict())
+        except Exception:
+            pass
+
+    # Dict
+    if isinstance(value, dict):
+        return {key: make_json_safe(sub_value) for key, sub_value in value.items()}
+
+    # List / tuple
+    if isinstance(value, (list, tuple)):
+        return [make_json_safe(sub_value) for sub_value in value]
+
+    # Already JSON safe
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+
+    # Arbitrary object: try __dict__ first, fallback to repr
+    if hasattr(value, "__dict__"):
+        return {
+            "__type__": type(value).__name__,
+            **make_json_safe(value.__dict__),
+        }
+
+    return repr(value)

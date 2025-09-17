@@ -9,6 +9,9 @@ from pydantic import Field
 
 from .types import ConfiguredBaseModel, Message, StateT, JSONValue
 
+# Text messages can have any role except "tool"
+TextMessageRole = Literal["developer", "system", "assistant", "user"]
+
 
 class EventType(str, Enum):
     """
@@ -58,7 +61,7 @@ class TextMessageStartEvent(BaseEvent):
 
     type: Literal[EventType.TEXT_MESSAGE_START] = EventType.TEXT_MESSAGE_START  # pyright: ignore[reportIncompatibleVariableOverride]
     message_id: str
-    role: Literal["assistant"] = "assistant"
+    role: TextMessageRole = "assistant"
 
 
 class TextMessageContentEvent(BaseEvent):
@@ -87,7 +90,7 @@ class TextMessageChunkEvent(BaseEvent):
 
     type: Literal[EventType.TEXT_MESSAGE_CHUNK] = EventType.TEXT_MESSAGE_CHUNK  # pyright: ignore[reportIncompatibleVariableOverride]
     message_id: Optional[str] = None
-    role: Optional[Literal["assistant"]] = None
+    role: Optional[TextMessageRole] = None
     delta: Optional[str] = None
 
 

@@ -4,7 +4,9 @@ import {
   waitForAIResponse,
   retryOnAIFailure,
 } from "../../test-isolation-helper";
-import { AgenticChatPage } from "../../pages/agnoPages/AgenticChatPage";
+import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
+
+const appleAsk = "What is the current stock price of AAPL? Please respond in the format of 'The current stock price of Apple Inc. (AAPL) is {{price}}'"
 
 test("[Agno] Agentic Chat sends and receives a greeting message", async ({
   page,
@@ -40,8 +42,8 @@ test("[Agno] Agentic Chat provides stock price information", async ({
     await chat.agentGreeting.waitFor({ state: "visible" });
 
     // Ask for AAPL stock price
-    await chat.sendMessage("What is the current stock price of AAPL");
-    await chat.assertUserMessageVisible("What is the current stock price of AAPL");
+    await chat.sendMessage(appleAsk);
+    await chat.assertUserMessageVisible(appleAsk);
     await waitForAIResponse(page);
 
     // Check if the response contains the expected stock price information
@@ -63,8 +65,8 @@ test("[Agno] Agentic Chat retains memory of previous questions", async ({
 
     // First question
     await chat.sendMessage("Hi");
-    await chat.sendMessage("What is the current stock price of AAPL");
-    await chat.assertUserMessageVisible("What is the current stock price of AAPL");
+    await chat.sendMessage(appleAsk);
+    await chat.assertUserMessageVisible(appleAsk);
     await waitForAIResponse(page);
     await chat.assertAgentReplyContains("The current stock price of Apple Inc. (AAPL) is");
 

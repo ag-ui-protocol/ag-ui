@@ -21,6 +21,7 @@ import { Feature } from "@/types/integration";
 import { useURLParams } from "@/contexts/url-params-context";
 import { View } from "@/types/interface";
 import { getTitleForCurrentDomain } from "@/utils/domain-config";
+import { useTheme } from "next-themes";
 
 interface SidebarProps {
   isMobile?: boolean;
@@ -30,8 +31,9 @@ interface SidebarProps {
 export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const { theme, setTheme } = useTheme();
+  const isDarkTheme = theme === "dark"
   const { view, frameworkPickerHidden, viewPickerHidden, featurePickerHidden, setView} = useURLParams();
-  const [isDarkTheme, setIsDarkTheme] = useState<boolean>(false);
 
   // Extract the current integration ID from the pathname
   const pathParts = pathname.split("/");
@@ -66,38 +68,6 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
   const handleIntegrationSelect = (integrationId: string) => {
     router.push(`/${integrationId}`);
   };
-
-  // Check for dark mode using media query
-  useEffect(() => {
-    // Check if we're in the browser
-    if (typeof window !== "undefined") {
-      // Initial check
-      setIsDarkTheme(window.matchMedia("(prefers-color-scheme: dark)").matches);
-
-      // Listen for changes
-      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-      const handleChange = (e: MediaQueryListEvent) => {
-        setIsDarkTheme(e.matches);
-      };
-
-      mediaQuery.addEventListener("change", handleChange);
-
-      // Also check for .dark class which is added by next-themes
-      const observer = new MutationObserver(() => {
-        setIsDarkTheme(document.documentElement.classList.contains("dark"));
-      });
-
-      observer.observe(document.documentElement, {
-        attributes: true,
-        attributeFilter: ["class"],
-      });
-
-      return () => {
-        mediaQuery.removeEventListener("change", handleChange);
-        observer.disconnect();
-      };
-    }
-  }, []);
 
   const tabClass = `cursor-pointer flex-1 h-8 px-2 text-sm text-primary shadow-none bg-none border-none font-medium gap-1 rounded-lg data-[state=active]:bg-white data-[state=active]:text-primary data-[state=active]:shadow-none`
 

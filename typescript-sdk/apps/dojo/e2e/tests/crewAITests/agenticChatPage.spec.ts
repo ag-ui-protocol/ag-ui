@@ -4,7 +4,7 @@ import {
   waitForAIResponse,
   retryOnAIFailure,
 } from "../../test-isolation-helper";
-import { AgenticChatPage } from "../../pages/crewAIPages/AgenticChatPage";
+import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
 
 test("[CrewAI] Agentic Chat sends and receives a message", async ({
   page,
@@ -26,7 +26,7 @@ test("[CrewAI] Agentic Chat sends and receives a message", async ({
   });
 });
 
-test.fixme("[CrewAI] Agentic Chat changes background on message and reset", async ({
+test("[CrewAI] Agentic Chat changes background on message and reset", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {

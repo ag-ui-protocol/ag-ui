@@ -27,7 +27,7 @@ test.describe("Human in the Loop Feature", () => {
       await page.waitForTimeout(5000);
       await humanInLoop.uncheckItem(itemText);
       await humanInLoop.performSteps();
-      
+
       await page.waitForFunction(
         () => {
           const messages = Array.from(document.querySelectorAll('.copilotKitAssistantMessage'));
@@ -70,13 +70,13 @@ test.describe("Human in the Loop Feature", () => {
       await page.waitForTimeout(5000);
       await humanInLoop.uncheckItem(uncheckedItem);
       await humanInLoop.performSteps();
-      
+
       await page.waitForFunction(
         () => {
           const messages = Array.from(document.querySelectorAll('.copilotKitAssistantMessage'));
           const lastMessage = messages[messages.length - 1];
           const content = lastMessage?.textContent?.trim() || '';
-          
+
           return messages.length >= 3 && content.length > 0;
         },
         { timeout: 30000 }

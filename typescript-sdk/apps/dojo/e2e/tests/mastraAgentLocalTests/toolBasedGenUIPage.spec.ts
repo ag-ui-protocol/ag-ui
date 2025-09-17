@@ -1,10 +1,10 @@
 import { test, expect } from "@playwright/test";
-import { ToolBaseGenUIPage } from "../../pages/mastraAgentLocalPages/ToolBaseGenUIPage";
+import { ToolBaseGenUIPage } from "../../featurePages/ToolBaseGenUIPage";
 
 const pageURL =
   "/mastra-agent-local/feature/tool_based_generative_ui";
 
-test.fixme('[Mastra Agent Local] Haiku generation and display verification', async ({
+test('[Mastra Agent Local] Haiku generation and display verification', async ({
   page,
 }) => {
   await page.goto(pageURL);
@@ -17,7 +17,7 @@ test.fixme('[Mastra Agent Local] Haiku generation and display verification', asy
   await genAIAgent.checkHaikuDisplay(page);
 });
 
-test.fixme('[Mastra Agent Local] Haiku generation and UI consistency for two different prompts', async ({
+test('[Mastra Agent Local] Haiku generation and UI consistency for two different prompts', async ({
   page,
 }) => {
   await page.goto(pageURL);
