@@ -105,3 +105,9 @@ export class AGUIError extends Error {
     super(message);
   }
 }
+
+export class AGUIConnectNotImplementedError extends AGUIError {
+  constructor() {
+    super("Connect not implemented. This method is not supported by the current agent.");
+  }
+}
