@@ -1,0 +1,13 @@
+# Development dependencies
+# Install with: pip install -r requirements-dev.txt
+
+# Testing
+pytest>=8.4.1
+pytest-asyncio>=1.0.0
+pytest-cov>=6.2.1
+
+# Code quality
+black>=25.1.0
+isort>=6.0.1
+flake8>=7.3.0
+mypy>=1.16.1
