@@ -11,3 +11,5 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.13.4"
+      - key: VIRTUAL_ENV
+        value: ""
