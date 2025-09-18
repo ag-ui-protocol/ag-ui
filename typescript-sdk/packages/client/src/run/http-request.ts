@@ -1,5 +1,5 @@
 import { Observable, from, defer, throwError } from "rxjs";
-import { switchMap } from "rxjs/operators";
+import { mergeMap, switchMap } from "rxjs/operators";
 
 export enum HttpEventType {
   HEADERS = "headers",
@@ -23,6 +23,24 @@ export const runHttpRequest = (url: string, requestInit: RequestInit): Observabl
   // Defer the fetch so that it's executed when subscribed to
   return defer(() => from(fetch(url, requestInit))).pipe(
     switchMap((response) => {
+      if (!response.ok) {
+        const contentType = response.headers.get("content-type") || "";
+        // Read the (small) error body once, then error the stream
+        return from(response.text()).pipe(
+          mergeMap((text) => {
+            let payload: unknown = text;
+            if (contentType.includes("application/json")) {
+              try { payload = JSON.parse(text); } catch {/* keep raw text */}
+            }
+            const err: any = new Error(
+              `HTTP ${response.status}: ${typeof payload === "string" ? payload : JSON.stringify(payload)}`
+            );
+            err.status = response.status;
+            err.payload = payload;
+            return throwError(() => err);
+          })
+        );
+      }
       // Emit headers event first
       const headersEvent: HttpHeadersEvent = {
         type: HttpEventType.HEADERS,
