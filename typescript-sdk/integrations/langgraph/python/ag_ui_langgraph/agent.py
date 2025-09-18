@@ -88,7 +88,6 @@ class LangGraphAgent:
         self.messages_in_process: MessagesInProgressRecord = {}
         self.active_run: Optional[RunMetadata] = None
         self.constant_schema_keys = ['messages', 'tools']
-        self.active_step = None
 
     def _dispatch_event(self, event: ProcessedEvents) -> str:
         if event.type == EventType.RAW:
@@ -121,9 +120,6 @@ class LangGraphAgent:
         node_name_input = forwarded_props.get('node_name', None) if forwarded_props else None
 
         self.active_run["manually_emitted_state"] = None
-        self.active_run["node_name"] = node_name_input
-        if self.active_run["node_name"] == "__end__":
-            self.active_run["node_name"] = None
 
         config = ensure_config(self.config.copy() if self.config else {})
         config["configurable"] = {**(config.get('configurable', {})), "thread_id": thread_id}
@@ -141,10 +137,11 @@ class LangGraphAgent:
         yield self._dispatch_event(
             RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["id"])
         )
+        self.handle_node_change(node_name_input)
 
         # In case of resume (interrupt), re-start resumed step
         if resume_input and self.active_run.get("node_name"):
-            for ev in self.start_step(self.active_run.get("node_name")):
+            for ev in self.handle_node_change(self.active_run.get("node_name")):
                 yield ev
 
         state = prepared_stream_response["state"]
@@ -189,7 +186,7 @@ class LangGraphAgent:
                 )
 
             if current_node_name and current_node_name != self.active_run.get("node_name"):
-                for ev in self.start_step(current_node_name):
+                for ev in self.handle_node_change(current_node_name):
                     yield ev
 
             updated_state = self.active_run.get("manually_emitted_state") or current_graph_state
@@ -236,7 +233,7 @@ class LangGraphAgent:
             )
 
         if self.active_run.get("node_name") != node_name:
-            for ev in self.start_step(node_name):
+            for ev in self.handle_node_change(node_name):
                 yield ev
 
         state_values = state.values if state.values else state
@@ -251,7 +248,8 @@ class LangGraphAgent:
             )
         )
 
-        yield self.end_step()
+        for ev in self.handle_node_change(None):
+            yield ev
 
         yield self._dispatch_event(
             RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
@@ -730,33 +728,46 @@ class LangGraphAgent:
 
         raise ValueError("Message ID not found in history")
 
-    def start_step(self, step_name: str):
-        if self.active_step:
-            yield self.end_step()
+    def handle_node_change(self, node_name: Optional[str]):
+        """
+        Centralized method to handle node name changes and step transitions.
+        Automatically manages step start/end events based on node name changes.
+        """
+        if node_name == "__end__":
+            node_name = None
 
+        if node_name != self.active_run.get("node_name"):
+            # End current step if we have one
+            if self.active_run.get("node_name"):
+                yield self.end_step()
+
+            # Start new step if we have a node name
+            if node_name:
+                for event in self.start_step(node_name):
+                    yield event
+
+        self.active_run["node_name"] = node_name
+
+    def start_step(self, step_name: str):
+        """Simple step start event dispatcher - node_name management handled by handle_node_change"""
         yield self._dispatch_event(
             StepStartedEvent(
                 type=EventType.STEP_STARTED,
                 step_name=step_name
             )
         )
-        self.active_run["node_name"] = step_name
-        self.active_step = step_name
 
     def end_step(self):
-        if self.active_step is None:
+        """Simple step end event dispatcher - node_name management handled by handle_node_change"""
+        if not self.active_run.get("node_name"):
             raise ValueError("No active step to end")
 
-        dispatch = self._dispatch_event(
+        return self._dispatch_event(
             StepFinishedEvent(
                 type=EventType.STEP_FINISHED,
-                step_name=self.active_run["node_name"] or self.active_step
+                step_name=self.active_run["node_name"]
             )
         )
-
-        self.active_run["node_name"] = None
-        self.active_step = None
-        return dispatch
 
     # Check if some kwargs are enabled per LG version, to "catch all versions" and backwards compatibility
     def get_stream_kwargs(
