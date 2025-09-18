@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pydantic_ai import Agent, RunDeps
+from pydantic_ai import Agent
 
 
 @dataclass
@@ -16,7 +16,7 @@ class State:
 
 
 @dataclass
-class Deps(RunDeps):
+class Deps
     """Dependencies that implement StateHandler protocol."""
     state: State
 
