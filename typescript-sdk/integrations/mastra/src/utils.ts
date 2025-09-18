@@ -97,20 +97,6 @@ export function getLocalAgents({
   runtimeContext,
 }: GetLocalAgentsOptions): Record<string, AbstractAgent> {
   const agents = mastra.getAgents() || {};
-  const networks = mastra.getNetworks() || [];
-
-  const networkAGUI = networks.reduce(
-    (acc, network) => {
-      acc[network.name!] = new MastraAgent({
-        agentId: network.name!,
-        agent: network as unknown as LocalMastraAgent,
-        resourceId,
-        runtimeContext,
-      });
-      return acc;
-    },
-    {} as Record<string, AbstractAgent>,
-  );
 
   const agentAGUI = Object.entries(agents).reduce(
     (acc, [agentId, agent]) => {
@@ -127,7 +113,6 @@ export function getLocalAgents({
 
   return {
     ...agentAGUI,
-    ...networkAGUI,
   };
 }
 
@@ -151,26 +136,6 @@ export function getLocalAgent({
   return new MastraAgent({
     agentId,
     agent,
-    resourceId,
-    runtimeContext,
-  }) as AbstractAgent;
-}
-
-export interface GetNetworkOptions {
-  mastra: Mastra;
-  networkId: string;
-  resourceId?: string;
-  runtimeContext?: RuntimeContext;
-}
-
-export function getNetwork({ mastra, networkId, resourceId, runtimeContext }: GetNetworkOptions) {
-  const network = mastra.getNetwork(networkId);
-  if (!network) {
-    throw new Error(`Network ${networkId} not found`);
-  }
-  return new MastraAgent({
-    agentId: network.name!,
-    agent: network as unknown as LocalMastraAgent,
     resourceId,
     runtimeContext,
   }) as AbstractAgent;
