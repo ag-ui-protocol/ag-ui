@@ -101,7 +101,7 @@ const ALL_TARGETS = {
   'adk-middleware': {
     command: 'uv sync',
     name: 'ADK Middleware',
-    cwd: path.join(integrationsRoot, 'adk-middleware/examples'),
+    cwd: path.join(integrationsRoot, 'adk-middleware/python/examples'),
   },
   'dojo': {
     command: 'pnpm install --no-frozen-lockfile && pnpm build --filter=demo-viewer...',

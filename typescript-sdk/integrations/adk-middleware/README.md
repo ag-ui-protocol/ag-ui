@@ -1,262 +1,194 @@
-# ADK Middleware for AG-UI Protocol
+# Pydantic AI
 
-This Python middleware enables [Google ADK](https://google.github.io/adk-docs/) agents to be used with the AG-UI Protocol, providing a bridge between the two frameworks.
+Implementation of the AG-UI protocol for [Pydantic AI](https://ai.pydantic.dev/).
+
+For more information on the Pydantic AI implementation see
+the [Pydantic AI AG-UI docs](https://ai.pydantic.dev/ag-ui/).
 
 ## Prerequisites
 
-The examples use ADK Agents using various Gemini models along with the AG-UI Dojo.
+This example uses a Pydantic AI agent using an OpenAI model and the AG-UI dojo.
 
-- A [Gemini API Key](https://makersuite.google.com/app/apikey). The examples assume that this is exported via the GOOGLE_API_KEY environment variable.
+- An [OpenAI API key](https://help.openai.com/en/articles/4936850-where-do-i-find-my-openai-api-key)
 
-## Quick Start
+## Running
 
-To use this integration you need to:
+To run this integration you need to:
 
-1. Clone the [AG-UI repository](https://github.com/ag-ui-protocol/ag-ui).
+1. Clone the [AG-UI repository](https://github.com/ag-ui-protocol/ag-ui)
 
-    ```bash
+    ```shell
     git clone https://github.com/ag-ui-protocol/ag-ui.git
     ```
 
-2. Change to the `typescript-sdk/integrations/adk-middleware` directory.
+2. Change into the `typescript-sdk/integrations/pydantic-ai` directory
 
-    ```bash
-    cd typescript-sdk/integrations/adk-middleware
+    ```shell
+    cd typescript-sdk/integrations/pydantic-ai
     ```
 
-3. Install the `adk-middleware` package from the local directory.  For example,
+3. Install the `pydantic-ai-examples` package, for example:
 
-    ```bash
-    pip install .
+    ```shell
+    pip install pydantic-ai-examples
     ```
 
-    or 
+    or:
 
-    ```bash
-    uv pip install .
-    ```
-    
-    This installs the package from the current directory which contains:
-    - `src/adk_middleware/` - The middleware source code
-    - `examples/` - Example servers and agents
-    - `tests/` - Test suite
-
-4. Install the requirements for the `examples`, for example:
-
-    ```bash
-    uv pip install -r requirements.txt
+    ```shell
+    uv venv
+    uv pip install pydantic-ai-examples
     ```
 
-5. Run the example fast_api server.
+4. Run the example dojo server
 
-    ```bash
-    export GOOGLE_API_KEY=<My API Key>
-    cd examples
-    uv sync
-    uv run dev
+    ```shell
+    export OPENAI_API_KEY=<your api key>
+    python -m pydantic_ai_examples.ag_ui
     ```
 
-6. Open another terminal in the root directory of the ag-ui repository clone.
+    or:
 
-7. Start the integration ag-ui dojo:
+    ```shell
+    export OPENAI_API_KEY=<your api key>
+    uv run python -m pydantic_ai_examples.ag_ui
+    ```
 
-    ```bash
+5. Open another terminal in root directory of the `ag-ui` repository clone
+6. Start the integration ag-ui dojo:
+
+    ```shell
     cd typescript-sdk
     pnpm install && pnpm run dev
     ```
 
-8. Visit [http://localhost:3000/adk-middleware](http://localhost:3000/adk-middleware).
+7. Visit [http://localhost:3000/pydantic-ai](http://localhost:3000/pydantic-ai)
+8. Select View `Pydantic AI` from the sidebar
 
-9. Select View `ADK Middleware` from the sidebar.
 
-### Development Setup
+## Feature Examples
 
-If you want to contribute to ADK Middleware development, you'll need to take some additional steps.  You can either use the following script of the manual development setup.
+### Agentic Chat
 
-```bash
-# From the adk-middleware directory
-chmod +x setup_dev.sh
-./setup_dev.sh
+This demonstrates a basic agent interaction including Pydantic AI server side
+tools and AG-UI client side tools.
+
+View the [Agentic Chat example](http://localhost:3000/pydantic-ai/feature/agentic_chat).
+
+#### Agent Tools
+
+- `time` - Pydantic AI tool to check the current time for a time zone
+- `background` - AG-UI tool to set the background color of the client window
+
+#### Agent Prompts
+
+```text
+What is the time in New York?
 ```
 
-### Manual Development Setup
-
-```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate
-
-# Install this package in editable mode
-pip install -e .
-
-# For development (includes testing and linting tools)
-pip install -e ".[dev]"
-# OR
-pip install -r requirements-dev.txt
+```text
+Change the background to blue
 ```
 
-This installs the ADK middleware in editable mode for development.
+A complex example which mixes both AG-UI and Pydantic AI tools:
 
-## Testing
-
-```bash
-# Run tests (271 comprehensive tests)
-pytest
-
-# With coverage
-pytest --cov=src/adk_middleware
-
-# Specific test file
-pytest tests/test_adk_agent.py
-```
-## Usage options
-
-### Option 1: Direct Usage
-```python
-from adk_middleware import ADKAgent
-from google.adk.agents import Agent
-
-# 1. Create your ADK agent
-my_agent = Agent(
-    name="assistant",
-    instruction="You are a helpful assistant."
-)
-
-# 2. Create the middleware with direct agent embedding
-agent = ADKAgent(
-    adk_agent=my_agent,
-    app_name="my_app", 
-    user_id="user123"
-)
-
-# 3. Use directly with AG-UI RunAgentInput
-async for event in agent.run(input_data):
-    print(f"Event: {event.type}")
+```text
+Perform the following steps, waiting for the response of each step before continuing:
+1. Get the time
+2. Set the background to red
+3. Get the time
+4. Report how long the background set took by diffing the two times
 ```
 
-### Option 2: FastAPI Server
+### Agentic Generative UI
 
-```python
-from fastapi import FastAPI
-from adk_middleware import ADKAgent, add_adk_fastapi_endpoint
-from google.adk.agents import Agent
+Demonstrates a long running task where the agent sends updates to the frontend
+to let the user know what's happening.
 
-# 1. Create your ADK agent
-my_agent = Agent(
-    name="assistant",
-    instruction="You are a helpful assistant."
-)
+View the [Agentic Generative UI example](http://localhost:3000/pydantic-ai/feature/agentic_generative_ui).
 
-# 2. Create the middleware with direct agent embedding
-agent = ADKAgent(
-    adk_agent=my_agent,
-    app_name="my_app", 
-    user_id="user123"
-)
+#### Plan Prompts
 
-# 3. Create FastAPI app
-app = FastAPI()
-add_adk_fastapi_endpoint(app, agent, path="/chat")
-
-# Run with: uvicorn your_module:app --host 0.0.0.0 --port 8000
+```text
+Create a plan for breakfast and execute it
 ```
 
-For detailed configuration options, see [CONFIGURATION.md](./CONFIGURATION.md)
+### Human in the Loop
 
+Demonstrates simple human in the loop workflow where the agent comes up with a
+plan and the user can approve it using checkboxes.
 
-## Running the ADK Backend Server for Dojo App
+#### Task Planning Tools
 
-To run the ADK backend server that works with the Dojo app, use the following command:
+- `generate_task_steps` - AG-UI tool to generate and confirm steps
 
-```bash
-python -m examples.fastapi_server
+#### Task Planning Prompt
+
+```text
+Generate a list of steps for cleaning a car for me to review
 ```
 
-This will start a FastAPI server that connects your ADK middleware to the Dojo application.
+### Predictive State Updates
 
-## Examples
+Demonstrates how to use the predictive state updates feature to update the state
+of the UI based on agent responses, including user interaction via user
+confirmation.
 
-### Simple Conversation
+View the [Predictive State Updates example](http://localhost:3000/pydantic-ai/feature/predictive_state_updates).
 
-```python
-import asyncio
-from adk_middleware import ADKAgent
-from google.adk.agents import Agent
-from ag_ui.core import RunAgentInput, UserMessage
+#### Story Tools
 
-async def main():
-    # Setup
-    my_agent = Agent(name="assistant", instruction="You are a helpful assistant.")
-    
-    agent = ADKAgent(
-        adk_agent=my_agent,
-        app_name="demo_app", 
-        user_id="demo"
-    )
-    
-    # Create input
-    input = RunAgentInput(
-        thread_id="thread_001",
-        run_id="run_001",
-        messages=[
-            UserMessage(id="1", role="user", content="Hello!")
-        ],
-        context=[],
-        state={},
-        tools=[],
-        forwarded_props={}
-    )
-    
-    # Run and handle events
-    async for event in agent.run(input):
-        print(f"Event: {event.type}")
-        if hasattr(event, 'delta'):
-            print(f"Content: {event.delta}")
+- `write_document` - AG-UI tool to write the document to a window
+- `document_predict_state` - Pydantic AI tool that enables document state
+  prediction for the `write_document` tool
 
-asyncio.run(main())
+This also shows how to use custom instructions based on shared state information.
+
+#### Story Example
+
+Starting document text
+
+```markdown
+Bruce was a good dog,
 ```
 
-### Multi-Agent Setup
+Agent prompt
 
-```python
-# Create multiple agent instances with different ADK agents
-general_agent_wrapper = ADKAgent(
-    adk_agent=general_agent,
-    app_name="demo_app",
-    user_id="demo"
-)
-
-technical_agent_wrapper = ADKAgent(
-    adk_agent=technical_agent,
-    app_name="demo_app",
-    user_id="demo"
-)
-
-creative_agent_wrapper = ADKAgent(
-    adk_agent=creative_agent,
-    app_name="demo_app",
-    user_id="demo"
-)
-
-# Use different endpoints for each agent
-from fastapi import FastAPI
-from adk_middleware import add_adk_fastapi_endpoint
-
-app = FastAPI()
-add_adk_fastapi_endpoint(app, general_agent_wrapper, path="/agents/general")
-add_adk_fastapi_endpoint(app, technical_agent_wrapper, path="/agents/technical")
-add_adk_fastapi_endpoint(app, creative_agent_wrapper, path="/agents/creative")
+```text
+Help me complete my story about bruce the dog, is should be no longer than a sentence.
 ```
 
-## Tool Support
+### Shared State
 
-The middleware provides complete bidirectional tool support, enabling AG-UI Protocol tools to execute within Google ADK agents. All tools supplied by the client are currently implemented as long-running tools that emit events to the client for execution and can be combined with backend tools provided by the agent to create a hybrid combined toolset.
+Demonstrates how to use the shared state between the UI and the agent.
 
-For detailed information about tool support, see [TOOLS.md](./TOOLS.md).
+State sent to the agent is detected by a function based instruction. This then
+validates the data using a custom pydantic model before using to create the
+instructions for the agent to follow and send to the client using a AG-UI tool.
 
-## Additional Documentation
+View the [Shared State example](http://localhost:3000/pydantic-ai/feature/shared_state).
 
-- **[CONFIGURATION.md](./CONFIGURATION.md)** - Complete configuration guide
-- **[TOOLS.md](./TOOLS.md)** - Tool support documentation
-- **[USAGE.md](./USAGE.md)** - Usage examples and patterns
-- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Technical architecture and design details
+#### Recipe Tools
+
+- `display_recipe` - AG-UI tool to display the recipe in a graphical format
+
+#### Recipe Example
+
+1. Customise the basic settings of your recipe
+2. Click `Improve with AI`
+
+### Tool Based Generative UI
+
+Demonstrates customised rendering for tool output with used confirmation.
+
+View the [Tool Based Generative UI example](http://localhost:3000/pydantic-ai/feature/tool_based_generative_ui).
+
+#### Haiku Tools
+
+- `generate_haiku` - AG-UI tool to display a haiku in English and Japanese
+
+#### Haiku Prompt
+
+```text
+Generate a haiku about formula 1
+```

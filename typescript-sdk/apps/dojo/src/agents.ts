@@ -15,6 +15,7 @@ import { CrewAIAgent } from "@ag-ui/crewai";
 import getEnvVars from "./env";
 import { mastra } from "./mastra";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
+import { ADKAgent } from "@ag-ui/adk";
 
 const envVars = getEnvVars();
 export const agentsIntegrations: AgentIntegrationConfig[] = [
@@ -64,11 +65,11 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     id: "adk-middleware",
     agents: async () => {
       return {
-        agentic_chat: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/chat` }),
-        tool_based_generative_ui: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-tool-based-generative-ui` }),
-        human_in_the_loop: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-human-in-loop-agent` }),
-        shared_state: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-shared-state-agent` }),
-        // predictive_state_updates: new ServerStarterAgent({ url: `${envVars.adkMiddlewareUrl}/adk-predictive-state-agent` }),
+        agentic_chat: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/chat` }),
+        tool_based_generative_ui: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/adk-tool-based-generative-ui` }),
+        human_in_the_loop: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/adk-human-in-loop-agent` }),
+        shared_state: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/adk-shared-state-agent` }),
+        // predictive_state_updates: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/adk-predictive-state-agent` }),
       };
     },
   },
