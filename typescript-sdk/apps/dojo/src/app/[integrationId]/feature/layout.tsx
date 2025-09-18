@@ -32,10 +32,12 @@ export default function FeatureLayout({ children, params }: Props) {
   const pathParts = pathname.split('/');
   const featureId = pathParts[pathParts.length - 1]; // Last segment is the featureId
 
-  const files = (filesJSON as FilesJsonType)[`${integrationId}::${featureId}`];
+  const files = (filesJSON as FilesJsonType)[`${integrationId}::${featureId}`] || [];
 
-  const readme = files.find(file => file.name.includes('.mdx'));
-  const codeFiles = files.filter(file => !file.name.includes('.mdx'));
+  const readme = files.find((file) => file?.name?.includes(".mdx")) || null;
+  const codeFiles = files.filter(
+    (file) => file && Object.keys(file).length > 0 && !file.name?.includes(".mdx"),
+  );
 
 
   const content = useMemo(() => {
@@ -55,5 +57,11 @@ export default function FeatureLayout({ children, params }: Props) {
     }
   }, [children, codeFiles, readme, view])
 
-  return <div className="bg-(--copilot-kit-background-color) w-full h-full">{content}</div>;
+  return (
+    <div className="bg-white rounded-lg w-full h-full overflow-hidden">
+      <div className="flex flex-col h-full overflow-auto">
+        {content}
+      </div>
+    </div>
+  );
 }

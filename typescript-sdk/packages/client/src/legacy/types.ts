@@ -28,6 +28,7 @@ export const LegacyTextMessageStart = z.object({
   type: z.literal(LegacyRuntimeEventTypes.enum.TextMessageStart),
   messageId: z.string(),
   parentMessageId: z.string().optional(),
+  role: z.string().optional(),
 });
 
 export const LegacyTextMessageContent = z.object({
@@ -84,6 +85,13 @@ export const LegacyMetaEvent = z.object({
   value: z.any(),
 });
 
+
+export const LegacyRunError = z.object({
+  type: z.literal(LegacyRuntimeEventTypes.enum.RunError),
+  message: z.string(),
+  code: z.string().optional(),
+});
+
 export const LegacyRuntimeProtocolEvent = z.discriminatedUnion("type", [
   LegacyTextMessageStart,
   LegacyTextMessageContent,
@@ -94,6 +102,7 @@ export const LegacyRuntimeProtocolEvent = z.discriminatedUnion("type", [
   LegacyActionExecutionResult,
   LegacyAgentStateMessage,
   LegacyMetaEvent,
+  LegacyRunError,
 ]);
 
 // Protocol Event type exports
@@ -109,6 +118,7 @@ export type LegacyActionExecutionResult = z.infer<typeof LegacyActionExecutionRe
 export type LegacyAgentStateMessage = z.infer<typeof LegacyAgentStateMessage>;
 export type LegacyMetaEvent = z.infer<typeof LegacyMetaEvent>;
 export type LegacyRuntimeProtocolEvent = z.infer<typeof LegacyRuntimeProtocolEvent>;
+export type LegacyRunError = z.infer<typeof LegacyRunError>;
 
 // Message schemas (with kind discriminator)
 export const LegacyTextMessageSchema = z.object({

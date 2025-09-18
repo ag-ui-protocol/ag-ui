@@ -1,0 +1,338 @@
+/* Travel Planning Subgraphs Demo Styles */
+/* Essential styles that cannot be achieved with Tailwind classes */
+
+/* Main container with CopilotSidebar layout */
+.travel-planner-container {
+  min-height: 100vh;
+  padding: 2rem;
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+}
+
+/* Travel content area styles */
+.travel-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Itinerary strip */
+.itinerary-strip {
+  background: white;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.itinerary-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #6b7280;
+  margin-bottom: 0.5rem;
+}
+
+.itinerary-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.itinerary-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #f9fafb;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+}
+
+.item-icon {
+  font-size: 1rem;
+}
+
+/* Agent status */
+.agent-status {
+  background: white;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.status-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #6b7280;
+  margin-bottom: 0.5rem;
+}
+
+.agent-indicators {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.agent-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  transition: all 0.2s ease;
+}
+
+.agent-indicator.active {
+  background: #dbeafe;
+  border-color: #3b82f6;
+  color: #1d4ed8;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+/* Travel details sections */
+.travel-details {
+  background: white;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  display: grid;
+  gap: 1rem;
+}
+
+.details-section h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.detail-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.detail-item {
+  padding: 0.5rem;
+  background: #f9fafb;
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
+  display: flex;
+  justify-content: space-between;
+}
+
+.detail-item strong {
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.detail-tips {
+  padding: 0.5rem;
+  background: #eff6ff;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  color: #1d4ed8;
+}
+
+.activity-item {
+  padding: 0.75rem;
+  background: #f0f9ff;
+  border-radius: 0.25rem;
+  border-left: 2px solid #0ea5e9;
+}
+
+.activity-name {
+  font-weight: 600;
+  color: #1f2937;
+  font-size: 0.875rem;
+  margin-bottom: 0.25rem;
+}
+
+.activity-category {
+  font-size: 0.75rem;
+  color: #0ea5e9;
+  margin-bottom: 0.25rem;
+}
+
+.activity-description {
+  color: #4b5563;
+  font-size: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+.activity-meta {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.no-activities {
+  text-align: center;
+  color: #9ca3af;
+  font-style: italic;
+  padding: 1rem;
+  font-size: 0.875rem;
+}
+
+/* Interrupt UI for Chat Sidebar (Generative UI) */
+.interrupt-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 100%;
+  padding-top: 34px;
+}
+
+.interrupt-header {
+  margin-bottom: 0.5rem;
+}
+
+.agent-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0 0 0.25rem 0;
+}
+
+.agent-message {
+  font-size: 0.75rem;
+  color: #6b7280;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.interrupt-options {
+    padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.option-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+  position: relative;
+  min-height: auto;
+}
+
+.option-card:hover {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+}
+
+.option-card:active {
+  background: #e5e7eb;
+}
+
+.option-card.recommended {
+  background: #eff6ff;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.1);
+}
+
+.option-card.recommended:hover {
+  background: #dbeafe;
+}
+
+.recommendation-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  background: #3b82f6;
+  color: white;
+  font-size: 0.625rem;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.75rem;
+  font-weight: 500;
+}
+
+.option-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.125rem;
+}
+
+.airline-name, .hotel-name {
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: #1f2937;
+}
+
+.price, .rating {
+  font-weight: 600;
+  font-size: 0.75rem;
+  color: #059669;
+}
+
+.route-info, .location-info {
+  font-size: 0.7rem;
+  color: #6b7280;
+  margin-bottom: 0.125rem;
+}
+
+.duration-info, .price-info {
+  font-size: 0.7rem;
+  color: #9ca3af;
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 768px) {
+  .travel-planner-container {
+    padding: 0.5rem;
+    padding-bottom: 120px; /* Space for mobile chat */
+  }
+  
+  .travel-content {
+    padding: 0;
+    gap: 0.75rem;
+  }
+  
+  .itinerary-items {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  
+  .agent-indicators {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  
+  .agent-indicator {
+    padding: 0.75rem;
+  }
+  
+  .travel-details {
+    padding: 0.75rem;
+  }
+
+  .interrupt-container {
+    padding: 0.5rem;
+  }
+
+  .option-card {
+    padding: 0.625rem;
+  }
+
+  .interrupt-options {
+    max-height: 250px;
+  }
+}

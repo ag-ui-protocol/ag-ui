@@ -1,0 +1,22 @@
+{
+  "name": "copilotkit-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Scheduled Playwright smoke tests for CopilotKit demo apps",
+  "scripts": {
+    "postinstall": "playwright install --with-deps",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.43.1",
+    "@slack/types": "^2.14.0",
+    "@types/node": "^22.15.28",
+    "playwright-slack-report": "^1.1.93"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0",
+    "json2md": "^2.0.1"
+  }
+}
