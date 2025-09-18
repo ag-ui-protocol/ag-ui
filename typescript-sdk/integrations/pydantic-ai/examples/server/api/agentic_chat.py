@@ -16,8 +16,15 @@ class ChatState:
     state: dict[str, Any]
 
 
+# Create agent with proper dependency type
 agent = Agent('openai:gpt-4o-mini', deps_type=ChatState)
-app = agent.to_ag_ui()
+
+# Create AG-UI app with default state
+def create_deps() -> ChatState:
+    """Create default dependencies for the agent."""
+    return ChatState(state={})
+
+app = agent.to_ag_ui(deps=create_deps)
 
 
 @agent.tool_plain
