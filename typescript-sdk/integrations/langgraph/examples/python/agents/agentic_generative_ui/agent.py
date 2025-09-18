@@ -99,7 +99,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     # Bind the tools to the model
     model_with_tools = model.bind_tools(
         [
-            *state["tools"],
+            *state.get("tools", []),
             generate_task_steps_generative_ui
         ],
         # Disable parallel tool calls to avoid race conditions

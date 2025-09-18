@@ -177,7 +177,7 @@ async def chat_node(state: Dict[str, Any], config: RunnableConfig):
     # Bind the tools to the model
     model_with_tools = model.bind_tools(
         [
-            *state["tools"],
+            *state.get("tools", []),
             generate_recipe
         ],
         # Disable parallel tool calls to avoid race conditions

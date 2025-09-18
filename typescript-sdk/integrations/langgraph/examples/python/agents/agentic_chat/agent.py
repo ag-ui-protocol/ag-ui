@@ -41,7 +41,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     # 2. Bind the tools to the model
     model_with_tools = model.bind_tools(
         [
-            *state["tools"],
+            *state.get("tools", []),
             # your_tool_here
         ],
 
