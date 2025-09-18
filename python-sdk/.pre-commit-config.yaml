@@ -1,0 +1,30 @@
+repos:
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: v0.12.9
+    hooks:
+      - id: ruff
+        args: [
+          --fix
+        ]
+        files: ^python-sdk/
+      - id: ruff-format
+        files: ^python-sdk/
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.17.1
+    hooks:
+      - id: mypy
+        files: ^python-sdk/
+        args: [
+          --python-version=3.9,
+          --disallow-untyped-calls,
+          --disallow-untyped-defs,
+          --disallow-incomplete-defs,
+          --check-untyped-defs,
+          --no-implicit-optional,
+          --warn-redundant-casts,
+          --ignore-missing-imports,
+        ]
+        additional_dependencies:
+          - "types-pytz"
+        exclude_types: [ jupyter ]
+        exclude: "tests"

@@ -29,7 +29,7 @@ from ag_ui.core.events import (
     RunErrorEvent,
     StepStartedEvent,
     StepFinishedEvent,
-    Event
+    Event,
 )
 
 from ag_ui.core.types import (
@@ -42,11 +42,9 @@ from ag_ui.core.types import (
     UserMessage,
     ToolMessage,
     Message,
-    Role,
     Context,
     Tool,
     RunAgentInput,
-    State
 )
 
 __all__ = [
@@ -88,9 +86,8 @@ __all__ = [
     "UserMessage",
     "ToolMessage",
     "Message",
-    "Role",
+    "TextMessageRole",
     "Context",
     "Tool",
     "RunAgentInput",
-    "State"
 ]

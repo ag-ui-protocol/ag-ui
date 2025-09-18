@@ -8,7 +8,6 @@ from ag_ui.core import (
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageChunkEvent,
-    Role,
 )
 
 # Test all available roles for text messages (excluding "tool")
