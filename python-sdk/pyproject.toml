@@ -10,6 +10,9 @@ requires-python = ">=3.9,<4.0"
 dependencies = [
     "pydantic>=2.11.2,<3.0.0",
 ]
+packages = [
+    "ag_ui"
+]
 
 [build-system]
 requires = ["hatchling"]
