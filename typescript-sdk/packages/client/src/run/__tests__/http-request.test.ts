@@ -34,6 +34,7 @@ describe("runHttpRequest", () => {
     mockHeaders.append("Content-Type", "application/json");
 
     const mockResponse = {
+      ok: true,
       status: 200,
       headers: mockHeaders,
       body: {
@@ -90,6 +91,7 @@ describe("runHttpRequest", () => {
     mockHeaders.append("Content-Type", "application/json");
 
     const mockResponse = {
+      ok: true,
       status: 200,
       headers: mockHeaders,
       body: {
@@ -142,6 +144,7 @@ describe("runHttpRequest", () => {
     mockHeaders.append("Content-Type", "application/json");
 
     const mockResponse = {
+      ok: true,
       status: 200,
       headers: mockHeaders,
       body: {
