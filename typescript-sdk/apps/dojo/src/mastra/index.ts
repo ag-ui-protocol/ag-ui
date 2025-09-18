@@ -34,7 +34,7 @@ export const mastra = new Mastra({
 
         Your primary function is to help users get weather details for specific locations. When responding:
         - Always ask for a location if none is provided
-        - If the location name isn’t in English, please translate it
+        - If the location name isn't in English, please translate it
         - If giving a location with multiple parts (e.g. "New York, NY"), use the most relevant part (e.g. "New York")
         - Include relevant details like humidity, wind conditions, and precipitation
         - Keep responses concise but informative
@@ -53,6 +53,84 @@ export const mastra = new Mastra({
           },
         },
       }),
+      tools: {
+        weatherTool: createTool({
+          id: "weatherTool",
+          description: "Get current weather for a location",
+          inputSchema: z.object({
+            location: z.string().describe("The location to get weather for"),
+          }),
+          outputSchema: z.string(),
+          execute: async ({ context }) => {
+            const { location } = context;
+
+            try {
+              // Use OpenWeatherMap API or similar weather service
+              // For now, we'll use a free weather API (Open-Meteo)
+              const geocodeResponse = await fetch(
+                `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`
+              );
+
+              if (!geocodeResponse.ok) {
+                throw new Error(`Geocoding failed: ${geocodeResponse.status}`);
+              }
+
+              const geocodeData = await geocodeResponse.json();
+
+              if (!geocodeData.results || geocodeData.results.length === 0) {
+                return `Sorry, I couldn't find weather data for "${location}". Please check the location name and try again.`;
+              }
+
+              const { latitude, longitude, name, country } = geocodeData.results[0];
+
+              // Get weather data
+              const weatherResponse = await fetch(
+                `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&timezone=auto`
+              );
+
+              if (!weatherResponse.ok) {
+                throw new Error(`Weather API failed: ${weatherResponse.status}`);
+              }
+
+              const weatherData = await weatherResponse.json();
+
+              if (!weatherData.current) {
+                return `Sorry, I couldn't retrieve current weather data for "${location}". The weather service might be temporarily unavailable.`;
+              }
+
+              const current = weatherData.current;
+              const temperature = current.temperature_2m;
+              const humidity = current.relative_humidity_2m;
+              const windSpeed = current.wind_speed_10m;
+              const weatherCode = current.weather_code;
+
+              // Simple weather code mapping
+              const getWeatherCondition = (code: number): string => {
+                if (code === 0) return "Clear sky";
+                if (code <= 3) return "Partly cloudy";
+                if (code <= 48) return "Foggy";
+                if (code <= 67) return "Rainy";
+                if (code <= 77) return "Snowy";
+                if (code <= 82) return "Rainy";
+                if (code <= 86) return "Snowy";
+                return "Stormy";
+              };
+
+              const condition = getWeatherCondition(weatherCode);
+
+              return `The current weather in ${name}, ${country} is as follows:
+Temperature: ${temperature}°C
+Humidity: ${humidity}%
+Wind Speed: ${windSpeed} km/h
+Conditions: ${condition}`;
+
+            } catch (error) {
+              console.error("Weather tool error:", error);
+              return `I'm sorry, but I'm having trouble retrieving weather data for "${location}" at the moment. This could be due to a temporary service issue. Please try again later or check another weather source.`;
+            }
+          },
+        }),
+      },
     }),
     shared_state: new Agent({
       name: "shared_state",
