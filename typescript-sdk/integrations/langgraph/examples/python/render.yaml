@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: langgraph-agui-dojo
+    runtime: python
+    plan: free
+    buildCommand: |
+      chmod +x start.sh
+      python -m pip install --upgrade pip
+      pip install poetry
+    startCommand: ./start.sh
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.4"
