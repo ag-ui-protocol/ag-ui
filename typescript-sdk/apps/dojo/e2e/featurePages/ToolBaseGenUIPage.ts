@@ -73,7 +73,17 @@ export class ToolBaseGenUIPage {
   }
 
   async extractMainDisplayHaikuContent(page: Page): Promise<string> {
+    // Wait for the main haiku display to be visible
+    await page.waitForSelector('[data-testid="main-haiku-display"]', { state: 'visible' });
+
     const mainDisplayLines = page.locator('[data-testid="main-haiku-line"]');
+
+    // Wait for at least 3 haiku lines to be present
+    await page.waitForFunction(() => {
+      const elements = document.querySelectorAll('[data-testid="main-haiku-line"]');
+      return elements.length >= 3;
+    });
+
     const mainCount = await mainDisplayLines.count();
     const lines: string[] = [];
 
