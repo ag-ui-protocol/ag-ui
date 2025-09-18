@@ -1,6 +1,9 @@
 import { test, expect } from "@playwright/test";
 import { SharedStatePage } from "../../featurePages/SharedStatePage";
 
+// Skip all tests in this file when CLOUD_AGENTS is set
+test.skip(!!process.env.CLOUD_AGENTS, 'Skipping ADK Middleware tests when CLOUD_AGENTS is set');
+
 test.describe("Shared State Feature", () => {
   test("[ADK Middleware] should interact with the chat to get a recipe on prompt", async ({
     page,
