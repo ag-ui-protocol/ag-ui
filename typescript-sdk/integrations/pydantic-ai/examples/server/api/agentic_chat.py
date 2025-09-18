@@ -16,7 +16,7 @@ class State:
 
 
 @dataclass
-class Deps
+class Deps:
     """Dependencies that implement StateHandler protocol."""
     state: State
 
