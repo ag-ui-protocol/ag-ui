@@ -373,6 +373,8 @@ func EventFromJSON(data []byte) (Event, error) {
 		event = &ToolCallArgsEvent{}
 	case EventTypeToolCallEnd:
 		event = &ToolCallEndEvent{}
+	case EventTypeToolCallResult:
+		event = &ToolCallResultEvent{}
 	case EventTypeStateSnapshot:
 		event = &StateSnapshotEvent{}
 	case EventTypeStateDelta:
