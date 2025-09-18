@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o-mini')
+
+@dataclass
+class ChatState:
+    """State handler for the agentic chat agent."""
+    state: dict[str, Any]
+
+
+agent = Agent('openai:gpt-4o-mini', deps_type=ChatState)
 app = agent.to_ag_ui()
 
 
