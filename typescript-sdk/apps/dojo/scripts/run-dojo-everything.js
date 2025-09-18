@@ -113,7 +113,7 @@ const ALL_SERVICES = {
   'adk-middleware': {
     command: 'uv run dev',
     name: 'ADK Middleware',
-    cwd: path.join(integrationsRoot, 'adk-middleware/examples'),
+    cwd: path.join(integrationsRoot, 'adk-middleware/python/examples'),
     env: { PORT: 8010 },
   },
   'dojo': {
