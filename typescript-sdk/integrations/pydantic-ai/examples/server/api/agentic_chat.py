@@ -7,24 +7,26 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunDeps
 
 
 @dataclass
-class ChatState:
-    """State handler for the agentic chat agent."""
-    state: dict[str, Any]
+class State:
+    pass
+
+
+@dataclass
+class Deps(RunDeps):
+    """Dependencies that implement StateHandler protocol."""
+    state: State
 
 
 # Create agent with proper dependency type
-agent = Agent('openai:gpt-4o-mini', deps_type=ChatState)
+agent = Agent[str, Deps]('openai:gpt-4o-mini', deps_type=Deps)
 
-# Create AG-UI app with default state
-def create_deps() -> ChatState:
-    """Create default dependencies for the agent."""
-    return ChatState(state={})
-
-app = agent.to_ag_ui(deps=create_deps)
+# Create AG-UI app with proper dataclass instance
+deps_instance = Deps(state=State())
+app = agent.to_ag_ui(deps=deps_instance)
 
 
 @agent.tool_plain
