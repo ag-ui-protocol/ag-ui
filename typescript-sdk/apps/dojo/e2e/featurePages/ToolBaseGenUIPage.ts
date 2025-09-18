@@ -33,39 +33,51 @@ export class ToolBaseGenUIPage {
   }
 
   async extractChatHaikuContent(page: Page): Promise<string> {
-    await page.waitForTimeout(3000);
-    await page.locator('[data-testid="haiku-card"]').first().waitFor({ state: 'visible' });
+    // Wait for haiku cards to be visible
+    await page.waitForSelector('[data-testid="haiku-card"]', { state: 'visible' });
+
     const allHaikuCards = page.locator('[data-testid="haiku-card"]');
     const cardCount = await allHaikuCards.count();
     let chatHaikuContainer;
     let chatHaikuLines;
 
+    // Find the most recent haiku card with lines
     for (let cardIndex = cardCount - 1; cardIndex >= 0; cardIndex--) {
       chatHaikuContainer = allHaikuCards.nth(cardIndex);
       chatHaikuLines = chatHaikuContainer.locator('[data-testid="haiku-line"]');
-      const linesCount = await chatHaikuLines.count();
 
-      if (linesCount > 0) {
-        try {
-          await chatHaikuLines.first().waitFor({ state: 'visible', timeout: 5000 });
-          break;
-        } catch (error) {
-          continue;
-        }
+      try {
+        // Wait for at least 3 haiku lines to be present in this card
+        await page.waitForFunction((cardIdx) => {
+          const cards = document.querySelectorAll('[data-testid="haiku-card"]');
+          if (cards[cardIdx]) {
+            const lines = cards[cardIdx].querySelectorAll('[data-testid="haiku-line"]');
+            return lines.length >= 3;
+          }
+          return false;
+        }, cardIndex, { timeout: 10000 });
+
+        // Verify the lines are visible
+        await chatHaikuLines.first().waitFor({ state: 'visible', timeout: 5000 });
+        break;
+      } catch (error) {
+        continue;
       }
     }
 
     if (!chatHaikuLines) {
-      throw new Error('No haiku cards with visible lines found');
+      throw new Error('No haiku cards with 3 visible lines found');
     }
 
     const count = await chatHaikuLines.count();
     const lines: string[] = [];
 
-    for (let i = 0; i < count; i++) {
-      const haikuLine = chatHaikuLines.nth(i);
-      const japaneseText = await haikuLine.locator('p').first().innerText();
-      lines.push(japaneseText);
+    if (count > 0) {
+      for (let i = 0; i < count; i++) {
+        const haikuLine = chatHaikuLines.nth(i);
+        const japaneseText = await haikuLine.locator('p').first().innerText();
+        lines.push(japaneseText);
+      }
     }
 
     const chatHaikuContent = lines.join('').replace(/\s/g, '');
