@@ -746,7 +746,7 @@ class LangGraphAgent:
                 for event in self.start_step(node_name):
                     yield event
 
-        self.handle_node_change(node_name)
+        self.active_run["node_name"] = node_name
 
     def start_step(self, step_name: str):
         """Simple step start event dispatcher - node_name management handled by handle_node_change"""
