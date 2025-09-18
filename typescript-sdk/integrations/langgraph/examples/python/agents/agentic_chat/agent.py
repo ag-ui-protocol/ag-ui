@@ -14,12 +14,21 @@ from langgraph.graph import MessagesState
 from langgraph.types import Command
 from langchain_core.tools import tool
 
-
 class AgentState(MessagesState):
     """
     State of our graph.
     """
     tools: List[Any] = []
+
+
+@tool
+def change_background(background: str) -> str: # pylint: disable=unused-argument
+    """
+    Change the background color of the chat. Can be anything that the CSS background attribute accepts. Regular colors, linear of radial gradients etc.
+
+    Args:
+        background: str: The background color to change to. Can be anything that the CSS background attribute accepts. Regular colors, linear of radial gradients etc.
+    """ # pylint: disable=line-too-long
 
 
 async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
@@ -45,6 +54,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     model_with_tools = model.bind_tools(
         [
             *state.get("tools", []),
+            change_background,
             # your_tool_here
         ],
 
