@@ -57,33 +57,92 @@ export class AgenticChatPage {
   async getBackground(
     property: "backgroundColor" | "backgroundImage" = "backgroundColor"
   ): Promise<string> {
-    // Wait a bit for background to apply
-    await this.page.waitForTimeout(500);
+    // Wait for React to render and apply styles
+    await this.page.waitForTimeout(2000);
 
-    // Try multiple selectors for the background element
+    // Wait for the main container with background style to be present
+    await this.page.waitForSelector('.flex.justify-center.items-center.h-full.w-full', {
+      state: 'visible',
+      timeout: 10000
+    });
+
+    // Try to get the background from the main container
+    const mainContainer = this.page.locator('.flex.justify-center.items-center.h-full.w-full').first();
+
+    try {
+      const backgroundValue = await mainContainer.evaluate((el) => {
+        // Get the inline style background value
+        const inlineBackground = el.style.background;
+        if (inlineBackground && inlineBackground !== '--copilot-kit-background-color') {
+          return inlineBackground;
+        }
+
+        // Get computed style
+        const computedStyle = getComputedStyle(el);
+        const computedBackground = computedStyle.background;
+        const computedBackgroundColor = computedStyle.backgroundColor;
+
+        // Check if it's a CSS custom property
+        if (inlineBackground === '--copilot-kit-background-color') {
+          // Try to resolve the CSS custom property
+          const customPropValue = computedStyle.getPropertyValue('--copilot-kit-background-color');
+          if (customPropValue) {
+            return customPropValue;
+          }
+        }
+
+        // Return computed values
+        if (computedBackground && computedBackground !== 'rgba(0, 0, 0, 0)' && computedBackground !== 'transparent') {
+          return computedBackground;
+        }
+
+        if (computedBackgroundColor && computedBackgroundColor !== 'rgba(0, 0, 0, 0)' && computedBackgroundColor !== 'transparent') {
+          return computedBackgroundColor;
+        }
+
+        return computedBackground || computedBackgroundColor;
+      });
+
+      console.log(`Main container background: ${backgroundValue}`);
+
+      if (backgroundValue && backgroundValue !== 'rgba(0, 0, 0, 0)' && backgroundValue !== 'transparent') {
+        return backgroundValue;
+      }
+    } catch (error) {
+      console.log('Error getting background from main container:', error);
+    }
+
+    // Fallback: try other selectors
     const selectors = [
       'div[style*="background"]',
       'div[style*="background-color"]',
-      '.flex.justify-center.items-center.h-full.w-full',
-      'div.flex.justify-center.items-center.h-full.w-full',
-      '[class*="bg-"]',
-      'div[class*="background"]'
+      '.copilotKitWindow',
+      'body'
     ];
 
     for (const selector of selectors) {
       try {
         const element = this.page.locator(selector).first();
-        if (await element.isVisible({ timeout: 1000 })) {
+        console.log(`Checking fallback selector: ${selector}`);
+
+        if (await element.isVisible({ timeout: 5000 })) {
           const value = await element.evaluate(
             (el, prop) => {
-              // Check inline style first
-              if (el.style.background) return el.style.background;
-              if (el.style.backgroundColor) return el.style.backgroundColor;
+              const computedStyle = getComputedStyle(el);
+              const inlineStyle = el.style[prop as any];
+
+              // Prefer inline style
+              if (inlineStyle && inlineStyle !== 'rgba(0, 0, 0, 0)' && inlineStyle !== 'transparent') {
+                return inlineStyle;
+              }
+
               // Then computed style
-              return getComputedStyle(el)[prop as any];
+              const computedValue = computedStyle[prop as any];
+              return computedValue;
             },
             property
           );
+
           if (value && value !== "rgba(0, 0, 0, 0)" && value !== "transparent") {
             console.log(`[${selector}] ${property}: ${value}`);
             return value;
@@ -94,13 +153,45 @@ export class AgenticChatPage {
       }
     }
 
-    // Fallback to original element
-    const value = await this.chatBackground.first().evaluate(
-      (el, prop) => getComputedStyle(el)[prop as any],
-      property
-    );
-    console.log(`[Fallback] ${property}: ${value}`);
-    return value;
+    // Final fallback
+    const fallbackValue = await this.page.evaluate((prop) => {
+      return getComputedStyle(document.body)[prop as any];
+    }, property);
+
+    console.log(`[Final Fallback] ${property}: ${fallbackValue}`);
+    return fallbackValue;
+  }
+
+  async waitForBackgroundChange(expectedBackground?: string, timeout: number = 10000): Promise<void> {
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeout) {
+      try {
+        const currentBackground = await this.getBackground();
+
+        // If we're looking for a specific background
+        if (expectedBackground) {
+          if (currentBackground.includes(expectedBackground) ||
+              currentBackground === expectedBackground) {
+            return;
+          }
+        } else {
+          // Just wait for any non-default background
+          if (currentBackground !== 'oklch(1 0 0)' &&
+              currentBackground !== 'rgba(0, 0, 0, 0)' &&
+              currentBackground !== 'transparent' &&
+              !currentBackground.includes('--copilot-kit-background-color')) {
+            return;
+          }
+        }
+
+        await this.page.waitForTimeout(500);
+      } catch (error) {
+        await this.page.waitForTimeout(500);
+      }
+    }
+
+    throw new Error(`Background did not change to expected value within ${timeout}ms`);
   }
 
   async getGradientButtonByName(name: string | RegExp) {
