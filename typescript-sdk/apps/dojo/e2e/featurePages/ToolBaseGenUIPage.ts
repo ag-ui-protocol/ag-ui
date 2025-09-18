@@ -112,9 +112,13 @@ export class ToolBaseGenUIPage {
   }
 
   async checkHaikuDisplay(page: Page): Promise<void> {
+    // Wait for both chat and main display to be fully loaded
+    await page.waitForTimeout(3000);
+
     const chatHaikuContent = await this.extractChatHaikuContent(page);
 
-    await page.waitForTimeout(5000);
+    // Wait a bit more for main display to sync
+    await page.waitForTimeout(2000);
 
     const mainHaikuContent = await this.extractMainDisplayHaikuContent(page);
 
@@ -123,14 +127,43 @@ export class ToolBaseGenUIPage {
       return;
     }
 
+    // Check if contents match exactly
     if (chatHaikuContent === mainHaikuContent) {
       expect(mainHaikuContent).toBe(chatHaikuContent);
+      return;
+    }
+
+    // If they don't match, check if one is a substring of the other (partial loading)
+    if (mainHaikuContent.includes(chatHaikuContent) || chatHaikuContent.includes(mainHaikuContent)) {
+      console.log(`Content partially matches - Chat: "${chatHaikuContent}", Main: "${mainHaikuContent}"`);
+
+      // Wait for content to stabilize and try again
+      await page.waitForTimeout(5000);
+
+      const finalChatContent = await this.extractChatHaikuContent(page);
+      const finalMainContent = await this.extractMainDisplayHaikuContent(page);
+
+      // Use the longer content as the expected result (more complete)
+      const expectedContent = finalChatContent.length >= finalMainContent.length ? finalChatContent : finalMainContent;
+
+      expect(finalMainContent).toBe(expectedContent);
+      expect(finalChatContent).toBe(expectedContent);
     } else {
-      await page.waitForTimeout(3000);
+      // Contents are completely different - this might indicate an error
+      console.log(`Content mismatch - Chat: "${chatHaikuContent}", Main: "${mainHaikuContent}"`);
 
-      const updatedMainContent = await this.extractMainDisplayHaikuContent(page);
+      // Wait longer and try one more time
+      await page.waitForTimeout(5000);
 
-      expect(updatedMainContent).toBe(chatHaikuContent);
+      const retryMainContent = await this.extractMainDisplayHaikuContent(page);
+      const retryChatContent = await this.extractChatHaikuContent(page);
+
+      // At least verify both have content
+      expect(retryChatContent.length).toBeGreaterThan(0);
+      expect(retryMainContent.length).toBeGreaterThan(0);
+
+      // Try to match again
+      expect(retryMainContent).toBe(retryChatContent);
     }
   }
 }
