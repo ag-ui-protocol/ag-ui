@@ -12,15 +12,15 @@ on:
   pull_request:
     branches: [ "main" ]
     paths:
-      - "rust-sdk/crates/**"
-      - "rust-sdk/**/tests/**"
-      - "rust-sdk/Cargo.toml"
-      - "rust-sdk/.cargo/**"
+      - "sdks/community/rust/crates/**"
+      - "sdks/community/rust/**/tests/**"
+      - "sdks/community/rust/Cargo.toml"
+      - "sdks/community/rust/.cargo/**"
       - ".github/workflows/rust-lint-test.yml"
 
 defaults:
   run:
-    working-directory: ./rust-sdk
+    working-directory: ./rust
 
 jobs:
   build-and-test:

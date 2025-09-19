@@ -141,7 +141,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Base URL for the mock server
     // Run the following command to start the mock server:
-    // `uv run rust-sdk/crates/ag-ui-client/scripts/generative_ui.py`
+    // `uv run rust/crates/ag-ui-client/scripts/generative_ui.py`
     let base_url = Url::parse("http://127.0.0.1:3001/")?;
 
     // Create the HTTP agent

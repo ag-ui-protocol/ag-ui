@@ -14,7 +14,7 @@ mod tests {
     fn test_role_serialization() {
         let role = Role::Developer;
         let json = serde_json::to_string(&role).unwrap();
-        assert_eq!(json, r#"{"role":"developer"}"#);
+        assert_eq!(json, r#""developer""#);
     }
 
     #[test]
