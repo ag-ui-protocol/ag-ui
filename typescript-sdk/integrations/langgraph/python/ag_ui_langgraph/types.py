@@ -48,7 +48,8 @@ RunMetadata = TypedDict("RunMetadata", {
     "exiting_node": NotRequired[bool],
     "manually_emitted_state": NotRequired[Optional[State]],
     "thread_id": NotRequired[Optional[ThinkingProcess]],
-    "thinking_process": NotRequired[Optional[str]]
+    "thinking_process": NotRequired[Optional[str]],
+    "has_function_streaming": NotRequired[bool],
 })
 
 MessagesInProgressRecord = Dict[str, Optional[MessageInProgress]]

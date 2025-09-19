@@ -164,6 +164,7 @@ export class LangGraphAgent extends AbstractAgent {
     this.activeRun = {
       id: input.runId,
       threadId: input.threadId,
+      hasFunctionStreaming: false,
     };
     this.subscriber = subscriber;
     if (!this.assistant) {
@@ -571,6 +572,10 @@ export class LangGraphAgent extends AbstractAgent {
           hasCurrentStream && currentStream?.toolCallId && toolCallData?.args;
         const isToolCallEndEvent = hasCurrentStream && currentStream?.toolCallId && !toolCallData;
 
+        if (isToolCallEndEvent || isToolCallArgsEvent || isToolCallStartEvent) {
+          this.activeRun!.hasFunctionStreaming = true;
+        }
+
         const reasoningData = resolveReasoningContent(event.data);
         const messageContent = resolveMessageContent(event.data.chunk.content);
         const isMessageContentEvent = Boolean(!toolCallData && messageContent);
@@ -768,6 +773,27 @@ export class LangGraphAgent extends AbstractAgent {
           rawEvent: event,
         });
         break;
+      case LangGraphEventTypes.OnToolEnd:
+        if (this.activeRun!.hasFunctionStreaming) break;
+        const toolCallOutput = event.data.output
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_START,
+          toolCallId: toolCallOutput.tool_call_id,
+          toolCallName: toolCallOutput.name,
+          parentMessageId: toolCallOutput.id,
+          rawEvent: event,
+        })
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: toolCallOutput.tool_call_id,
+          delta: JSON.stringify(event.data.input),
+          rawEvent: event,
+        });
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_END,
+          toolCallId: toolCallOutput.tool_call_id,
+          rawEvent: event,
+        });
     }
   }
 

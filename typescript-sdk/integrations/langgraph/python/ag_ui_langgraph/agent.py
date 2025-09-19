@@ -113,6 +113,7 @@ class LangGraphAgent:
             "thread_id": thread_id,
             "thinking_process": None,
             "node_name": None,
+            "has_function_streaming": False,
         }
         self.active_run = INITIAL_ACTIVE_RUN
 
@@ -485,6 +486,9 @@ class LangGraphAgent:
             is_tool_call_args_event = has_current_stream and current_stream.get("tool_call_id") and tool_call_data and tool_call_data.get("args")
             is_tool_call_end_event = has_current_stream and current_stream.get("tool_call_id") and not tool_call_data
 
+            if is_tool_call_start_event or is_tool_call_end_event or is_tool_call_args_event:
+                self.active_run["has_function_streaming"] = True
+
             reasoning_data = resolve_reasoning_content(event["data"]["chunk"]) if event["data"]["chunk"] else None
             message_content = resolve_message_content(event["data"]["chunk"].content) if event["data"]["chunk"] and event["data"]["chunk"].content else None
             is_message_content_event = tool_call_data is None and message_content
@@ -647,6 +651,35 @@ class LangGraphAgent:
             
             yield self._dispatch_event(
                 CustomEvent(type=EventType.CUSTOM, name=event["name"], value=event["data"], raw_event=event)
+            )
+
+        elif event_type == LangGraphEventTypes.OnToolEnd:
+            if self.active_run["has_function_streaming"]:
+                return
+            tool_call_output = event["data"]["output"]
+            yield self._dispatch_event(
+                ToolCallStartEvent(
+                    type=EventType.TOOL_CALL_START,
+                    tool_call_id=tool_call_output.tool_call_id,
+                    tool_call_name=tool_call_output.name,
+                    parent_message_id=tool_call_output.id,
+                    raw_event=event,
+                )
+            )
+            yield self._dispatch_event(
+                ToolCallArgsEvent(
+                    type=EventType.TOOL_CALL_ARGS,
+                    tool_call_id=tool_call_output.tool_call_id,
+                    delta=json.dumps(event["data"]["input"]),
+                    raw_event=event
+                )
+            )
+            yield self._dispatch_event(
+                ToolCallEndEvent(
+                    type=EventType.TOOL_CALL_END,
+                    tool_call_id=tool_call_output.tool_call_id,
+                    raw_event=event
+                )
             )
 
     def handle_thinking_event(self, reasoning_data: LangGraphReasoning) -> Generator[str, Any, str | None]:

@@ -63,6 +63,7 @@ export interface RunMetadata {
   manuallyEmittedState?: State | null;
   threadId?: string;
   graphInfo?: AssistantGraph
+  hasFunctionStreaming?: boolean;
 }
 
 export type MessagesInProgressRecord = Record<string, MessageInProgress | null>;
