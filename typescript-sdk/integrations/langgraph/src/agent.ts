@@ -126,6 +126,7 @@ export class LangGraphAgent extends AbstractAgent {
   subscriber: Subscriber<ProcessedEvents>;
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
   config: LangGraphAgentConfig;
+  abortController = new AbortController();
 
   constructor(config: LangGraphAgentConfig) {
     super(config);
@@ -158,6 +159,10 @@ export class LangGraphAgent extends AbstractAgent {
       this.runAgentStream(input, subscriber);
       return () => {};
     });
+  }
+
+  abortRun() {
+    this.abortController.abort();
   }
 
   async runAgentStream(input: RunAgentExtendedInput, subscriber: Subscriber<ProcessedEvents>) {
@@ -213,6 +218,7 @@ export class LangGraphAgent extends AbstractAgent {
       // @ts-ignore
       checkpointId: fork.checkpoint.checkpoint_id!,
       streamMode,
+      signal: this.abortController.signal,
     };
     return {
       streamResponse: this.client.runs.stream(threadId, this.assistant.assistant_id, payload),
@@ -331,7 +337,8 @@ export class LangGraphAgent extends AbstractAgent {
       context: {
         ...context,
         ...(payloadConfig?.configurable ?? {}),
-      }
+      },
+      signal: this.abortController.signal,
     };
 
     // If there are still outstanding unresolved interrupts, we must force resolution of them before moving forward
