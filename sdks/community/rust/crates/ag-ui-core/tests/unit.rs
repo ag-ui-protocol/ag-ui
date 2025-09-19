@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use ag_ui_core::error::AguiError;
+    use ag_ui_core::error::AgUiError;
     use ag_ui_core::types::{
         AssistantMessage, Context, DeveloperMessage, FunctionCall, Message, MessageId, Role,
         RunAgentInput, RunId, SystemMessage, ThreadId, Tool, ToolCall, ToolCallId, ToolMessage,
@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn test_agui_error() {
-        let error = AguiError::new("test error");
+        let error = AgUiError::new("test error");
         assert_eq!(error.to_string(), "AG-UI Error: test error");
     }
 
