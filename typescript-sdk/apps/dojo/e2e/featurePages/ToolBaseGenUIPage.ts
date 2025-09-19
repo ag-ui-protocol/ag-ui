@@ -33,39 +33,51 @@ export class ToolBaseGenUIPage {
   }
 
   async extractChatHaikuContent(page: Page): Promise<string> {
-    await page.waitForTimeout(3000);
-    await page.locator('[data-testid="haiku-card"]').first().waitFor({ state: 'visible' });
+    // Wait for haiku cards to be visible
+    await page.waitForSelector('[data-testid="haiku-card"]', { state: 'visible' });
+
     const allHaikuCards = page.locator('[data-testid="haiku-card"]');
     const cardCount = await allHaikuCards.count();
     let chatHaikuContainer;
     let chatHaikuLines;
 
+    // Find the most recent haiku card with lines
     for (let cardIndex = cardCount - 1; cardIndex >= 0; cardIndex--) {
       chatHaikuContainer = allHaikuCards.nth(cardIndex);
       chatHaikuLines = chatHaikuContainer.locator('[data-testid="haiku-line"]');
-      const linesCount = await chatHaikuLines.count();
 
-      if (linesCount > 0) {
-        try {
-          await chatHaikuLines.first().waitFor({ state: 'visible', timeout: 5000 });
-          break;
-        } catch (error) {
-          continue;
-        }
+      try {
+        // Wait for at least 3 haiku lines to be present in this card
+        await page.waitForFunction((cardIdx) => {
+          const cards = document.querySelectorAll('[data-testid="haiku-card"]');
+          if (cards[cardIdx]) {
+            const lines = cards[cardIdx].querySelectorAll('[data-testid="haiku-line"]');
+            return lines.length >= 3;
+          }
+          return false;
+        }, cardIndex, { timeout: 10000 });
+
+        // Verify the lines are visible
+        await chatHaikuLines.first().waitFor({ state: 'visible', timeout: 5000 });
+        break;
+      } catch (error) {
+        continue;
       }
     }
 
     if (!chatHaikuLines) {
-      throw new Error('No haiku cards with visible lines found');
+      throw new Error('No haiku cards with 3 visible lines found');
     }
 
     const count = await chatHaikuLines.count();
     const lines: string[] = [];
 
-    for (let i = 0; i < count; i++) {
-      const haikuLine = chatHaikuLines.nth(i);
-      const japaneseText = await haikuLine.locator('p').first().innerText();
-      lines.push(japaneseText);
+    if (count > 0) {
+      for (let i = 0; i < count; i++) {
+        const haikuLine = chatHaikuLines.nth(i);
+        const japaneseText = await haikuLine.locator('p').first().innerText();
+        lines.push(japaneseText);
+      }
     }
 
     const chatHaikuContent = lines.join('').replace(/\s/g, '');
@@ -73,7 +85,17 @@ export class ToolBaseGenUIPage {
   }
 
   async extractMainDisplayHaikuContent(page: Page): Promise<string> {
+    // Wait for the main haiku display to be visible
+    await page.waitForSelector('[data-testid="main-haiku-display"]', { state: 'visible' });
+
     const mainDisplayLines = page.locator('[data-testid="main-haiku-line"]');
+
+    // Wait for at least 3 haiku lines to be present
+    await page.waitForFunction(() => {
+      const elements = document.querySelectorAll('[data-testid="main-haiku-line"]');
+      return elements.length >= 3;
+    });
+
     const mainCount = await mainDisplayLines.count();
     const lines: string[] = [];
 
@@ -90,9 +112,13 @@ export class ToolBaseGenUIPage {
   }
 
   async checkHaikuDisplay(page: Page): Promise<void> {
+    // Wait for both chat and main display to be fully loaded
+    await page.waitForTimeout(3000);
+
     const chatHaikuContent = await this.extractChatHaikuContent(page);
 
-    await page.waitForTimeout(5000);
+    // Wait a bit more for main display to sync
+    await page.waitForTimeout(2000);
 
     const mainHaikuContent = await this.extractMainDisplayHaikuContent(page);
 
@@ -101,14 +127,43 @@ export class ToolBaseGenUIPage {
       return;
     }
 
+    // Check if contents match exactly
     if (chatHaikuContent === mainHaikuContent) {
       expect(mainHaikuContent).toBe(chatHaikuContent);
+      return;
+    }
+
+    // If they don't match, check if one is a substring of the other (partial loading)
+    if (mainHaikuContent.includes(chatHaikuContent) || chatHaikuContent.includes(mainHaikuContent)) {
+      console.log(`Content partially matches - Chat: "${chatHaikuContent}", Main: "${mainHaikuContent}"`);
+
+      // Wait for content to stabilize and try again
+      await page.waitForTimeout(5000);
+
+      const finalChatContent = await this.extractChatHaikuContent(page);
+      const finalMainContent = await this.extractMainDisplayHaikuContent(page);
+
+      // Use the longer content as the expected result (more complete)
+      const expectedContent = finalChatContent.length >= finalMainContent.length ? finalChatContent : finalMainContent;
+
+      expect(finalMainContent).toBe(expectedContent);
+      expect(finalChatContent).toBe(expectedContent);
     } else {
-      await page.waitForTimeout(3000);
+      // Contents are completely different - this might indicate an error
+      console.log(`Content mismatch - Chat: "${chatHaikuContent}", Main: "${mainHaikuContent}"`);
 
-      const updatedMainContent = await this.extractMainDisplayHaikuContent(page);
+      // Wait longer and try one more time
+      await page.waitForTimeout(5000);
 
-      expect(updatedMainContent).toBe(chatHaikuContent);
+      const retryMainContent = await this.extractMainDisplayHaikuContent(page);
+      const retryChatContent = await this.extractChatHaikuContent(page);
+
+      // At least verify both have content
+      expect(retryChatContent.length).toBeGreaterThan(0);
+      expect(retryMainContent.length).toBeGreaterThan(0);
+
+      // Try to match again
+      expect(retryMainContent).toBe(retryChatContent);
     }
   }
 }

@@ -41,30 +41,59 @@ export const weatherTool = createTool({
 });
 
 const getWeather = async (location: string) => {
-  const geocodingUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1`;
-  const geocodingResponse = await fetch(geocodingUrl);
-  const geocodingData = (await geocodingResponse.json()) as GeocodingResponse;
+  try {
+    const geocodingUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`;
+    const geocodingResponse = await fetch(geocodingUrl);
 
-  if (!geocodingData.results?.[0]) {
-    throw new Error(`Location '${location}' not found`);
+    if (!geocodingResponse.ok) {
+      throw new Error(`Geocoding API failed with status: ${geocodingResponse.status}`);
+    }
+
+    const geocodingData = (await geocodingResponse.json()) as GeocodingResponse;
+
+    if (!geocodingData.results?.[0]) {
+      throw new Error(`Location '${location}' not found`);
+    }
+
+    const { latitude, longitude, name } = geocodingData.results[0];
+
+    const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_gusts_10m,weather_code&timezone=auto`;
+
+    const response = await fetch(weatherUrl);
+
+    if (!response.ok) {
+      throw new Error(`Weather API failed with status: ${response.status}`);
+    }
+
+    const data = (await response.json()) as WeatherResponse;
+
+    // Add validation to check if the response has the expected structure
+    if (!data || !data.current) {
+      console.error('Invalid weather API response:', JSON.stringify(data, null, 2));
+      throw new Error(`Invalid weather data received for location '${location}'`);
+    }
+
+    const current = data.current;
+
+    // Validate that all required fields are present
+    if (current.temperature_2m === undefined || current.temperature_2m === null) {
+      console.error('Missing temperature data in response:', JSON.stringify(current, null, 2));
+      throw new Error(`Temperature data not available for location '${location}'`);
+    }
+
+    return {
+      temperature: current.temperature_2m,
+      feelsLike: current.apparent_temperature ?? current.temperature_2m,
+      humidity: current.relative_humidity_2m ?? 0,
+      windSpeed: current.wind_speed_10m ?? 0,
+      windGust: current.wind_gusts_10m ?? 0,
+      conditions: getWeatherCondition(current.weather_code ?? 0),
+      location: name,
+    };
+  } catch (error) {
+    console.error(`Weather tool error for location '${location}':`, error);
+    throw new Error(`Failed to get weather data for '${location}': ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-
-  const { latitude, longitude, name } = geocodingData.results[0];
-
-  const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_gusts_10m,weather_code`;
-
-  const response = await fetch(weatherUrl);
-  const data = (await response.json()) as WeatherResponse;
-
-  return {
-    temperature: data.current.temperature_2m,
-    feelsLike: data.current.apparent_temperature,
-    humidity: data.current.relative_humidity_2m,
-    windSpeed: data.current.wind_speed_10m,
-    windGust: data.current.wind_gusts_10m,
-    conditions: getWeatherCondition(data.current.weather_code),
-    location: name,
-  };
 };
 
 function getWeatherCondition(code: number): string {
