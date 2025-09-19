@@ -1010,6 +1010,7 @@ export class LangGraphAgent extends AbstractAgent {
 
       return {
         type: "function",
+        name: tool.name,
         function: {
           name: tool.name,
           description: tool.description,
