@@ -28,8 +28,6 @@ import {
   GetRemoteAgentsOptions,
   GetLocalAgentOptions,
   getLocalAgent,
-  GetNetworkOptions,
-  getNetwork,
 } from "./utils";
 
 export interface MastraAgentConfig extends AgentConfig {
@@ -343,9 +341,5 @@ export class MastraAgent extends AbstractAgent {
 
   static getLocalAgent(options: GetLocalAgentOptions) {
     return getLocalAgent(options);
-  }
-
-  static getNetwork(options: GetNetworkOptions) {
-    return getNetwork(options);
   }
 }
