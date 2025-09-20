@@ -111,4 +111,4 @@ jobs:
 
     - name: Run JVM tests
       working-directory: sdks/community/kotlin/library
-      run: ./gradlew jvmTest --no-daemon --stacktrace
+      run: ./gradlew jvmTest --no-daemon --stacktrace --info
