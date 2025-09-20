@@ -41,7 +41,7 @@ agent.sendMessage("Hello!").collect { event ->
 
 ```bash
 git clone https://github.com/ag-ui-protocol/ag-ui.git
-cd ag-ui/kotlin-sdk/library
+cd ag-ui/sdks/community/kotlin/library
 ./gradlew build
 ./gradlew test
 ```
