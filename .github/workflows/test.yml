@@ -121,28 +121,49 @@ jobs:
         total_tests=0
         total_failures=0
         total_errors=0
+        total_skipped=0
 
         for module in kotlin-core kotlin-client kotlin-tools; do
-          html_file="$module/build/reports/tests/jvmTest/index.html"
-          if [ -f "$html_file" ]; then
-            # Extract test counts from HTML using grep and sed
-            tests=$(grep -o '[0-9]* tests' "$html_file" | head -1 | sed 's/ tests//')
-            failures=$(grep -o '[0-9]* failures' "$html_file" | head -1 | sed 's/ failures//' || echo "0")
-            errors=$(grep -o '[0-9]* errors' "$html_file" | head -1 | sed 's/ errors//' || echo "0")
+          xml_dir="$module/build/test-results/jvmTest"
+          if [ -d "$xml_dir" ]; then
+            module_tests=0
+            module_failures=0
+            module_errors=0
+            module_skipped=0
 
-            if [ -n "$tests" ]; then
-              echo "✅ $module: $tests tests, $failures failures, $errors errors"
-              total_tests=$((total_tests + tests))
-              total_failures=$((total_failures + failures))
-              total_errors=$((total_errors + errors))
+            # Parse XML test results
+            for xml_file in "$xml_dir"/*.xml; do
+              if [ -f "$xml_file" ]; then
+                tests=$(grep -o 'tests="[0-9]*"' "$xml_file" | sed 's/tests="\([0-9]*\)"/\1/')
+                failures=$(grep -o 'failures="[0-9]*"' "$xml_file" | sed 's/failures="\([0-9]*\)"/\1/')
+                errors=$(grep -o 'errors="[0-9]*"' "$xml_file" | sed 's/errors="\([0-9]*\)"/\1/')
+                skipped=$(grep -o 'skipped="[0-9]*"' "$xml_file" | sed 's/skipped="\([0-9]*\)"/\1/')
+
+                module_tests=$((module_tests + ${tests:-0}))
+                module_failures=$((module_failures + ${failures:-0}))
+                module_errors=$((module_errors + ${errors:-0}))
+                module_skipped=$((module_skipped + ${skipped:-0}))
+              fi
+            done
+
+            if [ $module_tests -gt 0 ]; then
+              echo "✅ $module: $module_tests tests, $module_failures failures, $module_errors errors"
+              total_tests=$((total_tests + module_tests))
+              total_failures=$((total_failures + module_failures))
+              total_errors=$((total_errors + module_errors))
+              total_skipped=$((total_skipped + module_skipped))
             fi
           fi
         done
 
+        echo "---"
         echo "## Overall Results: $total_tests tests, $total_failures failures, $total_errors errors"
         if [ $total_failures -gt 0 ] || [ $total_errors -gt 0 ]; then
           echo "❌ Some tests failed"
           exit 1
+        elif [ $total_tests -eq 0 ]; then
+          echo "⚠️ No tests were found or executed"
+          exit 1
         else
-          echo "✅ All tests passed!"
+          echo "✅ All $total_tests tests passed!"
         fi
