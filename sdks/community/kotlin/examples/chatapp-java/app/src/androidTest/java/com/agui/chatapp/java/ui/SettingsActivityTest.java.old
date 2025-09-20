@@ -1,0 +1,343 @@
+package com.agui.chatapp.java.ui;
+
+import android.content.Context;
+
+import androidx.test.core.app.ActivityScenario;
+import androidx.test.core.app.ApplicationProvider;
+import androidx.test.espresso.action.ViewActions;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.filters.LargeTest;
+
+import com.agui.chatapp.java.R;
+import com.agui.chatapp.java.repository.AgentRepository;
+
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
+import static androidx.test.espresso.Espresso.onData;
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.action.ViewActions.*;
+import static androidx.test.espresso.assertion.ViewAssertions.*;
+import static androidx.test.espresso.matcher.ViewMatchers.*;
+import static org.hamcrest.Matchers.*;
+
+import com.google.android.material.textfield.TextInputLayout;
+import org.hamcrest.Description;
+import org.hamcrest.Matcher;
+import org.hamcrest.TypeSafeMatcher;
+
+/**
+ * Connected Android tests for SettingsActivity.
+ * Tests configuration UI, form validation, and data persistence.
+ */
+@RunWith(AndroidJUnit4.class)
+@LargeTest
+public class SettingsActivityTest {
+    
+    /**
+     * Custom matcher for checking TextInputLayout error text
+     */
+    public static Matcher<android.view.View> hasTextInputLayoutErrorText(final String expectedError) {
+        return new TypeSafeMatcher<android.view.View>() {
+            @Override
+            public boolean matchesSafely(android.view.View view) {
+                if (!(view instanceof TextInputLayout)) {
+                    return false;
+                }
+                CharSequence error = ((TextInputLayout) view).getError();
+                if (error == null) {
+                    return expectedError == null;
+                }
+                return expectedError.equals(error.toString());
+            }
+
+            @Override
+            public void describeTo(Description description) {
+                description.appendText("with TextInputLayout error text: ").appendText(expectedError);
+            }
+        };
+    }
+
+    private ActivityScenario<SettingsActivity> scenario;
+    private Context context;
+
+    @Before
+    public void setUp() {
+        context = ApplicationProvider.getApplicationContext();
+        clearAgentConfiguration();
+    }
+
+    @After
+    public void tearDown() {
+        if (scenario != null) {
+            scenario.close();
+        }
+        clearAgentConfiguration();
+    }
+
+    private void clearAgentConfiguration() {
+        context.getSharedPreferences("agent_settings", Context.MODE_PRIVATE)
+               .edit()
+               .clear()
+               .apply();
+    }
+
+    @Test
+    public void testActivityLaunchesSuccessfully() {
+        scenario = ActivityScenario.launch(SettingsActivity.class);
+        
+        // Verify main UI elements are present
+        onView(withId(R.id.toolbar))
+                .check(matches(isDisplayed()));
+        onView(withId(R.id.editAgentUrl))
+                .check(matches(isDisplayed()));
+        onView(withId(R.id.autoCompleteAuthType))
+                .check(matches(isDisplayed()));
+        onView(withId(R.id.btnSave))
+                .check(matches(isDisplayed()));
+        onView(withId(R.id.btnTestConnection))
+                .check(matches(isDisplayed()));
+    }
+
+    @Test
+    public void testDefaultFormState() {
+        scenario = ActivityScenario.launch(SettingsActivity.class);
+        
+        // URL field should be empty
+        onView(withId(R.id.editAgentUrl))
+                .check(matches(withText("")));
+        
+        // Auth type should default to "None"
+        onView(withId(R.id.autoCompleteAuthType))
+                .check(matches(withText("None")));
+        
+        // Auth fields should be hidden initially
+        onView(withId(R.id.textInputBearerToken))
+                .check(matches(not(isDisplayed())));
+        onView(withId(R.id.textInputApiKey))
+                .check(matches(not(isDisplayed())));
+        
+        // Debug switch should be off
+        onView(withId(R.id.switchDebug))
+                .check(matches(isNotChecked()));
+    }
+
+    @Test
+    public void testUrlFieldInput() {
+        scenario = ActivityScenario.launch(SettingsActivity.class);
+        
+        String testUrl = "https://test.example.com/agent";
+        onView(withId(R.id.editAgentUrl))
+                .perform(typeText(testUrl))
+                .check(matches(withText(testUrl)));
+    }
+
+    @Test
+    public void testAuthTypeSelection() {
+        scenario = ActivityScenario.launch(SettingsActivity.class);
+        
+        // Select Bearer Token by setting text directly (Material 3 ExposedDropdownMenu)
+        onView(withId(R.id.autoCompleteAuthType))
+                .perform(replaceText("Bearer Token"))
+                .perform(closeSoftKeyboard()); // Close keyboard to commit the change
+        
+        // Bearer token field should become visible
+        onView(withId(R.id.textInputBearerToken))
+                .check(matches(isDisplayed()));
+        onView(withId(R.id.textInputApiKey))
+                .check(matches(not(isDisplayed())));
+    }
+
+    @Test
+    public void testApiKeyAuthTypeSelection() {
+        scenario = ActivityScenario.launch(SettingsActivity.class);
+        
+        // Select API Key by setting text directly (Material 3 ExposedDropdownMenu)
+        onView(withId(R.id.autoCompleteAuthType))
+                .perform(replaceText("API Key"))
+                .perform(closeSoftKeyboard()); // Close keyboard to commit the change
+        
+        // API key field should become visible
+        onView(withId(R.id.textInputApiKey))
+                .check(matches(isDisplayed()));
+        onView(withId(R.id.textInputBearerToken))
+                .check(matches(not(isDisplayed())));
+    }
+
+    @Test
+    public void testSystemPromptInput() {
+        scenario = ActivityScenario.launch(SettingsActivity.class);
+        
+        String testPrompt = "You are a helpful test assistant.";
+        onView(withId(R.id.editSystemPrompt))
+                .perform(typeText(testPrompt))
+                .check(matches(withText(testPrompt)));
+    }
+
+    @Test
+    public void testDebugToggle() {
+        scenario = ActivityScenario.launch(SettingsActivity.class);
+        
+        // Initially unchecked
+        onView(withId(R.id.switchDebug))
+                .check(matches(isNotChecked()));
+        
+        // Toggle on
+        onView(withId(R.id.switchDebug))
+                .perform(click())
+                .check(matches(isChecked()));
+        
+        // Toggle off
+        onView(withId(R.id.switchDebug))
+                .perform(click())
+                .check(matches(isNotChecked()));
+    }
+
+    @Test
+    public void testSaveValidConfiguration() {
+        scenario = ActivityScenario.launch(SettingsActivity.class);
+        
+        // Fill in valid configuration
+        onView(withId(R.id.editAgentUrl))
+                .perform(typeText("https://test.example.com/agent"));
+        
+        onView(withId(R.id.editSystemPrompt))
+                .perform(typeText("Test prompt"));
+        
+        onView(withId(R.id.switchDebug))
+                .perform(click());
+        
+        // Save configuration
+        onView(withId(R.id.btnSave))
+                .perform(click());
+        
+        // Activity should finish (we can't easily test this without additional setup)
+        // But we can verify no validation errors are shown
+    }
+
+    @Test
+    public void testSaveWithoutUrl() {
+        scenario = ActivityScenario.launch(SettingsActivity.class);
+        
+        // Try to save without URL
+        onView(withId(R.id.btnSave))
+                .perform(click());
+        
+        // Should show validation error on the TextInputLayout
+        onView(withId(R.id.textInputUrl))
+                .check(matches(hasTextInputLayoutErrorText("Agent URL is required")));
+    }
+
+    @Test
+    public void testBearerTokenValidation() {
+        scenario = ActivityScenario.launch(SettingsActivity.class);
+        
+        // Set URL and Bearer Token auth
+        onView(withId(R.id.editAgentUrl))
+                .perform(typeText("https://test.com"));
+        
+        onView(withId(R.id.autoCompleteAuthType))
+                .perform(replaceText("Bearer Token"))
+                .perform(closeSoftKeyboard()); // Close keyboard to commit the change
+        
+        // Verify Bearer token field becomes visible
+        onView(withId(R.id.textInputBearerToken))
+                .check(matches(isDisplayed()));
+        
+        // Try to save without bearer token
+        onView(withId(R.id.btnSave))
+                .perform(click());
+        
+        // Should show validation error on the TextInputLayout
+        onView(withId(R.id.textInputBearerToken))
+                .check(matches(hasTextInputLayoutErrorText("Bearer token is required")));
+    }
+
+    @Test
+    public void testApiKeyValidation() {
+        scenario = ActivityScenario.launch(SettingsActivity.class);
+        
+        // Set URL and API Key auth
+        onView(withId(R.id.editAgentUrl))
+                .perform(typeText("https://test.com"));
+        
+        onView(withId(R.id.autoCompleteAuthType))
+                .perform(replaceText("API Key"))
+                .perform(closeSoftKeyboard()); // Close keyboard to commit the change
+        
+        // Verify API key field becomes visible
+        onView(withId(R.id.textInputApiKey))
+                .check(matches(isDisplayed()));
+        
+        // Try to save without API key
+        onView(withId(R.id.btnSave))
+                .perform(click());
+        
+        // Should show validation error on the TextInputLayout
+        onView(withId(R.id.textInputApiKey))
+                .check(matches(hasTextInputLayoutErrorText("API key is required")));
+    }
+
+    @Test
+    public void testConnectionTestButton() {
+        scenario = ActivityScenario.launch(SettingsActivity.class);
+        
+        // Fill in valid URL
+        onView(withId(R.id.editAgentUrl))
+                .perform(typeText("https://test.example.com/agent"));
+        
+        // Test connection button should be clickable
+        onView(withId(R.id.btnTestConnection))
+                .check(matches(isClickable()))
+                .perform(click());
+        
+        // Note: Without a real agent, this will likely show an error
+        // but the test verifies the UI interaction works
+    }
+
+    @Test
+    public void testProgressIndicatorDuringTest() {
+        scenario = ActivityScenario.launch(SettingsActivity.class);
+        
+        // Initially hidden
+        onView(withId(R.id.progressTesting))
+                .check(matches(not(isDisplayed())));
+        
+        // Fill URL and start test
+        onView(withId(R.id.editAgentUrl))
+                .perform(typeText("https://test.example.com/agent"));
+        onView(withId(R.id.btnTestConnection))
+                .perform(click());
+        
+        // Progress should briefly appear (might be too fast to catch in test)
+        // This mainly verifies the UI elements exist
+    }
+
+    @Test
+    public void testFormPersistenceOnRecreation() {
+        scenario = ActivityScenario.launch(SettingsActivity.class);
+        
+        // Fill some data
+        onView(withId(R.id.editAgentUrl))
+                .perform(typeText("https://test.com"));
+        onView(withId(R.id.editSystemPrompt))
+                .perform(typeText("Test prompt"))
+                .perform(closeSoftKeyboard()); // Close keyboard before saving
+        
+        // Save configuration
+        onView(withId(R.id.btnSave))
+                .perform(click());
+        
+        // Relaunch activity
+        scenario.close();
+        scenario = ActivityScenario.launch(SettingsActivity.class);
+        
+        // Data should be restored from SharedPreferences
+        onView(withId(R.id.editAgentUrl))
+                .check(matches(withText("https://test.com")));
+        onView(withId(R.id.editSystemPrompt))
+                .check(matches(withText("Test prompt")));
+    }
+}
