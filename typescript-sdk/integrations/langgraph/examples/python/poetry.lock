@@ -2,14 +2,14 @@
 
 [[package]]
 name = "ag-ui-langgraph"
-version = "0.0.12a1"
+version = "0.0.12a3"
 description = "Implementation of the AG-UI protocol for LangGraph."
 optional = false
 python-versions = "<3.14,>=3.10"
 groups = ["main"]
 files = [
-    {file = "ag_ui_langgraph-0.0.12a1-py3-none-any.whl", hash = "sha256:3c5e6a2b1cea7c91c33f6fa352dacaf23f905b13baa959276f3c22cb5dcbaa59"},
-    {file = "ag_ui_langgraph-0.0.12a1.tar.gz", hash = "sha256:13c6034aaa33ec053788cd7dba3a088d7763bf03b19830b4bba6d559546b30b2"},
+    {file = "ag_ui_langgraph-0.0.12a3-py3-none-any.whl", hash = "sha256:5bea4056e413bb53952d742da44893d80712ecc9bd77473d9cccd07bd4cd00ee"},
+    {file = "ag_ui_langgraph-0.0.12a3.tar.gz", hash = "sha256:0b0734c2a7a12bf98f7c411aaa9be3adacb77808ecb3c42360e5c129ea4b4411"},
 ]
 
 [package.dependencies]
@@ -2970,4 +2970,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.14"
-content-hash = "42262620b6201375360ae7e3b3a781edd9bba4bb64e2341175fd28921f268a65"
+content-hash = "aef84782b941a699c57297f1e9752de447f0c851a4370fbeebd2808601e8e369"

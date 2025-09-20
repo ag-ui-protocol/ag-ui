@@ -34,6 +34,7 @@ describe("runHttpRequest", () => {
     mockHeaders.append("Content-Type", "application/json");
 
     const mockResponse = {
+      ok: true,
       status: 200,
       headers: mockHeaders,
       body: {
@@ -90,6 +91,7 @@ describe("runHttpRequest", () => {
     mockHeaders.append("Content-Type", "application/json");
 
     const mockResponse = {
+      ok: true,
       status: 200,
       headers: mockHeaders,
       body: {
@@ -142,6 +144,7 @@ describe("runHttpRequest", () => {
     mockHeaders.append("Content-Type", "application/json");
 
     const mockResponse = {
+      ok: true,
       status: 200,
       headers: mockHeaders,
       body: {
@@ -191,5 +194,54 @@ describe("runHttpRequest", () => {
 
     // Clean up
     subscription.unsubscribe();
+  });
+
+  it("should throw HTTP error on occurs", async () => {
+    // Mock a 404 error response with JSON body
+    const mockHeaders = new Headers();
+    mockHeaders.append("content-type", "application/json");
+
+    const mockText = '{"message":"User not found"}';
+
+    const mockResponse = {
+      ok: false,
+      status: 404,
+      headers: mockHeaders,
+      // our error-path reads .text() (not streaming)
+      text: jest.fn().mockResolvedValue(mockText),
+    } as unknown as Response;
+
+    // Override fetch for this test
+    fetchMock.mockResolvedValue(mockResponse);
+
+    const observable = runHttpRequest("https://example.com/api", { method: "GET" });
+
+    const nextSpy = jest.fn();
+
+    await new Promise<void>((resolve) => {
+      const sub = observable.subscribe({
+        next: nextSpy,
+        error: (err: any) => {
+          // error should carry status + parsed payload
+          expect(err).toBeInstanceOf(Error);
+          expect(err.status).toBe(404);
+          expect(err.payload).toEqual({ message: "User not found" });
+          // readable message is okay too (optional)
+          expect(err.message).toContain("HTTP 404");
+          expect(err.message).toContain("User not found");
+          resolve();
+          sub.unsubscribe();
+        },
+        complete: () => {
+          fail("Should not complete on HTTP error");
+        },
+      });
+    });
+
+    // Should not have emitted any data events on error short-circuit
+    expect(nextSpy).not.toHaveBeenCalled();
+
+    // Ensure we read the error body exactly once
+    expect((mockResponse as any).text).toHaveBeenCalledTimes(1);
   });
 });

@@ -125,7 +125,6 @@ export class LangGraphAgent extends AbstractAgent {
   // @ts-expect-error no need to initialize subscriber right now
   subscriber: Subscriber<ProcessedEvents>;
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
-  activeStep?: string;
   config: LangGraphAgentConfig;
 
   constructor(config: LangGraphAgentConfig) {
@@ -165,6 +164,7 @@ export class LangGraphAgent extends AbstractAgent {
     this.activeRun = {
       id: input.runId,
       threadId: input.threadId,
+      hasFunctionStreaming: false,
     };
     this.subscriber = subscriber;
     if (!this.assistant) {
@@ -235,11 +235,6 @@ export class LangGraphAgent extends AbstractAgent {
     this.activeRun!.manuallyEmittedState = null;
 
     const nodeNameInput = forwardedProps?.nodeName;
-    this.activeRun!.nodeName = nodeNameInput;
-    if (this.activeRun!.nodeName === "__end__") {
-      this.activeRun!.nodeName = undefined;
-    }
-
     const threadId = inputThreadId ?? randomUUID();
 
     if (!this.assistant) {
@@ -347,6 +342,7 @@ export class LangGraphAgent extends AbstractAgent {
         threadId,
         runId: input.runId,
       });
+      this.handleNodeChange(nodeNameInput)
 
       interrupts.forEach((interrupt) => {
         this.dispatchEvent({
@@ -400,11 +396,7 @@ export class LangGraphAgent extends AbstractAgent {
         threadId,
         runId: this.activeRun!.id,
       });
-
-      // In case of resume (interrupt), re-start resumed step
-      if (forwardedProps?.command?.resume && this.activeRun!.nodeName) {
-        this.startStep(this.activeRun!.nodeName);
-      }
+      this.handleNodeChange(nodeNameInput)
 
       for await (let streamResponseChunk of streamResponse) {
         const subgraphsStreamEnabled = input.forwardedProps?.streamSubgraphs;
@@ -460,11 +452,7 @@ export class LangGraphAgent extends AbstractAgent {
         this.activeRun!.id = metadata.run_id;
 
         if (currentNodeName && currentNodeName !== this.activeRun!.nodeName) {
-          if (this.activeRun!.nodeName && this.activeRun!.nodeName !== nodeNameInput) {
-            this.endStep();
-          }
-
-          this.startStep(currentNodeName);
+          this.handleNodeChange(currentNodeName)
         }
 
         shouldExit =
@@ -482,7 +470,7 @@ export class LangGraphAgent extends AbstractAgent {
         // we only want to update the node name under certain conditions
         // since we don't need any internal node names to be sent to the frontend
         if (this.activeRun!.graphInfo?.["nodes"].some((node) => node.id === currentNodeName)) {
-          this.activeRun!.nodeName = currentNodeName;
+          this.handleNodeChange(currentNodeName)
         }
 
         updatedState.values = this.activeRun!.manuallyEmittedState ?? latestStateValues;
@@ -523,6 +511,7 @@ export class LangGraphAgent extends AbstractAgent {
       const isEndNode = state.next.length === 0;
       const writes = state.metadata?.writes ?? {};
 
+      // Initialize a new node name to use in the next if block
       let newNodeName = this.activeRun!.nodeName!;
 
       if (!interrupts?.length) {
@@ -539,12 +528,10 @@ export class LangGraphAgent extends AbstractAgent {
         });
       });
 
-      if (this.activeRun!.nodeName != newNodeName) {
-        this.endStep();
-        this.startStep(newNodeName);
-      }
+      this.handleNodeChange(newNodeName);
+      // Immediately turn off new step
+      this.handleNodeChange(undefined);
 
-      this.endStep();
       this.dispatchEvent({
         type: EventType.STATE_SNAPSHOT,
         snapshot: this.getStateSnapshot(state),
@@ -584,6 +571,10 @@ export class LangGraphAgent extends AbstractAgent {
         const isToolCallArgsEvent =
           hasCurrentStream && currentStream?.toolCallId && toolCallData?.args;
         const isToolCallEndEvent = hasCurrentStream && currentStream?.toolCallId && !toolCallData;
+
+        if (isToolCallEndEvent || isToolCallArgsEvent || isToolCallStartEvent) {
+          this.activeRun!.hasFunctionStreaming = true;
+        }
 
         const reasoningData = resolveReasoningContent(event.data);
         const messageContent = resolveMessageContent(event.data.chunk.content);
@@ -782,6 +773,27 @@ export class LangGraphAgent extends AbstractAgent {
           rawEvent: event,
         });
         break;
+      case LangGraphEventTypes.OnToolEnd:
+        if (this.activeRun!.hasFunctionStreaming) break;
+        const toolCallOutput = event.data.output
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_START,
+          toolCallId: toolCallOutput.tool_call_id,
+          toolCallName: toolCallOutput.name,
+          parentMessageId: toolCallOutput.id,
+          rawEvent: event,
+        })
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: toolCallOutput.tool_call_id,
+          delta: JSON.stringify(event.data.input),
+          rawEvent: event,
+        });
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_END,
+          toolCallId: toolCallOutput.tool_call_id,
+          rawEvent: event,
+        });
     }
   }
 
@@ -998,6 +1010,7 @@ export class LangGraphAgent extends AbstractAgent {
 
       return {
         type: "function",
+        name: tool.name,
         function: {
           name: tool.name,
           description: tool.description,
@@ -1017,28 +1030,35 @@ export class LangGraphAgent extends AbstractAgent {
     };
   }
 
-  startStep(nodeName: string) {
-    if (this.activeStep) {
-      this.endStep();
+  handleNodeChange(nodeName: string | undefined) {
+    if (nodeName === "__end__") {
+      nodeName = undefined;
     }
+    if (nodeName !== this.activeRun?.nodeName) {
+      // End current step
+      if (this.activeRun?.nodeName) {
+        this.endStep();
+      }
+      // If we actually got a node name, start a new step
+      if (nodeName) {
+        this.startStep(nodeName);
+      }
+    }
+    this.activeRun!.nodeName = nodeName;
+  }
+
+  startStep(nodeName: string) {
     this.dispatchEvent({
       type: EventType.STEP_STARTED,
       stepName: nodeName,
     });
-    this.activeRun!.nodeName = nodeName;
-    this.activeStep = nodeName;
   }
 
   endStep() {
-    if (!this.activeStep) {
-      throw new Error("No active step to end");
-    }
     this.dispatchEvent({
       type: EventType.STEP_FINISHED,
-      stepName: this.activeRun!.nodeName! ?? this.activeStep,
+      stepName: this.activeRun!.nodeName!,
     });
-    this.activeRun!.nodeName = undefined;
-    this.activeStep = undefined;
   }
 
   async getCheckpointByMessage(
