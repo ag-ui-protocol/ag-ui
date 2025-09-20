@@ -118,46 +118,39 @@ jobs:
       working-directory: sdks/community/kotlin/library
       run: |
         echo "## Kotlin SDK Test Results Summary"
+        echo ""
+
         total_tests=0
         total_failures=0
         total_errors=0
-        total_skipped=0
 
-        for module in kotlin-core kotlin-client kotlin-tools; do
+        for module in core client tools; do
           xml_dir="$module/build/test-results/jvmTest"
+
           if [ -d "$xml_dir" ]; then
-            module_tests=0
-            module_failures=0
-            module_errors=0
-            module_skipped=0
+            # Sum up test counts from all XML files in the directory
+            module_tests=$(find "$xml_dir" -name "*.xml" -exec grep -h '<testsuite' {} \; | grep -o 'tests="[0-9]*"' | sed 's/tests="\([0-9]*\)"/\1/' | awk '{sum += $1} END {print sum}')
+            module_failures=$(find "$xml_dir" -name "*.xml" -exec grep -h '<testsuite' {} \; | grep -o 'failures="[0-9]*"' | sed 's/failures="\([0-9]*\)"/\1/' | awk '{sum += $1} END {print sum}')
+            module_errors=$(find "$xml_dir" -name "*.xml" -exec grep -h '<testsuite' {} \; | grep -o 'errors="[0-9]*"' | sed 's/errors="\([0-9]*\)"/\1/' | awk '{sum += $1} END {print sum}')
 
-            # Parse XML test results
-            for xml_file in "$xml_dir"/*.xml; do
-              if [ -f "$xml_file" ]; then
-                tests=$(grep -o 'tests="[0-9]*"' "$xml_file" | sed 's/tests="\([0-9]*\)"/\1/')
-                failures=$(grep -o 'failures="[0-9]*"' "$xml_file" | sed 's/failures="\([0-9]*\)"/\1/')
-                errors=$(grep -o 'errors="[0-9]*"' "$xml_file" | sed 's/errors="\([0-9]*\)"/\1/')
-                skipped=$(grep -o 'skipped="[0-9]*"' "$xml_file" | sed 's/skipped="\([0-9]*\)"/\1/')
+            # Default to 0 if empty
+            module_tests=${module_tests:-0}
+            module_failures=${module_failures:-0}
+            module_errors=${module_errors:-0}
 
-                module_tests=$((module_tests + ${tests:-0}))
-                module_failures=$((module_failures + ${failures:-0}))
-                module_errors=$((module_errors + ${errors:-0}))
-                module_skipped=$((module_skipped + ${skipped:-0}))
-              fi
-            done
-
-            if [ $module_tests -gt 0 ]; then
-              echo "✅ $module: $module_tests tests, $module_failures failures, $module_errors errors"
+            if [ "$module_tests" -gt 0 ]; then
+              echo "✅ kotlin-$module: $module_tests tests, $module_failures failures, $module_errors errors"
               total_tests=$((total_tests + module_tests))
               total_failures=$((total_failures + module_failures))
               total_errors=$((total_errors + module_errors))
-              total_skipped=$((total_skipped + module_skipped))
             fi
           fi
         done
 
+        echo ""
         echo "---"
-        echo "## Overall Results: $total_tests tests, $total_failures failures, $total_errors errors"
+        echo "### Overall Results: $total_tests tests, $total_failures failures, $total_errors errors"
+
         if [ $total_failures -gt 0 ] || [ $total_errors -gt 0 ]; then
           echo "❌ Some tests failed"
           exit 1
