@@ -18,6 +18,7 @@ environment:
 
 dependencies:
   http: ^1.1.0
+  meta: ^1.17.0
 
 dev_dependencies:
   lints: ^3.0.0
