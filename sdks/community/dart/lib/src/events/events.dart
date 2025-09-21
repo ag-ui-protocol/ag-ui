@@ -1,5 +1,8 @@
 /// All event types for AG-UI protocol.
-/// 
+///
+/// This library defines all event types used in the AG-UI protocol for
+/// streaming agent responses and state updates.
+///
 /// Note: All event classes are in a single file because Dart's sealed classes
 /// can only be extended within the same library.
 library;
@@ -11,7 +14,11 @@ import 'event_type.dart';
 
 export 'event_type.dart';
 
-/// Base event for all AG-UI protocol events
+/// Base event for all AG-UI protocol events.
+///
+/// All protocol events extend this class and are identified by their
+/// [eventType]. Use the [BaseEvent.fromJson] factory to deserialize
+/// events from JSON.
 sealed class BaseEvent extends AGUIModel with TypeDiscriminator {
   final EventType eventType;
   final int? timestamp;
@@ -93,7 +100,9 @@ sealed class BaseEvent extends AGUIModel with TypeDiscriminator {
   };
 }
 
-/// Text message roles that can be used in text message events
+/// Text message roles that can be used in text message events.
+///
+/// Defines the possible roles for text messages in the protocol.
 enum TextMessageRole {
   developer('developer'),
   system('system'),

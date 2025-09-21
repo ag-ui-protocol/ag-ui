@@ -1,9 +1,15 @@
 /// Base types for AG-UI protocol models.
+///
+/// This library provides the foundational types and utilities for the AG-UI
+/// protocol implementation in Dart.
 library;
 
 import 'dart:convert';
 
 /// Base class for all AG-UI models with JSON serialization support.
+///
+/// All protocol models extend this class to provide consistent JSON
+/// serialization and deserialization capabilities.
 abstract class AGUIModel {
   const AGUIModel();
 
@@ -19,12 +25,18 @@ abstract class AGUIModel {
 }
 
 /// Mixin for models with type discriminators.
+///
+/// Used by event and message types to provide a type field for
+/// polymorphic deserialization.
 mixin TypeDiscriminator {
   /// The type discriminator field value.
   String get type;
 }
 
 /// Represents a validation error during JSON decoding.
+///
+/// Thrown when JSON data does not match the expected schema for
+/// AG-UI protocol models.
 class AGUIValidationError implements Exception {
   final String message;
   final String? field;
@@ -48,6 +60,8 @@ class AGUIValidationError implements Exception {
 }
 
 /// Base exception for AG-UI protocol errors.
+///
+/// The root exception class for all AG-UI protocol-related errors.
 class AGUIError implements Exception {
   final String message;
 
@@ -58,6 +72,9 @@ class AGUIError implements Exception {
 }
 
 /// Utility for tolerant JSON decoding that ignores unknown fields.
+///
+/// Provides helper methods for safely extracting and validating fields
+/// from JSON maps, with proper error handling.
 class JsonDecoder {
   /// Safely extracts a required field from JSON.
   static T requireField<T>(

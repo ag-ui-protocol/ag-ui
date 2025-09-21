@@ -1,8 +1,20 @@
 import '../sse/backoff_strategy.dart';
 
-/// Configuration for AgUiClient
+/// Configuration for AgUiClient.
+///
+/// Provides configuration options for connecting to AG-UI servers,
+/// including timeouts, headers, and retry strategies.
+///
+/// Example:
+/// ```dart
+/// final config = AgUiClientConfig(
+///   baseUrl: 'http://localhost:8000',
+///   defaultHeaders: {'Authorization': 'Bearer token'},
+///   maxRetries: 5,
+/// );
+/// ```
 class AgUiClientConfig {
-  /// Base URL for the AG-UI server
+  /// Base URL for the AG-UI server.
   final String baseUrl;
   
   /// Default headers to include with all requests

@@ -1,9 +1,14 @@
 /// Tool-related types for AG-UI protocol.
+///
+/// This library defines types for tool interactions, including tool calls
+/// from the assistant and tool definitions.
 library;
 
 import 'base.dart';
 
-/// Represents a function call within a tool call
+/// Represents a function call within a tool call.
+///
+/// Contains the function name and serialized arguments for execution.
 class FunctionCall extends AGUIModel {
   final String name;
   final String arguments;
@@ -38,7 +43,10 @@ class FunctionCall extends AGUIModel {
   }
 }
 
-/// Represents a tool call made by the assistant
+/// Represents a tool call made by the assistant.
+///
+/// Tool calls allow the assistant to request execution of external functions
+/// or tools to gather information or perform actions.
 class ToolCall extends AGUIModel {
   final String id;
   final String type;
@@ -81,7 +89,10 @@ class ToolCall extends AGUIModel {
   }
 }
 
-/// Represents a tool definition
+/// Represents a tool definition.
+///
+/// Defines a tool that can be called by the assistant, including its
+/// name, description, and parameter schema.
 class Tool extends AGUIModel {
   final String name;
   final String description;

@@ -2,6 +2,10 @@
 
 A strongly-typed Dart implementation of the AG-UI protocol for standardizing agent-user interactions through event-based communication.
 
+[![GitHub](https://img.shields.io/badge/GitHub-ag--ui-blue)](https://github.com/mattsp1290/ag-ui)
+[![Dart SDK](https://img.shields.io/badge/dart-%3E%3D3.0.0-blue)](https://dart.dev)
+[![Protocol](https://img.shields.io/badge/protocol-AG--UI-green)](https://github.com/mattsp1290/ag-ui/blob/main/docs/specification.md)
+
 ## Features
 
 ### ✅ Implemented
@@ -54,8 +58,7 @@ Then run:
 dart pub get
 ```
 
-## Quickstart
-### Basic Usage
+## Quick Start
 
 ```dart
 import 'package:ag_ui/ag_ui.dart';
@@ -99,9 +102,9 @@ void main() async {
 }
 ```
 
-## Usage Examples
+## Usage
 
-### 1. Initialize Client
+### Initialize Client
 
 ```dart
 import 'package:ag_ui/ag_ui.dart';
@@ -136,7 +139,7 @@ final customClient = AgUiClient(
 );
 ```
 
-### 2. Send User Message and Stream Response
+### Send User Message and Stream Response
 
 ```dart
 import 'dart:io';
@@ -182,7 +185,7 @@ Future<void> sendMessage(String userInput) async {
 }
 ```
 
-### 3. Handle Tool Calls
+### Handle Tool Calls
 
 ```dart
 import 'package:ag_ui/ag_ui.dart';
@@ -264,7 +267,7 @@ String processToolCall(ToolCall toolCall) {
 }
 ```
 
-### 4. Manage Conversation State
+### Manage Conversation State
 
 ```dart
 import 'dart:io';
@@ -342,7 +345,7 @@ class ConversationManager {
 }
 ```
 
-### 5. Error Handling and Cancellation
+### Error Handling and Cancellation
 
 ```dart
 import 'dart:async';
@@ -413,7 +416,7 @@ bool shouldCancel(BaseEvent event) {
 }
 ```
 
-### 6. Custom Event Processing
+### Custom Event Processing
 
 ```dart
 import 'dart:io';
@@ -485,7 +488,7 @@ void main() async {
 }
 ```
 
-### 7. Using Environment Variables
+### Using Environment Variables
 
 ```dart
 import 'dart:io';
@@ -515,7 +518,7 @@ AgUiClient createClientFromEnv() {
 // AGUI_BASE_URL=https://api.example.com AGUI_API_KEY=sk-xxx dart run main.dart
 ```
 
-### 8. Complete End-to-End Example
+### Complete End-to-End Example
 
 ```dart
 import 'dart:io';
@@ -649,92 +652,6 @@ Future<void> main() async {
 }
 ```
 
-### Handling Tool Calls
-
-```dart
-import 'package:ag_ui/ag_ui.dart';
-import 'dart:convert';
-
-Future<void> handleToolCalls() async {
-  final client = AgUiClient(
-    config: AgUiConfig(baseUrl: 'http://localhost:20203'),
-  );
-
-  final messages = <Message>[];
-  
-  // Initial user message
-  messages.add(UserMessage(
-    id: 'msg_1',
-    content: 'What\'s the weather in San Francisco?',
-  ));
-
-  final input = RunAgentInput(
-    threadId: 'thread_${DateTime.now().millisecondsSinceEpoch}',
-    runId: 'run_${DateTime.now().millisecondsSinceEpoch}',
-    messages: messages,
-    state: {},
-    tools: [],
-    context: [],
-    forwardedProps: {},
-  );
-
-  await for (final event in client.streamEvents('/agent', input)) {
-    if (event is MessagesSnapshotEvent) {
-      // Check for tool calls in assistant messages
-      for (final message in event.messages) {
-        if (message is AssistantMessage && message.toolCalls != null) {
-          for (final toolCall in message.toolCalls!) {
-            print('Tool called: ${toolCall.function.name}');
-            print('Arguments: ${toolCall.function.arguments}');
-            
-            // Provide tool result
-            final toolResult = ToolMessage(
-              id: 'tool_msg_${DateTime.now().millisecondsSinceEpoch}',
-              content: json.encode({'temperature': 72, 'condition': 'sunny'}),
-              toolCallId: toolCall.id,
-            );
-            
-            messages.add(toolResult);
-            
-            // Continue conversation with tool result
-            final continuedInput = RunAgentInput(
-              threadId: input.threadId,
-              runId: 'run_${DateTime.now().millisecondsSinceEpoch}',
-              messages: messages,
-              state: {},
-              tools: [],
-              context: [],
-              forwardedProps: {},
-            );
-            
-            // Stream the continuation
-            await for (final nextEvent in client.streamEvents('/agent', continuedInput)) {
-              // Handle continuation events...
-              if (nextEvent is RunFinishedEvent) break;
-            }
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-### Environment Variables
-
-Configure the client using environment variables:
-
-```bash
-export AGUI_BASE_URL=http://your-server:20203
-export AGUI_API_KEY=your-api-key-here
-
-dart run your_app.dart
-```
-
-```dart
-// Client will automatically use environment variables
-final client = AgUiClient.fromEnvironment();
-```
 
 ## API Overview
 
@@ -807,7 +724,7 @@ dart pub get
 dart run ag_ui_example --help
 ```
 
-## Integration Testing
+## Testing
 
 The SDK includes comprehensive integration tests that validate compatibility with AG-UI servers. To run tests locally:
 
@@ -881,9 +798,6 @@ Contributions are welcome! Please:
 
 This SDK is part of the AG-UI Protocol project. See the [main repository](https://github.com/mattsp1290/ag-ui) for license information.
 
-## Versioning
-
-This SDK follows semantic versioning. Version history will be tracked in future releases.
 
 ## Support
 

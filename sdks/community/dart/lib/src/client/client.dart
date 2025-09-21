@@ -13,7 +13,27 @@ import 'config.dart';
 import 'errors.dart';
 import 'validators.dart';
 
-/// Main client for interacting with AG-UI servers
+/// Main client for interacting with AG-UI servers.
+///
+/// The AgUiClient provides methods to connect to AG-UI compatible servers
+/// and stream events in real-time using Server-Sent Events (SSE).
+///
+/// Example:
+/// ```dart
+/// final client = AgUiClient(
+///   config: AgUiClientConfig(
+///     baseUrl: 'http://localhost:8000',
+///   ),
+/// );
+///
+/// final input = SimpleRunAgentInput(
+///   messages: [UserMessage(id: 'msg_1', content: 'Hello')],
+/// );
+///
+/// await for (final event in client.runAgent('agent', input)) {
+///   print('Event: ${event.type}');
+/// }
+/// ```
 class AgUiClient {
   final AgUiClientConfig config;
   final http.Client _httpClient;
@@ -34,7 +54,17 @@ class AgUiClient {
         _decoder = decoder ?? const codec.Decoder(),
         _streamAdapter = streamAdapter ?? EventStreamAdapter();
 
-  /// Run an agent with the given input and stream the response events
+  /// Run an agent with the given input and stream the response events.
+  ///
+  /// [endpoint] - The agent endpoint to connect to (e.g., 'agentic_chat')
+  /// [input] - The input containing messages and optional state
+  /// [cancelToken] - Optional token to cancel the request
+  ///
+  /// Returns a stream of [BaseEvent] objects representing the agent's response.
+  ///
+  /// Throws:
+  /// - [ValidationError] if the input is invalid
+  /// - [ConnectionException] if the connection fails
   Stream<BaseEvent> runAgent(
     String endpoint,
     SimpleRunAgentInput input, {
@@ -51,7 +81,9 @@ class AgUiClient {
     return _runAgentInternal(fullEndpoint, input, cancelToken: cancelToken);
   }
 
-  /// Run the agentic chat agent
+  /// Run the agentic chat agent.
+  ///
+  /// Convenience method for the 'agentic_chat' endpoint.
   Stream<BaseEvent> runAgenticChat(
     SimpleRunAgentInput input, {
     CancelToken? cancelToken,
@@ -59,7 +91,9 @@ class AgUiClient {
     return runAgent('agentic_chat', input, cancelToken: cancelToken);
   }
 
-  /// Run the human-in-the-loop agent
+  /// Run the human-in-the-loop agent.
+  ///
+  /// Convenience method for the 'human_in_the_loop' endpoint.
   Stream<BaseEvent> runHumanInTheLoop(
     SimpleRunAgentInput input, {
     CancelToken? cancelToken,
@@ -67,7 +101,9 @@ class AgUiClient {
     return runAgent('human_in_the_loop', input, cancelToken: cancelToken);
   }
 
-  /// Run the agentic generative UI agent
+  /// Run the agentic generative UI agent.
+  ///
+  /// Convenience method for the 'agentic_generative_ui' endpoint.
   Stream<BaseEvent> runAgenticGenerativeUi(
     SimpleRunAgentInput input, {
     CancelToken? cancelToken,
@@ -75,7 +111,9 @@ class AgUiClient {
     return runAgent('agentic_generative_ui', input, cancelToken: cancelToken);
   }
 
-  /// Run the tool-based generative UI agent
+  /// Run the tool-based generative UI agent.
+  ///
+  /// Convenience method for the 'tool_based_generative_ui' endpoint.
   Stream<BaseEvent> runToolBasedGenerativeUi(
     SimpleRunAgentInput input, {
     CancelToken? cancelToken,
@@ -83,7 +121,9 @@ class AgUiClient {
     return runAgent('tool_based_generative_ui', input, cancelToken: cancelToken);
   }
 
-  /// Run the shared state agent
+  /// Run the shared state agent.
+  ///
+  /// Convenience method for the 'shared_state' endpoint.
   Stream<BaseEvent> runSharedState(
     SimpleRunAgentInput input, {
     CancelToken? cancelToken,
@@ -91,7 +131,9 @@ class AgUiClient {
     return runAgent('shared_state', input, cancelToken: cancelToken);
   }
 
-  /// Run the predictive state updates agent
+  /// Run the predictive state updates agent.
+  ///
+  /// Convenience method for the 'predictive_state_updates' endpoint.
   Stream<BaseEvent> runPredictiveStateUpdates(
     SimpleRunAgentInput input, {
     CancelToken? cancelToken,

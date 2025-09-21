@@ -1,10 +1,15 @@
 /// Message types for AG-UI protocol.
+///
+/// This library defines the message types used in agent-user conversations,
+/// including user, assistant, system, tool, and developer messages.
 library;
 
 import 'base.dart';
 import 'tool.dart';
 
-/// Role types for messages
+/// Role types for messages in the AG-UI protocol.
+///
+/// Defines the possible roles a message can have in a conversation.
 enum MessageRole {
   developer('developer'),
   system('system'),
@@ -27,7 +32,12 @@ enum MessageRole {
   }
 }
 
-/// Base message class for all message types
+/// Base message class for all message types.
+///
+/// Messages represent the fundamental units of conversation in the AG-UI protocol.
+/// Each message has a role, optional content, and may include additional metadata.
+///
+/// Use the [Message.fromJson] factory to deserialize messages from JSON.
 sealed class Message extends AGUIModel with TypeDiscriminator {
   final String? id;
   final MessageRole role;
@@ -72,7 +82,9 @@ sealed class Message extends AGUIModel with TypeDiscriminator {
   };
 }
 
-/// Developer message with required content
+/// Developer message with required content.
+///
+/// Used for system-level or developer-facing messages in the conversation.
 class DeveloperMessage extends Message {
   @override
   final String content;
@@ -105,7 +117,9 @@ class DeveloperMessage extends Message {
   }
 }
 
-/// System message with required content
+/// System message with required content.
+///
+/// Represents system-level instructions or context provided to the agent.
 class SystemMessage extends Message {
   @override
   final String content;
@@ -138,7 +152,10 @@ class SystemMessage extends Message {
   }
 }
 
-/// Assistant message with optional content and tool calls
+/// Assistant message with optional content and tool calls.
+///
+/// Represents responses from the AI assistant, which may include
+/// text content and/or tool call requests.
 class AssistantMessage extends Message {
   final List<ToolCall>? toolCalls;
 
@@ -188,7 +205,9 @@ class AssistantMessage extends Message {
   }
 }
 
-/// User message with required content
+/// User message with required content.
+///
+/// Represents input from the user in the conversation.
 class UserMessage extends Message {
   @override
   final String content;
@@ -221,7 +240,10 @@ class UserMessage extends Message {
   }
 }
 
-/// Tool message with tool call result
+/// Tool message with tool call result.
+///
+/// Contains the result of a tool execution, linked to a specific tool call
+/// via the [toolCallId] field.
 class ToolMessage extends Message {
   @override
   final String content;

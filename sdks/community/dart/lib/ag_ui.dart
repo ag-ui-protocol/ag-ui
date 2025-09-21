@@ -2,6 +2,40 @@
 ///
 /// This library provides strongly-typed Dart models for the AG-UI protocol,
 /// enabling agent-user interaction through a standardized event-based system.
+///
+/// ## Features
+///
+/// - **Core Protocol Support**: Full implementation of AG-UI event types
+/// - **HTTP Client**: Production-ready client with SSE streaming support
+/// - **Event Streaming**: Real-time event processing with backpressure handling
+/// - **Tool Interactions**: Support for tool calls with generative UI
+/// - **State Management**: Handle snapshots and deltas (JSON Patch RFC 6902)
+/// - **Type Safety**: Strongly-typed models for all protocol entities
+///
+/// ## Getting Started
+///
+/// ```dart
+/// import 'package:ag_ui/ag_ui.dart';
+///
+/// final client = AgUiClient(
+///   config: AgUiClientConfig(
+///     baseUrl: 'http://localhost:8000',
+///   ),
+/// );
+///
+/// final input = SimpleRunAgentInput(
+///   messages: [
+///     UserMessage(
+///       id: 'msg_1',
+///       content: 'Hello, world!',
+///     ),
+///   ],
+/// );
+///
+/// await for (final event in client.runAgent('agent', input)) {
+///   print('Event: ${event.type}');
+/// }
+/// ```
 library ag_ui;
 
 // Core types
