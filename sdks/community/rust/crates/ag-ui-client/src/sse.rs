@@ -1,24 +1,8 @@
+use crate::error::AgUiClientError;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use reqwest::Response;
 use std::future::Future;
-use thiserror::Error;
-
-/// Error type for SSE response processing
-#[derive(Error, Debug)]
-pub enum SseError {
-    /// Error when parsing SSE data
-    #[error("Failed to parse SSE data: {0}")]
-    ParseError(String),
-
-    /// Error from reqwest
-    #[error("HTTP error: {0}")]
-    HttpError(#[from] reqwest::Error),
-
-    /// Error when deserializing JSON
-    #[error("JSON deserialization error: {0}")]
-    JsonError(#[from] serde_json::Error),
-}
 
 /// Represents a parsed Server-Sent Event
 #[derive(Debug)]
@@ -61,14 +45,14 @@ pub trait SseResponseExt {
     /// Converts a reqwest::Response into a Stream of SSE events
     fn event_source(
         self,
-    ) -> impl Future<Output = impl Stream<Item = Result<SseEvent, SseError>>> + Send;
+    ) -> impl Future<Output = impl Stream<Item = Result<SseEvent, AgUiClientError>>> + Send;
 }
 
 impl SseResponseExt for Response {
     #[allow(clippy::manual_async_fn)]
     fn event_source(
         self,
-    ) -> impl Future<Output = impl Stream<Item = Result<SseEvent, SseError>>> + Send {
+    ) -> impl Future<Output = impl Stream<Item = Result<SseEvent, AgUiClientError>>> + Send {
         async move {
             // Create a stream of bytes from the response
             let stream = self.bytes_stream();
@@ -87,7 +71,7 @@ impl SseEventProcessor {
     #[allow(clippy::new_ret_no_self)]
     fn new(
         stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + 'static,
-    ) -> impl Stream<Item = Result<SseEvent, SseError>> {
+    ) -> impl Stream<Item = Result<SseEvent, AgUiClientError>> {
         let mut buffer = String::new();
 
         // Process the stream
@@ -96,7 +80,7 @@ impl SseEventProcessor {
                 // Map reqwest errors
                 let chunk = match chunk_result {
                     Ok(chunk) => chunk,
-                    Err(err) => return vec![Err(SseError::HttpError(err))],
+                    Err(err) => return vec![Err(AgUiClientError::HttpTransport(err))],
                 };
 
                 // Convert bytes to string and append to buffer
@@ -110,7 +94,9 @@ impl SseEventProcessor {
 
                         events
                     }
-                    Err(e) => vec![Err(SseError::ParseError(format!("Invalid UTF-8: {e}")))],
+                    Err(e) => vec![Err(AgUiClientError::SseParse {
+                        message: format!("Invalid UTF-8: {e}"),
+                    })],
                 }
             })
             .flat_map(futures::stream::iter)
@@ -122,7 +108,7 @@ impl SseEventProcessor {
 /// Returns a tuple of (events, new_buffer) where:
 /// - events: A vector of parsed events or errors
 /// - new_buffer: The remaining buffer that might contain incomplete events
-fn process_raw_sse_events(buffer: &str) -> (Vec<Result<SseEvent, SseError>>, String) {
+fn process_raw_sse_events(buffer: &str) -> (Vec<Result<SseEvent, AgUiClientError>>, String) {
     let mut results = Vec::new();
     let chunks: Vec<&str> = buffer.split("\n\n").collect();
 
@@ -159,7 +145,7 @@ fn process_raw_sse_events(buffer: &str) -> (Vec<Result<SseEvent, SseError>>, Str
 }
 
 /// Parse a single SSE event text into an SseEvent
-fn parse_sse_event(event_text: &str) -> Result<SseEvent, SseError> {
+fn parse_sse_event(event_text: &str) -> Result<SseEvent, AgUiClientError> {
     let mut event = None;
     let mut id = None;
     let mut data_lines = Vec::new();

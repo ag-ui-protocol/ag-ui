@@ -7,7 +7,6 @@ use std::str::FromStr;
 
 use crate::Agent;
 use crate::agent::AgentError;
-use crate::agent::AgentError::SerializationError;
 use crate::core::event::Event;
 use crate::core::types::RunAgentInput;
 use crate::core::{AgentState, FwdProps};
@@ -61,7 +60,7 @@ impl HttpAgentBuilder {
 
     /// Set the base URL from a string, returning Result for validation
     pub fn with_url_str(mut self, url: &str) -> Result<Self, AgentError> {
-        let parsed_url = Url::parse(url).map_err(|e| AgentError::ConfigError {
+        let parsed_url = Url::parse(url).map_err(|e| AgentError::Config {
             message: format!("Invalid URL '{url}': {e}"),
         })?;
         self.base_url = Some(parsed_url);
@@ -76,10 +75,10 @@ impl HttpAgentBuilder {
 
     /// Add a single header by name and value strings
     pub fn with_header(mut self, name: &str, value: &str) -> Result<Self, AgentError> {
-        let header_name = HeaderName::from_str(name).map_err(|e| AgentError::ConfigError {
+        let header_name = HeaderName::from_str(name).map_err(|e| AgentError::Config {
             message: format!("Invalid header name '{value}': {e}"),
         })?;
-        let header_value = HeaderValue::from_str(value).map_err(|e| AgentError::ConfigError {
+        let header_value = HeaderValue::from_str(value).map_err(|e| AgentError::Config {
             message: format!("Invalid header value '{value}': {e}"),
         })?;
         self.header_map.insert(header_name, header_value);
@@ -115,13 +114,13 @@ impl HttpAgentBuilder {
     }
 
     pub fn build(self) -> Result<HttpAgent, AgentError> {
-        let base_url = self.base_url.ok_or(AgentError::ConfigError {
+        let base_url = self.base_url.ok_or(AgentError::Config {
             message: "Base URL is required".to_string(),
         })?;
 
         // Validate URL scheme
         if !["http", "https"].contains(&base_url.scheme()) {
-            return Err(AgentError::ConfigError {
+            return Err(AgentError::Config {
                 message: format!("Unsupported URL scheme: {}", base_url.scheme()),
             });
         }
@@ -142,14 +141,6 @@ impl Default for HttpAgentBuilder {
     }
 }
 
-impl From<reqwest::Error> for AgentError {
-    fn from(err: reqwest::Error) -> Self {
-        AgentError::ExecutionError {
-            message: err.to_string(),
-        }
-    }
-}
-
 #[async_trait]
 impl<StateT: AgentState, FwdPropsT: FwdProps> Agent<StateT, FwdPropsT> for HttpAgent {
     async fn run(
@@ -165,6 +156,17 @@ impl<StateT: AgentState, FwdPropsT: FwdProps> Agent<StateT, FwdPropsT> for HttpA
             .send()
             .await?;
 
+        // Check HTTP status and surface structured error on non-success
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            let snippet: String = text.chars().take(512).collect();
+            return Err(AgentError::HttpStatus {
+                status,
+                context: snippet,
+            });
+        }
+
         // Convert the response to an SSE event stream
         let stream = response
             .event_source()
@@ -173,15 +175,12 @@ impl<StateT: AgentState, FwdPropsT: FwdProps> Agent<StateT, FwdPropsT> for HttpA
                 Ok(event) => {
                     trace!("Received event: {event:?}");
 
-                    let event_data: Event<StateT> = serde_json::from_str(&event.data)
-                        .map_err(|err| SerializationError { source: err })?;
+                    let event_data: Event<StateT> = serde_json::from_str(&event.data)?;
                     debug!("Deserialized event: {event_data:?}");
 
                     Ok(event_data)
                 }
-                Err(err) => Err(AgentError::ExecutionError {
-                    message: err.to_string(),
-                }),
+                Err(err) => Err(err),
             })
             .boxed();
         Ok(stream)

@@ -1,4 +1,4 @@
-name: Lint & Test
+name: test
 
 on:
   push:
@@ -23,13 +23,13 @@ defaults:
     working-directory: ./rust
 
 jobs:
-  build-and-test:
+  rust:
     strategy:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
 
-    name: Test multiple workspaces on ${{ matrix.os }}
+    name: Rust SDK Tests [${{ matrix.os }}]
     runs-on: ${{ matrix.os }}
 
     env:
@@ -49,8 +49,11 @@ jobs:
       - name: Check clippy
         run: cargo clippy -- -D warnings
 
-      - name: Publish dry-run
+      - name: Publish ag-ui-core dry-run
         run: cargo publish -p ag-ui-core --dry-run
+
+      - name: Publish ag-ui-client dry-run
+        run: cargo publish -p ag-ui-client --dry-run
 
       - name: Run tests
         run: cargo test --verbose

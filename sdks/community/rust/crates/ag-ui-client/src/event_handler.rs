@@ -358,7 +358,7 @@ where
                     serde_json::from_value(serde_json::to_value(e.delta.clone())?)?;
 
                 json_patch::patch(&mut state_val, &patches).map_err(|err| {
-                    AgentError::ExecutionError {
+                    AgentError::Execution {
                         message: format!("Failed to apply state patch: {err}"),
                     }
                 })?;

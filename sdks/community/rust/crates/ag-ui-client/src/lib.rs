@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 pub mod agent;
+pub mod error;
 pub mod event_handler;
 pub mod http;
 pub mod sse;

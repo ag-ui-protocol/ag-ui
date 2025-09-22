@@ -1,6 +1,5 @@
 use futures::stream::StreamExt;
 use std::collections::HashSet;
-use thiserror::Error;
 
 use crate::core::JsonValue;
 use crate::core::types::{
@@ -132,18 +131,7 @@ impl<StateT> Default for AgentStateMutation<StateT> {
 }
 
 // Error types
-#[derive(Error, Debug)]
-pub enum AgentError {
-    #[error("Agent execution failed: {message}")]
-    ExecutionError { message: String },
-    #[error("Invalid configuration: {message}")]
-    ConfigError { message: String },
-    #[error("Serialization error: {source}")]
-    SerializationError {
-        #[from]
-        source: serde_json::Error,
-    },
-}
+pub use crate::error::AgUiClientError as AgentError;
 
 // TODO: Expand documentation
 /// Agent trait

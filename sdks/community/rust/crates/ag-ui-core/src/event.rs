@@ -5,7 +5,6 @@ use crate::types::{MessageId, RunId, ThreadId, ToolCallId};
 use serde::{Deserialize, Serialize};
 
 /// Event types for AG-UI protocol
-/// Event types for AG-UI protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum EventType {
