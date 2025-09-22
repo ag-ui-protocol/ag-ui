@@ -11,7 +11,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Create run parameters
     let params = RunAgentParams::new().add_message(message);
 
-    // Run the agent with the subscriber
+    // Run the agent without subscriber
     let result = agent.run_agent(&params, ()).await?;
 
     println!("{:#?}", result);

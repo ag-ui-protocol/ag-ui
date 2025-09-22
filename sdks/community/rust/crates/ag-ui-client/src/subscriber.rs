@@ -15,7 +15,7 @@ pub struct AgentSubscriberParams<'a, StateT: AgentState, FwdPropsT: FwdProps> {
     pub input: &'a RunAgentInput<StateT, FwdPropsT>,
 }
 
-/// Subscriber trait for handling agent events
+/// Subscriber trait for hooking into Agent run lifecycle events.
 #[async_trait::async_trait]
 pub trait AgentSubscriber<StateT = JsonValue, FwdPropsT = JsonValue>: Send + Sync
 where
@@ -373,6 +373,17 @@ where
 {
     fn into_subscribers(self) -> Subscribers<StateT, FwdPropsT> {
         self
+    }
+}
+
+// Implementation for no subscriber
+impl<StateT, FwdPropsT> IntoSubscribers<StateT, FwdPropsT> for Option<()>
+where
+    StateT: AgentState,
+    FwdPropsT: FwdProps,
+{
+    fn into_subscribers(self) -> Subscribers<StateT, FwdPropsT> {
+        Subscribers::new(vec![])
     }
 }
 

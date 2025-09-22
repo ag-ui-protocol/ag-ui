@@ -1,10 +1,3 @@
-use async_trait::async_trait;
-use futures::StreamExt;
-use log::{debug, trace};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use reqwest::{Client as HttpClient, Url};
-use std::str::FromStr;
-
 use crate::Agent;
 use crate::agent::AgentError;
 use crate::core::event::Event;
@@ -12,11 +5,19 @@ use crate::core::types::RunAgentInput;
 use crate::core::{AgentState, FwdProps};
 use crate::sse::SseResponseExt;
 use crate::stream::EventStream;
+use ag_ui_core::types::AgentId;
+use async_trait::async_trait;
+use futures::StreamExt;
+use log::{debug, trace};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::{Client as HttpClient, Url};
+use std::str::FromStr;
 
 pub struct HttpAgent {
     http_client: HttpClient,
     base_url: Url,
     header_map: HeaderMap,
+    agent_id: Option<AgentId>,
 }
 
 impl HttpAgent {
@@ -29,6 +30,7 @@ impl HttpAgent {
             http_client,
             base_url,
             header_map,
+            agent_id: None,
         }
     }
 
@@ -41,14 +43,13 @@ pub struct HttpAgentBuilder {
     base_url: Option<Url>,
     header_map: HeaderMap,
     http_client: Option<HttpClient>,
+    agent_id: Option<AgentId>,
 }
 
 impl HttpAgentBuilder {
     pub fn new() -> Self {
         Self {
-            base_url: None,
-            header_map: HeaderMap::new(),
-            http_client: None,
+            ..Default::default()
         }
     }
 
@@ -113,6 +114,12 @@ impl HttpAgentBuilder {
         self
     }
 
+    /// Set Agent ID
+    pub fn with_agent_id(mut self, agent_id: AgentId) -> Self {
+        self.agent_id = Some(agent_id);
+        self
+    }
+
     pub fn build(self) -> Result<HttpAgent, AgentError> {
         let base_url = self.base_url.ok_or(AgentError::Config {
             message: "Base URL is required".to_string(),
@@ -131,6 +138,7 @@ impl HttpAgentBuilder {
             http_client,
             base_url,
             header_map: self.header_map,
+            agent_id: self.agent_id,
         })
     }
 }
@@ -184,5 +192,9 @@ impl<StateT: AgentState, FwdPropsT: FwdProps> Agent<StateT, FwdPropsT> for HttpA
             })
             .boxed();
         Ok(stream)
+    }
+
+    fn agent_id(&self) -> Option<&AgentId> {
+        self.agent_id.as_ref()
     }
 }

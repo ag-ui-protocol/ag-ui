@@ -146,16 +146,42 @@ where
         input: &RunAgentInput<StateT, FwdPropsT>,
     ) -> Result<EventStream<'async_trait, StateT>, AgentError>;
 
-    // TODO: Expand documentation
-    /// The main execution method, containing the full pipeline logic.
+    /// Triggers an Agent run.
+    ///
+    /// # Parameters
+    /// * `params`: The run parameters as given in [RunAgentParams]
+    /// * `subscribers`: A (sequence of) type(s) that implement [crate::subscriber::AgentSubscriber];
+    /// can also be a unit type `()` or `None` if none are needed. Valid types are `T`, `(T,)`,
+    /// `Vec<T>`, `&[T]`, `()`, `Option<()>` where `T: AgentSubscriber`.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # use ag_ui_client::{Agent, HttpAgent, RunAgentParams, core::types::Message};
+    /// # use std::error::Error;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn Error>> {
+    ///  let agent = HttpAgent::builder()
+    ///     .with_url_str("http://127.0.0.1:3000/")?
+    ///     .build()?;
+    ///
+    ///  let message = Message::new_user("Can you give me the current temperature in New York?");
+    ///  // Create run parameters
+    ///  let params = RunAgentParams::new().add_message(message);
+    ///
+    ///  // Run the agent without subscriber
+    ///  let result = agent.run_agent(&params, ()).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Notes
+    /// Currently the subscriber pattern is the only way to subscriber to an Agent run's lifecycle.
     async fn run_agent(
         &self,
         params: &RunAgentParams<StateT, FwdPropsT>,
         subscribers: impl IntoSubscribers<StateT, FwdPropsT>,
     ) -> Result<RunAgentResult<StateT>, AgentError> {
-        // TODO: Use Agent ID?
-        let _agent_id = AgentId::random();
-
         let input = RunAgentInput {
             thread_id: ThreadId::random(),
             run_id: params.run_id.clone().unwrap_or_else(RunId::random),
@@ -163,7 +189,6 @@ where
             messages: params.messages.clone(),
             tools: params.tools.clone(),
             context: params.context.clone(),
-            // TODO: Find suitable default value
             forwarded_props: params.forwarded_props.clone(),
         };
         let current_message_ids: HashSet<&MessageId> =
@@ -209,5 +234,9 @@ where
             new_messages,
             new_state: event_handler.state,
         })
+    }
+
+    fn agent_id(&self) -> Option<&AgentId> {
+        None
     }
 }
