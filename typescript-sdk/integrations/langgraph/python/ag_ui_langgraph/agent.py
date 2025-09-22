@@ -446,12 +446,26 @@ class LangGraphAgent:
                 else:
                     tools_as_dicts.append(tool)
 
+        all_tools = [*state.get("tools", []), *tools_as_dicts]
+
+        # Remove duplicates based on tool name
+        seen_names = set()
+        unique_tools = []
+        for tool in all_tools:
+            tool_name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
+            if tool_name and tool_name not in seen_names:
+                seen_names.add(tool_name)
+                unique_tools.append(tool)
+            elif not tool_name:
+                # Keep tools without names (shouldn't happen, but just in case)
+                unique_tools.append(tool)
+
         return {
             **state,
             "messages": new_messages,
-            "tools": [*state.get("tools", []), *tools_as_dicts],
+            "tools": unique_tools,
             "ag-ui": {
-                "tools": [*state.get("tools", []), *tools_as_dicts],
+                "tools": unique_tools,
                 "context": input.context or []
             }
         }

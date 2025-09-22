@@ -25,7 +25,7 @@ import {
   PredictStateTool,
   LangGraphReasoning,
   StateEnrichment,
-  LangGraphTool,
+  LangGraphToolWithName,
 } from "./types";
 import {
   AbstractAgent,
@@ -1003,21 +1003,25 @@ export class LangGraphAgent extends AbstractAgent {
 
     const newMessages = messages.filter((message) => !existingMessageIds.has(message.id));
 
-    const langGraphTools: LangGraphTool[] = [...(state.tools ?? []), ...(input.tools ?? [])].map((tool) => {
-      if (tool.type) {
-        return tool;
+    const langGraphTools: LangGraphToolWithName[] = [...(state.tools ?? []), ...(input.tools ?? [])].reduce((acc, tool) => {
+      let mappedTool = tool;
+      if (!tool.type) {
+        mappedTool = {
+            type: "function",
+            name: tool.name,
+            function: {
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.parameters,
+            },
+        }
       }
 
-      return {
-        type: "function",
-        name: tool.name,
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.parameters,
-        },
-      };
-    });
+      // Verify no duplicated
+      if (acc.find((t: LangGraphToolWithName) => (t.name === mappedTool.name) || t.function.name === mappedTool.function.name)) return acc;
+
+      return [...acc, mappedTool];
+    }, []);
 
     return {
       ...state,
