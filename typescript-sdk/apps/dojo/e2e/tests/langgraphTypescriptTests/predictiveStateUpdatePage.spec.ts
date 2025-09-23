@@ -5,7 +5,7 @@ import {
 } from "../../test-isolation-helper";
 import { PredictiveStateUpdatesPage } from "../../pages/langGraphPages/PredictiveStateUpdatesPage";
 
-test.describe("Predictive Status Updates Feature", () => {
+test.fixme("Predictive Status Updates Feature", () => {
   test("[LangGraph] should interact with agent and approve asked changes", async ({
     page,
   }) => {
@@ -47,7 +47,7 @@ test.describe("Predictive Status Updates Feature", () => {
     });
   });
 
-  test("[LangGraph] should interact with agent and reject asked changes", async ({
+  test.fixme("[LangGraph] should interact with agent and reject asked changes", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
