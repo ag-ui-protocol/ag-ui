@@ -87,14 +87,14 @@ AG-UI was born from CopilotKit's initial partnership with LangGraph and CrewAI -
 | Framework                                                          | Status                   | AG-UI Resources                                                              | Integrations             | 
 | ------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------- | ------------------------ |
 | No-framework                                                       | ✅ Supported             | ➡️ Docs coming soon                                                          |                          |
-| [LangGraph](https://www.langchain.com/langgraph)                   | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/langgraph/) [Demos](https://dojo.ag-ui.com/langgraph-fastapi/feature/shared_state)                           | Partnership              |
-| [CrewAI](https://crewai.com/)                                      | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/crewai-flows) [Demos](https://dojo.ag-ui.com/crewai/feature/shared_state)                          | Partnership              |
-| [Mastra](https://mastra.ai/)                                       | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/mastra/) [Demos](https://dojo.ag-ui.com/mastra/feature/shared_state)                               | 1st party                |
-| [AG2](https://ag2.ai/)                                             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/ag2/) [Demos](https://dojo.ag-ui.com/ag2/feature/shared_state)                                   | 1st party                |
-| [Agno](https://github.com/agno-agi/agno)                           | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/agno/) [Demos](https://dojo.ag-ui.com/agno/feature/shared_state)                                  | 1st party                |
-| [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/llamaindex/) [Demos](https://dojo.ag-ui.com/llamaindex/feature/shared_state)                            | 1st party                |
-| [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/pydantic-ai/) [Demos](https://dojo.ag-ui.com/pydantic-ai/feature/shared_state)                           | 1st party                |
-| [Google ADK](https://google.github.io/adk-docs/get-started/)       | 🛠️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/274)           | –                                                                            | 1st party                |
+| [LangGraph](https://www.langchain.com/langgraph)                   | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/langgraph/) 🎮 [Demos](https://dojo.ag-ui.com/langgraph-fastapi/feature/shared_state)                           | Partnership              |
+| [CrewAI](https://crewai.com/)                                      | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/crewai-flows) 🎮 [Demos](https://dojo.ag-ui.com/crewai/feature/shared_state)                          | Partnership              |
+| [Mastra](https://mastra.ai/)                                       | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/mastra/) 🎮 [Demos](https://dojo.ag-ui.com/mastra)                               | 1st party                |
+| [AG2](https://ag2.ai/)                                             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/ag2/) 🎮 [Demos](https://dojo.ag-ui.com/ag2)                                   | 1st party                |
+| [Agno](https://github.com/agno-agi/agno)                           | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/agno/) 🎮 [Demos](https://dojo.ag-ui.com/agno)                                  | 1st party                |
+| [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/llamaindex/) 🎮 [Demos](https://dojo.ag-ui.com/llamaindex/feature/shared_state)                            | 1st party                |
+| [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/pydantic-ai/) 🎮 [Demos](https://dojo.ag-ui.com/pydantic-ai/feature/shared_state)                           | 1st party                | 
+| [Google ADK](https://google.github.io/adk-docs/get-started/)       | ✅ Supported            | ➡️ [Docs](https://docs.copilotkit.ai/adk) 🎮 [Demos](https://dojo.ag-ui.com/adk-middleware)                                                                            | Partnership                |
 | [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/)       | 🛠️ In Progress           | –                                                                            | 1st party                |
 | [AWS Strands Agents](https://github.com/strands-agents/sdk-python) | 🛠️ In Progress           | –                                                                            | 1st Party                |   
 | [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            | Community                |
@@ -117,8 +117,8 @@ AG-UI was born from CopilotKit's initial partnership with LangGraph and CrewAI -
 [View all supported frameworks →](https://ag-ui.com/frameworks)
 
 
-## ✨ Hello World App
-
+## Examples
+### Hello World App
 
 Video:
 
@@ -128,12 +128,13 @@ https://agui-demo.vercel.app/
 
 
 
-## 🧩 AG-UI Showcase: The AG-UI Dojo (Building-Blocks Viewer)
-The [AG-UI Dojo](https://dojo.ag-ui.com/langgraph-fastapi/feature/shared_state) showcases many of the building blocks that AG-UI supports ([AG-UI Dojo Source Code](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo)) with each Agent Framework integration.
+## The AG-UI Dojo (Building-Blocks Viewer)
+The AG-UI Dojo demonstrates AG-UI's core building blocks through simple, focused examples—each just 50-200 lines of code. 
 
-The building blocks are designed to be simple and focused -- between 50-200 lines of code.
+View the source code for the Dojo and all framework integrations [here](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo).
 
-https://github.com/user-attachments/assets/a67d3d54-36b2-4c7a-ac69-a0ca01365d5b
+https://github.com/user-attachments/assets/c298eea8-3f39-4a94-b968-7712429b0c49
+
 
 
 ## 🙋🏽‍♂️ Contributing to AG-UI
