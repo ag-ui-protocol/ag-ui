@@ -8,26 +8,41 @@ description: AI-generated interfaces without custom tool renderers
 ## Summary
 
 ### Problem Statement
-Currently, creating custom user interfaces for agent interactions requires programmers to define specific tool renderers. This limits the flexibility and adaptability of agent-driven applications.
+
+Currently, creating custom user interfaces for agent interactions requires
+programmers to define specific tool renderers. This limits the flexibility and
+adaptability of agent-driven applications.
 
 ### Motivation
-This draft describes an AG-UI extension that addresses **generative user interfaces**—interfaces produced directly by artificial intelligence without requiring a programmer to define custom tool renderers. The key idea is to leverage our ability to send client-side tools to the agent, thereby enabling this capability across all agent frameworks supported by AG-UI.
+
+This draft describes an AG-UI extension that addresses **generative user
+interfaces**—interfaces produced directly by artificial intelligence without
+requiring a programmer to define custom tool renderers. The key idea is to
+leverage our ability to send client-side tools to the agent, thereby enabling
+this capability across all agent frameworks supported by AG-UI.
 
 ## Status
 
 - **Status**: Draft
-- **Author(s)**: Markus Ecker (markus.ecker@gmail.com)
+- **Author(s)**: Markus Ecker (mail@mme.xyz)
 
 ## Challenges and Limitations
 
 ### Tool Description Length
-OpenAI enforces a limit of 1024 characters for tool descriptions. Gemini and Anthropic impose no such limit.
+
+OpenAI enforces a limit of 1024 characters for tool descriptions. Gemini and
+Anthropic impose no such limit.
 
 ### Arguments JSON Schema Constraints
-Classes, nesting, `$ref`, and `oneOf` are not reliably supported across LLM providers.
+
+Classes, nesting, `$ref`, and `oneOf` are not reliably supported across LLM
+providers.
 
 ### Context Window Considerations
-Injecting a large UI description language into an agent may reduce its performance. Agents dedicated solely to UI generation perform better than agents combining UI generation with other tasks.
+
+Injecting a large UI description language into an agent may reduce its
+performance. Agents dedicated solely to UI generation perform better than agents
+combining UI generation with other tasks.
 
 ## Detailed Specification
 
@@ -46,13 +61,17 @@ flowchart TD
 Inject a lightweight tool into the agent:
 
 **Tool Definition:**
+
 - **Name:** `generateUserInterface`
 - **Arguments:**
-  - **description**: A high-level description of the UI (e.g., *"A form for entering the user's address"*)
+  - **description**: A high-level description of the UI (e.g., _"A form for
+    entering the user's address"_)
   - **data**: Arbitrary pre-populated data for the generated UI
-  - **output**: A description or schema of the data the agent expects the user to submit back (fields, required/optional, types, constraints)
+  - **output**: A description or schema of the data the agent expects the user
+    to submit back (fields, required/optional, types, constraints)
 
 **Example Tool Call:**
+
 ```json
 {
   "tool": "generateUserInterface",
@@ -65,13 +84,20 @@ Inject a lightweight tool into the agent:
     },
     "output": {
       "type": "object",
-      "required": ["firstName", "lastName", "street", "city", "postalCode", "country"],
+      "required": [
+        "firstName",
+        "lastName",
+        "street",
+        "city",
+        "postalCode",
+        "country"
+      ],
       "properties": {
         "firstName": { "type": "string", "title": "First Name" },
-        "lastName":  { "type": "string", "title": "Last Name" },
-        "street":    { "type": "string", "title": "Street Address" },
-        "city":      { "type": "string", "title": "City" },
-        "postalCode":{ "type": "string", "title": "Postal Code" },
+        "lastName": { "type": "string", "title": "Last Name" },
+        "street": { "type": "string", "title": "Street Address" },
+        "city": { "type": "string", "title": "City" },
+        "postalCode": { "type": "string", "title": "Postal Code" },
         "country": {
           "type": "string",
           "title": "Country",
@@ -87,11 +113,16 @@ Inject a lightweight tool into the agent:
 
 Delegate UI generation to a secondary LLM or agent:
 
-- The CopilotKit user stays in control: Can make their own generators, add custom libraries, include additional prompts etc.
-- On tool invocation, the secondary model consumes `description`, `data`, and `output` to generate the user interface
-- This model is focused solely on UI generation, ensuring maximum fidelity and consistency
-- The generation method can be swapped as needed (e.g., JSON, HTML, or other renderable formats)
-- The UI format description is not subject to structural or length constraints, allowing arbitrarily complex specifications
+- The CopilotKit user stays in control: Can make their own generators, add
+  custom libraries, include additional prompts etc.
+- On tool invocation, the secondary model consumes `description`, `data`, and
+  `output` to generate the user interface
+- This model is focused solely on UI generation, ensuring maximum fidelity and
+  consistency
+- The generation method can be swapped as needed (e.g., JSON, HTML, or other
+  renderable formats)
+- The UI format description is not subject to structural or length constraints,
+  allowing arbitrarily complex specifications
 
 ## Implementation Examples
 
@@ -102,7 +133,14 @@ Delegate UI generation to a secondary LLM or agent:
   "jsonSchema": {
     "title": "Shipping Address",
     "type": "object",
-    "required": ["firstName", "lastName", "street", "city", "postalCode", "country"],
+    "required": [
+      "firstName",
+      "lastName",
+      "street",
+      "city",
+      "postalCode",
+      "country"
+    ],
     "properties": {
       "firstName": { "type": "string", "title": "First name" },
       "lastName": { "type": "string", "title": "Last name" },
@@ -151,10 +189,10 @@ Delegate UI generation to a secondary LLM or agent:
 ### Example Output: ReactFormHookGenerator
 
 ```tsx
-import React from "react";
-import { useForm } from "react-hook-form";
-import { z } from "zod";
-import { zodResolver } from "@hookform/resolvers/zod";
+import React from "react"
+import { useForm } from "react-hook-form"
+import { z } from "zod"
+import { zodResolver } from "@hookform/resolvers/zod"
 
 // ----- Schema (contract) -----
 const AddressSchema = z.object({
@@ -163,20 +201,32 @@ const AddressSchema = z.object({
   street: z.string().min(1, "Required"),
   city: z.string().min(1, "Required"),
   postalCode: z.string().regex(/^[A-Za-z0-9\\-\\s]{3,10}$/, "3–10 chars"),
-  country: z.enum(["GB", "US", "DE", "AT", "FR", "IT", "ES"])
-});
-export type Address = z.infer<typeof AddressSchema>;
+  country: z.enum(["GB", "US", "DE", "AT", "FR", "IT", "ES"]),
+})
+export type Address = z.infer<typeof AddressSchema>
 
 type Props = {
-  initialData?: Partial<Address>;
-  meta?: { title?: string; submitLabel?: string };
-  respond: (data: Address) => void; // <-- called on successful submit
-};
+  initialData?: Partial<Address>
+  meta?: { title?: string; submitLabel?: string }
+  respond: (data: Address) => void // <-- called on successful submit
+}
 
-const COUNTRIES: Address["country"][] = ["GB", "US", "DE", "AT", "FR", "IT", "ES"];
+const COUNTRIES: Address["country"][] = [
+  "GB",
+  "US",
+  "DE",
+  "AT",
+  "FR",
+  "IT",
+  "ES",
+]
 
 export default function AddressForm({ initialData, meta, respond }: Props) {
-  const { register, handleSubmit, formState: { errors } } = useForm<Address>({
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<Address>({
     resolver: zodResolver(AddressSchema),
     defaultValues: {
       firstName: "",
@@ -185,14 +235,14 @@ export default function AddressForm({ initialData, meta, respond }: Props) {
       city: "",
       postalCode: "",
       country: "GB",
-      ...initialData
-    }
-  });
+      ...initialData,
+    },
+  })
 
   const onSubmit = (data: Address) => {
     // Guaranteed to match AddressSchema
-    respond(data);
-  };
+    respond(data)
+  }
 
   return (
     <form onSubmit={handleSubmit(onSubmit)}>
@@ -240,7 +290,11 @@ export default function AddressForm({ initialData, meta, respond }: Props) {
         <div>
           <label>Country</label>
           <select {...register("country")}>
-            {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
+            {COUNTRIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
           </select>
           {errors.country && <small>{errors.country.message}</small>}
         </div>
@@ -250,7 +304,7 @@ export default function AddressForm({ initialData, meta, respond }: Props) {
         <button type="submit">{meta?.submitLabel ?? "Submit"}</button>
       </div>
     </form>
-  );
+  )
 }
 ```
 
@@ -259,12 +313,14 @@ export default function AddressForm({ initialData, meta, respond }: Props) {
 ### Client SDK Changes
 
 TypeScript SDK additions:
+
 - New `generateUserInterface` tool type
 - UI generator registry for pluggable generators
 - Validation layer for generated UI schemas
 - Response handler for user-submitted data
 
 Python SDK additions:
+
 - Support for UI generation tool invocation
 - Schema validation utilities
 - Serialization for UI definitions
@@ -278,15 +334,20 @@ Python SDK additions:
 ## Use Cases
 
 ### Dynamic Forms
-Agents can generate forms on-the-fly based on conversation context without pre-defined schemas.
+
+Agents can generate forms on-the-fly based on conversation context without
+pre-defined schemas.
 
 ### Data Visualization
+
 Generate charts, graphs, or tables appropriate to the data being discussed.
 
 ### Interactive Workflows
+
 Create multi-step wizards or guided processes tailored to user needs.
 
 ### Adaptive Interfaces
+
 Generate different UI layouts based on user preferences or device capabilities.
 
 ## Testing Strategy

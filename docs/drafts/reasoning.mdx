@@ -8,24 +8,33 @@ description: Support for LLM reasoning visibility and continuity
 ## Summary
 
 ### Problem Statement
-LLMs increasingly use chain-of-thought reasoning to improve response quality, but there's no standardized way to surface reasoning signals while maintaining privacy and state continuity across turns.
+
+LLMs increasingly use chain-of-thought reasoning to improve response quality,
+but there's no standardized way to surface reasoning signals while maintaining
+privacy and state continuity across turns.
 
 ### Motivation
+
 AG-UI should support **LLM reasoning** without breaking existing apps.
 
-- **Reasoning visibility & continuity**: We must surface reasoning signals (e.g., **reasoning summaries**) and support **encrypted reasoning items** for state carry-over across turns—especially under `store:false`/ZDR—*without exposing raw chain-of-thought*.
-- **Backwards compatibility**: Existing AG-UI clients must keep working unchanged. New capabilities should be non-breaking.
+- **Reasoning visibility & continuity**: We must surface reasoning signals
+  (e.g., **reasoning summaries**) and support **encrypted reasoning items** for
+  state carry-over across turns—especially under `store:false`/ZDR—_without
+  exposing raw chain-of-thought_.
+- **Backwards compatibility**: Existing AG-UI clients must keep working
+  unchanged. New capabilities should be non-breaking.
 
 ## Status
 
 - **Status**: Draft
-- **Author(s)**: Markus Ecker (markus.ecker@gmail.com)
+- **Author(s)**: Markus Ecker (mail@mme.xyz)
 
 ## Detailed Specification
 
 ### Overview
 
 This proposal introduces:
+
 - New events for reasoning lifecycle management
 - A new `ReasoningMessage` type for message history
 - Support for encrypted reasoning content
@@ -46,10 +55,10 @@ type ReasoningStartEvent = BaseEvent & {
 }
 ```
 
-| Property | Type | Description |
-| --- | --- | --- |
-| `messageId` | `string` | Unique identifier of this reasoning |
-| `encryptedContent` | `string?` | Optionally the encrypted content |
+| Property           | Type      | Description                         |
+| ------------------ | --------- | ----------------------------------- |
+| `messageId`        | `string`  | Unique identifier of this reasoning |
+| `encryptedContent` | `string?` | Optionally the encrypted content    |
 
 ### ReasoningMessageStartEvent
 
@@ -63,10 +72,10 @@ type ReasoningMessageStartEvent = BaseEvent & {
 }
 ```
 
-| Property | Type | Description |
-| --- | --- | --- |
-| `messageId` | `string` | Unique identifier of the message |
-| `role` | `"assistant"` | Role of the reasoning message |
+| Property    | Type          | Description                      |
+| ----------- | ------------- | -------------------------------- |
+| `messageId` | `string`      | Unique identifier of the message |
+| `role`      | `"assistant"` | Role of the reasoning message    |
 
 ### ReasoningMessageContentEvent
 
@@ -80,10 +89,10 @@ type ReasoningMessageContentEvent = BaseEvent & {
 }
 ```
 
-| Property | Type | Description |
-| --- | --- | --- |
+| Property    | Type     | Description                                    |
+| ----------- | -------- | ---------------------------------------------- |
 | `messageId` | `string` | Matches the ID from ReasoningMessageStartEvent |
-| `delta` | `string` | Reasoning content chunk (non-empty) |
+| `delta`     | `string` | Reasoning content chunk (non-empty)            |
 
 ### ReasoningMessageEndEvent
 
@@ -96,8 +105,8 @@ type ReasoningMessageEndEvent = BaseEvent & {
 }
 ```
 
-| Property | Type | Description |
-| --- | --- | --- |
+| Property    | Type     | Description                                    |
+| ----------- | -------- | ---------------------------------------------- |
 | `messageId` | `string` | Matches the ID from ReasoningMessageStartEvent |
 
 ### ReasoningMessageChunkEvent
@@ -112,10 +121,10 @@ type ReasoningMessageChunkEvent = BaseEvent & {
 }
 ```
 
-| Property | Type | Description |
-| --- | --- | --- |
+| Property    | Type      | Description                                |
+| ----------- | --------- | ------------------------------------------ |
 | `messageId` | `string?` | Message ID (first event must be non-empty) |
-| `delta` | `string?` | Reasoning content chunk |
+| `delta`     | `string?` | Reasoning content chunk                    |
 
 ### ReasoningEndEvent
 
@@ -128,8 +137,8 @@ type ReasoningEndEvent = BaseEvent & {
 }
 ```
 
-| Property | Type | Description |
-| --- | --- | --- |
+| Property    | Type     | Description                         |
+| ----------- | -------- | ----------------------------------- |
 | `messageId` | `string` | Unique identifier of this reasoning |
 
 ## New ReasoningMessage Type
@@ -146,6 +155,7 @@ type ReasoningMessage = {
 ## Removed Events
 
 These events have never been publicly documented and will be removed:
+
 - `THINKING_TEXT_MESSAGE_START`
 - `THINKING_TEXT_MESSAGE_CONTENT`
 - `THINKING_TEXT_MESSAGE_END`
@@ -155,20 +165,24 @@ These events have never been publicly documented and will be removed:
 ### Client SDK Changes
 
 TypeScript SDK:
+
 - New event types in `@ag-ui/core`
 - ReasoningMessage type in message unions
 - Reasoning event handlers in subscriber
 - Support for encrypted content handling
 
 Python SDK:
+
 - New event classes in `ag_ui.core.events`
 - ReasoningMessage class
 - Encryption/decryption utilities
 
 ### Privacy and Security
 
-- **Encrypted reasoning**: Support for encrypted reasoning content that clients cannot decrypt
-- **State continuity**: Encrypted reasoning items can be passed across turns without exposing content
+- **Encrypted reasoning**: Support for encrypted reasoning content that clients
+  cannot decrypt
+- **State continuity**: Encrypted reasoning items can be passed across turns
+  without exposing content
 - **ZDR compliance**: Works with `store:false` and zero data retention policies
 
 ### Backward Compatibility
@@ -180,15 +194,20 @@ Python SDK:
 ## Use Cases
 
 ### Chain-of-Thought Visibility
+
 Show users that the model is "thinking" without exposing internal reasoning.
 
 ### Reasoning Summaries
+
 Provide high-level summaries of reasoning process for transparency.
 
 ### State Continuity
-Maintain reasoning context across conversation turns without storing raw content.
+
+Maintain reasoning context across conversation turns without storing raw
+content.
 
 ### Compliance and Privacy
+
 Meet data retention requirements while preserving reasoning capabilities.
 
 ## Examples

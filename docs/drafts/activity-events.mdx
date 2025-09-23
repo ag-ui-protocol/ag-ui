@@ -1,6 +1,7 @@
 ---
 title: Activity Events
-description: Proposal for representing ongoing agent progress between chat messages
+description:
+  Proposal for representing ongoing agent progress between chat messages
 ---
 
 # Activity Events Proposal
@@ -8,19 +9,28 @@ description: Proposal for representing ongoing agent progress between chat messa
 ## Summary
 
 ### Problem Statement
-Users want to render "activity" updates inline with chat, not just at run start or end. Currently, there's no standardized way to represent ongoing agent progress between chat messages.
+
+Users want to render "activity" updates inline with chat, not just at run start
+or end. Currently, there's no standardized way to represent ongoing agent
+progress between chat messages.
 
 ### Motivation
-AG-UI is extended with **ActivityEvents** and **ActivityMessages** to represent ongoing agent progress in between chat messages. This allows frameworks to surface fine-grained activity updates chronologically, giving users immediate visibility into what an agent is doing without waiting for the next message or run boundary.
+
+AG-UI is extended with **ActivityEvents** and **ActivityMessages** to represent
+ongoing agent progress in between chat messages. This allows frameworks to
+surface fine-grained activity updates chronologically, giving users immediate
+visibility into what an agent is doing without waiting for the next message or
+run boundary.
 
 ## Status
 
 - **Status**: Draft
-- **Author(s)**: Markus Ecker (markus.ecker@gmail.com)
+- **Author(s)**: Markus Ecker (mail@mme.xyz)
 
 ## Background
 
-Users want real-time visibility into agent activities as they happen. Consider this example UI:
+Users want real-time visibility into agent activities as they happen. Consider
+this example UI:
 
 ```
 +------------------------------------------------------------+
@@ -41,8 +51,10 @@ Users want real-time visibility into agent activities as they happen. Consider t
 ## Challenges
 
 - **Flexibility**: Must handle arbitrary activity data from different frameworks
-- **Serializability**: Events must be replayable and rehydrated for session recovery
-- **Extensibility**: Developers should define custom renderers per activity type, with a generic fallback
+- **Serializability**: Events must be replayable and rehydrated for session
+  recovery
+- **Extensibility**: Developers should define custom renderers per activity
+  type, with a generic fallback
 - **Chronology**: Activities must interleave naturally with chat and run events
 
 ## Detailed Specification
@@ -50,10 +62,13 @@ Users want real-time visibility into agent activities as they happen. Consider t
 ### Overview
 
 This proposal introduces two new concepts to the AG-UI protocol:
-1. **ActivityEvent**: A new event type in the event stream
-2. **ActivityMessage**: A new message type alongside TextMessage, ToolMessage, etc.
 
-Frameworks may emit ActivityEvents, and frontends can render them inline with chat.
+1. **ActivityEvent**: A new event type in the event stream
+2. **ActivityMessage**: A new message type alongside TextMessage, ToolMessage,
+   etc.
+
+Frameworks may emit ActivityEvents, and frontends can render them inline with
+chat.
 
 ### New Event: ActivityEvent
 
@@ -83,6 +98,7 @@ type ActivityEvent = BaseEvent & {
 #### Example Events
 
 Initial activity snapshot:
+
 ```json
 {
   "id": "evt_001",
@@ -97,6 +113,7 @@ Initial activity snapshot:
 ```
 
 Incremental update via patch:
+
 ```json
 {
   "id": "evt_002",
@@ -139,20 +156,25 @@ type ActivityMessage = {
 ### Client SDK Changes
 
 TypeScript SDK additions:
+
 - New `ActivityEvent` type in `@ag-ui/core`
 - New `ActivityMessage` type in message unions
 - Activity renderer registry in `@ag-ui/client`
 
 Python SDK additions:
+
 - New `ActivityEvent` class in `ag_ui.core.events`
 - New `ActivityMessage` class in message types
 - Activity serialization/deserialization support
 
 ### Integration Impact
 
-- **Planning Frameworks**: Can emit ActivityEvents during planning or tool execution phases
-- **Workflow Systems**: Can surface step-by-step workflow progress as ActivityEvents
-- **Other frameworks**: May emit ActivityEvents freely; AG-UI will serialize them like other events
+- **Planning Frameworks**: Can emit ActivityEvents during planning or tool
+  execution phases
+- **Workflow Systems**: Can surface step-by-step workflow progress as
+  ActivityEvents
+- **Other frameworks**: May emit ActivityEvents freely; AG-UI will serialize
+  them like other events
 
 ## Examples and Use Cases
 
@@ -167,9 +189,9 @@ agent.emitActivity({
     sources: [
       { name: "Reddit", status: "pending" },
       { name: "X.com", status: "pending" },
-      { name: "Google", status: "pending" }
-    ]
-  }
+      { name: "Google", status: "pending" },
+    ],
+  },
 })
 
 // Update as search progresses
@@ -179,14 +201,15 @@ agent.emitActivity({
   patch: {
     op: "replace",
     path: "/sources/0/status",
-    value: "complete"
-  }
+    value: "complete",
+  },
 })
 ```
 
 ### Use Case: Multi-Step Workflow Visibility
 
 A data analysis agent performing multiple steps:
+
 1. Loading dataset → ActivityEvent shows progress bar
 2. Cleaning data → ActivityEvent shows rows processed
 3. Running analysis → ActivityEvent shows current computation

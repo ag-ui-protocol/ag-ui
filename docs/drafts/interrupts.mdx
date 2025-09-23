@@ -8,15 +8,22 @@ description: Native support for human-in-the-loop pauses and interrupts
 ## Summary
 
 ### Problem Statement
-Agents often need to pause execution to request human approval, gather additional input, or confirm potentially risky actions. Currently, there's no standardized way to handle these interruptions across different agent frameworks.
+
+Agents often need to pause execution to request human approval, gather
+additional input, or confirm potentially risky actions. Currently, there's no
+standardized way to handle these interruptions across different agent
+frameworks.
 
 ### Motivation
-Support **human-in-the-loop pauses** (and related mechanisms) natively in AG-UI and CopilotKit. This enables compatibility with various framework interrupts, workflow suspend/resume, and other framework-specific pause mechanisms.
+
+Support **human-in-the-loop pauses** (and related mechanisms) natively in AG-UI
+and CopilotKit. This enables compatibility with various framework interrupts,
+workflow suspend/resume, and other framework-specific pause mechanisms.
 
 ## Status
 
 - **Status**: Draft
-- **Author(s)**: Markus Ecker (markus.ecker@gmail.com)
+- **Author(s)**: Markus Ecker (mail@mme.xyz)
 
 ## Overview
 
@@ -37,28 +44,29 @@ sequenceDiagram
 ### Updates to RUN_FINISHED Event
 
 ```typescript
-type RunFinishedOutcome = "success" | "interrupt";
+type RunFinishedOutcome = "success" | "interrupt"
 
 type RunFinished = {
-  type: "RUN_FINISHED";
+  type: "RUN_FINISHED"
 
   // ... existing fields
 
-  outcome?: RunFinishedOutcome; // optional for back-compat (see rules below)
+  outcome?: RunFinishedOutcome // optional for back-compat (see rules below)
 
   // Present when outcome === "success" (or when outcome omitted and interrupt is absent)
-  result?: any;
+  result?: any
 
   // Present when outcome === "interrupt" (or when outcome omitted and interrupt is present)
   interrupt?: {
-    id?: string;                 // id can be set when needed
-    reason?: string;             // e.g. "human_approval" | "upload_required" | "policy_hold"
-    payload?: any;               // arbitrary JSON for UI (forms, proposals, diffs, etc.)
-  };
-};
+    id?: string // id can be set when needed
+    reason?: string // e.g. "human_approval" | "upload_required" | "policy_hold"
+    payload?: any // arbitrary JSON for UI (forms, proposals, diffs, etc.)
+  }
+}
 ```
 
-When a run finishes with `outcome == "interrupt"`, the agent indicates that on the next run, a value needs to be provided to continue.
+When a run finishes with `outcome == "interrupt"`, the agent indicates that on
+the next run, a value needs to be provided to continue.
 
 ### Updates to RunAgentInput
 
@@ -68,16 +76,17 @@ type RunAgentInput = {
 
   // NEW: resume channel for continuing a suspension
   resume?: {
-    interruptId?: string; // echo back if one was provided
-    payload?: any;        // arbitrary JSON: approvals, edits, files-as-refs, etc.
-  };
-};
+    interruptId?: string // echo back if one was provided
+    payload?: any // arbitrary JSON: approvals, edits, files-as-refs, etc.
+  }
+}
 ```
 
 ### Contract Rules
 
 - Resume requests **must** use the same `threadId`
-- When given in the `interrupt`, the `interruptId` must be provided via `RunAgentInput`
+- When given in the `interrupt`, the `interruptId` must be provided via
+  `RunAgentInput`
 - Agents should handle missing or invalid resume payloads gracefully
 
 ## Implementation Examples
@@ -85,6 +94,7 @@ type RunAgentInput = {
 ### Minimal Interrupt/Resume
 
 **Agent sends interrupt:**
+
 ```json
 {
   "type": "RUN_FINISHED",
@@ -105,6 +115,7 @@ type RunAgentInput = {
 ```
 
 **User responds:**
+
 ```json
 {
   "threadId": "t1",
@@ -119,6 +130,7 @@ type RunAgentInput = {
 ### Complex Approval Flow
 
 **Agent requests approval with context:**
+
 ```json
 {
   "type": "RUN_FINISHED",
@@ -141,6 +153,7 @@ type RunAgentInput = {
 ```
 
 **User approves with modifications:**
+
 ```json
 {
   "threadId": "thread-456",
@@ -161,18 +174,25 @@ type RunAgentInput = {
 ## Use Cases
 
 ### Human Approval
-Agents pause before executing sensitive operations (sending emails, making purchases, deleting data).
+
+Agents pause before executing sensitive operations (sending emails, making
+purchases, deleting data).
 
 ### Information Gathering
+
 Agent requests additional context or files from the user mid-execution.
 
 ### Policy Enforcement
-Automatic pauses triggered by organizational policies or compliance requirements.
+
+Automatic pauses triggered by organizational policies or compliance
+requirements.
 
 ### Multi-Step Wizards
+
 Complex workflows where each step requires user confirmation or input.
 
 ### Error Recovery
+
 Agent pauses when encountering an error, allowing user to provide guidance.
 
 ## Implementation Considerations
@@ -180,11 +200,13 @@ Agent pauses when encountering an error, allowing user to provide guidance.
 ### Client SDK Changes
 
 TypeScript SDK:
+
 - Extended `RunFinishedEvent` type with outcome and interrupt fields
 - Updated `RunAgentInput` with resume field
 - Helper methods for interrupt handling
 
 Python SDK:
+
 - Extended `RunFinishedEvent` class
 - Updated `RunAgentInput` with resume support
 - Interrupt state management utilities
@@ -192,14 +214,17 @@ Python SDK:
 ### Framework Integration
 
 **Planning Frameworks:**
+
 - Map framework interrupts to AG-UI interrupt events
 - Handle resume payloads in execution continuation
 
 **Workflow Systems:**
+
 - Convert workflow suspensions to AG-UI interrupts
 - Resume workflow execution with provided payload
 
 **Custom Frameworks:**
+
 - Provide interrupt/resume adapter interface
 - Documentation for integration patterns
 
