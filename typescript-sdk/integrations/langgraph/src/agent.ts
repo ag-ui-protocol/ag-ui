@@ -179,7 +179,7 @@ export class LangGraphAgent extends AbstractAgent {
       return subscriber.error("No stream to regenerate");
     }
 
-    await this.handleStreamEvents(preparedStream, threadId, subscriber, input, streamMode);
+    await this.handleStreamEvents(preparedStream, threadId, subscriber, input, Array.isArray(streamMode) ? streamMode : [streamMode]);
   }
 
   async prepareRegenerateStream(input: RegenerateInput, streamMode: StreamMode | StreamMode[]) {
@@ -376,7 +376,7 @@ export class LangGraphAgent extends AbstractAgent {
     threadId: string,
     subscriber: Subscriber<ProcessedEvents>,
     input: RunAgentExtendedInput,
-    streamMode: StreamMode | StreamMode[],
+    streamModes: StreamMode | StreamMode[],
   ) {
     const { forwardedProps } = input;
     const nodeNameInput = forwardedProps?.nodeName;
@@ -406,7 +406,7 @@ export class LangGraphAgent extends AbstractAgent {
             streamResponseChunk.event.startsWith("values"));
 
         // @ts-ignore
-        if (!streamMode.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream) {
+        if (!streamModes.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream && streamResponseChunk.event !== 'error') {
           continue;
         }
 
