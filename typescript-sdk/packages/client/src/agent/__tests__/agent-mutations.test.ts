@@ -43,7 +43,7 @@ jest.mock("@/chunks", () => ({
 
 // Create a test agent implementation
 class TestAgent extends AbstractAgent {
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     return of();
   }
 }

@@ -11,7 +11,7 @@ jest.mock("uuid", () => ({
 
 // Create a test agent that extends AbstractAgent
 class TestAgent extends AbstractAgent {
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     const messageId = "test-message-id";
     return new Observable<BaseEvent>((observer) => {
       observer.next({
@@ -54,7 +54,7 @@ class TestAgent extends AbstractAgent {
 
 // Agent that emits text chunks instead of start/content/end events
 class ChunkTestAgent extends AbstractAgent {
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     const messageId = "test-chunk-id";
     return new Observable<BaseEvent>((observer) => {
       observer.next({
@@ -86,7 +86,7 @@ class ChunkTestAgent extends AbstractAgent {
 
 // Agent that emits tool call events with results
 class ToolCallTestAgent extends AbstractAgent {
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     const toolCallId = "test-tool-call-id";
     const toolCallName = "get_weather";
     return new Observable<BaseEvent>((observer) => {

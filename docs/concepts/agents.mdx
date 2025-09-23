@@ -40,7 +40,7 @@ foundation for:
 import { AbstractAgent } from "@ag-ui/client"
 
 class MyAgent extends AbstractAgent {
-  protected run(input: RunAgentInput): RunAgent {
+  run(input: RunAgentInput): RunAgent {
     // Implementation details
   }
 }
@@ -89,7 +89,7 @@ You can create custom agents to integrate with any AI service by extending
 class CustomAgent extends AbstractAgent {
   // Custom properties and methods
 
-  protected run(input: RunAgentInput): RunAgent {
+  run(input: RunAgentInput): RunAgent {
     // Implement the agent's logic
   }
 }
@@ -113,7 +113,7 @@ import {
 import { Observable } from "rxjs"
 
 class SimpleAgent extends AbstractAgent {
-  protected run(input: RunAgentInput): RunAgent {
+  run(input: RunAgentInput): RunAgent {
     const { threadId, runId } = input
 
     return () =>

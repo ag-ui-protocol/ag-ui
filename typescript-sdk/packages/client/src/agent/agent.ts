@@ -53,7 +53,7 @@ export abstract class AbstractAgent {
     };
   }
 
-  protected abstract run(input: RunAgentInput): Observable<BaseEvent>;
+  abstract run(input: RunAgentInput): Observable<BaseEvent>;
 
   public async runAgent(
     parameters?: RunAgentParameters,

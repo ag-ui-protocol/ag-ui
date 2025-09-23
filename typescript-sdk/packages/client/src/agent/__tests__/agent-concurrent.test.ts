@@ -34,7 +34,7 @@ class ConcurrentTestAgent extends AbstractAgent {
     this.currentEventIndex = 0;
   }
 
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     return new Observable((subscriber) => {
       // Emit all the pre-configured events
       for (const event of this.eventsToEmit) {
