@@ -40,7 +40,7 @@ export class A2AClientAgent extends AbstractAgent {
     this.model = config.model;
   }
 
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     const state: any = { a2aMessages: [] };
 
     return new Observable<BaseEvent>((observer) => {
