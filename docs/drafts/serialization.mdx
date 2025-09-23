@@ -16,7 +16,7 @@ AG-UI adds **stream serialization** to reload chat history and attach to active 
 ## Status
 
 - **Status**: Draft
-- **Author(s)**: AG-UI Team
+- **Author(s)**: Markus Ecker (markus.ecker@gmail.com)
 
 ## Detailed Specification
 
@@ -222,14 +222,6 @@ Python SDK:
 - Compression support for serialized streams
 - Indexing strategies for quick access
 
-## Breaking Changes
-
-None. This is an additive change:
-- Existing events remain valid
-- New fields are optional
-- Compaction is opt-in
-- Backward compatible with existing streams
-
 ## Testing Strategy
 
 - Unit tests for compaction algorithm
@@ -237,15 +229,6 @@ None. This is an additive change:
 - Branch/merge scenario tests
 - Performance benchmarks for large event streams
 - Storage adapter integration tests
-
-## Open Questions
-
-1. Should compaction be automatic or explicit?
-2. What's the optimal compaction strategy for different use cases?
-3. How to handle conflicts in branched conversations?
-4. Should we support custom compaction rules?
-5. How to handle event versioning for long-term storage?
-6. Should we provide built-in storage adapters?
 
 ## References
 

@@ -16,7 +16,7 @@ AG-UI is extended with **MetaEvents**, a new class of events that can occur at a
 ## Status
 
 - **Status**: Draft
-- **Author(s)**: AG-UI Team
+- **Author(s)**: Markus Ecker (markus.ecker@gmail.com)
 
 ## Detailed Specification
 
@@ -215,28 +215,12 @@ Python SDK:
 - Consider permissions for who can create certain meta event types
 - Sanitize payload content to prevent injection attacks
 
-## Breaking Changes
-
-None. This is an additive change:
-- New event type doesn't affect existing event processing
-- Clients not handling MetaEvents can safely ignore them
-- No changes to existing event schemas
-
 ## Testing Strategy
 
 - Unit tests for MetaEvent creation and validation
 - Integration tests with mixed event streams
 - Performance tests with high-volume meta events
 - Security tests for payload validation
-
-## Open Questions
-
-1. Should we define a standard set of metaType values?
-2. How to handle MetaEvent permissions and authorization?
-3. Should MetaEvents support references to multiple entities?
-4. What's the maximum payload size for MetaEvents?
-5. Should we support MetaEvent versioning?
-6. How to handle MetaEvent conflicts (e.g., multiple ratings)?
 
 ## References
 

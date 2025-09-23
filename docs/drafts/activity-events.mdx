@@ -16,7 +16,7 @@ AG-UI is extended with **ActivityEvents** and **ActivityMessages** to represent 
 ## Status
 
 - **Status**: Draft
-- **Author(s)**: AG-UI Team
+- **Author(s)**: Markus Ecker (markus.ecker@gmail.com)
 
 ## Background
 
@@ -154,10 +154,6 @@ Python SDK additions:
 - **Workflow Systems**: Can surface step-by-step workflow progress as ActivityEvents
 - **Other frameworks**: May emit ActivityEvents freely; AG-UI will serialize them like other events
 
-## Breaking Changes
-
-None. This is an additive change that maintains backward compatibility.
-
 ## Examples and Use Cases
 
 ### Example 1: Web Search Activity
@@ -204,13 +200,6 @@ Each step appears inline with chat, giving users real-time feedback.
 - Integration tests with mock frameworks emitting ActivityEvents
 - E2E tests in AG-UI Dojo demonstrating activity rendering
 - Performance benchmarks for high-frequency activity updates
-
-## Open Questions
-
-1. Should we enforce a schema for common activity types (e.g., standardized "PLAN" format)?
-2. How should activities behave across run boundaries?
-3. Should there be a maximum number of patches before requiring a new snapshot?
-4. How do activities interact with message editing/regeneration?
 
 ## References
 

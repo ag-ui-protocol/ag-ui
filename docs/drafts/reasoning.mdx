@@ -19,7 +19,7 @@ AG-UI should support **LLM reasoning** without breaking existing apps.
 ## Status
 
 - **Status**: Draft
-- **Author(s)**: AG-UI Team
+- **Author(s)**: Markus Ecker (markus.ecker@gmail.com)
 
 ## Detailed Specification
 
@@ -254,16 +254,7 @@ Meet data retention requirements while preserving reasoning capabilities.
 - Encryption/decryption roundtrip tests
 - Performance tests for reasoning event streaming
 
-## Open Questions
-
-1. Should reasoning messages be included in `MESSAGES_SNAPSHOT` by default?
-2. How to handle partial reasoning in case of interruptions?
-3. Should we support different reasoning visibility levels (none, summary, full)?
-4. What's the maximum size for encrypted reasoning content?
-5. Should reasoning events support metadata (e.g., reasoning type, complexity)?
-
 ## References
 
 - [AG-UI Events Documentation](/concepts/events)
 - [AG-UI Messages Documentation](/concepts/messages)
-- [Chain-of-Thought Prompting](https://arxiv.org/abs/2201.11903)

@@ -16,7 +16,7 @@ Support **human-in-the-loop pauses** (and related mechanisms) natively in AG-UI 
 ## Status
 
 - **Status**: Draft
-- **Author(s)**: AG-UI Team
+- **Author(s)**: Markus Ecker (markus.ecker@gmail.com)
 
 ## Overview
 
@@ -210,12 +210,6 @@ Python SDK:
 - Clear indication of pending interrupts
 - History of interrupt/resume actions
 
-## Breaking Changes
-
-None. This is an additive change with backward compatibility:
-- Omitting `outcome` field maintains existing behavior
-- Clients not supporting interrupts can treat them as regular run completions
-
 ## Testing Strategy
 
 - Unit tests for interrupt/resume serialization
@@ -223,15 +217,6 @@ None. This is an additive change with backward compatibility:
 - E2E tests demonstrating various interrupt scenarios
 - State consistency tests across interrupt boundaries
 - Performance tests for rapid interrupt/resume cycles
-
-## Open Questions
-
-1. Should we define standard interrupt reasons (enum vs. free string)?
-2. How to handle timeout for unanswered interrupts?
-3. Should interrupts support priority levels?
-4. Can multiple interrupts be pending simultaneously?
-5. How to handle interrupt cancellation?
-6. Should we support batch approval of multiple interrupts?
 
 ## References
 

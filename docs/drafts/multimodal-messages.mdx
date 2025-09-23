@@ -16,7 +16,7 @@ Evolve AG-UI to support **multimodal input messages** without breaking existing 
 ## Status
 
 - **Status**: Draft
-- **Author(s)**: AG-UI Team
+- **Author(s)**: Markus Ecker (markus.ecker@gmail.com)
 
 ## Detailed Specification
 
@@ -231,13 +231,6 @@ Frameworks need to:
 - Sanitize URLs to prevent SSRF attacks
 - Consider content scanning for malicious files
 
-## Breaking Changes
-
-None. This is a backward-compatible change:
-- String content continues to work as before
-- Clients not supporting multimodal content can treat array content as text-only
-- Frameworks can gracefully degrade for unsupported content types
-
 ## Use Cases
 
 ### Visual Question Answering
@@ -262,15 +255,6 @@ Share screenshots for UI/UX feedback or debugging assistance.
 - Backward compatibility tests with string content
 - Performance tests for large binary payloads
 - Security tests for content validation and sanitization
-
-## Open Questions
-
-1. Should we define a maximum size for inline base64 content?
-2. How to handle content type negotiation with different LLM providers?
-3. Should we support streaming for large binary content?
-4. What MIME types should be officially supported?
-5. How to handle content expiration for URL references?
-6. Should we support content compression?
 
 ## References
 
