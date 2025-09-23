@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@ag-ui/a2a": "workspace:*",
+    "@ag-ui/adk": "workspace:*",
     "@ag-ui/agno": "workspace:*",
     "@ag-ui/crewai": "workspace:*",
     "@ag-ui/langgraph": "workspace:*",

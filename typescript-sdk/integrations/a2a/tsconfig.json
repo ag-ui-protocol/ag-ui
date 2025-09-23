@@ -1,12 +1,12 @@
 {
   "compilerOptions": {
     "target": "es2017",
-    "module": "esnext",
+    "module": "NodeNext",
     "lib": ["dom", "dom.iterable", "esnext"],
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "moduleResolution": "node",
+    "moduleResolution": "NodeNext",
     "skipLibCheck": true,
     "strict": true,
     "jsx": "react-jsx",
