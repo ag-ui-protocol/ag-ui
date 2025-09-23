@@ -59,7 +59,7 @@ export class MastraAgent extends AbstractAgent {
     this.runtimeContext = runtimeContext ?? new RuntimeContext();
   }
 
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  public run(input: RunAgentInput): Observable<BaseEvent> {
     let messageId = randomUUID();
 
     return new Observable<BaseEvent>((subscriber) => {

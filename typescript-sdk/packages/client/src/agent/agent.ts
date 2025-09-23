@@ -13,6 +13,7 @@ import { LegacyRuntimeProtocolEvent } from "@/legacy/types";
 import { lastValueFrom } from "rxjs";
 import { transformChunks } from "@/chunks";
 import { AgentStateMutation, AgentSubscriber, runSubscribersWithMutation } from "./subscriber";
+import { Middleware, MiddlewareFunction, FunctionMiddleware } from "@/middleware";
 
 export interface RunAgentResult {
   result: any;
@@ -27,6 +28,7 @@ export abstract class AbstractAgent {
   public state: State;
   public debug: boolean = false;
   public subscribers: AgentSubscriber[] = [];
+  private middlewares: Middleware[] = [];
 
   constructor({
     agentId,
@@ -53,7 +55,15 @@ export abstract class AbstractAgent {
     };
   }
 
-  protected abstract run(input: RunAgentInput): Observable<BaseEvent>;
+  public use(...middlewares: (Middleware | MiddlewareFunction)[]): this {
+    const normalizedMiddlewares = middlewares.map(m =>
+      typeof m === 'function' ? new FunctionMiddleware(m) : m
+    );
+    this.middlewares.push(...normalizedMiddlewares);
+    return this;
+  }
+
+  public abstract run(input: RunAgentInput): Observable<BaseEvent>;
 
   public async runAgent(
     parameters?: RunAgentParameters,
@@ -77,7 +87,21 @@ export abstract class AbstractAgent {
     await this.onInitialize(input, subscribers);
 
     const pipeline = pipe(
-      () => this.run(input),
+      () => {
+        // Build middleware chain using reduceRight
+        if (this.middlewares.length === 0) {
+          return this.run(input);
+        }
+
+        const chainedAgent = this.middlewares.reduceRight(
+          (nextAgent: AbstractAgent, middleware) => ({
+            run: (i: RunAgentInput) => middleware.run(i, nextAgent)
+          } as AbstractAgent),
+          this // Original agent is the final 'next'
+        );
+
+        return chainedAgent.run(input);
+      },
       transformChunks(this.debug),
       verifyEvents(this.debug),
       (source$) => this.apply(input, source$, subscribers),
@@ -416,7 +440,23 @@ export abstract class AbstractAgent {
     this.agentId = this.agentId ?? uuidv4();
     const input = this.prepareRunAgentInput(config);
 
-    return this.run(input).pipe(
+    // Build middleware chain for legacy bridge
+    const runObservable = (() => {
+      if (this.middlewares.length === 0) {
+        return this.run(input);
+      }
+
+      const chainedAgent = this.middlewares.reduceRight(
+        (nextAgent: AbstractAgent, middleware) => ({
+          run: (i: RunAgentInput) => middleware.run(i, nextAgent)
+        } as AbstractAgent),
+        this
+      );
+
+      return chainedAgent.run(input);
+    })();
+
+    return runObservable.pipe(
       transformChunks(this.debug),
       verifyEvents(this.debug),
       convertToLegacyEvents(this.threadId, input.runId, this.agentId),
