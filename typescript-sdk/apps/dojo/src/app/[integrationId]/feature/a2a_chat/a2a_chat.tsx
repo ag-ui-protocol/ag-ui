@@ -110,6 +110,13 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
     },
   });
 
+  const [selectedSeat, setSelectedSeat] = useState<{
+    tableIndex: number;
+    seatNumber: number;
+  } | null>(null);
+  const [isConfirmed, setIsConfirmed] = useState(false);
+
+
   useCopilotAction({
     name: "pickTable",
     description:
@@ -152,11 +159,6 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
     ],
     renderAndWaitForResponse({ args, respond }) {
       console.log("args", args);
-      const [selectedSeat, setSelectedSeat] = useState<{
-        tableIndex: number;
-        seatNumber: number;
-      } | null>(null);
-      const [isConfirmed, setIsConfirmed] = useState(false);
 
       const availableSeats =
         args.tables?.reduce(

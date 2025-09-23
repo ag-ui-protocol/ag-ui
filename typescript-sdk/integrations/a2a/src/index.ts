@@ -10,7 +10,8 @@ import {
   ToolCallChunkEvent,
   ToolCallResultEvent,
 } from "@ag-ui/client";
-import { A2AClient, SendMessageResponse, SendMessageSuccessResponse } from "@a2a-js/sdk";
+import { A2AClient } from "@a2a-js/sdk/client";
+import {SendMessageResponse, SendMessageSuccessResponse} from "@a2a-js/sdk";
 import { Observable } from "rxjs";
 import { LanguageModel, processDataStream, streamText, tool } from "ai";
 import {
