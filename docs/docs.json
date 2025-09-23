@@ -40,6 +40,7 @@
               "concepts/architecture",
               "concepts/events",
               "concepts/agents",
+              "concepts/middleware",
               "concepts/messages",
               "concepts/state",
               "concepts/tools"
@@ -85,6 +86,7 @@
                   "sdk/js/client/overview",
                   "sdk/js/client/abstract-agent",
                   "sdk/js/client/http-agent",
+                  "sdk/js/client/middleware",
                   "sdk/js/client/subscriber"
                 ]
               },

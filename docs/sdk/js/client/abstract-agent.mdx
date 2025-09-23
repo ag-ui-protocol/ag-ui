@@ -95,6 +95,36 @@ subscribe(subscriber: AgentSubscriber): { unsubscribe: () => void }
 Returns an object with an `unsubscribe()` method to remove the subscriber when
 no longer needed.
 
+### use()
+
+Adds middleware to the agent's event processing pipeline.
+
+```typescript
+use(...middlewares: (Middleware | MiddlewareFunction)[]): this
+```
+
+Middleware can be either:
+- **Function middleware**: Simple functions that transform the event stream
+- **Class middleware**: Instances of the `Middleware` class for stateful operations
+
+```typescript
+// Function middleware
+agent.use((input, next) => {
+  console.log("Processing:", input.runId);
+  return next.run(input);
+});
+
+// Class middleware
+agent.use(new FilterToolCallsMiddleware({
+  allowedToolCalls: ["search"]
+}));
+
+// Chain multiple middleware
+agent.use(loggingMiddleware, authMiddleware, filterMiddleware);
+```
+
+Middleware executes in the order added, with each wrapping the next. See the [Middleware documentation](/sdk/js/client/middleware) for more details.
+
 ### abortRun()
 
 Cancels the current agent execution.
