@@ -54,7 +54,7 @@ class TestAgent extends AbstractAgent {
     this.eventsToEmit = events;
   }
 
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     return of(...this.eventsToEmit);
   }
 }
@@ -428,7 +428,7 @@ describe("AgentSubscriber", () => {
 
       // Create an agent that throws an error
       class ErrorAgent extends AbstractAgent {
-        protected run(input: RunAgentInput): Observable<BaseEvent> {
+        run(input: RunAgentInput): Observable<BaseEvent> {
           return from([
             {
               type: EventType.RUN_STARTED,
@@ -469,7 +469,7 @@ describe("AgentSubscriber", () => {
 
       // Create an agent that throws an error
       class ErrorAgent extends AbstractAgent {
-        protected run(input: RunAgentInput): Observable<BaseEvent> {
+        run(input: RunAgentInput): Observable<BaseEvent> {
           return from([
             {
               type: EventType.RUN_STARTED,
@@ -711,7 +711,7 @@ describe("AgentSubscriber", () => {
 
       // Create an agent that throws an error
       class ErrorAgent extends AbstractAgent {
-        protected run(input: RunAgentInput): Observable<BaseEvent> {
+        run(input: RunAgentInput): Observable<BaseEvent> {
           return from([
             {
               type: EventType.RUN_STARTED,

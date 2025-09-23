@@ -10,7 +10,7 @@ describe("AbstractAgent multiple runs", () => {
       this.events = events;
     }
 
-    protected run(input: RunAgentInput): Observable<BaseEvent> {
+    run(input: RunAgentInput): Observable<BaseEvent> {
       return of(...this.events);
     }
   }
@@ -90,7 +90,7 @@ describe("AbstractAgent multiple runs", () => {
     // Verify second run results
     expect(result2.newMessages.length).toBe(1);
     expect(result2.newMessages[0].content).toBe("Hello from run 2");
-    
+
     // Verify messages are accumulated
     expect(agent.messages.length).toBe(2);
     expect(agent.messages[0].content).toBe("Hello from run 1");
@@ -104,7 +104,7 @@ describe("AbstractAgent multiple runs", () => {
     });
 
     const messages = ["First message", "Second message", "Third message"];
-    
+
     for (let i = 0; i < 3; i++) {
       const runEvents: BaseEvent[] = [
         {
