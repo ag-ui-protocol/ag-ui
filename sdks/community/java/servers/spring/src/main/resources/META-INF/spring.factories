@@ -1,0 +1,2 @@
+org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
+io.workm8.agui4j.server.spring.AgUiAutoConfiguration
