@@ -5,3 +5,4 @@ export * from "./run";
 export * from "./legacy";
 export * from "./agent";
 export * from "@ag-ui/core";
+export * from "./chunks";

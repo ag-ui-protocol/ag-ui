@@ -1,5 +1,5 @@
 import { AgentCard } from "@a2a-js/sdk";
-import { z } from "zod";
+import {Tool} from "@ag-ui/client";
 
 export const createSystemPrompt = (agentCards: AgentCard[], additionalInstructions?: string) => `
 **Role:** You are an expert Routing Delegator. Your primary function is to accurately delegate user inquiries to the appropriate specialized remote agents.
@@ -33,16 +33,21 @@ ${additionalInstructions ? `**Additional Instructions:**\n${additionalInstructio
 ${JSON.stringify(agentCards.map((agent) => ({ name: agent.name, description: agent.description })))}
 `;
 
-export const toolDefinition = {
-  name: 'send_message_to_a2a_agent',
-  description: 'Send a message to an A2A agent named `agentName`',
-  parameters: z.object({
-    agentName: z.string().describe("The name of the agent to send the task to."),
-    task: z
-      .string()
-      .describe(
-        "The comprehensive conversation-context summary and goal " +
-          "to be achieved regarding the user inquiry.",
-      ),
-  }),
+export const makeNameMachineSafe = (name: string) => {
+  return name.replace(/[^a-zA-Z0-9]/g, '_');
 };
+
+export const getToolDefinition = (card: AgentCard): Tool => {return {
+  name: `send_message_to_a2a_agent_${makeNameMachineSafe(card.name)}`,
+  description: `Send a message to an A2A agent named ${card.name}. Use this when discussing: ${card.description}`,
+  parameters: {
+    type: "object",
+    properties: {
+      task: {
+        type: "string",
+        description: "The comprehensive conversation-context summary and goal to be achieved regarding the user inquiry."
+      }
+    },
+    required: ["task"]
+  },
+}};
