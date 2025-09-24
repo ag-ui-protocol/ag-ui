@@ -174,7 +174,7 @@ Open `apps/dojo/package.json` and add the package `@ag-ui/openai-server`:
 Now let's see your work in action. First, start your Python server:
 
 ```bash
-cd integrations/openai/server/python
+cd integrations/openai-server/server/python
 poetry install && poetry run dev
 ```
 
@@ -197,7 +197,7 @@ world!** for now.
 Here's what's happening with that stub server:
 
 ```python
-# integrations/openai/server/python/example_server/__init__.py
+# integrations/openai-server/server/python/example_server/__init__.py
 @app.post("/")
 async def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):
     """Agentic chat endpoint"""
@@ -268,7 +268,7 @@ OpenAI.
 First, we need the OpenAI SDK:
 
 ```bash
-cd integrations/openai/server/python
+cd integrations/openai-server/server/python
 poetry add openai
 ```
 

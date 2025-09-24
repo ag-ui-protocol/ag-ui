@@ -1,0 +1,272 @@
+---
+title: Multi-modal Messages
+description:
+  Support for multimodal input messages including text, images, audio, and files
+---
+
+# Multi-modal Messages Proposal
+
+## Summary
+
+### Problem Statement
+
+Current AG-UI protocol only supports text-based user messages. As LLMs
+increasingly support multimodal inputs (images, audio, files), the protocol
+needs to evolve to handle these richer input types.
+
+### Motivation
+
+Evolve AG-UI to support **multimodal input messages** without breaking existing
+apps. Inputs may include text, images, audio, and files.
+
+## Status
+
+- **Status**: Draft
+- **Author(s)**: Markus Ecker (mail@mme.xyz)
+
+## Detailed Specification
+
+### Overview
+
+Extend the `UserMessage` `content` property to be either a string or an array of
+`InputContent`:
+
+```typescript
+interface TextInputContent {
+  type: "text"
+  text: string
+}
+
+interface BinaryInputContent {
+  type: "binary"
+  mimeType: string
+  id?: string
+  url?: string
+  data?: string
+  filename?: string
+}
+
+type InputContent = TextInputContent | BinaryInputContent
+
+type UserMessage = {
+  id: string
+  role: "user"
+  content: string | InputContent[]
+  name?: string
+}
+```
+
+### InputContent Types
+
+#### TextInputContent
+
+Represents text content within a multimodal message.
+
+```typescript
+interface TextInputContent {
+  type: "text"
+  text: string
+}
+```
+
+| Property | Type     | Description                     |
+| -------- | -------- | ------------------------------- |
+| `type`   | `"text"` | Identifies this as text content |
+| `text`   | `string` | The text content                |
+
+#### BinaryInputContent
+
+Represents binary content such as images, audio, or files.
+
+```typescript
+interface BinaryInputContent {
+  type: "binary"
+  mimeType: string
+  id?: string
+  url?: string
+  data?: string
+  filename?: string
+}
+```
+
+| Property   | Type       | Description                                                |
+| ---------- | ---------- | ---------------------------------------------------------- |
+| `type`     | `"binary"` | Identifies this as binary content                          |
+| `mimeType` | `string`   | MIME type of the content (e.g., "image/jpeg", "audio/wav") |
+| `id`       | `string?`  | Optional identifier for content reference                  |
+| `url`      | `string?`  | Optional URL to fetch the content                          |
+| `data`     | `string?`  | Optional base64-encoded content                            |
+| `filename` | `string?`  | Optional filename for the content                          |
+
+### Content Delivery Methods
+
+Binary content can be provided through multiple methods:
+
+1. **Inline Data**: Base64-encoded in the `data` field
+2. **URL Reference**: External URL in the `url` field
+3. **ID Reference**: Reference to pre-uploaded content via `id` field
+
+At least one of `data`, `url`, or `id` must be provided for binary content.
+
+## Implementation Examples
+
+### Simple Text Message (Backward Compatible)
+
+```json
+{
+  "id": "msg-001",
+  "role": "user",
+  "content": "What's in this image?"
+}
+```
+
+### Image with Text
+
+```json
+{
+  "id": "msg-002",
+  "role": "user",
+  "content": [
+    {
+      "type": "text",
+      "text": "What's in this image?"
+    },
+    {
+      "type": "binary",
+      "mimeType": "image/jpeg",
+      "data": "base64-encoded-image-data..."
+    }
+  ]
+}
+```
+
+### Multiple Images with Question
+
+```json
+{
+  "id": "msg-003",
+  "role": "user",
+  "content": [
+    {
+      "type": "text",
+      "text": "What are the differences between these images?"
+    },
+    {
+      "type": "binary",
+      "mimeType": "image/png",
+      "url": "https://example.com/image1.png"
+    },
+    {
+      "type": "binary",
+      "mimeType": "image/png",
+      "url": "https://example.com/image2.png"
+    }
+  ]
+}
+```
+
+### Audio Transcription Request
+
+```json
+{
+  "id": "msg-004",
+  "role": "user",
+  "content": [
+    {
+      "type": "text",
+      "text": "Please transcribe this audio recording"
+    },
+    {
+      "type": "binary",
+      "mimeType": "audio/wav",
+      "filename": "meeting-recording.wav",
+      "id": "audio-upload-123"
+    }
+  ]
+}
+```
+
+### Document Analysis
+
+```json
+{
+  "id": "msg-005",
+  "role": "user",
+  "content": [
+    {
+      "type": "text",
+      "text": "Summarize the key points from this PDF"
+    },
+    {
+      "type": "binary",
+      "mimeType": "application/pdf",
+      "filename": "quarterly-report.pdf",
+      "url": "https://example.com/reports/q4-2024.pdf"
+    }
+  ]
+}
+```
+
+## Implementation Considerations
+
+### Client SDK Changes
+
+TypeScript SDK:
+
+- Extended `UserMessage` type in `@ag-ui/core`
+- Content validation utilities
+- Helper methods for constructing multimodal messages
+- Binary content encoding/decoding utilities
+
+Python SDK:
+
+- Extended `UserMessage` class
+- Content type validation
+- Multimodal message builders
+- Binary content handling utilities
+
+### Framework Integration
+
+Frameworks need to:
+
+- Parse multimodal user messages
+- Forward content to LLM providers that support multimodal inputs
+- Handle fallbacks for models that don't support certain content types
+- Manage content upload/storage for binary data
+
+## Use Cases
+
+### Visual Question Answering
+
+Users can upload images and ask questions about them.
+
+### Document Processing
+
+Upload PDFs, Word documents, or spreadsheets for analysis.
+
+### Audio Transcription and Analysis
+
+Process voice recordings, podcasts, or meeting audio.
+
+### Multi-document Comparison
+
+Compare multiple images, documents, or mixed media.
+
+### Screenshot Analysis
+
+Share screenshots for UI/UX feedback or debugging assistance.
+
+## Testing Strategy
+
+- Unit tests for content type validation
+- Integration tests with multimodal LLMs
+- Backward compatibility tests with string content
+- Performance tests for large binary payloads
+- Security tests for content validation and sanitization
+
+## References
+
+- [OpenAI Vision API](https://platform.openai.com/docs/guides/vision)
+- [Anthropic Vision](https://docs.anthropic.com/en/docs/vision)
+- [MIME Types](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types)
+- [Data URLs](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URLs)

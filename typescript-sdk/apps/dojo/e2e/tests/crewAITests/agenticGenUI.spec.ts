@@ -3,7 +3,7 @@ import { AgenticGenUIPage } from "../../pages/crewAIPages/AgenticUIGenPage";
 
 test.describe("Agent Generative UI Feature", () => {
   // Flaky
-  test.fixme("[CrewAI] should interact with the chat to get a planner on prompt", async ({
+  test("[CrewAI] should interact with the chat to get a planner on prompt", async ({
     page,
   }) => {
     const genUIAgent = new AgenticGenUIPage(page);
@@ -35,7 +35,7 @@ test.describe("Agent Generative UI Feature", () => {
   });
 
   // Flaky
-  test.fixme("[CrewAI] should interact with the chat using predefined prompts and perform steps", async ({
+  test("[CrewAI] should interact with the chat using predefined prompts and perform steps", async ({
     page,
   }) => {
     const genUIAgent = new AgenticGenUIPage(page);
