@@ -3,11 +3,15 @@ title: AG-UI Overview
 description: 
 ---
 
-# AG‑UI: The Agent–User Interaction Protocol
+# The Agent–User Interaction (AG-UI) Protocol
 
 *A horizontal standard to bring AI agents into user‑facing frontend applications.*
 
 AG‑UI is the boundary layer where AI agents and users meet. It standardizes how agent state, UI intents, and user interactions flow between your model/agent runtime and your app's frontend—so you can ship reliable, debuggable, user‑friendly agentic features fast.
+
+<div style={{textAlign: 'center', margin: '2rem 0'}}>
+  <img src="/images/ag-ui-concept.png" alt="AG-UI Architecture Illustration" style={{maxWidth: '100%', height: 'auto', borderRadius: '8px'}} />
+</div>
 
 ---
 
@@ -15,17 +19,9 @@ AG‑UI is the boundary layer where AI agents and users meet. It standardizes ho
 
 **First‑party partnerships & integrations**
 
+*AG‑UI works across leading agent frameworks and frontend stacks, with shared vocabulary and primitives that keep your UX consistent as your agents evolve.*
+
 <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '0.75rem', margin: '2rem 0', maxWidth: '800px'}}>
-  {/* Direct to LLM */}
-  <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem'}}>
-    <div style={{width: '64px', height: '64px', borderRadius: '16px', backgroundColor: '#10B981', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)'}}>
-      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M12 2L13.09 8.26L20 9L15 14L16.18 21L12 17.77L7.82 21L9 14L2 9L8.91 8.26L12 2Z" fill="white" />
-        <path d="M12 16L10.5 22L12 20.5L13.5 22L12 16Z" fill="white" opacity="0.6" />
-      </svg>
-    </div>
-    <span style={{fontSize: '0.75rem', fontWeight: '600', color: '#374151', textAlign: 'center'}}>Direct to LLM</span>
-  </div>
 
   {/* LangGraph */}
   <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem'}}>
@@ -50,17 +46,7 @@ AG‑UI is the boundary layer where AI agents and users meet. It standardizes ho
     <span style={{fontSize: '0.75rem', fontWeight: '600', color: '#374151', textAlign: 'center'}}>Mastra</span>
   </div>
 
-  {/* CrewAI Crews */}
-  <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem'}}>
-    <div style={{width: '64px', height: '64px', borderRadius: '16px', backgroundColor: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(249, 115, 22, 0.25)'}}>
-      <svg width="32" height="32" viewBox="0 0 24 24" fill="white">
-        <path d="M12 2c5.523 0 10 4.477 10 10s-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2zm0 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16zm0 2a6 6 0 1 1 0 12 6 6 0 0 1 0-12zm0 2a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"/>
-      </svg>
-    </div>
-    <span style={{fontSize: '0.75rem', fontWeight: '600', color: '#374151', textAlign: 'center'}}>CrewAI Crews</span>
-  </div>
-
-  {/* CrewAI Flows */}
+  {/* CrewAI */}
   <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem'}}>
     <div style={{width: '64px', height: '64px', borderRadius: '16px', backgroundColor: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(249, 115, 22, 0.25)'}}>
       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
@@ -68,7 +54,7 @@ AG‑UI is the boundary layer where AI agents and users meet. It standardizes ho
         <path d="M7.5 4.21l4.5 2.6 4.5-2.6M12 6.81V17M3.27 6.96L12 12.01l8.73-5.05"/>
       </svg>
     </div>
-    <span style={{fontSize: '0.75rem', fontWeight: '600', color: '#374151', textAlign: 'center'}}>CrewAI Flows</span>
+    <span style={{fontSize: '0.75rem', fontWeight: '600', color: '#374151', textAlign: 'center'}}>CrewAI</span>
   </div>
 
   {/* ADK */}
@@ -138,53 +124,122 @@ AG‑UI is the boundary layer where AI agents and users meet. It standardizes ho
   </div>
 </div>
 
-*AG‑UI works across leading agent frameworks and frontend stacks, with shared vocabulary and primitives that keep your UX consistent as your agents evolve.*
 
 ---
 
 ## Building blocks (today & upcoming)
 
-<AccordionGroup>
-  <Accordion title="Streaming chat">
-    Token‑level and tool‑event streaming for responsive UIs.
-  </Accordion>
-  
-  <Accordion title="Static generative UI">
-    Render model output into stable, typed components.
-  </Accordion>
-  
-  <Accordion title="Declarative generative UI">
-    Let agents propose UI trees; app decides what to mount.
-  </Accordion>
-  
-  <Accordion title="Frontend tools">
-    Safe, typed tool calls that bridge agent logic to app actions.
-  </Accordion>
-  
-  <Accordion title="Interrupts & human‑in‑the‑loop">
-    Pause, approve, edit, or steer mid‑flow.
-  </Accordion>
-  
-  <Accordion title="In‑chat + in‑app interactions">
-    Chat commands alongside regular app controls.
-  </Accordion>
-  
-  <Accordion title="Attachments & multimodality">
-    Files, images, audio, and structured payloads.
-  </Accordion>
-  
-  <Accordion title="Thinking steps">
-    Expose summaries/redactions of chain‑of‑thought artifacts to users, safely.
-  </Accordion>
-  
-  <Accordion title="Sub‑agent calls">
-    Orchestrate nested agents and delegate specialized tasks.
-  </Accordion>
-  
-  <Accordion title="Agent steering">
-    Guardrails, policies, and UX affordances to keep agents on track.
-  </Accordion>
-</AccordionGroup>
+<div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem', margin: '1.5rem 0'}}>
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Streaming chat
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Token‑level and tool‑event streaming for responsive UIs.
+      </div>
+    </div>
+  </div>
+
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Static generative UI
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Render model output into stable, typed components.
+      </div>
+    </div>
+  </div>
+
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Declarative generative UI
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Let agents propose UI trees; app decides what to mount.
+      </div>
+    </div>
+  </div>
+
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Frontend tools
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Safe, typed tool calls that bridge agent logic to app actions.
+      </div>
+    </div>
+  </div>
+
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Interrupts & human‑in‑the‑loop
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Pause, approve, edit, or steer mid‑flow.
+      </div>
+    </div>
+  </div>
+
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      In‑chat + in‑app interactions
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Chat commands alongside regular app controls.
+      </div>
+    </div>
+  </div>
+
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Attachments & multimodality
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Files, images, audio, and structured payloads.
+      </div>
+    </div>
+  </div>
+
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Thinking steps
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Expose summaries/redactions of chain‑of‑thought artifacts to users, safely.
+      </div>
+    </div>
+  </div>
+
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Sub‑agent calls
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Orchestrate nested agents and delegate specialized tasks.
+      </div>
+    </div>
+  </div>
+
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Agent steering
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Guardrails, policies, and UX affordances to keep agents on track.
+      </div>
+    </div>
+  </div>
+</div>
 
 ---
 
@@ -249,7 +304,7 @@ AG-UI was born from an initial partnership between CopilotKit, LangGraph and Cre
 
 ```mermaid
 graph LR
-    A[Agents] <--> B[AG‑UI Boundary] <--> C[App UI/State]
+    A[Agentic App] <--> B[AG‑UI Boundary] <--> C[App UI/State]
     
     B --> D[Protocol]
     B --> E[Runtime adapters]
