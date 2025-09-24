@@ -129,7 +129,7 @@ AG‑UI is the boundary layer where AI agents and users meet. It standardizes ho
 
 ## Building blocks (today & upcoming)
 
-<div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem', margin: '1.5rem 0'}}>
+<div style={{display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem', margin: '1.5rem 0'}}>
   <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
     <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
       Streaming chat
@@ -255,12 +255,11 @@ AG‑UI is the boundary layer where AI agents and users meet. It standardizes ho
 </Steps>
 
 ---
-
-## Why AG‑UI
+## Why Agentic Apps need AG-UI
 
 **Agentic apps break the classic request/response contract.** Agents run for longer, stream work as they go, and make nondeterministic choices that can affect your UI and state. AG‑UI defines a clean, observable boundary so frontends remain predictable while agents stay flexible.
 
-### What's hard about user‑facing agents
+### What's hard about user‑facing agents?
 
 - Agents are **long‑running** and **stream** intermediate work—often across multi‑turn sessions.
 - Agents are **nondeterministic** and can **control UI** in ways that must be supervised.
@@ -273,7 +272,7 @@ With AG‑UI, these become deliberate, well‑typed interactions rather than ad�
 
 ## Supported Frameworks
 
-AG-UI was born from an initial partnership between CopilotKit, LangGraph and CrewAI - and is steadily gaining integrations within the wider agentic app developer ecosystem.
+AG-UI was born from an initial partnership between CopilotKit, LangGraph and CrewAI - and is steadily gaining integrations across the wider AI developer ecosystem.
 
 | Framework | Docs | Demos |
 | :----------------------- | :--- | :---- |
