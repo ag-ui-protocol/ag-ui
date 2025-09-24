@@ -11,7 +11,7 @@ requires-python = ">=3.9, <3.14"
 dependencies = [
     "llama-index-core>=0.14.0,<0.15",
     "llama-index-llms-openai>=0.5.0,<0.6.0",
-    "llama-index-protocols-ag-ui @ file:///Users/loganmarkewich/giant_change/llama_index/llama-index-integrations/protocols/llama-index-protocols-ag-ui",
+    "llama-index-protocols-ag-ui>=0.2.2,<0.3",
     "jsonpatch>=1.33",
     "uvicorn>=0.27.0",
     "fastapi>=0.100.0",
