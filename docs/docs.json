@@ -17,6 +17,7 @@
             "group": "Get Started",
             "pages": [
               "introduction",
+              "overview",
               {
                 "group": "Quickstart",
                 "pages": [
