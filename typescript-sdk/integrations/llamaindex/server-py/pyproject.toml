@@ -9,9 +9,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.9, <3.14"
 dependencies = [
-    "llama-index-core>=0.12.41,<0.13",
-    "llama-index-agent-openai>=0.4.9,<0.5",
-    "llama-index-protocols-ag-ui>=0.1.2",
+    "llama-index-core>=0.14.0,<0.15",
+    "llama-index-protocols-ag-ui>=0.2.0,<0.3",
     "jsonpatch>=1.33",
     "uvicorn>=0.27.0",
     "fastapi>=0.100.0",
@@ -25,6 +24,9 @@ include = ["server/"]
 
 [tool.hatch.build.targets.wheel]
 include = ["server/"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [project.scripts]
 dev = "server:main"
