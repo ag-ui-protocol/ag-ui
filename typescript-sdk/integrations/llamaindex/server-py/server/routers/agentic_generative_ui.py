@@ -19,65 +19,69 @@ async def run_task(
     ctx: Context, task: Task,
 ) -> str:
     """Execute any list of steps needed to complete a task. Useful for anything the user wants to do."""
-    state = await ctx.get("state", default={})
-    task = Task.model_validate(task)
 
-    state = {
-        "steps": [
-            {
-                "description": step.description,
-                "status": "pending"
-            }
-            for step in task.steps
-        ]
-    }
+    async with ctx.store.edit_state() as global_state:
+        state = global_state.get("state", {})
+        task = Task.model_validate(task)
 
-    # Send initial state snapshot
-    ctx.write_event_to_stream(
-        StateSnapshotWorkflowEvent(
-            snapshot=state
-        )
-    )
+        state = {
+            "steps": [
+                {
+                    "description": step.description,
+                    "status": "pending"
+                }
+                for step in task.steps
+            ]
+        }
 
-    # Sleep for 1 second
-    await asyncio.sleep(1.0)
-
-    # Create a copy to track changes for JSON patches
-    previous_state = copy.deepcopy(state)
-
-    # Update each step and send deltas
-    for i, step in enumerate(state["steps"]):
-        step["status"] = "completed"
-        
-        # Generate JSON patch from previous state to current state
-        patch = jsonpatch.make_patch(previous_state, state)
-        
-        # Send state delta event
+        # Send initial state snapshot
         ctx.write_event_to_stream(
-            StateDeltaWorkflowEvent(
-                delta=patch.patch
+            StateSnapshotWorkflowEvent(
+                snapshot=state
             )
         )
-        
-        # Update previous state for next iteration
-        previous_state = copy.deepcopy(state)
-        
+
         # Sleep for 1 second
         await asyncio.sleep(1.0)
 
-    # Optionally send a final snapshot to the client
-    ctx.write_event_to_stream(
-        StateSnapshotWorkflowEvent(
-            snapshot=state
-        )
-    )
+        # Create a copy to track changes for JSON patches
+        previous_state = copy.deepcopy(state)
 
-    return "Done!"
+        # Update each step and send deltas
+        for i, step in enumerate(state["steps"]):
+            step["status"] = "completed"
+            
+            # Generate JSON patch from previous state to current state
+            patch = jsonpatch.make_patch(previous_state, state)
+            
+            # Send state delta event
+            ctx.write_event_to_stream(
+                StateDeltaWorkflowEvent(
+                    delta=patch.patch
+                )
+            )
+            
+            # Update previous state for next iteration
+            previous_state = copy.deepcopy(state)
+            
+            # Sleep for 1 second
+            await asyncio.sleep(1.0)
+
+        # Optionally send a final snapshot to the client
+        ctx.write_event_to_stream(
+            StateSnapshotWorkflowEvent(
+                snapshot=state
+            )
+        )
+
+        global_state["state"] = state
+
+    return "Task Done!"
 
 
 agentic_generative_ui_router = get_ag_ui_workflow_router(
     llm=OpenAI(model="gpt-4.1"),
-    frontend_tools=[run_task],
+    backend_tools=[run_task],
     initial_state={},
     system_prompt=(
         "You are a helpful assistant that can help the user with their task. "
