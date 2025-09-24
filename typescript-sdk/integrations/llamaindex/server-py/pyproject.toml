@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9, <3.14"
 dependencies = [
     "llama-index-core>=0.14.0,<0.15",
+    "llama-index-llms-openai",
     "llama-index-protocols-ag-ui>=0.2.0,<0.3",
     "jsonpatch>=1.33",
     "uvicorn>=0.27.0",
