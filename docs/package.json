@@ -2,7 +2,7 @@
   "name": "docs",
   "scripts": {
     "dev": "mintlify dev --port=4000",
-    "build": "mintlify --help"
+    "build": "mintlify build"
   },
   "dependencies": {
     "mintlify": "^4.0.459",
