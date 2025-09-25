@@ -51,12 +51,12 @@ export class A2AMiddlewareAgent extends AbstractAgent {
     type: EventType;
     timestamp?: number | undefined;
     rawEvent?: any;
-}>, input: RunAgentInput, subscriber: AgentSubscriber): any {
+}>, input: RunAgentInput): any {
   const applyAndProcessEvents = (source$: Observable<BaseEvent>) => {
     // Apply events to get mutations
-    const mutations$ = this.apply(input, source$, [subscriber]);
+    const mutations$ = this.apply(input, source$, this.subscribers);
     // Process the mutations
-    const processedMutations$ = this.processApplyEvents(input, mutations$, [subscriber]);
+    const processedMutations$ = this.processApplyEvents(input, mutations$, this.subscribers);
     // Subscribe to the processed mutations to trigger side effects
     processedMutations$.subscribe();
     // Return the original stream to maintain BaseEvent type
@@ -96,9 +96,10 @@ export class A2AMiddlewareAgent extends AbstractAgent {
 
           if (pendingA2ACalls.size > 0) {
             const callProms = [...pendingA2ACalls].map((toolCallId) => {
-              const toolCallsFromMessages = input.messages.filter((message) => message.role == 'assistant')
-                .map(messages => messages.toolCalls?.filter((toolCall) => toolCall.id === toolCallId) || [])
-                .reduce((acc, curr) => acc.concat(curr), []);
+              const toolCallsFromMessages = this.messages
+                .filter((message) => message.role === 'assistant')
+                .flatMap((message) => message.toolCalls || [])
+                .filter((toolCall) => toolCall.id === toolCallId);
 
               const toolName = toolCallsFromMessages[0]?.function.name;
               const toolArgs = toolCallsFromMessages
@@ -114,15 +115,17 @@ export class A2AMiddlewareAgent extends AbstractAgent {
                     timestamp: Date.now(),
                     parts: [{ kind: "text", text: `A2A Agent Response: ${a2aResponse}` }]
                   } as Message;
-                  input.messages.push(newMessage);
+                  console.log('newMessage From a2a agent', newMessage);
+                  this.addMessage(newMessage);
 
-
-                  observer.next({
+                  const newEvent={
                     type: EventType.TOOL_CALL_RESULT,
                     toolCallId: toolCallId,
                     messageId: newMessage.id,
                     content: a2aResponse,
-                  } as ToolCallResultEvent);
+                  } as ToolCallResultEvent;
+                  console.log('newEvent', newEvent);
+                  observer.next(newEvent);
 
                   pendingA2ACalls.delete(toolCallId);
                 }).finally(() => {
@@ -170,10 +173,7 @@ export class A2AMiddlewareAgent extends AbstractAgent {
     return new Observable<BaseEvent>((observer) => {
       const run = async () => {
       let pendingA2ACalls = new Set<string>();
-
-
       const agentCards = await this.agentCards;
-
       const newSystemPrompt = createSystemPrompt(agentCards, this.instructions);
 
       const messages = input.messages;
