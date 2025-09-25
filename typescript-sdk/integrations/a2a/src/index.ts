@@ -180,10 +180,7 @@ export class A2AMiddlewareAgent extends AbstractAgent {
       ]
 
       // Start the orchestration agent run
-      const orchestrationStream = this.orchestrationAgent.run(input);
-
-      const subscription = this.wrapStream(orchestrationStream, pendingA2ACalls, observer, input);
-
+      this.triggerNewRun(observer, input, pendingA2ACalls);
     }
     run()
     });
