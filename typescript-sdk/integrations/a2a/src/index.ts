@@ -8,6 +8,7 @@ import {
   Message,
   ToolCallStartEvent,
   transformChunks,
+  AgentSubscriber,
 } from "@ag-ui/client";
 
 
@@ -50,10 +51,23 @@ export class A2AMiddlewareAgent extends AbstractAgent {
     type: EventType;
     timestamp?: number | undefined;
     rawEvent?: any;
-}>, input: RunAgentInput): any {
+}>, input: RunAgentInput, subscriber: AgentSubscriber): any {
+  const applyAndProcessEvents = (source$: Observable<BaseEvent>) => {
+    // Apply events to get mutations
+    const mutations$ = this.apply(input, source$, [subscriber]);
+    // Process the mutations
+    const processedMutations$ = this.processApplyEvents(input, mutations$, [subscriber]);
+    // Subscribe to the processed mutations to trigger side effects
+    processedMutations$.subscribe();
+    // Return the original stream to maintain BaseEvent type
+    return source$;
+  };
+
     return stream.pipe(
       transformChunks(this.debug),
-    ).subscribe({
+      applyAndProcessEvents
+    )
+    .subscribe({
       next: (event: BaseEvent) => {
         // Handle tool call start events for send_message_to_a2a_agent
         if (event.type === EventType.TOOL_CALL_START &&
