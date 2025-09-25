@@ -71,12 +71,22 @@ export const runHttpRequest = (url: string, requestInit: RequestInit): Observabl
             }
             subscriber.complete();
           } catch (error) {
+            if ((error as DOMException)?.name === "AbortError") {
+              subscriber.complete();
+              return;
+            }
             subscriber.error(error);
           }
         })();
 
         return () => {
-          reader.cancel();
+          reader.cancel().catch((error) => {
+            if ((error as DOMException)?.name === "AbortError") {
+              return;
+            }
+
+            throw error;
+          });
         };
       });
     }),
