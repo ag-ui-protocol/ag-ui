@@ -309,6 +309,77 @@ describe("Agent Result", () => {
     });
   });
 
+  describe("events$ stream", () => {
+    it("collects events from multiple runs", async () => {
+      const receivedEvents: BaseEvent[] = [];
+      const subscription = agent.events$.subscribe((event) => {
+        receivedEvents.push(event);
+      });
+
+      const firstRunEvents: BaseEvent[] = [
+        {
+          type: EventType.RUN_STARTED,
+          threadId: "test-thread",
+          runId: "run-1",
+        } as RunStartedEvent,
+        {
+          type: EventType.RUN_FINISHED,
+          threadId: "test-thread",
+          runId: "run-1",
+        } as RunFinishedEvent,
+      ];
+
+      agent.setEventsToEmit(firstRunEvents);
+      await agent.runAgent();
+
+      const secondRunEvents: BaseEvent[] = [
+        {
+          type: EventType.RUN_STARTED,
+          threadId: "test-thread",
+          runId: "run-2",
+        } as RunStartedEvent,
+        {
+          type: EventType.RUN_FINISHED,
+          threadId: "test-thread",
+          runId: "run-2",
+        } as RunFinishedEvent,
+      ];
+
+      agent.setEventsToEmit(secondRunEvents);
+      await agent.runAgent();
+
+      expect(receivedEvents).toEqual([...firstRunEvents, ...secondRunEvents]);
+
+      subscription.unsubscribe();
+    });
+
+    it("replays historical events to late subscribers", async () => {
+      const eventsToEmit: BaseEvent[] = [
+        {
+          type: EventType.RUN_STARTED,
+          threadId: "test-thread",
+          runId: "run-1",
+        } as RunStartedEvent,
+        {
+          type: EventType.RUN_FINISHED,
+          threadId: "test-thread",
+          runId: "run-1",
+        } as RunFinishedEvent,
+      ];
+
+      agent.setEventsToEmit(eventsToEmit);
+      await agent.runAgent();
+
+      const lateSubscriberEvents: BaseEvent[] = [];
+      const subscription = agent.events$.subscribe((event) => {
+        lateSubscriberEvents.push(event);
+      });
+      subscription.unsubscribe();
+
+      expect(lateSubscriberEvents).toEqual(eventsToEmit);
+    });
+  });
+
   describe("combined result and newMessages", () => {
     it("should return both result and newMessages correctly", async () => {
       const newMessages: Message[] = [
