@@ -342,34 +342,6 @@ importers:
         specifier: ^5.3.3
         version: 5.8.2
 
-  integrations/a2a/examples/middleware:
-    dependencies:
-      '@ag-ui/a2a-middleware':
-        specifier: workspace:*
-        version: link:../..
-      '@ag-ui/client':
-        specifier: workspace:*
-        version: link:../../../../packages/client
-      cors:
-        specifier: ^2.8.5
-        version: 2.8.5
-      express:
-        specifier: ^4.18.2
-        version: 4.21.2
-    devDependencies:
-      '@types/cors':
-        specifier: ^2.8.17
-        version: 2.8.19
-      '@types/express':
-        specifier: ^4.17.21
-        version: 4.17.23
-      '@types/node':
-        specifier: ^20.11.19
-        version: 20.19.4
-      typescript:
-        specifier: ^5.3.3
-        version: 5.8.2
-
   integrations/adk-middleware:
     dependencies:
       rxjs:
@@ -16319,6 +16291,21 @@ snapshots:
       object-assign: 4.1.1
       vary: 1.1.2
 
+  create-jest@29.7.0:
+    dependencies:
+      '@jest/types': 29.6.3
+      chalk: 4.1.2
+      exit: 0.1.2
+      graceful-fs: 4.2.11
+      jest-config: 29.7.0(@types/node@20.17.50)
+      jest-util: 29.7.0
+      prompts: 2.4.2
+    transitivePeerDependencies:
+      - '@types/node'
+      - babel-plugin-macros
+      - supports-color
+      - ts-node
+
   create-jest@29.7.0(@types/node@20.17.50):
     dependencies:
       '@jest/types': 29.6.3
@@ -17743,7 +17730,7 @@ snapshots:
       isstream: 0.1.2
       jsonwebtoken: 9.0.2
       mime-types: 2.1.35
-      retry-axios: 2.6.0(axios@1.10.0)
+      retry-axios: 2.6.0(axios@1.10.0(debug@4.4.1))
       tough-cookie: 4.1.4
     transitivePeerDependencies:
       - supports-color
@@ -18087,7 +18074,7 @@ snapshots:
       '@jest/test-result': 29.7.0
       '@jest/types': 29.6.3
       chalk: 4.1.2
-      create-jest: 29.7.0(@types/node@20.17.50)
+      create-jest: 29.7.0
       exit: 0.1.2
       import-local: 3.2.0
       jest-config: 29.7.0(@types/node@20.17.50)
@@ -20568,7 +20555,7 @@ snapshots:
       onetime: 5.1.2
       signal-exit: 3.0.7
 
-  retry-axios@2.6.0(axios@1.10.0):
+  retry-axios@2.6.0(axios@1.10.0(debug@4.4.1)):
     dependencies:
       axios: 1.10.0(debug@4.4.1)
 
