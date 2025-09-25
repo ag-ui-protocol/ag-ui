@@ -15,6 +15,7 @@ from a2a.types import (
     Message
 )
 import openai
+import os
 
 class FinanceAgent:
     """Finance Agent."""
@@ -35,7 +36,7 @@ skill = AgentSkill(
     description='The Finance Agent is in charge of the ERP system',
     tags=['finance', 'erp'],
     examples=[
-        'Set up payroll for a new employee', 
+        'Set up payroll for a new employee',
         'I want to purchase a new laptop for the office'
     ],
 )
@@ -85,7 +86,8 @@ def main():
         extended_agent_card=public_agent_card,
     )
 
-    uvicorn.run(server.build(), host='0.0.0.0', port=9999)
+    port = int(os.getenv("PORT", "9002"))
+    uvicorn.run(server.build(), host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
     main()
