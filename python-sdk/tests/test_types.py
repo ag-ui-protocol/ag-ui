@@ -10,6 +10,7 @@ from ag_ui.core.types import (
     AssistantMessage,
     UserMessage,
     ToolMessage,
+    ThinkingMessage,
     Message,
     RunAgentInput
 )
@@ -143,6 +144,63 @@ class TestBaseTypes(unittest.TestCase):
         self.assertEqual(serialized["role"], "user")
         self.assertEqual(serialized["content"], "User query")
 
+    def test_thinking_message(self):
+        """Test creating and serializing a thinking message"""
+        msg = ThinkingMessage(
+            id="thinking_123",
+            content="Let me think about this step by step..."
+        )
+        serialized = msg.model_dump(by_alias=True)
+        self.assertEqual(serialized["role"], "thinking")
+        self.assertEqual(serialized["content"], "Let me think about this step by step...")
+
+    def test_thinking_message_with_timestamp(self):
+        """Test creating a thinking message with timestamp"""
+        timestamp = 1648214400000
+        msg = ThinkingMessage(
+            id="thinking_456",
+            content="Analyzing the problem...",
+            timestamp=timestamp
+        )
+        self.assertEqual(msg.timestamp, timestamp)
+        
+        # Test serialization
+        serialized = msg.model_dump(by_alias=True)
+        self.assertEqual(serialized["timestamp"], timestamp)
+
+    def test_thinking_message_validation(self):
+        """Test validation requirements for thinking message"""
+        # Content is required for thinking messages
+        with self.assertRaises(ValidationError):
+            ThinkingMessage(
+                id="thinking_invalid"
+                # Missing content field should fail
+            )
+
+    def test_base_message_timestamp_field(self):
+        """Test the optional timestamp field in BaseMessage"""
+        timestamp = 1648214400000
+        
+        # Test with user message
+        user_msg = UserMessage(
+            id="user_timestamp",
+            content="Hello",
+            timestamp=timestamp
+        )
+        self.assertEqual(user_msg.timestamp, timestamp)
+        
+        # Test with assistant message
+        assistant_msg = AssistantMessage(
+            id="asst_timestamp",
+            content="Hi there",
+            timestamp=timestamp
+        )
+        self.assertEqual(assistant_msg.timestamp, timestamp)
+        
+        # Test serialization preserves timestamp
+        serialized = user_msg.model_dump(by_alias=True)
+        self.assertEqual(serialized["timestamp"], timestamp)
+
     def test_message_union_deserialization(self):
         """Test that the Message union correctly deserializes to the appropriate type"""
         # Create type adapter for the union
@@ -159,7 +217,8 @@ class TestBaseTypes(unittest.TestCase):
                 "role": "tool", 
                 "content": "Tool result", 
                 "toolCallId": "call_303"
-            }
+            },
+            {"id": "thinking_404", "role": "thinking", "content": "Let me analyze this..."}
         ]
 
         expected_types = [
@@ -167,7 +226,8 @@ class TestBaseTypes(unittest.TestCase):
             SystemMessage,
             AssistantMessage,
             UserMessage,
-            ToolMessage
+            ToolMessage,
+            ThinkingMessage
         ]
 
         for data, expected_type in zip(message_data, expected_types):
