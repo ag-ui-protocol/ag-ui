@@ -15,6 +15,7 @@ from a2a.types import (
     Message
 )
 import openai
+import os
 
 class BuildingsManagementAgent:
     """Buildings Management Agent."""
@@ -85,7 +86,8 @@ def main():
         extended_agent_card=public_agent_card,
     )
 
-    uvicorn.run(server.build(), host='0.0.0.0', port=9997)
+    port = int(os.getenv("PORT", "9001"))
+    uvicorn.run(server.build(), host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
     main()

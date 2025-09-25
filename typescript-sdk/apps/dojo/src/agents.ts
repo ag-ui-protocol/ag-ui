@@ -16,7 +16,9 @@ import getEnvVars from "./env";
 import { mastra } from "./mastra";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 import { ADKAgent } from "@ag-ui/adk";
-import { A2AClientAgent } from "@ag-ui/a2a";
+import { HttpAgent } from "@ag-ui/client";
+import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
+
 
 const envVars = getEnvVars();
 export const agentsIntegrations: AgentIntegrationConfig[] = [
@@ -289,18 +291,26 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
   {
     id: "a2a",
     agents: async () => {
+      // TODO: configurable
+      const agentUrls = ["http://127.0.0.1:9999", "http://127.0.0.1:9998", "http://127.0.0.1:9997"];
+      // TODO: configurable
+      const orchestrationAgent = new HttpAgent({
+        url: "http://127.0.0.1:9999",
+      });
       return {
-        a2a_chat: new A2AClientAgent({
-          model: openai("gpt-4o", { parallelToolCalls: false }),
-          agentUrls: ["http://127.0.0.1:9999", "http://127.0.0.1:9998", "http://127.0.0.1:9997"],
+        a2a_chat:
+
+        new A2AMiddlewareAgent({
+          description: "Middleware that connects to remote A2A agents",
+          agentUrls,
           instructions: `
           You are an HR agent. You are responsible for hiring employees and other typical HR tasks.
 
           It's very important to contact all the departments necessary to complete the task.
           For example, to hire an employee, you must contact the Finance and IT departments and to find a table at buildings management.
 
-          DO NOT FORGET TO COMMUNICATE BACK TO THE RELEVANT AGENT IF MAKING A TOOL CALL ON BEHALF OF ANOTHER AGENT!!!
-   `,
+          DO NOT FORGET TO COMMUNICATE BACK TO THE RELEVANT AGENT IF MAKING A TOOL CALL ON BEHALF OF ANOTHER AGENT!!! `,
+          orchestrationAgent,
         }),
       };
     },
