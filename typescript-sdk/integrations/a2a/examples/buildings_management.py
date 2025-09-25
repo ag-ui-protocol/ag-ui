@@ -17,6 +17,8 @@ from a2a.types import (
 import openai
 import os
 
+port = int(os.getenv("PORT", "9001"))
+
 class BuildingsManagementAgent:
     """Buildings Management Agent."""
 
@@ -44,7 +46,7 @@ skill = AgentSkill(
 public_agent_card = AgentCard(
     name='Buildings Management Agent',
     description='The Buildings Management Agent is in charge of the buildings management',
-    url='http://localhost:9997/',
+    url=f'http://localhost:{port}/',
     version='1.0.0',
     defaultInputModes=['text'],
     defaultOutputModes=['text'],
@@ -86,7 +88,6 @@ def main():
         extended_agent_card=public_agent_card,
     )
 
-    port = int(os.getenv("PORT", "9001"))
     uvicorn.run(server.build(), host='0.0.0.0', port=port)
 
 if __name__ == '__main__':

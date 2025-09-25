@@ -292,10 +292,10 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     id: "a2a",
     agents: async () => {
       // TODO: configurable
-      const agentUrls = ["http://127.0.0.1:9999", "http://127.0.0.1:9998", "http://127.0.0.1:9997"];
+      const agentUrls = ["http://127.0.0.1:9001", "http://127.0.0.1:9002", "http://127.0.0.1:9003"];
       // TODO: configurable
       const orchestrationAgent = new HttpAgent({
-        url: "http://127.0.0.1:9999",
+        url: "http://127.0.0.1:9000",
       });
       return {
         a2a_chat:
