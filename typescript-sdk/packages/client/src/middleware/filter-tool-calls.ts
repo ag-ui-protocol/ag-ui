@@ -3,7 +3,6 @@ import { AbstractAgent } from "@/agent";
 import { RunAgentInput, BaseEvent, EventType, ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent, ToolCallResultEvent } from "@ag-ui/core";
 import { Observable } from "rxjs";
 import { filter } from "rxjs/operators";
-import { transformChunks } from "@/chunks";
 
 type FilterToolCallsConfig =
   | { allowedToolCalls: string[]; disallowedToolCalls?: never }
@@ -34,9 +33,8 @@ export class FilterToolCallsMiddleware extends Middleware {
   }
 
   public run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
-    // Apply transformChunks first to convert TOOL_CALL_CHUNK events
-    return next.run(input).pipe(
-      transformChunks(false),
+    // Use runNext which already includes transformChunks
+    return this.runNext(input, next).pipe(
       filter((event) => {
         // Handle TOOL_CALL_START events
         if (event.type === EventType.TOOL_CALL_START) {
