@@ -89,7 +89,7 @@ export class A2AMiddlewareAgent extends AbstractAgent {
               const toolName = toolCallsFromMessages[0]?.function.name;
               const toolArgs = toolCallsFromMessages
                 .map((toolCall) => toolCall.function.arguments)
-                .reduce((acc, curr) => acc > curr ? acc : curr, '');
+                .reduce((acc, curr) => acc.length > curr.length ? acc : curr, '');
 
                 return this.sendMessageToA2AAgent(toolArgs, toolName).then((a2aResponse) => {
                   const newMessage = {
