@@ -193,6 +193,13 @@ func (c *Client) readStream(ctx context.Context, resp *http.Response, frames cha
 	var byteCount int64
 	startTime := time.Now()
 
+	// Create a channel for read results
+	type readResult struct {
+		line []byte
+		err  error
+	}
+	readCh := make(chan readResult)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -203,16 +210,42 @@ func (c *Client) readStream(ctx context.Context, resp *http.Response, frames cha
 		default:
 		}
 
+		// Start async read
+		go func() {
+			line, err := reader.ReadBytes('\n')
+			select {
+			case readCh <- readResult{line: line, err: err}:
+			case <-ctx.Done():
+			}
+		}()
+
+		// Wait for read result with timeout
+		var result readResult
 		if c.config.ReadTimeout > 0 {
-			deadline := time.Now().Add(c.config.ReadTimeout)
-			if tc, ok := resp.Body.(interface{ SetReadDeadline(time.Time) error }); ok {
-				_ = tc.SetReadDeadline(deadline)
+			select {
+			case result = <-readCh:
+				// Got result
+			case <-time.After(c.config.ReadTimeout):
+				// Timeout occurred
+				select {
+				case errors <- fmt.Errorf("read timeout after %v", c.config.ReadTimeout):
+				case <-ctx.Done():
+				}
+				return
+			case <-ctx.Done():
+				return
+			}
+		} else {
+			select {
+			case result = <-readCh:
+				// Got result
+			case <-ctx.Done():
+				return
 			}
 		}
 
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			if err == io.EOF {
+		if result.err != nil {
+			if result.err == io.EOF {
 				if c.logger != nil {
 					c.logger.WithFields(logrus.Fields{
 						"frames":   frameCount,
@@ -223,11 +256,13 @@ func (c *Client) readStream(ctx context.Context, resp *http.Response, frames cha
 				return
 			}
 			select {
-			case errors <- fmt.Errorf("read error: %w", err):
+			case errors <- fmt.Errorf("read error: %w", result.err):
 			case <-ctx.Done():
 			}
 			return
 		}
+
+		line := result.line
 
 		byteCount += int64(len(line))
 		line = bytes.TrimSuffix(line, []byte("\n"))
