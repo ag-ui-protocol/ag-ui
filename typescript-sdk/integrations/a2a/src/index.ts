@@ -9,6 +9,8 @@ import {
   ToolCallStartEvent,
   transformChunks,
   AgentSubscriber,
+  RunFinishedEventSchema,
+  RunFinishedEvent,
 } from "@ag-ui/client";
 
 
@@ -101,40 +103,48 @@ export class A2AMiddlewareAgent extends AbstractAgent {
                 .flatMap((message) => message.toolCalls || [])
                 .filter((toolCall) => toolCall.id === toolCallId);
 
-              const toolName = toolCallsFromMessages[0]?.function.name;
-              const toolArgs = toolCallsFromMessages
-                .map((toolCall) => toolCall.function.arguments)
-                .reduce((acc, curr) => acc.length > curr.length ? acc : curr, '');
+              const toolArgs = toolCallsFromMessages[0]?.function.arguments;
+              if (!toolArgs) {
+                throw new Error(`Tool arguments not found for tool call id ${toolCallId}`);
+              }
+              const parsed = JSON.parse(toolArgs);
+              const agentName = parsed.agentName;
+              const task = parsed.task;
 
-                return this.sendMessageToA2AAgent(toolArgs, toolName).then((a2aResponse) => {
-                  const newMessage = {
-                    id: randomUUID(),
-                    role: "tool",
-                    toolCallId: toolCallId,
-                    content: `A2A Agent Response: ${a2aResponse}`,
-                    timestamp: Date.now(),
-                    parts: [{ kind: "text", text: `A2A Agent Response: ${a2aResponse}` }]
-                  } as Message;
-                  console.log('newMessage From a2a agent', newMessage);
-                  this.addMessage(newMessage);
+              return this.sendMessageToA2AAgent(agentName, task).then((a2aResponse) => {
+                const newMessage: Message = {
+                  id: randomUUID(),
+                  role: "tool",
+                  toolCallId: toolCallId,
+                  content: `A2A Agent Response: ${a2aResponse}`,
+                };
+                console.log('newMessage From a2a agent', newMessage);
+                this.addMessage(newMessage);
+                this.orchestrationAgent.addMessage(newMessage);
 
-                  const newEvent={
-                    type: EventType.TOOL_CALL_RESULT,
-                    toolCallId: toolCallId,
-                    messageId: newMessage.id,
-                    content: a2aResponse,
-                  } as ToolCallResultEvent;
-                  console.log('newEvent', newEvent);
-                  observer.next(newEvent);
+                const newEvent: ToolCallResultEvent ={
+                  type: EventType.TOOL_CALL_RESULT,
+                  toolCallId: toolCallId,
+                  messageId: newMessage.id,
+                  content: a2aResponse
+                };
+                console.log('newEvent', newEvent);
+                observer.next(newEvent);
 
-                  pendingA2ACalls.delete(toolCallId);
-                }).finally(() => {
-                  pendingA2ACalls.delete(toolCallId as string);
-                })
+                pendingA2ACalls.delete(toolCallId);
+              }).finally(() => {
+                pendingA2ACalls.delete(toolCallId as string);
+              })
             })
 
             Promise.all(callProms).then (() => {
-              this.triggerNewRun(observer, input, pendingA2ACalls)
+              observer.next({
+                type: EventType.RUN_FINISHED,
+                threadId: input.threadId,
+                runId: input.runId,
+              } as RunFinishedEvent);
+
+              this.triggerNewRun(observer, input, pendingA2ACalls);
             })
 
           } else {
@@ -190,9 +200,10 @@ export class A2AMiddlewareAgent extends AbstractAgent {
 
       input.tools = [
         ...(input.tools || []),
-        ...agentCards.map((card) => getToolDefinition(card))
+        getToolDefinition(),
       ]
 
+      console.log('input.tools', input.tools);
       // Start the orchestration agent run
       this.triggerNewRun(observer, input, pendingA2ACalls);
     }
@@ -201,18 +212,19 @@ export class A2AMiddlewareAgent extends AbstractAgent {
   }
 
   private async sendMessageToA2AAgent(
+    agentName: string,
     args: string,
-    toolName: string): Promise<string> {
+  ): Promise<string> {
 
     const agentCards = await this.agentCards;
 
     const agents = agentCards.map((card, index) => {
         return { client: this.agentClients[index], card }});
 
-    const agent = agents.find((agent) =>  toolName === `send_message_to_a2a_agent_${makeNameMachineSafe(agent.card.name)}`);
+    const agent = agents.find((agent) =>  agent.card.name === agentName);
 
     if (!agent) {
-      throw new Error(`Agent for "${toolName}" not found`);
+      throw new Error(`Agent "${agentName}" not found`);
     }
 
     const { client } = agent;
@@ -227,7 +239,7 @@ export class A2AMiddlewareAgent extends AbstractAgent {
     });
 
     if ("error" in sendResponse) {
-      throw new Error(`Error sending message to agent "${toolName}": ${sendResponse.error.message}`);
+      throw new Error(`Error sending message to agent "${agentName}": ${sendResponse.error.message}`);
     }
 
     const result = (sendResponse as SendMessageSuccessResponse).result;
