@@ -1,0 +1,70 @@
+---
+title: "Java SDK Overview"
+description: "Connect to AG-UI agents using the official Java SDK"
+---
+
+The AG-UI Java SDK provides a robust and idiomatic way to connect Java applications to AG-UI agents. 
+It enables real-time streaming communication through Server-Sent Events (SSE), allowing you to build intelligent agent-powered applications with Go.
+
+## Installation
+
+Add the SDK as a maven dependency:
+
+```xml
+```
+
+## Quick Start
+
+
+## Package Structure
+
+The Java SDK is organized into several focused packages, each handling a specific aspect of the AG-UI protocol:
+
+### Core Package (`core/events`)
+The foundation of the SDK, providing event types, interfaces, and decoding capabilities. This package defines all the event structures used in AG-UI communication, including text messages, tool calls, state management, and lifecycle events.
+
+
+
+## Next Steps
+
+Explore the detailed documentation for each package to learn more about specific features and advanced usage:
+
+<Card
+  title="Core Concepts"
+  icon="cube"
+  href="/sdk/go/core/overview"
+  color="#3B82F6"
+  iconType="solid"
+>
+  Learn about events, types, and the foundational concepts of the AG-UI protocol
+</Card>
+
+<Card
+  title="Client Connectivity"
+  icon="cube"
+  href="/sdk/go/client/overview"
+  color="#3B82F6"
+  iconType="solid"
+>
+  Detailed guide on SSE client configuration, streaming, and connection management
+</Card>
+
+<Card
+  title="Encoding & Serialization"
+  icon="cube"
+  href="/sdk/go/encoding/overview"
+  color="#3B82F6"
+  iconType="solid"
+>
+  Work with different encodings, content negotiation, and SSE server implementation
+</Card>
+
+<Card
+  title="Error Handling"
+  icon="cube"
+  href="/sdk/go/errors/overview"
+  color="#3B82F6"
+  iconType="solid"
+>
+  Comprehensive error handling patterns, retry logic, and recovery strategies
+</Card>

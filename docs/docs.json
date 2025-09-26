@@ -108,6 +108,17 @@
                 "pages": ["sdk/python/encoder/overview"]
               }
             ]
+          },
+          {
+            "group": "Java",
+            "pages": [
+              {
+                "group": "Core",
+                "pages": [
+                  "sdk/java/core/overview"
+                ]
+              }
+            ]
           }
         ]
       }
