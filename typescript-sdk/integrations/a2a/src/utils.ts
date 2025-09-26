@@ -37,12 +37,16 @@ export const makeNameMachineSafe = (name: string) => {
   return name.replace(/[^a-zA-Z0-9]/g, '_');
 };
 
-export const getToolDefinition = (card: AgentCard): Tool => {return {
-  name: `send_message_to_a2a_agent_${makeNameMachineSafe(card.name)}`,
-  description: `Send a message to an A2A agent named ${card.name}. Use this when discussing: ${card.description}`,
+export const getToolDefinition = (): Tool => {return {
+  name: `send_message_to_a2a_agent`,
+  description: "Sends a task to the agent named `agentName`, including the full conversation context and goal",
   parameters: {
     type: "object",
     properties: {
+      agentName: {
+        type: "string",
+        description: "The name of the A2A agent to send the message to."
+      },
       task: {
         type: "string",
         description: "The comprehensive conversation-context summary and goal to be achieved regarding the user inquiry."
