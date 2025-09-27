@@ -37,7 +37,7 @@ const Chat = () => {
       {
         name: "background",
         type: "string",
-        description: "The background. Prefer gradients.",
+        description: "The background. Prefer gradients. Only use when asked.",
       },
     ],
     handler: ({ background }) => {
