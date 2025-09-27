@@ -96,3 +96,18 @@ class LegacyBackoffStrategy implements BackoffStrategy {
   double get multiplier => _delegate.multiplier;
   double get jitterFactor => _delegate.jitterFactor;
 }
+
+/// Simple constant backoff strategy that returns the same delay every time.
+class ConstantBackoff implements BackoffStrategy {
+  final Duration delay;
+
+  const ConstantBackoff(this.delay);
+
+  @override
+  Duration nextDelay(int attempt) => delay;
+
+  @override
+  void reset() {
+    // No state to reset
+  }
+}

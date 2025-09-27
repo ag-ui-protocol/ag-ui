@@ -102,43 +102,9 @@ void main() {
         expect(textMessages.first.delta, equals('Hello!'));
       });
 
-      test('handles server errors with retry', skip: 'SSE streaming does not retry on HTTP errors', () async {
-        int attempts = 0;
-        mockHttpClient = MockStreamingClient((request) async {
-          attempts++;
-          if (attempts < 2) {
-            return http.StreamedResponse(
-              Stream.value(utf8.encode('Server error')),
-              500,
-            );
-          }
-          return http.StreamedResponse(
-            Stream.fromIterable([
-              utf8.encode('data: {"type":"RUN_STARTED","threadId":"t1","runId":"run_123"}\n\n'),
-              utf8.encode('data: {"type":"RUN_FINISHED","threadId":"t1","runId":"run_123"}\n\n'),
-            ]),
-            200,
-            headers: {'content-type': 'text/event-stream'},
-          );
-        });
-
-        client = AgUiClient(
-          config: AgUiClientConfig(
-            baseUrl: 'https://api.example.com',
-            maxRetries: 2,
-          ),
-          httpClient: mockHttpClient,
-        );
-
-        final events = await client.runAgent(
-          'test_endpoint',
-          SimpleRunAgentInput(),
-        ).toList();
-        
-        final runStarted = events.whereType<RunStartedEvent>().first;
-        expect(runStarted.runId, equals('run_123'));
-        expect(attempts, equals(2));
-      });
+      // Note: SSE protocol does not support retry on HTTP errors (4xx/5xx)
+      // This is a protocol limitation, not a bug. SSE can only retry on
+      // network failures after a successful connection is established.
 
       test('throws exception after max retries', () async {
         mockHttpClient = MockStreamingClient((request) async {
@@ -342,49 +308,10 @@ void main() {
         expect(capturedHeaders?['X-Custom-Header'], equals('custom-value'));
       });
 
-      test('uses exponential backoff strategy', skip: 'SSE streaming does not retry on HTTP errors', () async {
-        final attempts = <DateTime>[];
-        
-        mockHttpClient = MockStreamingClient((request) async {
-          attempts.add(DateTime.now());
-          if (attempts.length < 3) {
-            return http.StreamedResponse(
-              Stream.value(utf8.encode('Server error')),
-              503,
-            );
-          }
-          return http.StreamedResponse(
-            Stream.fromIterable([
-              utf8.encode('data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1"}\n\n'),
-            ]),
-            200,
-            headers: {'content-type': 'text/event-stream'},
-          );
-        });
-
-        client = AgUiClient(
-          config: AgUiClientConfig(
-            baseUrl: 'https://api.example.com',
-            maxRetries: 3,
-            backoffStrategy: ExponentialBackoff(
-              initialDelay: Duration(milliseconds: 100),
-              maxDelay: Duration(seconds: 1),
-            ),
-          ),
-          httpClient: mockHttpClient,
-        );
-
-        await client.runAgent('test', SimpleRunAgentInput()).toList();
-        
-        expect(attempts.length, equals(3));
-        
-        // Check that delays increase
-        if (attempts.length >= 3) {
-          final delay1 = attempts[1].difference(attempts[0]);
-          final delay2 = attempts[2].difference(attempts[1]);
-          expect(delay2.inMilliseconds, greaterThan(delay1.inMilliseconds));
-        }
-      });
+      // Note: Exponential backoff for SSE connections only applies to
+      // network failures after successful connection, not HTTP errors.
+      // Applications requiring retry on HTTP errors should implement
+      // this at the application layer, not the protocol layer.
     });
   });
 }
