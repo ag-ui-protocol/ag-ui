@@ -104,7 +104,7 @@ const ALL_TARGETS = {
     cwd: path.join(integrationsRoot, 'adk-middleware/python/examples'),
   },
   'dojo': {
-    command: 'pnpm install --no-frozen-lockfile && pnpm build --filter=demo-viewer...',
+    command: 'pnpm build --filter=demo-viewer...',
     name: 'Dojo',
     cwd: path.join(gitRoot, 'typescript-sdk'),
   },
