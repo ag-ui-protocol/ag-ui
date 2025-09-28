@@ -43,15 +43,6 @@ export const AgentStateAnnotation = Annotation.Root({
 });
 export type AgentState = typeof AgentStateAnnotation.State;
 
-async function startFlow(state: AgentState, config?: RunnableConfig): Promise<Command> {
-  /**
-   * This is the entry point for the flow.
-   */
-  return new Command({
-    goto: "chat_node"
-  });
-}
-
 async function chatNode(state: AgentState, config?: RunnableConfig): Promise<Command> {
   /**
    * Standard chat node.
@@ -152,16 +143,13 @@ async function chatNode(state: AgentState, config?: RunnableConfig): Promise<Com
 }
 
 // Define the graph
-const workflow = new StateGraph<AgentState>(AgentStateAnnotation);
+const workflow = new StateGraph(AgentStateAnnotation);
 
 // Add nodes
-workflow.addNode("start_flow", startFlow);
 workflow.addNode("chat_node", chatNode);
 
 // Add edges
-workflow.setEntryPoint("start_flow");
-workflow.addEdge(START, "start_flow");
-workflow.addEdge("start_flow", "chat_node");
+workflow.addEdge(START, "chat_node");
 workflow.addEdge("chat_node", END);
 
 // Compile the graph

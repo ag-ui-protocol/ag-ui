@@ -3,7 +3,7 @@ import { AgenticGenUIPage } from "../../pages/llamaIndexPages/AgenticUIGenPage";
 
 test.describe("Agent Generative UI Feature", () => {
   // Fails. Issue with integration or something.
-  test.fixme("[LlamaIndex] should interact with the chat to get a planner on prompt", async ({
+  test("[LlamaIndex] should interact with the chat to get a planner on prompt", async ({
     page,
   }) => {
     const genUIAgent = new AgenticGenUIPage(page);
@@ -17,7 +17,7 @@ test.describe("Agent Generative UI Feature", () => {
     await genUIAgent.sendButton.click();
     await genUIAgent.assertAgentReplyVisible(/Hello/);
 
-    await genUIAgent.sendMessage("Give me a plan to make brownies");
+    await genUIAgent.sendMessage("Give me a plan to make brownies using your tools");
     await genUIAgent.sendButton.click();
 
     await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 15000 });
@@ -37,7 +37,7 @@ test.describe("Agent Generative UI Feature", () => {
   });
 
   // Fails. Issue with integration or something.
-  test.fixme("[LlamaIndex] should interact with the chat using predefined prompts and perform steps", async ({
+  test("[LlamaIndex] should interact with the chat using predefined prompts and perform steps", async ({
     page,
   }) => {
     const genUIAgent = new AgenticGenUIPage(page);
@@ -51,7 +51,7 @@ test.describe("Agent Generative UI Feature", () => {
     await genUIAgent.sendButton.click();
     await genUIAgent.assertAgentReplyVisible(/Hello/);
 
-    await genUIAgent.sendMessage("Go to Mars");
+    await genUIAgent.sendMessage("Go to Mars using your tools");
     await genUIAgent.sendButton.click();
 
     await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 15000 });

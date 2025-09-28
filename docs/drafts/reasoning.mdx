@@ -1,0 +1,279 @@
+---
+title: Reasoning
+description: Support for LLM reasoning visibility and continuity
+---
+
+# Reasoning Proposal
+
+## Summary
+
+### Problem Statement
+
+LLMs increasingly use chain-of-thought reasoning to improve response quality,
+but there's no standardized way to surface reasoning signals while maintaining
+privacy and state continuity across turns.
+
+### Motivation
+
+AG-UI should support **LLM reasoning** without breaking existing apps.
+
+- **Reasoning visibility & continuity**: We must surface reasoning signals
+  (e.g., **reasoning summaries**) and support **encrypted reasoning items** for
+  state carry-over across turns—especially under `store:false`/ZDR—_without
+  exposing raw chain-of-thought_.
+- **Backwards compatibility**: Existing AG-UI clients must keep working
+  unchanged. New capabilities should be non-breaking.
+
+## Status
+
+- **Status**: Draft
+- **Author(s)**: Markus Ecker (mail@mme.xyz)
+
+## Detailed Specification
+
+### Overview
+
+This proposal introduces:
+
+- New events for reasoning lifecycle management
+- A new `ReasoningMessage` type for message history
+- Support for encrypted reasoning content
+
+## New Reasoning Events
+
+These events represent the lifecycle of reasoning messages in a conversation.
+
+### ReasoningStartEvent
+
+Marks the start of reasoning.
+
+```typescript
+type ReasoningStartEvent = BaseEvent & {
+  type: EventType.REASONING_START
+  messageId: string
+  encryptedContent?: string
+}
+```
+
+| Property           | Type      | Description                         |
+| ------------------ | --------- | ----------------------------------- |
+| `messageId`        | `string`  | Unique identifier of this reasoning |
+| `encryptedContent` | `string?` | Optionally the encrypted content    |
+
+### ReasoningMessageStartEvent
+
+Signals the start of a reasoning message.
+
+```typescript
+type ReasoningMessageStartEvent = BaseEvent & {
+  type: EventType.REASONING_MESSAGE_START
+  messageId: string
+  role: "assistant"
+}
+```
+
+| Property    | Type          | Description                      |
+| ----------- | ------------- | -------------------------------- |
+| `messageId` | `string`      | Unique identifier of the message |
+| `role`      | `"assistant"` | Role of the reasoning message    |
+
+### ReasoningMessageContentEvent
+
+Represents a chunk of content in a streaming reasoning message.
+
+```typescript
+type ReasoningMessageContentEvent = BaseEvent & {
+  type: EventType.REASONING_MESSAGE_CONTENT
+  messageId: string
+  delta: string // Non-empty string
+}
+```
+
+| Property    | Type     | Description                                    |
+| ----------- | -------- | ---------------------------------------------- |
+| `messageId` | `string` | Matches the ID from ReasoningMessageStartEvent |
+| `delta`     | `string` | Reasoning content chunk (non-empty)            |
+
+### ReasoningMessageEndEvent
+
+Signals the end of a reasoning message.
+
+```typescript
+type ReasoningMessageEndEvent = BaseEvent & {
+  type: EventType.REASONING_MESSAGE_END
+  messageId: string
+}
+```
+
+| Property    | Type     | Description                                    |
+| ----------- | -------- | ---------------------------------------------- |
+| `messageId` | `string` | Matches the ID from ReasoningMessageStartEvent |
+
+### ReasoningMessageChunkEvent
+
+A convenience event to auto start/close reasoning messages.
+
+```typescript
+type ReasoningMessageChunkEvent = BaseEvent & {
+  type: EventType.REASONING_MESSAGE_CHUNK
+  messageId?: string
+  delta?: string
+}
+```
+
+| Property    | Type      | Description                                |
+| ----------- | --------- | ------------------------------------------ |
+| `messageId` | `string?` | Message ID (first event must be non-empty) |
+| `delta`     | `string?` | Reasoning content chunk                    |
+
+### ReasoningEndEvent
+
+Marks the end of reasoning.
+
+```typescript
+type ReasoningEndEvent = BaseEvent & {
+  type: EventType.REASONING_END
+  messageId: string
+}
+```
+
+| Property    | Type     | Description                         |
+| ----------- | -------- | ----------------------------------- |
+| `messageId` | `string` | Unique identifier of this reasoning |
+
+## New ReasoningMessage Type
+
+```typescript
+type ReasoningMessage = {
+  id: string
+  role: "reasoning"
+  content: string[]
+  encryptedContent?: string
+}
+```
+
+## Removed Events
+
+These events have never been publicly documented and will be removed:
+
+- `THINKING_TEXT_MESSAGE_START`
+- `THINKING_TEXT_MESSAGE_CONTENT`
+- `THINKING_TEXT_MESSAGE_END`
+
+## Implementation Considerations
+
+### Client SDK Changes
+
+TypeScript SDK:
+
+- New event types in `@ag-ui/core`
+- ReasoningMessage type in message unions
+- Reasoning event handlers in subscriber
+- Support for encrypted content handling
+
+Python SDK:
+
+- New event classes in `ag_ui.core.events`
+- ReasoningMessage class
+- Encryption/decryption utilities
+
+### Privacy and Security
+
+- **Encrypted reasoning**: Support for encrypted reasoning content that clients
+  cannot decrypt
+- **State continuity**: Encrypted reasoning items can be passed across turns
+  without exposing content
+- **ZDR compliance**: Works with `store:false` and zero data retention policies
+
+### Backward Compatibility
+
+- Clients not handling reasoning events continue to work
+- Reasoning messages are optional in message history
+- No changes required to existing integrations
+
+## Use Cases
+
+### Chain-of-Thought Visibility
+
+Show users that the model is "thinking" without exposing internal reasoning.
+
+### Reasoning Summaries
+
+Provide high-level summaries of reasoning process for transparency.
+
+### State Continuity
+
+Maintain reasoning context across conversation turns without storing raw
+content.
+
+### Compliance and Privacy
+
+Meet data retention requirements while preserving reasoning capabilities.
+
+## Examples
+
+### Basic Reasoning Flow
+
+```typescript
+// Agent emits reasoning start
+{
+  "type": "REASONING_START",
+  "messageId": "reasoning-001",
+  "encryptedContent": "encrypted-blob-xyz"
+}
+
+// Stream reasoning content (visible to client)
+{
+  "type": "REASONING_MESSAGE_START",
+  "messageId": "msg-123",
+  "role": "assistant"
+}
+
+{
+  "type": "REASONING_MESSAGE_CONTENT",
+  "messageId": "msg-123",
+  "delta": "Let me think through this step by step..."
+}
+
+{
+  "type": "REASONING_MESSAGE_END",
+  "messageId": "msg-123"
+}
+
+// End reasoning
+{
+  "type": "REASONING_END",
+  "messageId": "reasoning-001"
+}
+```
+
+### Convenience Event Usage
+
+```typescript
+// Using chunk event for simpler implementation
+{
+  "type": "REASONING_MESSAGE_CHUNK",
+  "messageId": "msg-456",
+  "delta": "Analyzing the requirements..."
+}
+
+// Auto-closes on next non-reasoning event or empty chunk
+{
+  "type": "REASONING_MESSAGE_CHUNK",
+  "messageId": "msg-456",
+  "delta": ""
+}
+```
+
+## Testing Strategy
+
+- Unit tests for new event types
+- Integration tests with reasoning-capable models
+- Backward compatibility tests with existing clients
+- Encryption/decryption roundtrip tests
+- Performance tests for reasoning event streaming
+
+## References
+
+- [AG-UI Events Documentation](/concepts/events)
+- [AG-UI Messages Documentation](/concepts/messages)
