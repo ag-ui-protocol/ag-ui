@@ -1,9 +1,9 @@
 import { test, expect } from "@playwright/test";
 import { AgenticGenUIPage } from "../../pages/crewAIPages/AgenticUIGenPage";
 
-test.describe("Agent Generative UI Feature", () => {
+test.fixme("[CrewAI] Agentic Gen UI", () => {
   // Flaky
-  test.fixme("[CrewAI] should interact with the chat to get a planner on prompt", async ({
+  test("[CrewAI] should interact with the chat to get a planner on prompt", async ({
     page,
   }) => {
     const genUIAgent = new AgenticGenUIPage(page);

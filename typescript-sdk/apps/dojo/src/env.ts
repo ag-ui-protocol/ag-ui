@@ -9,6 +9,7 @@ type envVars = {
   llamaIndexUrl: string;
   crewAiUrl: string;
   pydanticAIUrl: string;
+  adkMiddlewareUrl: string;
   customDomainTitle: Record<string, string>;
 }
 
@@ -32,6 +33,7 @@ export default function getEnvVars(): envVars {
     llamaIndexUrl: process.env.LLAMA_INDEX_URL || 'http://localhost:9000',
     crewAiUrl: process.env.CREW_AI_URL || 'http://localhost:9002',
     pydanticAIUrl: process.env.PYDANTIC_AI_URL || 'http://localhost:9000',
+    adkMiddlewareUrl: process.env.ADK_MIDDLEWARE_URL || 'http://localhost:8000',
     customDomainTitle: customDomainTitle,
   }
 }

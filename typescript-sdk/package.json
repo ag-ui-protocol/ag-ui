@@ -7,6 +7,7 @@
     "clean": "rm -rf dist .turbo node_modules && pnpm -r clean",
     "build:clean": "rm -rf dist .turbo node_modules && pnpm -r clean && pnpm install && turbo run build",
     "dev": "turbo run dev",
+    "start": "turbo run start",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md,mdx}\"",
     "check-types": "turbo run check-types",
@@ -14,6 +15,7 @@
     "bump": "pnpm --filter './packages/*' exec -- pnpm version",
     "bump:alpha": "pnpm --filter './packages/*' exec -- pnpm version --preid alpha",
     "publish": "pnpm -r clean && pnpm install && turbo run build && pnpm publish -r --filter='./packages/*'",
+    "publish:integrations": "pnpm -r clean && pnpm install && turbo run build && pnpm publish -r --filter='./integrations/*'",
     "publish:alpha": "pnpm -r clean && pnpm install && turbo run build && pnpm publish -r --no-git-checks --filter='./packages/*' --tag alpha"
   },
   "devDependencies": {

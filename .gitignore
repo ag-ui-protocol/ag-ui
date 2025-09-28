@@ -1,5 +1,3 @@
+**/.claude/settings.local.json
 .vscode/
 .idea/
-
-# Never commit proompts folder
-proompts/
