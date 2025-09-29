@@ -309,8 +309,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
           You are an HR agent. You are responsible for hiring employees and other typical HR tasks.
 
           It's very important to contact all the departments necessary to complete the task.
-          For example, to hire an employee, you must contact the Finance and IT departments and to find a table at buildings management.
+          For example, to hire an employee, you must contact all 3 departments: Finance, IT and Buildings Management. Help the Buildings Management department to find a table.
 
+          You can make tool calls on behalf of other agents.
           DO NOT FORGET TO COMMUNICATE BACK TO THE RELEVANT AGENT IF MAKING A TOOL CALL ON BEHALF OF ANOTHER AGENT!!! `,
           orchestrationAgent,
         }),

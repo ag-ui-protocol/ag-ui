@@ -8,7 +8,8 @@ export const createSystemPrompt = (agentCards: AgentCard[], additionalInstructio
 YOU MUST NOT literally repeat what the agent responds unless asked to do so. Add context, summarize the conversation, and add your own thoughts.
 YOU MUST engage in multi-turn conversations with the agents. NEVER ask the user for permission to engage multiple times with the same agent.
 YOU MUST ALWAYS, UNDER ALL CIRCUMSTANCES, COMMUNICATE WITH ALL AGENTS NECESSARY TO COMPLETE THE TASK.
-NEVER STOP COMMUNICATING WITH THE AGENTS UNTIL THE TASK IS COMPLETED.
+NEVER STOP COMMUNICATING WITH THE AGENTS UNTIL THEY CONFIRM THAT THEIR TASK IS COMPLETED.
+WHEN ONE AGENT FINISHES THEIR TASK, YOU MUST ASK THE NEXT AGENT TO START OR CONTINUE THEIR TASK.
 
 If you have tools available to display information to the user, you MUST use them.
 

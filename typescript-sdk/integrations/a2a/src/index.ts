@@ -203,7 +203,6 @@ export class A2AMiddlewareAgent extends AbstractAgent {
         getToolDefinition(),
       ]
 
-      console.log('input.tools', input.tools);
       // Start the orchestration agent run
       this.triggerNewRun(observer, input, pendingA2ACalls);
     }
