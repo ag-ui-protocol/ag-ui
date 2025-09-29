@@ -211,7 +211,7 @@ export class MastraAgent extends AbstractAgent {
 
       run();
 
-      return () => { };
+      return () => {};
     });
   }
 
@@ -249,13 +249,11 @@ export class MastraAgent extends AbstractAgent {
     );
     const resourceId = this.resourceId ?? threadId;
 
-
     const convertedMessages = convertAGUIMessagesToMastra(messages);
-    this.runtimeContext?.set('ag-ui', { context: inputContext });
+    this.runtimeContext?.set("ag-ui", { context: inputContext });
     const runtimeContext = this.runtimeContext;
 
     if (this.isLocalMastraAgent(this.agent)) {
-
       // Local agent - use the agent's stream method directly
       try {
         const response = await this.agent.streamVNext(convertedMessages, {
@@ -271,11 +269,11 @@ export class MastraAgent extends AbstractAgent {
         if (response && typeof response === "object") {
           for await (const chunk of response.fullStream) {
             switch (chunk.type) {
-              case 'text-delta': {
+              case "text-delta": {
                 onTextPart?.(chunk.payload.text);
                 break;
               }
-              case 'tool-call': {
+              case "tool-call": {
                 onToolCallPart?.({
                   toolCallId: chunk.payload.toolCallId,
                   toolName: chunk.payload.toolName,
@@ -283,7 +281,7 @@ export class MastraAgent extends AbstractAgent {
                 });
                 break;
               }
-              case 'tool-result': {
+              case "tool-result": {
                 onToolResultPart?.({
                   toolCallId: chunk.payload.toolCallId,
                   result: chunk.payload.result,
@@ -291,18 +289,13 @@ export class MastraAgent extends AbstractAgent {
                 break;
               }
 
-              case 'error': {
+              case "error": {
                 onError?.(new Error(chunk.payload.error as string));
                 break;
               }
 
-              case 'finish': {
+              case "finish": {
                 onFinishMessagePart?.();
-                break;
-              }
-
-              case 'tool-output': {
-                console.log(JSON.stringify(chunk.payload, null, 2))
                 break;
               }
             }
@@ -331,12 +324,11 @@ export class MastraAgent extends AbstractAgent {
           await response.processDataStream({
             onChunk: async (chunk) => {
               switch (chunk.type) {
-                case 'text-delta': {
+                case "text-delta": {
                   onTextPart?.(chunk.payload.text);
                   break;
                 }
-                case 'tool-call': {
-
+                case "tool-call": {
                   onToolCallPart?.({
                     toolCallId: chunk.payload.toolCallId,
                     toolName: chunk.payload.toolName,
@@ -344,7 +336,7 @@ export class MastraAgent extends AbstractAgent {
                   });
                   break;
                 }
-                case 'tool-result': {
+                case "tool-result": {
                   onToolResultPart?.({
                     toolCallId: chunk.payload.toolCallId,
                     result: chunk.payload.result,
@@ -352,7 +344,7 @@ export class MastraAgent extends AbstractAgent {
                   break;
                 }
 
-                case 'finish': {
+                case "finish": {
                   onFinishMessagePart?.();
                   break;
                 }
