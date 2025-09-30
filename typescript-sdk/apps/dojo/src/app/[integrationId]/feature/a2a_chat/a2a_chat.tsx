@@ -54,12 +54,8 @@ const MaybeMessageToA2A = ({ everything }: { everything: any }) => {
     case "executing":
     case "complete":
       return (
-        <div>
-          <h1>Send Message to A2A Agent</h1>
-          <p>Agent Name: {args.agentName}</p>
-          <p>Task: {args.task}</p>
-        </div>
-      )
+        <Message from={"Agent"} to={args.agentName} message={args.task} color="green" />
+      );
     case "inProgress":
     default:
       return null;
@@ -71,12 +67,8 @@ const MaybeMessageFromA2A = ({ everything }: { everything: any }) => {
   switch (status) {
     case "complete":
       return (
-        <div>
-          <h1>Recieve message from A2A Agent</h1>
-          <p>Agent Name: {args.agentName}</p>
-          <p>Response: {result}</p>
-        </div>
-      )
+        <Message from={args.agentName} to={"Agent"} message={result} color="blue" />
+      );
     case "executing":
     case "inProgress":
     default:
@@ -84,6 +76,27 @@ const MaybeMessageFromA2A = ({ everything }: { everything: any }) => {
   }
 }
 
+const Message = ({from, to, message, color}: {from: string, to: string, message: string, color: 'blue' | 'green'}) => {
+  const colorClass = color === 'blue' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700';
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg px-3 py-2">
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 min-w-[160px]">
+          <span
+            className={`px-2 py-1 rounded-full text-[10px] font-medium ${colorClass}`}
+          >
+            {from}
+          </span>
+          <span className="text-muted-foreground text-[11px]">→</span>
+          <span className="px-2 py-1 rounded-full text-[10px] font-medium bg-white border border-gray-300 text-muted-foreground">
+            {to}
+          </span>
+        </div>
+        <span className="break-words text-[11px] flex-1">{message}</span>
+      </div>
+    </div>
+  );
+};
 
 const Chat = ({ onNotification }: { onNotification?: () => void }) => {
   const [background, setBackground] = useState<string>("--copilot-kit-background-color");
@@ -103,52 +116,6 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
     }
   }, [isLoading, JSON.stringify(visibleMessages)]);
 
-  // React.useEffect(() => {
-  //   if (state?.a2aMessages) {
-  //     setLastMessageCount(state.a2aMessages.length);
-  //   }
-  // }, [state?.a2aMessages?.length]);
-
-
-
-  // useCoAgentStateRender<A2AChatState>({
-  //   name: "a2a_chat",
-  //   render: ({ state }) => {
-  //     if (!state.a2aMessages || state.a2aMessages.length === 0) {
-  //       return null;
-  //     }
-  //     return (
-  //       <div className="w-full max-w-2xl ml-0 mb-4 text-left">
-  //         <div className="space-y-2">
-  //           {state.a2aMessages.map((message, idx) => {
-  //             return (
-  //               <div key={idx} className="bg-white border border-gray-200 rounded-lg px-3 py-2">
-  //                 <div className="flex items-center gap-3">
-  //                   <div className="flex items-center gap-2 min-w-[160px]">
-  //                     <span
-  //                       className={`px-2 py-1 rounded-full text-[10px] font-medium ${
-  //                         message.name === "Agent"
-  //                           ? "bg-green-100 text-green-700"
-  //                           : "bg-blue-100 text-blue-700"
-  //                       }`}
-  //                     >
-  //                       {message.name}
-  //                     </span>
-  //                     <span className="text-muted-foreground text-[11px]">→</span>
-  //                     <span className="px-2 py-1 rounded-full text-[10px] font-medium bg-white border border-gray-300 text-muted-foreground">
-  //                       {message.to}
-  //                     </span>
-  //                   </div>
-  //                   <span className="break-words text-[11px] flex-1">{message.message}</span>
-  //                 </div>
-  //               </div>
-  //             );
-  //           })}
-  //         </div>
-  //       </div>
-  //     );
-  //   },
-  // });
 
   useCopilotAction({
     name: 'send_message_to_a2a_agent',
