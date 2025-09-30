@@ -48,6 +48,43 @@ interface Table {
   seats: Seat[];
 }
 
+const MaybeMessageToA2A = ({ everything }: { everything: any }) => {
+  const { status, args } = everything;
+  switch (status) {
+    case "executing":
+    case "complete":
+      return (
+        <div>
+          <h1>Send Message to A2A Agent</h1>
+          <p>Agent Name: {args.agentName}</p>
+          <p>Task: {args.task}</p>
+        </div>
+      )
+    case "inProgress":
+    default:
+      return null;
+  }
+}
+
+const MaybeMessageFromA2A = ({ everything }: { everything: any }) => {
+  const { status, args, result } = everything;
+  switch (status) {
+    case "complete":
+      return (
+        <div>
+          <h1>Recieve message from A2A Agent</h1>
+          <p>Agent Name: {args.agentName}</p>
+          <p>Response: {result}</p>
+        </div>
+      )
+    case "executing":
+    case "inProgress":
+    default:
+      return null;
+  }
+}
+
+
 const Chat = ({ onNotification }: { onNotification?: () => void }) => {
   const [background, setBackground] = useState<string>("--copilot-kit-background-color");
   const [lastMessageCount, setLastMessageCount] = useState(0);
@@ -129,20 +166,13 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
         description: 'The message to send to the A2A agent',
       },
     ],
-    render: ({ args, result }) => {
+    render: (everything) => {
+      console.log("everything", everything);
       return (
         <>
-        <div>
-          <h1>Send Message to A2A Agent</h1>
-          <p>Agent Name: {args.agentName}</p>
-          <p>Task: {args.task}</p>
-        </div>
+        <MaybeMessageToA2A everything={everything} />
+        <MaybeMessageFromA2A everything={everything} />
 
-        <div>
-          <h1>Recieve message from A2A Agent</h1>
-          <p>Agent Name: {args.agentName}</p>
-          <p>Response: {result}</p>
-        </div>
         </>
       )
     },
