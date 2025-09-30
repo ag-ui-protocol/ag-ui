@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import "@copilotkit/react-ui/styles.css";
 import "./style.css";
 import {
+  ActionRenderProps,
   CopilotKit,
   useCoAgent,
   useCoAgentStateRender,
@@ -49,8 +50,22 @@ interface Table {
   seats: Seat[];
 }
 
-const MaybeMessageToA2A = ({ everything }: { everything: any }) => {
-  const { status, args } = everything;
+type MessageActionRenderProps = ActionRenderProps<
+  [
+    {
+      readonly name: "agentName";
+      readonly type: "string";
+      readonly description: "The name of the A2A agent to send the message to";
+    },
+    {
+      readonly name: "task";
+      readonly type: "string";
+      readonly description: "The message to send to the A2A agent";
+    },
+  ]
+>;
+
+const MaybeMessageToA2A = ({ status, args }: MessageActionRenderProps) => {
   switch (status) {
     case "executing":
     case "complete":
@@ -61,8 +76,7 @@ const MaybeMessageToA2A = ({ everything }: { everything: any }) => {
   }
 };
 
-const MaybeMessageFromA2A = ({ everything }: { everything: any }) => {
-  const { status, args, result } = everything;
+const MaybeMessageFromA2A = ({ status, args, result }: MessageActionRenderProps) => {
   switch (status) {
     case "complete":
       return <Message from={args.agentName} to={"Agent"} message={result} color="blue" />;
@@ -129,12 +143,11 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
         description: "The message to send to the A2A agent",
       },
     ],
-    render: (everything) => {
-      console.log("everything", everything);
+    render: (actionRenderProps: MessageActionRenderProps) => {
       return (
         <>
-          <MaybeMessageToA2A everything={everything} />
-          <MaybeMessageFromA2A everything={everything} />
+          <MaybeMessageToA2A {...actionRenderProps} />
+          <MaybeMessageFromA2A {...actionRenderProps} />
         </>
       );
     },
