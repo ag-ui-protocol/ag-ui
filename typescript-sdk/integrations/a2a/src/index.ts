@@ -11,6 +11,8 @@ import {
   AgentSubscriber,
   RunFinishedEventSchema,
   RunFinishedEvent,
+  TextMessageStartEvent,
+  TextMessageEndEvent,
 } from "@ag-ui/client";
 
 
@@ -19,10 +21,10 @@ import {AgentCard, SendMessageResponse, SendMessageSuccessResponse} from "@a2a-j
 import { Observable, Subscriber, tap } from "rxjs";
 import {
   createSystemPrompt,
-  getToolDefinition,
-  makeNameMachineSafe,
+  sendMessageToA2AAgentTool,
 } from "./utils";
 import { randomUUID } from "crypto";
+import { text } from "stream/consumers";
 
 
 
@@ -48,8 +50,22 @@ export class A2AMiddlewareAgent extends AbstractAgent {
     this.orchestrationAgent = config.orchestrationAgent;
   }
 
+  finishTextMessages(observer: Subscriber<{
+    type: EventType;
+    timestamp?: number | undefined;
+    rawEvent?: any;
+}>, pendingTextMessages: Set<string>): void {
+  pendingTextMessages.forEach((messageId) => {
+    observer.next({
+      type: EventType.TEXT_MESSAGE_END,
+      messageId: messageId,
+    } as TextMessageEndEvent);
+    pendingTextMessages.delete(messageId);
+  });
+}
 
-  wrapStream(stream: Observable<BaseEvent>, pendingA2ACalls: Set<string>, observer: Subscriber<{
+
+  wrapStream(stream: Observable<BaseEvent>, pendingA2ACalls: Set<string>, pendingTextMessages: Set<string>, observer: Subscriber<{
     type: EventType;
     timestamp?: number | undefined;
     rawEvent?: any;
@@ -65,9 +81,23 @@ export class A2AMiddlewareAgent extends AbstractAgent {
     return source$;
   };
 
+  const markTextMessageAsPending = (event: BaseEvent) => {
+    if (event.type === EventType.TEXT_MESSAGE_START) {
+      const textMessageStartEvent = event as TextMessageStartEvent;
+      pendingTextMessages.add(textMessageStartEvent.messageId);
+      return;
+    }
+    if (event.type === EventType.TEXT_MESSAGE_END) {
+      const textMessageEndEvent = event as TextMessageEndEvent;
+      pendingTextMessages.delete(textMessageEndEvent.messageId);
+      return;
+    }
+  }
+
     return stream.pipe(
       transformChunks(this.debug),
-      applyAndProcessEvents
+      applyAndProcessEvents,
+      tap(markTextMessageAsPending),
     )
     .subscribe({
       next: (event: BaseEvent) => {
@@ -95,6 +125,7 @@ export class A2AMiddlewareAgent extends AbstractAgent {
 
         // Handle run completion events
         if (event.type === EventType.RUN_FINISHED) {
+          this.finishTextMessages(observer, pendingTextMessages);
 
           if (pendingA2ACalls.size > 0) {
             const callProms = [...pendingA2ACalls].map((toolCallId) => {
@@ -111,6 +142,9 @@ export class A2AMiddlewareAgent extends AbstractAgent {
               const agentName = parsed.agentName;
               const task = parsed.task;
 
+              if (this.debug) {
+                console.log('sending message to a2a agent', {agentName, message: task});
+              }
               return this.sendMessageToA2AAgent(agentName, task).then((a2aResponse) => {
                 const newMessage: Message = {
                   id: randomUUID(),
@@ -118,7 +152,9 @@ export class A2AMiddlewareAgent extends AbstractAgent {
                   toolCallId: toolCallId,
                   content: `A2A Agent Response: ${a2aResponse}`,
                 };
-                console.log('newMessage From a2a agent', newMessage);
+                if (this.debug) {
+                  console.log('newMessage From a2a agent', newMessage);
+                }
                 this.addMessage(newMessage);
                 this.orchestrationAgent.addMessage(newMessage);
 
@@ -128,7 +164,7 @@ export class A2AMiddlewareAgent extends AbstractAgent {
                   messageId: newMessage.id,
                   content: a2aResponse
                 };
-                console.log('newEvent', newEvent);
+
                 observer.next(newEvent);
 
                 pendingA2ACalls.delete(toolCallId);
@@ -138,13 +174,14 @@ export class A2AMiddlewareAgent extends AbstractAgent {
             })
 
             Promise.all(callProms).then (() => {
+              this.finishTextMessages(observer, pendingTextMessages);
               observer.next({
                 type: EventType.RUN_FINISHED,
                 threadId: input.threadId,
                 runId: input.runId,
               } as RunFinishedEvent);
 
-              this.triggerNewRun(observer, input, pendingA2ACalls);
+              this.triggerNewRun(observer, input, pendingA2ACalls, pendingTextMessages);
             })
 
           } else {
@@ -182,31 +219,32 @@ export class A2AMiddlewareAgent extends AbstractAgent {
   run(input: RunAgentInput): Observable<BaseEvent> {
     return new Observable<BaseEvent>((observer) => {
       const run = async () => {
-      let pendingA2ACalls = new Set<string>();
-      const agentCards = await this.agentCards;
-      const newSystemPrompt = createSystemPrompt(agentCards, this.instructions);
+        let pendingA2ACalls = new Set<string>();
+        const pendingTextMessages = new Set<string>();
+        const agentCards = await this.agentCards;
+        const newSystemPrompt = createSystemPrompt(agentCards, this.instructions);
 
-      const messages = input.messages;
-      if (messages.length && messages[0].role === "system") {
-        // remove the first message if it is a system message
-        messages.shift();
+        const messages = input.messages;
+        if (messages.length && messages[0].role === "system") {
+          // remove the first message if it is a system message
+          messages.shift();
+        }
+
+        messages.unshift({
+          role: "system",
+          content: newSystemPrompt,
+          id: randomUUID(),
+        });
+
+        input.tools = [
+          ...(input.tools || []),
+          sendMessageToA2AAgentTool,
+        ]
+
+        // Start the orchestration agent run
+        this.triggerNewRun(observer, input, pendingA2ACalls, pendingTextMessages);
       }
-
-      messages.unshift({
-        role: "system",
-        content: newSystemPrompt,
-        id: randomUUID(),
-      });
-
-      input.tools = [
-        ...(input.tools || []),
-        getToolDefinition(),
-      ]
-
-      // Start the orchestration agent run
-      this.triggerNewRun(observer, input, pendingA2ACalls);
-    }
-    run()
+      run()
     });
   }
 
@@ -257,8 +295,9 @@ export class A2AMiddlewareAgent extends AbstractAgent {
     observer: any,
     input: RunAgentInput,
     pendingA2ACalls: Set<string>,
+    pendingTextMessages: Set<string>,
   ): void {
     const newRunStream = this.orchestrationAgent.run(input);
-    this.wrapStream(newRunStream, pendingA2ACalls, observer, input);
+    this.wrapStream(newRunStream, pendingA2ACalls, pendingTextMessages, observer, input);
   }
 }
