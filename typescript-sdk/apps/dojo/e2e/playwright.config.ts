@@ -44,12 +44,12 @@ function getBaseUrl(): string {
 }
 
 export default defineConfig({
-  timeout: process.env.CI ? 300_000 : 120_000, // 5min in CI, 2min locally for AI tests
+  timeout: process.env.PLAYWRIGHT_TIMEOUT ? parseInt(process.env.PLAYWRIGHT_TIMEOUT) : (process.env.CI ? 300_000 : 120_000), // 5min in CI, 2min locally for AI tests
   testDir: "./tests",
-  retries: process.env.CI ? 3 : 0, // More retries for flaky AI tests in CI, 0 for local
+  retries: process.env.PLAYWRIGHT_RETRIES ? parseInt(process.env.PLAYWRIGHT_RETRIES) : (process.env.CI ? 3 : 0), // More retries for flaky AI tests in CI, 0 for local
   // Make this sequential for now to avoid race conditions
-  workers: process.env.CI ? 1 : undefined,
-  fullyParallel: process.env.CI ? false : true,
+  workers: process.env.PLAYWRIGHT_WORKERS ? parseInt(process.env.PLAYWRIGHT_WORKERS) : (process.env.CI ? 1 : undefined),
+  fullyParallel: process.env.PLAYWRIGHT_FULLY_PARALLEL ? process.env.PLAYWRIGHT_FULLY_PARALLEL.toLowerCase() === 'true' : (process.env.CI ? false : true),
   use: {
     headless: true,
     viewport: { width: 1280, height: 720 },
