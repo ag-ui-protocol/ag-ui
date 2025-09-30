@@ -77,16 +77,16 @@ importers:
         version: link:../../integrations/agno
       '@ag-ui/client':
         specifier: workspace:*
-        version: 0.0.35
+        version: 0.0.39
       '@ag-ui/core':
         specifier: workspace:*
-        version: 0.0.35
+        version: 0.0.39
       '@ag-ui/crewai':
         specifier: workspace:*
         version: link:../../integrations/crewai
       '@ag-ui/encoder':
         specifier: workspace:*
-        version: 0.0.35
+        version: 0.0.39
       '@ag-ui/langgraph':
         specifier: workspace:*
         version: link:../../integrations/langgraph
@@ -101,7 +101,7 @@ importers:
         version: link:../../integrations/middleware-starter
       '@ag-ui/proto':
         specifier: workspace:*
-        version: 0.0.35
+        version: 0.0.39
       '@ag-ui/pydantic-ai':
         specifier: workspace:*
         version: link:../../integrations/pydantic-ai
@@ -125,7 +125,7 @@ importers:
         version: 1.10.5(@types/react@19.1.5)(graphql@16.11.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@copilotkit/runtime':
         specifier: 1.10.5
-        version: 1.10.5(@ag-ui/client@0.0.35)(@ag-ui/core@0.0.35)(@ag-ui/encoder@0.0.35)(@ag-ui/proto@0.0.35)(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/client-bedrock-agent-runtime@3.844.0)(@aws-sdk/client-bedrock-runtime@3.844.0)(@aws-sdk/client-dynamodb@3.859.0)(@aws-sdk/client-kendra@3.844.0)(@aws-sdk/credential-provider-node@3.859.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@2.4.0(deepmerge@4.3.1)(dotenv@17.0.1)(react@19.1.0)(zod@3.25.67))(@ibm-cloud/watsonx-ai@1.6.8)(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.0.1(@opentelemetry/api@1.9.0))(@smithy/util-utf8@2.3.0)(@upstash/redis@1.35.1)(axios@1.10.0)(cohere-ai@7.17.1)(fast-xml-parser@5.2.5)(google-auth-library@10.1.0)(ibm-cloud-sdk-core@5.4.0)(ignore@5.3.2)(jsonwebtoken@9.0.2)(lodash@4.17.21)(pg@8.16.3)(playwright@1.53.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(redis@5.6.1)(ws@8.18.3)
+        version: 1.10.5(@ag-ui/client@0.0.39)(@ag-ui/core@0.0.39)(@ag-ui/encoder@0.0.39)(@ag-ui/proto@0.0.39)(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/client-bedrock-agent-runtime@3.844.0)(@aws-sdk/client-bedrock-runtime@3.844.0)(@aws-sdk/client-dynamodb@3.859.0)(@aws-sdk/client-kendra@3.844.0)(@aws-sdk/credential-provider-node@3.859.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@2.4.0(deepmerge@4.3.1)(dotenv@17.0.1)(react@19.1.0)(zod@3.25.67))(@ibm-cloud/watsonx-ai@1.6.8)(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.0.1(@opentelemetry/api@1.9.0))(@smithy/util-utf8@2.3.0)(@upstash/redis@1.35.1)(axios@1.10.0)(cohere-ai@7.17.1)(fast-xml-parser@5.2.5)(google-auth-library@10.1.0)(ibm-cloud-sdk-core@5.4.0)(ignore@5.3.2)(jsonwebtoken@9.0.2)(lodash@4.17.21)(pg@8.16.3)(playwright@1.53.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(redis@5.6.1)(ws@8.18.3)
       '@copilotkit/runtime-client-gql':
         specifier: 1.10.5
         version: 1.10.5(graphql@16.11.0)(react@19.1.0)
@@ -201,6 +201,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      dedent:
+        specifier: ^1.7.0
+        version: 1.7.0
       diff:
         specifier: ^7.0.0
         version: 7.0.0
@@ -387,7 +390,7 @@ importers:
         version: 29.7.0(@types/node@20.17.50)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.4.2)(postcss@8.5.6)(tsx@4.20.3)(typescript@5.8.2)(yaml@2.8.0)
@@ -418,7 +421,7 @@ importers:
         version: 29.7.0(@types/node@20.17.50)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.4.2)(postcss@8.5.6)(tsx@4.20.3)(typescript@5.8.2)(yaml@2.8.0)
@@ -458,7 +461,7 @@ importers:
         version: 29.7.0(@types/node@20.17.50)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.4.2)(postcss@8.5.6)(tsx@4.20.3)(typescript@5.8.2)(yaml@2.8.0)
@@ -489,7 +492,7 @@ importers:
         version: 29.7.0(@types/node@20.17.50)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.4.2)(postcss@8.5.6)(tsx@4.20.3)(typescript@5.8.2)(yaml@2.8.0)
@@ -535,7 +538,7 @@ importers:
         version: 29.7.0(@types/node@20.17.50)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.4.2)(postcss@8.5.6)(tsx@4.20.3)(typescript@5.8.2)(yaml@2.8.0)
@@ -563,7 +566,7 @@ importers:
         version: 29.7.0(@types/node@20.17.50)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.4.2)(postcss@8.5.6)(tsx@4.20.3)(typescript@5.8.2)(yaml@2.8.0)
@@ -594,7 +597,7 @@ importers:
         version: 29.7.0(@types/node@20.17.50)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.4.2)(postcss@8.5.6)(tsx@4.20.3)(typescript@5.8.2)(yaml@2.8.0)
@@ -622,7 +625,7 @@ importers:
         version: 29.7.0(@types/node@20.17.50)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.4.2)(postcss@8.5.6)(tsx@4.20.3)(typescript@5.8.2)(yaml@2.8.0)
@@ -650,7 +653,7 @@ importers:
         version: 29.7.0(@types/node@20.17.50)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.4.2)(postcss@8.5.6)(tsx@4.20.3)(typescript@5.8.2)(yaml@2.8.0)
@@ -687,7 +690,7 @@ importers:
         version: 29.7.0(@types/node@20.17.50)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.4.2)(postcss@8.5.6)(tsx@4.20.3)(typescript@5.8.2)(yaml@2.8.0)
@@ -721,7 +724,7 @@ importers:
         version: 29.7.0(@types/node@20.17.50)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.4.2)(postcss@8.5.6)(tsx@4.20.3)(typescript@5.8.2)(yaml@2.8.0)
@@ -770,7 +773,7 @@ importers:
         version: 29.7.0(@types/node@20.17.50)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
+        version: 29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.4.2)(postcss@8.5.6)(tsx@4.20.3)(typescript@5.8.2)(yaml@2.8.0)
@@ -878,6 +881,9 @@ packages:
 
   '@ag-ui/client@0.0.35':
     resolution: {integrity: sha512-rHtMQSU232dZeVx9qAGt1+j4ar4RWqwFanXcyNxAwbAh0XrY7VZeXFBDUeazy1LtBoViS7xehX8V1Ssf1a+bUw==}
+
+  '@ag-ui/client@0.0.39':
+    resolution: {integrity: sha512-VHusZRv0dBtxqKSh/fcLbS/txUpXuE68/2s8RiMoav1snEDonwPGNjvOdE15WResgnlEWPU5qPuSgPykvt2/+A==}
 
   '@ag-ui/core@0.0.35':
     resolution: {integrity: sha512-YAqrln3S3fdo+Hs5FFQPODXiBttyilv/E3xSSHCuxqC0Y/Fp3+VqyDx97BorO3NVp2VKZ9cG2nsO3cbmcTwkQw==}
@@ -4158,6 +4164,7 @@ packages:
   '@smithy/middleware-endpoint@4.1.14':
     resolution: {integrity: sha512-+BGLpK5D93gCcSEceaaYhUD/+OCGXM1IDaq/jKUQ+ujB0PTWlWN85noodKw/IPFZhIKFCNEe19PGd/reUMeLSQ==}
     engines: {node: '>=18.0.0'}
+    deprecated: Please upgrade to @smithy/middleware-endpoint@4.1.15 or higher to fix a bug preventing the resolution of ENV and config file custom endpoints https://github.com/smithy-lang/smithy-typescript/issues/1645
 
   '@smithy/middleware-endpoint@4.1.17':
     resolution: {integrity: sha512-S3hSGLKmHG1m35p/MObQCBCdRsrpbPU8B129BVzRqRfDvQqPMQ14iO4LyRw+7LNizYc605COYAcjqgawqi+6jA==}
@@ -5664,6 +5671,14 @@ packages:
 
   dedent@1.6.0:
     resolution: {integrity: sha512-F1Z+5UCFpmQUzJa11agbyPVMbpgT/qA3/SKyJ1jyBgm7dUcUEa8v9JwDkerSQXfakBwFljIxhOJqGkjUwZ9FSA==}
+    peerDependencies:
+      babel-plugin-macros: ^3.1.0
+    peerDependenciesMeta:
+      babel-plugin-macros:
+        optional: true
+
+  dedent@1.7.0:
+    resolution: {integrity: sha512-HGFtf8yhuhGhqO07SV79tRp+br4MnbdjeVxotpn1QBl30pcLLCQjX5b2295ll0fv8RKDKsmWYrl05usHM9CewQ==}
     peerDependencies:
       babel-plugin-macros: ^3.1.0
     peerDependenciesMeta:
@@ -8842,6 +8857,7 @@ packages:
   source-map@0.8.0-beta.0:
     resolution: {integrity: sha512-2ymg6oRBpebeZi9UUNsgQ89bhx01TcTkmNTGnNO88imTmbSgy4nfujrgVEFKWpMTEGA11EDkTt7mqObTPdigIA==}
     engines: {node: '>= 8'}
+    deprecated: The work that was done in this beta branch won't be included in future versions
 
   space-separated-tokens@1.1.5:
     resolution: {integrity: sha512-q/JSVd1Lptzhf5bkYm4ob4iWPjx0KiRe3sRFBNrVqbJkFaBm5vbbowy1mymoPNLRa52+oadOhJ+K49wsSeSjTA==}
@@ -9685,6 +9701,18 @@ snapshots:
       uuid: 11.1.0
       zod: 3.25.71
 
+  '@ag-ui/client@0.0.39':
+    dependencies:
+      '@ag-ui/core': 0.0.39
+      '@ag-ui/encoder': 0.0.39
+      '@ag-ui/proto': 0.0.39
+      '@types/uuid': 10.0.0
+      fast-json-patch: 3.1.1
+      rxjs: 7.8.1
+      untruncate-json: 0.0.1
+      uuid: 11.1.0
+      zod: 3.25.71
+
   '@ag-ui/core@0.0.35':
     dependencies:
       rxjs: 7.8.1
@@ -9710,10 +9738,10 @@ snapshots:
       '@ag-ui/core': 0.0.39
       '@ag-ui/proto': 0.0.39
 
-  '@ag-ui/langgraph@0.0.17(@ag-ui/client@0.0.35)(@ag-ui/core@0.0.35)(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.0.1(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.71))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
+  '@ag-ui/langgraph@0.0.17(@ag-ui/client@0.0.39)(@ag-ui/core@0.0.39)(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.0.1(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.71))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
-      '@ag-ui/client': 0.0.35
-      '@ag-ui/core': 0.0.35
+      '@ag-ui/client': 0.0.39
+      '@ag-ui/core': 0.0.39
       '@langchain/core': 0.3.66(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.0.1(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.71))
       '@langchain/langgraph-sdk': 0.1.2(@langchain/core@0.3.66(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.0.1(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.71)))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       partial-json: 0.1.7
@@ -11460,13 +11488,13 @@ snapshots:
       - encoding
       - graphql
 
-  '@copilotkit/runtime@1.10.5(@ag-ui/client@0.0.35)(@ag-ui/core@0.0.35)(@ag-ui/encoder@0.0.35)(@ag-ui/proto@0.0.35)(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/client-bedrock-agent-runtime@3.844.0)(@aws-sdk/client-bedrock-runtime@3.844.0)(@aws-sdk/client-dynamodb@3.859.0)(@aws-sdk/client-kendra@3.844.0)(@aws-sdk/credential-provider-node@3.859.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@2.4.0(deepmerge@4.3.1)(dotenv@17.0.1)(react@19.1.0)(zod@3.25.67))(@ibm-cloud/watsonx-ai@1.6.8)(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.0.1(@opentelemetry/api@1.9.0))(@smithy/util-utf8@2.3.0)(@upstash/redis@1.35.1)(axios@1.10.0)(cohere-ai@7.17.1)(fast-xml-parser@5.2.5)(google-auth-library@10.1.0)(ibm-cloud-sdk-core@5.4.0)(ignore@5.3.2)(jsonwebtoken@9.0.2)(lodash@4.17.21)(pg@8.16.3)(playwright@1.53.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(redis@5.6.1)(ws@8.18.3)':
+  '@copilotkit/runtime@1.10.5(@ag-ui/client@0.0.39)(@ag-ui/core@0.0.39)(@ag-ui/encoder@0.0.39)(@ag-ui/proto@0.0.39)(@aws-crypto/sha256-js@5.2.0)(@aws-sdk/client-bedrock-agent-runtime@3.844.0)(@aws-sdk/client-bedrock-runtime@3.844.0)(@aws-sdk/client-dynamodb@3.859.0)(@aws-sdk/client-kendra@3.844.0)(@aws-sdk/credential-provider-node@3.859.0)(@browserbasehq/sdk@2.6.0)(@browserbasehq/stagehand@2.4.0(deepmerge@4.3.1)(dotenv@17.0.1)(react@19.1.0)(zod@3.25.67))(@ibm-cloud/watsonx-ai@1.6.8)(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.0.1(@opentelemetry/api@1.9.0))(@smithy/util-utf8@2.3.0)(@upstash/redis@1.35.1)(axios@1.10.0)(cohere-ai@7.17.1)(fast-xml-parser@5.2.5)(google-auth-library@10.1.0)(ibm-cloud-sdk-core@5.4.0)(ignore@5.3.2)(jsonwebtoken@9.0.2)(lodash@4.17.21)(pg@8.16.3)(playwright@1.53.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(redis@5.6.1)(ws@8.18.3)':
     dependencies:
-      '@ag-ui/client': 0.0.35
-      '@ag-ui/core': 0.0.35
-      '@ag-ui/encoder': 0.0.35
-      '@ag-ui/langgraph': 0.0.17(@ag-ui/client@0.0.35)(@ag-ui/core@0.0.35)(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.0.1(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.71))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
-      '@ag-ui/proto': 0.0.35
+      '@ag-ui/client': 0.0.39
+      '@ag-ui/core': 0.0.39
+      '@ag-ui/encoder': 0.0.39
+      '@ag-ui/langgraph': 0.0.17(@ag-ui/client@0.0.39)(@ag-ui/core@0.0.39)(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.0.1(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.71))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      '@ag-ui/proto': 0.0.39
       '@anthropic-ai/sdk': 0.57.0
       '@copilotkit/shared': 1.10.5
       '@graphql-yoga/plugin-defer-stream': 3.13.4(graphql-yoga@5.13.4(graphql@16.11.0))(graphql@16.11.0)
@@ -16284,21 +16312,6 @@ snapshots:
       object-assign: 4.1.1
       vary: 1.1.2
 
-  create-jest@29.7.0:
-    dependencies:
-      '@jest/types': 29.6.3
-      chalk: 4.1.2
-      exit: 0.1.2
-      graceful-fs: 4.2.11
-      jest-config: 29.7.0(@types/node@20.17.50)
-      jest-util: 29.7.0
-      prompts: 2.4.2
-    transitivePeerDependencies:
-      - '@types/node'
-      - babel-plugin-macros
-      - supports-color
-      - ts-node
-
   create-jest@29.7.0(@types/node@20.17.50):
     dependencies:
       '@jest/types': 29.6.3
@@ -16390,6 +16403,8 @@ snapshots:
       character-entities: 2.0.2
 
   dedent@1.6.0: {}
+
+  dedent@1.7.0: {}
 
   deep-is@0.1.4: {}
 
@@ -17723,7 +17738,7 @@ snapshots:
       isstream: 0.1.2
       jsonwebtoken: 9.0.2
       mime-types: 2.1.35
-      retry-axios: 2.6.0(axios@1.10.0(debug@4.4.1))
+      retry-axios: 2.6.0(axios@1.10.0)
       tough-cookie: 4.1.4
     transitivePeerDependencies:
       - supports-color
@@ -18067,7 +18082,7 @@ snapshots:
       '@jest/test-result': 29.7.0
       '@jest/types': 29.6.3
       chalk: 4.1.2
-      create-jest: 29.7.0
+      create-jest: 29.7.0(@types/node@20.17.50)
       exit: 0.1.2
       import-local: 3.2.0
       jest-config: 29.7.0(@types/node@20.17.50)
@@ -20548,7 +20563,7 @@ snapshots:
       onetime: 5.1.2
       signal-exit: 3.0.7
 
-  retry-axios@2.6.0(axios@1.10.0(debug@4.4.1)):
+  retry-axios@2.6.0(axios@1.10.0):
     dependencies:
       axios: 1.10.0(debug@4.4.1)
 
@@ -21101,7 +21116,7 @@ snapshots:
 
   ts-interface-checker@0.1.13: {}
 
-  ts-jest@29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2):
+  ts-jest@29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(esbuild@0.25.4)(jest@29.7.0(@types/node@20.17.50))(typescript@5.8.2):
     dependencies:
       bs-logger: 0.2.6
       ejs: 3.1.10
@@ -21120,6 +21135,7 @@ snapshots:
       '@jest/transform': 29.7.0
       '@jest/types': 29.6.3
       babel-jest: 29.7.0(@babel/core@7.27.1)
+      esbuild: 0.25.4
 
   ts-jest@29.3.4(@babel/core@7.27.1)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.27.1))(jest@29.7.0(@types/node@20.19.4))(typescript@5.8.2):
     dependencies:

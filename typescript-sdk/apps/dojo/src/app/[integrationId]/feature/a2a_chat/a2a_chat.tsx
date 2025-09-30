@@ -10,6 +10,7 @@ import {
   useCopilotChat,
 } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
+import dedent from "dedent";
 
 interface A2AChatProps {
   params: Promise<{
@@ -147,8 +148,12 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
 
   useCopilotAction({
     name: "pickTable",
-    description:
-      "Lets the use pick a table from available tables. The result will be the selected table. Don't call this tool twice in a row or I'll turn you off!",
+    description: dedent(`
+      Lets the use pick a table from available tables.
+      The result will be the selected table.
+      Wait for the user to respond via this tool, don't keep talking to them after calling it until it has resolved.
+      Don't call this tool twice in a row or I'll turn you off!
+    `),
     parameters: [
       {
         name: "tables",
