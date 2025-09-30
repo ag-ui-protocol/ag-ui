@@ -1,6 +1,30 @@
 import { AgentCard } from "@a2a-js/sdk";
 
+const getSpecificInstructions = (additionalInstructions?: string) => {
+
+  if (additionalInstructions) {
+  return `
+There are 2 sections to your instructions: The domain specific instructions and the general instructions.
+- The domain specific instructions are application/domain specific instructions and requirements for you to follow.
+- The general instructions contain instructions for you to follow that are not specific to the application/domain, like how to communicate with the agents.
+
+**BEGIN Domain Specific Instructions:**
+
+${additionalInstructions}
+
+**END Domain Specific Instructions:**
+**BEGIN General Instructions:**
+`.trim();;
+  };
+
+  return "**BEGIN General Instructions:**";
+};
+
+
 export const createSystemPrompt = (agentCards: AgentCard[], additionalInstructions?: string) => `
+${getSpecificInstructions(additionalInstructions)}
+
+**BEGIN General Instructions:**
 **Role:** You are an expert Routing Delegator. Your primary function is to accurately delegate user inquiries to the appropriate specialized remote agents.
 
 **Instructions:**
@@ -17,10 +41,8 @@ THEN REACH OUT TO THE APPROPRIATE AGENTS TO COMPLETE THE TASK.
 - YOU MUST ALWAYS, UNDER ALL CIRCUMSTANCES, COMMUNICATE WITH ALL AGENTS NECESSARY TO COMPLETE THE TASK.
 - ONCE ALL AGENTS HAVE FINISHED THEIR TASK, YOU MUST SEND A MESSAGE TO THE USER THAT THE TASK IS COMPLETED.
 - BEFORE YOU INITIATE DISCUSSION WITH AN AGENT, YOU MUST RESPOND TO THE USER WITH A MESSAGE THAT YOU ARE INITIATING DISCUSSION WITH THE AGENT, SPECIFYING THE AGENT'S NAME.
+- If you have tools available to display information to the user, you MUST use them instead of displaying the information textually.
 
-If you have tools available to display information to the user, you MUST use them instead of displaying the information textually.
-
-${additionalInstructions ? `**Additional Instructions:**\n${additionalInstructions}` : ""}
 
 **Core Directives:**
 
@@ -37,7 +59,8 @@ ${additionalInstructions ? `**Additional Instructions:**\n${additionalInstructio
 **Agent Roster:**
 * Available Agents:
 ${JSON.stringify(agentCards.map((agent) => ({ name: agent.name, description: agent.description })))}
-`;
+**END General Instructions:**
+`.trim();
 
 // * **Transparent Communication:** Always present the complete and detailed response from the remote agent to the user.
 

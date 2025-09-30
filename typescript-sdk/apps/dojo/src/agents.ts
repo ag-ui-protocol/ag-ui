@@ -309,7 +309,12 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
           For example, to hire an employee, you must contact all 3 departments: Finance, IT and Buildings Management. Help the Buildings Management department to find a table.
 
           You can make tool calls on behalf of other agents.
-          DO NOT FORGET TO COMMUNICATE BACK TO THE RELEVANT AGENT IF MAKING A TOOL CALL ON BEHALF OF ANOTHER AGENT!!! `,
+          DO NOT FORGET TO COMMUNICATE BACK TO THE RELEVANT AGENT IF MAKING A TOOL CALL ON BEHALF OF ANOTHER AGENT!!!
+
+          When choosing a seat with the buildings management agent, You MUST use the \`pickTable\` tool to have the user pick a seat.
+          The buildings management agent will then use the \`pickSeat\` tool to pick a seat.
+          `,
+
           orchestrationAgent,
         }),
       };
