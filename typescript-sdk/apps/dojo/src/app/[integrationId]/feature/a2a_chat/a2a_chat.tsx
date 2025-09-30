@@ -72,17 +72,14 @@ const MaybeMessageFromA2A = ({ everything }: { everything: any }) => {
   }
 };
 
-const Message = ({
-  from,
-  to,
-  message,
-  color,
-}: {
+interface MessageProps {
   from: string;
   to: string;
   message: string;
   color: "blue" | "green";
-}) => {
+}
+
+const Message = ({ from, to, message, color }: MessageProps) => {
   const colorClass = color === "blue" ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700";
   return (
     <div className="bg-white border border-gray-200 rounded-lg px-3 py-2">
