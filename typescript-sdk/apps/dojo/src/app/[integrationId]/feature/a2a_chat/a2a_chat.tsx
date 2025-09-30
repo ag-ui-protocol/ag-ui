@@ -53,38 +53,42 @@ const MaybeMessageToA2A = ({ everything }: { everything: any }) => {
   switch (status) {
     case "executing":
     case "complete":
-      return (
-        <Message from={"Agent"} to={args.agentName} message={args.task} color="green" />
-      );
+      return <Message from={"Agent"} to={args.agentName} message={args.task} color="green" />;
     case "inProgress":
     default:
       return null;
   }
-}
+};
 
 const MaybeMessageFromA2A = ({ everything }: { everything: any }) => {
   const { status, args, result } = everything;
   switch (status) {
     case "complete":
-      return (
-        <Message from={args.agentName} to={"Agent"} message={result} color="blue" />
-      );
+      return <Message from={args.agentName} to={"Agent"} message={result} color="blue" />;
     case "executing":
     case "inProgress":
     default:
       return null;
   }
-}
+};
 
-const Message = ({from, to, message, color}: {from: string, to: string, message: string, color: 'blue' | 'green'}) => {
-  const colorClass = color === 'blue' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700';
+const Message = ({
+  from,
+  to,
+  message,
+  color,
+}: {
+  from: string;
+  to: string;
+  message: string;
+  color: "blue" | "green";
+}) => {
+  const colorClass = color === "blue" ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700";
   return (
     <div className="bg-white border border-gray-200 rounded-lg px-3 py-2">
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2 min-w-[160px]">
-          <span
-            className={`px-2 py-1 rounded-full text-[10px] font-medium ${colorClass}`}
-          >
+          <span className={`px-2 py-1 rounded-full text-[10px] font-medium ${colorClass}`}>
             {from}
           </span>
           <span className="text-muted-foreground text-[11px]">→</span>
@@ -99,7 +103,6 @@ const Message = ({from, to, message, color}: {from: string, to: string, message:
 };
 
 const Chat = ({ onNotification }: { onNotification?: () => void }) => {
-
   const { isLoading, visibleMessages } = useCopilotChat();
 
   useEffect(() => {
@@ -112,21 +115,20 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
     }
   }, [isLoading, JSON.stringify(visibleMessages)]);
 
-
   useCopilotAction({
-    name: 'send_message_to_a2a_agent',
-    description: 'Sends a message to an A2A agent',
-    available: 'frontend',
+    name: "send_message_to_a2a_agent",
+    description: "Sends a message to an A2A agent",
+    available: "frontend",
     parameters: [
       {
-        name: 'agentName',
-        type: 'string',
-        description: 'The name of the A2A agent to send the message to',
+        name: "agentName",
+        type: "string",
+        description: "The name of the A2A agent to send the message to",
       },
       {
-        name: 'task',
-        type: 'string',
-        description: 'The message to send to the A2A agent',
+        name: "task",
+        type: "string",
+        description: "The message to send to the A2A agent",
       },
     ],
     render: (everything) => {
@@ -136,7 +138,7 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
           <MaybeMessageToA2A everything={everything} />
           <MaybeMessageFromA2A everything={everything} />
         </>
-      )
+      );
     },
   });
 
@@ -145,7 +147,6 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
     seatNumber: number;
   } | null>(null);
   const [isConfirmed, setIsConfirmed] = useState(false);
-
 
   useCopilotAction({
     name: "pickTable",
@@ -356,7 +357,10 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
   });
 
   return (
-    <div className="flex justify-center items-center h-full w-full" style={{ background: '--copilot-kit-background-color' }}>
+    <div
+      className="flex justify-center items-center h-full w-full"
+      style={{ background: "--copilot-kit-background-color" }}
+    >
       <div className="w-8/10 h-8/10 rounded-lg">
         <CopilotChat
           className="h-full rounded-2xl"
