@@ -19,7 +19,6 @@ import { ADKAgent } from "@ag-ui/adk";
 import { HttpAgent } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
 
-
 const envVars = getEnvVars();
 export const agentsIntegrations: AgentIntegrationConfig[] = [
   {
@@ -227,7 +226,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         subgraphs: new LangGraphAgent({
           deploymentUrl: envVars.langgraphTypescriptUrl,
           graphId: "subgraphs",
-        })
+        }),
       };
     },
   },
@@ -300,9 +299,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         url: "http://127.0.0.1:9000",
       });
       return {
-        a2a_chat:
-
-        new A2AMiddlewareAgent({
+        a2a_chat: new A2AMiddlewareAgent({
           description: "Middleware that connects to remote A2A agents",
           agentUrls,
           instructions: `
