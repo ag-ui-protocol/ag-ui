@@ -41,23 +41,23 @@ ${JSON.stringify(agentCards.map((agent) => ({ name: agent.name, description: age
 
 // * **Transparent Communication:** Always present the complete and detailed response from the remote agent to the user.
 
-
-
 export const sendMessageToA2AAgentTool = {
   name: `send_message_to_a2a_agent`,
-  description: "Sends a task to the agent named `agentName`, including the full conversation context and goal",
+  description:
+    "Sends a task to the agent named `agentName`, including the full conversation context and goal",
   parameters: {
     type: "object",
     properties: {
       agentName: {
         type: "string",
-        description: "The name of the A2A agent to send the message to."
+        description: "The name of the A2A agent to send the message to.",
       },
       task: {
         type: "string",
-        description: "The comprehensive conversation-context summary and goal to be achieved regarding the user inquiry."
-      }
+        description:
+          "The comprehensive conversation-context summary and goal to be achieved regarding the user inquiry.",
+      },
     },
-    required: ["task"]
-  }
+    required: ["task"],
+  },
 };

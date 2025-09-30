@@ -159,9 +159,10 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
   } | null>(null);
   const [isConfirmed, setIsConfirmed] = useState(false);
 
-  useCopilotAction({
-    name: "pickTable",
-    description: dedent(`
+  useCopilotAction(
+    {
+      name: "pickTable",
+      description: dedent(`
       Lets the use pick a table from available tables.
       The result will be the selected table.
       Wait for the user to respond via this tool, don't keep talking to them after calling it until it has resolved.
@@ -171,130 +172,129 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
       - tableName: (string): The name of the table that was selected
       - seatNumber: (number): The number of the seat that was selected
     `),
-    parameters: [
-      {
-        name: "tables",
-        type: "object[]",
-        attributes: [
-          {
-            name: "name",
-            type: "string",
-            description: "The name of the table",
-          },
-          {
-            name: "seats",
-            type: "object[]",
-            attributes: [
-              {
-                name: "seatNumber",
-                type: "number",
-                description: "The number of the seat",
-              },
-              {
-                name: "status",
-                type: "string",
-                enum: ["available", "occupied"],
-                description: "The status of the seat",
-              },
-              {
-                name: "name",
-                type: "string",
-                description: "The name of the person occupying the seat",
-              },
-            ],
-          },
-        ],
-        description: `A JSON encoded array of tables. This is an example of the format: [{ "name": "Table 1", "seats": [{ "seatNumber": 1, "status": "available" }, { "seatNumber": 2, "status": "occupied", "name": "Alice" }] }, { "name": "Table 2", "seats": [{ "seatNumber": 1, "status": "available" }, { "seatNumber": 2, "status": "available" }] }, { "name": "Table 3", "seats": [{ "seatNumber": 1, "status": "occupied", "name": "Bob" }, { "seatNumber": 2, "status": "available" }] }]`,
-      },
-    ],
+      parameters: [
+        {
+          name: "tables",
+          type: "object[]",
+          attributes: [
+            {
+              name: "name",
+              type: "string",
+              description: "The name of the table",
+            },
+            {
+              name: "seats",
+              type: "object[]",
+              attributes: [
+                {
+                  name: "seatNumber",
+                  type: "number",
+                  description: "The number of the seat",
+                },
+                {
+                  name: "status",
+                  type: "string",
+                  enum: ["available", "occupied"],
+                  description: "The status of the seat",
+                },
+                {
+                  name: "name",
+                  type: "string",
+                  description: "The name of the person occupying the seat",
+                },
+              ],
+            },
+          ],
+          description: `A JSON encoded array of tables. This is an example of the format: [{ "name": "Table 1", "seats": [{ "seatNumber": 1, "status": "available" }, { "seatNumber": 2, "status": "occupied", "name": "Alice" }] }, { "name": "Table 2", "seats": [{ "seatNumber": 1, "status": "available" }, { "seatNumber": 2, "status": "available" }] }, { "name": "Table 3", "seats": [{ "seatNumber": 1, "status": "occupied", "name": "Bob" }, { "seatNumber": 2, "status": "available" }] }]`,
+        },
+      ],
 
-    renderAndWaitForResponse(allofit) {
-      const { args, respond } = allofit;
-      console.log("TABLE PICKER RENDER AND WAIT FOR RESPONSE", allofit);
+      renderAndWaitForResponse(allofit) {
+        const { args, respond } = allofit;
+        console.log("TABLE PICKER RENDER AND WAIT FOR RESPONSE", allofit);
 
-      const availableSeats =
-        args.tables?.reduce(
-          (total, table: Table) =>
-            total + (table.seats?.filter((seat: Seat) => seat.status === "available").length || 0),
-          0,
-        ) || 0;
+        const availableSeats =
+          args.tables?.reduce(
+            (total, table: Table) =>
+              total +
+              (table.seats?.filter((seat: Seat) => seat.status === "available").length || 0),
+            0,
+          ) || 0;
 
-      const teamMembers =
-        args.tables?.flatMap(
-          (table: Table) =>
-            table.seats
-              ?.filter((seat: Seat) => seat.status === "occupied" && seat.name)
-              .map((seat: Seat) => ({
-                name: seat.name!,
-                table: table.name,
-                seat: seat.seatNumber,
-              })) || [],
-        ) || [];
+        const teamMembers =
+          args.tables?.flatMap(
+            (table: Table) =>
+              table.seats
+                ?.filter((seat: Seat) => seat.status === "occupied" && seat.name)
+                .map((seat: Seat) => ({
+                  name: seat.name!,
+                  table: table.name,
+                  seat: seat.seatNumber,
+                })) || [],
+          ) || [];
 
-      const handleSeatClick = (tableIndex: number, seatNumber: number, status: string) => {
+        const handleSeatClick = (tableIndex: number, seatNumber: number, status: string) => {
+          console.log("handleSeatClick", tableIndex, seatNumber, status);
+          if (status === "available") {
+            console.log("setting selected seat", tableIndex, seatNumber);
+            setSelectedSeat({ tableIndex, seatNumber });
+            setIsConfirmed(false); // Reset confirmation when selecting a new seat
+          } else {
+            console.log("seat is not available", tableIndex, seatNumber);
+          }
+        };
 
-        console.log("handleSeatClick", tableIndex, seatNumber, status);
-        if (status === "available") {
-          console.log("setting selected seat", tableIndex, seatNumber);
-          setSelectedSeat({ tableIndex, seatNumber });
-          setIsConfirmed(false); // Reset confirmation when selecting a new seat
-        }
-        else {
-          console.log("seat is not available", tableIndex, seatNumber);
-        }
-      };
-
-      console.log("selected seat", selectedSeat);
-      return (
-        <div className="bg-white p-6 rounded-lg shadow-lg max-w-4xl my-8">
-          {/* Header */}
-          <div className="mb-6">
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">
-              Desk Picker - Engineering Team
-            </h1>
-            <p className="text-gray-600">
-              {availableSeats} seats available • {teamMembers.length} teammates nearby
-            </p>
-          </div>
-
-          {/* Legend */}
-          <div className="flex gap-4 mb-8 text-sm">
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 bg-green-200 rounded border"></div>
-              <span>Available</span>
+        console.log("selected seat", selectedSeat);
+        return (
+          <div className="bg-white p-6 rounded-lg shadow-lg max-w-4xl my-8">
+            {/* Header */}
+            <div className="mb-6">
+              <h1 className="text-2xl font-bold text-gray-900 mb-2">
+                Desk Picker - Engineering Team
+              </h1>
+              <p className="text-gray-600">
+                {availableSeats} seats available • {teamMembers.length} teammates nearby
+              </p>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 bg-gray-300 rounded border"></div>
-              <span>Occupied</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 bg-amber-100 rounded border"></div>
-              <span>Your Team</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 bg-blue-200 rounded border"></div>
-              <span>Selected</span>
-            </div>
-          </div>
 
-          {/* Tables Grid */}
-          <div className="grid grid-cols-2 gap-8 mb-8">
-            {args.tables?.map((table, tableIndex) => (
-              <div key={tableIndex} className="bg-gray-50 p-6 rounded-lg">
-                <h3 className="text-lg font-semibold text-center mb-4">{table.name}</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  {table.seats?.map((seat: Seat, seatIndex: number) => {
-                    const isSelected =
-                      selectedSeat?.tableIndex === tableIndex &&
-                      selectedSeat?.seatNumber === seat.seatNumber;
-                    const isTeamMember = seat.status === "occupied" && seat.name;
+            {/* Legend */}
+            <div className="flex gap-4 mb-8 text-sm">
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 bg-green-200 rounded border"></div>
+                <span>Available</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 bg-gray-300 rounded border"></div>
+                <span>Occupied</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 bg-amber-100 rounded border"></div>
+                <span>Your Team</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 bg-blue-200 rounded border"></div>
+                <span>Selected</span>
+              </div>
+            </div>
 
-                    return (
-                      <button
-                        key={seatIndex}
-                        disabled={seat.status !== "available"}
-                        onClick={() => handleSeatClick(tableIndex, seat.seatNumber, seat.status)}
-                        className={`
+            {/* Tables Grid */}
+            <div className="grid grid-cols-2 gap-8 mb-8">
+              {args.tables?.map((table, tableIndex) => (
+                <div key={tableIndex} className="bg-gray-50 p-6 rounded-lg">
+                  <h3 className="text-lg font-semibold text-center mb-4">{table.name}</h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    {table.seats?.map((seat: Seat, seatIndex: number) => {
+                      const isSelected =
+                        selectedSeat?.tableIndex === tableIndex &&
+                        selectedSeat?.seatNumber === seat.seatNumber;
+                      const isTeamMember = seat.status === "occupied" && seat.name;
+
+                      return (
+                        <button
+                          key={seatIndex}
+                          disabled={seat.status !== "available"}
+                          onClick={() => handleSeatClick(tableIndex, seat.seatNumber, seat.status)}
+                          className={`
                           w-16 h-16 rounded-lg border-2 flex items-center justify-center text-xs font-medium transition-all
                           ${
                             seat.status === "available"
@@ -307,87 +307,91 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
                           }
                           ${seat.status === "available" ? "cursor-pointer" : "cursor-default"}
                         `}
-                      >
-                        {seat.status === "available" ? (
-                          seat.seatNumber
-                        ) : isTeamMember ? (
-                          <div className="text-center leading-tight flex flex-col items-center">
-                            <svg className="w-4 h-4 mb-1" fill="currentColor" viewBox="0 0 20 20">
+                        >
+                          {seat.status === "available" ? (
+                            seat.seatNumber
+                          ) : isTeamMember ? (
+                            <div className="text-center leading-tight flex flex-col items-center">
+                              <svg className="w-4 h-4 mb-1" fill="currentColor" viewBox="0 0 20 20">
+                                <path
+                                  fillRule="evenodd"
+                                  d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
+                                  clipRule="evenodd"
+                                />
+                              </svg>
+                              <div className="text-[9px] font-semibold leading-none">
+                                {seat.name}
+                              </div>
+                            </div>
+                          ) : (
+                            <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
                               <path
                                 fillRule="evenodd"
-                                d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
+                                d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
                                 clipRule="evenodd"
                               />
                             </svg>
-                            <div className="text-[9px] font-semibold leading-none">{seat.name}</div>
-                          </div>
-                        ) : (
-                          <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                            <path
-                              fillRule="evenodd"
-                              d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
-                              clipRule="evenodd"
-                            />
-                          </svg>
-                        )}
-                      </button>
-                    );
-                  })}
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Selection Display */}
-          {selectedSeat && (
-            <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-              <p className="text-blue-800 font-medium mb-4">
-                Selected: {args.tables?.[selectedSeat.tableIndex]?.name} - Seat{" "}
-                {selectedSeat.seatNumber}
-              </p>
-              <button
-                onClick={() => {
-                  if (!isConfirmed) {
-                    // Handle seat selection confirmation
-                    const tableName = args.tables?.[selectedSeat.tableIndex]?.name;
-                    const seatNumber = selectedSeat.seatNumber;
-                    if (!tableName || !seatNumber) {
-                      // Throw some sort of error
-                    }
-
-                    setIsConfirmed(true);
-
-                    respond?.({tableName, seatNumber});
-                  }
-                }}
-                disabled={isConfirmed}
-                className={`w-full font-semibold py-3 px-6 rounded-lg transition-colors duration-200 shadow-sm flex items-center justify-center gap-2 ${
-                  isConfirmed
-                    ? "bg-green-600 text-white cursor-not-allowed"
-                    : "bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
-                }`}
-              >
-                {isConfirmed ? (
-                  <>
-                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                      <path
-                        fillRule="evenodd"
-                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                    Confirmed
-                  </>
-                ) : (
-                  "Confirm Selection"
-                )}
-              </button>
+              ))}
             </div>
-          )}
-        </div>
-      );
+
+            {/* Selection Display */}
+            {selectedSeat && (
+              <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+                <p className="text-blue-800 font-medium mb-4">
+                  Selected: {args.tables?.[selectedSeat.tableIndex]?.name} - Seat{" "}
+                  {selectedSeat.seatNumber}
+                </p>
+                <button
+                  onClick={() => {
+                    if (!isConfirmed) {
+                      // Handle seat selection confirmation
+                      const tableName = args.tables?.[selectedSeat.tableIndex]?.name;
+                      const seatNumber = selectedSeat.seatNumber;
+                      if (!tableName || !seatNumber) {
+                        // Throw some sort of error
+                      }
+
+                      setIsConfirmed(true);
+
+                      respond?.({ tableName, seatNumber });
+                    }
+                  }}
+                  disabled={isConfirmed}
+                  className={`w-full font-semibold py-3 px-6 rounded-lg transition-colors duration-200 shadow-sm flex items-center justify-center gap-2 ${
+                    isConfirmed
+                      ? "bg-green-600 text-white cursor-not-allowed"
+                      : "bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+                  }`}
+                >
+                  {isConfirmed ? (
+                    <>
+                      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                        <path
+                          fillRule="evenodd"
+                          d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                          clipRule="evenodd"
+                        />
+                      </svg>
+                      Confirmed
+                    </>
+                  ) : (
+                    "Confirm Selection"
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      },
     },
-  }, [selectedSeat, isConfirmed]);
+    [selectedSeat, isConfirmed],
+  );
 
   return (
     <div
