@@ -99,10 +99,6 @@ const Message = ({from, to, message, color}: {from: string, to: string, message:
 };
 
 const Chat = ({ onNotification }: { onNotification?: () => void }) => {
-  const [background, setBackground] = useState<string>("--copilot-kit-background-color");
-  const [lastMessageCount, setLastMessageCount] = useState(0);
-  // const { state } = useCoAgent({ name: "a2a_chat" });
-  // const a2aMessages = useState<{ from: string; to: string; message: string }[]>([]);
 
   const { isLoading, visibleMessages } = useCopilotChat();
 
@@ -137,9 +133,8 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
       console.log("everything", everything);
       return (
         <>
-        <MaybeMessageToA2A everything={everything} />
-        <MaybeMessageFromA2A everything={everything} />
-
+          <MaybeMessageToA2A everything={everything} />
+          <MaybeMessageFromA2A everything={everything} />
         </>
       )
     },
@@ -361,7 +356,7 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
   });
 
   return (
-    <div className="flex justify-center items-center h-full w-full" style={{ background }}>
+    <div className="flex justify-center items-center h-full w-full" style={{ background: '--copilot-kit-background-color' }}>
       <div className="w-8/10 h-8/10 rounded-lg">
         <CopilotChat
           className="h-full rounded-2xl"
