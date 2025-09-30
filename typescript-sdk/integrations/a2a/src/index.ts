@@ -144,7 +144,7 @@ export class A2AMiddlewareAgent extends AbstractAgent {
                 const task = parsed.task;
 
                 if (this.debug) {
-                  console.log("sending message to a2a agent", { agentName, message: task });
+                  console.debug("sending message to a2a agent", { agentName, message: task });
                 }
                 return this.sendMessageToA2AAgent(agentName, task)
                   .then((a2aResponse) => {
@@ -155,7 +155,7 @@ export class A2AMiddlewareAgent extends AbstractAgent {
                       content: `A2A Agent Response: ${a2aResponse}`,
                     };
                     if (this.debug) {
-                      console.log("newMessage From a2a agent", newMessage);
+                      console.debug("newMessage From a2a agent", newMessage);
                     }
                     this.addMessage(newMessage);
                     this.orchestrationAgent.addMessage(newMessage);

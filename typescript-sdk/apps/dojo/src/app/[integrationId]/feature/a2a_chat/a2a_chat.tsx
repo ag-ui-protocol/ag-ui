@@ -211,7 +211,6 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
 
       renderAndWaitForResponse(allofit) {
         const { args, respond } = allofit;
-        console.log("TABLE PICKER RENDER AND WAIT FOR RESPONSE", allofit);
 
         const availableSeats =
           args.tables?.reduce(
@@ -234,17 +233,12 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
           ) || [];
 
         const handleSeatClick = (tableIndex: number, seatNumber: number, status: string) => {
-          console.log("handleSeatClick", tableIndex, seatNumber, status);
           if (status === "available") {
-            console.log("setting selected seat", tableIndex, seatNumber);
             setSelectedSeat({ tableIndex, seatNumber });
             setIsConfirmed(false); // Reset confirmation when selecting a new seat
-          } else {
-            console.log("seat is not available", tableIndex, seatNumber);
           }
         };
 
-        console.log("selected seat", selectedSeat);
         return (
           <div className="bg-white p-6 rounded-lg shadow-lg max-w-4xl my-8">
             {/* Header */}
