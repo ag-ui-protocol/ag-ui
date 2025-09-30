@@ -18,10 +18,11 @@ import {
   StepStartedEvent,
   StepFinishedEvent,
 } from "@ag-ui/core";
+import { RunResumedEvent, RunSuspendedEvent } from "@ag-ui/core/src";
 
 describe("verifyEvents lifecycle", () => {
   // Test: RUN_STARTED must be the first event
-  it("should require RUN_STARTED as the first event", async () => {
+  it("should require RUN_STARTED as the first event if no RUN_SUSPENDED", async () => {
     const source$ = new Subject<BaseEvent>();
     const result$ = verifyEvents(false)(source$).pipe(
       catchError((err) => {
@@ -84,6 +85,100 @@ describe("verifyEvents lifecycle", () => {
     // Verify one event was processed before the error
     expect(events.length).toBe(1);
     expect(events[0].type).toBe(EventType.RUN_STARTED);
+  });
+
+  it("should require RUN_RESUMED as the first event RUN_SUSPENDED", async () => {
+    const source$ = new Subject<BaseEvent>();
+    const result$ = verifyEvents(false)(source$).pipe(
+      toArray(),
+      catchError((err) => {
+        expect(err).toBeInstanceOf(AGUIError);
+        expect(err.message).toContain("First event in suspended run must be 'RUN_RESUMED'");
+        throw err;
+      }),
+    );
+
+    // Set up subscription
+    const promise = firstValueFrom(result$).catch((e) => e);
+
+    // Start run and send event
+    source$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test-thread-id",
+      runId: "test-run-id",
+    } as RunStartedEvent);
+
+    // Suspense run
+    source$.next({
+      type: EventType.RUN_SUSPENDED,
+      threadId: "test-thread-id",
+      runId: "test-run-id",
+    } as RunSuspendedEvent);
+
+    // Send another RUN_STARTED event
+    source$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test-thread-id",
+      runId: "test-run-id",
+    } as RunStartedEvent);
+
+    // Complete the source
+    source$.complete();
+
+    // Await the promise and expect it to be an error
+    const result = await promise;
+    expect(result).toBeInstanceOf(AGUIError);
+  });
+
+  it("should not allow multiple RUN_RESUMED events", async () => {
+    const source$ = new Subject<BaseEvent>();
+    const events: BaseEvent[] = [];
+
+    // Create a subscription that will complete only after an error
+    const subscription = verifyEvents(false)(source$).subscribe({
+      next: (event) => events.push(event),
+      error: (err) => {
+        expect(err).toBeInstanceOf(AGUIError);
+        expect(err.message).toContain("Cannot send 'RUN_RESUMED' without a previous 'RUN_SUSPENDED' event");
+        subscription.unsubscribe();
+      },
+    });
+
+    // Send first RUN_STARTED (should be accepted)
+    source$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test-thread-id",
+      runId: "test-run-id",
+    } as RunStartedEvent);
+
+    // Suspend run (should be accepted)
+    source$.next({
+      type: EventType.RUN_SUSPENDED,
+      threadId: "test-thread-id",
+      runId: "test-run-id",
+    } as RunSuspendedEvent);
+
+    // Resume run (should be accepted)
+    source$.next({
+      type: EventType.RUN_RESUMED,
+      threadId: "test-thread-id",
+      runId: "test-run-id",
+    } as RunResumedEvent);
+
+    // Resume run again. This should be rejected.
+    source$.next({
+      type: EventType.RUN_RESUMED,
+      threadId: "test-thread-id",
+      runId: "test-run-id",
+    } as RunResumedEvent);
+
+    // Complete the source and wait a bit for processing
+    source$.complete();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Verify one event was processed before the error
+    expect(events.length).toBe(3);
+    expect(events[2].type).toBe(EventType.RUN_RESUMED);
   });
 
   // Test: No events should be allowed after RUN_FINISHED (except RUN_ERROR)

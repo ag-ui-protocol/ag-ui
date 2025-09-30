@@ -26,11 +26,14 @@ export enum EventType {
   THINKING_END = "THINKING_END",
   STATE_SNAPSHOT = "STATE_SNAPSHOT",
   STATE_DELTA = "STATE_DELTA",
+  INTERRUPT = "INTERRUPT",
   MESSAGES_SNAPSHOT = "MESSAGES_SNAPSHOT",
   RAW = "RAW",
   CUSTOM = "CUSTOM",
   RUN_STARTED = "RUN_STARTED",
   RUN_FINISHED = "RUN_FINISHED",
+  RUN_SUSPENDED = "RUN_SUSPENDED",
+  RUN_RESUMED = "RUN_RESUMED",
   RUN_ERROR = "RUN_ERROR",
   STEP_STARTED = "STEP_STARTED",
   STEP_FINISHED = "STEP_FINISHED",
@@ -134,6 +137,11 @@ export const StateDeltaEventSchema = BaseEventSchema.extend({
   delta: z.array(z.any()), // JSON Patch (RFC 6902)
 });
 
+export const InterruptEventSchema = BaseEventSchema.extend({
+  type: z.literal(EventType.INTERRUPT),
+  content: z.any(),
+});
+
 export const MessagesSnapshotEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.MESSAGES_SNAPSHOT),
   messages: z.array(MessageSchema),
@@ -159,6 +167,19 @@ export const RunStartedEventSchema = BaseEventSchema.extend({
 
 export const RunFinishedEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.RUN_FINISHED),
+  threadId: z.string(),
+  runId: z.string(),
+  result: z.any().optional(),
+});
+
+export const RunResumedEventSchema = BaseEventSchema.extend({
+  type: z.literal(EventType.RUN_RESUMED),
+  threadId: z.string(),
+  runId: z.string(),
+});
+
+export const RunSuspendedEventSchema = BaseEventSchema.extend({
+  type: z.literal(EventType.RUN_SUSPENDED),
   threadId: z.string(),
   runId: z.string(),
   result: z.any().optional(),
@@ -224,11 +245,14 @@ export type ThinkingStartEvent = z.infer<typeof ThinkingStartEventSchema>;
 export type ThinkingEndEvent = z.infer<typeof ThinkingEndEventSchema>;
 export type StateSnapshotEvent = z.infer<typeof StateSnapshotEventSchema>;
 export type StateDeltaEvent = z.infer<typeof StateDeltaEventSchema>;
+export type InterruptEvent = z.infer<typeof InterruptEventSchema>;
 export type MessagesSnapshotEvent = z.infer<typeof MessagesSnapshotEventSchema>;
 export type RawEvent = z.infer<typeof RawEventSchema>;
 export type CustomEvent = z.infer<typeof CustomEventSchema>;
 export type RunStartedEvent = z.infer<typeof RunStartedEventSchema>;
 export type RunFinishedEvent = z.infer<typeof RunFinishedEventSchema>;
+export type RunResumedEvent = z.infer<typeof RunResumedEventSchema>;
+export type RunSuspendedEvent = z.infer<typeof RunSuspendedEventSchema>;
 export type RunErrorEvent = z.infer<typeof RunErrorEventSchema>;
 export type StepStartedEvent = z.infer<typeof StepStartedEventSchema>;
 export type StepFinishedEvent = z.infer<typeof StepFinishedEventSchema>;

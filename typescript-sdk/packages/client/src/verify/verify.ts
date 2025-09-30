@@ -17,6 +17,7 @@ export const verifyEvents =
     let activeThinkingStep = false;
     let activeThinkingStepMessage = false;
     let runStarted = false; // Track if a run has started
+    let runSuspended = false;
 
     // Function to reset state for a new run
     const resetRunState = () => {
@@ -28,6 +29,7 @@ export const verifyEvents =
       runFinished = false;
       runError = false;
       runStarted = true;
+      runSuspended = false;
     };
 
     return source$.pipe(
@@ -55,6 +57,13 @@ export const verifyEvents =
             () =>
               new AGUIError(
                 `Cannot send event type '${eventType}': The run has already finished with 'RUN_FINISHED'. Start a new run with 'RUN_STARTED'.`,
+              ),
+          );
+        } else if (runSuspended && eventType !== EventType.RUN_ERROR && eventType !== EventType.RUN_RESUMED) {
+          return throwError(
+            () =>
+              new AGUIError(
+                `First event in suspended run must be 'RUN_RESUMED'`,
               ),
           );
         }
@@ -259,6 +268,27 @@ export const verifyEvents =
             }
 
             runFinished = true;
+            return of(event);
+          }
+
+          case EventType.RUN_RESUMED: {
+            if (!runSuspended) {
+              return throwError(
+                () =>
+                  new AGUIError(
+                    `Cannot send 'RUN_RESUMED' without a previous 'RUN_SUSPENDED' event`,
+                  ),
+              );
+            }
+
+            runSuspended = false;
+
+            return of(event);
+          }
+
+          case EventType.RUN_SUSPENDED: {
+            runSuspended = true;
+
             return of(event);
           }
 
