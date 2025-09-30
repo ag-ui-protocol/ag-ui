@@ -16,7 +16,8 @@ import getEnvVars from "./env";
 import { mastra } from "./mastra";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 import { ADKAgent } from "@ag-ui/adk";
-import { A2AClientAgent } from "@ag-ui/a2a";
+import { HttpAgent } from "@ag-ui/client";
+import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
 
 const envVars = getEnvVars();
 export const agentsIntegrations: AgentIntegrationConfig[] = [
@@ -226,7 +227,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         subgraphs: new LangGraphAgent({
           deploymentUrl: envVars.langgraphTypescriptUrl,
           graphId: "subgraphs",
-        })
+        }),
       };
     },
   },
@@ -290,18 +291,32 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
   {
     id: "a2a",
     agents: async () => {
+      // TODO: configurable
+      // A2A agents: building management, finance, it agents
+      const agentUrls = ["http://127.0.0.1:9001", "http://127.0.0.1:9002", "http://127.0.0.1:9003"];
+      // TODO: configurable
+      // AGUI orchestration/routing agent
+      const orchestrationAgent = new HttpAgent({
+        url: "http://127.0.0.1:9000",
+      });
       return {
-        a2a_chat: new A2AClientAgent({
-          model: openai("gpt-4o", { parallelToolCalls: false }),
-          agentUrls: ["http://127.0.0.1:9999", "http://127.0.0.1:9998", "http://127.0.0.1:9997"],
+        a2a_chat: new A2AMiddlewareAgent({
+          description: "Middleware that connects to remote A2A agents",
+          agentUrls,
           instructions: `
           You are an HR agent. You are responsible for hiring employees and other typical HR tasks.
 
           It's very important to contact all the departments necessary to complete the task.
-          For example, to hire an employee, you must contact the Finance and IT departments and to find a table at buildings management.
+          For example, to hire an employee, you must contact all 3 departments: Finance, IT and Buildings Management. Help the Buildings Management department to find a table.
 
+          You can make tool calls on behalf of other agents.
           DO NOT FORGET TO COMMUNICATE BACK TO THE RELEVANT AGENT IF MAKING A TOOL CALL ON BEHALF OF ANOTHER AGENT!!!
-   `,
+
+          When choosing a seat with the buildings management agent, You MUST use the \`pickTable\` tool to have the user pick a seat.
+          The buildings management agent will then use the \`pickSeat\` tool to pick a seat.
+          `,
+
+          orchestrationAgent,
         }),
       };
     },
