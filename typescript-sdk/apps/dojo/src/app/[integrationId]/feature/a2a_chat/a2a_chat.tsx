@@ -166,6 +166,10 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
       The result will be the selected table.
       Wait for the user to respond via this tool, don't keep talking to them after calling it until it has resolved.
       Don't call this tool twice in a row or I'll turn you off!
+
+      Returns: A json object with the following properties:
+      - tableName: (string): The name of the table that was selected
+      - seatNumber: (number): The number of the seat that was selected
     `),
     parameters: [
       {
@@ -203,8 +207,10 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
         description: `A JSON encoded array of tables. This is an example of the format: [{ "name": "Table 1", "seats": [{ "seatNumber": 1, "status": "available" }, { "seatNumber": 2, "status": "occupied", "name": "Alice" }] }, { "name": "Table 2", "seats": [{ "seatNumber": 1, "status": "available" }, { "seatNumber": 2, "status": "available" }] }, { "name": "Table 3", "seats": [{ "seatNumber": 1, "status": "occupied", "name": "Bob" }, { "seatNumber": 2, "status": "available" }] }]`,
       },
     ],
-    renderAndWaitForResponse({ args, respond }) {
-      console.log("args", args);
+
+    renderAndWaitForResponse(allofit) {
+      const { args, respond } = allofit;
+      console.log("TABLE PICKER RENDER AND WAIT FOR RESPONSE", allofit);
 
       const availableSeats =
         args.tables?.reduce(
@@ -226,12 +232,19 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
         ) || [];
 
       const handleSeatClick = (tableIndex: number, seatNumber: number, status: string) => {
+
+        console.log("handleSeatClick", tableIndex, seatNumber, status);
         if (status === "available") {
+          console.log("setting selected seat", tableIndex, seatNumber);
           setSelectedSeat({ tableIndex, seatNumber });
           setIsConfirmed(false); // Reset confirmation when selecting a new seat
         }
+        else {
+          console.log("seat is not available", tableIndex, seatNumber);
+        }
       };
 
+      console.log("selected seat", selectedSeat);
       return (
         <div className="bg-white p-6 rounded-lg shadow-lg max-w-4xl my-8">
           {/* Header */}
@@ -279,6 +292,7 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
                     return (
                       <button
                         key={seatIndex}
+                        disabled={seat.status !== "available"}
                         onClick={() => handleSeatClick(tableIndex, seat.seatNumber, seat.status)}
                         className={`
                           w-16 h-16 rounded-lg border-2 flex items-center justify-center text-xs font-medium transition-all
@@ -335,11 +349,15 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
                 onClick={() => {
                   if (!isConfirmed) {
                     // Handle seat selection confirmation
+                    const tableName = args.tables?.[selectedSeat.tableIndex]?.name;
+                    const seatNumber = selectedSeat.seatNumber;
+                    if (!tableName || !seatNumber) {
+                      // Throw some sort of error
+                    }
 
                     setIsConfirmed(true);
-                    respond?.(
-                      `I would like to book ${args.tables?.[selectedSeat.tableIndex]?.name} - Seat ${selectedSeat.seatNumber}`,
-                    );
+
+                    respond?.({tableName, seatNumber});
                   }
                 }}
                 disabled={isConfirmed}
@@ -369,7 +387,7 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
         </div>
       );
     },
-  });
+  }, [selectedSeat, isConfirmed]);
 
   return (
     <div
