@@ -22,11 +22,11 @@ Subscriber callbacks are async-friendly via async_trait.
 
 Pass subscribers to Agent::run_agent using any of these forms via IntoSubscribers:
 
-- T where T: AgentSubscriber
-- (T,) single-element tuple
-- Vec<T>
-- &[T]
-- () or Option<()> when no subscribers are needed
+- `T where T: AgentSubscriber`
+- `(T,)` single-element tuple
+- `Vec<T>`
+- `&[T]`
+- `()` or `Option<()>` when no subscribers are needed
 
 ```rust
 use ag_ui_client::{Agent, HttpAgent};
@@ -115,6 +115,8 @@ use async_trait::async_trait;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
 struct Plan { steps: Vec<String> }
+
+struct Logger;
 
 #[async_trait]
 impl AgentSubscriber<Plan, ()> for Logger {
