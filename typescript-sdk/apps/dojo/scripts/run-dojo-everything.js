@@ -65,12 +65,12 @@ const ALL_SERVICES = {
     cwd: path.join(integrationsRoot, 'agno/examples'),
     env: { PORT: 8002 },
   }],
-  'crew-ai': {
+  'crew-ai': [{
     command: 'poetry run dev',
     name: 'CrewAI',
     cwd: path.join(integrationsRoot, 'crewai/python'),
     env: { PORT: 8003 },
-  },
+  }],
   'langgraph-fastapi': [{
     command: 'poetry run dev',
     name: 'LG FastAPI',
@@ -80,36 +80,36 @@ const ALL_SERVICES = {
       POETRY_VIRTUALENVS_IN_PROJECT: 'false',
     },
   }],
-  'langgraph-platform-python': {
+  'langgraph-platform-python': [{
     command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8005',
     name: 'LG Platform Py',
     cwd: path.join(integrationsRoot, 'langgraph/examples/python'),
     env: { PORT: 8005 },
-  },
+  }],
   'langgraph-platform-typescript': [{
     command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8006',
     name: 'LG Platform TS',
     cwd: path.join(integrationsRoot, 'langgraph/examples/typescript/'),
     env: { PORT: 8006 },
   }],
-  'llama-index': {
+  'llama-index': [{
     command: 'uv run dev',
     name: 'Llama Index',
     cwd: path.join(integrationsRoot, 'llamaindex/server-py'),
     env: { PORT: 8007 },
-  },
+  }],
   'mastra': [{
     command: 'npm run dev',
     name: 'Mastra',
     cwd: path.join(integrationsRoot, 'mastra/example'),
     env: { PORT: 8008 },
   }],
-  'pydantic-ai': {
+  'pydantic-ai': [{
     command: 'uv run dev',
     name: 'Pydantic AI',
     cwd: path.join(integrationsRoot, 'pydantic-ai/examples'),
     env: { PORT: 8009 },
-  },
+  }],
   'adk-middleware': [{
     command: 'uv run dev',
     name: 'ADK Middleware',
