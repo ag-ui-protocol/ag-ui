@@ -291,13 +291,11 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
   {
     id: "a2a",
     agents: async () => {
-      // TODO: configurable
       // A2A agents: building management, finance, it agents
-      const agentUrls = ["http://127.0.0.1:9001", "http://127.0.0.1:9002", "http://127.0.0.1:9003"];
-      // TODO: configurable
+      const agentUrls = [envVars.a2aMiddlewareBuildingsManagementUrl, envVars.a2aMiddlewareFinanceUrl, envVars.a2aMiddlewareItUrl];
       // AGUI orchestration/routing agent
       const orchestrationAgent = new HttpAgent({
-        url: "http://127.0.0.1:9000",
+        url: envVars.a2aMiddlewareOrchestratorUrl,
       });
       return {
         a2a_chat: new A2AMiddlewareAgent({
@@ -316,7 +314,6 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
           When choosing a seat with the buildings management agent, You MUST use the \`pickTable\` tool to have the user pick a seat.
           The buildings management agent will then use the \`pickSeat\` tool to pick a seat.
           `,
-
         }),
       };
     },
