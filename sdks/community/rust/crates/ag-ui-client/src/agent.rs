@@ -50,6 +50,10 @@ pub struct RunAgentParams<StateT: AgentState = JsonValue, FwdPropsT: FwdProps = 
 impl<StateT: AgentState + Default, FwdPropsT: FwdProps + Default>
     RunAgentParams<StateT, FwdPropsT>
 {
+    /// Construct a new instance of [RunAgentParams] where the state and forwarded_props are
+    /// manually typed.
+    ///
+    /// If you do not need this level of customization, use [RunAgentParams::new].
     pub fn new_typed() -> Self {
         Self {
             run_id: None,
@@ -98,7 +102,7 @@ impl<StateT: AgentState + Default, FwdPropsT: FwdProps + Default>
 impl RunAgentParams<JsonValue, JsonValue> {
     /// Construct an empty parameter object with JSON Values for state and forwarded props.
     ///
-    /// If you want typed state and/or fwd props, use [Self::new_typed]
+    /// If you want typed state and/or forwarded_props, use [RunAgentParams::new_typed].
     pub fn new() -> Self {
         Self::default()
     }

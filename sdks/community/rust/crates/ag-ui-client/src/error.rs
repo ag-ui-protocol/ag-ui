@@ -1,36 +1,37 @@
+use reqwest::StatusCode;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum AgUiClientError {
-    // Configuration/usage errors
+    /// Configuration/usage errors
     #[error("Invalid configuration: {message}")]
     Config { message: String },
 
-    // Transport-level HTTP failures from reqwest
+    /// Transport-level HTTP failures from reqwest
     #[error("HTTP transport error: {0}")]
     HttpTransport(#[from] reqwest::Error),
 
-    // Non-success HTTP status with body snippet
+    /// Non-success HTTP status with body snippet
     #[error("HTTP status {status}: {context}")]
     HttpStatus {
         status: reqwest::StatusCode,
         context: String,
     },
 
-    // SSE parsing/framing/UTF-8 errors
+    /// SSE parsing/framing/UTF-8 errors
     #[error("SSE parse error: {message}")]
     SseParse { message: String },
 
-    // JSON serialization/deserialization
+    /// JSON serialization/deserialization errors
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
-    // Errors from subscribers/callbacks
+    /// Errors from subscribers/callbacks
     #[error("Subscriber error: {message}")]
     Subscriber { message: String },
 
-    // Pipeline catch-all
+    /// Pipeline catch-all
     #[error("Agent execution error: {message}")]
     Execution { message: String },
 }
@@ -44,11 +45,10 @@ impl AgUiClientError {
     }
 
     pub fn is_retryable(&self) -> bool {
-        use reqwest::StatusCode as S;
         match self {
             AgUiClientError::HttpTransport(e) => e.is_connect() || e.is_timeout() || e.is_request(),
             AgUiClientError::HttpStatus { status, .. } => {
-                status.is_server_error() || *status == S::TOO_MANY_REQUESTS
+                status.is_server_error() || *status == StatusCode::TOO_MANY_REQUESTS
             }
             _ => false,
         }
