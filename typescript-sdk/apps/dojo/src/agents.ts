@@ -303,6 +303,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         a2a_chat: new A2AMiddlewareAgent({
           description: "Middleware that connects to remote A2A agents",
           agentUrls,
+          orchestrationAgent,
           instructions: `
           You are an HR agent. You are responsible for hiring employees and other typical HR tasks.
 
@@ -316,7 +317,6 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
           The buildings management agent will then use the \`pickSeat\` tool to pick a seat.
           `,
 
-          orchestrationAgent,
         }),
       };
     },
