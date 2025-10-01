@@ -1,0 +1,29 @@
+[package]
+name = "ag-ui-client"
+version = "0.1.0"
+edition = "2024"
+description = "Client library for the AG-UI protocol."
+license = "MIT"
+readme = "README.md"
+
+[dependencies]
+ag-ui-core = { version = "0.1.0" }
+thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+async-trait = "0.1.88"
+uuid = { version = "1.17.0", features = ["v4"] }
+futures = "0.3.31"
+json-patch = "4.0.0"
+log = "0.4.27"
+reqwest = { version = "0.12.22" , features = ["json", "stream"]}
+bytes = "1.5.0"
+tokio = "1.36.0"
+
+[dev-dependencies]
+env_logger = "0.11.8"
+tokio = { version = "1.36.0", features = ["full"] }
+
+[[example]]
+name = "http-agent"
+path = "examples/basic_agent.rs"
