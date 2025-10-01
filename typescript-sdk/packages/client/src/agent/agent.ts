@@ -346,12 +346,14 @@ export abstract class AbstractAgent {
   public clone() {
     const cloned = Object.create(Object.getPrototypeOf(this));
 
-    for (const key of Object.getOwnPropertyNames(this)) {
-      const value = (this as any)[key];
-      if (typeof value !== "function") {
-        cloned[key] = structuredClone_(value);
-      }
-    }
+    cloned.agentId = this.agentId;
+    cloned.description = this.description;
+    cloned.threadId = this.threadId;
+    cloned.messages = structuredClone_(this.messages);
+    cloned.state = structuredClone_(this.state);
+    cloned.debug = this.debug;
+    cloned.isRunning = this.isRunning;
+    cloned.subscribers = [...this.subscribers];
 
     return cloned;
   }
