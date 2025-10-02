@@ -20,7 +20,6 @@ import { AgentCard, SendMessageResponse, SendMessageSuccessResponse } from "@a2a
 import { Observable, Subscriber, tap } from "rxjs";
 import { createSystemPrompt, sendMessageToA2AAgentTool } from "./utils";
 import { randomUUID } from "crypto";
-import { text } from "stream/consumers";
 
 export interface A2AAgentConfig extends AgentConfig {
   agentUrls: string[];
@@ -129,6 +128,9 @@ export class A2AMiddlewareAgent extends AbstractAgent {
             this.finishTextMessages(observer, pendingTextMessages);
 
             if (pendingA2ACalls.size > 0) {
+              // Array to collect all new tool result messages
+              const newToolMessages: Message[] = [];
+
               const callProms = [...pendingA2ACalls].map((toolCallId) => {
                 const toolCallsFromMessages = this.messages
                   .filter((message) => message.role === "assistant")
@@ -160,6 +162,9 @@ export class A2AMiddlewareAgent extends AbstractAgent {
                     this.addMessage(newMessage);
                     this.orchestrationAgent.addMessage(newMessage);
 
+                    // Collect the message so we can add it to input.messages
+                    newToolMessages.push(newMessage);
+
                     const newEvent: ToolCallResultEvent = {
                       type: EventType.TOOL_CALL_RESULT,
                       toolCallId: toolCallId,
@@ -183,6 +188,12 @@ export class A2AMiddlewareAgent extends AbstractAgent {
                   threadId: input.threadId,
                   runId: input.runId,
                 } as RunFinishedEvent);
+
+                // Add all tool result messages to input.messages BEFORE triggering new run
+                // This ensures the orchestrator sees the tool results in its context
+                newToolMessages.forEach((msg) => {
+                  input.messages.push(msg);
+                });
 
                 this.triggerNewRun(observer, input, pendingA2ACalls, pendingTextMessages);
               });
