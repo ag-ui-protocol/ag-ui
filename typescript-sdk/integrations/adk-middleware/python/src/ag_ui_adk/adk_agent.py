@@ -916,19 +916,28 @@ class ADKAgent:
                 final_response = adk_event.is_final_response()
                 has_content = adk_event.content and hasattr(adk_event.content, 'parts') and adk_event.content.parts
 
-                if not final_response or (not adk_event.usage_metadata and has_content):
-                    # Translate and emit events
+                # Check if this is a streaming chunk that needs regular processing
+                is_streaming_chunk = (
+                    getattr(adk_event, 'partial', False) or  # Explicitly marked as partial
+                    (not getattr(adk_event, 'turn_complete', True)) or  # Live streaming not complete
+                    (not final_response)  # Not marked as final by is_final_response()
+                )
+
+                # Process as streaming if it's a chunk OR if it has content but no finish_reason
+                # This ensures we capture all content, regardless of usage_metadata presence
+                if is_streaming_chunk or (has_content and not getattr(adk_event, 'finish_reason', None)):
+                    # Regular translation path
                     async for ag_ui_event in event_translator.translate(
                         adk_event,
                         input.thread_id,
                         input.run_id
                     ):
-                        
+
                         logger.debug(f"Emitting event to queue: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size before: {event_queue.qsize()})")
                         await event_queue.put(ag_ui_event)
                         logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
                 else:
-                    # LongRunning Tool events are usually emmitted in final response                   
+                    # LongRunning Tool events are usually emmitted in final response
                     async for ag_ui_event in event_translator.translate_lro_function_calls(
                         adk_event
                     ):
