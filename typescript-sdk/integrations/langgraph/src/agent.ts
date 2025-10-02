@@ -25,7 +25,7 @@ import {
   PredictStateTool,
   LangGraphReasoning,
   StateEnrichment,
-  LangGraphTool,
+  LangGraphToolWithName,
 } from "./types";
 import {
   AbstractAgent,
@@ -179,7 +179,7 @@ export class LangGraphAgent extends AbstractAgent {
       return subscriber.error("No stream to regenerate");
     }
 
-    await this.handleStreamEvents(preparedStream, threadId, subscriber, input, streamMode);
+    await this.handleStreamEvents(preparedStream, threadId, subscriber, input, Array.isArray(streamMode) ? streamMode : [streamMode]);
   }
 
   async prepareRegenerateStream(input: RegenerateInput, streamMode: StreamMode | StreamMode[]) {
@@ -376,7 +376,7 @@ export class LangGraphAgent extends AbstractAgent {
     threadId: string,
     subscriber: Subscriber<ProcessedEvents>,
     input: RunAgentExtendedInput,
-    streamMode: StreamMode | StreamMode[],
+    streamModes: StreamMode | StreamMode[],
   ) {
     const { forwardedProps } = input;
     const nodeNameInput = forwardedProps?.nodeName;
@@ -406,7 +406,7 @@ export class LangGraphAgent extends AbstractAgent {
             streamResponseChunk.event.startsWith("values"));
 
         // @ts-ignore
-        if (!streamMode.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream) {
+        if (!streamModes.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream && streamResponseChunk.event !== 'error') {
           continue;
         }
 
@@ -1003,21 +1003,25 @@ export class LangGraphAgent extends AbstractAgent {
 
     const newMessages = messages.filter((message) => !existingMessageIds.has(message.id));
 
-    const langGraphTools: LangGraphTool[] = [...(state.tools ?? []), ...(input.tools ?? [])].map((tool) => {
-      if (tool.type) {
-        return tool;
+    const langGraphTools: LangGraphToolWithName[] = [...(state.tools ?? []), ...(input.tools ?? [])].reduce((acc, tool) => {
+      let mappedTool = tool;
+      if (!tool.type) {
+        mappedTool = {
+            type: "function",
+            name: tool.name,
+            function: {
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.parameters,
+            },
+        }
       }
 
-      return {
-        type: "function",
-        name: tool.name,
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.parameters,
-        },
-      };
-    });
+      // Verify no duplicated
+      if (acc.find((t: LangGraphToolWithName) => (t.name === mappedTool.name) || t.function.name === mappedTool.function.name)) return acc;
+
+      return [...acc, mappedTool];
+    }, []);
 
     return {
       ...state,

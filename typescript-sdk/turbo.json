@@ -2,7 +2,7 @@
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
   "envMode": "loose",
-  "concurrency": "20",
+  "concurrency": "25",
   "tasks": {
     "generate": {
       "outputs": ["src/generated/**"]
