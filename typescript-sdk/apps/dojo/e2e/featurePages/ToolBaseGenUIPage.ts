@@ -1,4 +1,4 @@
-import { Page, Locator, expect } from '@playwright/test';
+import { Page, Locator, expect } from "@playwright/test";
 
 export class ToolBaseGenUIPage {
   readonly page: Page;
@@ -13,10 +13,10 @@ export class ToolBaseGenUIPage {
   constructor(page: Page) {
     this.page = page;
     this.haikuAgentIntro = page.getByText("I'm a haiku generator 👋. How can I help you?");
-    this.messageBox = page.getByRole('textbox', { name: 'Type a message...' });
+    this.messageBox = page.getByRole("textbox", { name: "Type a message..." });
     this.sendButton = page.locator('[data-test-id="copilot-chat-ready"]');
     this.haikuBlock = page.locator('[data-testid="haiku-card"]');
-    this.applyButton = page.getByRole('button', { name: 'Apply' });
+    this.applyButton = page.getByRole("button", { name: "Apply" });
     this.japaneseLines = page.locator('[data-testid="haiku-line"]');
   }
 
@@ -29,12 +29,15 @@ export class ToolBaseGenUIPage {
   async checkGeneratedHaiku() {
     await this.page.locator('[data-testid="haiku-card"]').last().isVisible();
     const mostRecentCard = this.page.locator('[data-testid="haiku-card"]').last();
-    await mostRecentCard.locator('[data-testid="haiku-line"]').first().waitFor({ state: 'visible', timeout: 10000 });
+    await mostRecentCard
+      .locator('[data-testid="haiku-line"]')
+      .first()
+      .waitFor({ state: "visible", timeout: 10000 });
   }
 
   async extractChatHaikuContent(page: Page): Promise<string> {
     await page.waitForTimeout(3000);
-    await page.locator('[data-testid="haiku-card"]').first().waitFor({ state: 'visible' });
+    await page.locator('[data-testid="haiku-card"]').first().waitFor({ state: "visible" });
     const allHaikuCards = page.locator('[data-testid="haiku-card"]');
     const cardCount = await allHaikuCards.count();
     let chatHaikuContainer;
@@ -47,7 +50,7 @@ export class ToolBaseGenUIPage {
 
       if (linesCount > 0) {
         try {
-          await chatHaikuLines.first().waitFor({ state: 'visible', timeout: 5000 });
+          await chatHaikuLines.first().waitFor({ state: "visible", timeout: 5000 });
           break;
         } catch (error) {
           continue;
@@ -56,7 +59,7 @@ export class ToolBaseGenUIPage {
     }
 
     if (!chatHaikuLines) {
-      throw new Error('No haiku cards with visible lines found');
+      throw new Error("No haiku cards with visible lines found");
     }
 
     const count = await chatHaikuLines.count();
@@ -64,11 +67,11 @@ export class ToolBaseGenUIPage {
 
     for (let i = 0; i < count; i++) {
       const haikuLine = chatHaikuLines.nth(i);
-      const japaneseText = await haikuLine.locator('p').first().innerText();
+      const japaneseText = await haikuLine.locator("p").first().innerText();
       lines.push(japaneseText);
     }
 
-    const chatHaikuContent = lines.join('').replace(/\s/g, '');
+    const chatHaikuContent = lines.join("").replace(/\s/g, "");
     return chatHaikuContent;
   }
 
@@ -80,12 +83,12 @@ export class ToolBaseGenUIPage {
     if (mainCount > 0) {
       for (let i = 0; i < mainCount; i++) {
         const haikuLine = mainDisplayLines.nth(i);
-        const japaneseText = await haikuLine.locator('p').first().innerText();
+        const japaneseText = await haikuLine.locator("p").first().innerText();
         lines.push(japaneseText);
       }
     }
 
-    const mainHaikuContent = lines.join('').replace(/\s/g, '');
+    const mainHaikuContent = lines.join("").replace(/\s/g, "");
     return mainHaikuContent;
   }
 
@@ -96,7 +99,7 @@ export class ToolBaseGenUIPage {
 
     const mainHaikuContent = await this.extractMainDisplayHaikuContent(page);
 
-    if (mainHaikuContent === '') {
+    if (mainHaikuContent === "") {
       expect(chatHaikuContent.length).toBeGreaterThan(0);
       return;
     }
@@ -110,5 +113,22 @@ export class ToolBaseGenUIPage {
 
       expect(updatedMainContent).toBe(chatHaikuContent);
     }
+  }
+
+  async waitForMainDisplayHaiku(page: Page, expectedContent: string): Promise<void> {
+    await page.waitForFunction(
+      (expectedContent) => {
+        const mainLines = Array.from(
+          document.querySelectorAll('[data-testid="main-haiku-line"] p:first-child'),
+        );
+        const mainContent = mainLines
+          .map((el) => el.textContent)
+          .join("")
+          .replace(/\s/g, "");
+        return mainContent === expectedContent;
+      },
+      expectedContent,
+      { timeout: 10000 },
+    );
   }
 }
