@@ -212,8 +212,8 @@ class TestADKAgent:
         async def fake_translate(self, adk_event, thread_id, run_id):
             nonlocal translate_calls
             translate_calls += 1
-            yield TextMessageContentEvent(
-                type=EventType.TEXT_MESSAGE_CONTENT,
+            yield TextMessageChunkEvent(
+                type=EventType.TEXT_MESSAGE_CHUNK,
                 message_id=adk_event.id,
                 delta="chunk"
             )
@@ -248,7 +248,7 @@ class TestADKAgent:
              patch.object(adk_agent, "_create_runner", return_value=FakeRunner()):
             events = [event async for event in adk_agent.run(sample_input)]
 
-        assert any(isinstance(event, TextMessageContentEvent) for event in events)
+        assert any(isinstance(event, TextMessageChunkEvent) for event in events)
         assert translate_calls == 1
         assert lro_calls == 0
 
