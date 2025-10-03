@@ -54,17 +54,25 @@ export OPENAI_API_KEY=your-api-key-here
 
 Install the following tools:
 
-```bash
-brew install protobuf
-```
+- Install protobuf
+    - Linux, using apt or apt-get, for example:
+        ```bash
+        apt install -y protobuf-compiler
+        ```
+    - MacOS, using Homebrew:
+        ```sh
+        brew install protobuf
+        ```
 
-```bash
-npm i turbo
-```
+    - Windows, using Winget
+        ```sh
+        winget install protobuf
+        ```
 
-```bash
-curl -fsSL https://get.pnpm.io/install.sh | sh -
-```
+- Install pnpm
+    ```bash
+    curl -fsSL https://get.pnpm.io/install.sh | sh -
+    ```
 
 ## Step 1 – Scaffold your server
 
@@ -133,7 +141,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     id: "openai-server",
     agents: async () => {
       return {
-        agentic_chat: new OpenAIServerAgent(),
+        agentic_chat: new OpenAIServerAgent({ url: "http://localhost:8000/" }),
       }
     },
   },
@@ -183,11 +191,8 @@ In another terminal, start the dojo:
 ```bash
 cd typescript-sdk
 
-# Install dependencies
-pnpm install
-
-# Compile the project and run the dojo
-turbo run dev
+# Install dependencies & Compile the project and run the dojo
+pnpm install & pnpm run dev
 ```
 
 Head over to [http://localhost:3000](http://localhost:3000) and choose
@@ -297,28 +302,85 @@ import uuid
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
+
 from ag_ui.core import (
     RunAgentInput,
     EventType,
     RunStartedEvent,
     RunFinishedEvent,
     RunErrorEvent,
+    TextMessageStartEvent,
+    TextMessageContentEvent,
+    TextMessageEndEvent,
+    ToolCallStartEvent,
+    ToolCallArgsEvent,
+    ToolCallEndEvent,
 )
 from ag_ui.encoder import EventEncoder
+
 from openai import OpenAI
+from openai.types.chat import (
+    ChatCompletionUserMessageParam,
+    ChatCompletionAssistantMessageParam,
+    ChatCompletionToolMessageParam,
+    ChatCompletionSystemMessageParam,
+    ChatCompletionFunctionMessageParam,
+    ChatCompletionToolParam,
+)
+from openai.types.shared_params import FunctionDefinition
 
 app = FastAPI(title="AG-UI OpenAI Server")
 
-# Initialize OpenAI client - uses OPENAI_API_KEY from environment
-client = OpenAI()
+# ✅ Initialize OpenAI client
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+
+# ✅ Convert AG-UI messages to proper OpenAI types
+def convert_message(msg):
+    if msg.role == "user":
+        return ChatCompletionUserMessageParam(role="user", content=msg.content or "")
+    elif msg.role == "assistant":
+        return ChatCompletionAssistantMessageParam(
+            role="assistant",
+            content=msg.content or "",
+            tool_calls=msg.tool_calls if hasattr(msg, "tool_calls") else None
+        )
+    elif msg.role == "tool":
+        return ChatCompletionToolMessageParam(
+            role="tool",
+            content=msg.content or "",
+            tool_call_id=msg.tool_call_id if hasattr(msg, "tool_call_id") else None
+        )
+    elif msg.role == "system":
+        return ChatCompletionSystemMessageParam(role="system", content=msg.content or "")
+    elif msg.role == "function":
+        return ChatCompletionFunctionMessageParam(
+            role="function",
+            content=msg.content or "",
+            name=msg.name if hasattr(msg, "name") else None
+        )
+    else:
+        raise ValueError(f"Unsupported message role: {msg.role}")
+
+# ✅ Convert AG-UI tool definitions to OpenAI tools
+def convert_tools(tools):
+    return [
+        ChatCompletionToolParam(
+            type="function",
+            function=FunctionDefinition(
+                name=tool.name,
+                description=tool.description,
+                parameters=tool.parameters
+            )
+        )
+        for tool in tools
+    ]
 
 @app.post("/")
 async def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):
-    """OpenAI agentic chat endpoint"""
-    accept_header = request.headers.get("accept")
-    encoder = EventEncoder(accept=accept_header)
+    accept = request.headers.get("accept")
+    encoder = EventEncoder(accept=accept)
 
-    async def event_generator():
+    async def event_stream():
         try:
             yield encoder.encode(
                 RunStartedEvent(
@@ -328,58 +390,90 @@ async def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):
                 )
             )
 
-            # Call OpenAI's API with streaming enabled
-            stream = client.chat.completions.create(
-                model="gpt-4o",
-                stream=True,
-                # Convert AG-UI tools format to OpenAI's expected format
-                tools=[
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": tool.name,
-                            "description": tool.description,
-                            "parameters": tool.parameters,
-                        }
-                    }
-                    for tool in input_data.tools
-                ] if input_data.tools else None,
-                # Transform AG-UI messages to OpenAI's message format
-                messages=[
-                    {
-                        "role": message.role,
-                        "content": message.content or "",
-                        # Include tool calls if this is an assistant message with tools
-                        **({"tool_calls": message.tool_calls} if message.role == "assistant" and hasattr(message, 'tool_calls') and message.tool_calls else {}),
-                        # Include tool call ID if this is a tool result message
-                        **({"tool_call_id": message.tool_call_id} if message.role == "tool" and hasattr(message, 'tool_call_id') else {}),
-                    }
-                    for message in input_data.messages
-                ],
-            )
-
             message_id = str(uuid.uuid4())
 
-            # Stream each chunk from OpenAI's response
-            for chunk in stream:
-                # Handle text content chunks
-                if chunk.choices[0].delta.content:
-                    yield encoder.encode({
-                        "type": EventType.TEXT_MESSAGE_CHUNK,
-                        "message_id": message_id,
-                        "delta": chunk.choices[0].delta.content,
-                    })
-                # Handle tool call chunks
-                elif chunk.choices[0].delta.tool_calls:
-                    tool_call = chunk.choices[0].delta.tool_calls[0]
+            response = client.chat.completions.create(
+                model="gpt-4o",  # Or any supported model
+                stream=True,
+                messages=[convert_message(m) for m in input_data.messages],
+                tools=convert_tools(input_data.tools) if input_data.tools else None
+            )
 
-                    yield encoder.encode({
-                        "type": EventType.TOOL_CALL_CHUNK,
-                        "tool_call_id": tool_call.id,
-                        "tool_call_name": tool_call.function.name if tool_call.function else None,
-                        "parent_message_id": message_id,
-                        "delta": tool_call.function.arguments if tool_call.function else None,
-                    })
+            # Track if we've started a text message
+            text_message_started = False
+
+            for chunk in response:
+                delta = chunk.choices[0].delta
+
+                if delta.content:
+                    # Start text message if not already started
+                    if not text_message_started:
+                        yield encoder.encode(
+                            TextMessageStartEvent(
+                                type=EventType.TEXT_MESSAGE_START,
+                                message_id=message_id,
+                                role="assistant"
+                            )
+                        )
+                        text_message_started = True
+                    
+                    yield encoder.encode(
+                        TextMessageContentEvent(
+                            type=EventType.TEXT_MESSAGE_CONTENT,
+                            message_id=message_id,
+                            delta=delta.content,
+                        )
+                    )
+
+                elif delta.tool_calls:
+                    # End text message if it was started
+                    if text_message_started:
+                        yield encoder.encode(
+                            TextMessageEndEvent(
+                                type=EventType.TEXT_MESSAGE_END,
+                                message_id=message_id
+                            )
+                        )
+                        text_message_started = False
+                    
+                    tool_call = delta.tool_calls[0]
+                    
+                    # Send tool call start event
+                    yield encoder.encode(
+                        ToolCallStartEvent(
+                            type=EventType.TOOL_CALL_START,
+                            tool_call_id=tool_call.id,
+                            tool_call_name=tool_call.function.name if tool_call.function else "",
+                            parent_message_id=message_id,
+                        )
+                    )
+                    
+                    # Send tool call args event if there are arguments
+                    if tool_call.function and tool_call.function.arguments:
+                        yield encoder.encode(
+                            ToolCallArgsEvent(
+                                type=EventType.TOOL_CALL_ARGS,
+                                tool_call_id=tool_call.id,
+                                delta=tool_call.function.arguments,
+                            )
+                        )
+                    
+                    # Send tool call end event
+                    yield encoder.encode(
+                        ToolCallEndEvent(
+                            type=EventType.TOOL_CALL_END,
+                            tool_call_id=tool_call.id,
+                        )
+                    )
+
+            # End text message if it was started but not ended
+            if text_message_started:
+                yield encoder.encode(
+                    TextMessageEndEvent(
+                        type=EventType.TEXT_MESSAGE_END,
+                        message_id=message_id
+                    )
+                )
 
             yield encoder.encode(
                 RunFinishedEvent(
@@ -389,31 +483,23 @@ async def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):
                 )
             )
 
-        except Exception as error:
+        except Exception as e:
             yield encoder.encode(
                 RunErrorEvent(
                     type=EventType.RUN_ERROR,
-                    message=str(error)
+                    message=str(e)
                 )
             )
 
-    return StreamingResponse(
-        event_generator(),
-        media_type=encoder.get_content_type()
-    )
+    return StreamingResponse(event_stream(), media_type=encoder.get_content_type())
 
 def main():
-    """Run the uvicorn server."""
     port = int(os.getenv("PORT", "8000"))
-    uvicorn.run(
-        "example_server:app",
-        host="0.0.0.0",
-        port=port,
-        reload=True
-    )
+    uvicorn.run("example_server:app", host="0.0.0.0", port=port, reload=True)
 
 if __name__ == "__main__":
     main()
+
 ```
 
 ### What happens under the hood?
