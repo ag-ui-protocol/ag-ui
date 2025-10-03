@@ -1,0 +1,7 @@
+{"timestamp":"2025-09-09T19:09:35.131269","level":"info","message":"Starting Tool Based Generative UI flow"}
+{"timestamp":"2025-09-09T19:09:35.133225","level":"debug","message":"Base URL: http://127.0.0.1:20203"}
+{"timestamp":"2025-09-09T19:09:35.133445","level":"info","message":"Starting run with thread_id: thread_1757459375133, run_id: run_1757459375133"}
+{"timestamp":"2025-09-09T19:09:35.133468","level":"info","message":"User message: Create a haiku about AI"}
+{"timestamp":"2025-09-09T19:09:35.139817","level":"debug","message":"Sending request to http://127.0.0.1:20203/tool-based-generative-ui"}
+{"timestamp":"2025-09-09T19:09:35.174453","level":"error","message":"Failed to complete run: Exception: Server returned 404: {\"detail\":\"Not Found\"}"}
+{"error":"Exception: Server returned 404: {\"detail\":\"Not Found\"}"}
