@@ -19,6 +19,6 @@
     },
     "stripInternal": true
   },
-  "include": ["src", "../core/src/subscriber.ts"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }
