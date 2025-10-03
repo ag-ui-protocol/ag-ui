@@ -271,7 +271,7 @@ class TestADKAgent:
             custom_data=None,
             long_running_tool_ids=[],
         )
-        streaming_event.is_final_response = lambda: True
+        streaming_event.is_final_response = lambda: False
         streaming_event.get_function_calls = Mock(return_value=[])
         streaming_event.get_function_responses = Mock(return_value=[])
 
