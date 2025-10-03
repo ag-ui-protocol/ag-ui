@@ -8,10 +8,12 @@ from types import SimpleNamespace
 from unittest.mock import Mock, MagicMock, AsyncMock, patch
 
 
-from ag_ui_adk import ADKAgent, SessionManager, EventTranslator
+from ag_ui_adk import ADKAgent, SessionManager
+from ag_ui_adk.event_translator import EventTranslator
 from ag_ui.core import (
     RunAgentInput, EventType, UserMessage, Context,
-    RunStartedEvent, RunFinishedEvent, TextMessageChunkEvent, SystemMessage
+    RunStartedEvent, RunFinishedEvent, TextMessageChunkEvent, SystemMessage,
+    TextMessageContentEvent
 )
 from google.adk.agents import Agent
 
@@ -254,46 +256,101 @@ class TestADKAgent:
 
     @pytest.mark.asyncio
     async def test_streaming_finish_reason_fallback(self, adk_agent, sample_input):
-        """Test that finish_reason fallback works for streaming message termination."""
+        """Ensure streaming translator handles final responses missing finish_reason."""
 
-        streaming_calls = []
+        text_part = SimpleNamespace(text="Hello from stream", function_call=None)
+        streaming_event = SimpleNamespace(
+            id="event-stream",
+            author="assistant",
+            content=SimpleNamespace(parts=[text_part]),
+            partial=False,
+            turn_complete=True,
+            usage_metadata={"tokens": 9},
+            finish_reason=None,
+            actions=None,
+            custom_data=None,
+            long_running_tool_ids=[],
+        )
+        streaming_event.is_final_response = lambda: True
+        streaming_event.get_function_calls = Mock(return_value=[])
+        streaming_event.get_function_responses = Mock(return_value=[])
 
-        async def fake_translate(self, adk_event, thread_id, run_id):
-            streaming_calls.append((adk_event, thread_id, run_id))
-            yield TextMessageChunkEvent(
-                message_id=adk_event.id,
-                role="assistant",
-                delta="chunk",
-            )
+        function_call = SimpleNamespace(id="tool-1", name="long_tool", args={"foo": "bar"})
+        function_part = SimpleNamespace(text=None, function_call=function_call)
+        lro_event = SimpleNamespace(
+            id="event-lro",
+            author="assistant",
+            content=SimpleNamespace(parts=[function_part]),
+            partial=False,
+            turn_complete=True,
+            usage_metadata={"tokens": 1},
+            finish_reason="STOP",
+            actions=None,
+            custom_data=None,
+            long_running_tool_ids=[function_call.id],
+        )
+        lro_event.is_final_response = lambda: True
+        lro_event.get_function_calls = Mock(return_value=[])
+        lro_event.get_function_responses = Mock(return_value=[])
 
-        # Event with finish_reason but is_final_response=False (the bug scenario)
-        mock_event = Mock()
-        mock_event.id = "event_finish"
-        mock_event.author = "assistant"
-        mock_event.partial = True
-        mock_event.turn_complete = None
-        mock_event.finish_reason = "STOP"
-        mock_event.is_final_response = Mock(return_value=False)
-        mock_event.content = Mock()
-        mock_event.content.parts = [Mock(text="Final")]
-        mock_event.actions = None
-        mock_event.get_function_calls = Mock(return_value=[])
-        mock_event.get_function_responses = Mock(return_value=[])
-        mock_event.custom_data = None
+        events_to_yield = [streaming_event, lro_event]
 
         class DummyRunner:
             async def run_async(self, *args, **kwargs):
-                yield mock_event
+                for event in events_to_yield:
+                    yield event
 
-        with patch.object(adk_agent, '_create_runner', return_value=DummyRunner()), \
-             patch.object(EventTranslator, 'translate', new=fake_translate):
+        captured_stream_events = []
+        captured_lro_events = []
 
-            events = []
+        original_translate = EventTranslator.translate
+        original_translate_lro = EventTranslator.translate_lro_function_calls
+
+        async def translate_spy(self, adk_event, thread_id, run_id):
+            translate_spy.call_count += 1
+            translate_spy.adk_events.append(adk_event)
+            async for event in original_translate(self, adk_event, thread_id, run_id):
+                captured_stream_events.append(event)
+                yield event
+
+        translate_spy.call_count = 0
+        translate_spy.adk_events = []
+
+        async def translate_lro_spy(self, adk_event):
+            translate_lro_spy.call_count += 1
+            translate_lro_spy.adk_events.append(adk_event)
+            async for event in original_translate_lro(self, adk_event):
+                captured_lro_events.append(event)
+                yield event
+
+        translate_lro_spy.call_count = 0
+        translate_lro_spy.adk_events = []
+
+        dummy_runner = DummyRunner()
+
+        with patch.object(EventTranslator, "translate", translate_spy), \
+             patch.object(EventTranslator, "translate_lro_function_calls", translate_lro_spy), \
+             patch.object(adk_agent, "_create_runner", return_value=dummy_runner):
+
+            emitted_events = []
             async for event in adk_agent.run(sample_input):
-                events.append(event)
+                emitted_events.append(event)
 
-        # Should have streaming events
-        assert len(streaming_calls) == 1
+        # Assert streaming translator was used for the first event
+        assert translate_spy.call_count == 1
+        assert translate_spy.adk_events[0] is streaming_event
+
+        # Confirm streaming content flowed through as expected
+        text_events = [event for event in emitted_events if isinstance(event, TextMessageContentEvent)]
+        assert text_events and text_events[0].delta == "Hello from stream"
+        assert any(isinstance(event, TextMessageContentEvent) for event in captured_stream_events)
+
+        # Long-running translation should be invoked only for the STOP event
+        assert translate_lro_spy.call_count == 1
+        assert translate_lro_spy.adk_events[0] is lro_event
+
+        # Ensure we produced a tool call event to guard against regressions
+        assert any(event.type == EventType.TOOL_CALL_END for event in captured_lro_events)
 
     @pytest.mark.asyncio
     async def test_session_management(self, adk_agent):
