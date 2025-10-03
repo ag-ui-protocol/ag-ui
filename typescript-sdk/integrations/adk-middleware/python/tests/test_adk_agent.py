@@ -4,6 +4,7 @@
 
 import pytest
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import Mock, MagicMock, AsyncMock, patch
 
 
@@ -200,6 +201,55 @@ class TestADKAgent:
         # Confirm branch selection
         assert len(streaming_calls) == 1
         assert lro_calls == []
+        
+    async def test_partial_final_chunk_uses_streaming_translation(self, adk_agent, sample_input):
+        """Ensure partial chunks marked as final still use streaming translation."""
+
+        translate_calls = 0
+        lro_calls = 0
+
+        async def fake_translate(self, adk_event, thread_id, run_id):
+            nonlocal translate_calls
+            translate_calls += 1
+            yield TextMessageChunkEvent(
+                type=EventType.TEXT_MESSAGE_CHUNK,
+                message_id=adk_event.id,
+                delta="chunk"
+            )
+
+        async def fake_translate_lro(self, adk_event):
+            nonlocal lro_calls
+            lro_calls += 1
+            if False:
+                yield  # pragma: no cover - keeps this an async generator
+
+        adk_event = SimpleNamespace(
+            id="event-final-chunk",
+            author="assistant",
+            content=SimpleNamespace(parts=[SimpleNamespace(text="hello")]),
+            partial=True,
+            turn_complete=True,
+            usage_metadata={"tokens": 1},
+            finish_reason="STOP",
+            actions=None,
+            custom_data=None,
+            get_function_calls=lambda: [],
+            get_function_responses=lambda: [],
+            is_final_response=lambda: True
+        )
+
+        class FakeRunner:
+            async def run_async(self, *args, **kwargs):
+                yield adk_event
+
+        with patch("ag_ui_adk.adk_agent.EventTranslator.translate", new=fake_translate), \
+             patch("ag_ui_adk.adk_agent.EventTranslator.translate_lro_function_calls", new=fake_translate_lro), \
+             patch.object(adk_agent, "_create_runner", return_value=FakeRunner()):
+            events = [event async for event in adk_agent.run(sample_input)]
+
+        assert any(isinstance(event, TextMessageChunkEvent) for event in events)
+        assert translate_calls == 1
+        assert lro_calls == 0
 
     @pytest.mark.asyncio
     async def test_session_management(self, adk_agent):
