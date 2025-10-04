@@ -73,16 +73,23 @@ export class ToolBaseGenUIPage {
   }
 
   async extractMainDisplayHaikuContent(page: Page): Promise<string> {
+    // Wait for main haiku lines to be present
     const mainDisplayLines = page.locator('[data-testid="main-haiku-line"]');
     const mainCount = await mainDisplayLines.count();
+
+    if (mainCount === 0) {
+      return '';
+    }
+
+    // Take only the last 3 lines (most recent haiku)
+    // Haikus are 3 lines, and they're appended in order
+    const startIndex = Math.max(0, mainCount - 3);
     const lines: string[] = [];
 
-    if (mainCount > 0) {
-      for (let i = 0; i < mainCount; i++) {
-        const haikuLine = mainDisplayLines.nth(i);
-        const japaneseText = await haikuLine.locator('p').first().innerText();
-        lines.push(japaneseText);
-      }
+    for (let i = startIndex; i < mainCount; i++) {
+      const haikuLine = mainDisplayLines.nth(i);
+      const japaneseText = await haikuLine.locator('p').first().innerText();
+      lines.push(japaneseText);
     }
 
     const mainHaikuContent = lines.join('').replace(/\s/g, '');
