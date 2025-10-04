@@ -157,16 +157,23 @@ jobs:
         echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > python/ag_ui_langgraph/.env
         echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> python/ag_ui_langgraph/.env
         
+    - name: write adk-middleware env file
+      working-directory: typescript-sdk/integrations/adk-middleware
+      env:
+        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      if: ${{ contains(join(matrix.services, ','), 'adk-middleware') }}
+      run: |
+        echo "GOOGLE_API_KEY=${GOOGLE_API_KEY}" > examples/.env
+        
     - name: Run dojo+agents
       uses: JarvusInnovations/background-action@v1
-      # The top-level 'env:' block has been removed.
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       if: ${{ join(matrix.services, ',') != '' && contains(join(matrix.services, ','), 'dojo') }}
       with:
         run: |
-          # Inject the secrets directly into the command line environment.
-          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} \
-          LANGSMITH_API_KEY=${{ secrets.LANGSMITH_API_KEY }} \
-          GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }} \
           node ../scripts/run-dojo-everything.js --only ${{ join(matrix.services, ',') }}
         working-directory: typescript-sdk/apps/dojo/e2e
         wait-on: ${{ matrix.wait_on }}
