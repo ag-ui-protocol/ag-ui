@@ -85,40 +85,23 @@ export class ToolBaseGenUIPage {
   }
 
   async extractMainDisplayHaikuContent(page: Page): Promise<string> {
-    await page.waitForTimeout(2000);
-    const carousel = page.locator('[data-testid="haiku-carousel"]');
-    await carousel.waitFor({ state: "visible", timeout: 10000 });
-
-    // Find the visible carousel item (the active slide)
-    const carouselItems = carousel.locator('[data-testid^="carousel-item-"]');
-    const itemCount = await carouselItems.count();
-    let activeCard = null;
-
-    // Find the visible/active carousel item
-    for (let i = 0; i < itemCount; i++) {
-      const item = carouselItems.nth(i);
-      const isVisible = await item.isVisible();
-      if (isVisible) {
-        activeCard = item.locator('[data-testid="haiku-card"]');
-        break;
-      }
-    }
-
-    if (!activeCard) {
-      // Fallback to first card if none found visible
-      activeCard = carousel.locator('[data-testid="haiku-card"]').first();
-    }
-
-    const mainDisplayLines = activeCard.locator('[data-testid="haiku-japanese-line"]');
+    // Wait for main haiku lines to be present
+    const mainDisplayLines = page.locator('[data-testid="main-haiku-line"]');
     const mainCount = await mainDisplayLines.count();
+
+    if (mainCount === 0) {
+      return '';
+    }
+
+    // Take only the last 3 lines (most recent haiku)
+    // Haikus are 3 lines, and they're appended in order
+    const startIndex = Math.max(0, mainCount - 3);
     const lines: string[] = [];
 
-    if (mainCount > 0) {
-      for (let i = 0; i < mainCount; i++) {
-        const haikuLine = mainDisplayLines.nth(i);
-        const japaneseText = await haikuLine.innerText();
-        lines.push(japaneseText);
-      }
+    for (let i = startIndex; i < mainCount; i++) {
+      const haikuLine = mainDisplayLines.nth(i);
+      const japaneseText = await haikuLine.locator('p').first().innerText();
+      lines.push(japaneseText);
     }
 
     const mainHaikuContent = lines.join("").replace(/\s/g, "");
