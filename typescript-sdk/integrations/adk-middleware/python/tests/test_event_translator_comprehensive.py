@@ -11,7 +11,8 @@ from unittest.mock import MagicMock, patch, AsyncMock
 
 from ag_ui.core import (
     EventType, TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent,
-    ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent, StateDeltaEvent, CustomEvent
+    ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent, ToolCallResultEvent,
+    StateDeltaEvent, CustomEvent
 )
 from google.adk.events import Event as ADKEvent
 from ag_ui_adk.event_translator import EventTranslator
@@ -128,11 +129,14 @@ class TestEventTranslatorComprehensive:
 
     @pytest.mark.asyncio
     async def test_translate_function_response_with_call_tool_result_payload(self, translator):
-        """Ensure CallToolResult payloads are serialized without errors."""
+        """Ensure complex CallToolResult payloads are serialized correctly."""
 
         @dataclass
         class TextContent:
-            text: str
+            type: str = "text"
+            text: str = ""
+            annotations: list | None = None
+            meta: dict | None = None
 
         @dataclass
         class CallToolResult:
@@ -149,7 +153,7 @@ class TestEventTranslatorComprehensive:
         ]
 
         payload = CallToolResult(
-            meta={"source": "test"},
+            meta=None,
             structuredContent=None,
             isError=False,
             content=[TextContent(text=text) for text in repeated_text_entries],
@@ -157,7 +161,7 @@ class TestEventTranslatorComprehensive:
 
         function_response = SimpleNamespace(
             id="tool-structured-1",
-            response=asdict(payload),
+            response={"result": payload},
         )
 
         events = []
@@ -169,9 +173,9 @@ class TestEventTranslatorComprehensive:
         assert isinstance(event, ToolCallResultEvent)
 
         content = json.loads(event.content)
-        assert content["isError"] is False
-        assert content["structuredContent"] is None
-        assert [item["text"] for item in content["content"]] == repeated_text_entries
+        assert content["result"]["isError"] is False
+        assert content["result"]["structuredContent"] is None
+        assert [item["text"] for item in content["result"]["content"]] == repeated_text_entries
 
     @pytest.mark.asyncio
     async def test_translate_state_delta_event(self, translator, mock_adk_event):
