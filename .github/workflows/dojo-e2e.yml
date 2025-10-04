@@ -10,9 +10,6 @@ jobs:
   e2e:
     name: ${{ matrix.suite }}
     runs-on: depot-ubuntu-24.04
-    permissions:
-      contents: 'read'
-      id-token: 'write'
     strategy:
       fail-fast: false
       matrix:
@@ -156,15 +153,7 @@ jobs:
         echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> examples/typescript/.env
         echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > python/ag_ui_langgraph/.env
         echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> python/ag_ui_langgraph/.env
-        
-    - name: write adk-middleware env file
-      working-directory: typescript-sdk/integrations/adk-middleware
-      env:
-        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-      if: ${{ contains(join(matrix.services, ','), 'adk-middleware') }}
-      run: |
-        echo "GOOGLE_API_KEY=${GOOGLE_API_KEY}" > python/examples/.env
-        
+
     - name: Run dojo+agents
       uses: JarvusInnovations/background-action@v1
       env:
