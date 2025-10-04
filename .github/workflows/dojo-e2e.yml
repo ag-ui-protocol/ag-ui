@@ -153,13 +153,6 @@ jobs:
         echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> examples/typescript/.env
         echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > python/ag_ui_langgraph/.env
         echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> python/ag_ui_langgraph/.env
-        
-    - name: setup workload identity federation
-      uses: 'google-github-actions/auth@v3'
-      with:
-        service_account: 'vertex-express@contextable-ci-builds-474115.iam.gserviceaccount.com'
-        workload_identity_provider: 'projects/27343391129/locations/global/workloadIdentityPools/github/providers/my-repo' 
-
 
     - name: Run dojo+agents
       uses: JarvusInnovations/background-action@v1
