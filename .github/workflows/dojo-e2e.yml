@@ -157,8 +157,8 @@ jobs:
     - name: setup workload identity federation
       uses: 'google-github-actions/auth@v3'
       with:
-        service_account: 'vertex-express@contextable-ci-builds-474115.iam.gserviceaccount.com'
-        workload_identity_provider: 'projects/27343391129/locations/global/workloadIdentityPools/github/providers/my-repo' 
+        service_account: '${{ secrets.GOOGLE_SERVICE_ACCOUNT }}'
+        workload_identity_provider: '${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}' 
 
 
     - name: Run dojo+agents
