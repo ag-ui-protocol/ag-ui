@@ -157,22 +157,16 @@ jobs:
         echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > python/ag_ui_langgraph/.env
         echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> python/ag_ui_langgraph/.env
         
-    - name: setup workload identity federation
-      uses: 'google-github-actions/auth@v3'
-      with:
-        service_account: '${{ secrets.GOOGLE_SERVICE_ACCOUNT }}'
-        workload_identity_provider: '${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}' 
-
-
     - name: Run dojo+agents
       uses: JarvusInnovations/background-action@v1
-      env:
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
-        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      # The top-level 'env:' block has been removed.
       if: ${{ join(matrix.services, ',') != '' && contains(join(matrix.services, ','), 'dojo') }}
       with:
         run: |
+          # Inject the secrets directly into the command line environment.
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} \
+          LANGSMITH_API_KEY=${{ secrets.LANGSMITH_API_KEY }} \
+          GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }} \
           node ../scripts/run-dojo-everything.js --only ${{ join(matrix.services, ',') }}
         working-directory: typescript-sdk/apps/dojo/e2e
         wait-on: ${{ matrix.wait_on }}
