@@ -163,7 +163,7 @@ jobs:
         GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       if: ${{ contains(join(matrix.services, ','), 'adk-middleware') }}
       run: |
-        echo "GOOGLE_API_KEY=${GOOGLE_API_KEY}" > examples/.env
+        echo "GOOGLE_API_KEY=${GOOGLE_API_KEY}" > python/examples/.env
         
     - name: Run dojo+agents
       uses: JarvusInnovations/background-action@v1
