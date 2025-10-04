@@ -10,6 +10,9 @@ jobs:
   e2e:
     name: ${{ matrix.suite }}
     runs-on: depot-ubuntu-24.04
+    permissions:
+      contents: 'read'
+      id-token: 'write'
     strategy:
       fail-fast: false
       matrix:
