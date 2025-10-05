@@ -73,49 +73,55 @@ export class ToolBaseGenUIPage {
   }
 
   async extractMainDisplayHaikuContent(page: Page): Promise<string> {
-    // Wait for main haiku lines to be present
-    const mainDisplayLines = page.locator('[data-testid="main-haiku-line"]');
-    const mainCount = await mainDisplayLines.count();
+    const activeCard = page.locator('[data-testid="main-haiku-display"].active').last();
 
-    if (mainCount === 0) {
+    try {
+      await activeCard.waitFor({ state: 'visible', timeout: 5000 });
+    } catch (error) {
+      // Fallback to any visible haiku lines if the active card isn't available yet
+      const fallbackLines = page.locator('[data-testid="main-haiku-line"]');
+      const fallbackCount = await fallbackLines.count();
+      if (fallbackCount === 0) {
+        return '';
+      }
+
+      const fallbackLineTexts: string[] = [];
+      for (let i = 0; i < fallbackCount; i++) {
+        const fallbackLine = fallbackLines.nth(i);
+        const japaneseText = await fallbackLine.locator('p').first().innerText();
+        fallbackLineTexts.push(japaneseText);
+      }
+
+      return fallbackLineTexts.join('').replace(/\s/g, '');
+    }
+
+    const mainDisplayLines = activeCard.locator('[data-testid="main-haiku-line"]');
+    const count = await mainDisplayLines.count();
+    if (count === 0) {
       return '';
     }
 
-    // Take only the last 3 lines (most recent haiku)
-    // Haikus are 3 lines, and they're appended in order
-    const startIndex = Math.max(0, mainCount - 3);
     const lines: string[] = [];
-
-    for (let i = startIndex; i < mainCount; i++) {
+    for (let i = 0; i < count; i++) {
       const haikuLine = mainDisplayLines.nth(i);
       const japaneseText = await haikuLine.locator('p').first().innerText();
       lines.push(japaneseText);
     }
 
-    const mainHaikuContent = lines.join('').replace(/\s/g, '');
-    return mainHaikuContent;
+    return lines.join('').replace(/\s/g, '');
   }
 
   async checkHaikuDisplay(page: Page): Promise<void> {
     const chatHaikuContent = await this.extractChatHaikuContent(page);
 
-    await page.waitForTimeout(5000);
-
-    const mainHaikuContent = await this.extractMainDisplayHaikuContent(page);
-
-    if (mainHaikuContent === '') {
-      expect(chatHaikuContent.length).toBeGreaterThan(0);
-      return;
-    }
-
-    if (chatHaikuContent === mainHaikuContent) {
-      expect(mainHaikuContent).toBe(chatHaikuContent);
-    } else {
-      await page.waitForTimeout(3000);
-
-      const updatedMainContent = await this.extractMainDisplayHaikuContent(page);
-
-      expect(updatedMainContent).toBe(chatHaikuContent);
-    }
+    await expect
+      .poll(async () => {
+        const content = await this.extractMainDisplayHaikuContent(page);
+        return content;
+      }, {
+        timeout: 10000,
+        message: 'Main display did not match the latest chat haiku',
+      })
+      .toBe(chatHaikuContent);
   }
 }
