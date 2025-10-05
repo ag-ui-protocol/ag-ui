@@ -1,5 +1,6 @@
 **/.claude/settings.local.json
 .vscode/
 .idea/
+mastra.db*
 
 .DS_Store
