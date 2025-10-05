@@ -193,6 +193,7 @@ const agentFilesMapper: Record<string, (agentKeys: string[]) => Record<string, s
     }), {})
   },
   'agno': () => ({}),
+  'spring-ai': () => ({}),
   'llama-index': (agentKeys: string[]) => {
     return agentKeys.reduce((acc, agentId) => ({
       ...acc,

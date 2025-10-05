@@ -5,13 +5,13 @@
 
 ---
 
-This package contains the [Abstract Agent](./src/main/java/io/workm8/agui4j/client/agent/AbstractAgent.java).
+This package contains the [Abstract Agent](./src/main/java/com/agui/client/agent/AbstractAgent.java).
 
 ### Dependency
 
 ```xml
 <dependency>
-    <groupId>io.workm8.agui4j</groupId>
+    <groupId>com.ag-ui</groupId>
     <artifactId>client</artifactId>
     <version>4.12.0</version>
 </dependency>

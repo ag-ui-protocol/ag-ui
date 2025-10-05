@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>io.workm8.agui4j</groupId>
+        <groupId>com.ag-ui</groupId>
         <artifactId>ag-ui</artifactId>
         <version>0.0.1</version>
         <relativePath>../../pom.xml</relativePath>
@@ -13,8 +13,8 @@
     <artifactId>spring-client</artifactId>
     <version>${spring.version}</version>
 
-    <name>AG-UI-4J Spring Client</name>
-    <description>AG-UI-4J Spring Client</description>
+    <name>AG-UI Spring Client</name>
+    <description>AG-UI Spring Client</description>
 
     <properties>
         <spring.version>6.2.7</spring.version>
@@ -24,12 +24,12 @@
 
     <dependencies>
         <dependency>
-            <groupId>io.workm8.agui4j</groupId>
+            <groupId>com.ag-ui</groupId>
             <artifactId>http</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>
         <dependency>
-            <groupId>io.workm8.agui4j</groupId>
+            <groupId>com.ag-ui</groupId>
             <artifactId>json</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>

@@ -9,7 +9,7 @@ TBD.
 
 ```xml
 <dependency>
-    <groupId>io.workm8.agui4j</groupId>
+    <groupId>com.ag-ui</groupId>
     <artifactId>langchain4j</artifactId>
     <version>1.3.0</version>
 </dependency>

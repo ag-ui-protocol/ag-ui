@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>io.workm8.agui4j</groupId>
+        <groupId>com.ag-ui</groupId>
         <artifactId>ag-ui</artifactId>
         <version>0.0.1</version>
         <relativePath>../../pom.xml</relativePath>
@@ -13,8 +13,8 @@
     <artifactId>spring-ai</artifactId>
     <version>${spring-ai.version}</version>
 
-    <name>AG-UI-4J Spring AI</name>
-    <description>AG-UI-4J Spring AI Integration</description>
+    <name>AG-UI Spring AI</name>
+    <description>AG-UI Spring AI Integration</description>
 
     <properties>
         <spring-ai.version>1.0.1</spring-ai.version>
@@ -39,17 +39,17 @@
 
     <dependencies>
         <dependency>
-            <groupId>io.workm8.agui4j</groupId>
+            <groupId>com.ag-ui</groupId>
             <artifactId>core</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>
         <dependency>
-            <groupId>io.workm8.agui4j</groupId>
+            <groupId>com.ag-ui</groupId>
             <artifactId>json</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>
         <dependency>
-            <groupId>io.workm8.agui4j</groupId>
+            <groupId>com.ag-ui</groupId>
             <artifactId>server</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>

@@ -5,13 +5,13 @@
 
 ---
 
-This package contains the [Events](./src/main/java/io/workm8/agui4j/core/event), [Messages](./src/main/java/io/workm8/agui4j/core/message) and other primitives for AG-UI.
+This package contains the [Events](./src/main/java/com/agui/core/event), [Messages](./src/main/java/com/agui/core/message) and other primitives for AG-UI.
 
 ### Dependency
 
 ```xml
 <dependency>
-    <groupId>io.workm8.agui4j</groupId>
+    <groupId>com.ag-ui</groupId>
     <artifactId>core</artifactId>
     <version>0.0.1</version>
 </dependency>

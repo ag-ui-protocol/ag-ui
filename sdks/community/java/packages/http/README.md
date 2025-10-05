@@ -5,7 +5,7 @@
 
 ---
 
-This package contains the BaseAgent implementation [Http Agent](./src/main/java/io/workm8/agui4j/http/HttpAgent.java).
+This package contains the BaseAgent implementation [Http Agent](./src/main/java/com/agui/http/HttpAgent.java).
 <br />
 The Http Agent needs a HttpClient (OkHttp or Spring Rest implementations).
 
@@ -13,7 +13,7 @@ The Http Agent needs a HttpClient (OkHttp or Spring Rest implementations).
 
 ```xml
 <dependency>
-    <groupId>io.workm8.agui4j</groupId>
+    <groupId>com.ag-ui</groupId>
     <artifactId>http</artifactId>
     <version>0.0.1</version>
 </dependency>

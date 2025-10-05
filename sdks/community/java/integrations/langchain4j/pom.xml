@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>io.workm8.agui4j</groupId>
+        <groupId>com.ag-ui</groupId>
         <artifactId>ag-ui</artifactId>
         <version>0.0.1</version>
         <relativePath>../../pom.xml</relativePath>
@@ -13,8 +13,8 @@
     <artifactId>langchain4j</artifactId>
     <version>${langchain4j.version}</version>
 
-    <name>AG-UI-4J Langchain4j</name>
-    <description>AG-UI-4J Langchain4j Integration</description>
+    <name>AG-UI Langchain4j</name>
+    <description>AG-UI Langchain4j Integration</description>
 
     <properties>
         <langchain4j.version>1.3.0</langchain4j.version>
@@ -24,12 +24,12 @@
 
     <dependencies>
         <dependency>
-            <groupId>io.workm8.agui4j</groupId>
+            <groupId>com.ag-ui</groupId>
             <artifactId>core</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>
         <dependency>
-            <groupId>io.workm8.agui4j</groupId>
+            <groupId>com.ag-ui</groupId>
             <artifactId>server</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>

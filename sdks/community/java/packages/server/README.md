@@ -5,13 +5,13 @@
 
 ---
 
-This package contains the Abstract Agent implementation [Local Agent](./src/main/java/io/workm8/agui4j/server/LocalAgent.java).
+This package contains the Abstract Agent implementation [Local Agent](./src/main/java/com/agui/server/LocalAgent.java).
 
 ### Dependency
 
 ```xml
 <dependency>
-    <groupId>io.workm8.agui4j</groupId>
+    <groupId>com.ag-ui</groupId>
     <artifactId>server</artifactId>
     <version>0.0.1</version>
 </dependency>

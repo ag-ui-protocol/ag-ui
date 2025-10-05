@@ -31,12 +31,12 @@
             <artifactId>spring-ai-starter-model-openai</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.workm8.agui4j</groupId>
+            <groupId>com.ag-ui</groupId>
             <artifactId>spring-ai</artifactId>
             <version>${spring-ai.version}</version>
         </dependency>
         <dependency>
-            <groupId>io.workm8.agui4j</groupId>
+            <groupId>com.ag-ui</groupId>
             <artifactId>server</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>
@@ -49,7 +49,7 @@
         </dependency>
 
         <dependency>
-            <groupId>io.workm8.agui4j</groupId>
+            <groupId>com.ag-ui</groupId>
             <artifactId>spring</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>
