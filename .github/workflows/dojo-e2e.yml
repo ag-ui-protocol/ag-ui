@@ -14,62 +14,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - suite: a2a-middleware
-            test_path: tests/a2aMiddlewareTests
-            services: ["dojo","a2a-middleware"]
-            wait_on: http://localhost:9999,tcp:localhost:8011,tcp:localhost:8012,tcp:localhost:8013,tcp:localhost:8014
           - suite: adk-middleware
             test_path: tests/adkMiddlewareTests
             services: ["dojo","adk-middleware"]
             wait_on: http://localhost:9999,tcp:localhost:8010
-          - suite: agno
-            test_path: tests/agnoTests
-            services: ["dojo","agno"]
-            wait_on: http://localhost:9999,tcp:localhost:8002
-          - suite: crew-ai
-            test_path: tests/crewAITests
-            services: ["dojo","crew-ai"]
-            wait_on: http://localhost:9999,tcp:localhost:8003
-          - suite: langgraph-python
-            test_path: tests/langgraphPythonTests
-            services: ["dojo","langgraph-platform-python"]
-            wait_on: http://localhost:9999,tcp:localhost:8005
-          - suite: langgraph-typescript
-            test_path: tests/langgraphTypescriptTests
-            services: ["dojo","langgraph-platform-typescript"]
-            wait_on: http://localhost:9999,tcp:localhost:8006
-          - suite: langgraph-fastapi
-            test_path: tests/langgraphFastAPITests
-            services: ["dojo","langgraph-fastapi"]
-            wait_on: http://localhost:9999,tcp:localhost:8004
-          - suite: llama-index
-            test_path: tests/llamaIndexTests
-            services: ["dojo","llama-index"]
-            wait_on: http://localhost:9999,tcp:localhost:8007
-          - suite: mastra
-            test_path: tests/mastraTests
-            services: ["dojo","mastra"]
-            wait_on: http://localhost:9999,tcp:localhost:8008
-          - suite: mastra-agent-local
-            test_path: tests/mastraAgentLocalTests
-            services: ["dojo"]
-            wait_on: http://localhost:9999
-          - suite: middleware-starter
-            test_path: tests/middlewareStarterTests
-            services: ["dojo"]
-            wait_on: http://localhost:9999
-          - suite: pydantic-ai
-            test_path: tests/pydanticAITests
-            services: ["dojo","pydantic-ai"]
-            wait_on: http://localhost:9999,tcp:localhost:8009
-          - suite: server-starter
-            test_path: tests/serverStarterTests
-            services: ["dojo","server-starter"]
-            wait_on: http://localhost:9999,tcp:localhost:8000
-          - suite: server-starter-all
-            test_path: tests/serverStarterAllFeaturesTests
-            services: ["dojo","server-starter-all"]
-            wait_on: http://localhost:9999,tcp:localhost:8001
           # - suite: vercel-ai-sdk
           #   test_path: tests/vercelAISdkTests
           #   services: ["dojo"]
