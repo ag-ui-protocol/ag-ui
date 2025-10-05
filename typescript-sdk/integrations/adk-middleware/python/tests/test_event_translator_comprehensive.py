@@ -90,20 +90,33 @@ class TestEventTranslatorComprehensive:
 
     @pytest.mark.asyncio
     async def test_translate_function_calls_detection(self, translator, mock_adk_event):
-        """Test function calls detection and logging."""
-        # Mock event with function calls
+        """Test function calls detection by asserting tool events are emitted.
+
+        This avoids brittle checks on debug log wording and instead
+        verifies that function calls result in ToolCall events.
+        """
+        # Mock event with one function call
         mock_function_call = MagicMock()
         mock_function_call.name = "test_function"
+        mock_function_call.id = "call_123"
+        mock_function_call.args = {"param": "value"}
         mock_adk_event.get_function_calls = MagicMock(return_value=[mock_function_call])
 
-        with patch('ag_ui_adk.event_translator.logger') as mock_logger:
-            events = []
-            async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
-                events.append(event)
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
 
-            # Should log function calls detection (along with the ADK Event debug log)
-            debug_calls = [str(call) for call in mock_logger.debug.call_args_list]
-            assert any("ADK function calls detected: 1 calls" in call for call in debug_calls)
+        # Expect a START, ARGS, END sequence for the function call
+        types = [e.type for e in events]
+        type_names = [str(t).split('.')[-1] for t in types]
+        assert type_names == [
+            "TOOL_CALL_START",
+            "TOOL_CALL_ARGS",
+            "TOOL_CALL_END",
+        ]
+        # And the tool_call_id should match the mocked id
+        ids = [getattr(e, 'tool_call_id', None) for e in events]
+        assert all(tc_id == "call_123" for tc_id in ids)
 
     @pytest.mark.asyncio
     async def test_translate_function_responses_handling(self, translator, mock_adk_event):
