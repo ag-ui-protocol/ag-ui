@@ -165,11 +165,13 @@ class EventTranslator:
             is_final_response = adk_event.is_final_response
         
         # Handle None values: if is_final_response=True, it means streaming should end
-        should_send_end = is_final_response and not is_partial
-        
+        # Also check for finish_reason as a fallback indicator that streaming is complete
+        has_finish_reason = bool(getattr(adk_event, 'finish_reason', None))
+        should_send_end = (is_final_response and not is_partial) or (has_finish_reason and self._is_streaming)
+
         logger.info(f"📥 Text event - partial={is_partial}, turn_complete={turn_complete}, "
-                    f"is_final_response={is_final_response}, should_send_end={should_send_end}, "
-                    f"currently_streaming={self._is_streaming}")
+                    f"is_final_response={is_final_response}, has_finish_reason={has_finish_reason}, "
+                    f"should_send_end={should_send_end}, currently_streaming={self._is_streaming}")
 
         if is_final_response:
 
