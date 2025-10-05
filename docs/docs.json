@@ -21,7 +21,6 @@
                 "group": "Quickstart",
                 "pages": [
                   "quickstart/applications",
-                  "quickstart/clients",
                   {
                     "group": "Build integrations",
                     "pages": [
@@ -29,7 +28,8 @@
                       "quickstart/server",
                       "quickstart/middleware"
                     ]
-                  }
+                  },
+                  "quickstart/clients"
                 ]
               }
             ]

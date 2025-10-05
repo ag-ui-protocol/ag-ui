@@ -17,7 +17,7 @@ test.describe("Agent Generative UI Feature", () => {
     await genUIAgent.sendButton.click();
     await genUIAgent.assertAgentReplyVisible(/Hello/);
 
-    await genUIAgent.sendMessage("Give me a plan to make brownies");
+    await genUIAgent.sendMessage("Give me a plan to make brownies using your tools");
     await genUIAgent.sendButton.click();
 
     await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 15000 });
@@ -51,7 +51,7 @@ test.describe("Agent Generative UI Feature", () => {
     await genUIAgent.sendButton.click();
     await genUIAgent.assertAgentReplyVisible(/Hello/);
 
-    await genUIAgent.sendMessage("Go to Mars");
+    await genUIAgent.sendMessage("Go to Mars using your tools");
     await genUIAgent.sendButton.click();
 
     await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 15000 });

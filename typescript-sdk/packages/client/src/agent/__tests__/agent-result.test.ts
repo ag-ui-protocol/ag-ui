@@ -49,7 +49,7 @@ class TestAgent extends AbstractAgent {
     this.eventsToEmit = events;
   }
 
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     return of(...this.eventsToEmit);
   }
 }

@@ -11,6 +11,10 @@ type envVars = {
   crewAiUrl: string;
   pydanticAIUrl: string;
   adkMiddlewareUrl: string;
+  a2aMiddlewareBuildingsManagementUrl: string;
+  a2aMiddlewareFinanceUrl: string;
+  a2aMiddlewareItUrl: string;
+  a2aMiddlewareOrchestratorUrl: string;
   customDomainTitle: Record<string, string>;
 }
 
@@ -36,6 +40,10 @@ export default function getEnvVars(): envVars {
     pydanticAIUrl: process.env.PYDANTIC_AI_URL || 'http://localhost:9000',
     adkMiddlewareUrl: process.env.ADK_MIDDLEWARE_URL || 'http://localhost:8000',
     springAiUrl: process.env.SPRING_AI_URL || 'http://localhost:8080',
+    a2aMiddlewareBuildingsManagementUrl: process.env.A2A_MIDDLEWARE_BUILDINGS_MANAGEMENT_URL || 'http://localhost:9001',
+    a2aMiddlewareFinanceUrl: process.env.A2A_MIDDLEWARE_FINANCE_URL || 'http://localhost:9002',
+    a2aMiddlewareItUrl: process.env.A2A_MIDDLEWARE_IT_URL || 'http://localhost:9003',
+    a2aMiddlewareOrchestratorUrl: process.env.A2A_MIDDLEWARE_ORCHESTRATOR_URL || 'http://localhost:9000',
     customDomainTitle: customDomainTitle,
   }
 }

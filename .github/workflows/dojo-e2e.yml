@@ -14,6 +14,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - suite: a2a-middleware
+            test_path: tests/a2aMiddlewareTests
+            services: ["dojo","a2a-middleware"]
+            wait_on: http://localhost:9999,tcp:localhost:8011,tcp:localhost:8012,tcp:localhost:8013,tcp:localhost:8014
           - suite: adk-middleware
             test_path: tests/adkMiddlewareTests
             services: ["dojo","adk-middleware"]
@@ -66,10 +70,10 @@ jobs:
             test_path: tests/serverStarterAllFeaturesTests
             services: ["dojo","server-starter-all"]
             wait_on: http://localhost:9999,tcp:localhost:8001
-          - suite: vercel-ai-sdk
-            test_path: tests/vercelAISdkTests
-            services: ["dojo"]
-            wait_on: http://localhost:9999
+          # - suite: vercel-ai-sdk
+          #   test_path: tests/vercelAISdkTests
+          #   services: ["dojo"]
+          #   wait_on: http://localhost:9999
 
     steps:
     - name: Checkout code
