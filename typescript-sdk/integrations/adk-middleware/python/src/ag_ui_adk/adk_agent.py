@@ -923,9 +923,24 @@ class ADKAgent:
                     (not final_response)  # Not marked as final by is_final_response()
                 )
 
-                # Process as streaming if it's a chunk OR if it has content but no finish_reason
-                # This ensures we capture all content, regardless of usage_metadata presence
-                if is_streaming_chunk or (has_content and not getattr(adk_event, 'finish_reason', None)):
+                # Prefer LRO routing when a long-running tool call is present
+                has_lro_function_call = False
+                try:
+                    lro_ids = set(getattr(adk_event, 'long_running_tool_ids', []) or [])
+                    if lro_ids and adk_event.content and getattr(adk_event.content, 'parts', None):
+                        for part in adk_event.content.parts:
+                            func = getattr(part, 'function_call', None)
+                            func_id = getattr(func, 'id', None) if func else None
+                            if func_id and func_id in lro_ids:
+                                has_lro_function_call = True
+                                break
+                except Exception:
+                    # Be conservative: if detection fails, do not block streaming path
+                    has_lro_function_call = False
+
+                # Process as streaming if it's a chunk OR if it has content but no finish_reason,
+                # but only when there is no LRO function call present (LRO takes precedence)
+                if (not has_lro_function_call) and (is_streaming_chunk or (has_content and not getattr(adk_event, 'finish_reason', None))):
                     # Regular translation path
                     async for ag_ui_event in event_translator.translate(
                         adk_event,
@@ -937,7 +952,12 @@ class ADKAgent:
                         await event_queue.put(ag_ui_event)
                         logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
                 else:
-                    # LongRunning Tool events are usually emmitted in final response
+                    # LongRunning Tool events are usually emitted in final response
+                    # Ensure any active streaming text message is closed BEFORE tool calls
+                    async for end_event in event_translator.force_close_streaming_message():
+                        await event_queue.put(end_event)
+                        logger.debug(f"Event queued (forced close): {type(end_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
+
                     async for ag_ui_event in event_translator.translate_lro_function_calls(
                         adk_event
                     ):

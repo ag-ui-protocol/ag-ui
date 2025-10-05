@@ -87,16 +87,24 @@ class EventTranslator:
             if hasattr(adk_event, 'get_function_calls'):               
                 function_calls = adk_event.get_function_calls()
                 if function_calls:
-                    logger.debug(f"ADK function calls detected: {len(function_calls)} calls")
-                    
-                    # CRITICAL FIX: End any active text message stream before starting tool calls
-                    # Per AG-UI protocol: TEXT_MESSAGE_END must be sent before TOOL_CALL_START
-                    async for event in self.force_close_streaming_message():
-                        yield event
-                    
-                    # NOW ACTUALLY YIELD THE EVENTS
-                    async for event in self._translate_function_calls(function_calls):
-                        yield event
+                    # Filter out long-running tool calls; those are handled by translate_lro_function_calls
+                    try:
+                        lro_ids = set(getattr(adk_event, 'long_running_tool_ids', []) or [])
+                    except Exception:
+                        lro_ids = set()
+
+                    non_lro_calls = [fc for fc in function_calls if getattr(fc, 'id', None) not in lro_ids]
+
+                    if non_lro_calls:
+                        logger.debug(f"ADK function calls detected (non-LRO): {len(non_lro_calls)} of {len(function_calls)} total")
+                        # CRITICAL FIX: End any active text message stream before starting tool calls
+                        # Per AG-UI protocol: TEXT_MESSAGE_END must be sent before TOOL_CALL_START
+                        async for event in self.force_close_streaming_message():
+                            yield event
+                        
+                        # Yield only non-LRO function call events
+                        async for event in self._translate_function_calls(non_lro_calls):
+                            yield event
                         
             # Handle function responses and yield the tool response event
             # this is essential for scenerios when user has to render function response at frontend
