@@ -27,7 +27,7 @@ interface Haiku {
 export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIProps) {
   const { integrationId } = React.use(params);
 
-  const sharedChatProps = {
+  const chatProps = {
     defaultOpen: true,
     labels: {
       title: "Haiku Generator",
@@ -47,8 +47,7 @@ export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIP
       showDevConsole={false}
       agent="tool_based_generative_ui"
     >
-      <CopilotSidebar className="hidden xl:block" {...sharedChatProps} />
-      <CopilotPopup className="xl:hidden" {...sharedChatProps} />
+      <CopilotSidebar {...chatProps} />
       <HaikuDisplay />
     </CopilotKit>
   );
