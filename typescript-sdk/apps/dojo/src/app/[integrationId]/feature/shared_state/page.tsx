@@ -17,19 +17,13 @@ interface SharedStateProps {
 export default function SharedState({ params }: SharedStateProps) {
   const { integrationId } = React.use(params);
   const { isMobile } = useMobileView();
-  const defaultChatHeight = 50
-  const {
-    isChatOpen,
-    setChatHeight,
-    setIsChatOpen,
-    isDragging,
-    chatHeight,
-    handleDragStart
-  } = useMobileChat(defaultChatHeight)
+  const defaultChatHeight = 50;
+  const { isChatOpen, setChatHeight, setIsChatOpen, isDragging, chatHeight, handleDragStart } =
+    useMobileChat(defaultChatHeight);
 
-  const chatTitle = 'AI Recipe Assistant'
-  const chatDescription = 'Ask me to craft recipes'
-  const initialLabel = 'Hi 👋 How can I help with your recipe?'
+  const chatTitle = "AI Recipe Assistant";
+  const chatDescription = "Ask me to craft recipes";
+  const initialLabel = "Hi 👋 How can I help with your recipe?";
 
   return (
     <CopilotKit
@@ -38,17 +32,7 @@ export default function SharedState({ params }: SharedStateProps) {
       // agent lock to the relevant agent
       agent="shared_state"
     >
-      <div
-        className="min-h-screen w-full flex items-center justify-center"
-        style={
-          {
-            backgroundImage: "url('/shared_state_background.png')",
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-            backgroundRepeat: "no-repeat",
-          } as React.CSSProperties
-        }
-      >
+      <div className="min-h-screen w-full flex items-center justify-center">
         <Recipe />
         {isMobile ? (
           <>
@@ -70,9 +54,21 @@ export default function SharedState({ params }: SharedStateProps) {
                     <div className="text-sm text-gray-500">{chatDescription}</div>
                   </div>
                 </div>
-                <div className={`transform transition-transform duration-300 ${isChatOpen ? 'rotate-180' : ''}`}>
-                  <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                <div
+                  className={`transform transition-transform duration-300 ${isChatOpen ? "rotate-180" : ""}`}
+                >
+                  <svg
+                    className="w-6 h-6 text-gray-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M5 15l7-7 7 7"
+                    />
                   </svg>
                 </div>
               </div>
@@ -81,11 +77,11 @@ export default function SharedState({ params }: SharedStateProps) {
             {/* Pull-Up Chat Container */}
             <div
               className={`fixed inset-x-0 bottom-0 z-40 bg-white rounded-t-2xl shadow-[0px_0px_20px_0px_rgba(0,0,0,0.15)] transform transition-all duration-300 ease-in-out flex flex-col ${
-                isChatOpen ? 'translate-y-0' : 'translate-y-full'
-              } ${isDragging ? 'transition-none' : ''}`}
+                isChatOpen ? "translate-y-0" : "translate-y-full"
+              } ${isDragging ? "transition-none" : ""}`}
               style={{
                 height: `${chatHeight}vh`,
-                paddingBottom: 'env(safe-area-inset-bottom)' // Handle iPhone bottom padding
+                paddingBottom: "env(safe-area-inset-bottom)", // Handle iPhone bottom padding
               }}
             >
               {/* Drag Handle Bar */}
@@ -106,8 +102,18 @@ export default function SharedState({ params }: SharedStateProps) {
                     onClick={() => setIsChatOpen(false)}
                     className="p-2 hover:bg-gray-100 rounded-full transition-colors"
                   >
-                    <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    <svg
+                      className="w-5 h-5 text-gray-500"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M6 18L18 6M6 6l12 12"
+                      />
                     </svg>
                   </button>
                 </div>
@@ -126,10 +132,7 @@ export default function SharedState({ params }: SharedStateProps) {
 
             {/* Backdrop */}
             {isChatOpen && (
-              <div
-                className="fixed inset-0 z-30"
-                onClick={() => setIsChatOpen(false)}
-              />
+              <div className="fixed inset-0 z-30" onClick={() => setIsChatOpen(false)} />
             )}
           </>
         ) : (
@@ -367,10 +370,11 @@ function Recipe() {
   };
 
   return (
-    <form 
-    data-testid="recipe-card"
-    style={isMobile ? { marginBottom: "100px" } : {}}
-    className="recipe-card">
+    <form
+      data-testid="recipe-card"
+      style={isMobile ? { marginBottom: "100px" } : {}}
+      className="recipe-card"
+    >
       {/* Recipe Title */}
       <div className="recipe-header">
         <input
@@ -465,14 +469,9 @@ function Recipe() {
             + Add Ingredient
           </button>
         </div>
-        <div
-          data-testid="ingredients-container"
-          className="ingredients-container"
-        >
+        <div data-testid="ingredients-container" className="ingredients-container">
           {recipe.ingredients.map((ingredient, index) => (
-            <div key={index} 
-             data-testid="ingredient-card"
-             className="ingredient-card">
+            <div key={index} data-testid="ingredient-card" className="ingredient-card">
               <div className="ingredient-icon">{getProperIcon(ingredient.icon)}</div>
               <div className="ingredient-content">
                 <input
@@ -512,9 +511,7 @@ function Recipe() {
             + Add Step
           </button>
         </div>
-        <div 
-          data-testid="instructions-container"
-          className="instructions-container">
+        <div data-testid="instructions-container" className="instructions-container">
           {recipe.instructions.map((instruction, index) => (
             <div key={index} className="instruction-item">
               {/* Number Circle */}

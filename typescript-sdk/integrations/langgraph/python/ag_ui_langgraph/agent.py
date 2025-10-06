@@ -651,7 +651,13 @@ class LangGraphAgent:
                     )
                 )
                 yield self._dispatch_event(
-                    ToolCallArgsEvent(type=EventType.TOOL_CALL_ARGS, tool_call_id=event["data"]["id"], delta=event["data"]["args"], raw_event=event)
+                    ToolCallArgsEvent(
+                        type=EventType.TOOL_CALL_ARGS,
+                        tool_call_id=event["data"]["id"],
+                        delta=event["data"]["args"] if isinstance(event["data"]["args"], str) else json.dumps(
+                            event["data"]["args"]),
+                        raw_event=event
+                    )
                 )
                 yield self._dispatch_event(
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=event["data"]["id"], raw_event=event)
