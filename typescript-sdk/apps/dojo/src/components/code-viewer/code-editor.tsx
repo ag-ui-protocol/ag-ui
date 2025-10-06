@@ -16,6 +16,8 @@ export function CodeEditor({ file, onFileChange }: CodeEditorProps) {
 
   const theme = useTheme();
 
+  if (file?.language === "ts") file.language = "typescript";
+
   return file ? (
     <div className="h-full flex flex-col">
       <Editor
@@ -25,6 +27,7 @@ export function CodeEditor({ file, onFileChange }: CodeEditorProps) {
         onChange={handleEditorChange}
         options={{
           minimap: { enabled: false },
+          padding: { top: 30, bottom: 30 },
           fontSize: 16,
           lineNumbers: "on",
           readOnly: true,
