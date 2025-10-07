@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-test("[MastraAgentLocal] Backend Tool Rendering displays weather cards", async ({ page }) => {
+test("[LanggraphPython] Backend Tool Rendering displays weather cards", async ({ page }) => {
   // Set shorter default timeout for this test
   test.setTimeout(30000); // 30 seconds total
 
