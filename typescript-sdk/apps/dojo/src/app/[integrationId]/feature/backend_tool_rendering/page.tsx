@@ -31,7 +31,6 @@ const Chat = () => {
     available: "disabled",
     parameters: [{ name: "location", type: "string", required: true }],
     render: ({ args, result, status }) => {
-      console.log(result, args);
       if (status !== "complete") {
         return (
           <div className=" bg-[#667eea] text-white p-4 rounded-lg max-w-md">
