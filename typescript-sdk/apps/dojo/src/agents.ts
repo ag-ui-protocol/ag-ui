@@ -281,6 +281,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         shared_state: new LlamaIndexAgent({
           url: `${envVars.llamaIndexUrl}/shared_state/run`,
         }),
+        backend_tool_rendering: new LlamaIndexAgent({
+          url: `${envVars.llamaIndexUrl}/backend_tool_rendering/run`,
+        }),
       };
     },
   },
