@@ -52,6 +52,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         tool_based_generative_ui: new PydanticAIAgent({
           url: `${envVars.pydanticAIUrl}/tool_based_generative_ui/`,
         }),
+        backend_tool_rendering: new PydanticAIAgent({
+          url: `${envVars.pydanticAIUrl}/backend_tool_rendering`,
+        }),
       };
     },
   },

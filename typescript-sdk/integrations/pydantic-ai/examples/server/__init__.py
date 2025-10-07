@@ -21,6 +21,7 @@ import os
 from .api import (
     agentic_chat_app,
     agentic_generative_ui_app,
+    backend_tool_rendering_app,
     human_in_the_loop_app,
     predictive_state_updates_app,
     shared_state_app,
@@ -30,6 +31,7 @@ from .api import (
 app = FastAPI(title='Pydantic AI AG-UI server')
 app.mount('/agentic_chat', agentic_chat_app, 'Agentic Chat')
 app.mount('/agentic_generative_ui', agentic_generative_ui_app, 'Agentic Generative UI')
+app.mount('/backend_tool_rendering', backend_tool_rendering_app, 'Backend Tool Rendering')
 app.mount('/human_in_the_loop', human_in_the_loop_app, 'Human in the Loop')
 app.mount(
     '/predictive_state_updates',
