@@ -26,6 +26,9 @@ class AgentState(MessagesState):
 
 @tool
 def get_weather(city: str):
+    """
+    Get the weather for a given city.
+    """
     return {
         "temperature": 20,
         "conditions": "sunny",
