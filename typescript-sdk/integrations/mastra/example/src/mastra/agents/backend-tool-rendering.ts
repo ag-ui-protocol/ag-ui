@@ -16,7 +16,7 @@ export const backendToolRenderingAgent = new Agent({
       - Include relevant details like humidity, wind conditions, and precipitation
       - Keep responses concise but informative
 
-      Use the weatherTool to fetch current weather data.
+      Use the get_weather tool to fetch current weather data.
 `,
   model: openai("gpt-4o-mini"),
   tools: { get_weather: weatherTool },

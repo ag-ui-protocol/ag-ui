@@ -22,7 +22,7 @@ agent = Agent(
         - Include relevant details like humidity, wind conditions, and precipitation
         - Keep responses concise but informative
 
-        Use the weatherTool to fetch current weather data.
+        Use the get_weather tool to fetch current weather data.
         """
     ),
 )
