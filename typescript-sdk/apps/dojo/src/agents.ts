@@ -77,6 +77,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         human_in_the_loop: new ADKAgent({
           url: `${envVars.adkMiddlewareUrl}/adk-human-in-loop-agent`,
         }),
+        backend_tool_rendering: new ADKAgent({
+          url: `${envVars.adkMiddlewareUrl}/backend_tool_rendering`,
+        }),
         shared_state: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/adk-shared-state-agent` }),
         // predictive_state_updates: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/adk-predictive-state-agent` }),
       };
