@@ -18,9 +18,9 @@ from langgraph.prebuilt import create_react_agent
 
 
 @tool
-def get_weather(city: str):
+def get_weather(location: str):
     """
-    Get the weather for a given city.
+    Get the weather for a given location.
     """
     return {
         "temperature": 20,
