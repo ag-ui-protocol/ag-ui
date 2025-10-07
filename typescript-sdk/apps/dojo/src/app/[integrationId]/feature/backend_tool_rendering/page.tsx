@@ -31,6 +31,7 @@ const Chat = () => {
     available: "disabled",
     parameters: [{ name: "location", type: "string", required: true }],
     render: ({ args, result, status }) => {
+      console.log(result, args);
       if (status !== "complete") {
         return (
           <div className=" bg-[#667eea] text-white p-4 rounded-lg max-w-md">
@@ -40,11 +41,11 @@ const Chat = () => {
       }
 
       const weatherResult: WeatherToolResult = {
-        temperature: result.temperature || 0,
-        conditions: result.conditions || "clear",
-        humidity: result.humidity || 0,
-        windSpeed: result.wind_speed || 0,
-        feelsLike: result.feels_like || result.temperature || 0,
+        temperature: result?.temperature || 0,
+        conditions: result?.conditions || "clear",
+        humidity: result?.humidity || 0,
+        windSpeed: result?.wind_speed || 0,
+        feelsLike: result?.feels_like || result?.temperature || 0,
       };
 
       const themeColor = getThemeColor(weatherResult.conditions);
