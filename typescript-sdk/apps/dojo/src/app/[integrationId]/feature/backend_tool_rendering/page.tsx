@@ -29,7 +29,7 @@ const Chat = () => {
   useCopilotAction({
     name: "get_weather",
     available: "disabled",
-    parameters: [{ name: "city", type: "string", required: true }],
+    parameters: [{ name: "location", type: "string", required: true }],
     render: ({ args, result, status }) => {
       if (status !== "complete") {
         return (
@@ -51,7 +51,7 @@ const Chat = () => {
 
       return (
         <WeatherCard
-          location={args.city}
+          location={args.location}
           themeColor={themeColor}
           result={weatherResult}
           status={status || "complete"}
