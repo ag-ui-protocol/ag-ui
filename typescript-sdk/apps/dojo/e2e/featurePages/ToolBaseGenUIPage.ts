@@ -125,12 +125,8 @@ export class ToolBaseGenUIPage {
     return mainHaikuContent;
   }
 
-      const fallbackLineTexts: string[] = [];
-      for (let i = 0; i < fallbackCount; i++) {
-        const fallbackLine = fallbackLines.nth(i);
-        const japaneseText = await fallbackLine.locator('p').first().innerText();
-        fallbackLineTexts.push(japaneseText);
-      }
+  async checkHaikuDisplay(page: Page): Promise<void> {
+    const chatHaikuContent = await this.extractChatHaikuContent(page);
 
     await page.waitForTimeout(3000);
 
