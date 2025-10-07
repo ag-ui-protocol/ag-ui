@@ -85,77 +85,55 @@ export class ToolBaseGenUIPage {
   }
 
   async extractMainDisplayHaikuContent(page: Page): Promise<string> {
-    await page.waitForTimeout(2000);
-    const carousel = page.locator('[data-testid="haiku-carousel"]');
-    await carousel.waitFor({ state: "visible", timeout: 10000 });
+    const activeCard = page.locator('[data-testid="main-haiku-display"].active').last();
 
-    // Find the visible carousel item (the active slide)
-    const carouselItems = carousel.locator('[data-testid^="carousel-item-"]');
-    const itemCount = await carouselItems.count();
-    let activeCard = null;
-
-    // Find the visible/active carousel item
-    for (let i = 0; i < itemCount; i++) {
-      const item = carouselItems.nth(i);
-      const isVisible = await item.isVisible();
-      if (isVisible) {
-        activeCard = item.locator('[data-testid="haiku-card"]');
-        break;
+    try {
+      await activeCard.waitFor({ state: 'visible', timeout: 5000 });
+    } catch (error) {
+      // Fallback to any visible haiku lines if the active card isn't available yet
+      const fallbackLines = page.locator('[data-testid="main-haiku-line"]');
+      const fallbackCount = await fallbackLines.count();
+      if (fallbackCount === 0) {
+        return '';
       }
+
+      const fallbackLineTexts: string[] = [];
+      for (let i = 0; i < fallbackCount; i++) {
+        const fallbackLine = fallbackLines.nth(i);
+        const japaneseText = await fallbackLine.locator('p').first().innerText();
+        fallbackLineTexts.push(japaneseText);
+      }
+
+      return fallbackLineTexts.join('').replace(/\s/g, '');
     }
 
-    if (!activeCard) {
-      // Fallback to first card if none found visible
-      activeCard = carousel.locator('[data-testid="haiku-card"]').first();
+    const mainDisplayLines = activeCard.locator('[data-testid="main-haiku-line"]');
+    const count = await mainDisplayLines.count();
+    if (count === 0) {
+      return '';
     }
 
-    const mainDisplayLines = activeCard.locator('[data-testid="haiku-japanese-line"]');
-    const mainCount = await mainDisplayLines.count();
     const lines: string[] = [];
-
-    if (mainCount > 0) {
-      for (let i = 0; i < mainCount; i++) {
-        const haikuLine = mainDisplayLines.nth(i);
-        const japaneseText = await haikuLine.innerText();
-        lines.push(japaneseText);
-      }
+    for (let i = 0; i < count; i++) {
+      const haikuLine = mainDisplayLines.nth(i);
+      const japaneseText = await haikuLine.locator('p').first().innerText();
+      lines.push(japaneseText);
     }
 
-    const mainHaikuContent = lines.join("").replace(/\s/g, "");
-    return mainHaikuContent;
+    return lines.join('').replace(/\s/g, '');
   }
 
   async checkHaikuDisplay(page: Page): Promise<void> {
     const chatHaikuContent = await this.extractChatHaikuContent(page);
 
-    await page.waitForTimeout(3000);
-
-    // Check that the haiku exists somewhere in the carousel
-    const carousel = page.locator('[data-testid="haiku-carousel"]');
-    await carousel.waitFor({ state: "visible", timeout: 10000 });
-
-    const allCarouselCards = carousel.locator('[data-testid="haiku-card"]');
-    const cardCount = await allCarouselCards.count();
-
-    let foundMatch = false;
-    for (let i = 0; i < cardCount; i++) {
-      const card = allCarouselCards.nth(i);
-      const lines = card.locator('[data-testid="haiku-japanese-line"]');
-      const lineCount = await lines.count();
-      const cardLines: string[] = [];
-
-      for (let j = 0; j < lineCount; j++) {
-        const text = await lines.nth(j).innerText();
-        cardLines.push(text);
-      }
-
-      const cardContent = cardLines.join("").replace(/\s/g, "");
-      if (cardContent === chatHaikuContent) {
-        foundMatch = true;
-        break;
-      }
-    }
-
-    expect(foundMatch).toBe(true);
+    await expect
+      .poll(async () => {
+        const content = await this.extractMainDisplayHaikuContent(page);
+        return content;
+      }, {
+        timeout: 10000,
+        message: 'Main display did not match the latest chat haiku',
+      })
+      .toBe(chatHaikuContent);
   }
 }
