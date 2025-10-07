@@ -52,6 +52,7 @@ from ag_ui.core import (
     ToolCallArgsEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
+    ToolCallResultEvent,
     ThinkingTextMessageStartEvent,
     ThinkingTextMessageContentEvent,
     ThinkingTextMessageEndEvent,
@@ -674,31 +675,40 @@ class LangGraphAgent:
             )
 
         elif event_type == LangGraphEventTypes.OnToolEnd:
-            if self.active_run["has_function_streaming"]:
-                return
             tool_call_output = event["data"]["output"]
-            yield self._dispatch_event(
-                ToolCallStartEvent(
-                    type=EventType.TOOL_CALL_START,
-                    tool_call_id=tool_call_output.tool_call_id,
-                    tool_call_name=tool_call_output.name,
-                    parent_message_id=tool_call_output.id,
-                    raw_event=event,
+            if not self.active_run["has_function_streaming"]:
+                yield self._dispatch_event(
+                    ToolCallStartEvent(
+                        type=EventType.TOOL_CALL_START,
+                        tool_call_id=tool_call_output.tool_call_id,
+                        tool_call_name=tool_call_output.name,
+                        parent_message_id=tool_call_output.id,
+                        raw_event=event,
+                    )
                 )
-            )
-            yield self._dispatch_event(
-                ToolCallArgsEvent(
-                    type=EventType.TOOL_CALL_ARGS,
-                    tool_call_id=tool_call_output.tool_call_id,
-                    delta=json.dumps(event["data"]["input"]),
-                    raw_event=event
+                yield self._dispatch_event(
+                    ToolCallArgsEvent(
+                        type=EventType.TOOL_CALL_ARGS,
+                        tool_call_id=tool_call_output.tool_call_id,
+                        delta=json.dumps(event["data"]["input"]),
+                        raw_event=event
+                    )
                 )
-            )
+                yield self._dispatch_event(
+                    ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=tool_call_output.tool_call_id,
+                        raw_event=event
+                    )
+                )
+
             yield self._dispatch_event(
-                ToolCallEndEvent(
-                    type=EventType.TOOL_CALL_END,
+                ToolCallResultEvent(
+                    type=EventType.TOOL_CALL_RESULT,
                     tool_call_id=tool_call_output.tool_call_id,
-                    raw_event=event
+                    message_id=uuid.uuid4(),
+                    content=tool_call_output.content,
+                    role="tool"
                 )
             )
 
