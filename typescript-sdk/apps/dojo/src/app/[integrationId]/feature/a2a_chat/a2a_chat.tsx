@@ -5,10 +5,9 @@ import "./style.css";
 import {
   ActionRenderProps,
   CopilotKit,
-  useCoAgent,
-  useCoAgentStateRender,
   useCopilotAction,
   useCopilotChat,
+  useFrontendTool,
 } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 import dedent from "dedent";
@@ -127,10 +126,9 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
     }
   }, [isLoading, JSON.stringify(visibleMessages)]);
 
-  useCopilotAction({
+  useFrontendTool({
     name: "send_message_to_a2a_agent",
     description: "Sends a message to an A2A agent",
-    available: "frontend",
     parameters: [
       {
         name: "agentName",
