@@ -371,7 +371,7 @@ const Chat = ({ integrationId }: { integrationId: string }) => {
             { title: "Simple plan", message: "Please plan a trip to mars in 5 steps." },
             { title: "Complex plan", message: "Please plan a pastra dish in 10 steps." },
           ]}
-          className="h-full rounded-2xl"
+          className="h-full rounded-2xl max-w-6xl mx-auto"
           labels={{
             initial:
               "Hi, I'm an agent specialized in helping you with your tasks. How can I help you?",
