@@ -7,7 +7,6 @@ export type Feature =
   | "predictive_state_updates"
   | "shared_state"
   | "tool_based_generative_ui"
-  | "backend_tool_rendering"
   | "agentic_chat_reasoning"
   | "subgraphs"
   | "a2a_chat";

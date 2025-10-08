@@ -52,9 +52,6 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         tool_based_generative_ui: new PydanticAIAgent({
           url: `${envVars.pydanticAIUrl}/tool_based_generative_ui/`,
         }),
-        backend_tool_rendering: new PydanticAIAgent({
-          url: `${envVars.pydanticAIUrl}/backend_tool_rendering`,
-        }),
       };
     },
   },
@@ -71,15 +68,8 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/chat` }),
-        tool_based_generative_ui: new ADKAgent({
-          url: `${envVars.adkMiddlewareUrl}/adk-tool-based-generative-ui`,
-        }),
-        human_in_the_loop: new ADKAgent({
-          url: `${envVars.adkMiddlewareUrl}/adk-human-in-loop-agent`,
-        }),
-        backend_tool_rendering: new ADKAgent({
-          url: `${envVars.adkMiddlewareUrl}/backend_tool_rendering`,
-        }),
+        tool_based_generative_ui: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/adk-tool-based-generative-ui` }),
+        human_in_the_loop: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/adk-human-in-loop-agent` }),
         shared_state: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/adk-shared-state-agent` }),
         // predictive_state_updates: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/adk-predictive-state-agent` }),
       };
@@ -91,9 +81,6 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
       return {
         agentic_chat: new ServerStarterAllFeaturesAgent({
           url: `${envVars.serverStarterAllFeaturesUrl}/agentic_chat`,
-        }),
-        backend_tool_rendering: new ServerStarterAllFeaturesAgent({
-          url: `${envVars.serverStarterAllFeaturesUrl}/backend_tool_rendering`,
         }),
         human_in_the_loop: new ServerStarterAllFeaturesAgent({
           url: `${envVars.serverStarterAllFeaturesUrl}/human_in_the_loop`,
@@ -148,10 +135,6 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
           deploymentUrl: envVars.langgraphPythonUrl,
           graphId: "agentic_chat",
         }),
-        backend_tool_rendering: new LangGraphAgent({
-          deploymentUrl: envVars.langgraphPythonUrl,
-          graphId: "backend_tool_rendering",
-        }),
         agentic_generative_ui: new LangGraphAgent({
           deploymentUrl: envVars.langgraphPythonUrl,
           graphId: "agentic_generative_ui",
@@ -189,9 +172,6 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         agentic_chat: new LangGraphHttpAgent({
           url: `${envVars.langgraphFastApiUrl}/agent/agentic_chat`,
         }),
-        backend_tool_rendering: new LangGraphHttpAgent({
-          url: `${envVars.langgraphFastApiUrl}/agent/backend_tool_rendering`,
-        }),
         agentic_generative_ui: new LangGraphHttpAgent({
           url: `${envVars.langgraphFastApiUrl}/agent/agentic_generative_ui`,
         }),
@@ -224,10 +204,6 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
           deploymentUrl: envVars.langgraphTypescriptUrl,
           graphId: "agentic_chat",
         }),
-        // agentic_chat_reasoning: new LangGraphAgent({
-        //   deploymentUrl: envVars.langgraphTypescriptUrl,
-        //   graphId: "agentic_chat_reasoning",
-        // }),
         agentic_generative_ui: new LangGraphAgent({
           deploymentUrl: envVars.langgraphTypescriptUrl,
           graphId: "agentic_generative_ui",
@@ -265,9 +241,6 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         tool_based_generative_ui: new AgnoAgent({
           url: `${envVars.agnoUrl}/tool_based_generative_ui/agui`,
         }),
-        backend_tool_rendering: new AgnoAgent({
-          url: `${envVars.agnoUrl}/backend_tool_rendering/agui`,
-        }),
       };
     },
   },
@@ -286,9 +259,6 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         }),
         shared_state: new LlamaIndexAgent({
           url: `${envVars.llamaIndexUrl}/shared_state/run`,
-        }),
-        backend_tool_rendering: new LlamaIndexAgent({
-          url: `${envVars.llamaIndexUrl}/backend_tool_rendering/run`,
         }),
       };
     },
@@ -322,11 +292,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     id: "a2a",
     agents: async () => {
       // A2A agents: building management, finance, it agents
-      const agentUrls = [
-        envVars.a2aMiddlewareBuildingsManagementUrl,
-        envVars.a2aMiddlewareFinanceUrl,
-        envVars.a2aMiddlewareItUrl,
-      ];
+      const agentUrls = [envVars.a2aMiddlewareBuildingsManagementUrl, envVars.a2aMiddlewareFinanceUrl, envVars.a2aMiddlewareItUrl];
       // AGUI orchestration/routing agent
       const orchestrationAgent = new HttpAgent({
         url: envVars.a2aMiddlewareOrchestratorUrl,

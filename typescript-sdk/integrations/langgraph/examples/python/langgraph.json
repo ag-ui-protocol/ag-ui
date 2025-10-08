@@ -4,7 +4,6 @@
   "dependencies": ["."],
   "graphs": {
     "agentic_chat": "./agents/agentic_chat/agent.py:graph",
-    "backend_tool_rendering": "./agents/backend_tool_rendering/agent.py:graph",
     "agentic_generative_ui": "./agents/agentic_generative_ui/agent.py:graph",
     "human_in_the_loop": "./agents/human_in_the_loop/agent.py:graph",
     "predictive_state_updates": "./agents/predictive_state_updates/agent.py:graph",

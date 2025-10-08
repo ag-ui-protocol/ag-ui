@@ -1,6 +1,6 @@
 version = 1
 revision = 2
-requires-python = ">=3.12, <4.0"
+requires-python = ">=3.12"
 
 [[package]]
 name = "ag-ui-protocol"
@@ -208,17 +208,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b2/9d/c3b43da9515bd270df0f80548d9944e389870713cc1fe2b8fb35fe2bcefd/docstring_parser-0.17.0.tar.gz", hash = "sha256:583de4a309722b3315439bb31d64ba3eebada841f2e2cee23b99df001434c912", size = 27442, upload-time = "2025-07-21T07:35:01.868Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/55/e2/2537ebcff11c1ee1ff17d8d0b6f4db75873e3b0fb32c2d4a2ee31ecb310a/docstring_parser-0.17.0-py3-none-any.whl", hash = "sha256:cf2569abd23dce8099b300f9b4fa8191e9582dda731fd533daf54c4551658708", size = 36896, upload-time = "2025-07-21T07:35:00.684Z" },
-]
-
-[[package]]
-name = "dotenv"
-version = "0.9.9"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "python-dotenv" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b2/b7/545d2c10c1fc15e48653c91efde329a790f2eecfbbf2bd16003b5db2bab0/dotenv-0.9.9-py2.py3-none-any.whl", hash = "sha256:29cf74a087b31dafdb5a446b6d7e11cbce8ed2741540e2339c69fbef92c94ce9", size = 1892, upload-time = "2025-02-19T22:15:01.647Z" },
 ]
 
 [[package]]
@@ -725,9 +714,7 @@ source = { editable = "." }
 dependencies = [
     { name = "ag-ui-protocol" },
     { name = "agno" },
-    { name = "dotenv" },
     { name = "fastapi" },
-    { name = "httpx" },
     { name = "openai" },
     { name = "uvicorn" },
     { name = "yfinance" },
@@ -737,9 +724,7 @@ dependencies = [
 requires-dist = [
     { name = "ag-ui-protocol", specifier = ">=0.1.8" },
     { name = "agno", specifier = ">=1.7.7" },
-    { name = "dotenv", specifier = ">=0.9.9,<0.10.0" },
     { name = "fastapi", specifier = ">=0.116.1" },
-    { name = "httpx", specifier = ">=0.27.0" },
     { name = "openai", specifier = ">=1.99.1" },
     { name = "uvicorn", specifier = ">=0.35.0" },
     { name = "yfinance", specifier = ">=0.2.63" },

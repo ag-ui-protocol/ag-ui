@@ -7,20 +7,69 @@ import { DynamoDBStore } from "@mastra/dynamodb";
 import { createStep, createWorkflow, Mastra } from "@mastra/core";
 import { createTool } from "@mastra/core";
 import { z } from "zod";
-import { weatherTool } from "./tools";
+
+
 
 function getStorage(): LibSQLStore | DynamoDBStore {
   if (process.env.DYNAMODB_TABLE_NAME) {
     return new DynamoDBStore({
       name: "dynamodb",
       config: {
-        tableName: process.env.DYNAMODB_TABLE_NAME,
+        tableName: process.env.DYNAMODB_TABLE_NAME
       },
     });
   } else {
     return new LibSQLStore({ url: "file::memory:" });
   }
 }
+
+export const weatherInfo = createTool({
+  id: "Get Weather Information",
+  description: `Fetches the current weather information for a given city`,
+  inputSchema: z.object({
+    city: z.string(),
+  }),
+  outputSchema: z.object({
+    text: z.string(),
+  }),
+  execute: async ({ writer }) => {
+    const step = createStep({
+      id: "weather-info",
+      inputSchema: z.object({}),
+      outputSchema: z.object({
+        text: z.string(),
+      }),
+      execute: async () => {
+        return {
+          text: "70 degrees"
+        }
+      }
+    })
+
+    const workflow = createWorkflow({
+      id: "weather-info",
+      inputSchema: z.object({}),
+      outputSchema: z.object({}),
+      steps: [step],
+    }).then(step).commit();
+
+    const run = await workflow.createRunAsync()
+
+    const stream = run.streamVNext()
+
+    for await (const chunk of stream) {
+      console.log('WORKFLOW CHUNK', chunk)
+      if ('payload' in chunk) {
+        await writer!.write({
+          type: `${chunk.from}-${chunk.type}`,
+          payload: chunk.payload,
+        })
+      }
+    }
+
+    return await stream.result as any;
+  },
+});
 
 export const mastra = new Mastra({
   agents: {
@@ -37,7 +86,9 @@ export const mastra = new Mastra({
         - Keep responses concise but informative
     `,
       model: openai("gpt-4o"),
-      tools: { get_weather: weatherTool },
+      tools: {
+        weatherInfo
+      },
       memory: new Memory({
         storage: getStorage(),
         options: {
@@ -48,28 +99,6 @@ export const mastra = new Mastra({
             }),
           },
         },
-      }),
-    }),
-    backend_tool_rendering: new Agent({
-      name: "Weather Agent",
-      instructions: `
-          You are a helpful weather assistant that provides accurate weather information.
-
-          Your primary function is to help users get weather details for specific locations. When responding:
-          - Always ask for a location if none is provided
-          - If the location name isn’t in English, please translate it
-          - If giving a location with multiple parts (e.g. "New York, NY"), use the most relevant part (e.g. "New York")
-          - Include relevant details like humidity, wind conditions, and precipitation
-          - Keep responses concise but informative
-
-          Use the weatherTool to fetch current weather data.
-    `,
-      model: openai("gpt-4o-mini"),
-      tools: { get_weather: weatherTool },
-      memory: new Memory({
-        storage: new LibSQLStore({
-          url: "file:../mastra.db", // path is relative to the .mastra/output directory
-        }),
       }),
     }),
     shared_state: new Agent({

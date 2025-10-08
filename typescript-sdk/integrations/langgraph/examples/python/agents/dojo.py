@@ -3,7 +3,6 @@ import uvicorn
 from fastapi import FastAPI
 
 from dotenv import load_dotenv
-
 load_dotenv()
 
 os.environ["LANGGRAPH_FAST_API"] = "true"
@@ -16,7 +15,6 @@ from .tool_based_generative_ui.agent import graph as tool_based_generative_ui_gr
 from .agentic_chat.agent import graph as agentic_chat_graph
 from .agentic_generative_ui.agent import graph as agentic_generative_ui_graph
 from .agentic_chat_reasoning.agent import graph as agentic_chat_reasoning_graph
-from .backend_tool_rendering.agent import graph as backend_tool_rendering_graph
 from .subgraphs.agent import graph as subgraphs_graph
 
 app = FastAPI(title="LangGraph Dojo Example Server")
@@ -26,12 +24,7 @@ agents = {
     "agentic_chat": LangGraphAgent(
         name="agentic_chat",
         description="An example for an agentic chat flow using LangGraph.",
-        graph=agentic_chat_graph,
-    ),
-    "backend_tool_rendering": LangGraphAgent(
-        name="backend_tool_rendering",
-        description="An example for a backend tool rendering flow.",
-        graph=backend_tool_rendering_graph,
+        graph=agentic_chat_graph
     ),
     "tool_based_generative_ui": LangGraphAgent(
         name="tool_based_generative_ui",
@@ -71,52 +64,59 @@ agents = {
 }
 
 add_langgraph_fastapi_endpoint(
-    app=app, agent=agents["agentic_chat"], path="/agent/agentic_chat"
-)
-
-add_langgraph_fastapi_endpoint(
     app=app,
-    agent=agents["backend_tool_rendering"],
-    path="/agent/backend_tool_rendering",
+    agent=agents["agentic_chat"],
+    path="/agent/agentic_chat"
 )
-
 
 add_langgraph_fastapi_endpoint(
     app=app,
     agent=agents["tool_based_generative_ui"],
-    path="/agent/tool_based_generative_ui",
+    path="/agent/tool_based_generative_ui"
 )
 
 add_langgraph_fastapi_endpoint(
-    app=app, agent=agents["agentic_generative_ui"], path="/agent/agentic_generative_ui"
+    app=app,
+    agent=agents["agentic_generative_ui"],
+    path="/agent/agentic_generative_ui"
 )
 
 add_langgraph_fastapi_endpoint(
-    app=app, agent=agents["human_in_the_loop"], path="/agent/human_in_the_loop"
+    app=app,
+    agent=agents["human_in_the_loop"],
+    path="/agent/human_in_the_loop"
 )
 
 add_langgraph_fastapi_endpoint(
-    app=app, agent=agents["shared_state"], path="/agent/shared_state"
+    app=app,
+    agent=agents["shared_state"],
+    path="/agent/shared_state"
 )
 
 add_langgraph_fastapi_endpoint(
     app=app,
     agent=agents["predictive_state_updates"],
-    path="/agent/predictive_state_updates",
+    path="/agent/predictive_state_updates"
 )
 
 add_langgraph_fastapi_endpoint(
     app=app,
     agent=agents["agentic_chat_reasoning"],
-    path="/agent/agentic_chat_reasoning",
+    path="/agent/agentic_chat_reasoning"
 )
 
 add_langgraph_fastapi_endpoint(
-    app=app, agent=agents["subgraphs"], path="/agent/subgraphs"
+    app=app,
+    agent=agents["subgraphs"],
+    path="/agent/subgraphs"
 )
-
 
 def main():
     """Run the uvicorn server."""
     port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("agents.dojo:app", host="0.0.0.0", port=port, reload=True)
+    uvicorn.run(
+        "agents.dojo:app",
+        host="0.0.0.0",
+        port=port,
+        reload=True
+    )

@@ -57,7 +57,7 @@ const Chat = () => {
     >
       <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
         <CopilotChat
-          className="h-full rounded-2xl max-w-6xl mx-auto"
+          className="h-full rounded-2xl"
           labels={{ initial: "Hi, I'm an agent. Want to chat?" }}
           suggestions={[
             {

@@ -22,7 +22,6 @@ source = { editable = "." }
 dependencies = [
     { name = "ag-ui-adk" },
     { name = "fastapi" },
-    { name = "httpx" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "uvicorn", extra = ["standard"] },
@@ -32,7 +31,6 @@ dependencies = [
 requires-dist = [
     { name = "ag-ui-adk", directory = "../" },
     { name = "fastapi", specifier = ">=0.104.0" },
-    { name = "httpx", specifier = ">=0.27.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
