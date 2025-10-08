@@ -133,8 +133,6 @@ jobs:
     - name: Prepare dojo for e2e
       working-directory: typescript-sdk/apps/dojo
       if: ${{ join(matrix.services, ',') != '' }}
-      env:
-        npm_config_legacy_peer_deps: ${{ contains(join(matrix.services, ','), 'mastra') && 'true' || '' }}
       run: node ./scripts/prep-dojo-everything.js --only ${{ join(matrix.services, ',') }}
 
     - name: Install e2e dependencies
@@ -162,7 +160,6 @@ jobs:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
         GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-        npm_config_legacy_peer_deps: ${{ contains(join(matrix.services, ','), 'mastra') && 'true' || '' }}
       if: ${{ join(matrix.services, ',') != '' && contains(join(matrix.services, ','), 'dojo') }}
       with:
         run: |

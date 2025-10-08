@@ -89,7 +89,7 @@ const ALL_TARGETS = {
     cwd: path.join(integrationsRoot, 'llamaindex/server-py'),
   },
   'mastra': {
-    command: 'npm install',
+    command: 'pnpm install',
     name: 'Mastra',
     cwd: path.join(integrationsRoot, 'mastra/example'),
   },
