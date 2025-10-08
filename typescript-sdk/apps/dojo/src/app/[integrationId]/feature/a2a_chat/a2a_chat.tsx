@@ -5,8 +5,7 @@ import "./style.css";
 import {
   ActionRenderProps,
   CopilotKit,
-  useCoAgent,
-  useCoAgentStateRender,
+  useRenderToolCall,
   useCopilotAction,
   useCopilotChat,
 } from "@copilotkit/react-core";
@@ -127,10 +126,9 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
     }
   }, [isLoading, JSON.stringify(visibleMessages)]);
 
-  useCopilotAction({
+  useRenderToolCall({
     name: "send_message_to_a2a_agent",
     description: "Sends a message to an A2A agent",
-    available: "frontend",
     parameters: [
       {
         name: "agentName",

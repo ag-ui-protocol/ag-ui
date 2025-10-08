@@ -2,7 +2,11 @@
 import React, { useState, useEffect } from "react";
 import "@copilotkit/react-ui/styles.css";
 import "./style.css";
-import { CopilotKit, useCopilotAction, useLangGraphInterrupt } from "@copilotkit/react-core";
+import {
+  CopilotKit,
+  useHumanInTheLoop,
+  useLangGraphInterrupt,
+} from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 import { useTheme } from "next-themes";
 
@@ -329,7 +333,7 @@ const Chat = ({ integrationId }: { integrationId: string }) => {
   useLangGraphInterrupt({
     render: ({ event, resolve }) => <InterruptHumanInTheLoop event={event} resolve={resolve} />,
   });
-  useCopilotAction({
+  useHumanInTheLoop({
     name: "generate_task_steps",
     description: "Generates a list of steps for the user to perform",
     parameters: [
@@ -354,7 +358,7 @@ const Chat = ({ integrationId }: { integrationId: string }) => {
     available: ["langgraph", "langgraph-fastapi", "langgraph-typescript"].includes(integrationId)
       ? "disabled"
       : "enabled",
-    renderAndWaitForResponse: ({ args, respond, status }) => {
+    render: ({ args, respond, status }) => {
       return <StepsFeedback args={args} respond={respond} status={status} />;
     },
   });
