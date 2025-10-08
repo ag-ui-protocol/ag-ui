@@ -256,7 +256,7 @@ export class MastraAgent extends AbstractAgent {
     if (this.isLocalMastraAgent(this.agent)) {
       // Local agent - use the agent's stream method directly
       try {
-        const response = await this.agent.streamVNext(convertedMessages, {
+        const response = await this.agent.stream(convertedMessages, {
           threadId,
           resourceId,
           runId,
@@ -311,7 +311,7 @@ export class MastraAgent extends AbstractAgent {
     } else {
       // Remote agent - use the remote agent's stream method
       try {
-        const response = await this.agent.streamVNext({
+        const response = await this.agent.stream({
           threadId,
           resourceId,
           runId,
