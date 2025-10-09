@@ -14,8 +14,13 @@ A production-ready Kotlin Multiplatform client library for connecting applicatio
 The comprehensive documentation covers:
 - [Getting Started](../../../docs/sdk/kotlin/overview.mdx) - Installation and quick start
 - [Client APIs](../../../docs/sdk/kotlin/client/) - AgUiAgent, StatefulAgUiAgent, builders
-- [Core Types](../../../docs/sdk/kotlin/core/) - Protocol messages, events, and types  
+- [Core Types](../../../docs/sdk/kotlin/core/) - Protocol messages, events, and types
 - [Tools Framework](../../../docs/sdk/kotlin/tools/) - Extensible tool execution system
+
+## Note
+
+This is a community lead project. While the core ag-ui team wants to help out as much as possible, the primary point of contact for issues with the AG-UI Kotlin SDK is Mark Fogle (mark@contextable.com, mefinsf on discord)
+
 
 ## 🚀 Quick Start
 
@@ -45,6 +50,7 @@ cd ag-ui/sdks/community/kotlin/library
 ./gradlew build
 ./gradlew test
 ```
+
 
 ## 📄 License
 
