@@ -22,6 +22,7 @@ from .api import (
     tool_based_generative_ui_app,
     human_in_the_loop_app,
     shared_state_app,
+    backend_tool_rendering_app,
     # predictive_state_updates_app,
 )
 
@@ -32,6 +33,7 @@ app.include_router(agentic_chat_app.router, prefix='/chat', tags=['Agentic Chat'
 app.include_router(tool_based_generative_ui_app.router, prefix='/adk-tool-based-generative-ui', tags=['Tool Based Generative UI'])
 app.include_router(human_in_the_loop_app.router, prefix='/adk-human-in-loop-agent', tags=['Human in the Loop'])
 app.include_router(shared_state_app.router, prefix='/adk-shared-state-agent', tags=['Shared State'])
+app.include_router(backend_tool_rendering_app.router, prefix='/backend_tool_rendering', tags=['Backend Tool Rendering'])
 # app.include_router(predictive_state_updates_app.router, prefix='/adk-predictive-state-agent', tags=['Predictive State Updates'])
 
 
@@ -44,6 +46,7 @@ async def root():
             "tool_based_generative_ui": "/adk-tool-based-generative-ui",
             "human_in_the_loop": "/adk-human-in-loop-agent",
             "shared_state": "/adk-shared-state-agent",
+            "backend_tool_rendering": "/backend_tool_rendering",
             # "predictive_state_updates": "/adk-predictive-state-agent",
             "docs": "/docs"
         }

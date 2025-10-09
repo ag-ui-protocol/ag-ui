@@ -1,13 +1,18 @@
 #!/usr/bin/env python
 """Comprehensive tests for EventTranslator, focusing on untested paths."""
 
+import json
+from dataclasses import asdict, dataclass
+from types import SimpleNamespace
+
 import pytest
 import uuid
 from unittest.mock import MagicMock, patch, AsyncMock
 
 from ag_ui.core import (
     EventType, TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent,
-    ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent, StateDeltaEvent, CustomEvent
+    ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent, ToolCallResultEvent,
+    StateDeltaEvent, CustomEvent
 )
 from google.adk.events import Event as ADKEvent
 from ag_ui_adk.event_translator import EventTranslator
@@ -110,15 +115,68 @@ class TestEventTranslatorComprehensive:
     async def test_translate_function_responses_handling(self, translator, mock_adk_event):
         """Test function responses handling."""
         # Mock event with function responses
-        mock_function_response = MagicMock()
-        mock_adk_event.get_function_responses = MagicMock(return_value=[mock_function_response])
+        function_response = SimpleNamespace(id="tool-1", response={"ok": True})
+        mock_adk_event.get_function_calls = MagicMock(return_value=[])
+        mock_adk_event.get_function_responses = MagicMock(return_value=[function_response])
 
         events = []
         async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
             events.append(event)
 
-        # Function responses should be handled but not emit events
-        assert len(events) == 0
+        assert len(events) == 1
+        event = events[0]
+        assert isinstance(event, ToolCallResultEvent)
+        assert json.loads(event.content) == {"ok": True}
+
+    @pytest.mark.asyncio
+    async def test_translate_function_response_with_call_tool_result_payload(self, translator):
+        """Ensure complex CallToolResult payloads are serialized correctly."""
+
+        @dataclass
+        class TextContent:
+            type: str = "text"
+            text: str = ""
+            annotations: list | None = None
+            meta: dict | None = None
+
+        @dataclass
+        class CallToolResult:
+            meta: dict | None
+            structuredContent: dict | None
+            isError: bool
+            content: list[TextContent]
+
+        repeated_text_entries = [
+            "Primary Task: Provide a detailed walkthrough for the requested topic.",
+            "Primary Task: Provide a detailed walkthrough for the requested topic.",
+            "Constraints: Ensure clarity and maintain a concise explanation.",
+            "Constraints: Ensure clarity and maintain a concise explanation.",
+        ]
+
+        payload = CallToolResult(
+            meta=None,
+            structuredContent=None,
+            isError=False,
+            content=[TextContent(text=text) for text in repeated_text_entries],
+        )
+
+        function_response = SimpleNamespace(
+            id="tool-structured-1",
+            response={"result": payload},
+        )
+
+        events = []
+        async for event in translator._translate_function_response([function_response]):
+            events.append(event)
+
+        assert len(events) == 1
+        event = events[0]
+        assert isinstance(event, ToolCallResultEvent)
+
+        content = json.loads(event.content)
+        assert content["result"]["isError"] is False
+        assert content["result"]["structuredContent"] is None
+        assert [item["text"] for item in content["result"]["content"]] == repeated_text_entries
 
     @pytest.mark.asyncio
     async def test_translate_state_delta_event(self, translator, mock_adk_event):

@@ -1825,6 +1825,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "jsonpatch" },
     { name = "llama-index-core" },
     { name = "llama-index-llms-openai" },
@@ -1835,6 +1836,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.100.0" },
+    { name = "httpx", specifier = ">=0.24.0" },
     { name = "jsonpatch", specifier = ">=1.33" },
     { name = "llama-index-core", specifier = ">=0.14.0,<0.15" },
     { name = "llama-index-llms-openai", specifier = ">=0.5.0,<0.6.0" },

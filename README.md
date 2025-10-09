@@ -94,23 +94,28 @@ AG-UI was born from CopilotKit's initial partnership with LangGraph and CrewAI -
 | [AWS Strands Agents](https://github.com/strands-agents/sdk-python) | 🛠️ In Progress           | –                                                                            | 1st Party                |   
 | [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            | Community                |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress           | –                                                                            | Community                |
-| [Cloudflare Agents](https://developers.cloudflare.com/agents/)     | 💡 Open to Contributions | –                                                                            | Community                |
+| [Cloudflare Agents](https://developers.cloudflare.com/agents/)     | 🛠️ In Progress           | –                                                                            | Community                |
+| [Microsoft Agent Framework](https://azure.microsoft.com/en-us/blog/introducing-microsoft-agent-framework/)     | 🛠️ In Progress           | –                                                                            | 1st Party               |
 
-[View all supported frameworks →](https://docs.ag-ui.com/introduction#supported-frameworks)
 
+| Protocols                                                       | Status                    | AG-UI Resources                                                                 |
+| ------------------------------------------------------------------ | ------------------------  | ---------------------------------------------------------------------------- |
+| [A2A]()                                                         | ✅ Supported              | ➡️ [Docs](https://docs.copilotkit.ai/a2a-protocol)                              |
 
-| Language SDK                                                       | Status                    | AG-UI Resources                                                              |
+| SDK's                                                       | Status                    | AG-UI Resources                                                              |
 | ------------------------------------------------------------------ | ------------------------  | ---------------------------------------------------------------------------- |
 | [Kotlin]()                                                         | ✅ Supported              | ➡️ [GitHub Source](https://github.com/Contextable/ag-ui-4k)                  |
 | [.NET]()                                                           | 🛠️ In Progress            | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/38)                     |
 | [Nim]()                                                            | 🛠️ In Progress            | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/29)                     |
-| [Golang]()                                                         | 🛠️ In Progress            | ➡️ [Issue](https://github.com/ag-ui-protocol/ag-ui/issues/156)               |
-| [Rust]()                                                           | 🛠️ In Progress            | ➡️ [Issue](https://github.com/ag-ui-protocol/ag-ui/issues/239)               |
-| [Java]()                                                           | 🛠️ In Progress            | ➡️ [GitHub Source](https://github.com/work-m8/ag-ui-4j)                      |
+| [Golang]()                                                         | 🛠️ In Progress            | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/339)                    |
+| [Rust]()                                                           | 🛠️ In Progress            | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/243)                    |
+| [Java]()                                                           | 🛠️ In Progress            | ➡️ [GitHub Source](https://github.com/ag-ui-protocol/ag-ui/issues/20)                      |
+| [Dart]()                                                           | 🛠️ In Progress            | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/432)         |
+| [Flowise]()                                                        | 🛠️ In Progress            | ➡️ [GitHub Source](https://github.com/ag-ui-protocol/ag-ui/issues/367)         |
+| [Langflow]()                                                       | 🛠️ In Progress            | ➡️ [GitHub Source](https://github.com/ag-ui-protocol/ag-ui/issues/366)         |
 
 
-[View all supported frameworks →](https://ag-ui.com/frameworks)
-
+[View all supported frameworks →](https://docs.ag-ui.com/introduction#supported-frameworks)
 
 ## Examples
 ### Hello World App
