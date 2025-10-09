@@ -136,20 +136,20 @@ importers:
         specifier: ^0.14.0
         version: 0.14.0(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76)
       '@mastra/core':
-        specifier: ^0.19.0
-        version: 0.19.0(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76)
+        specifier: ^0.20.1
+        version: 0.20.2(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76)
       '@mastra/dynamodb':
         specifier: ^0.15.4
-        version: 0.15.4(@mastra/core@0.19.0(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))
+        version: 0.15.4(@mastra/core@0.20.2(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))
       '@mastra/libsql':
         specifier: ^0.15.0
-        version: 0.15.0(@mastra/core@0.19.0(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))
+        version: 0.15.0(@mastra/core@0.20.2(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))
       '@mastra/loggers':
         specifier: ^0.10.14
-        version: 0.10.14(@mastra/core@0.19.0(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))
+        version: 0.10.14(@mastra/core@0.20.2(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))
       '@mastra/memory':
         specifier: ^0.15.4
-        version: 0.15.4(@mastra/core@0.19.0(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))(react@19.1.0)(zod@3.25.76)
+        version: 0.15.4(@mastra/core@0.20.2(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))(react@19.1.0)(zod@3.25.76)
       '@mdx-js/loader':
         specifier: ^3.1.0
         version: 3.1.0(acorn@8.14.1)(webpack@5.99.9)
@@ -528,8 +528,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/core
       '@mastra/core':
-        specifier: ^0.20.0
-        version: 0.20.1(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76)
+        specifier: ^0.20.1
+        version: 0.20.2(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76)
       '@types/jest':
         specifier: ^29.5.14
         version: 29.5.14
@@ -14861,11 +14861,11 @@ snapshots:
       - supports-color
       - typescript
 
-  '@mastra/dynamodb@0.15.4(@mastra/core@0.19.0(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))':
+  '@mastra/dynamodb@0.15.4(@mastra/core@0.20.2(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))':
     dependencies:
       '@aws-sdk/client-dynamodb': 3.859.0
       '@aws-sdk/lib-dynamodb': 3.878.0(@aws-sdk/client-dynamodb@3.859.0)
-      '@mastra/core': 0.19.0(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76)
+      '@mastra/core': 0.20.2(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76)
       electrodb: 3.4.6(@aws-sdk/client-dynamodb@3.859.0)
     transitivePeerDependencies:
       - aws-crt
@@ -14878,14 +14878,6 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@mastra/libsql@0.15.0(@mastra/core@0.19.0(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))':
-    dependencies:
-      '@libsql/client': 0.15.15
-      '@mastra/core': 0.19.0(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76)
-    transitivePeerDependencies:
-      - bufferutil
-      - utf-8-validate
-
   '@mastra/libsql@0.15.0(@mastra/core@0.20.1(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))':
     dependencies:
       '@libsql/client': 0.15.15
@@ -14894,15 +14886,23 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@mastra/loggers@0.10.14(@mastra/core@0.19.0(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))':
+  '@mastra/libsql@0.15.0(@mastra/core@0.20.2(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))':
     dependencies:
-      '@mastra/core': 0.19.0(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76)
-      pino: 9.7.0
-      pino-pretty: 13.0.0
+      '@libsql/client': 0.15.15
+      '@mastra/core': 0.20.2(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76)
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   '@mastra/loggers@0.10.14(@mastra/core@0.20.1(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))':
     dependencies:
       '@mastra/core': 0.20.1(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76)
+      pino: 9.7.0
+      pino-pretty: 13.0.0
+
+  '@mastra/loggers@0.10.14(@mastra/core@0.20.2(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))':
+    dependencies:
+      '@mastra/core': 0.20.2(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76)
       pino: 9.7.0
       pino-pretty: 13.0.0
 
@@ -14953,9 +14953,9 @@ snapshots:
       - pg-native
       - react
 
-  '@mastra/memory@0.15.4(@mastra/core@0.19.0(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))(react@19.1.0)(zod@3.25.76)':
+  '@mastra/memory@0.15.4(@mastra/core@0.20.1(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))(react@19.1.0)(zod@3.25.76)':
     dependencies:
-      '@mastra/core': 0.19.0(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76)
+      '@mastra/core': 0.20.1(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76)
       '@mastra/schema-compat': 0.11.4(ai@4.3.19(react@19.1.0)(zod@3.25.76))(zod@3.25.76)
       '@upstash/redis': 1.35.4
       ai: 4.3.19(react@19.1.0)(zod@3.25.76)
@@ -14974,9 +14974,9 @@ snapshots:
       - pg-native
       - react
 
-  '@mastra/memory@0.15.4(@mastra/core@0.20.1(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))(react@19.1.0)(zod@3.25.76)':
+  '@mastra/memory@0.15.4(@mastra/core@0.20.2(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76))(react@19.1.0)(zod@3.25.76)':
     dependencies:
-      '@mastra/core': 0.20.1(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76)
+      '@mastra/core': 0.20.2(@sinclair/typebox@0.34.37)(openapi-types@12.1.3)(react@19.1.0)(zod@3.25.76)
       '@mastra/schema-compat': 0.11.4(ai@4.3.19(react@19.1.0)(zod@3.25.76))(zod@3.25.76)
       '@upstash/redis': 1.35.4
       ai: 4.3.19(react@19.1.0)(zod@3.25.76)
@@ -18622,21 +18622,6 @@ snapshots:
       object-assign: 4.1.1
       vary: 1.1.2
 
-  create-jest@29.7.0:
-    dependencies:
-      '@jest/types': 29.6.3
-      chalk: 4.1.2
-      exit: 0.1.2
-      graceful-fs: 4.2.11
-      jest-config: 29.7.0(@types/node@20.17.50)
-      jest-util: 29.7.0
-      prompts: 2.4.2
-    transitivePeerDependencies:
-      - '@types/node'
-      - babel-plugin-macros
-      - supports-color
-      - ts-node
-
   create-jest@29.7.0(@types/node@20.17.50):
     dependencies:
       '@jest/types': 29.6.3
@@ -20214,7 +20199,7 @@ snapshots:
       isstream: 0.1.2
       jsonwebtoken: 9.0.2
       mime-types: 2.1.35
-      retry-axios: 2.6.0(axios@1.10.0(debug@4.4.1))
+      retry-axios: 2.6.0(axios@1.10.0)
       tough-cookie: 4.1.4
     transitivePeerDependencies:
       - supports-color
@@ -20574,7 +20559,7 @@ snapshots:
       '@jest/test-result': 29.7.0
       '@jest/types': 29.6.3
       chalk: 4.1.2
-      create-jest: 29.7.0
+      create-jest: 29.7.0(@types/node@20.17.50)
       exit: 0.1.2
       import-local: 3.2.0
       jest-config: 29.7.0(@types/node@20.17.50)
@@ -23151,7 +23136,7 @@ snapshots:
       onetime: 5.1.2
       signal-exit: 3.0.7
 
-  retry-axios@2.6.0(axios@1.10.0(debug@4.4.1)):
+  retry-axios@2.6.0(axios@1.10.0):
     dependencies:
       axios: 1.10.0(debug@4.4.1)
 
