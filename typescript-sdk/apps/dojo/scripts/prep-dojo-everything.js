@@ -1,28 +1,28 @@
 #!/usr/bin/env node
 
-const { execSync } = require('child_process');
-const path = require('path');
-const concurrently = require('concurrently');
+const { execSync } = require("child_process");
+const path = require("path");
+const concurrently = require("concurrently");
 
 // Parse command line arguments
 const args = process.argv.slice(2);
-const showHelp = args.includes('--help') || args.includes('-h');
-const dryRun = args.includes('--dry-run');
+const showHelp = args.includes("--help") || args.includes("-h");
+const dryRun = args.includes("--dry-run");
 
 // selection controls
 function parseList(flag) {
   const idx = args.indexOf(flag);
   if (idx !== -1 && args[idx + 1]) {
     return args[idx + 1]
-      .split(',')
+      .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
   }
   return null;
 }
 
-const onlyList = parseList('--only') || parseList('--include');
-const excludeList = parseList('--exclude') || [];
+const onlyList = parseList("--only") || parseList("--include");
+const excludeList = parseList("--exclude") || [];
 
 if (showHelp) {
   console.log(`
@@ -43,84 +43,82 @@ Examples:
   process.exit(0);
 }
 
-const gitRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim();
-const integrationsRoot = path.join(gitRoot, 'typescript-sdk', 'integrations');
-
-
+const gitRoot = execSync("git rev-parse --show-toplevel", { encoding: "utf-8" }).trim();
+const integrationsRoot = path.join(gitRoot, "typescript-sdk", "integrations");
 
 // Define all prep targets keyed by a stable id
 const ALL_TARGETS = {
-  'server-starter': {
-    command: 'poetry install',
-    name: 'Server Starter',
-    cwd: path.join(integrationsRoot, 'server-starter/server/python'),
+  "server-starter": {
+    command: "poetry install",
+    name: "Server Starter",
+    cwd: path.join(integrationsRoot, "server-starter/server/python"),
   },
-  'server-starter-all': {
-    command: 'poetry install',
-    name: 'Server AF',
-    cwd: path.join(integrationsRoot, 'server-starter-all-features/server/python'),
+  "server-starter-all": {
+    command: "poetry install",
+    name: "Server AF",
+    cwd: path.join(integrationsRoot, "server-starter-all-features/server/python"),
   },
-  'agno': {
-    command: 'uv sync',
-    name: 'Agno',
-    cwd: path.join(integrationsRoot, 'agno/examples'),
+  agno: {
+    command: "uv sync",
+    name: "Agno",
+    cwd: path.join(integrationsRoot, "agno/examples"),
   },
-  'crew-ai': {
-    command: 'poetry install',
-    name: 'CrewAI',
-    cwd: path.join(integrationsRoot, 'crewai/python'),
+  "crew-ai": {
+    command: "poetry install",
+    name: "CrewAI",
+    cwd: path.join(integrationsRoot, "crewai/python"),
   },
-  'langgraph-fastapi': {
-    command: 'poetry install',
-    name: 'LG FastAPI',
-    cwd: path.join(integrationsRoot, 'langgraph/examples/python'),
+  "langgraph-fastapi": {
+    command: "poetry install",
+    name: "LG FastAPI",
+    cwd: path.join(integrationsRoot, "langgraph/examples/python"),
     env: {
       POETRY_VIRTUALENVS_IN_PROJECT: "false",
     },
   },
-  'langgraph-platform-typescript': {
-    command: 'pnpm install',
-    name: 'LG Platform TS',
-    cwd: path.join(integrationsRoot, 'langgraph/examples/typescript/'),
+  "langgraph-platform-typescript": {
+    command: "pnpm install",
+    name: "LG Platform TS",
+    cwd: path.join(integrationsRoot, "langgraph/examples/typescript/"),
   },
-  'llama-index': {
-    command: 'uv sync',
-    name: 'Llama Index',
-    cwd: path.join(integrationsRoot, 'llamaindex/server-py'),
+  "llama-index": {
+    command: "uv sync",
+    name: "Llama Index",
+    cwd: path.join(integrationsRoot, "llamaindex/server-py"),
   },
-  'mastra': {
-    command: 'pnpm install',
-    name: 'Mastra',
-    cwd: path.join(integrationsRoot, 'mastra/example'),
+  mastra: {
+    command: "pnpm install --no-frozen-lockfile",
+    name: "Mastra",
+    cwd: path.join(integrationsRoot, "mastra/example"),
   },
-  'pydantic-ai': {
-    command: 'uv sync',
-    name: 'Pydantic AI',
-    cwd: path.join(integrationsRoot, 'pydantic-ai/examples'),
+  "pydantic-ai": {
+    command: "uv sync",
+    name: "Pydantic AI",
+    cwd: path.join(integrationsRoot, "pydantic-ai/examples"),
   },
-  'adk-middleware': {
-    command: 'uv sync',
-    name: 'ADK Middleware',
-    cwd: path.join(integrationsRoot, 'adk-middleware/python/examples'),
+  "adk-middleware": {
+    command: "uv sync",
+    name: "ADK Middleware",
+    cwd: path.join(integrationsRoot, "adk-middleware/python/examples"),
   },
-  'a2a-middleware': {
-    command: 'uv sync',
-    name: 'A2A Middleware',
-    cwd: path.join(integrationsRoot, 'a2a-middleware/examples'),
+  "a2a-middleware": {
+    command: "uv sync",
+    name: "A2A Middleware",
+    cwd: path.join(integrationsRoot, "a2a-middleware/examples"),
   },
-  'dojo': {
-    command: 'pnpm install --no-frozen-lockfile && pnpm build --filter=demo-viewer...',
-    name: 'Dojo',
-    cwd: path.join(gitRoot, 'typescript-sdk'),
+  dojo: {
+    command: "pnpm install --no-frozen-lockfile && pnpm build --filter=demo-viewer...",
+    name: "Dojo",
+    cwd: path.join(gitRoot, "typescript-sdk"),
   },
 };
 
 function printDryRunServices(procs) {
-  console.log('Dry run - would install dependencies for the following services:');
-  procs.forEach(proc => {
+  console.log("Dry run - would install dependencies for the following services:");
+  procs.forEach((proc) => {
     console.log(`  - ${proc.name} (${proc.cwd})`);
     console.log(`    Command: ${proc.command}`);
-    console.log('');
+    console.log("");
   });
   process.exit(0);
 }
@@ -150,12 +148,14 @@ async function main() {
     printDryRunServices(procs);
   }
 
-  const {result} = concurrently(procs);
+  const { result } = concurrently(procs);
 
-  result.then(() => process.exit(0)).catch((err) => {
-    console.error(err);
-    process.exit(1);
-  });
+  result
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
 }
 
 main();
