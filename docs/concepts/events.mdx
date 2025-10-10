@@ -20,6 +20,7 @@ Events in the protocol are categorized by their purpose:
 | Tool Call Events        | Manage tool executions by agents        |
 | State Management Events | Synchronize state between agents and UI |
 | Special Events          | Support custom functionality            |
+| Draft Events            | Proposed events under development       |
 
 ## Base Event Properties
 
@@ -194,10 +195,10 @@ for an incoming message, such as creating a new message bubble with a loading
 indicator. The `role` property identifies whether the message is coming from the
 assistant or potentially another participant in the conversation.
 
-| Property    | Description                                    |
-| ----------- | ---------------------------------------------- |
-| `messageId` | Unique identifier for the message              |
-| `role`      | Role of the message sender (e.g., "assistant") |
+| Property    | Description                                                                       |
+| ----------- | --------------------------------------------------------------------------------- |
+| `messageId` | Unique identifier for the message                                                 |
+| `role`      | Role of the message sender ("developer", "system", "assistant", "user", "tool") |
 
 ### TextMessageContent
 
@@ -230,6 +231,22 @@ automatic scrolling to ensure the full message is visible.
 | Property    | Description                            |
 | ----------- | -------------------------------------- |
 | `messageId` | Matches the ID from `TextMessageStart` |
+
+### TextMessageChunk
+
+A self-contained text message event that combines start, content, and end.
+
+The `TextMessageChunk` event provides a convenient way to send complete text messages 
+in a single event instead of the three-event sequence (start, content, end). This is 
+particularly useful for simple messages or when the entire content is available at once. 
+The event includes both the message metadata and content, making it more efficient for 
+non-streaming scenarios.
+
+| Property    | Description                                                                           |
+| ----------- | ------------------------------------------------------------------------------------- |
+| `messageId` | Optional unique identifier for the message                                            |
+| `role`      | Optional role of the sender ("developer", "system", "assistant", "user", "tool")    |
+| `delta`     | Optional text content of the message                                                  |
 
 ## Tool Call Events
 
@@ -470,6 +487,135 @@ implementation across frontends and agents.
 | -------- | ------------------------------- |
 | `name`   | Name of the custom event        |
 | `value`  | Value associated with the event |
+
+## Draft Events
+
+These events are currently in draft status and may change before finalization. They represent proposed extensions to the protocol that are under active development and discussion.
+
+### Activity Events
+
+<span style={{backgroundColor: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '0.75em', fontWeight: 'bold'}}>DRAFT</span> [View Proposal](/drafts/activity-events)
+
+Activity events represent ongoing agent progress between chat messages, allowing frameworks to surface fine-grained activity updates chronologically.
+
+#### ActivitySnapshotEvent
+
+Provides the complete activity state at a point in time.
+
+| Property       | Description                                          |
+| -------------- | ---------------------------------------------------- |
+| `messageId`    | Unique identifier for the ActivityMessage           |
+| `activityType` | Activity type (e.g., "PLAN", "SEARCH", "SCRAPE")    |
+| `content`      | Complete activity state at this point               |
+
+#### ActivityDeltaEvent
+
+Provides incremental updates to the activity state using JSON Patch operations.
+
+| Property       | Description                                          |
+| -------------- | ---------------------------------------------------- |
+| `messageId`    | Unique identifier for the ActivityMessage           |
+| `activityType` | Activity type (e.g., "PLAN", "SEARCH", "SCRAPE")    |
+| `patch`        | JSON Patch operations (RFC 6902) to apply           |
+
+### Reasoning Events
+
+<span style={{backgroundColor: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '0.75em', fontWeight: 'bold'}}>DRAFT</span> [View Proposal](/drafts/reasoning)
+
+Reasoning events support LLM reasoning visibility and continuity, enabling chain-of-thought reasoning while maintaining privacy.
+
+#### ReasoningStart
+
+Marks the start of reasoning.
+
+| Property           | Description                             |
+| ------------------ | --------------------------------------- |
+| `messageId`        | Unique identifier of this reasoning     |
+| `encryptedContent` | Optional encrypted content              |
+
+#### ReasoningMessageStart
+
+Signals the start of a reasoning message.
+
+| Property    | Description                         |
+| ----------- | ----------------------------------- |
+| `messageId` | Unique identifier of the message    |
+| `role`      | Role of the reasoning message       |
+
+#### ReasoningMessageContent
+
+Represents a chunk of content in a streaming reasoning message.
+
+| Property    | Description                          |
+| ----------- | ------------------------------------ |
+| `messageId` | Matches ID from ReasoningMessageStart |
+| `delta`     | Reasoning content chunk (non-empty)   |
+
+#### ReasoningMessageEnd
+
+Signals the end of a reasoning message.
+
+| Property    | Description                          |
+| ----------- | ------------------------------------ |
+| `messageId` | Matches ID from ReasoningMessageStart |
+
+#### ReasoningMessageChunk
+
+A convenience event to auto start/close reasoning messages.
+
+| Property    | Description                               |
+| ----------- | ----------------------------------------- |
+| `messageId` | Optional message ID                       |
+| `delta`     | Optional reasoning content chunk          |
+
+#### ReasoningEnd
+
+Marks the end of reasoning.
+
+| Property    | Description                         |
+| ----------- | ----------------------------------- |
+| `messageId` | Unique identifier of this reasoning |
+
+### Meta Events
+
+<span style={{backgroundColor: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '0.75em', fontWeight: 'bold'}}>DRAFT</span> [View Proposal](/drafts/meta-events)
+
+Meta events provide annotations and signals independent of agent runs, such as user feedback or external system events.
+
+#### MetaEvent
+
+A side-band annotation event that can occur anywhere in the stream.
+
+| Property   | Description                                               |
+| ---------- | --------------------------------------------------------- |
+| `metaType` | Application-defined type (e.g., "thumbs_up", "tag")      |
+| `payload`  | Application-defined payload                               |
+
+### Modified Lifecycle Events
+
+<span style={{backgroundColor: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '0.75em', fontWeight: 'bold'}}>DRAFT</span> [View Proposal](/drafts/interrupts)
+
+Extensions to existing lifecycle events to support interrupts and branching.
+
+#### RunFinished (Extended)
+
+The `RunFinished` event gains new fields to support interrupt-aware workflows.
+
+| Property    | Description                                          |
+| ----------- | ---------------------------------------------------- |
+| `outcome`   | Optional: "success" or "interrupt"                  |
+| `interrupt` | Optional: Contains interrupt details when paused    |
+
+<span style={{backgroundColor: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '0.75em', fontWeight: 'bold'}}>DRAFT</span> [View Proposal](/drafts/serialization)
+
+#### RunStarted (Extended)
+
+The `RunStarted` event gains new fields to support branching and input tracking.
+
+| Property     | Description                                        |
+| ------------ | -------------------------------------------------- |
+| `parentRunId`| Optional: Parent run ID for branching/time travel |
+| `input`      | Optional: The exact agent input for this run      |
 
 ## Event Flow Patterns
 

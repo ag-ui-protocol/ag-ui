@@ -15,6 +15,9 @@ import { CrewAIAgent } from "@ag-ui/crewai";
 import getEnvVars from "./env";
 import { mastra } from "./mastra";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
+import { ADKAgent } from "@ag-ui/adk";
+import { HttpAgent } from "@ag-ui/client";
+import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
 
 const envVars = getEnvVars();
 export const agentsIntegrations: AgentIntegrationConfig[] = [
@@ -39,14 +42,18 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         human_in_the_loop: new PydanticAIAgent({
           url: `${envVars.pydanticAIUrl}/human_in_the_loop/`,
         }),
-        predictive_state_updates: new PydanticAIAgent({
-          url: `${envVars.pydanticAIUrl}/predictive_state_updates/`,
-        }),
+        // Disabled until we can figure out why production builds break
+        // predictive_state_updates: new PydanticAIAgent({
+        //   url: `${envVars.pydanticAIUrl}/predictive_state_updates/`,
+        // }),
         shared_state: new PydanticAIAgent({
           url: `${envVars.pydanticAIUrl}/shared_state/`,
         }),
         tool_based_generative_ui: new PydanticAIAgent({
           url: `${envVars.pydanticAIUrl}/tool_based_generative_ui/`,
+        }),
+        backend_tool_rendering: new PydanticAIAgent({
+          url: `${envVars.pydanticAIUrl}/backend_tool_rendering`,
         }),
       };
     },
@@ -60,11 +67,33 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     },
   },
   {
+    id: "adk-middleware",
+    agents: async () => {
+      return {
+        agentic_chat: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/chat` }),
+        tool_based_generative_ui: new ADKAgent({
+          url: `${envVars.adkMiddlewareUrl}/adk-tool-based-generative-ui`,
+        }),
+        human_in_the_loop: new ADKAgent({
+          url: `${envVars.adkMiddlewareUrl}/adk-human-in-loop-agent`,
+        }),
+        backend_tool_rendering: new ADKAgent({
+          url: `${envVars.adkMiddlewareUrl}/backend_tool_rendering`,
+        }),
+        shared_state: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/adk-shared-state-agent` }),
+        // predictive_state_updates: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/adk-predictive-state-agent` }),
+      };
+    },
+  },
+  {
     id: "server-starter-all-features",
     agents: async () => {
       return {
         agentic_chat: new ServerStarterAllFeaturesAgent({
           url: `${envVars.serverStarterAllFeaturesUrl}/agentic_chat`,
+        }),
+        backend_tool_rendering: new ServerStarterAllFeaturesAgent({
+          url: `${envVars.serverStarterAllFeaturesUrl}/backend_tool_rendering`,
         }),
         human_in_the_loop: new ServerStarterAllFeaturesAgent({
           url: `${envVars.serverStarterAllFeaturesUrl}/human_in_the_loop`,
@@ -102,14 +131,15 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
       return MastraAgent.getLocalAgents({ mastra });
     },
   },
-  {
-    id: "vercel-ai-sdk",
-    agents: async () => {
-      return {
-        agentic_chat: new VercelAISDKAgent({ model: openai("gpt-4o") }),
-      };
-    },
-  },
+  // Disabled until we can support Vercel AI SDK v5
+  // {
+  //   id: "vercel-ai-sdk",
+  //   agents: async () => {
+  //     return {
+  //       agentic_chat: new VercelAISDKAgent({ model: openai("gpt-4o") }),
+  //     };
+  //   },
+  // },
   {
     id: "langgraph",
     agents: async () => {
@@ -117,6 +147,10 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         agentic_chat: new LangGraphAgent({
           deploymentUrl: envVars.langgraphPythonUrl,
           graphId: "agentic_chat",
+        }),
+        backend_tool_rendering: new LangGraphAgent({
+          deploymentUrl: envVars.langgraphPythonUrl,
+          graphId: "backend_tool_rendering",
         }),
         agentic_generative_ui: new LangGraphAgent({
           deploymentUrl: envVars.langgraphPythonUrl,
@@ -141,6 +175,10 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         agentic_chat_reasoning: new LangGraphHttpAgent({
           url: `${envVars.langgraphPythonUrl}/agent/agentic_chat_reasoning`,
         }),
+        subgraphs: new LangGraphAgent({
+          deploymentUrl: envVars.langgraphPythonUrl,
+          graphId: "subgraphs",
+        }),
       };
     },
   },
@@ -150,6 +188,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
       return {
         agentic_chat: new LangGraphHttpAgent({
           url: `${envVars.langgraphFastApiUrl}/agent/agentic_chat`,
+        }),
+        backend_tool_rendering: new LangGraphHttpAgent({
+          url: `${envVars.langgraphFastApiUrl}/agent/backend_tool_rendering`,
         }),
         agentic_generative_ui: new LangGraphHttpAgent({
           url: `${envVars.langgraphFastApiUrl}/agent/agentic_generative_ui`,
@@ -169,6 +210,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         agentic_chat_reasoning: new LangGraphHttpAgent({
           url: `${envVars.langgraphFastApiUrl}/agent/agentic_chat_reasoning`,
         }),
+        subgraphs: new LangGraphHttpAgent({
+          url: `${envVars.langgraphFastApiUrl}/agent/subgraphs`,
+        }),
       };
     },
   },
@@ -180,6 +224,10 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
           deploymentUrl: envVars.langgraphTypescriptUrl,
           graphId: "agentic_chat",
         }),
+        // agentic_chat_reasoning: new LangGraphAgent({
+        //   deploymentUrl: envVars.langgraphTypescriptUrl,
+        //   graphId: "agentic_chat_reasoning",
+        // }),
         agentic_generative_ui: new LangGraphAgent({
           deploymentUrl: envVars.langgraphTypescriptUrl,
           graphId: "agentic_generative_ui",
@@ -199,7 +247,11 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         tool_based_generative_ui: new LangGraphAgent({
           deploymentUrl: envVars.langgraphTypescriptUrl,
           graphId: "tool_based_generative_ui",
-        })
+        }),
+        subgraphs: new LangGraphAgent({
+          deploymentUrl: envVars.langgraphTypescriptUrl,
+          graphId: "subgraphs",
+        }),
       };
     },
   },
@@ -212,6 +264,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         }),
         tool_based_generative_ui: new AgnoAgent({
           url: `${envVars.agnoUrl}/tool_based_generative_ui/agui`,
+        }),
+        backend_tool_rendering: new AgnoAgent({
+          url: `${envVars.agnoUrl}/backend_tool_rendering/agui`,
         }),
       };
     },
@@ -231,6 +286,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         }),
         shared_state: new LlamaIndexAgent({
           url: `${envVars.llamaIndexUrl}/shared_state/run`,
+        }),
+        backend_tool_rendering: new LlamaIndexAgent({
+          url: `${envVars.llamaIndexUrl}/backend_tool_rendering/run`,
         }),
       };
     },
@@ -256,6 +314,40 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         }),
         predictive_state_updates: new CrewAIAgent({
           url: `${envVars.crewAiUrl}/predictive_state_updates`,
+        }),
+      };
+    },
+  },
+  {
+    id: "a2a",
+    agents: async () => {
+      // A2A agents: building management, finance, it agents
+      const agentUrls = [
+        envVars.a2aMiddlewareBuildingsManagementUrl,
+        envVars.a2aMiddlewareFinanceUrl,
+        envVars.a2aMiddlewareItUrl,
+      ];
+      // AGUI orchestration/routing agent
+      const orchestrationAgent = new HttpAgent({
+        url: envVars.a2aMiddlewareOrchestratorUrl,
+      });
+      return {
+        a2a_chat: new A2AMiddlewareAgent({
+          description: "Middleware that connects to remote A2A agents",
+          agentUrls,
+          orchestrationAgent,
+          instructions: `
+          You are an HR agent. You are responsible for hiring employees and other typical HR tasks.
+
+          It's very important to contact all the departments necessary to complete the task.
+          For example, to hire an employee, you must contact all 3 departments: Finance, IT and Buildings Management. Help the Buildings Management department to find a table.
+
+          You can make tool calls on behalf of other agents.
+          DO NOT FORGET TO COMMUNICATE BACK TO THE RELEVANT AGENT IF MAKING A TOOL CALL ON BEHALF OF ANOTHER AGENT!!!
+
+          When choosing a seat with the buildings management agent, You MUST use the \`pickTable\` tool to have the user pick a seat.
+          The buildings management agent will then use the \`pickSeat\` tool to pick a seat.
+          `,
         }),
       };
     },

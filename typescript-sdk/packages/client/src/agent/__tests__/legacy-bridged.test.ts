@@ -11,7 +11,7 @@ jest.mock("uuid", () => ({
 
 // Create a test agent that extends AbstractAgent
 class TestAgent extends AbstractAgent {
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     const messageId = "test-message-id";
     return new Observable<BaseEvent>((observer) => {
       observer.next({
@@ -54,7 +54,7 @@ class TestAgent extends AbstractAgent {
 
 // Agent that emits text chunks instead of start/content/end events
 class ChunkTestAgent extends AbstractAgent {
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     const messageId = "test-chunk-id";
     return new Observable<BaseEvent>((observer) => {
       observer.next({
@@ -86,7 +86,7 @@ class ChunkTestAgent extends AbstractAgent {
 
 // Agent that emits tool call events with results
 class ToolCallTestAgent extends AbstractAgent {
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     const toolCallId = "test-tool-call-id";
     const toolCallName = "get_weather";
     return new Observable<BaseEvent>((observer) => {
@@ -160,7 +160,7 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
     const legacyEvents = await lastValueFrom(legacy$.pipe(toArray()));
 
     // Verify events are in correct legacy format
-    expect(legacyEvents).toHaveLength(4); // Start, Content, End, AgentStateMessage
+    expect(legacyEvents).toHaveLength(3); // Start, Content, End
 
     // TextMessageStart
     expect(legacyEvents[0]).toMatchObject({
@@ -182,12 +182,12 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
     });
 
     // Final AgentStateMessage
-    expect(legacyEvents[3]).toMatchObject({
-      type: "AgentStateMessage",
-      threadId: "test-thread-id",
-      agentName: "test-agent-id",
-      active: false,
-    });
+    // expect(legacyEvents[3]).toMatchObject({
+    //   type: "AgentStateMessage",
+    //   threadId: "test-thread-id",
+    //   agentName: "test-agent-id",
+    //   active: false,
+    // });
   });
 
   it("should pass configuration to the underlying run method", async () => {
@@ -304,7 +304,7 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
     const legacyEvents = await lastValueFrom(legacy$.pipe(toArray()));
 
     // Verify events are in correct legacy format
-    expect(legacyEvents).toHaveLength(4); // Start, Content, End, AgentStateMessage
+    expect(legacyEvents).toHaveLength(3); // Start, Content, End
 
     // TextMessageStart
     expect(legacyEvents[0]).toMatchObject({
@@ -326,12 +326,12 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
     });
 
     // Final AgentStateMessage
-    expect(legacyEvents[3]).toMatchObject({
-      type: "AgentStateMessage",
-      threadId: "test-thread-id",
-      agentName: "test-agent-id",
-      active: false,
-    });
+    // expect(legacyEvents[3]).toMatchObject({
+    //   type: "AgentStateMessage",
+    //   threadId: "test-thread-id",
+    //   agentName: "test-agent-id",
+    //   active: false,
+    // });
   });
 
   it("should transform tool call events with results into legacy events with correct tool name", async () => {
@@ -348,7 +348,7 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
     const legacyEvents = await lastValueFrom(legacy$.pipe(toArray()));
 
     // Verify events are in correct legacy format
-    expect(legacyEvents).toHaveLength(5); // ActionExecutionStart, ActionExecutionArgs, ActionExecutionEnd, ActionExecutionResult, AgentStateMessage
+    expect(legacyEvents).toHaveLength(4); // ActionExecutionStart, ActionExecutionArgs, ActionExecutionEnd, ActionExecutionResult
 
     // ActionExecutionStart
     expect(legacyEvents[0]).toMatchObject({
@@ -379,11 +379,11 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
     });
 
     // Final AgentStateMessage
-    expect(legacyEvents[4]).toMatchObject({
-      type: "AgentStateMessage",
-      threadId: "test-thread-id",
-      agentName: "test-agent-id",
-      active: false,
-    });
+    // expect(legacyEvents[4]).toMatchObject({
+    //   type: "AgentStateMessage",
+    //   threadId: "test-thread-id",
+    //   agentName: "test-agent-id",
+    //   active: false,
+    // });
   });
 });

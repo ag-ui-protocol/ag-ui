@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12,<4.0"
 dependencies = [
     "agno>=1.7.7",
+    "httpx>=0.27.0",
     "openai>=1.99.1",
     "yfinance>=0.2.63",
     "fastapi>=0.116.1",

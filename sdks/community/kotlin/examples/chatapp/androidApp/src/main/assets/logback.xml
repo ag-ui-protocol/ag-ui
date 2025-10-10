@@ -1,0 +1,21 @@
+<configuration>
+    <!-- Write to Android logcat -->
+    <appender name="logcat" class="ch.qos.logback.classic.android.LogcatAppender">
+        <tagEncoder>
+            <pattern>%logger{12}</pattern>
+        </tagEncoder>
+        <encoder>
+            <pattern>[%-5level] %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Set log levels -->
+    <logger name="com.agui" level="DEBUG" />
+    <logger name="io.ktor" level="INFO" />
+    <logger name="io.ktor.client.HttpClient" level="DEBUG" />
+
+    <!-- Root logger -->
+    <root level="INFO">
+        <appender-ref ref="logcat" />
+    </root>
+</configuration>

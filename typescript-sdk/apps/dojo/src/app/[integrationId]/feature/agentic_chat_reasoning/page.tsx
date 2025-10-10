@@ -2,7 +2,13 @@
 import React, { useState } from "react";
 import "@copilotkit/react-ui/styles.css";
 import "./style.css";
-import { CopilotKit, useCoAgent, useCopilotAction, useCopilotChat } from "@copilotkit/react-core";
+import {
+  CopilotKit,
+  useCoAgent,
+  useCopilotAction,
+  useCopilotChat,
+  useFrontendTool,
+} from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -56,7 +62,7 @@ const Chat = () => {
     setAgentState({ model });
   };
 
-  useCopilotAction({
+  useFrontendTool({
     name: "change_background",
     description:
       "Change the background color of the chat. Can be anything that the CSS background attribute accepts. Regular colors, linear of radial gradients etc.",

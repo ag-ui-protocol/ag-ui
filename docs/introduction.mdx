@@ -1,162 +1,320 @@
 ---
-title: Introduction
-description: "Get started with the Agent User Interaction Protocol (AG-UI)"
+title: AG-UI Overview
+description: 
 ---
 
-**AG-UI** standardizes how **front-end applications connect to AI agents**
-through an open protocol. Think of it as a universal translator for AI-driven
-systems- no matter what language an agent speaks: **AG-UI ensures fluent
-communication**.
+# The Agent–User Interaction (AG-UI) Protocol
 
-## Why AG-UI?
 
-AG-UI helps developers build next-generation AI workflows that need **real-time
-interactivity**, **live state streaming** and **human-in-the-loop
-collaboration**.
+AG-UI is an <u><strong>open</strong></u>, <u><strong>lightweight</strong></u>, <u><strong>event-based</strong></u> protocol that standardizes how AI agents connect to user-facing applications.
 
-AG-UI provides:
 
-- **A straightforward approach** to integrating AI agents with the front-end
-  through frameworks such as
-  [CopilotKit 🪁](https://github.com/CopilotKit/CopilotKit)
-- **Building blocks** for an efficient wire protocol for human⚡️agent
-  communication
-- **Best practices** for chat, streaming state updates, human-in-the-loop and
-  shared state
+Built for simplicity and flexibility, it standardizes how agent state, UI intents, and user interactions flow between your model/agent runtime and user-facing frontend applications—to allow application developers to ship reliable, debuggable, user‑friendly agentic features fast while focusing on application needs and avoding complex ad-hoc wiring.
 
-## Existing Integrations
 
-AG-UI has been integrated with several popular agent frameworks, making it easy
-to adopt regardless of your preferred tooling:
 
-- **[LangGraph](https://docs.copilotkit.ai/coagents)**: Build agent-native
-  applications with shared state and human-in-the-loop workflows using
-  LangGraph's powerful orchestration capabilities.
-- **[CrewAI Flows](https://docs.copilotkit.ai/crewai-flows)**: Create sequential
-  multi-agent workflows with well-defined stages and process control.
-- **[CrewAI Crews](https://docs.copilotkit.ai/crewai-crews)**: Design
-  collaborative agent teams with specialized roles and inter-agent
-  communication.
-- **[Mastra](/mastra)**: Leverage TypeScript for building strongly-typed agent
-  implementations with enhanced developer experience.
-- **[AG2](/ag2)**: Utilize the open-source AgentOS for scalable,
-  production-ready agent deployments.
+<div style={{textAlign: 'center', margin: '2rem 0'}}>
+  <img src="/images/ag-ui-overview-with-partners.png" alt="AG-UI Overview" style={{maxWidth: '100%', height: 'auto', borderRadius: '8px'}} />
+</div>
 
-These integrations make it straightforward to connect your preferred agent
-framework with frontend applications through the AG-UI protocol.
+---
 
-### Architecture
+## Building blocks (today & upcoming)
 
-At its core, AG-UI bridges AI agents and front-end applications using a
-lightweight, event-driven protocol:
+<div style={{display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem', margin: '1.5rem 0'}}>
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Streaming chat
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Live token and event streaming for responsive multi turn sessions, with cancel and resume.
+      </div>
+    </div>
+  </div>
 
-```mermaid
-flowchart LR
-    subgraph "Frontend"
-        FE["Front-end"]
-    end
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Multimodality
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Typed attachments and real time media (files, images, audio, transcripts); supports voice, previews, annotations, provenance.
+      </div>
+    </div>
+  </div>
 
-    subgraph "Backend"
-        A1["AI Agent A"]
-        P["Secure Proxy"]
-        A2["AI Agent B"]
-        A3["AI Agent C"]
-    end
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Generative UI, static
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Render model output as stable, typed components under app control.
+      </div>
+    </div>
+  </div>
 
-    FE <-->|"AG-UI Protocol"| A1
-    FE <-->|"AG-UI Protocol"| P
-    P <-->|"AG-UI Protocol"| A2
-    P <-->|"AG-UI Protocol"| A3
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Generative UI, declarative
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Small declarative language for constrained yet open-ended agent UIs; agents propose trees and constraints, the app validates and mounts.
+      </div>
+    </div>
+  </div>
 
-    class P mintStyle;
-    classDef mintStyle fill:#E0F7E9,stroke:#66BB6A,stroke-width:2px,color:#000000;
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Shared state
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        (Read-only & read-write). Typed store shared between agent and app, with streamed event-sourced diffs and conflict resolution for snappy collaboration.
+      </div>
+    </div>
+  </div>
 
-    %% Apply slight border radius to each node
-    style FE rx:5, ry:5;
-    style A1 rx:5, ry:5;
-    style P rx:5, ry:5;
-    style A2 rx:5, ry:5;
-    style A3 rx:5, ry:5;
-```
+    <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Thinking steps
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Visualize intermediate reasoning from traces and tool events; no raw chain of thought.
+      </div>
+    </div>
+  </div>
 
-- **Front-end**: The application (chat or any AI-enabled app) that communicates
-  over AG-UI
-- **AI Agent A**: An agent that the front-end can connect to directly without
-  going through the proxy
-- **Secure Proxy**: An intermediary proxy that securely routes requests from the
-  front-end to multiple AI agents
-- **Agents B and C**: Agents managed by the proxy service
 
-## Technical Overview
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Frontend tool calls
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Typed handoffs from agent to frontend-executed actions, and back.
+      </div>
+    </div>
+  </div>
 
-AG-UI is designed to be lightweight and minimally opinionated, making it easy to
-integrate with a wide range of agent implementations. The protocol's flexibility
-comes from its simple requirements:
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Backend tool rendering & side effects
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Visualize backend tool outputs in app and chat, emit side effects as first-class events.
+      </div>
+    </div>
+  </div>
 
-1. **Event-Driven Communication**: Agents need to emit any of the 16
-   standardized event types during execution, creating a stream of updates that
-   clients can process.
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Interrupts (human in the loop)
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Pause, approve, edit, retry, or escalate mid flow without losing state.
+      </div>
+    </div>
+  </div>
 
-2. **Bidirectional Interaction**: Agents accept input from users, enabling
-   collaborative workflows where humans and AI work together seamlessly.
 
-The protocol includes a built-in middleware layer that maximizes compatibility
-in two key ways:
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Sub-agents and composition
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Nested delegation with scoped state, tracing, and cancellation.
+      </div>
+    </div>
+  </div>
 
-- **Flexible Event Structure**: Events don't need to match AG-UI's format
-  exactly—they just need to be AG-UI-compatible. This allows existing agent
-  frameworks to adapt their native event formats with minimal effort.
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Agent steering
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Dynamically redirect agent execution with real-time user input to guide behavior and outcomes.
+      </div>
+    </div>
+  </div>
 
-- **Transport Agnostic**: AG-UI doesn't mandate how events are delivered,
-  supporting various transport mechanisms including Server-Sent Events (SSE),
-  webhooks, WebSockets, and more. This flexibility lets developers choose the
-  transport that best fits their architecture.
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Tool output streaming
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Stream tool results and logs so UIs can render long-running effects in real time.
+      </div>
+    </div>
+  </div>
 
-This pragmatic approach makes AG-UI easy to adopt without requiring major
-changes to existing agent implementations or frontend applications.
+  <div style={{border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', transition: 'all 0.3s ease', cursor: 'pointer'}} onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.15)'; e.currentTarget.querySelector('.content').style.maxHeight = '200px'; e.currentTarget.querySelector('.content').style.opacity = '1'; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.querySelector('.content').style.maxHeight = '0px'; e.currentTarget.querySelector('.content').style.opacity = '0'; }}>
+    <div style={{padding: '1rem 1.5rem', backgroundColor: '#f9fafb', fontWeight: '600', color: '#374151'}}>
+      Custom events
+    </div>
+    <div className="content" style={{maxHeight: '0px', opacity: '0', overflow: 'hidden', transition: 'all 0.3s ease', padding: '0 1.5rem', backgroundColor: '#ffffff'}}>
+      <div style={{padding: '1rem 0', color: '#6b7280', lineHeight: '1.6'}}>
+        Open-ended data exchange for needs not covered by the protocol.
+      </div>
+    </div>
+  </div>
+</div>
 
-## Comparison with other protocols
 
-AG-UI focuses explicitly and specifically on the agent-user interactivity layer.
-It does not compete with protocols such as A2A (Agent-to-Agent protocol) and MCP
-(Model Context Protocol).
 
-For example, the same agent may communicate with another agent via A2A while
-communicating with the user via AG-UI, and while calling tools provided by an
-MCP server.
+---
 
-These protocols serve complementary purposes in the agent ecosystem:
+## Why Agentic Apps need AG-UI
 
-- **AG-UI**: Handles human-in-the-loop interaction and streaming UI updates
-- **A2A**: Facilitates agent-to-agent communication and collaboration
-- **MCP**: Standardizes tool calls and context handling across different models
+Agentic applications break the simple request/response model that dominated frontend-backend development in the pre-agentic era: a client makes a request, the server returns data, the client renders it, and the interaction ends.
+
+#### The requirements of user‑facing agents
+
+While agents are just software, they exhibit characteristics that make them challenging to serve behind traditional REST/GraphQL APIs:
+
+- Agents are **long‑running** and **stream** intermediate work—often across multi‑turn sessions.
+- Agents are **nondeterministic** and can **control application UI nondeterministically**.
+- Agents simultanously mix **structured + unstructured IO** (e.g. text & voice, alongside tool calls and state updates).
+- Agents need user-interactive **composition**: e.g. they may call sub‑agents, often recursively.
+- And more...
+
+AG-UI is an event-based protocol that enables dynamic communication between agentic frontends and backends. It builds on top of the foundational protocols of the web (HTTP, WebSockets) as an abstraction layer designed for the agentic age—bridging the gap between traditional client-server architectures and the dynamic, stateful nature of AI agents.
+
+## The AI protocol landscape
+
+AG-UI has emerged as the 3rd leg of the AI protocol landscape:
+<div style={{textAlign: 'center', margin: '2rem 0'}}>
+  <img src="/images/ai-protocol-stack.png" alt="AI Protocol Stack" style={{maxWidth: '40%', height: 'auto', borderRadius: '8px'}} />
+</div>
+
+- MCP: Connects agents to tool and to context.
+- A2A: Connects agents to other agents.
+- **AG-UI:** Connects agents to users (through user-facing applications)
+
+
+These protocols are complimentary and have distinct technical goals; a single agent can and often does use all 3 simultanously.
+Where these protocols intersect, there are opportunities for seamless handshakes facilitating interoperability—work on these integration points is actively ongoing.
+AG-UI's mandate is to support the full set of building blocks required by modern agentic applications.
+
+
+
+
+---
+
+## AG-UI in action
+
+<div style={{textAlign: 'center', margin: '3rem 0 1rem 0'}}>
+  <video 
+    width="100%" 
+    height="auto" 
+    autoPlay 
+    muted 
+    loop 
+    controls 
+    style={{maxWidth: '800px', borderRadius: '12px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.12)'}}
+  >
+    <source src="/videos/Dojo-overview.mp4" type="video/mp4" />
+    Your browser does not support the video tag.
+  </video>
+</div>
+
+<Callout type="info" icon="lightbulb">
+You can see demo apps of the AG-UI features with the framework of your choice, with preview, code and walkthrough docs in the [AG-UI Dojo](dojo.ag-ui.com)
+</Callout>
+
+---
+
+## Supported Frameworks
+
+AG-UI was born from an initial partnership between CopilotKit, LangGraph and CrewAI - and is steadily gaining integrations across the wider AI developer ecosystem.
+
+| Framework | Docs | Demos |
+| :----------------------- | :--- | :---- |
+| [LangGraph](https://www.langchain.com/langgraph) | [Documentation](https://docs.copilotkit.ai/langgraph/) | [Live Demo](https://dojo.ag-ui.com/langgraph-fastapi/feature/shared_state) |
+| [Mastra](https://mastra.ai/) | [Documentation](https://docs.copilotkit.ai/mastra/) | [Live Demo](https://dojo.ag-ui.com/mastra) |
+| [Pydantic AI](https://github.com/pydantic/pydantic-ai) | [Documentation](https://docs.copilotkit.ai/pydantic-ai/) | [Live Demo](https://dojo.ag-ui.com/pydantic-ai/feature/shared_state) |
+| [Google ADK](https://google.github.io/adk-docs/get-started/) | [Documentation](https://docs.copilotkit.ai/adk) | [Live Demo](https://dojo.ag-ui.com/adk-middleware) |
+| [Agno](https://github.com/agno-agi/agno) | [Documentation](https://docs.copilotkit.ai/agno/) | [Live Demo](https://dojo.ag-ui.com/agno) |
+| [LlamaIndex](https://github.com/run-llama/llama_index) | [Documentation](https://docs.copilotkit.ai/llamaindex/) | [Live Demo](https://dojo.ag-ui.com/llamaindex/feature/shared_state) |
+| [CrewAI](https://crewai.com/) | [Documentation](https://docs.copilotkit.ai/crewai-flows) | [Live Demo](https://dojo.ag-ui.com/crewai/feature/shared_state) |
+| [AG2](https://ag2.ai/) | [Documentation](https://docs.copilotkit.ai/ag2/) | Coming Soon |
+| [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/) | In Progress | Coming Soon |
+| [AWS Strands Agents](https://github.com/strands-agents/sdk-python) | In Progress | Coming Soon |
+| [Vercel AI SDK](https://github.com/vercel/ai) | In Progress | Coming Soon |
+| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | In Progress | Coming Soon |
+| [Cloudflare Agents](https://developers.cloudflare.com/agents/) | Open to Contributions | Coming Soon |
+
+---
 
 ## Quick Start
 
 Choose the path that fits your needs:
 
-<CardGroup cols={2}>
- <Card
-    title="AG-UI Middleware Connectors"
-    icon="bolt"
-    href="/quickstart/middleware"
+<CardGroup cols={3}>
+  <Card
+    title="Build agentic applications"
+    icon="rocket"
+    href="/quickstart/applications"
     color="#3B82F6"
     iconType="solid"
   >
-    Connect AG-UI with existing protocols, in process agents or custom solutions
-    **using TypeScript**
+    Build agentic applications powered by AG-UI compatible agents.
   </Card>
 
   <Card
-    title="AG-UI Compatible Servers"
-    icon="wrench"
-    href="/quickstart/server"
+    title="Build new AG-UI integrations"
+    icon="plug"
+    href="/quickstart/introduction"
     color="#3B82F6"
     iconType="solid"
   >
-    Implement AG-UI compatible servers **using Python or TypeScript**
+    Build integrations for new agent frameworks, custom in-house solutions, or use AG-UI without any agent framework.
   </Card>
- 
+
+  <Card
+    title="Build AG-UI compatible clients"
+    icon="desktop"
+    href="/quickstart/clients"
+    color="#3B82F6"
+    iconType="solid"
+  >
+    Build new clients for AG-UI-compatible agents (web, mobile, slack, messaging, etc.)
+  </Card>
+
+</CardGroup>
+
+## Explore AG-UI
+
+Dive deeper into AG-UI's core concepts and capabilities:
+
+<CardGroup cols={2}>
+  <Card
+    title="Core architecture"
+    icon="sitemap"
+    iconType="light"
+    color="#3B82F6"
+    href="/concepts/architecture"
+  >
+    Understand how AG-UI connects agents, protocols, and front-ends
+  </Card>
+
+  <Card
+    title="Events"
+    icon="bolt"
+    iconType="light"
+    color="#3B82F6"
+    href="/concepts/events"
+  >
+    Learn about AG-UI's event-driven protocol
+  </Card>
 </CardGroup>
 
 ## Resources
@@ -166,16 +324,6 @@ your AG-UI implementation. These resources cover everything from practical
 development workflows to debugging techniques.
 
 <CardGroup cols={2}>
-  <Card
-    title="Explore Integrations"
-    icon="cubes"
-    iconType="light"
-    color="#3B82F6"
-    href="/integrations"
-  >
-    Discover ready-to-use AG-UI integrations across popular agent frameworks and
-    platforms
-  </Card>
   <Card
     title="Developing with Cursor"
     icon="rocket"
@@ -196,31 +344,6 @@ development workflows to debugging techniques.
   </Card>
 </CardGroup>
 
-## Explore AG-UI
-
-Dive deeper into AG-UI's core concepts and capabilities:
-
-<CardGroup cols={2}>
-  <Card
-    title="Core architecture"
-    icon="sitemap"
-    iconType="light"
-    color="#3B82F6"
-    href="/docs/concepts/architecture"
-  >
-    Understand how AG-UI connects agents, protocols, and front-ends
-  </Card>
-
-  <Card
-    title="Transports"
-    icon="network-wired"
-    iconType="light"
-    color="#3B82F6"
-    href="/docs/concepts/transports"
-  >
-    Learn about AG-UI's communication mechanism
-  </Card>
-</CardGroup>
 
 ## Contributing
 

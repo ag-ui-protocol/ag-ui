@@ -24,6 +24,12 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["Chat", "Tools", "Streaming"],
   }),
   createFeatureConfig({
+    id: "backend_tool_rendering",
+    name: "Backend Tool Rendering",
+    description: "Render and stream your backend tools to the frontend.",
+    tags: ["Agent State", "Collaborating"],
+  }),
+  createFeatureConfig({
     id: "human_in_the_loop",
     name: "Human in the loop",
     description: "Plan a task together and direct the Copilot to take the right steps",
@@ -58,6 +64,18 @@ export const featureConfig: FeatureConfig[] = [
     name: "Agentic Chat Reasoning",
     description: "Chat with a reasoning Copilot and call frontend tools",
     tags: ["Chat", "Tools", "Streaming", "Reasoning"],
+  }),
+  createFeatureConfig({
+    id: "subgraphs",
+    name: "Subgraphs",
+    description: "Have your tasks performed by multiple agents, working together",
+    tags: ["Chat", "Multi-agent architecture", "Streaming", "Subgraphs"],
+  }),
+  createFeatureConfig({
+    id: "a2a_chat",
+    name: "A2A Chat",
+    description: "Chat with your Copilot and call frontend tools",
+    tags: ["Chat", "Tools", "Streaming"],
   }),
 ];
 
