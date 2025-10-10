@@ -15,10 +15,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.agui.example.chatapp.ui.screens.chat.DisplayMessage
 import com.agui.example.chatapp.ui.screens.chat.MessageRole
+import com.halilibo.richtext.commonmark.Markdown
+import com.halilibo.richtext.ui.material3.RichText
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -34,6 +39,14 @@ fun MessageBubble(
     val isToolCall = message.role == MessageRole.TOOL_CALL
     val isStepInfo = message.role == MessageRole.STEP_INFO
     val isEphemeral = message.ephemeralGroupId != null
+    val messageTextColor = when {
+        isUser -> MaterialTheme.colorScheme.onPrimary
+        isError -> MaterialTheme.colorScheme.onError
+        isSystem -> MaterialTheme.colorScheme.onTertiary
+        isToolCall -> MaterialTheme.colorScheme.onSecondaryContainer
+        isStepInfo -> MaterialTheme.colorScheme.onTertiaryContainer
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
 
     // Enhanced fade-in animation
     val animatedAlpha = remember(message.id) { Animatable(0f) }
@@ -94,12 +107,7 @@ fun MessageBubble(
                     Text(
                         text = message.content,
                         style = MaterialTheme.typography.bodyLarge,
-                        color = when {
-                            isUser -> MaterialTheme.colorScheme.onPrimary
-                            isError -> MaterialTheme.colorScheme.onError
-                            isSystem -> MaterialTheme.colorScheme.onTertiary
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                        }
+                        color = messageTextColor
                     )
                     CircularProgressIndicator(
                         modifier = Modifier.size(12.dp),
@@ -126,14 +134,7 @@ fun MessageBubble(
                         label = "textShimmer"
                     )
 
-                    val textColor = when {
-                        isUser -> MaterialTheme.colorScheme.onPrimary
-                        isError -> MaterialTheme.colorScheme.onError
-                        isSystem -> MaterialTheme.colorScheme.onTertiary
-                        isToolCall -> MaterialTheme.colorScheme.onSecondaryContainer
-                        isStepInfo -> MaterialTheme.colorScheme.onTertiaryContainer
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    }
+                    val textColor = messageTextColor
 
                     Box {
                         Text(
@@ -163,18 +164,17 @@ fun MessageBubble(
                     }
                 } else {
                     // Regular text for non-ephemeral messages
-                    Text(
-                        text = message.content,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = when {
-                            isUser -> MaterialTheme.colorScheme.onPrimary
-                            isError -> MaterialTheme.colorScheme.onError
-                            isSystem -> MaterialTheme.colorScheme.onTertiary
-                            isToolCall -> MaterialTheme.colorScheme.onSecondaryContainer
-                            isStepInfo -> MaterialTheme.colorScheme.onTertiaryContainer
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    ProvideTextStyle(MaterialTheme.typography.bodyLarge) {
+                        CompositionLocalProvider(LocalContentColor provides messageTextColor) {
+                            RichText(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .semantics { text = listOf(AnnotatedString(message.content)) }
+                            ) {
+                                Markdown(message.content)
+                            }
                         }
-                    )
+                    }
                 }
             }
 

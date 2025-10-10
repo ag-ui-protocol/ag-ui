@@ -21,6 +21,7 @@ runner = "1.6.2"
 slf4j = "2.0.9"
 ui-test-junit4 = "1.8.3"
 voyager-navigator = "1.0.0"
+compose-richtext = "1.0.0-alpha03"
 
 [libraries]
 # Ktor
@@ -62,6 +63,9 @@ ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4", version.ref = 
 voyager-navigator = { module = "cafe.adriel.voyager:voyager-navigator", version.ref = "voyager-navigator" }
 voyager-screenmodel = { module = "cafe.adriel.voyager:voyager-screenmodel", version.ref = "voyager-navigator" }
 voyager-transitions = { module = "cafe.adriel.voyager:voyager-transitions", version.ref = "voyager-navigator" }
+richtext-commonmark = { module = "com.halilibo.compose-richtext:richtext-commonmark", version.ref = "compose-richtext" }
+richtext-ui = { module = "com.halilibo.compose-richtext:richtext-ui", version.ref = "compose-richtext" }
+richtext-ui-material3 = { module = "com.halilibo.compose-richtext:richtext-ui-material3", version.ref = "compose-richtext" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

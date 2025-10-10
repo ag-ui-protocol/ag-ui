@@ -79,6 +79,11 @@ kotlin {
 
                 // Base64 encoding/decoding
                 implementation(libs.okio)
+
+                // Markdown rendering
+                implementation(libs.richtext.commonmark)
+                implementation(libs.richtext.ui)
+                implementation(libs.richtext.ui.material3)
             }
         }
 
