@@ -113,6 +113,7 @@ class TestADKAgent:
         with patch.object(adk_agent, '_create_runner') as mock_create_runner:
             # Create a mock runner
             mock_runner = AsyncMock()
+            mock_runner.close = AsyncMock()
             mock_event = Mock()
             mock_event.id = "event1"
             mock_event.author = "test_agent"
@@ -139,6 +140,31 @@ class TestADKAgent:
             assert len(events) >= 2  # At least RUN_STARTED and RUN_FINISHED
             assert events[0].type == EventType.RUN_STARTED
             assert events[-1].type == EventType.RUN_FINISHED
+            mock_runner.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_runner_close_called_on_run_error(self, adk_agent, sample_input):
+        """Runner.close should still be awaited when execution errors."""
+
+        with patch.object(adk_agent, '_create_runner') as mock_create_runner:
+            mock_runner = AsyncMock()
+            mock_runner.close = AsyncMock()
+
+            async def failing_run_async(*args, **kwargs):
+                if False:  # pragma: no cover - keep async generator semantics
+                    yield None
+                raise RuntimeError("boom")
+
+            mock_runner.run_async = failing_run_async
+            mock_create_runner.return_value = mock_runner
+
+            events = []
+            async for event in adk_agent.run(sample_input):
+                events.append(event)
+
+            # Ensure RUN_ERROR emitted and runner closed
+            assert any(event.type == EventType.RUN_ERROR for event in events)
+            mock_runner.close.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_turn_complete_falls_back_to_streaming_translator(

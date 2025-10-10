@@ -834,20 +834,21 @@ class ADKAgent:
             app_name: App name
             event_queue: Queue for emitting events
         """
+        runner: Optional[Runner] = None
         try:
             # Agent is already prepared with tools and SystemMessage instructions (if any)
             # from _start_background_execution, so no additional agent copying needed here
-            
+
             # Create runner
             runner = self._create_runner(
                 adk_agent=adk_agent,
                 user_id=user_id,
                 app_name=app_name
             )
-            
+
             # Create RunConfig
             run_config = self._run_config_factory(input)
-            
+
             # Ensure session exists
             await self._ensure_session_exists(
                 app_name, user_id, input.thread_id, input.state
@@ -994,9 +995,20 @@ class ADKAgent:
             await event_queue.put(None)
         finally:
             # Background task cleanup completed
-            # Note: toolset cleanup is handled by garbage collection
-            # since toolset is now embedded in the agent's tools
-            pass
+            # Ensure the ADK runner releases any resources (e.g. toolsets)
+            if runner is not None:
+                close_method = getattr(runner, "close", None)
+                if close_method is not None:
+                    try:
+                        close_result = close_method()
+                        if inspect.isawaitable(close_result):
+                            await close_result
+                    except Exception as close_error:
+                        logger.warning(
+                            "Error while closing ADK runner for thread %s: %s",
+                            input.thread_id,
+                            close_error,
+                        )
     
     async def _cleanup_stale_executions(self):
         """Clean up stale executions."""
