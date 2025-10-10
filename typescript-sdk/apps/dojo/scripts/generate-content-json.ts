@@ -347,7 +347,10 @@ async function runGenerateContent() {
     // Use the parsed agent keys instead of executing the agents function
     const agentsPerFeatures = agentConfig.agentKeys;
 
-    const agentFilePaths = agentFilesMapper[agentConfig.id](agentConfig.agentKeys);
+    const agentFilePaths = agentFilesMapper[agentConfig.id]?.(agentConfig.agentKeys);
+    if (!agentFilePaths) {
+      continue;
+    }
 
     // Per feature, assign all the frontend files like page.tsx as well as all agent files
     for (const featureId of agentsPerFeatures) {
