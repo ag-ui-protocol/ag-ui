@@ -4,6 +4,7 @@
 import json
 from dataclasses import asdict, dataclass
 from types import SimpleNamespace
+from typing import Optional
 
 import pytest
 import uuid
@@ -136,13 +137,13 @@ class TestEventTranslatorComprehensive:
         class TextContent:
             type: str = "text"
             text: str = ""
-            annotations: list | None = None
-            meta: dict | None = None
+            annotations: Optional[list] = None
+            meta: Optional[dict] = None
 
         @dataclass
         class CallToolResult:
-            meta: dict | None
-            structuredContent: dict | None
+            meta: Optional[dict]
+            structuredContent: Optional[dict]
             isError: bool
             content: list[TextContent]
 
