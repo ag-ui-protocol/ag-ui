@@ -147,11 +147,15 @@ if (hasServer) {
 
     let agentsContent = fs.readFileSync(agentsPath, "utf8");
 
+    // Add import statement at the top
+    const importStatement = `import { ${agentClassName} } from "@ag-ui/${integrationName}";\n`;
+    agentsContent = importStatement + agentsContent;
+
     const newAgentIntegration = `  {
     id: "${integrationName}",
     agents: async () => {
       return {
-        agentic_chat: new ${agentClassName}(),
+        agentic_chat: new ${agentClassName}({ url: "http://localhost:8000" }),
       }
     },
   },\n`;
