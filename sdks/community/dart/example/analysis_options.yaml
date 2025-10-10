@@ -1,0 +1,4 @@
+# This file inherits analysis options from the parent package
+# to ensure consistent linting across the entire project.
+
+include: ../analysis_options.yaml
