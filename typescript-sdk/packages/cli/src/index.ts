@@ -45,7 +45,8 @@ async function createProject() {
     "ag2",
     "llamaindex",
     "pydanticAi",
-    "agno"
+    "agno",
+    "adk"
   ].some(flag => options[flag]);
 
   if (isFrameworkDefined) {
@@ -121,9 +122,11 @@ async function handleCopilotKitNextJs() {
     frameworkArgs.push("-f", "agno");
   } else if (options.pydanticAi) {
     frameworkArgs.push("-f", "pydantic-ai");
+  } else if (options.adk) {
+    frameworkArgs.push("-f", "adk");
   }
 
-  const copilotkit = spawn("npx", 
+  const copilotkit = spawn("npx",
     [
       "copilotkit@latest",
       "create",
@@ -217,6 +220,7 @@ program
   .option("--llamaindex", "Use the LlamaIndex framework")
   .option("--agno", "Use the Agno framework")
   .option("--ag2", "Use the AG2 framework")
+  .option("--adk", "Use the ADK framework")
 
 program.action(async () => {
   await createProject();

@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { useRouter, usePathname, useSearchParams } from 'next/navigation';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { View } from "@/types/interface";
 
 interface URLParamsState {
@@ -11,6 +11,7 @@ interface URLParamsState {
   viewPickerHidden: boolean;
   featurePickerHidden: boolean;
   file?: string;
+  codeLayout: "sidebar" | "tabs";
 }
 
 interface URLParamsContextType extends URLParamsState {
@@ -20,6 +21,7 @@ interface URLParamsContextType extends URLParamsState {
   setViewPickerHidden: (disabled: boolean) => void;
   setFeaturePickerHidden: (disabled: boolean) => void;
   setCodeFile: (fileName: string) => void;
+  setCodeLayout: (layout: "sidebar" | "tabs") => void;
 }
 
 const URLParamsContext = createContext<URLParamsContextType | undefined>(undefined);
@@ -40,6 +42,7 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
     frameworkPickerHidden: searchParams.get("frameworkPicker") === "false",
     viewPickerHidden: searchParams.get("viewPicker") === "false",
     featurePickerHidden: searchParams.get("featurePicker") === "false",
+    codeLayout: (searchParams.get("codeLayout") as "sidebar" | "tabs") || "sidebar",
   }));
 
   // Update URL when state changes
@@ -90,8 +93,22 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
       }
     }
 
+    // Update codeLayout param
+    if (newState.codeLayout !== undefined) {
+      if (newState.codeLayout === "sidebar") {
+        params.delete("codeLayout");
+      } else {
+        params.set("codeLayout", newState.codeLayout);
+      }
+    }
+
+    // Update file param
+    if (newState.file !== undefined) {
+      params.set("file", newState.file);
+    }
+
     const queryString = params.toString();
-    router.push(pathname + (queryString ? '?' + queryString : ''));
+    router.push(pathname + (queryString ? "?" + queryString : ""));
   };
 
   // Sync state with URL changes (e.g., browser back/forward)
@@ -102,6 +119,8 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
       frameworkPickerHidden: searchParams.get("frameworkPicker") === "false",
       viewPickerHidden: searchParams.get("viewPicker") === "false",
       featurePickerHidden: searchParams.get("featurePicker") === "false",
+      file: searchParams.get("file") || undefined,
+      codeLayout: (searchParams.get("codeLayout") as "sidebar" | "tabs") || "sidebar",
     };
 
     setState(newState);
@@ -144,6 +163,12 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
     updateURL({ file: fileName });
   };
 
+  const setCodeLayout = (codeLayout: "sidebar" | "tabs") => {
+    const newState = { ...state, codeLayout };
+    setState(newState);
+    updateURL({ codeLayout });
+  };
+
   const contextValue: URLParamsContextType = {
     ...state,
     setView,
@@ -152,19 +177,16 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
     setViewPickerHidden,
     setFeaturePickerHidden,
     setCodeFile,
+    setCodeLayout,
   };
 
-  return (
-    <URLParamsContext.Provider value={contextValue}>
-      {children}
-    </URLParamsContext.Provider>
-  );
+  return <URLParamsContext.Provider value={contextValue}>{children}</URLParamsContext.Provider>;
 }
 
 export function useURLParams(): URLParamsContextType {
   const context = useContext(URLParamsContext);
   if (context === undefined) {
-    throw new Error('useURLParams must be used within a URLParamsProvider');
+    throw new Error("useURLParams must be used within a URLParamsProvider");
   }
   return context;
 }

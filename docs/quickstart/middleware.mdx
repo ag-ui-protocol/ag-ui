@@ -201,7 +201,7 @@ import {
 import { Observable } from "rxjs"
 
 export class OpenAIAgent extends AbstractAgent {
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     const messageId = Date.now().toString()
     return new Observable<BaseEvent>((observer) => {
       observer.next({
@@ -290,7 +290,7 @@ export class OpenAIAgent extends AbstractAgent {
     this.openai = openai ?? new OpenAI()
   }
 
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     return new Observable<BaseEvent>((observer) => {
       // Same as before - emit RUN_STARTED to begin
       observer.next({

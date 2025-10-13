@@ -24,19 +24,20 @@ async def update_recipe(ctx: Context, recipe: Recipe) -> str:
     """Useful for recording a recipe to shared state."""
     recipe = Recipe.model_validate(recipe)
 
-    state = await ctx.get("state")
-    if state is None:
-        state = {}
+    async with ctx.store.edit_state() as global_state:
+        state = global_state.get("state", {})
+        if state is None:
+            state = {}
 
-    state["recipe"] = recipe.model_dump()
+        state["recipe"] = recipe.model_dump()
 
-    ctx.write_event_to_stream(
-        StateSnapshotWorkflowEvent(
-            snapshot=state
+        ctx.write_event_to_stream(
+            StateSnapshotWorkflowEvent(
+                snapshot=state
+            )
         )
-    )
 
-    await ctx.set("state", state)
+        global_state["state"] = state
 
     return "Recipe updated!"
 

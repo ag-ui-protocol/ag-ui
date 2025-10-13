@@ -52,6 +52,7 @@ from ag_ui.core import (
     ToolCallArgsEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
+    ToolCallResultEvent,
     ThinkingTextMessageStartEvent,
     ThinkingTextMessageContentEvent,
     ThinkingTextMessageEndEvent,
@@ -88,7 +89,6 @@ class LangGraphAgent:
         self.messages_in_process: MessagesInProgressRecord = {}
         self.active_run: Optional[RunMetadata] = None
         self.constant_schema_keys = ['messages', 'tools']
-        self.active_step = None
 
     def _dispatch_event(self, event: ProcessedEvents) -> str:
         if event.type == EventType.RAW:
@@ -114,6 +114,7 @@ class LangGraphAgent:
             "thread_id": thread_id,
             "thinking_process": None,
             "node_name": None,
+            "has_function_streaming": False,
         }
         self.active_run = INITIAL_ACTIVE_RUN
 
@@ -121,9 +122,6 @@ class LangGraphAgent:
         node_name_input = forwarded_props.get('node_name', None) if forwarded_props else None
 
         self.active_run["manually_emitted_state"] = None
-        self.active_run["node_name"] = node_name_input
-        if self.active_run["node_name"] == "__end__":
-            self.active_run["node_name"] = None
 
         config = ensure_config(self.config.copy() if self.config else {})
         config["configurable"] = {**(config.get('configurable', {})), "thread_id": thread_id}
@@ -141,10 +139,11 @@ class LangGraphAgent:
         yield self._dispatch_event(
             RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["id"])
         )
+        self.handle_node_change(node_name_input)
 
         # In case of resume (interrupt), re-start resumed step
         if resume_input and self.active_run.get("node_name"):
-            for ev in self.start_step(self.active_run.get("node_name")):
+            for ev in self.handle_node_change(self.active_run.get("node_name")):
                 yield ev
 
         state = prepared_stream_response["state"]
@@ -189,7 +188,7 @@ class LangGraphAgent:
                 )
 
             if current_node_name and current_node_name != self.active_run.get("node_name"):
-                for ev in self.start_step(current_node_name):
+                for ev in self.handle_node_change(current_node_name):
                     yield ev
 
             updated_state = self.active_run.get("manually_emitted_state") or current_graph_state
@@ -236,7 +235,7 @@ class LangGraphAgent:
             )
 
         if self.active_run.get("node_name") != node_name:
-            for ev in self.start_step(node_name):
+            for ev in self.handle_node_change(node_name):
                 yield ev
 
         state_values = state.values if state.values else state
@@ -251,7 +250,8 @@ class LangGraphAgent:
             )
         )
 
-        yield self.end_step()
+        for ev in self.handle_node_change(None):
+            yield ev
 
         yield self._dispatch_event(
             RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
@@ -447,12 +447,26 @@ class LangGraphAgent:
                 else:
                     tools_as_dicts.append(tool)
 
+        all_tools = [*state.get("tools", []), *tools_as_dicts]
+
+        # Remove duplicates based on tool name
+        seen_names = set()
+        unique_tools = []
+        for tool in all_tools:
+            tool_name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
+            if tool_name and tool_name not in seen_names:
+                seen_names.add(tool_name)
+                unique_tools.append(tool)
+            elif not tool_name:
+                # Keep tools without names (shouldn't happen, but just in case)
+                unique_tools.append(tool)
+
         return {
             **state,
             "messages": new_messages,
-            "tools": [*state.get("tools", []), *tools_as_dicts],
+            "tools": unique_tools,
             "ag-ui": {
-                "tools": [*state.get("tools", []), *tools_as_dicts],
+                "tools": unique_tools,
                 "context": input.context or []
             }
         }
@@ -486,6 +500,9 @@ class LangGraphAgent:
             is_tool_call_start_event = not has_current_stream and tool_call_data and tool_call_data.get("name")
             is_tool_call_args_event = has_current_stream and current_stream.get("tool_call_id") and tool_call_data and tool_call_data.get("args")
             is_tool_call_end_event = has_current_stream and current_stream.get("tool_call_id") and not tool_call_data
+
+            if is_tool_call_start_event or is_tool_call_end_event or is_tool_call_args_event:
+                self.active_run["has_function_streaming"] = True
 
             reasoning_data = resolve_reasoning_content(event["data"]["chunk"]) if event["data"]["chunk"] else None
             message_content = resolve_message_content(event["data"]["chunk"].content) if event["data"]["chunk"] and event["data"]["chunk"].content else None
@@ -635,7 +652,13 @@ class LangGraphAgent:
                     )
                 )
                 yield self._dispatch_event(
-                    ToolCallArgsEvent(type=EventType.TOOL_CALL_ARGS, tool_call_id=event["data"]["id"], delta=event["data"]["args"], raw_event=event)
+                    ToolCallArgsEvent(
+                        type=EventType.TOOL_CALL_ARGS,
+                        tool_call_id=event["data"]["id"],
+                        delta=event["data"]["args"] if isinstance(event["data"]["args"], str) else json.dumps(
+                            event["data"]["args"]),
+                        raw_event=event
+                    )
                 )
                 yield self._dispatch_event(
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=event["data"]["id"], raw_event=event)
@@ -649,6 +672,44 @@ class LangGraphAgent:
             
             yield self._dispatch_event(
                 CustomEvent(type=EventType.CUSTOM, name=event["name"], value=event["data"], raw_event=event)
+            )
+
+        elif event_type == LangGraphEventTypes.OnToolEnd:
+            tool_call_output = event["data"]["output"]
+            if not self.active_run["has_function_streaming"]:
+                yield self._dispatch_event(
+                    ToolCallStartEvent(
+                        type=EventType.TOOL_CALL_START,
+                        tool_call_id=tool_call_output.tool_call_id,
+                        tool_call_name=tool_call_output.name,
+                        parent_message_id=tool_call_output.id,
+                        raw_event=event,
+                    )
+                )
+                yield self._dispatch_event(
+                    ToolCallArgsEvent(
+                        type=EventType.TOOL_CALL_ARGS,
+                        tool_call_id=tool_call_output.tool_call_id,
+                        delta=json.dumps(event["data"]["input"]),
+                        raw_event=event
+                    )
+                )
+                yield self._dispatch_event(
+                    ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=tool_call_output.tool_call_id,
+                        raw_event=event
+                    )
+                )
+
+            yield self._dispatch_event(
+                ToolCallResultEvent(
+                    type=EventType.TOOL_CALL_RESULT,
+                    tool_call_id=tool_call_output.tool_call_id,
+                    message_id=str(uuid.uuid4()),
+                    content=tool_call_output.content,
+                    role="tool"
+                )
             )
 
     def handle_thinking_event(self, reasoning_data: LangGraphReasoning) -> Generator[str, Any, str | None]:
@@ -730,33 +791,46 @@ class LangGraphAgent:
 
         raise ValueError("Message ID not found in history")
 
-    def start_step(self, step_name: str):
-        if self.active_step:
-            yield self.end_step()
+    def handle_node_change(self, node_name: Optional[str]):
+        """
+        Centralized method to handle node name changes and step transitions.
+        Automatically manages step start/end events based on node name changes.
+        """
+        if node_name == "__end__":
+            node_name = None
 
+        if node_name != self.active_run.get("node_name"):
+            # End current step if we have one
+            if self.active_run.get("node_name"):
+                yield self.end_step()
+
+            # Start new step if we have a node name
+            if node_name:
+                for event in self.start_step(node_name):
+                    yield event
+
+        self.active_run["node_name"] = node_name
+
+    def start_step(self, step_name: str):
+        """Simple step start event dispatcher - node_name management handled by handle_node_change"""
         yield self._dispatch_event(
             StepStartedEvent(
                 type=EventType.STEP_STARTED,
                 step_name=step_name
             )
         )
-        self.active_run["node_name"] = step_name
-        self.active_step = step_name
 
     def end_step(self):
-        if self.active_step is None:
+        """Simple step end event dispatcher - node_name management handled by handle_node_change"""
+        if not self.active_run.get("node_name"):
             raise ValueError("No active step to end")
 
-        dispatch = self._dispatch_event(
+        return self._dispatch_event(
             StepFinishedEvent(
                 type=EventType.STEP_FINISHED,
-                step_name=self.active_run["node_name"] or self.active_step
+                step_name=self.active_run["node_name"]
             )
         )
-
-        self.active_run["node_name"] = None
-        self.active_step = None
-        return dispatch
 
     # Check if some kwargs are enabled per LG version, to "catch all versions" and backwards compatibility
     def get_stream_kwargs(

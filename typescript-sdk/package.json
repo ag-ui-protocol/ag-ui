@@ -12,6 +12,7 @@
     "format": "prettier --write \"**/*.{ts,tsx,md,mdx}\"",
     "check-types": "turbo run check-types",
     "test": "turbo run test",
+    "create-integration": "pnpm dlx tsx create-integration.ts",
     "bump": "pnpm --filter './packages/*' exec -- pnpm version",
     "bump:alpha": "pnpm --filter './packages/*' exec -- pnpm version --preid alpha",
     "publish": "pnpm -r clean && pnpm install && turbo run build && pnpm publish -r --filter='./packages/*'",

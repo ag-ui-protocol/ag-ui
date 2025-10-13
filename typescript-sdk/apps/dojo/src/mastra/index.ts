@@ -4,26 +4,23 @@ import { Memory } from "@mastra/memory";
 import { LibSQLStore } from "@mastra/libsql";
 import { DynamoDBStore } from "@mastra/dynamodb";
 
-import { Mastra } from "@mastra/core";
+import { createStep, createWorkflow, Mastra } from "@mastra/core";
 import { createTool } from "@mastra/core";
 import { z } from "zod";
-
-
+import { weatherTool } from "./tools";
 
 function getStorage(): LibSQLStore | DynamoDBStore {
   if (process.env.DYNAMODB_TABLE_NAME) {
     return new DynamoDBStore({
-    name: "dynamodb",
-    config: {
-      tableName: process.env.DYNAMODB_TABLE_NAME
-    },
-  });
+      name: "dynamodb",
+      config: {
+        tableName: process.env.DYNAMODB_TABLE_NAME,
+      },
+    });
   } else {
     return new LibSQLStore({ url: "file::memory:" });
   }
 }
-
-
 
 export const mastra = new Mastra({
   agents: {
@@ -38,10 +35,9 @@ export const mastra = new Mastra({
         - If giving a location with multiple parts (e.g. "New York, NY"), use the most relevant part (e.g. "New York")
         - Include relevant details like humidity, wind conditions, and precipitation
         - Keep responses concise but informative
-
-        Use the weatherTool to fetch current weather data.
-  `,
+    `,
       model: openai("gpt-4o"),
+      tools: { get_weather: weatherTool },
       memory: new Memory({
         storage: getStorage(),
         options: {
@@ -52,6 +48,26 @@ export const mastra = new Mastra({
             }),
           },
         },
+      }),
+    }),
+    backend_tool_rendering: new Agent({
+      name: "Weather Agent",
+      instructions: `
+          You are a helpful weather assistant that provides accurate weather information.
+
+          Your primary function is to help users get weather details for specific locations. When responding:
+          - Always ask for a location if none is provided
+          - If the location name isn’t in English, please translate it
+          - If giving a location with multiple parts (e.g. "New York, NY"), use the most relevant part (e.g. "New York")
+          - Include relevant details like humidity, wind conditions, and precipitation
+          - Keep responses concise but informative
+
+          Use the weatherTool to fetch current weather data.
+    `,
+      model: openai("gpt-4o-mini"),
+      tools: { get_weather: weatherTool },
+      memory: new Memory({
+        storage: getStorage(),
       }),
     }),
     shared_state: new Agent({

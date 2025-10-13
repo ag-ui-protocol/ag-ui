@@ -6,7 +6,7 @@ import { ChatOpenAI } from "@langchain/openai";
 import { SystemMessage } from "@langchain/core/messages";
 import { RunnableConfig } from "@langchain/core/runnables";
 import { dispatchCustomEvent } from "@langchain/core/callbacks/dispatch";
-import { Annotation, MessagesAnnotation, StateGraph } from "@langchain/langgraph";
+import { Annotation, Command, MessagesAnnotation, StateGraph, END } from "@langchain/langgraph";
 
 // This tool simulates performing a task on the server.
 // The tool call will be streamed to the frontend as it is being generated.
@@ -150,17 +150,23 @@ async function chatNode(state: AgentState, config?: RunnableConfig) {
         await dispatchCustomEvent("manually_emit_state", state, config);
       }
       
-      return {
-        messages: updatedMessages,
-        steps: state.steps
-      };
+      return new Command({
+        goto: "start_flow",
+        update: {
+          messages: updatedMessages,
+          steps: state.steps
+        }
+      });
     }
   }
 
-  return {
-    messages: messages,
-    steps: state.steps
-  };
+  return new Command({
+    goto: END,
+    update: {
+      messages: messages,
+      steps: state.steps
+    }
+  });
 }
 
 // Define the graph
