@@ -150,7 +150,11 @@ impl Default for HttpAgentBuilder {
 }
 
 #[async_trait]
-impl<StateT: AgentState, FwdPropsT: FwdProps> Agent<StateT, FwdPropsT> for HttpAgent {
+impl<StateT, FwdPropsT> Agent<StateT, FwdPropsT> for HttpAgent
+where
+    StateT: AgentState,
+    FwdPropsT: FwdProps,
+{
     async fn run(
         &self,
         input: &RunAgentInput<StateT, FwdPropsT>,

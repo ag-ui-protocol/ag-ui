@@ -47,8 +47,10 @@ pub struct RunAgentParams<StateT: AgentState = JsonValue, FwdPropsT: FwdProps = 
     pub state: StateT,
 }
 
-impl<StateT: AgentState + Default, FwdPropsT: FwdProps + Default>
-    RunAgentParams<StateT, FwdPropsT>
+impl<StateT, FwdPropsT> RunAgentParams<StateT, FwdPropsT>
+where
+    StateT: AgentState + Default,
+    FwdPropsT: FwdProps + Default,
 {
     /// Construct a new instance of [RunAgentParams] where the state and forwarded_props are
     /// manually typed.

@@ -317,7 +317,11 @@ pub struct Subscribers<StateT: AgentState = JsonValue, FwdPropsT: FwdProps = Jso
     subs: Vec<Arc<dyn AgentSubscriber<StateT, FwdPropsT>>>,
 }
 
-impl<StateT: AgentState, FwdPropsT: FwdProps> Subscribers<StateT, FwdPropsT> {
+impl<StateT, FwdPropsT> Subscribers<StateT, FwdPropsT>
+where
+    StateT: AgentState,
+    FwdPropsT: FwdProps,
+{
     pub fn new(subscribers: Vec<Arc<dyn AgentSubscriber<StateT, FwdPropsT>>>) -> Self {
         Self { subs: subscribers }
     }
