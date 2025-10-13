@@ -34,7 +34,7 @@ function FileTreeNode({
           "flex w-full items-center gap-2 rounded-sm px-2 py-1 text-sm text-gray-700 dark:text-gray-200",
           "mix-from-cpk-docs-primary mix-to-white mix-25",
           !isSelected && "hover:bg-foreground/5 hover:text-gray-900 dark:hover:text-white",
-          isSelected && (isInsideCpkFrame || true
+          isSelected && (isInsideCpkFrame
             ? "bg-mix/15 text-cpk-docs-primary dark:text-mix"
             : "bg-foreground/10 text-gray-900 dark:text-white"),
           depth === 1 && "ml-0.5",

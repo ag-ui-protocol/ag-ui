@@ -31,7 +31,7 @@ export default function CodeViewer({ codeFiles }: { codeFiles: FeatureFile[] }) 
                 value={file.name}
                 className={cn(
                   "border-0 shadow-none hover:bg-foreground/5 hover:text-gray-900 dark:hover:text-neutral-100 data-[state=active]:text-gray-900 dark:data-[state=active]:text-white",
-                  isInsideCpkFrame || true
+                  isInsideCpkFrame
                     ? "mix-from-cpk-docs-primary mix-to-white mix-25 data-[state=active]:bg-mix/15 data-[state=active]:text-cpk-docs-primary data-[state=active]:dark:text-mix"
                     : "data-[state=active]:bg-foreground/8 text-gray-600 dark:text-neutral-300",
                 )}
