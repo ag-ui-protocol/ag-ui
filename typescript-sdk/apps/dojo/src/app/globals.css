@@ -286,3 +286,8 @@
     @apply bg-background! text-foreground! font-sans;
   }
 }
+
+/* hide scroll decoration on code blocks */
+.monaco-editor .overflow-guard .scroll-decoration {
+  @apply hidden!;
+}
