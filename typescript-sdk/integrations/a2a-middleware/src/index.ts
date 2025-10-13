@@ -154,7 +154,7 @@ export class A2AMiddlewareAgent extends AbstractAgent {
                       id: randomUUID(),
                       role: "tool",
                       toolCallId: toolCallId,
-                      content: `A2A Agent Response: ${a2aResponse}`,
+                      content: a2aResponse,
                     };
                     if (this.debug) {
                       console.debug("newMessage From a2a agent", newMessage);

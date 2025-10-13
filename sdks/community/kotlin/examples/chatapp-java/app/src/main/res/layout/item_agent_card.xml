@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView 
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/cardAgent"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="8dp"
+    app:cardElevation="2dp"
+    app:cardCornerRadius="12dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- Header with name and active indicator -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <!-- Agent info column -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <!-- Agent name -->
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/textAgentName"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textAppearance="?attr/textAppearanceTitleMedium"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    tools:text="My Assistant" />
+
+                <!-- Agent URL -->
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/textAgentUrl"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textAppearance="?attr/textAppearanceBodySmall"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    tools:text="https://api.example.com/agent" />
+
+                <!-- Agent description (optional) -->
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/textAgentDescription"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textAppearance="?attr/textAppearanceBodyMedium"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:maxLines="2"
+                    android:ellipsize="end"
+                    android:visibility="gone"
+                    tools:text="This is a helpful AI assistant for various tasks"
+                    tools:visibility="visible" />
+
+            </LinearLayout>
+
+            <!-- Active indicator -->
+            <ImageView
+                android:id="@+id/iconActive"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginStart="8dp"
+                android:src="@android:drawable/ic_menu_compass"
+                app:tint="?attr/colorPrimary"
+                android:visibility="gone"
+                android:contentDescription="Active agent"
+                tools:visibility="visible" />
+
+        </LinearLayout>
+
+        <!-- Auth method and last used info -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <!-- Auth method chip -->
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipAuthMethod"
+                style="@style/Widget.Material3.Chip.Assist"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="12sp"
+                app:chipIconSize="14dp"
+                app:chipIcon="@android:drawable/ic_lock_lock"
+                tools:text="API Key" />
+
+            <!-- Last used -->
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/textLastUsed"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:textAppearance="?attr/textAppearanceLabelSmall"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:visibility="gone"
+                tools:text="Last used: Jan 15, 14:30"
+                tools:visibility="visible" />
+
+        </LinearLayout>
+
+        <!-- Action buttons -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal"
+            android:gravity="end">
+
+            <!-- Activate button (only visible when not active) -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnActivate"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Activate"
+                android:minWidth="0dp"
+                android:paddingHorizontal="12dp" />
+
+            <!-- Edit button -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnEdit"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Edit"
+                android:minWidth="0dp"
+                android:paddingHorizontal="12dp"
+                app:icon="@android:drawable/ic_menu_edit"
+                app:iconSize="16dp" />
+
+            <!-- Delete button -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnDelete"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Delete"
+                android:textColor="?attr/colorError"
+                android:minWidth="0dp"
+                android:paddingHorizontal="12dp"
+                app:icon="@android:drawable/ic_menu_delete"
+                app:iconSize="16dp"
+                app:iconTint="?attr/colorError" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>

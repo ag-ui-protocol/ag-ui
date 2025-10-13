@@ -16,11 +16,13 @@ load_dotenv()
 from .api import (
     agentic_chat_app,
     tool_based_generative_ui_app,
+    backend_tool_rendering_app,
 )
 
 app = FastAPI(title='Agno AG-UI server')
 app.mount('/agentic_chat', agentic_chat_app, 'Agentic Chat')
 app.mount('/tool_based_generative_ui', tool_based_generative_ui_app, 'Tool-based Generative UI')
+app.mount('/backend_tool_rendering', backend_tool_rendering_app, 'Backend Tool Rendering')
 
 def main():
     """Main function to start the FastAPI server."""

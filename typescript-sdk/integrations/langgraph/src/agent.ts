@@ -48,12 +48,12 @@ import {
   ToolCallArgsEvent,
   ToolCallEndEvent,
   ToolCallStartEvent,
+  ToolCallResultEvent,
   ThinkingTextMessageStartEvent,
   ThinkingTextMessageContentEvent,
   ThinkingTextMessageEndEvent,
   ThinkingStartEvent,
   ThinkingEndEvent,
-  Message as AGUIMessage,
 } from "@ag-ui/client";
 import { RunsStreamPayload } from "@langchain/langgraph-sdk/dist/types";
 import {
@@ -76,6 +76,7 @@ export type ProcessedEvents =
   | ToolCallStartEvent
   | ToolCallArgsEvent
   | ToolCallEndEvent
+  | ToolCallResultEvent
   | ThinkingStartEvent
   | ThinkingEndEvent
   | StateSnapshotEvent
@@ -774,26 +775,35 @@ export class LangGraphAgent extends AbstractAgent {
         });
         break;
       case LangGraphEventTypes.OnToolEnd:
-        if (this.activeRun!.hasFunctionStreaming) break;
-        const toolCallOutput = event.data.output
+        const toolCallOutput = event.data?.output
+        if (!this.activeRun!.hasFunctionStreaming) {
+          this.dispatchEvent({
+            type: EventType.TOOL_CALL_START,
+            toolCallId: toolCallOutput.tool_call_id,
+            toolCallName: toolCallOutput.name,
+            parentMessageId: toolCallOutput.id,
+            rawEvent: event,
+          })
+          this.dispatchEvent({
+            type: EventType.TOOL_CALL_ARGS,
+            toolCallId: toolCallOutput.tool_call_id,
+            delta: JSON.stringify(event.data.input),
+            rawEvent: event,
+          });
+          this.dispatchEvent({
+            type: EventType.TOOL_CALL_END,
+            toolCallId: toolCallOutput.tool_call_id,
+            rawEvent: event,
+          });
+        }
         this.dispatchEvent({
-          type: EventType.TOOL_CALL_START,
+          type: EventType.TOOL_CALL_RESULT,
           toolCallId: toolCallOutput.tool_call_id,
-          toolCallName: toolCallOutput.name,
-          parentMessageId: toolCallOutput.id,
-          rawEvent: event,
+          content: toolCallOutput?.content,
+          messageId: randomUUID(),
+          role: "tool",
         })
-        this.dispatchEvent({
-          type: EventType.TOOL_CALL_ARGS,
-          toolCallId: toolCallOutput.tool_call_id,
-          delta: JSON.stringify(event.data.input),
-          rawEvent: event,
-        });
-        this.dispatchEvent({
-          type: EventType.TOOL_CALL_END,
-          toolCallId: toolCallOutput.tool_call_id,
-          rawEvent: event,
-        });
+        break;
     }
   }
 

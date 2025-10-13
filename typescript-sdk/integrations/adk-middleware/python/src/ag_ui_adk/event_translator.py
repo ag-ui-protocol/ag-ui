@@ -2,6 +2,8 @@
 
 """Event translator for converting ADK events to AG-UI protocol events."""
 
+import dataclasses
+from collections.abc import Iterable, Mapping
 from typing import AsyncGenerator, Optional, Dict, Any , List
 import uuid
 
@@ -19,6 +21,106 @@ from google.adk.events import Event as ADKEvent
 
 import logging
 logger = logging.getLogger(__name__)
+
+
+def _coerce_tool_response(value: Any, _visited: Optional[set[int]] = None) -> Any:
+    """Recursively convert arbitrary tool responses into JSON-serializable structures."""
+
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        try:
+            return value.decode()  # type: ignore[union-attr]
+        except Exception:
+            return list(value)
+
+    if _visited is None:
+        _visited = set()
+
+    obj_id = id(value)
+    if obj_id in _visited:
+        return str(value)
+
+    _visited.add(obj_id)
+    try:
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            return {
+                field.name: _coerce_tool_response(getattr(value, field.name), _visited)
+                for field in dataclasses.fields(value)
+            }
+
+        if hasattr(value, "_asdict") and callable(getattr(value, "_asdict")):
+            try:
+                return {
+                    str(k): _coerce_tool_response(v, _visited)
+                    for k, v in value._asdict().items()  # type: ignore[attr-defined]
+                }
+            except Exception:
+                pass
+
+        for method_name in ("model_dump", "to_dict"):
+            method = getattr(value, method_name, None)
+            if callable(method):
+                try:
+                    dumped = method()
+                except TypeError:
+                    try:
+                        dumped = method(exclude_none=False)
+                    except Exception:
+                        continue
+                except Exception:
+                    continue
+
+                return _coerce_tool_response(dumped, _visited)
+
+        if isinstance(value, Mapping):
+            return {
+                str(k): _coerce_tool_response(v, _visited)
+                for k, v in value.items()
+            }
+
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return [_coerce_tool_response(item, _visited) for item in value]
+
+        if isinstance(value, Iterable):
+            try:
+                return [_coerce_tool_response(item, _visited) for item in list(value)]
+            except TypeError:
+                pass
+
+        try:
+            obj_vars = vars(value)
+        except TypeError:
+            obj_vars = None
+
+        if obj_vars:
+            coerced = {
+                key: _coerce_tool_response(val, _visited)
+                for key, val in obj_vars.items()
+                if not key.startswith("_")
+            }
+            if coerced:
+                return coerced
+
+        return str(value)
+    finally:
+        _visited.discard(obj_id)
+
+
+def _serialize_tool_response(response: Any) -> str:
+    """Serialize a tool response into a JSON string."""
+
+    try:
+        coerced = _coerce_tool_response(response)
+        return json.dumps(coerced, ensure_ascii=False)
+    except Exception as exc:
+        logger.warning("Failed to coerce tool response to JSON: %s", exc, exc_info=True)
+        try:
+            return json.dumps(str(response), ensure_ascii=False)
+        except Exception:
+            logger.warning("Failed to stringify tool response; returning empty string.")
+            return json.dumps("", ensure_ascii=False)
 
 
 class EventTranslator:
@@ -87,16 +189,24 @@ class EventTranslator:
             if hasattr(adk_event, 'get_function_calls'):               
                 function_calls = adk_event.get_function_calls()
                 if function_calls:
-                    logger.debug(f"ADK function calls detected: {len(function_calls)} calls")
-                    
-                    # CRITICAL FIX: End any active text message stream before starting tool calls
-                    # Per AG-UI protocol: TEXT_MESSAGE_END must be sent before TOOL_CALL_START
-                    async for event in self.force_close_streaming_message():
-                        yield event
-                    
-                    # NOW ACTUALLY YIELD THE EVENTS
-                    async for event in self._translate_function_calls(function_calls):
-                        yield event
+                    # Filter out long-running tool calls; those are handled by translate_lro_function_calls
+                    try:
+                        lro_ids = set(getattr(adk_event, 'long_running_tool_ids', []) or [])
+                    except Exception:
+                        lro_ids = set()
+
+                    non_lro_calls = [fc for fc in function_calls if getattr(fc, 'id', None) not in lro_ids]
+
+                    if non_lro_calls:
+                        logger.debug(f"ADK function calls detected (non-LRO): {len(non_lro_calls)} of {len(function_calls)} total")
+                        # CRITICAL FIX: End any active text message stream before starting tool calls
+                        # Per AG-UI protocol: TEXT_MESSAGE_END must be sent before TOOL_CALL_START
+                        async for event in self.force_close_streaming_message():
+                            yield event
+                        
+                        # Yield only non-LRO function call events
+                        async for event in self._translate_function_calls(non_lro_calls):
+                            yield event
                         
             # Handle function responses and yield the tool response event
             # this is essential for scenerios when user has to render function response at frontend
@@ -164,12 +274,17 @@ class EventTranslator:
         elif hasattr(adk_event, 'is_final_response'):
             is_final_response = adk_event.is_final_response
         
-        # Handle None values: if is_final_response=True, it means streaming should end
-        should_send_end = is_final_response and not is_partial
-        
+        # Handle None values: if a turn is complete or a final chunk arrives, end streaming
+        has_finish_reason = bool(getattr(adk_event, 'finish_reason', None))
+        should_send_end = (
+            (turn_complete and not is_partial)
+            or (is_final_response and not is_partial)
+            or (has_finish_reason and self._is_streaming)
+        )
+
         logger.info(f"📥 Text event - partial={is_partial}, turn_complete={turn_complete}, "
-                    f"is_final_response={is_final_response}, should_send_end={should_send_end}, "
-                    f"currently_streaming={self._is_streaming}")
+                    f"is_final_response={is_final_response}, has_finish_reason={has_finish_reason}, "
+                    f"should_send_end={should_send_end}, currently_streaming={self._is_streaming}")
 
         if is_final_response:
 
@@ -377,7 +492,7 @@ class EventTranslator:
                     message_id=str(uuid.uuid4()),
                     type=EventType.TOOL_CALL_RESULT,
                     tool_call_id=tool_call_id,
-                    content=json.dumps(func_response.response)
+                    content=_serialize_tool_response(func_response.response)
                 )
             else:
                 logger.debug(f"Skipping ToolCallResultEvent for long-running tool: {tool_call_id}")

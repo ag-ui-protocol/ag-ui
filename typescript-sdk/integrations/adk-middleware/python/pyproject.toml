@@ -5,7 +5,7 @@ readme = "README.md"
 authors = [
     { name = "Mark Fogle", email = "mark@contextable.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.9, <3.14"
 dependencies = [
     "ag-ui-protocol>=0.1.7",
     "aiohttp>=3.12.0",

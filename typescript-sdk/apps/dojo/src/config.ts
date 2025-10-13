@@ -24,6 +24,12 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["Chat", "Tools", "Streaming"],
   }),
   createFeatureConfig({
+    id: "backend_tool_rendering",
+    name: "Backend Tool Rendering",
+    description: "Render and stream your backend tools to the frontend.",
+    tags: ["Agent State", "Collaborating"],
+  }),
+  createFeatureConfig({
     id: "human_in_the_loop",
     name: "Human in the loop",
     description: "Plan a task together and direct the Copilot to take the right steps",

@@ -100,6 +100,72 @@ async def test_streaming_behavior():
         print(f"   Got:      {event_type_strings}")
         return False
 
+async def test_partial_with_finish_reason():
+    """Test the specific scenario: partial=True, is_final_response=False, but finish_reason=STOP.
+
+    This is the bug we fixed - Gemini returns partial=True even on the final chunk with finish_reason.
+    The fix checks for finish_reason as a fallback to properly close the streaming message.
+    """
+    print("\n🧪 Testing Partial Event with finish_reason (Bug Fix Scenario)")
+    print("=================================================================")
+
+    translator = EventTranslator()
+
+    # First event: start streaming
+    first_event = MagicMock()
+    first_event.content = MagicMock()
+    first_event.content.parts = [MagicMock(text="Hello")]
+    first_event.author = "assistant"
+    first_event.partial = True
+    first_event.turn_complete = None
+    first_event.finish_reason = None
+    first_event.is_final_response = lambda: False
+    first_event.get_function_calls = lambda: []
+    first_event.get_function_responses = lambda: []
+
+    # Second event: final chunk with finish_reason BUT still partial=True (the bug scenario!)
+    final_event = MagicMock()
+    final_event.content = MagicMock()
+    final_event.content.parts = [MagicMock(text=" world")]
+    final_event.author = "assistant"
+    final_event.partial = True  # Still marked as partial!
+    final_event.turn_complete = None
+    final_event.finish_reason = "STOP"  # But has finish_reason!
+    final_event.is_final_response = lambda: False  # And is_final_response returns False!
+    final_event.get_function_calls = lambda: []
+    final_event.get_function_responses = lambda: []
+
+    print("\n📡 Event 1: partial=True, finish_reason=None, is_final_response=False")
+    print("📡 Event 2: partial=True, finish_reason=STOP, is_final_response=False ⚠️")
+
+    all_events = []
+
+    # Process first event
+    async for ag_ui_event in translator.translate(first_event, "test_thread", "test_run"):
+        all_events.append(ag_ui_event)
+
+    # Process final event
+    async for ag_ui_event in translator.translate(final_event, "test_thread", "test_run"):
+        all_events.append(ag_ui_event)
+
+    event_types = [str(event.type).split('.')[-1] for event in all_events]
+
+    print(f"\n📊 Generated Events: {event_types}")
+
+    # Expected: START, CONTENT (Hello), CONTENT (world), END
+    # The fix ensures that finish_reason triggers END even when partial=True and is_final_response=False
+    expected = ["TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_END"]
+
+    if event_types == expected:
+        print("✅ Bug fix verified! finish_reason properly triggers TEXT_MESSAGE_END")
+        print("   Even when partial=True and is_final_response=False")
+        return True
+    else:
+        print(f"❌ Bug fix failed!")
+        print(f"   Expected: {expected}")
+        print(f"   Got:      {event_types}")
+        return False
+
 async def test_non_streaming():
     """Test that complete messages still work."""
     print("\n🧪 Testing Non-Streaming (Complete Messages)")
@@ -135,9 +201,10 @@ async def test_non_streaming():
 if __name__ == "__main__":
     async def run_tests():
         test1 = await test_streaming_behavior()
-        test2 = await test_non_streaming()
+        test2 = await test_partial_with_finish_reason()
+        test3 = await test_non_streaming()
 
-        if test1 and test2:
+        if test1 and test2 and test3:
             print("\n🎉 All streaming tests passed!")
             print("💡 Ready for real ADK integration with proper streaming")
         else:

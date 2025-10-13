@@ -7,9 +7,10 @@ description = "Example usage of the ADK middleware with FastAPI"
 license = "MIT"
 
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.9, <3.14"
 dependencies = [
     "fastapi>=0.104.0",
+    "httpx>=0.27.0",
     "uvicorn[standard]>=0.24.0",
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",

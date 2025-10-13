@@ -1,0 +1,31 @@
+# Gradle
+.gradle/
+build/
+out/
+
+# IDE
+.idea/
+*.iml
+local.properties
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Android
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# iOS
+iosApp/iosApp.xcworkspace/
+iosApp/iosApp.xcodeproj/xcuserdata/
+iosApp/iosApp.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Kotlin Native
+*.klib
+
+# Compose Desktop
+compose-desktop-*
