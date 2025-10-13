@@ -4,13 +4,12 @@ import { CodeEditor } from "./code-editor";
 import { FeatureFile } from "@/types/feature";
 import { useURLParams } from "@/contexts/url-params-context";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useIsInsideIframe } from "@/utils/use-in-iframe";
+import { useIsInsideCpkFrame } from "@/utils/use-is-inside-iframe";
 import { cn } from "@/lib/utils";
 
 export default function CodeViewer({ codeFiles }: { codeFiles: FeatureFile[] }) {
   const { file, setCodeFile, codeLayout } = useURLParams();
-  const isInsideIframe = useIsInsideIframe();
-  const isInsideCpkFrame = isInsideIframe && (document.referrer.includes("copilotkit.com") || document.referrer.includes("localhost"));
+  const isInsideCpkFrame = useIsInsideCpkFrame();
 
   const selectedFile = useMemo(
     () => codeFiles.find((f) => f.name === file) ?? codeFiles[0],
@@ -30,7 +29,12 @@ export default function CodeViewer({ codeFiles }: { codeFiles: FeatureFile[] }) 
               <TabsTrigger
                 key={file.name}
                 value={file.name}
-                className="border-0 shadow-none text-gray-600 dark:text-neutral-300 hover:bg-foreground/5 hover:text-gray-900 dark:hover:text-neutral-100 data-[state=active]:bg-foreground/8 data-[state=active]:text-gray-900 dark:data-[state=active]:text-white"
+                className={cn(
+                  "border-0 shadow-none hover:bg-foreground/5 hover:text-gray-900 dark:hover:text-neutral-100 data-[state=active]:text-gray-900 dark:data-[state=active]:text-white",
+                  isInsideCpkFrame || true
+                    ? "mix-from-cpk-docs-primary mix-to-white mix-25 data-[state=active]:bg-mix/15 data-[state=active]:text-cpk-docs-primary data-[state=active]:dark:text-mix"
+                    : "data-[state=active]:bg-foreground/8 text-gray-600 dark:text-neutral-300",
+                )}
               >
                 {file.name.split("/").pop()}
               </TabsTrigger>

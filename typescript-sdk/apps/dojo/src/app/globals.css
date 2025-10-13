@@ -187,6 +187,7 @@
   --cohere: hsl(0 80% 60%); /* Bright red */ --background: oklch(1 0 0); --foreground: oklch(0.145 0 0);
 
   --cpk-docs-dark-bg: oklch(0.274 0.006 286.033);
+  --cpk-docs-primary: oklch(0.55 0.25 285);
 }
 
 .dark {
@@ -271,6 +272,12 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-cpk-docs-dark-bg: var(--cpk-docs-dark-bg);
+  --color-cpk-docs-primary: var(--cpk-docs-primary);
+
+  /* supporting variables for color-mix (see related color-mix-* utilities below */
+  --color-mix-from: var(--tw-mix-from);
+  --color-mix-to: var(--tw-mix-to);
+  --color-mix: var(--tw-mix);
 }
 
 @layer base {
@@ -290,4 +297,56 @@
 /* hide scroll decoration on code blocks */
 .monaco-editor .overflow-guard .scroll-decoration {
   @apply hidden!;
+}
+
+@utility mix-from-* {
+  --tw-mix-from-color: --value(--color-*, color, [color]);
+  --tw-mix-from-opacity: --modifier(--opacity-*, [percentage]);
+  --tw-mix-from-opacity: calc(--modifier(number) * 1%);
+  --tw-mix-from-opacity: calc(--modifier([number]) * 100%);
+  --tw-mix-from: --alpha(var(--tw-mix-from-color) / var(--tw-mix-from-opacity, 100%));
+  /* calculate the final color-mix result */
+  --tw-mix: color-mix(color-mix(in srgb, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
+  @supports (color: color-mix(in lab, red, red)) {
+    --tw-mix: color-mix(color-mix(in oklab, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
+  }
+  /* redefining the color variables here to ensure they receive the latest values */
+  --color-mix-from: var(--tw-mix-from);
+  --color-mix-to: var(--tw-mix-to);
+  --color-mix: var(--tw-mix);
+}
+
+@utility mix-to-* {
+  --tw-mix-to-color: --value(--color-*, color, [color]);
+  --tw-mix-to-opacity: --modifier(--opacity-*, [percentage]);
+  --tw-mix-to-opacity: calc(--modifier(number) * 1%);
+  --tw-mix-to-opacity: calc(--modifier([number]) * 100%);
+  --tw-mix-to: --alpha(var(--tw-mix-to-color) / var(--tw-mix-to-opacity, 100%));
+  /* calculate the final color-mix result */
+  --tw-mix: color-mix(color-mix(in srgb, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
+  @supports (color: color-mix(in lab, red, red)) {
+    --tw-mix: color-mix(color-mix(in oklab, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
+  }
+  /* redefining the color variables here to ensure they receive the latest values */
+  --color-mix-from: var(--tw-mix-from);
+  --color-mix-to: var(--tw-mix-to);
+  --color-mix: var(--tw-mix);
+}
+
+@utility mix-* {
+  --tw-mix-percent: --value(--opacity-*, [percentage]);
+  --tw-mix-percent: calc(--value(number) * 1%);
+  --tw-mix-percent: calc(--value([number]) * 100%);
+  --tw-mix-opacity: --modifier(--opacity-*, [percentage]);
+  --tw-mix-opacity: calc(--modifier(number) * 1%);
+  --tw-mix-opacity: calc(--modifier([number]) * 100%);
+  /* calculate the final color-mix result */
+  --tw-mix: color-mix(in srgb, color-mix(in srgb, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
+  @supports (color: color-mix(in lab, red, red)) {
+    --tw-mix: color-mix(in oklab, color-mix(in oklab, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
+  }
+  /* redefining the color variables here to ensure they receive the latest values */
+  --color-mix-from: var(--tw-mix-from);
+  --color-mix-to: var(--tw-mix-to);
+  --color-mix: var(--tw-mix);
 }
