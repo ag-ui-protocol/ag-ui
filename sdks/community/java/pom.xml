@@ -17,13 +17,10 @@
         <module>clients/ok-http</module>
         <module>integrations/spring-ai</module>
         <module>integrations/langchain4j</module>
-        <module>examples/spring-ai-example</module>
         <module>packages/server</module>
-        <module>examples/langchain4j-example</module>
         <module>servers/spring</module>
         <module>clients/spring-client</module>
-        <module>examples/spring-cli-client</module>
-        <module>examples/git-cli</module>
+        <module>examples/spring-ai-example</module>
     </modules>
 
     <properties>
