@@ -15,13 +15,13 @@ export default function CodeViewer({ codeFiles }: { codeFiles: FeatureFile[] }) 
 
   if (codeLayout === "tabs") {
     return (
-      <div className="flex flex-col h-full">
+      <div className="flex flex-col h-full bg-white">
         <Tabs
           value={selectedFile?.name}
           onValueChange={setCodeFile}
-          className="flex-1 flex flex-col dark:bg-cpk-docs-dark-bg"
+          className="flex-1 flex flex-col dark:bg-cpk-docs-dark-bg/95"
         >
-          <TabsList className="w-full justify-start h-auto flex-wrap p-1 gap-1 bg-white dark:bg-white/5 rounded-none">
+          <TabsList className="w-full justify-start h-auto flex-wrap p-1 gap-1 rounded-none">
             {codeFiles.map((file) => (
               <TabsTrigger
                 key={file.name}
@@ -38,7 +38,7 @@ export default function CodeViewer({ codeFiles }: { codeFiles: FeatureFile[] }) 
               value={file.name}
               className="flex-1 mt-0 data-[state=inactive]:hidden"
             >
-              <div className="h-full bg-gray-50 dark:bg-[#1e1e1e]">
+              <div className="h-full rounded-xl overflow-hidden">
                 <CodeEditor file={file} />
               </div>
             </TabsContent>
@@ -49,22 +49,25 @@ export default function CodeViewer({ codeFiles }: { codeFiles: FeatureFile[] }) 
   }
 
   return (
-    <div className="flex h-full dark:bg-cpk-docs-dark-bg">
-      <div className="w-72 border-r border-gray-200 dark:border-neutral-700 flex flex-col bg-white dark:bg-white/5">
-        <div className="flex-1 overflow-auto">
-          <FileTree files={codeFiles} selectedFile={selectedFile} onFileSelect={setCodeFile} />
+    <div className="flex h-full bg-white">
+      {/* wrapper div to mix the bg-cpk-docs-dark-bg bg-white with bg-cpk-docs-dark-bg on dark mode */}
+      <div className="dark:bg-cpk-docs-dark-bg/95">
+        <div className="w-72 border-r border-gray-200 dark:border-neutral-700 flex flex-col">
+          <div className="flex-1 overflow-auto">
+            <FileTree files={codeFiles} selectedFile={selectedFile} onFileSelect={setCodeFile} />
+          </div>
         </div>
-      </div>
-      <div className="flex-1 h-full py-5 bg-gray-50 dark:bg-[#1e1e1e]">
-        {selectedFile ? (
-          <div className="h-full">
-            <CodeEditor file={selectedFile} />
-          </div>
-        ) : (
-          <div className="flex items-center justify-center h-full text-muted-foreground dark:text-neutral-300">
-            Select a file to view its content.
-          </div>
-        )}
+        <div className="flex-1 h-full py-5 bg-gray-50 dark:bg-[#1e1e1e] rounded-xl overflow-hidden">
+          {selectedFile ? (
+            <div className="h-full">
+              <CodeEditor file={selectedFile} />
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-full text-muted-foreground dark:text-neutral-300">
+              Select a file to view its content.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
