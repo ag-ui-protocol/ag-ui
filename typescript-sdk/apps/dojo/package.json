@@ -8,7 +8,8 @@
     "start": "npm run generate-content-json && next start",
     "lint": "next lint",
     "mastra:dev": "mastra dev",
-    "generate-content-json": "npx tsx scripts/generate-content-json.ts"
+    "generate-content-json": "npx tsx scripts/generate-content-json.ts",
+    "run-everything": "./scripts/prep-dojo-everything.js && ./scripts/run-dojo-everything.js"
   },
   "dependencies": {
     "@ag-ui/a2a-middleware": "workspace:*",

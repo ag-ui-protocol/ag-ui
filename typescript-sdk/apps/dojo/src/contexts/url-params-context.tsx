@@ -43,7 +43,7 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
   const [state, setState] = useState<URLParamsState>(() => ({
     view: (searchParams.get("view") as View) || "preview",
     sidebarHidden: searchParams.get("sidebar") === "false",
-    chatDefaultOpen: searchParams.get("chatDefaultOpen") === "true",
+    chatDefaultOpen: searchParams.get("chatDefaultOpen") !== "false",
     frameworkPickerHidden: searchParams.get("frameworkPicker") === "false",
     viewPickerHidden: searchParams.get("viewPicker") === "false",
     featurePickerHidden: searchParams.get("featurePicker") === "false",
