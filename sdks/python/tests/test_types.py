@@ -368,15 +368,17 @@ class TestBaseTypes(unittest.TestCase):
         with self.assertRaises(ValidationError):
             UserMessage.model_validate(missing_id_data)
 
-        # Test extra fields
+        # Test extra fields are now allowed for backwards compatibility
         extra_field_data = {
             "id": "msg_456",
             "role": "user",
             "content": "Hello",
-            "extra_field": "This shouldn't be here"  # Extra field
+            "extra_field": "This is allowed for backwards compatibility"  # Extra field
         }
-        with self.assertRaises(ValidationError):
-            UserMessage.model_validate(extra_field_data)
+        # Should not raise an error - extra fields are allowed
+        msg = UserMessage.model_validate(extra_field_data)
+        self.assertEqual(msg.id, "msg_456")
+        self.assertEqual(msg.content, "Hello")
 
         # Test invalid tool_call_id in ToolMessage
         invalid_tool_data = {
