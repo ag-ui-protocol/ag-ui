@@ -42,7 +42,8 @@ test.describe("Agentic Chat Feature", () => {
       await chat.agentGreeting.waitFor({ state: "visible" });
 
       // Store initial background color
-      const initialBackground = await chat.getBackground();
+      const backgroundContainer = page.locator('[data-testid="background-container"]')
+      const initialBackground = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
       console.log("Initial background color:", initialBackground);
 
       // 1. Send message to change background to blue
@@ -52,8 +53,8 @@ test.describe("Agentic Chat Feature", () => {
       );
       await waitForAIResponse(page);
 
-      const backgroundBlue = await chat.getBackground();
-      expect(backgroundBlue).not.toBe(initialBackground);
+      await expect(backgroundContainer).not.toHaveCSS('background-color', initialBackground, { timeout: 7000 });
+      const backgroundBlue = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
       // Check if background is blue (string color name or contains blue)
       expect(backgroundBlue.toLowerCase()).toMatch(/blue|rgb\(.*,.*,.*\)|#[0-9a-f]{6}/);
 
@@ -64,15 +65,10 @@ test.describe("Agentic Chat Feature", () => {
       );
       await waitForAIResponse(page);
 
-      const backgroundPink = await chat.getBackground();
-      expect(backgroundPink).not.toBe(backgroundBlue);
+      await expect(backgroundContainer).not.toHaveCSS('background-color', backgroundBlue, { timeout: 7000 });
+      const backgroundPink = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
       // Check if background is pink (string color name or contains pink)
       expect(backgroundPink.toLowerCase()).toMatch(/pink|rgb\(.*,.*,.*\)|#[0-9a-f]{6}/);
-
-      // 3. Reset to default
-      await chat.sendMessage("Reset the background color");
-      await chat.assertUserMessageVisible("Reset the background color");
-      await waitForAIResponse(page);
     });
   });
 

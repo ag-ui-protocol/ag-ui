@@ -4,6 +4,7 @@ import { HttpEvent, HttpEventType } from "../run/http-request";
 import { parseSSEStream } from "./sse";
 import { parseProtoStream } from "./proto";
 import * as proto from "@ag-ui/proto";
+import { EventType } from "@ag-ui/core";
 
 /**
  * Transforms HTTP events into BaseEvents using the appropriate format parser based on content type.
@@ -47,7 +48,17 @@ export const transformHttpEventStream = (source$: Observable<HttpEvent>): Observ
                 eventSubject.error(err);
               }
             },
-            error: (err) => eventSubject.error(err),
+            error: (err) => {
+              if ((err as DOMException)?.name === "AbortError") {
+                eventSubject.next({
+                  type: EventType.RUN_ERROR,
+                  rawEvent: err,
+                });
+                eventSubject.complete();
+                return;
+              }
+              return eventSubject.error(err)
+            },
             complete: () => eventSubject.complete(),
           });
         }

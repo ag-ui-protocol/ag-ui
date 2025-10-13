@@ -97,7 +97,7 @@ export function getLocalAgents({
   runtimeContext,
 }: GetLocalAgentsOptions): Record<string, AbstractAgent> {
   const agents = mastra.getAgents() || {};
-  const networks = mastra.getNetworks() || [];
+  const networks = mastra.vnext_getNetworks() || [];
 
   const networkAGUI = networks.reduce(
     (acc, network) => {
@@ -164,7 +164,7 @@ export interface GetNetworkOptions {
 }
 
 export function getNetwork({ mastra, networkId, resourceId, runtimeContext }: GetNetworkOptions) {
-  const network = mastra.getNetwork(networkId);
+  const network = mastra.vnext_getNetwork(networkId);
   if (!network) {
     throw new Error(`Network ${networkId} not found`);
   }

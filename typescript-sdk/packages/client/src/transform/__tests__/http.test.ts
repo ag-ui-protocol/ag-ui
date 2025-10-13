@@ -54,6 +54,40 @@ describe("transformHttpEventStream", () => {
     expect(receivedEvents).toEqual([mockBaseEvent]);
   });
 
+  test("should emit RUN_ERROR and complete on AbortError without erroring", () => {
+    const mockHttpSource = new Subject<HttpEvent>();
+    const receivedEvents: BaseEvent[] = [];
+    let completed = false;
+    let receivedError: unknown = undefined;
+
+    const result$ = transformHttpEventStream(mockHttpSource);
+    result$.subscribe({
+      next: (event) => receivedEvents.push(event),
+      error: (err) => {
+        receivedError = err;
+      },
+      complete: () => {
+        completed = true;
+      },
+    });
+
+    mockHttpSource.next({
+      type: HttpEventType.HEADERS,
+      status: 200,
+      headers: new Headers([["content-type", "text/event-stream"]]),
+    });
+
+    const abortError = { name: "AbortError" } as DOMException;
+    mockHttpSource.error(abortError);
+
+    expect(receivedEvents).toHaveLength(1);
+    expect(receivedEvents[0].type).toBe(EventType.RUN_ERROR);
+    const runErrorEvent = receivedEvents[0] as any;
+    expect(runErrorEvent.rawEvent).toBe(abortError);
+    expect(completed).toBe(true);
+    expect(receivedError).toBeUndefined();
+  });
+
   test("should handle parseProtoStream errors", (done) => {
     // Given
     const mockHttpSource = new Subject<HttpEvent>();
