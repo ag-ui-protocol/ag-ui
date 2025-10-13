@@ -38,7 +38,7 @@ export default function CodeViewer({ codeFiles }: { codeFiles: FeatureFile[] }) 
               value={file.name}
               className="flex-1 mt-0 data-[state=inactive]:hidden"
             >
-              <div className="h-full rounded-xl overflow-hidden border border-b-0 border-cpk-docs-dark-bg/10 dark:border-white/10 -mx-px">
+              <div className="h-full rounded-xl overflow-hidden border border-b-0 border-cpk-docs-dark-bg/8 dark:border-white/6 -mx-px">
                 <CodeEditor file={file} />
               </div>
             </TabsContent>
@@ -59,7 +59,7 @@ export default function CodeViewer({ codeFiles }: { codeFiles: FeatureFile[] }) 
         </div>
         <div className="flex-1 h-full py-5 bg-gray-50 dark:bg-[#1e1e1e] rounded-xl overflow-hidden">
           {selectedFile ? (
-            <div className="h-full rounded-xl overflow-hidden border border-b-0 border-cpk-docs-dark-bg/10 dark:border-white/10 -mx-px">
+            <div className="h-full rounded-xl overflow-hidden border border-b-0 border-cpk-docs-dark-bg/8 dark:border-white/6 -mx-px">
               <CodeEditor file={selectedFile} />
             </div>
           ) : (
