@@ -13,7 +13,7 @@ class ConfiguredBaseModel(BaseModel):
     A configurable base model.
     """
     model_config = ConfigDict(
-        extra="forbid",
+        extra="allow",
         alias_generator=to_camel,
         populate_by_name=True,
     )
