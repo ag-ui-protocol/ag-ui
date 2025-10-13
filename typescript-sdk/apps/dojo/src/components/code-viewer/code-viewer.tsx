@@ -73,10 +73,7 @@ export default function CodeViewer({ codeFiles }: { codeFiles: FeatureFile[] }) 
           isInsideCpkFrame && "rounded-xl overflow-hidden",
         )}>
           {selectedFile ? (
-            <div className={cn(
-              "h-full border-cpk-docs-dark-bg/8 dark:border-white/6",
-              isInsideCpkFrame && "rounded-xl overflow-hidden",
-            )}>
+            <div className="h-full border-cpk-docs-dark-bg/8 dark:border-white/6">
               <CodeEditor file={selectedFile} />
             </div>
           ) : (
