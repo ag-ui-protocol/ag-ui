@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 
-export const structuredClone_ = (obj: any) => {
+export const structuredClone_ = <T>(obj: T): T => {
   if (typeof structuredClone === "function") {
     return structuredClone(obj);
   }
