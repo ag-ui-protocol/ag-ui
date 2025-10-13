@@ -9,11 +9,11 @@ Server-side utilities for building agents and streaming events to clients.
 
 ## Packages
 
-- `io.workm8.agui4j.server` — local agents and event helpers
+- `com.agui.server` — local agents and event helpers
   - `LocalAgent` — implement server-side agents that emit events
   - `EventFactory` — convenience methods to create events
   - `streamer.AgentStreamer` — bridge agents to `EventStream`
-- `io.workm8.agui4j.server.spring` — Spring Boot integration
+- `com.agui.server.spring` — Spring Boot integration
   - `AgUiService` — run agents and stream `SseEmitter`
   - `AgUiParameters` — HTTP payload mapped to `RunAgentParameters`
   - Auto-configuration for easy wiring

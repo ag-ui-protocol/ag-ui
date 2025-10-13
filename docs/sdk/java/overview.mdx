@@ -12,19 +12,19 @@ Add the packages you need as Maven dependencies (or Gradle):
 
 ```xml
 <dependency>
-  <groupId>io.workm8.agui4j</groupId>
+  <groupId>com.ag-ui</groupId>
   <artifactId>core</artifactId>
   <version>0.0.1</version>
 </dependency>
 
 <dependency>
-  <groupId>io.workm8.agui4j</groupId>
+  <groupId>com.ag-ui</groupId>
   <artifactId>client</artifactId>
   <version>0.0.1</version>
 </dependency>
 
 <dependency>
-  <groupId>io.workm8.agui4j</groupId>
+  <groupId>com.ag-ui</groupId>
   <artifactId>http</artifactId>
   <version>0.0.1</version>
 </dependency>
@@ -35,16 +35,16 @@ Add the packages you need as Maven dependencies (or Gradle):
 Create an `HttpAgent`, subscribe to events, and run the agent:
 
 ```java
-import io.workm8.agui4j.http.HttpAgent;
-import io.workm8.agui4j.http.BaseHttpClient; // choose an implementation, e.g., OkHttp
-import io.workm8.agui4j.core.agent.*;
-import io.workm8.agui4j.core.message.*;
-import io.workm8.agui4j.core.state.State;
+import com.agui.http.HttpAgent;
+import com.agui.http.BaseHttpClient; // choose an implementation, e.g., OkHttp
+import com.agui.core.agent.*;
+import com.agui.core.message.*;
+import com.agui.core.state.State;
 
 HttpAgent agent = HttpAgent.builder()
     .agentId("my-agent")
     .threadId("thread-123")
-    .httpClient(myHttpClient) // e.g., new io.workm8.agui4j.okhttp.HttpClient("https://api.example.com/agent")
+    .httpClient(myHttpClient) // e.g., new com.agui.okhttp.HttpClient("https://api.example.com/agent")
     .state(new State())
     .build();
 
@@ -66,13 +66,13 @@ agent.runAgent(params, null).join();
 
 The Java SDK is organized into several focused packages, each handling a specific aspect of the AG-UI protocol:
 
-### Core Package (`io.workm8.agui4j.core`)
+### Core Package (`com.agui.core`)
 Foundational types and events: messages, state, tools, context, event stream, and all event classes.
 
-### Client Package (`io.workm8.agui4j.client`)
+### Client Package (`com.agui.client`)
 Agent base class, message factory, and subscriber interfaces for building and integrating agents.
 
-### HTTP Package (`io.workm8.agui4j.http`)
+### HTTP Package (`com.agui.http`)
 Ready-to-use `HttpAgent` that streams events from a remote server using your chosen HTTP client.
 
 
