@@ -19,9 +19,9 @@ export default function CodeViewer({ codeFiles }: { codeFiles: FeatureFile[] }) 
         <Tabs
           value={selectedFile?.name}
           onValueChange={setCodeFile}
-          className="flex-1 flex flex-col"
+          className="flex-1 flex flex-col dark:bg-cpk-docs-dark-bg"
         >
-          <TabsList className="w-full justify-start h-auto flex-wrap p-1 gap-1 bg-white dark:bg-cpk-docs-dark-bg rounded-none">
+          <TabsList className="w-full justify-start h-auto flex-wrap p-1 gap-1 bg-white dark:bg-white/10 rounded-none">
             {codeFiles.map((file) => (
               <TabsTrigger
                 key={file.name}
@@ -49,8 +49,8 @@ export default function CodeViewer({ codeFiles }: { codeFiles: FeatureFile[] }) 
   }
 
   return (
-    <div className="flex h-full">
-      <div className="w-72 border-r border-gray-200 dark:border-neutral-700 flex flex-col bg-white dark:bg-cpk-docs-dark-bg">
+    <div className="flex h-full dark:bg-cpk-docs-dark-bg">
+      <div className="w-72 border-r border-gray-200 dark:border-neutral-700 flex flex-col bg-white dark:bg-white/10">
         <div className="flex-1 overflow-auto">
           <FileTree files={codeFiles} selectedFile={selectedFile} onFileSelect={setCodeFile} />
         </div>
