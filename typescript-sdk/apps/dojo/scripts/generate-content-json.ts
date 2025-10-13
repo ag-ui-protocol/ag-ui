@@ -310,22 +310,6 @@ const agentFilesMapper: Record<string, (agentKeys: string[]) => Record<string, s
       {},
     );
   },
-  agno: () => ({}),
-  "llama-index": (agentKeys: string[]) => {
-    return agentKeys.reduce(
-      (acc, agentId) => ({
-        ...acc,
-        [agentId]: [
-          path.join(
-            __dirname,
-            integrationsFolderPath,
-            `/llamaindex/server-py/server/routers/${agentId}.py`,
-          ),
-        ],
-      }),
-      {},
-    );
-  },
   crewai: (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({
