@@ -1,10 +1,17 @@
 import { compactEvents } from "../compact";
-import { BaseEvent, EventType } from "@ag-ui/core";
+import {
+  EventType,
+  TextMessageStartEvent,
+  TextMessageContentEvent,
+  ToolCallStartEvent,
+  ToolCallArgsEvent,
+  CustomEvent,
+} from "@ag-ui/core";
 
 describe("Event Compaction", () => {
   describe("Text Message Compaction", () => {
     it("should compact multiple text message content events into one", () => {
-      const events: BaseEvent[] = [
+      const events = [
         { type: EventType.TEXT_MESSAGE_START, messageId: "msg1", role: "user" },
         { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg1", delta: "Hello" },
         { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg1", delta: " " },
@@ -17,12 +24,12 @@ describe("Event Compaction", () => {
       expect(compacted).toHaveLength(3);
       expect(compacted[0].type).toBe(EventType.TEXT_MESSAGE_START);
       expect(compacted[1].type).toBe(EventType.TEXT_MESSAGE_CONTENT);
-      expect((compacted[1] as any).delta).toBe("Hello world");
+      expect((compacted[1] as TextMessageContentEvent).delta).toBe("Hello world");
       expect(compacted[2].type).toBe(EventType.TEXT_MESSAGE_END);
     });
 
     it("should move interleaved events to after text message events", () => {
-      const events: BaseEvent[] = [
+      const events = [
         { type: EventType.TEXT_MESSAGE_START, messageId: "msg1", role: "assistant" },
         { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg1", delta: "Processing" },
         { type: EventType.CUSTOM, id: "custom1", name: "thinking" },
@@ -37,17 +44,17 @@ describe("Event Compaction", () => {
       // Text message events should come first
       expect(compacted[0].type).toBe(EventType.TEXT_MESSAGE_START);
       expect(compacted[1].type).toBe(EventType.TEXT_MESSAGE_CONTENT);
-      expect((compacted[1] as any).delta).toBe("Processing...");
+      expect((compacted[1] as TextMessageContentEvent).delta).toBe("Processing...");
       expect(compacted[2].type).toBe(EventType.TEXT_MESSAGE_END);
       // Other events should come after
       expect(compacted[3].type).toBe(EventType.CUSTOM);
-      expect((compacted[3] as any).id).toBe("custom1");
+      expect((compacted[3] as CustomEvent & { id: string }).id).toBe("custom1");
       expect(compacted[4].type).toBe(EventType.CUSTOM);
-      expect((compacted[4] as any).id).toBe("custom2");
+      expect((compacted[4] as CustomEvent & { id: string }).id).toBe("custom2");
     });
 
     it("should handle multiple messages independently", () => {
-      const events: BaseEvent[] = [
+      const events = [
         { type: EventType.TEXT_MESSAGE_START, messageId: "msg1", role: "user" },
         { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg1", delta: "Hi" },
         { type: EventType.TEXT_MESSAGE_END, messageId: "msg1" },
@@ -62,20 +69,20 @@ describe("Event Compaction", () => {
       expect(compacted).toHaveLength(6);
       // First message
       expect(compacted[0].type).toBe(EventType.TEXT_MESSAGE_START);
-      expect((compacted[0] as any).messageId).toBe("msg1");
+      expect((compacted[0] as TextMessageStartEvent).messageId).toBe("msg1");
       expect(compacted[1].type).toBe(EventType.TEXT_MESSAGE_CONTENT);
-      expect((compacted[1] as any).delta).toBe("Hi");
+      expect((compacted[1] as TextMessageContentEvent).delta).toBe("Hi");
       expect(compacted[2].type).toBe(EventType.TEXT_MESSAGE_END);
       // Second message
       expect(compacted[3].type).toBe(EventType.TEXT_MESSAGE_START);
-      expect((compacted[3] as any).messageId).toBe("msg2");
+      expect((compacted[3] as TextMessageStartEvent).messageId).toBe("msg2");
       expect(compacted[4].type).toBe(EventType.TEXT_MESSAGE_CONTENT);
-      expect((compacted[4] as any).delta).toBe("Hello there");
+      expect((compacted[4] as TextMessageContentEvent).delta).toBe("Hello there");
       expect(compacted[5].type).toBe(EventType.TEXT_MESSAGE_END);
     });
 
     it("should handle incomplete messages", () => {
-      const events: BaseEvent[] = [
+      const events = [
         { type: EventType.TEXT_MESSAGE_START, messageId: "msg1", role: "user" },
         { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg1", delta: "Incomplete" },
         // No END event
@@ -86,11 +93,11 @@ describe("Event Compaction", () => {
       expect(compacted).toHaveLength(2);
       expect(compacted[0].type).toBe(EventType.TEXT_MESSAGE_START);
       expect(compacted[1].type).toBe(EventType.TEXT_MESSAGE_CONTENT);
-      expect((compacted[1] as any).delta).toBe("Incomplete");
+      expect((compacted[1] as TextMessageContentEvent).delta).toBe("Incomplete");
     });
 
     it("should pass through non-text-message events unchanged", () => {
-      const events: BaseEvent[] = [
+      const events = [
         { type: EventType.CUSTOM, id: "custom1", name: "event1" },
         { type: EventType.TOOL_CALL_START, toolCallId: "tool1", toolCallName: "search" },
         { type: EventType.TOOL_CALL_END, toolCallId: "tool1" },
@@ -102,7 +109,7 @@ describe("Event Compaction", () => {
     });
 
     it("should handle empty content deltas", () => {
-      const events: BaseEvent[] = [
+      const events = [
         { type: EventType.TEXT_MESSAGE_START, messageId: "msg1", role: "user" },
         { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg1", delta: "" },
         { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg1", delta: "Hello" },
@@ -113,13 +120,13 @@ describe("Event Compaction", () => {
       const compacted = compactEvents(events);
 
       expect(compacted).toHaveLength(3);
-      expect((compacted[1] as any).delta).toBe("Hello");
+      expect((compacted[1] as TextMessageContentEvent).delta).toBe("Hello");
     });
   });
 
   describe("Tool Call Compaction", () => {
     it("should compact multiple tool call args events into one", () => {
-      const events: BaseEvent[] = [
+      const events = [
         {
           type: EventType.TOOL_CALL_START,
           toolCallId: "tool1",
@@ -138,12 +145,12 @@ describe("Event Compaction", () => {
       expect(compacted).toHaveLength(3);
       expect(compacted[0].type).toBe(EventType.TOOL_CALL_START);
       expect(compacted[1].type).toBe(EventType.TOOL_CALL_ARGS);
-      expect((compacted[1] as any).delta).toBe('{"query": "weather today"}');
+      expect((compacted[1] as ToolCallArgsEvent).delta).toBe('{"query": "weather today"}');
       expect(compacted[2].type).toBe(EventType.TOOL_CALL_END);
     });
 
     it("should move interleaved events to after tool call events", () => {
-      const events: BaseEvent[] = [
+      const events = [
         {
           type: EventType.TOOL_CALL_START,
           toolCallId: "tool1",
@@ -163,17 +170,17 @@ describe("Event Compaction", () => {
       // Tool call events should come first
       expect(compacted[0].type).toBe(EventType.TOOL_CALL_START);
       expect(compacted[1].type).toBe(EventType.TOOL_CALL_ARGS);
-      expect((compacted[1] as any).delta).toBe('{"a": 10, "b": 20}');
+      expect((compacted[1] as ToolCallArgsEvent).delta).toBe('{"a": 10, "b": 20}');
       expect(compacted[2].type).toBe(EventType.TOOL_CALL_END);
       // Other events should come after
       expect(compacted[3].type).toBe(EventType.CUSTOM);
-      expect((compacted[3] as any).id).toBe("custom1");
+      expect((compacted[3] as CustomEvent & { id: string }).id).toBe("custom1");
       expect(compacted[4].type).toBe(EventType.CUSTOM);
-      expect((compacted[4] as any).id).toBe("custom2");
+      expect((compacted[4] as CustomEvent & { id: string }).id).toBe("custom2");
     });
 
     it("should handle multiple tool calls independently", () => {
-      const events: BaseEvent[] = [
+      const events = [
         {
           type: EventType.TOOL_CALL_START,
           toolCallId: "tool1",
@@ -198,20 +205,20 @@ describe("Event Compaction", () => {
       expect(compacted).toHaveLength(6);
       // First tool call
       expect(compacted[0].type).toBe(EventType.TOOL_CALL_START);
-      expect((compacted[0] as any).toolCallId).toBe("tool1");
+      expect((compacted[0] as ToolCallStartEvent).toolCallId).toBe("tool1");
       expect(compacted[1].type).toBe(EventType.TOOL_CALL_ARGS);
-      expect((compacted[1] as any).delta).toBe('{"query": "test"}');
+      expect((compacted[1] as ToolCallArgsEvent).delta).toBe('{"query": "test"}');
       expect(compacted[2].type).toBe(EventType.TOOL_CALL_END);
       // Second tool call
       expect(compacted[3].type).toBe(EventType.TOOL_CALL_START);
-      expect((compacted[3] as any).toolCallId).toBe("tool2");
+      expect((compacted[3] as ToolCallStartEvent).toolCallId).toBe("tool2");
       expect(compacted[4].type).toBe(EventType.TOOL_CALL_ARGS);
-      expect((compacted[4] as any).delta).toBe('{"a": 5}');
+      expect((compacted[4] as ToolCallArgsEvent).delta).toBe('{"a": 5}');
       expect(compacted[5].type).toBe(EventType.TOOL_CALL_END);
     });
 
     it("should handle incomplete tool calls", () => {
-      const events: BaseEvent[] = [
+      const events = [
         {
           type: EventType.TOOL_CALL_START,
           toolCallId: "tool1",
@@ -227,11 +234,11 @@ describe("Event Compaction", () => {
       expect(compacted).toHaveLength(2);
       expect(compacted[0].type).toBe(EventType.TOOL_CALL_START);
       expect(compacted[1].type).toBe(EventType.TOOL_CALL_ARGS);
-      expect((compacted[1] as any).delta).toBe('{"incomplete": ');
+      expect((compacted[1] as ToolCallArgsEvent).delta).toBe('{"incomplete": ');
     });
 
     it("should handle empty args deltas", () => {
-      const events: BaseEvent[] = [
+      const events = [
         {
           type: EventType.TOOL_CALL_START,
           toolCallId: "tool1",
@@ -247,13 +254,13 @@ describe("Event Compaction", () => {
       const compacted = compactEvents(events);
 
       expect(compacted).toHaveLength(3);
-      expect((compacted[1] as any).delta).toBe('{"test": true}');
+      expect((compacted[1] as ToolCallArgsEvent).delta).toBe('{"test": true}');
     });
   });
 
   describe("Mixed Compaction", () => {
     it("should handle text messages and tool calls together", () => {
-      const events: BaseEvent[] = [
+      const events = [
         { type: EventType.TEXT_MESSAGE_START, messageId: "msg1", role: "assistant" },
         { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg1", delta: "Let me " },
         { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "msg1", delta: "search for that" },
@@ -275,12 +282,12 @@ describe("Event Compaction", () => {
       // Text message
       expect(compacted[0].type).toBe(EventType.TEXT_MESSAGE_START);
       expect(compacted[1].type).toBe(EventType.TEXT_MESSAGE_CONTENT);
-      expect((compacted[1] as any).delta).toBe("Let me search for that");
+      expect((compacted[1] as TextMessageContentEvent).delta).toBe("Let me search for that");
       expect(compacted[2].type).toBe(EventType.TEXT_MESSAGE_END);
       // Tool call
       expect(compacted[3].type).toBe(EventType.TOOL_CALL_START);
       expect(compacted[4].type).toBe(EventType.TOOL_CALL_ARGS);
-      expect((compacted[4] as any).delta).toBe('{"q": "test"}');
+      expect((compacted[4] as ToolCallArgsEvent).delta).toBe('{"q": "test"}');
       expect(compacted[5].type).toBe(EventType.TOOL_CALL_END);
     });
   });
