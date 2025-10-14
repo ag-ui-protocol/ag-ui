@@ -12,7 +12,13 @@ import { convertToLegacyEvents } from "@/legacy/convert";
 import { LegacyRuntimeProtocolEvent } from "@/legacy/types";
 import { lastValueFrom } from "rxjs";
 import { transformChunks } from "@/chunks";
-import { AgentStateMutation, AgentSubscriber, runSubscribersWithMutation } from "./subscriber";
+import {
+  AgentStateMutation,
+  AgentSubscriber,
+  runSubscribersWithMutation,
+  AgentSubscriberParams,
+  MaybePromise,
+} from "./subscriber";
 
 export interface RunAgentResult {
   result: any;
