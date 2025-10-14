@@ -169,7 +169,7 @@ fun MessageBubble(
                             RichText(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .semantics { text = listOf(AnnotatedString(message.content)) }
+                                    .semantics { text = AnnotatedString(message.content) }
                             ) {
                                 Markdown(message.content)
                             }
