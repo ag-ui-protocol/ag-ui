@@ -63,8 +63,8 @@ AG-UI is complementary to the other 2 top agentic protocols
 
 <div align="center">
   <img width="2048" height="1182" alt="The Agent Protocol Stack" src="https://github.com/user-attachments/assets/41138f71-50be-4812-98aa-20e0ad595716" />
-</div>  
-   
+</div>
+
 ## 🚀 Features
 
 - 💬 Real-time agentic chat with streaming
@@ -138,9 +138,9 @@ https://agui-demo.vercel.app/
 
 
 ## The AG-UI Dojo (Building-Blocks Viewer)
-The AG-UI Dojo demonstrates AG-UI's core building blocks through simple, focused examples—each just 50-200 lines of code. 
+The AG-UI Dojo demonstrates AG-UI's core building blocks through simple, focused examples—each just 50-200 lines of code.
 
-View the source code for the Dojo and all framework integrations [here](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo).
+View the source code for the Dojo and all framework integrations [here](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo).
 
 https://github.com/user-attachments/assets/c298eea8-3f39-4a94-b968-7712429b0c49
 
@@ -150,7 +150,7 @@ https://github.com/user-attachments/assets/c298eea8-3f39-4a94-b968-7712429b0c49
 
 Check out the [Contributing guide](https://github.com/ag-ui-protocol/ag-ui/blob/main/CONTRIBUTING.md)
 
-- **[Bi-Weekely AG-UI Working Group](https://lu.ma/CopilotKit?k=c)**  
+- **[Bi-Weekely AG-UI Working Group](https://lu.ma/CopilotKit?k=c)**
   📅 Follow the CopilotKit Luma Events Calendar
 
 ## Roadmap
@@ -160,4 +160,4 @@ Check out the [AG-UI Roadmap](https://github.com/orgs/ag-ui-protocol/projects/1)
 
 ## 📄 License
 
-AG-UI is open source software [licensed as MIT](https://opensource.org/licenses/MIT).  
+AG-UI is open source software [licensed as MIT](https://opensource.org/licenses/MIT).
