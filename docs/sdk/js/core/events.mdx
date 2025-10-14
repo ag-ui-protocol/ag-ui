@@ -68,13 +68,17 @@ type RunStartedEvent = BaseEvent & {
   type: EventType.RUN_STARTED
   threadId: string
   runId: string
+  parentRunId?: string
+  input?: RunAgentInput
 }
 ```
 
-| Property   | Type     | Description                   |
-| ---------- | -------- | ----------------------------- |
-| `threadId` | `string` | ID of the conversation thread |
-| `runId`    | `string` | ID of the agent run           |
+| Property       | Type                          | Description                                                                                                                              |
+| -------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `threadId`     | `string`                      | ID of the conversation thread                                                                                                            |
+| `runId`        | `string`                      | ID of the agent run                                                                                                                      |
+| `parentRunId`  | `string` (optional)           | (Optional) Lineage pointer for branching/time travel. If present, refers to a prior run within the same thread                          |
+| `input`        | `RunAgentInput` (optional)    | (Optional) The exact agent input payload sent to the agent for this run. May omit messages already in history                            |
 
 ### RunFinishedEvent
 

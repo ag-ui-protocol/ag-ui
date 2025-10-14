@@ -83,10 +83,12 @@ elements such as progress indicators or loading states. It also provides crucial
 identifiers that can be used to associate subsequent events with this specific
 run.
 
-| Property   | Description                   |
-| ---------- | ----------------------------- |
-| `threadId` | ID of the conversation thread |
-| `runId`    | ID of the agent run           |
+| Property       | Description                                                                                                                                                      |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `threadId`     | ID of the conversation thread                                                                                                                                    |
+| `runId`        | ID of the agent run                                                                                                                                              |
+| `parentRunId`  | (Optional) Lineage pointer for branching/time travel. If present, refers to a prior run within the same thread, creating a git-like append-only log             |
+| `input`        | (Optional) The exact agent input payload that was sent to the agent for this run. May omit messages already present in history; compactEvents() will normalize   |
 
 ### RunFinished
 
