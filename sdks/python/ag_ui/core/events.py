@@ -7,7 +7,7 @@ from typing import Annotated, Any, List, Literal, Optional, Union
 
 from pydantic import Field
 
-from .types import ConfiguredBaseModel, Message, State, Role
+from .types import ConfiguredBaseModel, Message, State, Role, RunAgentInput
 
 # Text messages can have any role except "tool"
 TextMessageRole = Literal["developer", "system", "assistant", "user"]
@@ -213,6 +213,8 @@ class RunStartedEvent(BaseEvent):
     type: Literal[EventType.RUN_STARTED] = EventType.RUN_STARTED  # pyright: ignore[reportIncompatibleVariableOverride]
     thread_id: str
     run_id: str
+    parent_run_id: Optional[str] = None
+    input: Optional[RunAgentInput] = None
 
 
 class RunFinishedEvent(BaseEvent):

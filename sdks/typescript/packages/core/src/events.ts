@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MessageSchema, StateSchema } from "./types";
+import { MessageSchema, StateSchema, RunAgentInputSchema } from "./types";
 
 // Text messages can have any role except "tool"
 const TextMessageRoleSchema = z.union([
@@ -155,6 +155,8 @@ export const RunStartedEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.RUN_STARTED),
   threadId: z.string(),
   runId: z.string(),
+  parentRunId: z.string().optional(),
+  input: RunAgentInputSchema.optional(),
 });
 
 export const RunFinishedEventSchema = BaseEventSchema.extend({
