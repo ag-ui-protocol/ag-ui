@@ -15,7 +15,7 @@ import { AbstractAgent, EventType } from "@ag-ui/client";
 import type { StorageThreadType } from "@mastra/core";
 import { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RuntimeContext } from "@mastra/core/runtime-context";
-import { randomUUID } from "crypto";
+import { randomUUID } from "@ag-ui/client";
 import { Observable } from "rxjs";
 import { MastraClient } from "@mastra/client-js";
 type RemoteMastraAgent = ReturnType<MastraClient["getAgent"]>;

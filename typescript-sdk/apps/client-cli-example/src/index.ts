@@ -1,6 +1,6 @@
 import * as readline from "readline";
 import { agent } from "./agent";
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "@ag-ui/client";
 
 const rl = readline.createInterface({
   input: process.stdin,

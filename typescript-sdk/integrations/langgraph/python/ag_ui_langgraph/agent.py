@@ -706,7 +706,7 @@ class LangGraphAgent:
                 ToolCallResultEvent(
                     type=EventType.TOOL_CALL_RESULT,
                     tool_call_id=tool_call_output.tool_call_id,
-                    message_id=uuid.uuid4(),
+                    message_id=str(uuid.uuid4()),
                     content=tool_call_output.content,
                     role="tool"
                 )

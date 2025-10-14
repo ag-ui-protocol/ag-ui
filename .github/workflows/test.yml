@@ -91,6 +91,37 @@ jobs:
       working-directory: typescript-sdk
       run: pnpm run test
 
+  go:
+    name: Go SDK Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.4'
+
+    - name: Setup Go module cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Download dependencies
+      working-directory: sdks/community/go
+      run: go mod download
+
+    - name: Run tests
+      working-directory: sdks/community/go
+      run: go test ./... -v
+
   kotlin:
     name: Kotlin SDK Tests
     runs-on: ubuntu-latest
@@ -159,3 +190,25 @@ jobs:
         else
           echo "✅ All $total_tests tests passed!"
         fi
+
+  java:
+    name: Java SDK Tests
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: sdks/community/java
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+        cache: 'maven'
+
+    - name: Run tests
+      run: mvn -B -ntp test

@@ -19,7 +19,7 @@ import { A2AClient } from "@a2a-js/sdk/client";
 import { AgentCard, SendMessageResponse, SendMessageSuccessResponse } from "@a2a-js/sdk";
 import { Observable, Subscriber, tap } from "rxjs";
 import { createSystemPrompt, sendMessageToA2AAgentTool } from "./utils";
-import { randomUUID } from "crypto";
+import { randomUUID } from "@ag-ui/client";
 
 export interface A2AAgentConfig extends AgentConfig {
   agentUrls: string[];
