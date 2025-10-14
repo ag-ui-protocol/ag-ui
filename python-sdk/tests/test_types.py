@@ -209,6 +209,7 @@ class TestBaseTypes(unittest.TestCase):
         run_agent_input_data = {
             "threadId": "thread_12345",
             "runId": "run_67890",
+            "parentRunId": "run_parent_123",
             "state": {"conversation_state": "active", "custom_data": {"key": "value"}},
             "messages": [
                 # System message
@@ -307,6 +308,7 @@ class TestBaseTypes(unittest.TestCase):
         # Verify basic fields
         self.assertEqual(run_agent_input.thread_id, "thread_12345")
         self.assertEqual(run_agent_input.run_id, "run_67890")
+        self.assertEqual(run_agent_input.parent_run_id, "run_parent_123")
         self.assertEqual(run_agent_input.state["conversation_state"], "active")
 
         # Verify messages count and types

@@ -22,6 +22,7 @@ Input parameters for running an agent. In the HTTP API, this is the body of the
 class RunAgentInput(ConfiguredBaseModel):
     thread_id: str
     run_id: str
+    parent_run_id: Optional[str] = None
     state: Any
     messages: List[Message]
     tools: List[Tool]
@@ -33,6 +34,7 @@ class RunAgentInput(ConfiguredBaseModel):
 | ----------------- | --------------- | --------------------------------------------- |
 | `thread_id`       | `str`           | ID of the conversation thread                 |
 | `run_id`          | `str`           | ID of the current run                         |
+| `parent_run_id`   | `Optional[str]` | (Optional) ID of the run that spawned this run|
 | `state`           | `Any`           | Current state of the agent                    |
 | `messages`        | `List[Message]` | List of messages in the conversation          |
 | `tools`           | `List[Tool]`    | List of tools available to the agent          |

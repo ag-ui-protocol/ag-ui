@@ -120,6 +120,7 @@ class RunAgentInput(ConfiguredBaseModel):
     """
     thread_id: str
     run_id: str
+    parent_run_id: Optional[str] = None
     state: Any
     messages: List[Message]
     tools: List[Tool]
