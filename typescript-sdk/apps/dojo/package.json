@@ -20,6 +20,7 @@
     "@ag-ui/llamaindex": "workspace:*",
     "@ag-ui/mastra": "workspace:*",
     "@ag-ui/middleware-starter": "workspace:*",
+    "@ag-ui/spring-ai": "workspace:*",
     "@ag-ui/pydantic-ai": "workspace:*",
     "@ag-ui/server-starter": "workspace:*",
     "@ag-ui/server-starter-all-features": "workspace:*",

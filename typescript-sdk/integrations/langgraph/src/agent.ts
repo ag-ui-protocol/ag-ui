@@ -11,7 +11,7 @@ import {
   Interrupt,
   Thread,
 } from "@langchain/langgraph-sdk";
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "@ag-ui/client";
 import {
   LangGraphPlatformMessage,
   CustomEventNames,
@@ -960,7 +960,7 @@ export class LangGraphAgent extends AbstractAgent {
     if (!retrievedAssistant) {
       console.error(`
       No agent found with graph ID ${this.graphId} found..\n
-      
+
       These are the available agents: [${assistants.map((a) => `${a.graph_id} (ID: ${a.assistant_id})`).join(", ")}]
       `);
       throw new Error("No agent id found");

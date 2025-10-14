@@ -6,6 +6,7 @@ type envVars = {
   langgraphFastApiUrl: string;
   langgraphTypescriptUrl: string;
   agnoUrl: string;
+  springAiUrl: string;
   llamaIndexUrl: string;
   crewAiUrl: string;
   pydanticAIUrl: string;
@@ -38,6 +39,7 @@ export default function getEnvVars(): envVars {
     crewAiUrl: process.env.CREW_AI_URL || 'http://localhost:9002',
     pydanticAIUrl: process.env.PYDANTIC_AI_URL || 'http://localhost:9000',
     adkMiddlewareUrl: process.env.ADK_MIDDLEWARE_URL || 'http://localhost:8000',
+    springAiUrl: process.env.SPRING_AI_URL || 'http://localhost:8080',
     a2aMiddlewareBuildingsManagementUrl: process.env.A2A_MIDDLEWARE_BUILDINGS_MANAGEMENT_URL || 'http://localhost:9001',
     a2aMiddlewareFinanceUrl: process.env.A2A_MIDDLEWARE_FINANCE_URL || 'http://localhost:9002',
     a2aMiddlewareItUrl: process.env.A2A_MIDDLEWARE_IT_URL || 'http://localhost:9003',
