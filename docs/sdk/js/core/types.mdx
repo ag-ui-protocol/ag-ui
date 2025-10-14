@@ -20,6 +20,7 @@ Input parameters for running an agent. In the HTTP API, this is the body of the
 type RunAgentInput = {
   threadId: string
   runId: string
+  parentRunId?: string
   state: any
   messages: Message[]
   tools: Tool[]
@@ -32,6 +33,7 @@ type RunAgentInput = {
 | ---------------- | ----------- | ---------------------------------------------- |
 | `threadId`       | `string`    | ID of the conversation thread                  |
 | `runId`          | `string`    | ID of the current run                          |
+| `parentRunId`    | `string (optional)` | ID of the run that spawned this run          |
 | `state`          | `any`       | Current state of the agent                     |
 | `messages`       | `Message[]` | Array of messages in the conversation          |
 | `tools`          | `Tool[]`    | Array of tools available to the agent          |

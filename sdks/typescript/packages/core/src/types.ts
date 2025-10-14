@@ -77,6 +77,7 @@ export const ToolSchema = z.object({
 export const RunAgentInputSchema = z.object({
   threadId: z.string(),
   runId: z.string(),
+  parentRunId: z.string().optional(),
   state: z.any(),
   messages: z.array(MessageSchema),
   tools: z.array(ToolSchema),

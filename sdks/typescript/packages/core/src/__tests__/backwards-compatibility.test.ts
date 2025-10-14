@@ -57,6 +57,7 @@ describe("Backwards Compatibility", () => {
       const inputWithExtraFields = {
         threadId: "thread_1",
         runId: "run_1",
+        parentRunId: "parent_run_1",
         state: {},
         messages: [],
         tools: [],
@@ -74,6 +75,7 @@ describe("Backwards Compatibility", () => {
       if (result.success) {
         expect(result.data.threadId).toBe("thread_1");
         expect(result.data.runId).toBe("run_1");
+        expect(result.data.parentRunId).toBe("parent_run_1");
       }
     });
 
