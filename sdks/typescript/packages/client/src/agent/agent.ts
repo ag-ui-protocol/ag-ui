@@ -96,12 +96,11 @@ export abstract class AbstractAgent {
         }),
       );
 
-      return lastValueFrom(pipeline(of(null))).then(() => {
-        const newMessages = structuredClone_(this.messages).filter(
-          (message: Message) => !currentMessageIds.has(message.id),
-        );
-        return { result, newMessages };
-      });
+      await lastValueFrom(pipeline(of(null)));
+      const newMessages = structuredClone_(this.messages).filter(
+        (message: Message) => !currentMessageIds.has(message.id),
+      );
+      return { result, newMessages };
     } finally {
       this.isRunning = false;
     }
@@ -152,12 +151,11 @@ export abstract class AbstractAgent {
         }),
       );
 
-      return lastValueFrom(pipeline(of(null))).then(() => {
-        const newMessages = structuredClone_(this.messages).filter(
-          (message: Message) => !currentMessageIds.has(message.id),
-        );
-        return { result, newMessages };
-      });
+      await lastValueFrom(pipeline(of(null))); // wait for stream completion before toggling isRunning
+      const newMessages = structuredClone_(this.messages).filter(
+        (message: Message) => !currentMessageIds.has(message.id),
+      );
+      return { result, newMessages };
     } finally {
       this.isRunning = false;
     }
