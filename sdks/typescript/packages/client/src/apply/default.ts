@@ -567,6 +567,25 @@ export const defaultApplyEvents = (
           );
           applyMutation(mutation);
 
+          // Handle input.messages if present and stopPropagation is not set
+          if (mutation.stopPropagation !== true) {
+            const runStartedEvent = event as RunStartedEvent;
+
+            // Check if the event contains input with messages
+            if (runStartedEvent.input?.messages) {
+              // Add messages that aren't already present (checked by ID)
+              for (const message of runStartedEvent.input.messages) {
+                const existingMessage = messages.find((m) => m.id === message.id);
+                if (!existingMessage) {
+                  messages.push(message);
+                }
+              }
+
+              // Apply mutation to emit the updated messages
+              applyMutation({ messages });
+            }
+          }
+
           return emitUpdates();
         }
 
