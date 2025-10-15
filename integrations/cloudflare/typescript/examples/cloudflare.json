@@ -1,0 +1,28 @@
+{
+  "dependencies": ["."],
+  "agents": {
+    "agentic_chat": {
+      "path": "./src/agents/agentic_chat/agent.ts",
+      "export": "getAgenticChatAgent",
+      "description": "Basic chat with Llama 3.1 8B",
+      "model": "@cf/meta/llama-3.1-8b-instruct"
+    },
+    "tool_based_generative_ui": {
+      "path": "./src/agents/tool_based_generative_ui/agent.ts",
+      "export": "getToolBasedGenerativeUiAgent",
+      "description": "Tool-based UI with Llama 3.3 70B (haiku generation)",
+      "model": "@cf/meta/llama-3.3-70b-instruct"
+    },
+    "agentic_generative_ui": {
+      "path": "./src/agents/agentic_generative_ui/agent.ts",
+      "export": "getAgenticGenerativeUiAgent",
+      "description": "Progressive state updates with task steps",
+      "model": "@cf/meta/llama-3.1-8b-instruct"
+    }
+  },
+  "env": ".env",
+  "server": {
+    "port": 4114,
+    "host": "0.0.0.0"
+  }
+}
