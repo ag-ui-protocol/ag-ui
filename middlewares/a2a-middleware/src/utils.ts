@@ -58,7 +58,7 @@ THEN REACH OUT TO THE APPROPRIATE AGENTS TO COMPLETE THE TASK.
 
 **Agent Roster:**
 * Available Agents:
-${JSON.stringify(agentCards.map((agent) => ({ name: agent.name, description: agent.description })))}
+${JSON.stringify(agentCards.map((agent) => ({ name: agent.name, description: agent.description, skills: agent.skills })))}
 **END General Instructions:**
 `.trim();
 
