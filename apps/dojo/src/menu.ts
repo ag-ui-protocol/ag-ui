@@ -60,15 +60,15 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
     ],
   },
   {
-    id: "spring-ai",
-    name: "Spring AI",
+    id: 'spring-ai',
+    name: 'Spring AI',
     features: [
-      "agentic_chat",
-      "shared_state",
-      "tool_based_generative_ui",
-      "human_in_the_loop",
-      "agentic_generative_ui",
-    ],
+      'agentic_chat', 
+      'shared_state', 
+      'tool_based_generative_ui', 
+      'human_in_the_loop', 
+      'agentic_generative_ui'
+    ]
   },
   {
     id: "pydantic-ai",

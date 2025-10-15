@@ -16,7 +16,7 @@ import getEnvVars from "./env";
 import { mastra } from "./mastra";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 import { ADKAgent } from "@ag-ui/adk";
-import { SpringAiAgent } from "@ag-ui/spring-ai";
+import { SpringAiAgent } from '@ag-ui/spring-ai';
 import { HttpAgent } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
 import { CloudflareHttpAgent } from "@ag-ui/cloudflare";
@@ -274,26 +274,26 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     },
   },
   {
-    id: "spring-ai",
+    id: 'spring-ai',
     agents: async () => {
       return {
         agentic_chat: new SpringAiAgent({
-          url: `${envVars.springAiUrl}/agentic_chat/agui`,
+          url: `${envVars.springAiUrl}/agentic_chat/agui`
         }),
         shared_state: new SpringAiAgent({
-          url: `${envVars.springAiUrl}/shared_state/agui`,
+          url: `${envVars.springAiUrl}/shared_state/agui`
         }),
         tool_based_generative_ui: new SpringAiAgent({
-          url: `${envVars.springAiUrl}/tool_based_generative_ui/agui`,
+          url: `${envVars.springAiUrl}/tool_based_generative_ui/agui`
         }),
         human_in_the_loop: new SpringAiAgent({
-          url: `${envVars.springAiUrl}/human_in_the_loop/agui`,
+          url: `${envVars.springAiUrl}/human_in_the_loop/agui`
         }),
         agentic_generative_ui: new SpringAiAgent({
-          url: `${envVars.springAiUrl}/agentic_generative_ui/agui`,
-        }),
-      };
-    },
+          url: `${envVars.springAiUrl}/agentic_generative_ui/agui`
+        })
+      }
+    }
   },
   {
     id: "llama-index",
@@ -343,16 +343,6 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     },
   },
   {
-    id: "cloudflare",
-    agents: async () => {
-      return {
-        agentic_chat: new CloudflareHttpAgent({
-          url: `${envVars.cloudflareUrl}/agentic_chat`,
-        }),
-      };
-    },
-  },
-  {
     id: "a2a",
     agents: async () => {
       // A2A agents: building management, finance, it agents
@@ -382,6 +372,16 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
           When choosing a seat with the buildings management agent, You MUST use the \`pickTable\` tool to have the user pick a seat.
           The buildings management agent will then use the \`pickSeat\` tool to pick a seat.
           `,
+        }),
+      };
+    },
+  },
+  {
+    id: "cloudflare",
+    agents: async () => {
+      return {
+        agentic_chat: new CloudflareHttpAgent({
+          url: `${envVars.cloudflareUrl}/agentic_chat`,
         }),
       };
     },
