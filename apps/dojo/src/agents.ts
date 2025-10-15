@@ -16,9 +16,10 @@ import getEnvVars from "./env";
 import { mastra } from "./mastra";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 import { ADKAgent } from "@ag-ui/adk";
-import { SpringAiAgent } from '@ag-ui/spring-ai';
+import { SpringAiAgent } from "@ag-ui/spring-ai";
 import { HttpAgent } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
+import { CloudflareHttpAgent } from "@ag-ui/cloudflare";
 
 const envVars = getEnvVars();
 export const agentsIntegrations: AgentIntegrationConfig[] = [
@@ -273,26 +274,26 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     },
   },
   {
-    id: 'spring-ai',
+    id: "spring-ai",
     agents: async () => {
       return {
         agentic_chat: new SpringAiAgent({
-          url: `${envVars.springAiUrl}/agentic_chat/agui`
+          url: `${envVars.springAiUrl}/agentic_chat/agui`,
         }),
         shared_state: new SpringAiAgent({
-          url: `${envVars.springAiUrl}/shared_state/agui`
+          url: `${envVars.springAiUrl}/shared_state/agui`,
         }),
         tool_based_generative_ui: new SpringAiAgent({
-          url: `${envVars.springAiUrl}/tool_based_generative_ui/agui`
+          url: `${envVars.springAiUrl}/tool_based_generative_ui/agui`,
         }),
         human_in_the_loop: new SpringAiAgent({
-          url: `${envVars.springAiUrl}/human_in_the_loop/agui`
+          url: `${envVars.springAiUrl}/human_in_the_loop/agui`,
         }),
         agentic_generative_ui: new SpringAiAgent({
-          url: `${envVars.springAiUrl}/agentic_generative_ui/agui`
-        })
-      }
-    }
+          url: `${envVars.springAiUrl}/agentic_generative_ui/agui`,
+        }),
+      };
+    },
   },
   {
     id: "llama-index",
@@ -337,6 +338,16 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         }),
         predictive_state_updates: new CrewAIAgent({
           url: `${envVars.crewAiUrl}/predictive_state_updates`,
+        }),
+      };
+    },
+  },
+  {
+    id: "cloudflare",
+    agents: async () => {
+      return {
+        agentic_chat: new CloudflareHttpAgent({
+          url: `${envVars.cloudflareUrl}/agentic_chat`,
         }),
       };
     },

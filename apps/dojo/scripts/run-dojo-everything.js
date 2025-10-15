@@ -43,39 +43,38 @@ Examples:
 }
 
 const gitRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim();
-const integrationsRoot = path.join(gitRoot, 'integrations');
-const middlewaresRoot = path.join(gitRoot, 'middlewares');
+const integrationsRoot = path.join(gitRoot, 'typescript-sdk', 'integrations');
 
 // Define all runnable services keyed by a stable id
 const ALL_SERVICES = {
   'server-starter': [{
     command: 'poetry run dev',
     name: 'Server Starter',
-    cwd: path.join(integrationsRoot, 'server-starter/python/examples'),
+    cwd: path.join(integrationsRoot, 'server-starter/server/python'),
     env: { PORT: 8000 },
   }],
   'server-starter-all': [{
     command: 'poetry run dev',
     name: 'Server AF',
-    cwd: path.join(integrationsRoot, 'server-starter-all-features/python/examples'),
+    cwd: path.join(integrationsRoot, 'server-starter-all-features/server/python'),
     env: { PORT: 8001 },
   }],
   'agno': [{
     command: 'uv run dev',
     name: 'Agno',
-    cwd: path.join(integrationsRoot, 'agno/python/examples'),
+    cwd: path.join(integrationsRoot, 'agno/examples'),
     env: { PORT: 8002 },
   }],
   'crew-ai': [{
     command: 'poetry run dev',
     name: 'CrewAI',
-    cwd: path.join(integrationsRoot, 'crew-ai/python'),
+    cwd: path.join(integrationsRoot, 'crewai/python'),
     env: { PORT: 8003 },
   }],
   'langgraph-fastapi': [{
     command: 'poetry run dev',
     name: 'LG FastAPI',
-    cwd: path.join(integrationsRoot, 'langgraph/python/examples'),
+    cwd: path.join(integrationsRoot, 'langgraph/examples/python'),
     env: {
       PORT: 8004,
       POETRY_VIRTUALENVS_IN_PROJECT: 'false',
@@ -84,31 +83,31 @@ const ALL_SERVICES = {
   'langgraph-platform-python': [{
     command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8005',
     name: 'LG Platform Py',
-    cwd: path.join(integrationsRoot, 'langgraph/python/examples'),
+    cwd: path.join(integrationsRoot, 'langgraph/examples/python'),
     env: { PORT: 8005 },
   }],
   'langgraph-platform-typescript': [{
     command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8006',
     name: 'LG Platform TS',
-    cwd: path.join(integrationsRoot, 'langgraph/typescript/examples'),
+    cwd: path.join(integrationsRoot, 'langgraph/examples/typescript/'),
     env: { PORT: 8006 },
   }],
   'llama-index': [{
     command: 'uv run dev',
     name: 'Llama Index',
-    cwd: path.join(integrationsRoot, 'llama-index/python/examples'),
+    cwd: path.join(integrationsRoot, 'llamaindex/server-py'),
     env: { PORT: 8007 },
   }],
   'mastra': [{
     command: 'npm run dev',
     name: 'Mastra',
-    cwd: path.join(integrationsRoot, 'mastra/typescript/examples'),
+    cwd: path.join(integrationsRoot, 'mastra/example'),
     env: { PORT: 8008 },
   }],
   'pydantic-ai': [{
     command: 'uv run dev',
     name: 'Pydantic AI',
-    cwd: path.join(integrationsRoot, 'pydantic-ai/python/examples'),
+    cwd: path.join(integrationsRoot, 'pydantic-ai/examples'),
     env: { PORT: 8009 },
   }],
   'adk-middleware': [{
@@ -120,31 +119,37 @@ const ALL_SERVICES = {
   'a2a-middleware': [{
     command: 'uv run buildings_management.py',
     name: 'A2A Middleware: Buildings Management',
-    cwd: path.join(middlewaresRoot, "a2a-middleware/examples"),
+    cwd: path.join(integrationsRoot, 'a2a-middleware/examples'),
     env: { PORT: 8011 },
   },
   {
     command: 'uv run finance.py',
     name: 'A2A Middleware: Finance',
-    cwd: path.join(middlewaresRoot, "a2a-middleware/examples"),
+    cwd: path.join(integrationsRoot, 'a2a-middleware/examples'),
     env: { PORT: 8012 },
   },
   {
     command: 'uv run it.py',
     name: 'A2A Middleware: IT',
-    cwd: path.join(middlewaresRoot, "a2a-middleware/examples"),
+    cwd: path.join(integrationsRoot, 'a2a-middleware/examples'),
     env: { PORT: 8013 },
   },
   {
     command: 'uv run orchestrator.py',
     name: 'A2A Middleware: Orchestrator',
-    cwd: path.join(middlewaresRoot, "a2a-middleware/examples"),
+    cwd: path.join(integrationsRoot, 'a2a-middleware/examples'),
     env: { PORT: 8014 },
+  }],
+  'cloudflare': [{
+    command: 'pnpm start',
+    name: 'Cloudflare',
+    cwd: path.join(integrationsRoot, 'cloudflare/examples/server'),
+    env: { PORT: 4114, HOST: '0.0.0.0' },
   }],
   'dojo': [{
     command: 'pnpm run start',
     name: 'Dojo',
-    cwd: path.join(gitRoot, 'apps/dojo'),
+    cwd: path.join(gitRoot, 'typescript-sdk/apps/dojo'),
     env: {
       PORT: 9999,
       SERVER_STARTER_URL: 'http://localhost:8000',
@@ -162,6 +167,7 @@ const ALL_SERVICES = {
       A2A_MIDDLEWARE_FINANCE_URL: 'http://localhost:8012',
       A2A_MIDDLEWARE_IT_URL: 'http://localhost:8013',
       A2A_MIDDLEWARE_ORCHESTRATOR_URL: 'http://localhost:8014',
+      CLOUDFLARE_URL: 'http://localhost:4114',
       NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: 'cpkdojo.local___CopilotKit Feature Viewer',
     },
   }],

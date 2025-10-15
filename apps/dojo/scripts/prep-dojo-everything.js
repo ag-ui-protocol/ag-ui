@@ -44,35 +44,34 @@ Examples:
 }
 
 const gitRoot = execSync("git rev-parse --show-toplevel", { encoding: "utf-8" }).trim();
-const integrationsRoot = path.join(gitRoot, "integrations");
-const middlewaresRoot = path.join(gitRoot, "middlewares");
+const integrationsRoot = path.join(gitRoot, "typescript-sdk", "integrations");
 
 // Define all prep targets keyed by a stable id
 const ALL_TARGETS = {
   "server-starter": {
     command: "poetry install",
     name: "Server Starter",
-    cwd: path.join(integrationsRoot, "server-starter/python/examples"),
+    cwd: path.join(integrationsRoot, "server-starter/server/python"),
   },
   "server-starter-all": {
     command: "poetry install",
     name: "Server AF",
-    cwd: path.join(integrationsRoot, "server-starter-all-features/python/examples"),
+    cwd: path.join(integrationsRoot, "server-starter-all-features/server/python"),
   },
   agno: {
     command: "uv sync",
     name: "Agno",
-    cwd: path.join(integrationsRoot, "agno/python/examples"),
+    cwd: path.join(integrationsRoot, "agno/examples"),
   },
   "crew-ai": {
     command: "poetry install",
     name: "CrewAI",
-    cwd: path.join(integrationsRoot, "crew-ai/python"),
+    cwd: path.join(integrationsRoot, "crewai/python"),
   },
   "langgraph-fastapi": {
     command: "poetry install",
     name: "LG FastAPI",
-    cwd: path.join(integrationsRoot, "langgraph/python/examples"),
+    cwd: path.join(integrationsRoot, "langgraph/examples/python"),
     env: {
       POETRY_VIRTUALENVS_IN_PROJECT: "false",
     },
@@ -80,22 +79,22 @@ const ALL_TARGETS = {
   "langgraph-platform-typescript": {
     command: "pnpm install",
     name: "LG Platform TS",
-    cwd: path.join(integrationsRoot, "langgraph/typescript/examples"),
+    cwd: path.join(integrationsRoot, "langgraph/examples/typescript/"),
   },
   "llama-index": {
     command: "uv sync",
     name: "Llama Index",
-    cwd: path.join(integrationsRoot, "llama-index/python/examples"),
+    cwd: path.join(integrationsRoot, "llamaindex/server-py"),
   },
   mastra: {
     command: "pnpm install --no-frozen-lockfile",
     name: "Mastra",
-    cwd: path.join(integrationsRoot, "mastra/typescript/examples"),
+    cwd: path.join(integrationsRoot, "mastra/example"),
   },
   "pydantic-ai": {
     command: "uv sync",
     name: "Pydantic AI",
-    cwd: path.join(integrationsRoot, "pydantic-ai/python/examples"),
+    cwd: path.join(integrationsRoot, "pydantic-ai/examples"),
   },
   "adk-middleware": {
     command: "uv sync",
@@ -105,12 +104,17 @@ const ALL_TARGETS = {
   "a2a-middleware": {
     command: "uv sync",
     name: "A2A Middleware",
-    cwd: path.join(middlewaresRoot, "a2a-middleware/examples"),
+    cwd: path.join(integrationsRoot, "a2a-middleware/examples"),
+  },
+  cloudflare: {
+    command: "pnpm install --no-frozen-lockfile",
+    name: "Cloudflare",
+    cwd: path.join(integrationsRoot, "cloudflare/examples/server"),
   },
   dojo: {
     command: "pnpm install --no-frozen-lockfile && pnpm build --filter=demo-viewer...",
     name: "Dojo",
-    cwd: gitRoot,
+    cwd: path.join(gitRoot, "typescript-sdk"),
   },
 };
 
