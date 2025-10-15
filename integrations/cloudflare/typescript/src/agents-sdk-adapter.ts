@@ -13,7 +13,7 @@ import type { CloudflareMessage } from "./types";
  * Base interface for Cloudflare Agents SDK Agent class
  * This represents the Agent class from 'agents' package
  */
-export interface CloudflareAgent {
+export interface CloudflareAgentsSDKAgent {
   /** Agent instance ID */
   id: string;
 
@@ -50,7 +50,7 @@ export interface CloudflareAgent {
  */
 export interface AgentsSDKAdapterOptions {
   /** Agent instance to wrap */
-  agent: CloudflareAgent;
+  agent: CloudflareAgentsSDKAgent;
 
   /** Enable state synchronization via AG-UI events */
   syncState?: boolean;
@@ -89,7 +89,7 @@ export interface AgentsSDKAdapterOptions {
  * ```
  */
 export class CloudflareAgentsSDKAdapter {
-  private agent: CloudflareAgent;
+  private agent: CloudflareAgentsSDKAgent;
   private options: AgentsSDKAdapterOptions;
   private runCounter = 0;
   private stateListeners: Set<(state: any) => void> = new Set();
@@ -312,7 +312,7 @@ export class CloudflareAgentsSDKAdapter {
  * Helper function to create an Agents SDK adapter from an agent instance
  */
 export function createAgentsSDKAdapter(
-  agent: CloudflareAgent,
+  agent: CloudflareAgentsSDKAgent,
   options?: Partial<AgentsSDKAdapterOptions>,
 ): CloudflareAgentsSDKAdapter {
   return new CloudflareAgentsSDKAdapter({
@@ -327,7 +327,7 @@ export function createAgentsSDKAdapter(
  * Create a Worker fetch handler that uses Agents SDK + AG-UI
  */
 export function createAgentsSDKWorkerHandler(
-  agentFactory: (state: DurableObjectState, env: any) => CloudflareAgent,
+  agentFactory: (state: DurableObjectState, env: any) => CloudflareAgentsSDKAgent,
   options?: Partial<AgentsSDKAdapterOptions>,
 ): {
   fetch: (request: Request, env: any, ctx: ExecutionContext) => Promise<Response>;

@@ -8,6 +8,7 @@ export {
   createCopilotKitCloudflareAdapter,
 } from "./copilotkit-adapter";
 export { CloudflareHttpAgent } from "./agent";
+export { CloudflareAgent, type CloudflareAgentConfig } from "./cloudflare-agent";
 
 // Infrastructure Support (NEW!)
 export {
@@ -36,7 +37,7 @@ export {
   CloudflareAgentsSDKAdapter,
   createAgentsSDKAdapter,
   createAgentsSDKWorkerHandler,
-  type CloudflareAgent,
+  type CloudflareAgentsSDKAgent,
   type AgentsSDKAdapterOptions,
 } from "./agents-sdk-adapter";
 

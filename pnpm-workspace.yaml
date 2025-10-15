@@ -4,4 +4,4 @@ packages:
   - "sdks/typescript/packages/*"
   - "integrations/*/typescript"
   - "integrations/community/*/typescript"
-  - "integrations/mastra/typescript/examples"
+  - "integrations/*/typescript/examples"
