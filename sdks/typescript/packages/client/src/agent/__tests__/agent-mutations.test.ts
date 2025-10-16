@@ -112,6 +112,33 @@ describe("Agent Mutations", () => {
       expect(mockSubscriber.onNewToolCall).not.toHaveBeenCalled();
     });
 
+    it("should add a user message with attachments", async () => {
+      const attachment = {
+        url: "data:image/png;base64,somepngbytes",
+      };
+
+      const userMessage: Message = {
+        id: "user-msg-attachments",
+        role: "user",
+        attachments: [attachment],
+      };
+
+      agent.addMessage(userMessage);
+
+      expect(agent.messages.at(-1)).toBe(userMessage);
+
+      await waitForAsyncNotifications();
+
+      expect(mockSubscriber.onNewMessage).toHaveBeenCalledWith({
+        message: userMessage,
+        messages: agent.messages,
+        state: agent.state,
+        agent,
+      });
+      expect(mockSubscriber.onMessagesChanged).toHaveBeenCalled();
+      expect((agent.messages.at(-1) as Message).attachments).toEqual([attachment]);
+    });
+
     it("should add an assistant message without tool calls", async () => {
       const assistantMessage: Message = {
         id: "assistant-msg-1",

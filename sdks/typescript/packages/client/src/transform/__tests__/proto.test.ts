@@ -375,6 +375,11 @@ describe("parseProtoStream", () => {
           id: "msg1",
           role: "user",
           content: "Hello, can you help me with something?",
+          attachments: [
+            {
+              url: "data:image/png;base64,somepngbytes",
+            },
+          ],
         },
         {
           id: "msg2",
@@ -432,17 +437,23 @@ describe("parseProtoStream", () => {
       expect(message.role).toEqual(messagesSnapshotEvent.messages[index].role);
       expect(message.content).toEqual(messagesSnapshotEvent.messages[index].content);
 
+      const originalMessage = messagesSnapshotEvent.messages[index] as any;
+      if (originalMessage.attachments) {
+        expect((message as any).attachments?.length).toEqual(originalMessage.attachments.length);
+        (message as any).attachments?.forEach((attachment: any, attachmentIndex: number) => {
+          expect(attachment).toMatchObject(originalMessage.attachments[attachmentIndex]);
+        });
+      } else {
+        expect((message as any).attachments).toBeUndefined();
+      }
+
       // Check tool calls if present
-      if ((messagesSnapshotEvent.messages[index] as any).toolCalls) {
+      if (originalMessage.toolCalls) {
         expect((message as any).toolCalls).toBeDefined();
-        expect((message as any).toolCalls!.length).toEqual(
-          (messagesSnapshotEvent.messages[index] as any).toolCalls!.length,
-        );
+        expect((message as any).toolCalls!.length).toEqual(originalMessage.toolCalls!.length);
 
         (message as any).toolCalls!.forEach((toolCall: any, toolIndex: number) => {
-          const originalToolCall = (messagesSnapshotEvent.messages[index] as any).toolCalls![
-            toolIndex
-          ];
+          const originalToolCall = originalMessage.toolCalls![toolIndex];
           expect(toolCall.id).toEqual(originalToolCall.id);
           expect(toolCall.type).toEqual(originalToolCall.type);
           expect(toolCall.function.name).toEqual(originalToolCall.function.name);

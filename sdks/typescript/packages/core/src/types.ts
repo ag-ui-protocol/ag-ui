@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+export const FileAttachmentSchema = z.object({
+  url: z
+    .string()
+    .refine((value) => value.startsWith("data:"), {
+      message: "Attachment url must be a data URL (data:<mime>;base64,...)",
+    }),
+});
+
 export const FunctionCallSchema = z.object({
   name: z.string(),
   arguments: z.string(),
@@ -34,9 +42,23 @@ export const AssistantMessageSchema = BaseMessageSchema.extend({
   toolCalls: z.array(ToolCallSchema).optional(),
 });
 
-export const UserMessageSchema = BaseMessageSchema.extend({
+const RawUserMessageSchema = BaseMessageSchema.extend({
   role: z.literal("user"),
-  content: z.string(),
+  content: z.string().optional(),
+  attachments: z.array(FileAttachmentSchema).optional(),
+});
+
+export const UserMessageSchema = RawUserMessageSchema.superRefine((value, ctx) => {
+  const hasContent = typeof value.content === "string" && value.content.trim().length > 0;
+  const attachments = value.attachments ?? [];
+
+  if (!hasContent && attachments.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "User messages must include content or at least one attachment.",
+      path: ["attachments"],
+    });
+  }
 });
 
 export const ToolMessageSchema = z.object({
@@ -47,13 +69,24 @@ export const ToolMessageSchema = z.object({
   error: z.string().optional(),
 });
 
-export const MessageSchema = z.discriminatedUnion("role", [
-  DeveloperMessageSchema,
-  SystemMessageSchema,
-  AssistantMessageSchema,
-  UserMessageSchema,
-  ToolMessageSchema,
-]);
+export const MessageSchema = z
+  .discriminatedUnion("role", [
+    DeveloperMessageSchema,
+    SystemMessageSchema,
+    AssistantMessageSchema,
+    RawUserMessageSchema,
+    ToolMessageSchema,
+  ])
+  .superRefine((value, ctx) => {
+    if (value.role === "user") {
+      const parsed = UserMessageSchema.safeParse(value);
+      if (!parsed.success) {
+        for (const issue of parsed.error.issues) {
+          ctx.addIssue(issue);
+        }
+      }
+    }
+  });
 
 export const RoleSchema = z.union([
   z.literal("developer"),
@@ -99,9 +132,23 @@ export type Tool = z.infer<typeof ToolSchema>;
 export type RunAgentInput = z.infer<typeof RunAgentInputSchema>;
 export type State = z.infer<typeof StateSchema>;
 export type Role = z.infer<typeof RoleSchema>;
+export type FileAttachment = z.infer<typeof FileAttachmentSchema>;
 
 export class AGUIError extends Error {
   constructor(message: string) {
     super(message);
   }
 }
+
+export const userMessageHasBody = (message: UserMessage): boolean => {
+  const content = message.content ?? "";
+  const hasContent = content.trim().length > 0;
+  const hasAttachments = (message.attachments?.length ?? 0) > 0;
+  return hasContent || hasAttachments;
+};
+
+export const assertUserMessageHasBody = (message: UserMessage): void => {
+  if (!userMessageHasBody(message)) {
+    throw new AGUIError("User messages must include content or at least one attachment.");
+  }
+};

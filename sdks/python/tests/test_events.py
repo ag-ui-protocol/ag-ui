@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 from pydantic import ValidationError, TypeAdapter
 
-from ag_ui.core.types import Message, UserMessage, AssistantMessage, FunctionCall, ToolCall
+from ag_ui.core.types import Message, UserMessage, AssistantMessage, FunctionCall, ToolCall, FileAttachment
 from ag_ui.core.events import (
     EventType,
     BaseEvent,
@@ -176,7 +176,10 @@ class TestEvents(unittest.TestCase):
     def test_messages_snapshot(self):
         """Test creating and serializing a MessagesSnapshotEvent event"""
         messages = [
-            UserMessage(id="user_1", content="Hello"),
+            UserMessage(
+                id="user_1",
+                attachments=[FileAttachment(url="data:text/plain;base64,ZmFrZQ==")],
+            ),
             AssistantMessage(id="asst_1", content="Hi there", tool_calls=[
                 ToolCall(
                     id="call_1",
@@ -194,12 +197,20 @@ class TestEvents(unittest.TestCase):
         self.assertEqual(len(event.messages), 2)
         self.assertEqual(event.messages[0].id, "user_1")
         self.assertEqual(event.messages[1].tool_calls[0].function.name, "get_weather")
+        self.assertEqual(
+            str(event.messages[0].attachments[0].url),
+            "data:text/plain;base64,ZmFrZQ==",
+        )
         
         # Test serialization
         serialized = event.model_dump(by_alias=True)
         self.assertEqual(serialized["type"], "MESSAGES_SNAPSHOT")
         self.assertEqual(len(serialized["messages"]), 2)
         self.assertEqual(serialized["messages"][0]["role"], "user")
+        self.assertEqual(
+            serialized["messages"][0]["attachments"][0]["url"],
+            "data:text/plain;base64,ZmFrZQ==",
+        )
         self.assertEqual(serialized["messages"][1]["toolCalls"][0]["function"]["name"], "get_weather")
 
     def test_raw_event(self):
