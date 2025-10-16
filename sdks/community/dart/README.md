@@ -7,17 +7,14 @@ Dart SDK for the **Agent-User Interaction (AG-UI) Protocol**.
 ## Installation
 
 ```bash
-dart pub add ag_ui --git-url=https://github.com/mattsp1290/ag-ui.git --git-path=sdks/community/dart
+dart pub add ag_ui
 ```
 
 Or add to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  ag_ui:
-    git:
-      url: https://github.com/mattsp1290/ag-ui.git
-      path: sdks/community/dart
+  ag_ui: ^0.1.0
 ```
 
 ## Features
@@ -268,14 +265,8 @@ Contributions are welcome! Please:
 4. Ensure all tests pass
 5. Submit a pull request
 
-## Related SDKs
-
-- TypeScript: [`@ag-ui/client`](../../typescript-sdk/)
-- Python: [`ag-ui-protocol`](../../python-sdk/)
-- Protocol Specification: [`docs/specification`](https://github.com/mattsp1290/ag-ui/blob/main/docs/specification.md)
-
 ## License
 
-This SDK is part of the AG-UI Protocol project. See the [main repository](https://github.com/mattsp1290/ag-ui) for license information.
+This SDK is part of the AG-UI Protocol project. See the [main repository](https://github.com/ag-ui-protocol/ag-ui) for license information.
 
 

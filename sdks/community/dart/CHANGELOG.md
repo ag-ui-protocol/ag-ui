@@ -35,4 +35,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Advanced retry strategies planned for future release
 - Event caching and offline support planned for future release
 
-[0.1.0]: https://github.com/mattsp1290/ag-ui/releases/tag/dart-v0.1.0
+[0.1.0]: https://github.com/ag-ui-protocol/ag-ui/releases/tag/dart-v0.1.0
