@@ -11,7 +11,9 @@ from ag_ui.core.types import (
     UserMessage,
     ToolMessage,
     Message,
-    RunAgentInput
+    RunAgentInput,
+    TextInputContent,
+    BinaryInputContent,
 )
 
 
@@ -143,6 +145,31 @@ class TestBaseTypes(unittest.TestCase):
         self.assertEqual(serialized["role"], "user")
         self.assertEqual(serialized["content"], "User query")
 
+    def test_user_message_multimodal_content(self):
+        """Test creating and serializing a multimodal user message"""
+        contents = [
+            TextInputContent(text="Check this out"),
+            BinaryInputContent(mime_type="image/png", url="https://example.com/image.png"),
+        ]
+        msg = UserMessage(
+            id="user_multi",
+            content=contents,
+        )
+        self.assertIsInstance(msg.content, list)
+        self.assertEqual(len(msg.content), 2)
+        serialized = msg.model_dump(by_alias=True)
+        self.assertIsInstance(serialized["content"], list)
+        self.assertEqual(serialized["content"][0]["type"], "text")
+        self.assertEqual(serialized["content"][0]["text"], "Check this out")
+        self.assertEqual(serialized["content"][1]["mimeType"], "image/png")
+        self.assertEqual(serialized["content"][1]["url"], "https://example.com/image.png")
+
+    def test_binary_input_requires_payload_source(self):
+        """Binary content must specify at least one delivery channel"""
+        with self.assertRaises(ValidationError):
+            BinaryInputContent(mime_type="image/png")
+
+
     def test_message_union_deserialization(self):
         """Test that the Message union correctly deserializes to the appropriate type"""
         # Create type adapter for the union
@@ -257,7 +284,14 @@ class TestBaseTypes(unittest.TestCase):
                 {
                     "id": "user_002",
                     "role": "user",
-                    "content": "Can you explain these results?"
+                    "content": [
+                        {"type": "text", "text": "Can you explain these results?"},
+                        {
+                            "type": "binary",
+                            "mimeType": "image/png",
+                            "url": "https://example.com/results-chart.png"
+                        }
+                    ]
                 }
             ],
             "tools": [
@@ -323,6 +357,12 @@ class TestBaseTypes(unittest.TestCase):
         # Verify specific message content
         self.assertEqual(run_agent_input.messages[0].content, "You are a helpful assistant.")
         self.assertEqual(run_agent_input.messages[1].content, "Can you help me analyze this data?")
+        multimodal_content = run_agent_input.messages[5].content
+        self.assertIsInstance(multimodal_content, list)
+        self.assertEqual(multimodal_content[0].type, "text")
+        self.assertEqual(multimodal_content[0].text, "Can you explain these results?")
+        self.assertEqual(multimodal_content[1].mime_type, "image/png")
+        self.assertEqual(multimodal_content[1].url, "https://example.com/results-chart.png")
 
         # Verify assistant message with tool call
         assistant_msg = run_agent_input.messages[3]

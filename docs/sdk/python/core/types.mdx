@@ -124,15 +124,55 @@ Represents a message from a user.
 ```python
 class UserMessage(BaseMessage):
     role: Literal["user"]
-    content: str
+    content: Union[str, List["InputContent"]]
 ```
 
-| Property  | Type              | Description                                 |
-| --------- | ----------------- | ------------------------------------------- |
-| `id`      | `str`             | Unique identifier for the message           |
-| `role`    | `Literal["user"]` | Role of the message sender, fixed as "user" |
-| `content` | `str`             | Text content of the message (required)      |
-| `name`    | `Optional[str]`   | Optional name of the sender                 |
+| Property  | Type                               | Description                                                           |
+| --------- | ---------------------------------- | --------------------------------------------------------------------- |
+| `id`      | `str`                              | Unique identifier for the message                                     |
+| `role`    | `Literal["user"]`                  | Role of the message sender, fixed as "user"                           |
+| `content` | `Union[str, List["InputContent"]]` | Either a plain text string or an ordered list of multimodal fragments |
+| `name`    | `Optional[str]`                    | Optional name of the sender                                           |
+
+### TextInputContent
+
+Represents a text fragment inside a multimodal user message.
+
+```python
+class TextInputContent(ConfiguredBaseModel):
+    type: Literal["text"]
+    text: str
+```
+
+| Property | Type            | Description                  |
+| -------- | --------------- | ---------------------------- |
+| `type`   | `Literal["text"]` | Identifies the fragment type |
+| `text`   | `str`           | Text content                 |
+
+### BinaryInputContent
+
+Represents binary data such as images, audio, or files.
+
+```python
+class BinaryInputContent(ConfiguredBaseModel):
+    type: Literal["binary"]
+    mime_type: str
+    id: Optional[str] = None
+    url: Optional[str] = None
+    data: Optional[str] = None
+    filename: Optional[str] = None
+```
+
+| Property   | Type              | Description                                                   |
+| ---------- | ----------------- | ------------------------------------------------------------- |
+| `type`     | `Literal["binary"]` | Identifies the fragment type                                 |
+| `mime_type`| `str`             | MIME type, for example `"image/png"`                          |
+| `id`       | `Optional[str]`   | Reference to previously uploaded content                      |
+| `url`      | `Optional[str]`   | Remote URL where the content can be retrieved                 |
+| `data`     | `Optional[str]`   | Base64 encoded content                                        |
+| `filename` | `Optional[str]`   | Optional filename hint                                        |
+
+> **Validation:** At least one of `id`, `url`, or `data` must be provided.
 
 ### ToolMessage
 
