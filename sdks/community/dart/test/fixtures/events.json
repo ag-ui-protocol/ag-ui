@@ -1,0 +1,441 @@
+{
+  "simple_text_message": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "thread_01",
+      "runId": "run_01"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "msg_01",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "msg_01",
+      "delta": "Hello, "
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "msg_01",
+      "delta": "how can I help you today?"
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "msg_01"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "thread_01",
+      "runId": "run_01"
+    }
+  ],
+  "tool_call_sequence": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "thread_02",
+      "runId": "run_02"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "msg_02",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "msg_02",
+      "delta": "Let me search for that information."
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "msg_02"
+    },
+    {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "tool_01",
+      "toolCallName": "search",
+      "parentMessageId": "msg_02"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "tool_01",
+      "delta": "{\"query\": \"AG-UI protocol\"}"
+    },
+    {
+      "type": "TOOL_CALL_END",
+      "toolCallId": "tool_01"
+    },
+    {
+      "type": "TOOL_CALL_RESULT",
+      "messageId": "msg_03",
+      "toolCallId": "tool_01",
+      "content": "AG-UI is an event-based protocol for agent-user interactions.",
+      "role": "tool"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "msg_04",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "msg_04",
+      "delta": "Based on my search, AG-UI is an event-based protocol for agent-user interactions."
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "msg_04"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "thread_02",
+      "runId": "run_02"
+    }
+  ],
+  "state_management": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "thread_03",
+      "runId": "run_03"
+    },
+    {
+      "type": "STATE_SNAPSHOT",
+      "snapshot": {
+        "count": 0,
+        "items": [],
+        "user": {
+          "name": "Alice",
+          "preferences": {
+            "theme": "dark"
+          }
+        }
+      }
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "msg_05",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "msg_05",
+      "delta": "Updating count..."
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "msg_05"
+    },
+    {
+      "type": "STATE_DELTA",
+      "delta": [
+        {"op": "replace", "path": "/count", "value": 1},
+        {"op": "add", "path": "/items/-", "value": "item1"}
+      ]
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "thread_03",
+      "runId": "run_03"
+    }
+  ],
+  "messages_snapshot": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "thread_04",
+      "runId": "run_04"
+    },
+    {
+      "type": "MESSAGES_SNAPSHOT",
+      "messages": [
+        {
+          "id": "msg_06",
+          "role": "user",
+          "content": "What is the weather?"
+        },
+        {
+          "id": "msg_07",
+          "role": "assistant",
+          "content": "I'll check the weather for you.",
+          "toolCalls": [
+            {
+              "id": "call_01",
+              "type": "function",
+              "function": {
+                "name": "get_weather",
+                "arguments": "{\"location\": \"New York\"}"
+              }
+            }
+          ]
+        },
+        {
+          "id": "msg_08",
+          "role": "tool",
+          "content": "72°F and sunny",
+          "toolCallId": "call_01"
+        }
+      ]
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "msg_09",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "msg_09",
+      "delta": "The weather in New York is 72°F and sunny."
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "msg_09"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "thread_04",
+      "runId": "run_04"
+    }
+  ],
+  "multiple_runs": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "thread_05",
+      "runId": "run_05"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "msg_10",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "msg_10",
+      "delta": "First run message."
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "msg_10"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "thread_05",
+      "runId": "run_05"
+    },
+    {
+      "type": "RUN_STARTED",
+      "threadId": "thread_05",
+      "runId": "run_06"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "msg_11",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "msg_11",
+      "delta": "Second run message."
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "msg_11"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "thread_05",
+      "runId": "run_06"
+    }
+  ],
+  "thinking_events": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "thread_06",
+      "runId": "run_07"
+    },
+    {
+      "type": "THINKING_START",
+      "title": "Analyzing request"
+    },
+    {
+      "type": "THINKING_CONTENT",
+      "delta": "Let me think about this..."
+    },
+    {
+      "type": "THINKING_CONTENT",
+      "delta": " The user is asking about..."
+    },
+    {
+      "type": "THINKING_END"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "msg_12",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "msg_12",
+      "delta": "Based on my analysis..."
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "msg_12"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "thread_06",
+      "runId": "run_07"
+    }
+  ],
+  "step_events": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "thread_07",
+      "runId": "run_08"
+    },
+    {
+      "type": "STEP_STARTED",
+      "stepName": "Initialize"
+    },
+    {
+      "type": "STEP_FINISHED",
+      "stepName": "Initialize"
+    },
+    {
+      "type": "STEP_STARTED",
+      "stepName": "Process"
+    },
+    {
+      "type": "STEP_FINISHED",
+      "stepName": "Process"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "thread_07",
+      "runId": "run_08"
+    }
+  ],
+  "error_handling": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "thread_08",
+      "runId": "run_09"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "msg_13",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "msg_13",
+      "delta": "Processing..."
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "msg_13"
+    },
+    {
+      "type": "RUN_ERROR",
+      "message": "Connection timeout",
+      "code": "TIMEOUT"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "thread_08",
+      "runId": "run_09"
+    }
+  ],
+  "custom_events": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "thread_09",
+      "runId": "run_10"
+    },
+    {
+      "type": "CUSTOM",
+      "name": "user_feedback",
+      "value": {
+        "rating": 5,
+        "comment": "Very helpful!"
+      }
+    },
+    {
+      "type": "RAW",
+      "event": {
+        "customType": "metrics",
+        "data": {
+          "latency": 123,
+          "tokens": 456
+        }
+      }
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "thread_09",
+      "runId": "run_10"
+    }
+  ],
+  "concurrent_messages": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "thread_10",
+      "runId": "run_11"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "msg_14",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "msg_15",
+      "role": "system"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "msg_14",
+      "delta": "First message"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "msg_15",
+      "delta": "System message"
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "msg_14"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "msg_15",
+      "delta": " continues..."
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "msg_15"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "thread_10",
+      "runId": "run_11"
+    }
+  ],
+  "text_message_chunk": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "thread_11",
+      "runId": "run_12"
+    },
+    {
+      "type": "TEXT_MESSAGE_CHUNK",
+      "messageId": "msg_16",
+      "role": "assistant",
+      "delta": "Complete message in a single chunk"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "thread_11",
+      "runId": "run_12"
+    }
+  ]
+}

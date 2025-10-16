@@ -1,0 +1,25 @@
+{"timestamp":"2025-09-09T19:28:11.655292","level":"info","message":"Starting Tool Based Generative UI flow"}
+{"timestamp":"2025-09-09T19:28:11.656882","level":"debug","message":"Base URL: http://127.0.0.1:20203"}
+{"timestamp":"2025-09-09T19:28:11.657091","level":"info","message":"Starting run with thread_id: thread_1757460491656, run_id: run_1757460491656"}
+{"timestamp":"2025-09-09T19:28:11.657114","level":"info","message":"User message: Create a haiku about AI"}
+{"timestamp":"2025-09-09T19:28:11.662558","level":"debug","message":"Sending request to http://127.0.0.1:20203/tool_based_generative_ui"}
+{"timestamp":"2025-09-09T19:28:11.696209","level":"event","message":"runStarted"}
+{"timestamp":"2025-09-09T19:28:11.696270","level":"info","message":"Run started: run_1757460491656"}
+{"timestamp":"2025-09-09T19:28:11.697961","level":"event","message":"messagesSnapshot"}
+{"timestamp":"2025-09-09T19:28:11.698083","level":"info","message":"Tool call detected: generate_haiku (will process after run completes)"}
+{"timestamp":"2025-09-09T19:28:11.698412","level":"event","message":"runFinished"}
+{"timestamp":"2025-09-09T19:28:11.698448","level":"info","message":"Run finished: run_1757460491656"}
+{"timestamp":"2025-09-09T19:28:11.699061","level":"info","message":"Processing 1 pending tool calls"}
+{"timestamp":"2025-09-09T19:28:11.699188","level":"info","message":"Processing tool call: generate_haiku"}
+{"timestamp":"2025-09-09T19:28:11.699214","level":"debug","message":"Arguments: {\"japanese\": [\"エーアイの\", \"橋つなぐ道\", \"コパキット\"], \"english\": [\"From AI's realm\", \"A bridge-road linking us—\", \"CopilotKit.\"]}"}
+{"timestamp":"2025-09-09T19:28:11.699316","level":"info","message":"Auto-generated tool result: thanks"}
+{"timestamp":"2025-09-09T19:28:11.699347","level":"info","message":"Sending tool response(s) to server with new run..."}
+{"timestamp":"2025-09-09T19:28:11.699788","level":"debug","message":"Sending request to http://127.0.0.1:20203/tool_based_generative_ui"}
+{"timestamp":"2025-09-09T19:28:11.701140","level":"event","message":"runStarted"}
+{"timestamp":"2025-09-09T19:28:11.701165","level":"info","message":"Run started: run_1757460491699"}
+{"timestamp":"2025-09-09T19:28:11.701390","level":"event","message":"messagesSnapshot"}
+{"timestamp":"2025-09-09T19:28:11.701412","level":"info","message":"Tool call detected: generate_haiku (will process after run completes)"}
+{"timestamp":"2025-09-09T19:28:11.701433","level":"assistant","message":"Haiku created"}
+{"timestamp":"2025-09-09T19:28:11.701528","level":"event","message":"runFinished"}
+{"timestamp":"2025-09-09T19:28:11.701544","level":"info","message":"Run finished: run_1757460491699"}
+{"timestamp":"2025-09-09T19:28:11.701589","level":"info","message":"All tool calls already processed, run complete"}
