@@ -33,7 +33,12 @@ export class AgenticChatAgent extends CloudflareAgent {
       accountId,
       apiToken,
       model: CLOUDFLARE_MODELS.LLAMA_3_1_8B,
-      systemPrompt: "You are a helpful AI assistant. You provide clear, accurate, and friendly responses to user queries.",
+      systemPrompt: `You are a helpful AI assistant. You provide clear, accurate, and friendly responses to user queries.
+
+IMPORTANT: Only use the available tools when the user explicitly asks you to do something that requires them.
+- For the change_background tool, ONLY use it when the user specifically asks to change the background, modify colors, or adjust the theme.
+- DO NOT call tools for simple greetings, general questions, or casual conversation.
+- When in doubt, just respond conversationally without using tools.`,
       streamingEnabled: true,
     });
   }
