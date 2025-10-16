@@ -123,17 +123,49 @@ Represents a message from a user.
 type UserMessage = {
   id: string
   role: "user"
-  content: string
+  content: string | InputContent[]
   name?: string
 }
 ```
 
-| Property  | Type     | Description                                 |
-| --------- | -------- | ------------------------------------------- |
-| `id`      | `string` | Unique identifier for the message           |
-| `role`    | `"user"` | Role of the message sender, fixed as "user" |
-| `content` | `string` | Text content of the message (required)      |
-| `name`    | `string` | Optional name of the sender                 |
+| Property  | Type                        | Description                                                           |
+| --------- | --------------------------- | --------------------------------------------------------------------- |
+| `id`      | `string`                    | Unique identifier for the message                                     |
+| `role`    | `"user"`                    | Role of the message sender, fixed as "user"                           |
+| `content` | `string \| InputContent[]` | Either plain text or an ordered array of multimodal content fragments |
+| `name`    | `string`                    | Optional name of the sender                                           |
+
+### InputContent
+
+Union of supported multimodal fragments.
+
+```typescript
+type InputContent = TextInputContent | BinaryInputContent
+```
+
+### TextInputContent
+
+```typescript
+type TextInputContent = {
+  type: "text"
+  text: string
+}
+```
+
+### BinaryInputContent
+
+```typescript
+type BinaryInputContent = {
+  type: "binary"
+  mimeType: string
+  id?: string
+  url?: string
+  data?: string
+  filename?: string
+}
+```
+
+> At least one of `id`, `url`, or `data` must be provided.
 
 ### ToolMessage
 
