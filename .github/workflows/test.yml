@@ -90,3 +90,24 @@ jobs:
     - name: Run tests
       working-directory: typescript-sdk
       run: pnpm run test
+
+  dart:
+    name: Dart SDK Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Dart
+      uses: dart-lang/setup-dart@v1
+      with:
+        sdk: stable
+
+    - name: Install dependencies
+      working-directory: sdks/community/dart
+      run: dart pub get
+
+    - name: Run tests
+      working-directory: sdks/community/dart
+      run: dart test --exclude-tags requires-server
