@@ -17,10 +17,18 @@ export function encode(event: BaseEvent): Uint8Array {
   if (type === EventType.MESSAGES_SNAPSHOT) {
     rest.messages = rest.messages.map((message: Message) => {
       const untypedMessage = message as any;
-      if (untypedMessage.toolCalls === undefined) {
-        return { ...message, toolCalls: [] };
+      const toolCalls = untypedMessage.toolCalls ?? [];
+      const attachments = untypedMessage.attachments ?? [];
+
+      if (toolCalls === untypedMessage.toolCalls && attachments === untypedMessage.attachments) {
+        return message;
       }
-      return message;
+
+      return {
+        ...message,
+        toolCalls,
+        attachments,
+      };
     });
   }
 
@@ -50,8 +58,8 @@ export function encode(event: BaseEvent): Uint8Array {
  * The format includes a 4-byte length prefix followed by the message.
  */
 export function decode(data: Uint8Array): BaseEvent {
-  const event = protoEvents.Event.decode(data);
-  const decoded = Object.values(event).find((value) => value !== undefined);
+  const event = protoEvents.Event.decode(data, data.length);
+  const decoded = Object.values(event).find((value) => value !== undefined) as any;
   if (!decoded) {
     throw new Error("Invalid event");
   }
@@ -65,6 +73,9 @@ export function decode(data: Uint8Array): BaseEvent {
       const untypedMessage = message as any;
       if (untypedMessage.toolCalls?.length === 0) {
         untypedMessage.toolCalls = undefined;
+      }
+      if (untypedMessage.attachments?.length === 0) {
+        untypedMessage.attachments = undefined;
       }
     }
   }

@@ -12,6 +12,10 @@ message ToolCall {
   Function function = 3;
 }
 
+message Attachment {
+  string url = 1;
+}
+
 message Message {
   string id = 1;
   string role = 2;
@@ -20,4 +24,5 @@ message Message {
   repeated ToolCall tool_calls = 5;
   optional string tool_call_id = 6;
   optional string error = 7;
+  repeated Attachment attachments = 8;
 }

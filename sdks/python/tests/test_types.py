@@ -10,6 +10,7 @@ from ag_ui.core.types import (
     AssistantMessage,
     UserMessage,
     ToolMessage,
+    FileAttachment,
     Message,
     RunAgentInput
 )
@@ -26,14 +27,15 @@ class TestBaseTypes(unittest.TestCase):
 
     def test_message_serialization(self):
         """Test serialization of a basic message"""
+        attachment = FileAttachment(url="data:text/plain;base64,SGVsbG8=")
         user_msg = UserMessage(
             id="msg_123",
-            content="Hello, world!"
+            attachments=[attachment]
         )
         serialized = user_msg.model_dump(by_alias=True)
         self.assertEqual(serialized["id"], "msg_123")
         self.assertEqual(serialized["role"], "user")
-        self.assertEqual(serialized["content"], "Hello, world!")
+        self.assertEqual(serialized["attachments"][0]["url"], str(attachment.url))
 
     def test_tool_call_serialization(self):
         """Test camel case serialization for ConfiguredBaseModel subclasses"""
@@ -143,6 +145,23 @@ class TestBaseTypes(unittest.TestCase):
         self.assertEqual(serialized["role"], "user")
         self.assertEqual(serialized["content"], "User query")
 
+    def test_user_message_with_attachments_only(self):
+        """User messages should allow attachments without text."""
+        attachment = FileAttachment(url="data:image/png;base64,somepngbytes")
+        msg = UserMessage(
+            id="user_attachments",
+            attachments=[attachment]
+        )
+        self.assertIsNone(msg.content)
+        self.assertEqual(msg.attachments[0].url, attachment.url)
+
+    def test_user_message_requires_body(self):
+        """User messages must include content or attachments."""
+        with self.assertRaises(ValidationError):
+            UserMessage(
+                id="user_empty",
+            )
+
     def test_message_union_deserialization(self):
         """Test that the Message union correctly deserializes to the appropriate type"""
         # Create type adapter for the union
@@ -153,7 +172,11 @@ class TestBaseTypes(unittest.TestCase):
             {"id": "dev_123", "role": "developer", "content": "Developer note"},
             {"id": "sys_456", "role": "system", "content": "System instruction"},
             {"id": "asst_789", "role": "assistant", "content": "Assistant response"},
-            {"id": "user_101", "role": "user", "content": "User query"},
+            {
+                "id": "user_101",
+                "role": "user",
+                "attachments": [{"url": "data:application/json;base64,eyJrZXkiOiAiZGF0YSJ9"}]
+            },
             {
                 "id": "tool_202", 
                 "role": "tool", 
@@ -175,7 +198,7 @@ class TestBaseTypes(unittest.TestCase):
             self.assertIsInstance(msg, expected_type)
             self.assertEqual(msg.id, data["id"])
             self.assertEqual(msg.role, data["role"])
-            self.assertEqual(msg.content, data["content"])
+            self.assertEqual(msg.content, data.get("content"))
 
     def test_message_union_with_tool_calls(self):
         """Test the Message union with an assistant message containing tool calls"""
@@ -203,6 +226,25 @@ class TestBaseTypes(unittest.TestCase):
         self.assertEqual(len(msg.tool_calls), 1)
         self.assertEqual(msg.tool_calls[0].function.name, "search_data")
 
+    def test_message_union_with_attachments(self):
+        """Test that attachments are preserved in the message union."""
+        message_adapter = TypeAdapter(Message)
+
+        data = {
+            "id": "user_attachments",
+            "role": "user",
+            "attachments": [
+                {
+                    "url": "data:image/png;base64,aW1hZ2U=",
+                }
+            ]
+        }
+
+        msg = message_adapter.validate_python(data)
+        self.assertIsInstance(msg, UserMessage)
+        self.assertEqual(len(msg.attachments), 1)
+        self.assertEqual(str(msg.attachments[0].url), "data:image/png;base64,aW1hZ2U=")
+
     def test_run_agent_input_deserialization(self):
         """Test deserializing RunAgentInput JSON with diverse message types"""
         # Create JSON data for RunAgentInput with diverse messages
@@ -221,7 +263,10 @@ class TestBaseTypes(unittest.TestCase):
                 {
                     "id": "user_001",
                     "role": "user",
-                    "content": "Can you help me analyze this data?"
+                    "content": "Can you help me analyze this data?",
+                    "attachments": [
+                        {"url": "data:text/csv;base64,YSxiLGM="}
+                    ]
                 },
                 # Developer message
                 {
@@ -321,6 +366,10 @@ class TestBaseTypes(unittest.TestCase):
         # Verify specific message content
         self.assertEqual(run_agent_input.messages[0].content, "You are a helpful assistant.")
         self.assertEqual(run_agent_input.messages[1].content, "Can you help me analyze this data?")
+        self.assertEqual(
+            str(run_agent_input.messages[1].attachments[0].url),
+            "data:text/csv;base64,YSxiLGM=",
+        )
 
         # Verify assistant message with tool call
         assistant_msg = run_agent_input.messages[3]

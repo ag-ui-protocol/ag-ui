@@ -25,6 +25,11 @@ interface BaseMessage {
   role: string // The role of the sender (user, assistant, system, tool)
   content?: string // Optional text content of the message
   name?: string // Optional name of the sender
+  attachments?: FileAttachment[] // Optional remote files referenced by the message
+}
+
+interface FileAttachment {
+  url: string // data URL (data:<mime>;base64,...) containing the file bytes
 }
 ```
 
@@ -41,9 +46,14 @@ Messages from the end user to the agent:
 interface UserMessage {
   id: string
   role: "user"
-  content: string // Text input from the user
+  content?: string // Optional text input from the user
+  attachments?: FileAttachment[] // Optional remote files shared with the agent
   name?: string // Optional user identifier
 }
+
+> **Validation rule:** a user message must include either non-empty `content` or at least one `attachment`. This allows file-only interactions while keeping the protocol backward compatible with text-only chats.
+
+> **Implementation note:** in this release, attachments must be provided as `data:` URLs (typically base64-encoded payloads). Remote HTTP(S) links will be supported in a future iteration once upload flows are standardized.
 ```
 
 ### Assistant Messages

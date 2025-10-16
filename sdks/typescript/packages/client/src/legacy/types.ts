@@ -124,7 +124,7 @@ export type LegacyRunError = z.infer<typeof LegacyRunError>;
 export const LegacyTextMessageSchema = z.object({
   id: z.string(),
   role: z.string(),
-  content: z.string(),
+  content: z.string().optional(),
   parentMessageId: z.string().optional(),
 });
 

@@ -4,7 +4,7 @@ This module contains the types for the Agent User Interaction Protocol Python SD
 
 from typing import Annotated, Any, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, model_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -44,6 +44,20 @@ class BaseMessage(ConfiguredBaseModel):
     role: str
     content: Optional[str] = None
     name: Optional[str] = None
+    attachments: Optional[List["FileAttachment"]] = None
+
+
+class FileAttachment(ConfiguredBaseModel):
+    """
+    Remote file metadata associated with a message.
+    """
+    url: str
+
+    @model_validator(mode="after")
+    def validate_data_url(cls, values: "FileAttachment") -> "FileAttachment":
+        if not values.url.startswith("data:"):
+            raise ValueError("Attachment url must be a data URL (data:<mime>;base64,...)")
+        return values
 
 
 class DeveloperMessage(BaseMessage):
@@ -75,7 +89,15 @@ class UserMessage(BaseMessage):
     A user message.
     """
     role: Literal["user"] = "user" # pyright: ignore[reportIncompatibleVariableOverride]
-    content: str
+    content: Optional[str] = None
+
+    @model_validator(mode="after")
+    def ensure_body(cls, values: "UserMessage") -> "UserMessage":
+        has_content = bool((values.content or "").strip())
+        has_attachments = bool(values.attachments)
+        if not has_content and not has_attachments:
+            raise ValueError("User messages must include content or at least one attachment.")
+        return values
 
 
 class ToolMessage(ConfiguredBaseModel):
