@@ -158,7 +158,14 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   {
     id: "cloudflare",
     name: "Cloudflare",
-    features: ["agentic_chat"],
+    features: [
+      "agentic_chat",
+      "tool_based_generative_ui",
+      "agentic_generative_ui",
+      "human_in_the_loop",
+      "shared_state",
+      "backend_tool_rendering",
+    ],
   },
   {
     id: "a2a",

@@ -18,6 +18,24 @@
       "export": "getAgenticGenerativeUiAgent",
       "description": "Progressive state updates with task steps",
       "model": "@cf/meta/llama-3.1-8b-instruct"
+    },
+    "human_in_the_loop": {
+      "path": "./src/agents/human_in_the_loop/agent.ts",
+      "export": "getHumanInTheLoopAgent",
+      "description": "Interactive task planning with user confirmation",
+      "model": "@cf/meta/llama-3.1-8b-instruct"
+    },
+    "shared_state": {
+      "path": "./src/agents/shared_state/agent.ts",
+      "export": "getSharedStateAgent",
+      "description": "Persistent to-do list management",
+      "model": "@cf/meta/llama-3.1-8b-instruct"
+    },
+    "backend_tool_rendering": {
+      "path": "./src/agents/backend_tool_rendering/agent.ts",
+      "export": "getBackendToolRenderingAgent",
+      "description": "Backend-generated UI components",
+      "model": "@cf/meta/llama-3.1-8b-instruct"
     }
   },
   "env": ".env",

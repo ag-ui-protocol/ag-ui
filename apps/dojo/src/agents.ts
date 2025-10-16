@@ -389,6 +389,15 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         agentic_generative_ui: new CloudflareHttpAgent({
           url: `${envVars.cloudflareUrl}/agentic_generative_ui`,
         }),
+        human_in_the_loop: new CloudflareHttpAgent({
+          url: `${envVars.cloudflareUrl}/human_in_the_loop`,
+        }),
+        shared_state: new CloudflareHttpAgent({
+          url: `${envVars.cloudflareUrl}/shared_state`,
+        }),
+        backend_tool_rendering: new CloudflareHttpAgent({
+          url: `${envVars.cloudflareUrl}/backend_tool_rendering`,
+        }),
       };
     },
   },
