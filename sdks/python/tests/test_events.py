@@ -3,7 +3,15 @@ import json
 from datetime import datetime
 from pydantic import ValidationError, TypeAdapter
 
-from ag_ui.core.types import Message, UserMessage, AssistantMessage, FunctionCall, ToolCall
+from ag_ui.core.types import (
+    Message,
+    UserMessage,
+    AssistantMessage,
+    FunctionCall,
+    ToolCall,
+    create_text_input_content,
+    create_binary_input_content,
+)
 from ag_ui.core.events import (
     EventType,
     BaseEvent,
@@ -176,7 +184,16 @@ class TestEvents(unittest.TestCase):
     def test_messages_snapshot(self):
         """Test creating and serializing a MessagesSnapshotEvent event"""
         messages = [
-            UserMessage(id="user_1", content="Hello"),
+            UserMessage(
+                id="user_1",
+                content=[
+                    create_text_input_content("fake"),
+                    create_binary_input_content(
+                        mime_type="text/plain",
+                        data="ZmFrZQ==",
+                    ),
+                ],
+            ),
             AssistantMessage(id="asst_1", content="Hi there", tool_calls=[
                 ToolCall(
                     id="call_1",
@@ -194,12 +211,22 @@ class TestEvents(unittest.TestCase):
         self.assertEqual(len(event.messages), 2)
         self.assertEqual(event.messages[0].id, "user_1")
         self.assertEqual(event.messages[1].tool_calls[0].function.name, "get_weather")
+        self.assertEqual(event.messages[0].content[0].text, "fake")
+        self.assertEqual(event.messages[0].content[1].data, "ZmFrZQ==")
         
         # Test serialization
         serialized = event.model_dump(by_alias=True)
         self.assertEqual(serialized["type"], "MESSAGES_SNAPSHOT")
         self.assertEqual(len(serialized["messages"]), 2)
         self.assertEqual(serialized["messages"][0]["role"], "user")
+        self.assertEqual(
+            serialized["messages"][0]["content"][0]["text"],
+            "fake",
+        )
+        self.assertEqual(
+            serialized["messages"][0]["content"][1]["data"],
+            "ZmFrZQ==",
+        )
         self.assertEqual(serialized["messages"][1]["toolCalls"][0]["function"]["name"], "get_weather")
 
     def test_raw_event(self):

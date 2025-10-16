@@ -1,9 +1,54 @@
-import { BaseEvent, EventSchemas, EventType, Message } from "@ag-ui/core";
+import {
+  BaseEvent,
+  EventSchemas,
+  EventType,
+  InputContent,
+  Message,
+} from "@ag-ui/core";
 import * as protoEvents from "./generated/events";
 import * as protoPatch from "./generated/patch";
 
 function toCamelCase(str: string): string {
   return str.toLowerCase().replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+}
+
+function toProtoContent(content: InputContent) {
+  if (content.type === "text") {
+    return {
+      text: {
+        text: content.text,
+      },
+    };
+  }
+
+  return {
+    binary: {
+      mimeType: content.mimeType,
+      id: content.id,
+      url: content.url,
+      data: content.data,
+      filename: content.filename,
+    },
+  };
+}
+
+function fromProtoContent(content: any): InputContent {
+  if (content.text) {
+    return {
+      type: "text",
+      text: content.text.text ?? "",
+    };
+  }
+
+  const binary = content.binary ?? {};
+  return {
+    type: "binary",
+    mimeType: binary.mimeType ?? "",
+    id: binary.id ?? undefined,
+    url: binary.url ?? undefined,
+    data: binary.data ?? undefined,
+    filename: binary.filename ?? undefined,
+  };
 }
 
 /**
@@ -17,10 +62,18 @@ export function encode(event: BaseEvent): Uint8Array {
   if (type === EventType.MESSAGES_SNAPSHOT) {
     rest.messages = rest.messages.map((message: Message) => {
       const untypedMessage = message as any;
-      if (untypedMessage.toolCalls === undefined) {
-        return { ...message, toolCalls: [] };
-      }
-      return message;
+      const toolCalls = untypedMessage.toolCalls ?? [];
+      const content = untypedMessage.content;
+      const isContentArray = Array.isArray(content);
+
+      return {
+        ...message,
+        toolCalls,
+        content: isContentArray ? undefined : content,
+        contentParts: isContentArray
+          ? (content as InputContent[]).map(toProtoContent)
+          : [],
+      };
     });
   }
 
@@ -50,8 +103,8 @@ export function encode(event: BaseEvent): Uint8Array {
  * The format includes a 4-byte length prefix followed by the message.
  */
 export function decode(data: Uint8Array): BaseEvent {
-  const event = protoEvents.Event.decode(data);
-  const decoded = Object.values(event).find((value) => value !== undefined);
+  const event = protoEvents.Event.decode(data, data.length);
+  const decoded = Object.values(event).find((value) => value !== undefined) as any;
   if (!decoded) {
     throw new Error("Invalid event");
   }
@@ -66,6 +119,10 @@ export function decode(data: Uint8Array): BaseEvent {
       if (untypedMessage.toolCalls?.length === 0) {
         untypedMessage.toolCalls = undefined;
       }
+      if (Array.isArray(untypedMessage.contentParts) && untypedMessage.contentParts.length > 0) {
+        untypedMessage.content = untypedMessage.contentParts.map(fromProtoContent);
+      }
+      delete untypedMessage.contentParts;
     }
   }
 

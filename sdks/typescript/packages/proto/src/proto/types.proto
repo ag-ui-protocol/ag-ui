@@ -12,6 +12,25 @@ message ToolCall {
   Function function = 3;
 }
 
+message TextInputContent {
+  string text = 1;
+}
+
+message BinaryInputContent {
+  string mime_type = 1;
+  string id = 2;
+  string url = 3;
+  string data = 4;
+  string filename = 5;
+}
+
+message InputContent {
+  oneof value {
+    TextInputContent text = 1;
+    BinaryInputContent binary = 2;
+  }
+}
+
 message Message {
   string id = 1;
   string role = 2;
@@ -20,4 +39,5 @@ message Message {
   repeated ToolCall tool_calls = 5;
   optional string tool_call_id = 6;
   optional string error = 7;
+  repeated InputContent content_parts = 8;
 }

@@ -89,7 +89,14 @@ describe("Proto", () => {
         {
           id: "msg-1",
           role: "user",
-          content: "Hello, can you help me with something?",
+          content: [
+            { type: "text", text: "Hello, can you help me with something?" },
+            {
+              type: "binary",
+              mimeType: "image/png",
+              data: "somepngbytes",
+            },
+          ],
         },
         {
           id: "msg-2",
@@ -136,7 +143,7 @@ describe("Proto", () => {
     // Verify first message (user)
     expect(decoded.messages[0].id).toBe(originalEvent.messages[0].id);
     expect(decoded.messages[0].role).toBe(originalEvent.messages[0].role);
-    expect(decoded.messages[0].content).toBe(originalEvent.messages[0].content);
+    expect(decoded.messages[0].content).toEqual(originalEvent.messages[0].content);
 
     // Verify second message (assistant with tool calls)
     expect(decoded.messages[1].id).toBe(originalEvent.messages[1].id);

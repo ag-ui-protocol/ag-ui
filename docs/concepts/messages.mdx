@@ -17,13 +17,42 @@ different AI providers while maintaining a consistent structure. This allows
 applications to switch between AI services (like OpenAI, Anthropic, or custom
 models) without changing the client-side implementation.
 
+`InputContent` values let user messages mix text with binary payloads (for
+images, audio, PDFs, etc.). Text entries keep backwards compatibility with
+string-only messages, while binary entries describe rich media with metadata:
+
+- `mimeType` specifies how downstream systems should interpret the payload.
+- `data` contains inline base64-encoded bytes for immediate consumption.
+- `url` references externally hosted content when direct upload is preferred.
+- `id` links to pre-uploaded assets managed elsewhere in the system.
+- `filename` provides optional human-readable naming for downloads.
+
+At least one of `data`, `url`, or `id` must be present on binary items so the
+agent (or its backing provider) can retrieve the payload.
+
 The basic message structure includes:
 
 ```typescript
+interface TextInputContent {
+  type: "text"
+  text: string
+}
+
+interface BinaryInputContent {
+  type: "binary"
+  mimeType: string
+  id?: string
+  url?: string
+  data?: string
+  filename?: string
+}
+
+type InputContent = TextInputContent | BinaryInputContent
+
 interface BaseMessage {
   id: string // Unique identifier for the message
   role: string // The role of the sender (user, assistant, system, tool)
-  content?: string // Optional text content of the message
+  content?: string | InputContent[] // Text or multimodal content of the message
   name?: string // Optional name of the sender
 }
 ```
@@ -41,9 +70,11 @@ Messages from the end user to the agent:
 interface UserMessage {
   id: string
   role: "user"
-  content: string // Text input from the user
+  content: string | InputContent[] // User-provided text or multimodal payload
   name?: string // Optional user identifier
 }
+
+> **Validation rule:** a user message must include either non-empty string content or a non-empty array of `InputContent`. Binary items must specify at least one of `data`, `url`, or `id` to reference the payload.
 ```
 
 ### Assistant Messages
@@ -108,23 +139,31 @@ mapped to and from proprietary formats used by various AI providers:
 // Example: Converting AG-UI messages to OpenAI format
 const openaiMessages = agUiMessages
   .filter((msg) => ["user", "system", "assistant"].includes(msg.role))
-  .map((msg) => ({
-    role: msg.role as "user" | "system" | "assistant",
-    content: msg.content || "",
-    // Map tool calls if present
-    ...(msg.role === "assistant" && msg.toolCalls
-      ? {
-          tool_calls: msg.toolCalls.map((tc) => ({
-            id: tc.id,
-            type: tc.type,
-            function: {
-              name: tc.function.name,
-              arguments: tc.function.arguments,
-            },
-          })),
-        }
-      : {}),
-  }))
+  .map((msg) => {
+    const textContent = Array.isArray(msg.content)
+      ? msg.content
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n")
+      : msg.content ?? "";
+
+    return {
+      role: msg.role as "user" | "system" | "assistant",
+      content: textContent,
+      ...(msg.role === "assistant" && msg.toolCalls
+        ? {
+            tool_calls: msg.toolCalls.map((tc) => ({
+              id: tc.id,
+              type: tc.type,
+              function: {
+                name: tc.function.name,
+                arguments: tc.function.arguments,
+              },
+            })),
+          }
+        : {}),
+    };
+  });
 ```
 
 This abstraction allows AG-UI to serve as a common interface regardless of the

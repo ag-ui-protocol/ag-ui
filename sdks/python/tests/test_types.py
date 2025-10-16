@@ -10,8 +10,15 @@ from ag_ui.core.types import (
     AssistantMessage,
     UserMessage,
     ToolMessage,
+    TextInputContent,
+    BinaryInputContent,
     Message,
-    RunAgentInput
+    RunAgentInput,
+    create_text_input_content,
+    create_binary_input_content,
+    normalize_input_content,
+    encode_binary_data,
+    decode_binary_data,
 )
 
 
@@ -28,12 +35,20 @@ class TestBaseTypes(unittest.TestCase):
         """Test serialization of a basic message"""
         user_msg = UserMessage(
             id="msg_123",
-            content="Hello, world!"
+            content=[
+                {"type": "text", "text": "Hello"},
+                {
+                    "type": "binary",
+                    "mime_type": "image/png",
+                    "data": encode_binary_data(b"hello"),
+                },
+            ],
         )
         serialized = user_msg.model_dump(by_alias=True)
         self.assertEqual(serialized["id"], "msg_123")
         self.assertEqual(serialized["role"], "user")
-        self.assertEqual(serialized["content"], "Hello, world!")
+        self.assertIsInstance(serialized["content"], list)
+        self.assertEqual(serialized["content"][0]["text"], "Hello")
 
     def test_tool_call_serialization(self):
         """Test camel case serialization for ConfiguredBaseModel subclasses"""
@@ -44,6 +59,25 @@ class TestBaseTypes(unittest.TestCase):
         serialized = tool_call.model_dump(by_alias=True)
         # Should convert function to camelCase
         self.assertIn("function", serialized)
+
+    def test_input_content_helpers(self):
+        """Helper utilities should create and normalize input content."""
+        text_item = create_text_input_content("Hello")
+        self.assertIsInstance(text_item, TextInputContent)
+        self.assertEqual(text_item.text, "Hello")
+
+        binary_item = create_binary_input_content(
+            mime_type="application/json",
+            data=encode_binary_data(b"{}"),
+            filename="payload.json",
+        )
+        self.assertIsInstance(binary_item, BinaryInputContent)
+        self.assertEqual(binary_item.mime_type, "application/json")
+        self.assertEqual(decode_binary_data(binary_item.data), b"{}")
+
+        normalized = normalize_input_content("Hello")
+        self.assertEqual(len(normalized), 1)
+        self.assertIsInstance(normalized[0], TextInputContent)
 
     def test_tool_message_camel_case(self):
         """Test camel case serialization for ToolMessage"""
@@ -143,6 +177,30 @@ class TestBaseTypes(unittest.TestCase):
         self.assertEqual(serialized["role"], "user")
         self.assertEqual(serialized["content"], "User query")
 
+    def test_user_message_with_binary_content_only(self):
+        """User messages should allow binary content without text."""
+        msg = UserMessage(
+            id="user_binary",
+            content=[
+                {
+                    "type": "binary",
+                    "mime_type": "application/pdf",
+                    "url": "https://example.com/file.pdf",
+                }
+            ],
+        )
+        self.assertIsInstance(msg.content, list)
+        binary_content = msg.content[0]
+        self.assertIsInstance(binary_content, BinaryInputContent)
+        self.assertEqual(binary_content.mime_type, "application/pdf")
+
+    def test_user_message_requires_body(self):
+        """User messages must include content."""
+        with self.assertRaises(ValidationError):
+            UserMessage(
+                id="user_empty",
+            )
+
     def test_message_union_deserialization(self):
         """Test that the Message union correctly deserializes to the appropriate type"""
         # Create type adapter for the union
@@ -153,7 +211,17 @@ class TestBaseTypes(unittest.TestCase):
             {"id": "dev_123", "role": "developer", "content": "Developer note"},
             {"id": "sys_456", "role": "system", "content": "System instruction"},
             {"id": "asst_789", "role": "assistant", "content": "Assistant response"},
-            {"id": "user_101", "role": "user", "content": "User query"},
+            {
+                "id": "user_101",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "binary",
+                        "mimeType": "application/json",
+                        "data": encode_binary_data(b"{\"key\": \"data\"}"),
+                    }
+                ],
+            },
             {
                 "id": "tool_202", 
                 "role": "tool", 
@@ -175,7 +243,10 @@ class TestBaseTypes(unittest.TestCase):
             self.assertIsInstance(msg, expected_type)
             self.assertEqual(msg.id, data["id"])
             self.assertEqual(msg.role, data["role"])
-            self.assertEqual(msg.content, data["content"])
+            if msg.role == "user":
+                self.assertIsInstance(msg.content, list)
+            else:
+                self.assertEqual(msg.content, data.get("content"))
 
     def test_message_union_with_tool_calls(self):
         """Test the Message union with an assistant message containing tool calls"""
@@ -203,6 +274,30 @@ class TestBaseTypes(unittest.TestCase):
         self.assertEqual(len(msg.tool_calls), 1)
         self.assertEqual(msg.tool_calls[0].function.name, "search_data")
 
+    def test_message_union_with_multimodal_content(self):
+        """Test that multimodal content arrays are preserved in the message union."""
+        message_adapter = TypeAdapter(Message)
+
+        data = {
+            "id": "user_multimodal",
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "See this"},
+                {
+                    "type": "binary",
+                    "mimeType": "image/png",
+                    "data": encode_binary_data(b"image-bytes"),
+                    "filename": "example.png",
+                },
+            ],
+        }
+
+        msg = message_adapter.validate_python(data)
+        self.assertIsInstance(msg, UserMessage)
+        self.assertEqual(len(msg.content), 2)
+        self.assertIsInstance(msg.content[0], TextInputContent)
+        self.assertIsInstance(msg.content[1], BinaryInputContent)
+
     def test_run_agent_input_deserialization(self):
         """Test deserializing RunAgentInput JSON with diverse message types"""
         # Create JSON data for RunAgentInput with diverse messages
@@ -221,7 +316,17 @@ class TestBaseTypes(unittest.TestCase):
                 {
                     "id": "user_001",
                     "role": "user",
-                    "content": "Can you help me analyze this data?"
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Can you help me analyze this data?",
+                        },
+                        {
+                            "type": "binary",
+                            "mimeType": "text/csv",
+                            "data": encode_binary_data(b"a,b,c"),
+                        },
+                    ],
                 },
                 # Developer message
                 {
@@ -320,7 +425,13 @@ class TestBaseTypes(unittest.TestCase):
 
         # Verify specific message content
         self.assertEqual(run_agent_input.messages[0].content, "You are a helpful assistant.")
-        self.assertEqual(run_agent_input.messages[1].content, "Can you help me analyze this data?")
+        user_msg = run_agent_input.messages[1]
+        self.assertIsInstance(user_msg.content, list)
+        self.assertEqual(user_msg.content[0].text, "Can you help me analyze this data?")
+        self.assertEqual(
+            decode_binary_data(user_msg.content[1].data),
+            b"a,b,c",
+        )
 
         # Verify assistant message with tool call
         assistant_msg = run_agent_input.messages[3]

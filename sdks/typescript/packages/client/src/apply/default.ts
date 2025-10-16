@@ -25,6 +25,7 @@ import {
   RunErrorEvent,
   StepStartedEvent,
   StepFinishedEvent,
+  InputContent,
 } from "@ag-ui/core";
 import { mergeMap, mergeAll, defaultIfEmpty, concatMap } from "rxjs/operators";
 import { of, EMPTY } from "rxjs";
@@ -140,14 +141,40 @@ export const defaultApplyEvents = (
                 state,
                 agent,
                 input,
-                textMessageBuffer: targetMessage.content ?? "",
+                textMessageBuffer: Array.isArray(targetMessage.content)
+                  ? targetMessage.content
+                      .filter((part) => part.type === "text")
+                      .map((part) => part.text)
+                      .join("")
+                  : targetMessage.content ?? "",
               }),
           );
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
             // Append content to the correct message by ID
-            targetMessage.content = (targetMessage.content || "") + delta;
+            const currentContent = targetMessage.content;
+            if (Array.isArray(currentContent)) {
+              const updatedContent: InputContent[] = currentContent.slice();
+              const lastTextIndex = updatedContent
+                .map((part, index) => (part.type === "text" ? index : -1))
+                .filter((index) => index >= 0)
+                .at(-1);
+
+              if (lastTextIndex !== undefined && updatedContent[lastTextIndex].type === "text") {
+                const textPart = updatedContent[lastTextIndex];
+                updatedContent[lastTextIndex] = {
+                  ...textPart,
+                  text: textPart.text + delta,
+                };
+              } else {
+                updatedContent.push({ type: "text", text: delta });
+              }
+
+              targetMessage.content = updatedContent;
+            } else {
+              targetMessage.content = (currentContent || "") + delta;
+            }
             applyMutation({ messages });
           }
 
@@ -175,7 +202,12 @@ export const defaultApplyEvents = (
                 state,
                 agent,
                 input,
-                textMessageBuffer: targetMessage.content ?? "",
+                textMessageBuffer: Array.isArray(targetMessage.content)
+                  ? targetMessage.content
+                      .filter((part) => part.type === "text")
+                      .map((part) => part.text)
+                      .join("")
+                  : targetMessage.content ?? "",
               }),
           );
           applyMutation(mutation);

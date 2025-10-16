@@ -374,7 +374,14 @@ describe("parseProtoStream", () => {
         {
           id: "msg1",
           role: "user",
-          content: "Hello, can you help me with something?",
+          content: [
+            { type: "text", text: "Hello, can you help me with something?" },
+            {
+              type: "binary",
+              mimeType: "image/png",
+              data: "somepngbytes",
+            },
+          ],
         },
         {
           id: "msg2",
@@ -384,7 +391,9 @@ describe("parseProtoStream", () => {
         {
           id: "msg3",
           role: "user",
-          content: "I need help with coding",
+          content: [
+            { type: "text", text: "I need help with coding" },
+          ],
         },
         {
           id: "msg4",
@@ -433,16 +442,13 @@ describe("parseProtoStream", () => {
       expect(message.content).toEqual(messagesSnapshotEvent.messages[index].content);
 
       // Check tool calls if present
-      if ((messagesSnapshotEvent.messages[index] as any).toolCalls) {
+      const originalMessage = messagesSnapshotEvent.messages[index] as any;
+      if (originalMessage.toolCalls) {
         expect((message as any).toolCalls).toBeDefined();
-        expect((message as any).toolCalls!.length).toEqual(
-          (messagesSnapshotEvent.messages[index] as any).toolCalls!.length,
-        );
+        expect((message as any).toolCalls!.length).toEqual(originalMessage.toolCalls!.length);
 
         (message as any).toolCalls!.forEach((toolCall: any, toolIndex: number) => {
-          const originalToolCall = (messagesSnapshotEvent.messages[index] as any).toolCalls![
-            toolIndex
-          ];
+          const originalToolCall = originalMessage.toolCalls![toolIndex];
           expect(toolCall.id).toEqual(originalToolCall.id);
           expect(toolCall.type).toEqual(originalToolCall.type);
           expect(toolCall.function.name).toEqual(originalToolCall.function.name);

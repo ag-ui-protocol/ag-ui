@@ -112,6 +112,35 @@ describe("Agent Mutations", () => {
       expect(mockSubscriber.onNewToolCall).not.toHaveBeenCalled();
     });
 
+    it("should add a user message with binary content", async () => {
+      const userMessage: Message = {
+        id: "user-msg-binary",
+        role: "user",
+        content: [
+          {
+            type: "binary",
+            mimeType: "image/png",
+            data: "base64,somepngbytes",
+          },
+        ],
+      };
+
+      agent.addMessage(userMessage);
+
+      expect(agent.messages.at(-1)).toBe(userMessage);
+
+      await waitForAsyncNotifications();
+
+      expect(mockSubscriber.onNewMessage).toHaveBeenCalledWith({
+        message: userMessage,
+        messages: agent.messages,
+        state: agent.state,
+        agent,
+      });
+      expect(mockSubscriber.onMessagesChanged).toHaveBeenCalled();
+      expect(Array.isArray((agent.messages.at(-1) as Message).content)).toBe(true);
+    });
+
     it("should add an assistant message without tool calls", async () => {
       const assistantMessage: Message = {
         id: "assistant-msg-1",
