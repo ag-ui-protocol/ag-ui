@@ -383,6 +383,12 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         agentic_chat: new CloudflareHttpAgent({
           url: `${envVars.cloudflareUrl}/agentic_chat`,
         }),
+        tool_based_generative_ui: new CloudflareHttpAgent({
+          url: `${envVars.cloudflareUrl}/tool_based_generative_ui`,
+        }),
+        agentic_generative_ui: new CloudflareHttpAgent({
+          url: `${envVars.cloudflareUrl}/agentic_generative_ui`,
+        }),
       };
     },
   },
