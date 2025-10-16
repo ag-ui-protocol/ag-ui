@@ -72,11 +72,11 @@ curl -fsSL https://get.pnpm.io/install.sh | sh -
 
 ## Step 1 – Scaffold your integration
 
-Start by cloning the repo and navigating to the TypeScript SDK:
+Start by cloning the repo
 
 ```bash
 git clone git@github.com:ag-ui-protocol/ag-ui.git
-cd ag-ui/typescript-sdk
+cd ag-ui/
 ```
 
 Copy the middleware-starter template to create your OpenAI integration:
@@ -201,7 +201,7 @@ import {
 import { Observable } from "rxjs"
 
 export class OpenAIAgent extends AbstractAgent {
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     const messageId = Date.now().toString()
     return new Observable<BaseEvent>((observer) => {
       observer.next({
@@ -290,7 +290,7 @@ export class OpenAIAgent extends AbstractAgent {
     this.openai = openai ?? new OpenAI()
   }
 
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     return new Observable<BaseEvent>((observer) => {
       // Same as before - emit RUN_STARTED to begin
       observer.next({
@@ -417,7 +417,7 @@ Did you build a custom adapter that others could reuse? We welcome community
 contributions!
 
 1. Fork the [AG-UI repository](https://github.com/ag-ui-protocol/ag-ui)
-2. Add your package under `typescript-sdk/integrations/`. See
+2. Add your package under `integrations`. See
    [Contributing](../development/contributing) for more details and naming
    conventions.
 3. Open a pull request describing your use-case and design decisions

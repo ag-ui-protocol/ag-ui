@@ -36,15 +36,15 @@ jobs:
 
     - name: Install dependencies
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-      working-directory: python-sdk
+      working-directory: sdks/python
       run: poetry install --no-interaction --no-root
 
     - name: Install project
-      working-directory: python-sdk
+      working-directory: sdks/python
       run: poetry install --no-interaction
 
     - name: Run tests
-      working-directory: python-sdk
+      working-directory: sdks/python
       run: poetry run python -m unittest discover tests -v
 
   typescript:
@@ -58,7 +58,7 @@ jobs:
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '22'
 
     - name: Install protoc
       uses: arduino/setup-protoc@v3
@@ -80,13 +80,132 @@ jobs:
           ${{ runner.os }}-pnpm-store-
 
     - name: Install dependencies
-      working-directory: typescript-sdk
       run: pnpm install --frozen-lockfile
 
     - name: Test Build
-      working-directory: typescript-sdk
       run: pnpm run build
 
     - name: Run tests
-      working-directory: typescript-sdk
       run: pnpm run test
+
+  go:
+    name: Go SDK Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.4'
+
+    - name: Setup Go module cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Download dependencies
+      working-directory: sdks/community/go
+      run: go mod download
+
+    - name: Run tests
+      working-directory: sdks/community/go
+      run: go test ./... -v
+
+  kotlin:
+    name: Kotlin SDK Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+
+    - name: Setup Gradle
+      uses: gradle/gradle-build-action@v3
+
+    - name: Run JVM tests
+      working-directory: sdks/community/kotlin/library
+      run: ./gradlew jvmTest --no-daemon --stacktrace
+
+    - name: Parse test results
+      if: always()
+      working-directory: sdks/community/kotlin/library
+      run: |
+        echo "## Kotlin SDK Test Results Summary"
+        echo ""
+
+        total_tests=0
+        total_failures=0
+        total_errors=0
+
+        for module in core client tools; do
+          xml_dir="$module/build/test-results/jvmTest"
+
+          if [ -d "$xml_dir" ]; then
+            # Sum up test counts from all XML files in the directory
+            module_tests=$(find "$xml_dir" -name "*.xml" -exec grep -h '<testsuite' {} \; | grep -o 'tests="[0-9]*"' | sed 's/tests="\([0-9]*\)"/\1/' | awk '{sum += $1} END {print sum}')
+            module_failures=$(find "$xml_dir" -name "*.xml" -exec grep -h '<testsuite' {} \; | grep -o 'failures="[0-9]*"' | sed 's/failures="\([0-9]*\)"/\1/' | awk '{sum += $1} END {print sum}')
+            module_errors=$(find "$xml_dir" -name "*.xml" -exec grep -h '<testsuite' {} \; | grep -o 'errors="[0-9]*"' | sed 's/errors="\([0-9]*\)"/\1/' | awk '{sum += $1} END {print sum}')
+
+            # Default to 0 if empty
+            module_tests=${module_tests:-0}
+            module_failures=${module_failures:-0}
+            module_errors=${module_errors:-0}
+
+            if [ "$module_tests" -gt 0 ]; then
+              echo "✅ kotlin-$module: $module_tests tests, $module_failures failures, $module_errors errors"
+              total_tests=$((total_tests + module_tests))
+              total_failures=$((total_failures + module_failures))
+              total_errors=$((total_errors + module_errors))
+            fi
+          fi
+        done
+
+        echo ""
+        echo "---"
+        echo "### Overall Results: $total_tests tests, $total_failures failures, $total_errors errors"
+
+        if [ $total_failures -gt 0 ] || [ $total_errors -gt 0 ]; then
+          echo "❌ Some tests failed"
+          exit 1
+        elif [ $total_tests -eq 0 ]; then
+          echo "⚠️ No tests were found or executed"
+          exit 1
+        else
+          echo "✅ All $total_tests tests passed!"
+        fi
+
+  java:
+    name: Java SDK Tests
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: sdks/community/java
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+        cache: 'maven'
+
+    - name: Run tests
+      run: mvn -B -ntp test
