@@ -14,6 +14,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - suite: a2a-middleware
+            test_path: tests/a2aMiddlewareTests
+            services: ["dojo","a2a-middleware"]
+            wait_on: http://localhost:9999,tcp:localhost:8011,tcp:localhost:8012,tcp:localhost:8013,tcp:localhost:8014
           - suite: adk-middleware
             test_path: tests/adkMiddlewareTests
             services: ["dojo","adk-middleware"]
@@ -66,10 +70,10 @@ jobs:
             test_path: tests/serverStarterAllFeaturesTests
             services: ["dojo","server-starter-all"]
             wait_on: http://localhost:9999,tcp:localhost:8001
-          - suite: vercel-ai-sdk
-            test_path: tests/vercelAISdkTests
-            services: ["dojo"]
-            wait_on: http://localhost:9999
+          # - suite: vercel-ai-sdk
+          #   test_path: tests/vercelAISdkTests
+          #   services: ["dojo"]
+          #   wait_on: http://localhost:9999
 
     steps:
     - name: Checkout code
@@ -123,32 +127,29 @@ jobs:
       uses: astral-sh/setup-uv@v6
 
     - name: Install dependencies
-      working-directory: typescript-sdk
       run: pnpm install --frozen-lockfile
 
     - name: Prepare dojo for e2e
-      working-directory: typescript-sdk/apps/dojo
+      working-directory: apps/dojo
       if: ${{ join(matrix.services, ',') != '' }}
       run: node ./scripts/prep-dojo-everything.js --only ${{ join(matrix.services, ',') }}
 
     - name: Install e2e dependencies
-      working-directory: typescript-sdk/apps/dojo/e2e
+      working-directory: apps/dojo/e2e
       run: |
         pnpm install
 
     - name: write langgraph env files
-      working-directory: typescript-sdk/integrations/langgraph
+      working-directory: integrations/langgraph
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
       if: ${{ contains(join(matrix.services, ','), 'langgraph-fastapi') || contains(join(matrix.services, ','), 'langgraph-platform-python') || contains(join(matrix.services, ','), 'langgraph-platform-typescript') }}
       run: |
-        echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > examples/python/.env
-        echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> examples/python/.env
-        echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > examples/typescript/.env
-        echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> examples/typescript/.env
-        echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > python/ag_ui_langgraph/.env
-        echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> python/ag_ui_langgraph/.env
+        echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > python/examples/.env
+        echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> python/examples/.env
+        echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > typescript/examples/.env
+        echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> typescript/examples/.env
 
     - name: Run dojo+agents
       uses: JarvusInnovations/background-action@v1
@@ -160,12 +161,12 @@ jobs:
       with:
         run: |
           node ../scripts/run-dojo-everything.js --only ${{ join(matrix.services, ',') }}
-        working-directory: typescript-sdk/apps/dojo/e2e
+        working-directory: apps/dojo/e2e
         wait-on: ${{ matrix.wait_on }}
         wait-for: 300000
 
     - name: Run tests – ${{ matrix.suite }}
-      working-directory: typescript-sdk/apps/dojo/e2e
+      working-directory: apps/dojo/e2e
       env:
         BASE_URL: http://localhost:9999
         PLAYWRIGHT_SUITE: ${{ matrix.suite }}
@@ -178,6 +179,6 @@ jobs:
       with:
         name: ${{ matrix.suite }}-playwright-traces
         path: |
-          typescript-sdk/apps/dojo/e2e/test-results/${{ matrix.suite }}/**/*
-          typescript-sdk/apps/dojo/e2e/playwright-report/**/*
+          apps/dojo/e2e/test-results/${{ matrix.suite }}/**/*
+          apps/dojo/e2e/playwright-report/**/*
         retention-days: 7

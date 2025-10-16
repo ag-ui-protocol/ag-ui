@@ -1,0 +1,45 @@
+{
+  "name": "@ag-ui/langgraph",
+  "version": "0.0.18",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist/**",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist .turbo node_modules",
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "link:global": "pnpm link --global",
+    "unlink:global": "pnpm unlink --global"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.66",
+    "@langchain/langgraph-sdk": "^0.1.2",
+    "partial-json": "^0.1.7",
+    "rxjs": "7.8.1"
+  },
+  "peerDependencies": {
+    "@ag-ui/core": ">=0.0.38",
+    "@ag-ui/client": ">=0.0.38"
+  },
+  "devDependencies": {
+    "@ag-ui/core": "workspace:*",
+    "@ag-ui/client": "workspace:*",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.11.19",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.2",
+    "tsup": "^8.0.2",
+    "typescript": "^5.3.3"
+  }
+}
