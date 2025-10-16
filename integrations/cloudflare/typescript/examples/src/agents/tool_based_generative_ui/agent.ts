@@ -36,7 +36,7 @@ export class ToolBasedGenerativeUiAgent extends CloudflareAgent {
     super({
       accountId,
       apiToken,
-      model: CLOUDFLARE_MODELS.LLAMA_3_3_70B, // Using 70B for better tool calling
+      model: CLOUDFLARE_MODELS.LLAMA_3_1_70B, // Using 70B for better tool calling
       systemPrompt: "Help the user with writing Haikus. If the user asks for a haiku, use the generate_haiku tool to display the haiku to the user.",
       streamingEnabled: true,
     });

@@ -62,7 +62,6 @@ export { EventType, type AGUIEvent, type BaseEvent } from "./events";
 export const CLOUDFLARE_MODELS = {
   LLAMA_3_1_8B: "@cf/meta/llama-3.1-8b-instruct" as const,
   LLAMA_3_1_70B: "@cf/meta/llama-3.1-70b-instruct" as const,
-  LLAMA_3_3_70B: "@cf/meta/llama-3.3-70b-instruct" as const,
   LLAMA_2_7B: "@cf/meta/llama-2-7b-chat-int8" as const,
   MISTRAL_7B: "@cf/mistral/mistral-7b-instruct-v0.2" as const,
   GEMMA_7B: "@cf/google/gemma-7b-it" as const,
