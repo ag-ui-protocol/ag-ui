@@ -107,6 +107,11 @@ const ALL_TARGETS = {
     name: "A2A Middleware",
     cwd: path.join(middlewaresRoot, "a2a-middleware/examples"),
   },
+  cloudflare: {
+    command: 'pnpm install --no-frozen-lockfile',
+    name: 'Cloudflare',
+    cwd: path.join(integrationsRoot, 'cloudflare/typescript/examples')
+  },
   dojo: {
     command: "pnpm install --no-frozen-lockfile && pnpm build --filter=demo-viewer...",
     name: "Dojo",

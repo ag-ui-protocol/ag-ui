@@ -19,6 +19,7 @@ import { ADKAgent } from "@ag-ui/adk";
 import { SpringAiAgent } from '@ag-ui/spring-ai';
 import { HttpAgent } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
+import { CloudflareHttpAgent } from "@ag-ui/cloudflare";
 
 const envVars = getEnvVars();
 export const agentsIntegrations: AgentIntegrationConfig[] = [
@@ -371,6 +372,32 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
           When choosing a seat with the buildings management agent, You MUST use the \`pickTable\` tool to have the user pick a seat.
           The buildings management agent will then use the \`pickSeat\` tool to pick a seat.
           `,
+        }),
+      };
+    },
+  },
+  {
+    id: "cloudflare",
+    agents: async () => {
+      return {
+        agentic_chat: new CloudflareHttpAgent({
+          url: `${envVars.cloudflareUrl}/agentic_chat`,
+        }),
+        tool_based_generative_ui: new CloudflareHttpAgent({
+          url: `${envVars.cloudflareUrl}/tool_based_generative_ui`,
+        }),
+      };
+    },
+  },
+  {
+    id: "cloudflare-agents-sdk",
+    agents: async () => {
+      return {
+        human_in_the_loop: new CloudflareHttpAgent({
+          url: `${envVars.cloudflareUrl}/human_in_the_loop_sdk`,
+        }),
+        tool_based_generative_ui: new CloudflareHttpAgent({
+          url: `${envVars.cloudflareUrl}/tool_based_generative_ui_sdk`,
         }),
       };
     },

@@ -344,6 +344,21 @@ const agentFilesMapper: Record<string, (agentKeys: string[]) => Record<string, s
       {},
     );
   },
+  cloudflare: (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/cloudflare/typescript/examples/src/agents/${agentId}/agent.ts`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
 };
 
 async function runGenerateContent() {
