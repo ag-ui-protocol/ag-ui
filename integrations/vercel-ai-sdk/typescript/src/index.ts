@@ -25,9 +25,53 @@ import {
   tool as createVercelAISDKTool,
   ToolChoice,
   ToolSet,
+  FilePart,
+  ImagePart,
+  TextPart,
 } from "ai";
 import { randomUUID } from "@ag-ui/client";
 import { z } from "zod";
+
+type VercelUserContent = Extract<CoreMessage, { role: "user" }>["content"];
+type VercelUserArrayContent = Extract<VercelUserContent, any[]>;
+type VercelUserPart = VercelUserArrayContent extends Array<infer Part> ? Part : never;
+
+const toVercelUserParts = (inputContent: Message["content"]): VercelUserPart[] => {
+  if (!Array.isArray(inputContent)) {
+    return [];
+  }
+
+  const parts: VercelUserPart[] = [];
+
+  for (const part of inputContent) {
+    if (part.type === "text") {
+      parts.push({ type: "text", text: part.text } as VercelUserPart);
+    }
+  }
+
+  return parts;
+};
+
+const toVercelUserContent = (content: Message["content"]): VercelUserContent => {
+  if (!content) {
+    return "";
+  }
+
+  if (typeof content === "string") {
+    return content;
+  }
+
+  const parts = toVercelUserParts(content);
+  if (parts.length === 0) {
+    return "";
+  }
+
+  if (parts.length === 1 && parts[0].type === "text") {
+    return parts[0].text;
+  }
+
+  return parts;
+};
 
 type ProcessedEvent =
   | MessagesSnapshotEvent
@@ -193,7 +237,7 @@ export function convertMessagesToVercelAISDKMessages(messages: Message[]): CoreM
     } else if (message.role === "user") {
       result.push({
         role: "user",
-        content: message.content || "",
+        content: toVercelUserContent(message.content),
       });
     } else if (message.role === "tool") {
       let toolName = "unknown";

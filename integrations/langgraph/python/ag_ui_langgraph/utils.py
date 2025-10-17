@@ -13,6 +13,8 @@ from ag_ui.core import (
     ToolMessage as AGUIToolMessage,
     ToolCall as AGUIToolCall,
     FunctionCall as AGUIFunctionCall,
+    TextInputContent,
+    BinaryInputContent,
 )
 from .types import State, SchemaKeys, LangGraphReasoning
 
@@ -96,9 +98,10 @@ def agui_messages_to_langchain(messages: List[AGUIMessage]) -> List[BaseMessage]
     for message in messages:
         role = message.role
         if role == "user":
+            flattened_content = flatten_user_content(message.content)
             langchain_messages.append(HumanMessage(
                 id=message.id,
-                content=message.content,
+                content=flattened_content,
                 name=message.name,
             ))
         elif role == "assistant":
@@ -176,6 +179,20 @@ def resolve_message_content(content: Any) -> str | None:
         return content_text
 
     return None
+
+
+def flatten_user_content(content: Any) -> str:
+    if content is None:
+        return ""
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        text_parts = [part.text for part in content if isinstance(part, TextInputContent) and part.text]
+        return "\n".join(text_parts)
+
+    return str(content)
 
 def camel_to_snake(name):
     return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()

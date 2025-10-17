@@ -73,10 +73,11 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
   return messages.map((message, index) => {
     switch (message.role) {
       case "user":
+        const userContent = flattenUserContent(message.content);
         return {
           id: message.id,
           role: message.role,
-          content: message.content,
+          content: userContent,
           type: "human",
         };
       case "assistant":
@@ -117,6 +118,23 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
 function stringifyIfNeeded(item: any) {
   if (typeof item === "string") return item;
   return JSON.stringify(item);
+}
+
+function flattenUserContent(content: Message["content"]) {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const textParts = content
+    .filter((part): part is { type: "text"; text: string } => part.type === "text")
+    .map((part) => part.text)
+    .filter((text) => text.length > 0);
+
+  return textParts.join("\n");
 }
 
 export function resolveReasoningContent(eventData: any): LangGraphReasoning | null {

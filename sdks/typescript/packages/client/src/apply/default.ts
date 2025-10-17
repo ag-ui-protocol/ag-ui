@@ -140,14 +140,17 @@ export const defaultApplyEvents = (
                 state,
                 agent,
                 input,
-                textMessageBuffer: targetMessage.content ?? "",
+                textMessageBuffer:
+                  typeof targetMessage.content === "string" ? targetMessage.content : "",
               }),
           );
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
             // Append content to the correct message by ID
-            targetMessage.content = (targetMessage.content || "") + delta;
+            const existingContent =
+              typeof targetMessage.content === "string" ? targetMessage.content : "";
+            targetMessage.content = `${existingContent}${delta}`;
             applyMutation({ messages });
           }
 
@@ -175,7 +178,8 @@ export const defaultApplyEvents = (
                 state,
                 agent,
                 input,
-                textMessageBuffer: targetMessage.content ?? "",
+                textMessageBuffer:
+                  typeof targetMessage.content === "string" ? targetMessage.content : "",
               }),
           );
           applyMutation(mutation);
