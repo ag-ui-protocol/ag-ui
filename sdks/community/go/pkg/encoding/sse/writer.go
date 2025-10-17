@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -67,6 +68,9 @@ func (w *SSEWriter) WriteBytes(ctx context.Context, writer io.Writer, event []by
 			return fmt.Errorf("SSE flush failed: %w", err)
 		}
 	}
+	if flusher, ok := writer.(flusherWithoutError); ok {
+		flusher.Flush()
+	}
 	return nil
 }
 
@@ -115,6 +119,9 @@ func (w *SSEWriter) WriteEventWithType(ctx context.Context, writer io.Writer, ev
 				"event_type", event.Type())
 			return fmt.Errorf("SSE flush failed: %w", err)
 		}
+	}
+	if flusher, ok := writer.(flusherWithoutError); ok {
+		flusher.Flush()
 	}
 
 	return nil
@@ -186,6 +193,10 @@ func (w *SSEWriter) createSSEFrame(jsonData []byte, eventType string, event even
 type flusher interface {
 	Flush() error
 }
+
+// flusherWithoutError is a type alias for http.Flusher.
+// It is used to flush the writer without returning an error.
+type flusherWithoutError = http.Flusher
 
 // CustomEvent is a simple implementation of events.Event for error and custom events
 type CustomEvent struct {
