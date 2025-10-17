@@ -53,7 +53,6 @@ export async function humanInTheLoopHandler(req: Request, res: Response) {
     });
 
     req.on("close", () => {
-      console.log("Client disconnected from human_in_the_loop");
     });
   } catch (error) {
     console.error("Handler error:", error);

@@ -35,7 +35,7 @@ export class HumanInTheLoopAgent extends CloudflareAgent {
     super({
       accountId,
       apiToken,
-      model: CLOUDFLARE_MODELS.LLAMA_3_1_8B,
+      model: CLOUDFLARE_MODELS.HERMES_2_PRO_7B,
       systemPrompt: `You are a helpful assistant that creates task plans.
 
 When the user asks you to do something:

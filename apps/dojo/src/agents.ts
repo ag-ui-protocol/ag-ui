@@ -386,17 +386,18 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         tool_based_generative_ui: new CloudflareHttpAgent({
           url: `${envVars.cloudflareUrl}/tool_based_generative_ui`,
         }),
-        agentic_generative_ui: new CloudflareHttpAgent({
-          url: `${envVars.cloudflareUrl}/agentic_generative_ui`,
-        }),
+      };
+    },
+  },
+  {
+    id: "cloudflare-agents-sdk",
+    agents: async () => {
+      return {
         human_in_the_loop: new CloudflareHttpAgent({
-          url: `${envVars.cloudflareUrl}/human_in_the_loop`,
+          url: `${envVars.cloudflareUrl}/human_in_the_loop_sdk`,
         }),
-        shared_state: new CloudflareHttpAgent({
-          url: `${envVars.cloudflareUrl}/shared_state`,
-        }),
-        backend_tool_rendering: new CloudflareHttpAgent({
-          url: `${envVars.cloudflareUrl}/backend_tool_rendering`,
+        tool_based_generative_ui: new CloudflareHttpAgent({
+          url: `${envVars.cloudflareUrl}/tool_based_generative_ui_sdk`,
         }),
       };
     },

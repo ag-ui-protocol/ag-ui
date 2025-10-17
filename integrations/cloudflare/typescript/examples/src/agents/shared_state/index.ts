@@ -53,7 +53,6 @@ export async function sharedStateHandler(req: Request, res: Response) {
     });
 
     req.on("close", () => {
-      console.log("Client disconnected from shared_state");
     });
   } catch (error) {
     console.error("Handler error:", error);

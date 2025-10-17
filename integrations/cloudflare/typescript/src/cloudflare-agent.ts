@@ -46,7 +46,6 @@ export class CloudflareAgent extends AbstractAgent {
     return new Observable((subscriber) => {
       this.executeRun(input, subscriber)
         .catch((error) => {
-          console.error("CloudflareAgent execution error:", error);
           subscriber.error(error);
         })
         .finally(() => {
@@ -163,10 +162,21 @@ export class CloudflareAgent extends AbstractAgent {
 
           // Stream tool call arguments - emit TOOL_CALL_ARGS
           if (toolCall.function.arguments) {
+            // Parse arguments if they're a JSON string
+            let argsToEmit = toolCall.function.arguments;
+            if (typeof argsToEmit === 'string') {
+              try {
+                argsToEmit = JSON.parse(argsToEmit);
+              } catch (e) {
+                // If parsing fails, it might be a partial JSON string being streamed
+                // Keep it as a string for now
+              }
+            }
+
             const toolArgs: ToolCallArgsEvent = {
               type: EventType.TOOL_CALL_ARGS,
               toolCallId: toolCall.id,
-              delta: toolCall.function.arguments,
+              delta: argsToEmit,
               timestamp: Date.now(),
             };
             subscriber.next(toolArgs);
@@ -247,10 +257,20 @@ export class CloudflareAgent extends AbstractAgent {
         };
         subscriber.next(toolStart);
 
+        // Parse arguments if they're a JSON string
+        let argsToEmit = toolCall.function.arguments;
+        if (typeof argsToEmit === 'string') {
+          try {
+            argsToEmit = JSON.parse(argsToEmit);
+          } catch (e) {
+            // Failed to parse - use string as-is
+          }
+        }
+
         const toolArgs: ToolCallArgsEvent = {
           type: EventType.TOOL_CALL_ARGS,
           toolCallId: toolCall.id,
-          delta: toolCall.function.arguments,
+          delta: argsToEmit,
           timestamp: Date.now(),
         };
         subscriber.next(toolArgs);
@@ -280,13 +300,17 @@ export class CloudflareAgent extends AbstractAgent {
   }
 
   /**
-   * Converts AG-UI tools to Cloudflare format.
+   * Converts AG-UI tools to Cloudflare/OpenAI format.
+   * For the /chat/completions endpoint, tools need to be wrapped in a function object.
    */
   protected convertTools(tools: any[]): any[] {
     return tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
+      type: "function",
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      },
     }));
   }
 

@@ -35,7 +35,7 @@ export class BackendToolRenderingAgent extends CloudflareAgent {
     super({
       accountId,
       apiToken,
-      model: CLOUDFLARE_MODELS.LLAMA_3_1_8B,
+      model: CLOUDFLARE_MODELS.LLAMA_3_3_70B_FP8, // Using function-calling capable model
       systemPrompt: `You are a helpful assistant with access to various tools.
 
 When the user asks for information or actions that can be enhanced with rich UI:

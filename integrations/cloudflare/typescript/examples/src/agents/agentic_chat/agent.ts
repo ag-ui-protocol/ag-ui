@@ -32,7 +32,7 @@ export class AgenticChatAgent extends CloudflareAgent {
     super({
       accountId,
       apiToken,
-      model: CLOUDFLARE_MODELS.LLAMA_3_1_8B,
+      model: CLOUDFLARE_MODELS.LLAMA_3_1_8B, // Using smaller model for simple chat
       systemPrompt: `You are a helpful AI assistant. You provide clear, accurate, and friendly responses to user queries.
 
 IMPORTANT: Only use the available tools when the user explicitly asks you to do something that requires them.

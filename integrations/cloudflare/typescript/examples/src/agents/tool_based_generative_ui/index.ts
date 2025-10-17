@@ -69,7 +69,6 @@ export async function toolBasedGenerativeUiHandler(req: Request, res: Response) 
 
     // Handle client disconnect
     req.on("close", () => {
-      console.log("Client disconnected from tool_based_generative_ui");
     });
   } catch (error) {
     console.error("Handler error:", error);

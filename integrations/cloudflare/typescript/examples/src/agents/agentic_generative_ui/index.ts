@@ -69,7 +69,6 @@ export async function agenticGenerativeUiHandler(req: Request, res: Response) {
 
     // Handle client disconnect
     req.on("close", () => {
-      console.log("Client disconnected from agentic_generative_ui");
     });
   } catch (error) {
     console.error("Handler error:", error);

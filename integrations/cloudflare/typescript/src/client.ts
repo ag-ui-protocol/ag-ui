@@ -145,11 +145,29 @@ export class CloudflareAIClient {
 
   getModelCapabilities(model: string) {
     const capabilities = {
-      "@cf/meta/llama-3.3-70b-instruct": {
+      "@cf/meta/llama-3.3-70b-instruct-fp8-fast": {
         streaming: true,
         functionCalling: true,
         maxTokens: 4096,
         contextWindow: 128000,
+      },
+      "@cf/meta/llama-4-scout-17b-16e-instruct": {
+        streaming: true,
+        functionCalling: true,
+        maxTokens: 4096,
+        contextWindow: 128000,
+      },
+      "@cf/mistralai/mistral-small-3.1-24b-instruct": {
+        streaming: true,
+        functionCalling: true,
+        maxTokens: 8192,
+        contextWindow: 32768,
+      },
+      "@cf/nousresearch/hermes-2-pro-mistral-7b": {
+        streaming: true,
+        functionCalling: true,
+        maxTokens: 4096,
+        contextWindow: 32768,
       },
       "@cf/meta/llama-3.1-70b-instruct": {
         streaming: true,

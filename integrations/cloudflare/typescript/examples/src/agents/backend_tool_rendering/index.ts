@@ -53,7 +53,6 @@ export async function backendToolRenderingHandler(req: Request, res: Response) {
     });
 
     req.on("close", () => {
-      console.log("Client disconnected from backend_tool_rendering");
     });
   } catch (error) {
     console.error("Handler error:", error);

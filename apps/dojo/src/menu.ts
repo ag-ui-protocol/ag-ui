@@ -157,14 +157,18 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   },
   {
     id: "cloudflare",
-    name: "Cloudflare",
+    name: "Cloudflare Workers AI",
     features: [
       "agentic_chat",
       "tool_based_generative_ui",
-      "agentic_generative_ui",
+    ],
+  },
+  {
+    id: "cloudflare-agents-sdk",
+    name: "Cloudflare Agents SDK",
+    features: [
       "human_in_the_loop",
-      "shared_state",
-      "backend_tool_rendering",
+      "tool_based_generative_ui",
     ],
   },
   {

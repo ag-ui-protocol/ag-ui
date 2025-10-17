@@ -71,7 +71,6 @@ export async function agenticChatHandler(req: Request, res: Response) {
 
     // Handle client disconnect
     req.on("close", () => {
-      console.log("Client disconnected from agentic_chat");
       // Observable will be automatically unsubscribed
     });
   } catch (error) {
