@@ -6,7 +6,8 @@ and background changing, exposed in an AG-UI compatible way.
 from typing import List
 
 from agno.agent.agent import Agent
-from agno.app.agui.app import AGUIApp
+from agno.os import AgentOS
+from agno.os.interfaces.agui import AGUI
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
 
@@ -47,11 +48,9 @@ agent = Agent(
     debug_mode=True,
 )
 
-agui_app = AGUIApp(
-  agent=agent,
-  name="Tool-based Generative UI Agent",
-  app_id="tool_based_generative_ui",
-  description="A tool-based generative UI agent with haiku generation and background changing capabilities.",
+agent_os = AgentOS(
+  agents=[agent],
+  interfaces=[AGUI(agent=agent)]
 )
 
-app = agui_app.get_app()
+app = agent_os.get_app()
