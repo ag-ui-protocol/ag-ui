@@ -304,6 +304,7 @@ export class A2AMiddlewareAgent extends AbstractAgent {
     pendingA2ACalls: Set<string>,
     pendingTextMessages: Set<string>,
   ): void {
+    // @ts-expect-error orchestrationAgent.run remains protected; middleware intentionally bypasses until public API exists.
     const newRunStream = this.orchestrationAgent.run(input);
     this.wrapStream(newRunStream, pendingA2ACalls, pendingTextMessages, observer, input);
   }
