@@ -1,6 +1,6 @@
 [versions]
 core-ktx = "1.16.0"
-kotlin = "2.1.21"
+kotlin = "2.2.20"
 kotlin-json-patch = "1.0.0"
 #Downgrading to avoid an R8 error
 ktor = "3.1.3"

@@ -1,8 +1,8 @@
 import org.jetbrains.kotlin.gradle.targets.js.dsl.ExperimentalWasmDsl
 
 plugins {
-    kotlin("multiplatform") version "2.1.21"
-    kotlin("plugin.serialization") version "2.1.21"
+    kotlin("multiplatform") version "2.2.20"
+    kotlin("plugin.serialization") version "2.2.20"
     id("com.android.library") version "8.2.2"
     id("io.gitlab.arturbosch.detekt") version "1.23.4"
     id("maven-publish")
@@ -34,8 +34,8 @@ kotlin {
                     freeCompilerArgs.add("-Xopt-in=kotlin.RequiresOptIn")
                     freeCompilerArgs.add("-Xopt-in=kotlinx.coroutines.ExperimentalCoroutinesApi")
                     freeCompilerArgs.add("-Xopt-in=kotlinx.serialization.ExperimentalSerializationApi")
-                    languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
-                    apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
+                    languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_2)
+                    apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_2)
                 }
             }
         }

@@ -82,9 +82,7 @@ kotlin {
                 implementation(libs.okio)
 
                 // Markdown rendering
-                implementation(libs.richtext.commonmark)
-                implementation(libs.richtext.ui)
-                implementation(libs.richtext.ui.material3)
+                implementation(libs.markdown.renderer.m3)
             }
         }
 
@@ -101,6 +99,13 @@ kotlin {
                 api(libs.activity.compose)
                 api(libs.appcompat)
                 api(libs.core.ktx)
+                implementation(libs.androidx.compose.runtime)
+                implementation(libs.androidx.compose.runtime.saveable)
+                implementation(libs.androidx.compose.foundation)
+                implementation(libs.androidx.compose.material)
+                implementation(libs.androidx.compose.material3)
+                implementation(libs.androidx.compose.ui)
+                implementation(libs.androidx.compose.ui.tooling.preview)
                 implementation(libs.ktor.client.android)
             }
         }
@@ -123,7 +128,7 @@ kotlin {
 
                 // Fixed Compose testing dependencies with explicit versions
                 implementation(libs.ui.test.junit4)
-                implementation("androidx.compose.ui:ui-test-manifest:1.8.3")
+                implementation(libs.androidx.compose.ui.test.manifest)
                 implementation(libs.activity.compose)
                 implementation(libs.androidx.ui.tooling)
             }
