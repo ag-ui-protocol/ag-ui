@@ -1,0 +1,36 @@
+package com.agui.example.chatapp.chat
+
+import com.agui.client.AgUiAgent
+import com.agui.core.types.BaseEvent
+import com.agui.example.chatapp.data.model.AgentConfig
+import com.agui.tools.DefaultToolRegistry
+import kotlinx.coroutines.flow.Flow
+
+/** Abstraction over the AG-UI client so we can substitute fakes in tests. */
+fun interface ChatAgent {
+    fun sendMessage(message: String, threadId: String): Flow<BaseEvent>?
+}
+
+fun interface ChatAgentFactory {
+    fun createAgent(
+        config: AgentConfig,
+        headers: Map<String, String>,
+        toolRegistry: DefaultToolRegistry,
+        userId: String,
+        systemPrompt: String?
+    ): ChatAgent
+
+    companion object {
+        fun default(): ChatAgentFactory = ChatAgentFactory { config, headers, toolRegistry, userId, systemPrompt ->
+            val agent = AgUiAgent(url = config.url) {
+                this.headers.putAll(headers)
+                this.toolRegistry = toolRegistry
+                this.userId = userId
+                this.systemPrompt = systemPrompt
+            }
+            ChatAgent { message, threadId ->
+                agent.sendMessage(message = message, threadId = threadId)
+            }
+        }
+    }
+}
