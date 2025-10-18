@@ -475,16 +475,20 @@ class ChatViewModel : ScreenModel {
 
     fun cancelCurrentOperation() {
         currentJob?.cancel()
-        
+
         // Cancel any pending confirmations
         pendingConfirmationContinuation?.cancel()
         pendingConfirmationContinuation = null
-        
+
         _state.update { it.copy(isLoading = false, pendingConfirmation = null) }
         finalizeStreamingMessages()
         // Clear ephemeral messages on cancel
         ephemeralMessageIds.keys.toList().forEach { type ->
             clearEphemeralMessage(type)
         }
+    }
+
+    fun clearError() {
+        _state.update { it.copy(error = null) }
     }
 }
