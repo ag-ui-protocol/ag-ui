@@ -1,4 +1,5 @@
 import SwiftUI
+import MarkdownUI
 import shared
 
 struct ChatView: View {
@@ -10,85 +11,96 @@ struct ChatView: View {
     @State private var messageText: String = ""
 
     var body: some View {
-        if state.activeAgent == nil {
-            ContentUnavailableView(
-                "Select an agent",
-                systemImage: "person.crop.circle.badge.questionmark",
-                description: Text("Choose or create an agent to begin chatting.")
-            )
-            .padding()
-        } else {
-            VStack(spacing: 0) {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 12) {
-                            ForEach(state.messages, id: \.id) { message in
-                                ChatMessageBubble(message: message)
-                                .id(message.id)
-                        }
+        Group {
+            if state.activeAgent == nil {
+                ContentUnavailableView(
+                    "Select an agent",
+                    systemImage: "person.crop.circle.badge.questionmark",
+                    description: Text("Choose or create an agent to begin chatting.")
+                )
+                .padding()
+            } else {
+                VStack(spacing: 0) {
+                    conversationScrollView
+
+                    if let ephemeral = state.ephemeralMessage {
+                        EphemeralBanner(message: ephemeral)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
-                    .padding(.horizontal)
-                    .padding(.vertical, 16)
-                }
-                .background(Color(UIColor.systemGroupedBackground))
-                .onChange(of: state.messages.last?.id) { id in
-                    guard let id else { return }
-                    withAnimation { proxy.scrollTo(id, anchor: .bottom) }
-                }
-            }
 
-            if let ephemeral = state.ephemeralMessage {
-                EphemeralBanner(message: ephemeral)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-
-            if let confirmation = state.pendingConfirmation {
-                ConfirmationBanner(confirmation: confirmation) {
-                    store.confirmPendingAction()
-                } onReject: {
-                    store.rejectPendingAction()
-                }
-            }
-
-            Divider()
-
-            VStack(spacing: 8) {
-                HStack(alignment: .bottom, spacing: 12) {
-                    TextField("Type a message", text: $messageText, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                        .lineLimit(1...6)
-                        .disabled(!state.isConnected)
-
-                    Button {
-                        let trimmed = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty else { return }
-                        onSend(trimmed)
-                        messageText = ""
-                    } label: {
-                        Image(systemName: "paperplane.fill")
-                            .font(.system(size: 18, weight: .semibold))
+                    if let confirmation = state.pendingConfirmation {
+                        ConfirmationBanner(
+                            confirmation: confirmation,
+                            onConfirm: store.confirmPendingAction,
+                            onReject: store.rejectPendingAction
+                        )
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!state.isConnected)
-                }
 
-                if state.isLoading {
-                    HStack {
-                        ProgressView()
-                        Text("Waiting for response...")
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Button("Cancel", role: .cancel, action: store.cancelStreaming)
-                    }
-                    .padding(.horizontal, 4)
+                    Divider()
+                    inputArea
                 }
+                .background(Color(UIColor.systemBackground))
             }
-            .padding()
-            .background(Material.bar)
         }
         .animation(.default, value: state.messages.count)
-        .background(Color(UIColor.systemBackground))
+    }
+
+    private var conversationScrollView: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(state.messages, id: \.id) { message in
+                        ChatMessageBubble(message: message)
+                            .id(message.id)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 16)
+            }
+            .background(Color(UIColor.systemGroupedBackground))
+            .onChange(of: state.messages.last?.id) { id in
+                guard let id else { return }
+                withAnimation {
+                    proxy.scrollTo(id, anchor: .bottom)
+                }
+            }
+        }
+    }
+
+    private var inputArea: some View {
+        VStack(spacing: 8) {
+            HStack(alignment: .bottom, spacing: 12) {
+                TextField("Type a message", text: $messageText, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(1...6)
+                    .disabled(!state.isConnected)
+
+                Button {
+                    let trimmed = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return }
+                    onSend(trimmed)
+                    messageText = ""
+                } label: {
+                    Image(systemName: "paperplane.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!state.isConnected)
+            }
+
+            if state.isLoading {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Waiting for response…")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button("Cancel", role: .cancel, action: store.cancelStreaming)
+                }
+            }
+        }
+        .padding()
+        .background(Material.bar)
     }
 }
 
@@ -97,38 +109,38 @@ private struct ChatMessageBubble: View {
 
     private var alignment: HorizontalAlignment {
         switch message.role {
-        case .user: return .trailing
+        case MessageRole.user: return .trailing
         default: return .leading
         }
     }
 
     private var bubbleColor: Color {
         switch message.role {
-        case .user: return Color.accentColor
-        case .assistant: return Color(UIColor.secondarySystemBackground)
-        case .system: return Color(UIColor.systemGray5)
-        case .error: return Color.red.opacity(0.15)
-        case .tool_call: return Color.yellow.opacity(0.2)
-        case .step_info: return Color.blue.opacity(0.12)
+        case MessageRole.user: return Color.accentColor
+        case MessageRole.assistant: return Color(UIColor.secondarySystemBackground)
+        case MessageRole.system: return Color(UIColor.systemGray5)
+        case MessageRole.error: return Color.red.opacity(0.15)
+        case MessageRole.toolCall: return Color.yellow.opacity(0.2)
+        case MessageRole.stepInfo: return Color.blue.opacity(0.12)
         default: return Color(UIColor.tertiarySystemBackground)
         }
     }
 
     private var textColor: Color {
         switch message.role {
-        case .user: return .white
-        case .error: return .red
+        case MessageRole.user: return .white
+        case MessageRole.error: return .red
         default: return .primary
         }
     }
 
     private var leadingIcon: String? {
         switch message.role {
-        case .assistant: return "sparkles"
-        case .system: return "info.circle"
-        case .error: return "exclamationmark.triangle"
-        case .tool_call: return "wrench.adjustable"
-        case .step_info: return "bolt.fill"
+        case MessageRole.assistant: return "sparkles"
+        case MessageRole.system: return "info.circle"
+        case MessageRole.error: return "exclamationmark.triangle"
+        case MessageRole.toolCall: return "wrench.adjustable"
+        case MessageRole.stepInfo: return "bolt.fill"
         default: return nil
         }
     }
@@ -144,19 +156,38 @@ private struct ChatMessageBubble: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
-                    Text(message.content.isEmpty && message.isStreaming ? "…" : message.content)
-                        .foregroundColor(textColor)
-                        .textSelection(.enabled)
-                        .font(.body)
+                    if message.content.isEmpty && message.isStreaming {
+                        Text("…")
+                            .foregroundColor(textColor)
+                            .font(.body)
+                    } else {
+                        Markdown(message.content)
+                            .markdownTheme(.basic)
+                            .markdownTextStyle(\.text) {
+                                ForegroundColor(textColor)
+                            }
+                            .markdownTextStyle(\.strong) {
+                                FontWeight(.heavy)
+                                ForegroundColor(textColor)
+                                BackgroundColor(textColor.opacity(alignment == .trailing ? 0.3 : 0.15))
+                            }
+                            .markdownTextStyle(\.link) {
+                                ForegroundColor(textColor)
+                            }
+                            .textSelection(.enabled)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: alignment == .trailing ? .trailing : .leading)
                 .padding(12)
                 .background(bubbleColor)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
-                Text(Date(timeIntervalSince1970: TimeInterval(message.timestamp) / 1000).formatted(date: .omitted, time: .shortened))
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+                Text(
+                    Date(timeIntervalSince1970: TimeInterval(message.timestamp) / 1000)
+                        .formatted(date: .omitted, time: .shortened)
+                )
+                .font(.caption2)
+                .foregroundColor(.secondary)
             }
 
             if alignment == .leading { Spacer(minLength: 40) }
@@ -169,7 +200,7 @@ private struct EphemeralBanner: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: message.role == .tool_call ? "wrench.adjustable" : "bolt.fill")
+            Image(systemName: message.role == MessageRole.toolCall ? "wrench.adjustable" : "bolt.fill")
                 .foregroundColor(.accentColor)
             Text(message.content)
                 .font(.footnote)
@@ -195,6 +226,7 @@ private struct ConfirmationBanner: View {
             Text("Impact: \(confirmation.impact)")
                 .font(.caption)
                 .foregroundColor(.secondary)
+
             if !confirmation.details.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(confirmation.details, id: \.key) { entry in
@@ -209,6 +241,7 @@ private struct ConfirmationBanner: View {
                     }
                 }
             }
+
             HStack {
                 Button(role: .destructive, action: onReject) {
                     Label("Reject", systemImage: "xmark.circle")
@@ -219,6 +252,7 @@ private struct ConfirmationBanner: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
+
             Text("Auto expires in \(confirmation.timeout)s")
                 .font(.caption2)
                 .foregroundColor(.secondary)
