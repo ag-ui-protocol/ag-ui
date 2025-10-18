@@ -23,8 +23,8 @@ kotlin {
                     freeCompilerArgs.add("-opt-in=kotlin.RequiresOptIn")
                     freeCompilerArgs.add("-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi")
                     freeCompilerArgs.add("-opt-in=kotlinx.serialization.ExperimentalSerializationApi")
-                    languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
-                    apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
+                    languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_2)
+                    apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_2)
                 }
             }
         }

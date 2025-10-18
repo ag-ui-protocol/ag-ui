@@ -22,8 +22,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.agui.example.chatapp.ui.screens.chat.DisplayMessage
 import com.agui.example.chatapp.ui.screens.chat.MessageRole
-import com.halilibo.richtext.commonmark.Markdown
-import com.halilibo.richtext.ui.material3.RichText
+import com.mikepenz.markdown.m3.Markdown
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -166,13 +165,12 @@ fun MessageBubble(
                     // Regular text for non-ephemeral messages
                     ProvideTextStyle(MaterialTheme.typography.bodyLarge) {
                         CompositionLocalProvider(LocalContentColor provides messageTextColor) {
-                            RichText(
+                            Markdown(
+                                content = message.content,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .semantics { text = AnnotatedString(message.content) }
-                            ) {
-                                Markdown(message.content)
-                            }
+                            )
                         }
                     }
                 }
