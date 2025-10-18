@@ -2,4 +2,11 @@
 .vscode/
 .idea/
 
+mastra.db*
+
+.DS_Store
+**/.DS_Store
+
+test-results/
+
 **/target

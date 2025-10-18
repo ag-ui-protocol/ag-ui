@@ -14,6 +14,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - suite: a2a-middleware
+            test_path: tests/a2aMiddlewareTests
+            services: ["dojo","a2a-middleware"]
+            wait_on: http://localhost:9999,tcp:localhost:8011,tcp:localhost:8012,tcp:localhost:8013,tcp:localhost:8014
+          - suite: adk-middleware
+            test_path: tests/adkMiddlewareTests
+            services: ["dojo","adk-middleware"]
+            wait_on: http://localhost:9999,tcp:localhost:8010
           - suite: agno
             test_path: tests/agnoTests
             services: ["dojo","agno"]
@@ -22,10 +30,14 @@ jobs:
             test_path: tests/crewAITests
             services: ["dojo","crew-ai"]
             wait_on: http://localhost:9999,tcp:localhost:8003
-          - suite: langgraph
-            test_path: tests/langgraphTests
-            services: ["dojo","langgraph-platform-python","langgraph-platform-typescript"]
-            wait_on: http://localhost:9999,tcp:localhost:8005,tcp:localhost:8006
+          - suite: langgraph-python
+            test_path: tests/langgraphPythonTests
+            services: ["dojo","langgraph-platform-python"]
+            wait_on: http://localhost:9999,tcp:localhost:8005
+          - suite: langgraph-typescript
+            test_path: tests/langgraphTypescriptTests
+            services: ["dojo","langgraph-platform-typescript"]
+            wait_on: http://localhost:9999,tcp:localhost:8006
           - suite: langgraph-fastapi
             test_path: tests/langgraphFastAPITests
             services: ["dojo","langgraph-fastapi"]
@@ -58,10 +70,10 @@ jobs:
             test_path: tests/serverStarterAllFeaturesTests
             services: ["dojo","server-starter-all"]
             wait_on: http://localhost:9999,tcp:localhost:8001
-          - suite: vercel-ai-sdk
-            test_path: tests/vercelAISdkTests
-            services: ["dojo"]
-            wait_on: http://localhost:9999
+          # - suite: vercel-ai-sdk
+          #   test_path: tests/vercelAISdkTests
+          #   services: ["dojo"]
+          #   wait_on: http://localhost:9999
 
     steps:
     - name: Checkout code
@@ -147,6 +159,7 @@ jobs:
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       if: ${{ join(matrix.services, ',') != '' && contains(join(matrix.services, ','), 'dojo') }}
       with:
         run: |

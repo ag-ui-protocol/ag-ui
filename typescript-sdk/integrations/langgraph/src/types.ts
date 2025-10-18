@@ -15,8 +15,9 @@ export enum LangGraphEventTypes {
   OnInterrupt = "on_interrupt",
 }
 
-export type LangGraphTool = {
+export type LangGraphToolWithName = {
   type: "function";
+  name?: string;
   function: {
     name: string;
     description: string;
@@ -29,9 +30,9 @@ export type State<TDefinedState = Record<string, any>> = {
 } & Record<string, any>;
 export interface StateEnrichment {
   messages: LangGraphMessage[];
-  tools: LangGraphTool[];
+  tools: LangGraphToolWithName[];
   'ag-ui': {
-    tools: LangGraphTool[];
+    tools: LangGraphToolWithName[];
     context: RunAgentInput['context']
   }
 }
@@ -63,6 +64,7 @@ export interface RunMetadata {
   manuallyEmittedState?: State | null;
   threadId?: string;
   graphInfo?: AssistantGraph
+  hasFunctionStreaming?: boolean;
 }
 
 export type MessagesInProgressRecord = Record<string, MessageInProgress | null>;

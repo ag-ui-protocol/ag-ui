@@ -10,7 +10,7 @@ describe("AbstractAgent text message roles", () => {
       this.events = events;
     }
 
-    protected run(input: RunAgentInput): Observable<BaseEvent> {
+    run(input: RunAgentInput): Observable<BaseEvent> {
       return of(...this.events);
     }
   }

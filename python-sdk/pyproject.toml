@@ -1,9 +1,10 @@
 [tool.poetry]
 name = "ag-ui-protocol"
-version = "0.1.8"
+version = "0.1.9"
 description = ""
 authors = ["Markus Ecker <markus.ecker@gmail.com>"]
 readme = "README.md"
+license = "MIT"
 packages = [{include = "ag_ui", from = "."}]
 [tool.poetry.dependencies]
 python = "^3.9"

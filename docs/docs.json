@@ -21,7 +21,6 @@
                 "group": "Quickstart",
                 "pages": [
                   "quickstart/applications",
-                  "quickstart/clients",
                   {
                     "group": "Build integrations",
                     "pages": [
@@ -29,7 +28,8 @@
                       "quickstart/server",
                       "quickstart/middleware"
                     ]
-                  }
+                  },
+                  "quickstart/clients"
                 ]
               }
             ]
@@ -43,6 +43,19 @@
               "concepts/messages",
               "concepts/state",
               "concepts/tools"
+            ]
+          },
+          {
+            "group": "Draft Proposals",
+            "pages": [
+              "drafts/overview",
+              "drafts/activity-events",
+              "drafts/reasoning",
+              "drafts/serialization",
+              "drafts/multimodal-messages",
+              "drafts/interrupts",
+              "drafts/generative-ui",
+              "drafts/meta-events"
             ]
           },
           {

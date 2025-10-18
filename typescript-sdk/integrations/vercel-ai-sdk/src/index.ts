@@ -55,7 +55,7 @@ export class VercelAISDKAgent extends AbstractAgent {
     this.toolChoice = toolChoice ?? "auto";
   }
 
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     const finalMessages: Message[] = input.messages;
 
     return new Observable<ProcessedEvent>((subscriber) => {

@@ -47,31 +47,31 @@ const integrationsRoot = path.join(gitRoot, 'typescript-sdk', 'integrations');
 
 // Define all runnable services keyed by a stable id
 const ALL_SERVICES = {
-  'server-starter': {
+  'server-starter': [{
     command: 'poetry run dev',
     name: 'Server Starter',
     cwd: path.join(integrationsRoot, 'server-starter/server/python'),
     env: { PORT: 8000 },
-  },
-  'server-starter-all': {
+  }],
+  'server-starter-all': [{
     command: 'poetry run dev',
     name: 'Server AF',
     cwd: path.join(integrationsRoot, 'server-starter-all-features/server/python'),
     env: { PORT: 8001 },
-  },
-  'agno': {
+  }],
+  'agno': [{
     command: 'uv run dev',
     name: 'Agno',
     cwd: path.join(integrationsRoot, 'agno/examples'),
     env: { PORT: 8002 },
-  },
-  'crew-ai': {
+  }],
+  'crew-ai': [{
     command: 'poetry run dev',
     name: 'CrewAI',
     cwd: path.join(integrationsRoot, 'crewai/python'),
     env: { PORT: 8003 },
-  },
-  'langgraph-fastapi': {
+  }],
+  'langgraph-fastapi': [{
     command: 'poetry run dev',
     name: 'LG FastAPI',
     cwd: path.join(integrationsRoot, 'langgraph/examples/python'),
@@ -79,44 +79,68 @@ const ALL_SERVICES = {
       PORT: 8004,
       POETRY_VIRTUALENVS_IN_PROJECT: 'false',
     },
-  },
-  'langgraph-platform-python': {
+  }],
+  'langgraph-platform-python': [{
     command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8005',
     name: 'LG Platform Py',
     cwd: path.join(integrationsRoot, 'langgraph/examples/python'),
     env: { PORT: 8005 },
-  },
-  'langgraph-platform-typescript': {
+  }],
+  'langgraph-platform-typescript': [{
     command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8006',
     name: 'LG Platform TS',
     cwd: path.join(integrationsRoot, 'langgraph/examples/typescript/'),
     env: { PORT: 8006 },
-  },
-  'llama-index': {
+  }],
+  'llama-index': [{
     command: 'uv run dev',
     name: 'Llama Index',
     cwd: path.join(integrationsRoot, 'llamaindex/server-py'),
     env: { PORT: 8007 },
-  },
-  'mastra': {
+  }],
+  'mastra': [{
     command: 'npm run dev',
     name: 'Mastra',
     cwd: path.join(integrationsRoot, 'mastra/example'),
     env: { PORT: 8008 },
-  },
-  'pydantic-ai': {
+  }],
+  'pydantic-ai': [{
     command: 'uv run dev',
     name: 'Pydantic AI',
     cwd: path.join(integrationsRoot, 'pydantic-ai/examples'),
     env: { PORT: 8009 },
-  },
-  'adk-middleware': {
+  }],
+  'adk-middleware': [{
     command: 'uv run dev',
     name: 'ADK Middleware',
-    cwd: path.join(integrationsRoot, 'adk-middleware/examples'),
+    cwd: path.join(integrationsRoot, 'adk-middleware/python/examples'),
     env: { PORT: 8010 },
+  }],
+  'a2a-middleware': [{
+    command: 'uv run buildings_management.py',
+    name: 'A2A Middleware: Buildings Management',
+    cwd: path.join(integrationsRoot, 'a2a-middleware/examples'),
+    env: { PORT: 8011 },
   },
-  'dojo': {
+  {
+    command: 'uv run finance.py',
+    name: 'A2A Middleware: Finance',
+    cwd: path.join(integrationsRoot, 'a2a-middleware/examples'),
+    env: { PORT: 8012 },
+  },
+  {
+    command: 'uv run it.py',
+    name: 'A2A Middleware: IT',
+    cwd: path.join(integrationsRoot, 'a2a-middleware/examples'),
+    env: { PORT: 8013 },
+  },
+  {
+    command: 'uv run orchestrator.py',
+    name: 'A2A Middleware: Orchestrator',
+    cwd: path.join(integrationsRoot, 'a2a-middleware/examples'),
+    env: { PORT: 8014 },
+  }],
+  'dojo': [{
     command: 'pnpm run start',
     name: 'Dojo',
     cwd: path.join(gitRoot, 'typescript-sdk/apps/dojo'),
@@ -133,9 +157,13 @@ const ALL_SERVICES = {
       MASTRA_URL: 'http://localhost:8008',
       PYDANTIC_AI_URL: 'http://localhost:8009',
       ADK_MIDDLEWARE_URL: 'http://localhost:8010',
+      A2A_MIDDLEWARE_BUILDINGS_MANAGEMENT_URL: 'http://localhost:8011',
+      A2A_MIDDLEWARE_FINANCE_URL: 'http://localhost:8012',
+      A2A_MIDDLEWARE_IT_URL: 'http://localhost:8013',
+      A2A_MIDDLEWARE_ORCHESTRATOR_URL: 'http://localhost:8014',
       NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: 'cpkdojo.local___CopilotKit Feature Viewer',
     },
-  },
+  }],
 };
 
 function printDryRunServices(procs) {
@@ -169,12 +197,12 @@ async function main() {
   // Build processes, warn for unknown keys
   const procs = [];
   for (const key of selectedKeys) {
-    const svc = ALL_SERVICES[key];
-    if (!svc) {
+    const svcs = ALL_SERVICES[key];
+    if (!svcs || svcs.length === 0) {
       console.warn(`Skipping unknown service: ${key}`);
       continue;
     }
-    procs.push(svc);
+    procs.push(...svcs);
   }
 
   if (dryRun) {
