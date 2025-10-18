@@ -36,15 +36,15 @@ jobs:
 
     - name: Install dependencies
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-      working-directory: python-sdk
+      working-directory: sdks/python
       run: poetry install --no-interaction --no-root
 
     - name: Install project
-      working-directory: python-sdk
+      working-directory: sdks/python
       run: poetry install --no-interaction
 
     - name: Run tests
-      working-directory: python-sdk
+      working-directory: sdks/python
       run: poetry run python -m unittest discover tests -v
 
   typescript:
@@ -80,15 +80,12 @@ jobs:
           ${{ runner.os }}-pnpm-store-
 
     - name: Install dependencies
-      working-directory: typescript-sdk
       run: pnpm install --frozen-lockfile
 
     - name: Test Build
-      working-directory: typescript-sdk
       run: pnpm run build
 
     - name: Run tests
-      working-directory: typescript-sdk
       run: pnpm run test
 
   go:
@@ -190,3 +187,25 @@ jobs:
         else
           echo "✅ All $total_tests tests passed!"
         fi
+
+  java:
+    name: Java SDK Tests
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: sdks/community/java
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+        cache: 'maven'
+
+    - name: Run tests
+      run: mvn -B -ntp test
