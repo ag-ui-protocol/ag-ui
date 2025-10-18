@@ -428,7 +428,11 @@ where
 }
 
 // Implementation for empty case (no subscribers)
-impl<StateT: AgentState, FwdPropsT: FwdProps> IntoSubscribers<StateT, FwdPropsT> for () {
+impl<StateT, FwdPropsT> IntoSubscribers<StateT, FwdPropsT> for ()
+where
+    StateT: AgentState,
+    FwdPropsT: FwdProps,
+{
     fn into_subscribers(self) -> Subscribers<StateT, FwdPropsT> {
         Subscribers::new(vec![])
     }
