@@ -81,7 +81,7 @@ private struct AgentRow: View {
                 Text(agent.url)
                     .font(.subheadline)
                     .foregroundColor(.secondary)
-                let description = agent.description ?? ""
+                let description = agent.description_ ?? ""
                 if !description.isEmpty {
                     Text(description)
                         .font(.footnote)

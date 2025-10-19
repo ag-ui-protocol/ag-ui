@@ -1,20 +1,25 @@
 package com.agui.example.chatapp.ui.screens.chat
 
-import cafe.adriel.voyager.core.model.ScreenModel
-import cafe.adriel.voyager.core.model.screenModelScope
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import com.agui.example.chatapp.chat.ChatController
 import com.agui.example.chatapp.chat.ChatState
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * Compose-facing wrapper that adapts [ChatController] to Voyager's [ScreenModel] API.
+ * Compose-facing wrapper around [ChatController].
  */
 class ChatViewModel(
+    scopeFactory: () -> CoroutineScope = { MainScope() },
     controllerFactory: (CoroutineScope) -> ChatController = { scope -> ChatController(scope) }
-) : ScreenModel {
+) {
 
-    private val controller = controllerFactory(screenModelScope)
+    private val scope = scopeFactory()
+    private val controller = controllerFactory(scope)
 
     val state: StateFlow<ChatState> = controller.state
 
@@ -24,7 +29,17 @@ class ChatViewModel(
 
     fun clearError() = controller.clearError()
 
-    override fun onDispose() {
+    fun dispose() {
         controller.close()
+        scope.cancel()
     }
+}
+
+@Composable
+fun rememberChatViewModel(): ChatViewModel {
+    val viewModel = remember { ChatViewModel() }
+    DisposableEffect(Unit) {
+        onDispose { viewModel.dispose() }
+    }
+    return viewModel
 }

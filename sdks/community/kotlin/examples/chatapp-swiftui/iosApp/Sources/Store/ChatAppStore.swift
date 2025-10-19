@@ -199,7 +199,7 @@ struct AgentDraft {
     init(snapshot: AgentSnapshot) {
         name = snapshot.name
         url = snapshot.url
-        description = snapshot.description ?? ""
+        description = snapshot.description_ ?? ""
         systemPrompt = snapshot.systemPrompt ?? ""
         headers = snapshot.customHeaders.map { HeaderField(key: $0.key, value: $0.value) }
         authSelection = AuthMethodSelection(kindIdentifier: snapshot.authMethod.kind)

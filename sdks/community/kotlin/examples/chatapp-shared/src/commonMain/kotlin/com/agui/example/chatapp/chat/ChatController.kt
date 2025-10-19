@@ -237,6 +237,9 @@ class ChatController(
                     }
                 }
 
+                logger.i {
+                    "ToolCallEnd id=${event.toolCallId} name=${toolName ?: "<unknown>"}"
+                }
                 toolCallBuffer.remove(event.toolCallId)
                 pendingToolCalls.remove(event.toolCallId)
             }
@@ -257,6 +260,7 @@ class ChatController(
             }
 
             is TextMessageStartEvent -> {
+                logger.i { "TextMessageStart id=${event.messageId}" }
                 streamingMessages[event.messageId] = StringBuilder()
                 addDisplayMessage(
                     DisplayMessage(
@@ -269,11 +273,19 @@ class ChatController(
             }
 
             is TextMessageContentEvent -> {
+                logger.i {
+                    val deltaPreview = event.delta.replace('\n', ' ')
+                    "TextMessageContent id=${event.messageId} delta='" + deltaPreview.take(80) + if (deltaPreview.length > 80) "…" else "'"
+                }
                 streamingMessages[event.messageId]?.append(event.delta)
                 updateStreamingMessage(event.messageId, event.delta)
             }
 
             is TextMessageEndEvent -> {
+                val complete = streamingMessages[event.messageId]?.toString()
+                logger.i {
+                    "TextMessageEnd id=${event.messageId} text='" + summarizeForLog(complete) + "'"
+                }
                 finalizeStreamingMessage(event.messageId)
             }
 
@@ -393,6 +405,12 @@ class ChatController(
         }
     }
 
+    private fun summarizeForLog(text: String?): String {
+        if (text.isNullOrEmpty()) return ""
+        val noNewlines = text.replace('\n', ' ')
+        return if (noNewlines.length <= 120) noNewlines else noNewlines.take(117) + "…"
+    }
+
     private fun addDisplayMessage(message: DisplayMessage) {
         _state.update { state ->
             state.copy(messages = state.messages + message)
@@ -435,4 +453,3 @@ data class DisplayMessage(
     val ephemeralGroupId: String? = null,
     val ephemeralType: EphemeralType? = null
 )
-
