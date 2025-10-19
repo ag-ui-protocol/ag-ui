@@ -11,6 +11,8 @@ struct ChatView: View {
     @State private var messageText: String = ""
 
     var body: some View {
+        let backgroundColor = state.background.color(default: Color(UIColor.systemBackground))
+
         Group {
             if state.activeAgent == nil {
                 ContentUnavailableView(
@@ -28,18 +30,10 @@ struct ChatView: View {
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
 
-                    if let confirmation = state.pendingConfirmation {
-                        ConfirmationBanner(
-                            confirmation: confirmation,
-                            onConfirm: store.confirmPendingAction,
-                            onReject: store.rejectPendingAction
-                        )
-                    }
-
                     Divider()
                     inputArea
                 }
-                .background(Color(UIColor.systemBackground))
+                .background(backgroundColor)
             }
         }
         .animation(.default, value: state.messages.count)
@@ -57,7 +51,7 @@ struct ChatView: View {
                 .padding(.horizontal)
                 .padding(.vertical, 16)
             }
-            .background(Color(UIColor.systemGroupedBackground))
+        .background(state.background.color(default: Color(UIColor.systemGroupedBackground)))
             .onChange(of: state.messages.last?.id) { id in
                 guard let id else { return }
                 withAnimation {
@@ -101,6 +95,32 @@ struct ChatView: View {
         }
         .padding()
         .background(Material.bar)
+    }
+}
+
+private extension BackgroundSnapshot {
+    func color(default defaultColor: Color) -> Color {
+        guard let hex = colorHex?.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "#", with: ""),
+              let value = UInt64(hex, radix: 16) else {
+            return defaultColor
+        }
+
+        switch hex.count {
+        case 6:
+            let red = Double((value & 0xFF0000) >> 16) / 255.0
+            let green = Double((value & 0x00FF00) >> 8) / 255.0
+            let blue = Double(value & 0x0000FF) / 255.0
+            return Color(red: red, green: green, blue: blue)
+        case 8:
+            // Expect RRGGBBAA ordering from the tool.
+            let red = Double((value & 0xFF000000) >> 24) / 255.0
+            let green = Double((value & 0x00FF0000) >> 16) / 255.0
+            let blue = Double((value & 0x0000FF00) >> 8) / 255.0
+            let alpha = Double(value & 0x000000FF) / 255.0
+            return Color(red: red, green: green, blue: blue, opacity: alpha)
+        default:
+            return defaultColor
+        }
     }
 }
 
@@ -209,55 +229,5 @@ private struct EphemeralBanner: View {
         }
         .padding(12)
         .background(Color.accentColor.opacity(0.1))
-    }
-}
-
-private struct ConfirmationBanner: View {
-    let confirmation: UserConfirmationSnapshot
-    let onConfirm: () -> Void
-    let onReject: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Action Required")
-                .font(.headline)
-            Text(confirmation.action)
-                .font(.subheadline)
-            Text("Impact: \(confirmation.impact)")
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-            if !confirmation.details.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(confirmation.details, id: \.key) { entry in
-                        HStack {
-                            Text(entry.key)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Text(entry.value)
-                                .font(.caption)
-                        }
-                    }
-                }
-            }
-
-            HStack {
-                Button(role: .destructive, action: onReject) {
-                    Label("Reject", systemImage: "xmark.circle")
-                }
-                Spacer()
-                Button(action: onConfirm) {
-                    Label("Approve", systemImage: "checkmark.circle")
-                }
-                .buttonStyle(.borderedProminent)
-            }
-
-            Text("Auto expires in \(confirmation.timeout)s")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-        }
-        .padding()
-        .background(Material.thick)
     }
 }

@@ -9,7 +9,6 @@ private val logger = Logger.withTag("StatefulAgUiAgent")
 
 /**
  * Stateful AG-UI agent that maintains conversation history and state.
- * Includes predictive state updates via PredictStateValue.
  */
 open class StatefulAgUiAgent(
     url: String,

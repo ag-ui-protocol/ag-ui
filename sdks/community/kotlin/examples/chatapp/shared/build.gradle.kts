@@ -7,6 +7,7 @@ plugins {
 }
 
 kotlin {
+    applyDefaultHierarchyTemplate()
     jvmToolchain(21)
     androidTarget {
         compilations.all {
@@ -50,11 +51,6 @@ kotlin {
                 implementation(compose.materialIconsExtended)
 
                 implementation(project(":chatapp-shared"))
-
-                // Navigation
-                implementation(libs.voyager.navigator)
-                implementation(libs.voyager.screenmodel)
-                implementation(libs.voyager.transitions)
 
                 // Coroutines
                 implementation(libs.kotlinx.coroutines.core)

@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">AG Chat Wear</string>
+    <string name="app_name">AG-UI Chat</string>
     <string name="chat_input_hint">Ask something…</string>
     <string name="chip_prompt_summary">Recent prompts</string>
     <string name="retry">Retry</string>

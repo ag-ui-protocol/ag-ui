@@ -20,12 +20,11 @@ import com.agui.example.chatapp.data.repository.AgentRepository
 import com.agui.example.chatapp.util.Strings
 import com.agui.example.chatapp.util.UserIdManager
 import com.agui.example.chatapp.util.getPlatformSettings
-import com.agui.example.tools.ConfirmationHandler
-import com.agui.example.tools.ConfirmationRequest
-import com.agui.example.tools.ConfirmationToolExecutor
+import com.agui.example.tools.BackgroundChangeHandler
+import com.agui.example.tools.BackgroundStyle
+import com.agui.example.tools.ChangeBackgroundToolExecutor
 import com.agui.tools.DefaultToolRegistry
 import kotlinx.atomicfu.atomic
-import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
@@ -37,10 +36,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.datetime.Clock
 import com.russhwolf.settings.Settings
-import kotlin.coroutines.resume
 
 private val logger = Logger.withTag("ChatController")
 
@@ -71,7 +68,6 @@ class ChatController(
     private val toolCallBuffer = mutableMapOf<String, StringBuilder>()
     private val pendingToolCalls = mutableMapOf<String, String>() // toolCallId -> toolName
     private val ephemeralMessageIds = mutableMapOf<EphemeralType, String>()
-    private var pendingConfirmationContinuation: CancellableContinuation<Boolean>? = null
 
     private val controllerClosed = atomic(false)
 
@@ -95,27 +91,14 @@ class ChatController(
             val headers = agentConfig.customHeaders.toMutableMap()
             authManager.applyAuth(agentConfig.authMethod, headers)
 
-            val confirmationTool = ConfirmationToolExecutor(object : ConfirmationHandler {
-                override suspend fun requestConfirmation(request: ConfirmationRequest): Boolean {
-                    return suspendCancellableCoroutine { continuation ->
-                        _state.update {
-                            it.copy(
-                                pendingConfirmation = UserConfirmationRequest(
-                                    toolCallId = request.toolCallId,
-                                    action = request.message,
-                                    impact = request.importance,
-                                    details = mapOf("details" to (request.details ?: "")),
-                                    timeout = 30
-                                )
-                            )
-                        }
-                        pendingConfirmationContinuation = continuation
-                    }
+            val backgroundTool = ChangeBackgroundToolExecutor(object : BackgroundChangeHandler {
+                override suspend fun applyBackground(style: BackgroundStyle) {
+                    _state.update { it.copy(background = style) }
                 }
             })
 
             val clientToolRegistry = DefaultToolRegistry().apply {
-                registerTool(confirmationTool)
+                registerTool(backgroundTool)
             }
 
             currentAgent = agentFactory.createAgent(
@@ -128,7 +111,7 @@ class ChatController(
 
             currentThreadId = "thread_${Clock.System.now().toEpochMilliseconds()}"
 
-            _state.update { it.copy(isConnected = true, error = null) }
+            _state.update { it.copy(isConnected = true, error = null, background = BackgroundStyle.Default) }
 
             addDisplayMessage(
                 DisplayMessage(
@@ -158,14 +141,11 @@ class ChatController(
         pendingToolCalls.clear()
         ephemeralMessageIds.clear()
 
-        pendingConfirmationContinuation?.cancel()
-        pendingConfirmationContinuation = null
-
         _state.update {
             it.copy(
                 isConnected = false,
                 messages = emptyList(),
-                pendingConfirmation = null
+                background = BackgroundStyle.Default
             )
         }
     }
@@ -224,7 +204,7 @@ class ChatController(
                 toolCallBuffer[event.toolCallId] = StringBuilder()
                 pendingToolCalls[event.toolCallId] = event.toolCallName
 
-                if (event.toolCallName != "user_confirmation") {
+                if (event.toolCallName != "change_background") {
                     setEphemeralMessage(
                         content = "Calling ${event.toolCallName}...",
                         type = EphemeralType.TOOL_CALL,
@@ -238,7 +218,7 @@ class ChatController(
                 val currentArgs = toolCallBuffer[event.toolCallId]?.toString() ?: ""
 
                 val toolName = pendingToolCalls[event.toolCallId]
-                if (toolName != "user_confirmation") {
+                if (toolName != "change_background") {
                     setEphemeralMessage(
                         content = "Calling tool with: ${currentArgs.take(50)}${if (currentArgs.length > 50) "..." else ""}",
                         type = EphemeralType.TOOL_CALL,
@@ -250,13 +230,16 @@ class ChatController(
             is ToolCallEndEvent -> {
                 val toolName = pendingToolCalls[event.toolCallId]
 
-                if (toolName != "user_confirmation") {
+                if (toolName != "change_background") {
                     scope.launch {
                         delay(1000)
                         clearEphemeralMessage(EphemeralType.TOOL_CALL)
                     }
                 }
 
+                logger.i {
+                    "ToolCallEnd id=${event.toolCallId} name=${toolName ?: "<unknown>"}"
+                }
                 toolCallBuffer.remove(event.toolCallId)
                 pendingToolCalls.remove(event.toolCallId)
             }
@@ -277,6 +260,7 @@ class ChatController(
             }
 
             is TextMessageStartEvent -> {
+                logger.i { "TextMessageStart id=${event.messageId}" }
                 streamingMessages[event.messageId] = StringBuilder()
                 addDisplayMessage(
                     DisplayMessage(
@@ -289,11 +273,19 @@ class ChatController(
             }
 
             is TextMessageContentEvent -> {
+                logger.i {
+                    val deltaPreview = event.delta.replace('\n', ' ')
+                    "TextMessageContent id=${event.messageId} delta='" + deltaPreview.take(80) + if (deltaPreview.length > 80) "…" else "'"
+                }
                 streamingMessages[event.messageId]?.append(event.delta)
                 updateStreamingMessage(event.messageId, event.delta)
             }
 
             is TextMessageEndEvent -> {
+                val complete = streamingMessages[event.messageId]?.toString()
+                logger.i {
+                    "TextMessageEnd id=${event.messageId} text='" + summarizeForLog(complete) + "'"
+                }
                 finalizeStreamingMessage(event.messageId)
             }
 
@@ -318,24 +310,10 @@ class ChatController(
         }
     }
 
-    fun confirmAction() {
-        pendingConfirmationContinuation?.resume(true)
-        pendingConfirmationContinuation = null
-        _state.update { it.copy(pendingConfirmation = null) }
-    }
-
-    fun rejectAction() {
-        pendingConfirmationContinuation?.resume(false)
-        pendingConfirmationContinuation = null
-        _state.update { it.copy(pendingConfirmation = null) }
-    }
-
     fun cancelCurrentOperation() {
         currentJob?.cancel()
-        pendingConfirmationContinuation?.cancel()
-        pendingConfirmationContinuation = null
 
-        _state.update { it.copy(isLoading = false, pendingConfirmation = null) }
+        _state.update { it.copy(isLoading = false) }
         finalizeStreamingMessages()
         ephemeralMessageIds.keys.toList().forEach { type ->
             clearEphemeralMessage(type)
@@ -427,6 +405,12 @@ class ChatController(
         }
     }
 
+    private fun summarizeForLog(text: String?): String {
+        if (text.isNullOrEmpty()) return ""
+        val noNewlines = text.replace('\n', ' ')
+        return if (noNewlines.length <= 120) noNewlines else noNewlines.take(117) + "…"
+    }
+
     private fun addDisplayMessage(message: DisplayMessage) {
         _state.update { state ->
             state.copy(messages = state.messages + message)
@@ -446,7 +430,7 @@ data class ChatState(
     val isLoading: Boolean = false,
     val isConnected: Boolean = false,
     val error: String? = null,
-    val pendingConfirmation: UserConfirmationRequest? = null
+    val background: BackgroundStyle = BackgroundStyle.Default
 )
 
 /** Classic chat roles shown in the UI layers. */
@@ -468,13 +452,4 @@ data class DisplayMessage(
     val isStreaming: Boolean = false,
     val ephemeralGroupId: String? = null,
     val ephemeralType: EphemeralType? = null
-)
-
-/** Pending confirmation prompt triggered by a tool call. */
-data class UserConfirmationRequest(
-    val toolCallId: String,
-    val action: String,
-    val impact: String,
-    val details: Map<String, String> = emptyMap(),
-    val timeout: Int = 30
 )

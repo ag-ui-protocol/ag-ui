@@ -1,6 +1,5 @@
 package com.agui.example.chatapp.test
 
-import cafe.adriel.voyager.core.model.ScreenModel
 import com.agui.example.chatapp.ui.screens.chat.ChatState
 import com.agui.example.chatapp.ui.screens.chat.DisplayMessage
 import com.agui.example.chatapp.ui.screens.chat.MessageRole
@@ -13,7 +12,7 @@ import kotlinx.datetime.Clock
 /**
  * A testable version of ChatViewModel that doesn't depend on platform settings.
  */
-class TestChatViewModel : ScreenModel {
+class TestChatViewModel {
     private val _state = MutableStateFlow(ChatState())
     val state: StateFlow<ChatState> = _state.asStateFlow()
 

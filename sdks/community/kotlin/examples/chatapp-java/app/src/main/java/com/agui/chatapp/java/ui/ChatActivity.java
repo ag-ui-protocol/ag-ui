@@ -1,6 +1,7 @@
 package com.agui.chatapp.java.ui;
 
 import android.content.Intent;
+import android.graphics.Color;
 import android.os.Bundle;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -10,7 +11,10 @@ import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.AttrRes;
+import androidx.annotation.ColorInt;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
@@ -24,9 +28,12 @@ import com.agui.chatapp.java.databinding.ActivityChatBinding;
 import com.agui.example.chatapp.data.model.AgentConfig;
 import com.agui.chatapp.java.ui.adapter.MessageAdapter;
 import com.agui.chatapp.java.viewmodel.ChatViewModel;
+import com.agui.example.tools.BackgroundStyle;
 import com.google.android.material.snackbar.Snackbar;
 
 import java.util.ArrayList;
+
+import android.util.TypedValue;
 
 /**
  * Main chat activity using Material 3 design with Android View system.
@@ -38,6 +45,8 @@ public class ChatActivity extends AppCompatActivity {
     private ChatViewModel viewModel;
     private MessageAdapter messageAdapter;
     private ActivityResultLauncher<Intent> settingsLauncher;
+    @ColorInt
+    private int defaultBackgroundColor;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -48,6 +57,9 @@ public class ChatActivity extends AppCompatActivity {
 
         binding = ActivityChatBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+
+        defaultBackgroundColor = resolveThemeColor(com.google.android.material.R.attr.colorSurface);
+        binding.getRoot().setBackgroundColor(defaultBackgroundColor);
 
         // Setup edge-to-edge window insets
         setupEdgeToEdgeInsets();
@@ -153,6 +165,35 @@ public class ChatActivity extends AppCompatActivity {
                 binding.noAgentCard.setVisibility(View.VISIBLE);
             }
         });
+
+        viewModel.getBackgroundStyle().observe(this, this::applyBackgroundStyle);
+    }
+
+    private void applyBackgroundStyle(@Nullable BackgroundStyle style) {
+        if (binding == null) {
+            return;
+        }
+
+        int targetColor = defaultBackgroundColor;
+        if (style != null) {
+            String colorHex = style.getColorHex();
+            if (colorHex != null && !colorHex.isEmpty()) {
+                try {
+                    targetColor = Color.parseColor(colorHex);
+                } catch (IllegalArgumentException ignored) {
+                    android.util.Log.w("ChatActivity", "Invalid background colour received: " + colorHex);
+                }
+            }
+        }
+
+        binding.getRoot().setBackgroundColor(targetColor);
+    }
+
+    @ColorInt
+    private int resolveThemeColor(@AttrRes int attr) {
+        TypedValue typedValue = new TypedValue();
+        boolean resolved = getTheme().resolveAttribute(attr, typedValue, true);
+        return resolved ? typedValue.data : Color.WHITE;
     }
 
     private void sendMessage() {

@@ -4,12 +4,12 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.asLiveData
 import androidx.lifecycle.viewModelScope
 import com.agui.chatapp.java.model.ChatMessage
 import com.agui.chatapp.java.repository.MultiAgentRepository
 import com.agui.example.chatapp.chat.ChatController
 import com.agui.example.chatapp.data.model.AgentConfig
+import com.agui.example.tools.BackgroundStyle
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -22,6 +22,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _isConnecting = MutableLiveData(false)
     private val _errorMessage = MutableLiveData<String?>()
     private val _hasAgentConfig = MutableLiveData(false)
+    private val _backgroundStyle = MutableLiveData(BackgroundStyle.Default)
 
     private val activeAgentLiveData: LiveData<AgentConfig?> = repository.getActiveAgent()
 
@@ -33,6 +34,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun getHasAgentConfig(): LiveData<Boolean> = _hasAgentConfig
 
+    fun getBackgroundStyle(): LiveData<BackgroundStyle> = _backgroundStyle
+
     fun getActiveAgent(): LiveData<AgentConfig?> = activeAgentLiveData
 
     init {
@@ -42,6 +45,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _isConnecting.postValue(state.isLoading)
                 _errorMessage.postValue(state.error)
                 _hasAgentConfig.postValue(state.activeAgent != null)
+                _backgroundStyle.postValue(state.background)
             }
         }
     }

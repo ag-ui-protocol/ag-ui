@@ -93,44 +93,14 @@ class ChatViewModelErrorHandlingTest {
 
         // Verify no confirmation dialog is created for invalid JSON
         val state = viewModel.state.value
-        assertNull(state.pendingConfirmation)
         
         // Tool call ephemeral message should still exist
         val toolMessage = state.messages.find { it.role == MessageRole.TOOL_CALL }
         assertNotNull(toolMessage)
     }
 
-    @Test
-    fun testInvalidJsonInConfirmationTool() = runTest {
-        // Test invalid JSON specifically in confirmation tool
-        viewModel.handleAgentEvent(ToolCallStartEvent("confirm-123", "user_confirmation"))
-        
-        // Send malformed confirmation JSON
-        val malformedJson = """{"action": "Test action", "impact": unclosed string"""
-        viewModel.handleAgentEvent(ToolCallArgsEvent("confirm-123", malformedJson))
-        viewModel.handleAgentEvent(ToolCallEndEvent("confirm-123"))
-
-        // Verify no confirmation dialog is created
-        val state = viewModel.state.value
-        assertNull(state.pendingConfirmation)
-    }
-
-    @Test
-    fun testMissingRequiredConfirmationFields() = runTest {
-        // Test confirmation with missing required fields
-        viewModel.handleAgentEvent(ToolCallStartEvent("confirm-123", "user_confirmation"))
-        
-        // JSON missing required 'action' field
-        val incompleteJson = """{"impact": "high", "details": {}}"""
-        viewModel.handleAgentEvent(ToolCallArgsEvent("confirm-123", incompleteJson))
-        viewModel.handleAgentEvent(ToolCallEndEvent("confirm-123"))
-
-        // Should handle gracefully - either create with defaults or reject
-        val state = viewModel.state.value
-        // This depends on implementation - could be null or have default values
-    }
-
-
+    
+    
     @Test
     fun testToolCallWithoutStart() = runTest {
         // Test tool call events without proper start event

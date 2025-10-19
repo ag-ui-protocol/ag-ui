@@ -1,5 +1,6 @@
 package com.agui.example.chatwear.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -58,12 +59,12 @@ import androidx.wear.compose.material.VignettePosition
 import com.agui.example.chatwear.R
 import com.agui.example.chatapp.chat.DisplayMessage
 import com.agui.example.chatapp.chat.MessageRole
-import com.agui.example.chatapp.chat.UserConfirmationRequest
 import com.agui.example.chatapp.data.model.AgentConfig
 import com.agui.example.chatapp.data.model.AuthMethod
 import com.mikepenz.markdown.m3.Markdown
 import com.agui.example.chatwear.ui.theme.ChatWearTheme
 import androidx.compose.ui.text.input.ImeAction
+import com.agui.example.tools.BackgroundStyle
 
 @Composable
 fun ChatWearApp(
@@ -92,8 +93,14 @@ fun ChatWearApp(
             return@ChatWearTheme
         }
 
+        val backgroundColor = remember(chatState.background) {
+            chatState.background.toWearColor(WearMaterialTheme.colorScheme.background)
+        }
+
         Scaffold(
-            modifier = modifier.fillMaxSize(),
+            modifier = modifier
+                .fillMaxSize()
+                .background(backgroundColor),
             timeText = { TimeText() },
             vignette = {
                 if (chatState.messages.isNotEmpty()) {
@@ -103,7 +110,9 @@ fun ChatWearApp(
             positionIndicator = { PositionIndicator(listState) }
         ) {
             ScalingLazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(backgroundColor),
                 state = listState,
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -126,17 +135,6 @@ fun ChatWearApp(
                             onRetry = {
                                 activeAgent?.let(viewModel::selectAgent)
                             }
-                        )
-                    }
-                }
-
-                chatState.pendingConfirmation?.let { request ->
-                    item {
-                        ConfirmationCard(
-                            request = request,
-                            onConfirm = viewModel::confirmPendingAction,
-                            onReject = viewModel::rejectPendingAction,
-                            onCancel = viewModel::cancelCurrentOperation
                         )
                     }
                 }
@@ -182,6 +180,20 @@ fun ChatWearApp(
                 }
             }
         }
+    }
+}
+
+private fun BackgroundStyle.toWearColor(default: Color): Color {
+    val hex = colorHex?.removePrefix("#") ?: return default
+    return when (hex.length) {
+        6 -> hex.toLongOrNull(16)?.let { Color((0xFF000000 or it).toInt()) } ?: default
+        8 -> {
+            val rgb = hex.substring(0, 6)
+            val alpha = hex.substring(6, 8)
+            val argb = (alpha + rgb).toLongOrNull(16) ?: return default
+            Color(argb.toInt())
+        }
+        else -> default
     }
 }
 
@@ -777,68 +789,6 @@ private fun QuickPromptRow(
                         labelColor = WearMaterialTheme.colorScheme.onSecondaryContainer
                     )
                 )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ConfirmationCard(
-    request: UserConfirmationRequest,
-    onConfirm: () -> Unit,
-    onReject: () -> Unit,
-    onCancel: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = WearMaterialTheme.colorScheme.surfaceContainerHigh)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Text(
-                text = "Tool request",
-                style = WearMaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-            Text(
-                text = request.action,
-                style = WearMaterialTheme.typography.bodyMedium
-            )
-            request.details.takeIf { it.isNotEmpty() }?.let { details ->
-                details.entries.forEach { (key, value) ->
-                    Text(
-                        text = "$key: $value",
-                        style = WearMaterialTheme.typography.bodySmall,
-                        color = WearMaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Button(
-                    onClick = onConfirm,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.filledTonalButtonColors()
-                ) {
-                    WearText(text = stringResource(id = R.string.confirm))
-                }
-                Button(
-                    onClick = onReject,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = WearMaterialTheme.colorScheme.errorContainer)
-                ) {
-                    WearText(text = stringResource(id = R.string.reject))
-                }
-            }
-            TextButton(onClick = onCancel) {
-                Text(text = stringResource(id = R.string.cancel_operation))
             }
         }
     }
