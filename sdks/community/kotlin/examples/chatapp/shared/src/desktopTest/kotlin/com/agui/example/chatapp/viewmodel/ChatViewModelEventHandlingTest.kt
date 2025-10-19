@@ -187,30 +187,7 @@ class ChatViewModelEventHandlingTest {
         assertNotNull(state)
     }
 
-    @Test
-    fun testUserConfirmationToolFlow() = runTest {
-        // NOTE: With new architecture, confirmation dialogs are handled by tool executor
-        // Start a user_confirmation tool call
-        viewModel.handleAgentEvent(ToolCallStartEvent("confirm-123", "user_confirmation"))
-        
-        // Send confirmation args
-        val confirmationArgs = """
-            {
-                "action": "Delete file",
-                "impact": "high",
-                "details": {"file": "important.txt"},
-                "timeout_seconds": 30
-            }
-        """.trimIndent()
-        
-        viewModel.handleAgentEvent(ToolCallArgsEvent("confirm-123", confirmationArgs))
-        viewModel.handleAgentEvent(ToolCallEndEvent("confirm-123"))
-
-        // With new architecture, confirmation dialog won't be shown from events
-        val state = viewModel.state.value
-        assertNull(state.pendingConfirmation, "Confirmations are now handled by tool executor")
-    }
-
+    
     @Test
     fun testStepStartedEvent() = runTest {
         val event = StepStartedEvent(stepName = "Processing data")

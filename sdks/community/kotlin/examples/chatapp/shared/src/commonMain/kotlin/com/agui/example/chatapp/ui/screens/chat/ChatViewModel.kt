@@ -20,10 +20,6 @@ class ChatViewModel(
 
     fun sendMessage(content: String) = controller.sendMessage(content)
 
-    fun confirmAction() = controller.confirmAction()
-
-    fun rejectAction() = controller.rejectAction()
-
     fun cancelCurrentOperation() = controller.cancelCurrentOperation()
 
     fun clearError() = controller.clearError()

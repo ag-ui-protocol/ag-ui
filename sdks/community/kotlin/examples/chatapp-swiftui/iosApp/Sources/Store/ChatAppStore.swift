@@ -61,14 +61,6 @@ final class ChatAppStore: ObservableObject {
         chatBridge.sendMessage(content: text)
     }
 
-    func confirmPendingAction() {
-        chatBridge.confirmAction()
-    }
-
-    func rejectPendingAction() {
-        chatBridge.rejectAction()
-    }
-
     func cancelStreaming() {
         chatBridge.cancelCurrentOperation()
     }

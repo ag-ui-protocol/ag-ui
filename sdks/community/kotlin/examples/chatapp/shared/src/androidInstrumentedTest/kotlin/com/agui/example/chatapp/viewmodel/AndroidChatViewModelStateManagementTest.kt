@@ -160,37 +160,9 @@ class AndroidChatViewModelStateManagementTest {
         if (state2.messages.isNotEmpty()) {
             assertEquals(MessageRole.SYSTEM, state2.messages.first().role, "Only message should be system connection message")
         }
-        assertNull(state2.pendingConfirmation)
     }
 
-    @Test
-    fun testAgentClientToolRegistration() = runTest {
-        // Test that AgentClient is created with proper tool registry
-        val testAgent = AgentConfig(
-            id = "test-agent",
-            name = "Test Agent",
-            url = "https://test.com/agent",
-            authMethod = AuthMethod.None()
-        )
-
-        agentRepository.setActiveAgent(testAgent)
-        delay(500) // Give more time for async agent connection
-
-        // We can't directly test the AgentClient instance, but we can verify
-        // that confirmation tools are handled properly
-        viewModel.handleAgentEvent(ToolCallStartEvent("confirm-123", "user_confirmation"))
-        
-        val argsJson = """{"action": "Test action", "impact": "low"}"""
-        viewModel.handleAgentEvent(ToolCallArgsEvent("confirm-123", argsJson))
-        viewModel.handleAgentEvent(ToolCallEndEvent("confirm-123"))
-
-        // Note: With the new AgentClient API, tool confirmation is handled
-        // directly by the confirmation handler, not through parsing events
-        val state = viewModel.state.value
-        // The confirmation dialog may not appear since tool handling changed
-        // This test validates that the event processing doesn't crash
-    }
-
+    
     @Test
     fun testEmptyMessageIgnored() = runTest {
         val testAgent = AgentConfig(
@@ -372,41 +344,4 @@ class AndroidChatViewModelStateManagementTest {
         // Note: Reduced expectation to match actual behavior
     }
 
-    @Test
-    fun testPendingConfirmationStateManagement() = runTest {
-        // Test that confirmation tool events are handled properly on Android
-        // This test verifies that user_confirmation tool events don't create visible messages
-        
-        // Create a fresh ChatViewModel to avoid state from other tests
-        val freshViewModel = ChatViewModel()
-        
-        // Handle confirmation tool events directly without agent connection
-        freshViewModel.handleAgentEvent(ToolCallStartEvent("confirm-1", "user_confirmation"))
-        freshViewModel.handleAgentEvent(ToolCallArgsEvent("confirm-1", """{"action": "First action", "impact": "low"}"""))
-        freshViewModel.handleAgentEvent(ToolCallEndEvent("confirm-1"))
-
-        // Verify no messages were created (user_confirmation tools should not create ephemeral messages)
-        var state = freshViewModel.state.value
-        assertNotNull(state)
-        assertEquals(0, state.messages.size, "No messages should be created from user_confirmation tool events")
-
-        // Handle another confirmation tool sequence
-        freshViewModel.handleAgentEvent(ToolCallStartEvent("confirm-2", "user_confirmation"))
-        freshViewModel.handleAgentEvent(ToolCallArgsEvent("confirm-2", """{"action": "Second action", "impact": "high"}"""))
-        freshViewModel.handleAgentEvent(ToolCallEndEvent("confirm-2"))
-
-        // Verify state remains consistent
-        state = freshViewModel.state.value
-        assertNotNull(state)
-        assertEquals(0, state.messages.size, "Still no messages after second confirmation tool sequence")
-        
-        // Verify non-confirmation tools DO create ephemeral messages
-        freshViewModel.handleAgentEvent(ToolCallStartEvent("tool-1", "some_other_tool"))
-        delay(50) // Give time for ephemeral message to be set
-        
-        state = freshViewModel.state.value
-        assertEquals(1, state.messages.size, "Non-confirmation tools should create ephemeral messages")
-        
-        freshViewModel.handleAgentEvent(ToolCallEndEvent("tool-1"))
-    }
-}
+    

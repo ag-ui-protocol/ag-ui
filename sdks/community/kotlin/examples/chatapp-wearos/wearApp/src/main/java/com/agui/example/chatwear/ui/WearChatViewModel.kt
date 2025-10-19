@@ -83,14 +83,6 @@ class WearChatViewModel(
         controller.sendMessage(content)
     }
 
-    fun confirmPendingAction() {
-        controller.confirmAction()
-    }
-
-    fun rejectPendingAction() {
-        controller.rejectAction()
-    }
-
     fun cancelCurrentOperation() {
         controller.cancelCurrentOperation()
     }

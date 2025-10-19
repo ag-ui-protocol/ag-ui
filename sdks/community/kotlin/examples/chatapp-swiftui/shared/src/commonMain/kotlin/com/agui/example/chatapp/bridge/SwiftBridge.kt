@@ -5,11 +5,11 @@ import com.agui.example.chatapp.chat.ChatState
 import com.agui.example.chatapp.chat.DisplayMessage
 import com.agui.example.chatapp.chat.EphemeralType
 import com.agui.example.chatapp.chat.MessageRole
-import com.agui.example.chatapp.chat.UserConfirmationRequest
 import com.agui.example.chatapp.data.model.AgentConfig
 import com.agui.example.chatapp.data.model.AuthMethod
 import com.agui.example.chatapp.data.repository.AgentRepository
 import com.agui.example.chatapp.util.getPlatformSettings
+import com.agui.example.tools.BackgroundStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.Job
@@ -89,15 +89,10 @@ data class DisplayMessageSnapshot(
     val ephemeralType: EphemeralType?
 )
 
-/**
- * Snapshot for user confirmation requests coming from tool calls.
- */
-data class UserConfirmationSnapshot(
-    val toolCallId: String,
-    val action: String,
-    val impact: String,
-    val details: List<HeaderEntry>,
-    val timeout: Int
+/** Snapshot of the current chat background styling. */
+data class BackgroundSnapshot(
+    val colorHex: String?,
+    val description: String?
 )
 
 /**
@@ -110,7 +105,7 @@ data class ChatStateSnapshot(
     val isLoading: Boolean,
     val isConnected: Boolean,
     val error: String?,
-    val pendingConfirmation: UserConfirmationSnapshot?
+    val background: BackgroundSnapshot
 )
 
 /**
@@ -145,13 +140,10 @@ private fun DisplayMessage.toSnapshot(): DisplayMessageSnapshot = DisplayMessage
     ephemeralType = ephemeralType
 )
 
-private fun UserConfirmationRequest.toSnapshot(): UserConfirmationSnapshot =
-    UserConfirmationSnapshot(
-        toolCallId = toolCallId,
-        action = action,
-        impact = impact,
-        details = details.map { HeaderEntry(it.key, it.value) },
-        timeout = timeout
+private fun BackgroundStyle.toSnapshot(): BackgroundSnapshot =
+    BackgroundSnapshot(
+        colorHex = colorHex,
+        description = description
     )
 
 private fun ChatState.toSnapshot(): ChatStateSnapshot = ChatStateSnapshot(
@@ -161,7 +153,7 @@ private fun ChatState.toSnapshot(): ChatStateSnapshot = ChatStateSnapshot(
     isLoading = isLoading,
     isConnected = isConnected,
     error = error,
-    pendingConfirmation = pendingConfirmation?.toSnapshot()
+    background = background.toSnapshot()
 )
 
 private fun AuthMethod.toSnapshot(): AuthMethodSnapshot = when (this) {
@@ -243,14 +235,6 @@ class ChatViewModelBridge(private val controller: ChatController) {
 
     fun sendMessage(content: String) {
         controller.sendMessage(content)
-    }
-
-    fun confirmAction() {
-        controller.confirmAction()
-    }
-
-    fun rejectAction() {
-        controller.rejectAction()
     }
 
     fun cancelCurrentOperation() {

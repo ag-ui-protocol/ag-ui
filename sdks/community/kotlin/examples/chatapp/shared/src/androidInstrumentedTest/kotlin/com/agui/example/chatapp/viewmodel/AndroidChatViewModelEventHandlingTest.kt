@@ -97,35 +97,7 @@ class AndroidChatViewModelEventHandlingTest {
         assertEquals(EphemeralType.TOOL_CALL, ephemeralMessage.ephemeralType)
     }
 
-    @Test
-    fun testUserConfirmationFlowOnAndroid() = runTest {
-        // Note: This test validates the internal event handling mechanism
-        // In real usage, confirmation would be triggered by the actual confirmation tool
-        
-        // For now, we'll test that the confirmation tool events are handled correctly
-        // but acknowledge that pendingConfirmation is set by the ConfirmationHandler, not the events directly
-        viewModel.handleAgentEvent(ToolCallStartEvent("confirm-123", "user_confirmation"))
-        
-        val confirmationArgs = """
-            {
-                "action": "Delete file",
-                "impact": "high",
-                "details": {"file": "important.txt"},
-                "timeout_seconds": 30
-            }
-        """.trimIndent()
-        
-        viewModel.handleAgentEvent(ToolCallArgsEvent("confirm-123", confirmationArgs))
-        viewModel.handleAgentEvent(ToolCallEndEvent("confirm-123"))
-
-        // For internal event handling tests, we verify the events are processed without error
-        // The actual pendingConfirmation is set by the ConfirmationHandler during real tool execution
-        val state = viewModel.state.value
-        // The confirmation dialog state would be set by the actual tool execution, not direct events
-        // For now, we just verify the events were handled without throwing errors
-        assertNotNull(state) // Basic state validation
-    }
-
+    
     @Test
     fun testErrorHandlingOnAndroid() = runTest {
         // Test error handling works on Android platform
