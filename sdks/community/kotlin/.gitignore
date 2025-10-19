@@ -44,6 +44,7 @@ captures/
 **/*.xcodeproj/xcuserdata/
 *.xccheckout
 *.xcscmblueprint
+*.xcsettings
 DerivedData/
 *.hmap
 *.ipa
