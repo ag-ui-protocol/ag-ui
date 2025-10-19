@@ -1,6 +1,9 @@
 package com.agui.example.chatapp.chat
 
+import com.agui.client.agent.AgentSubscriber
+import com.agui.client.agent.AgentSubscription
 import com.agui.core.types.BaseEvent
+import com.agui.core.types.Role
 import com.agui.core.types.RunErrorEvent
 import com.agui.core.types.TextMessageContentEvent
 import com.agui.core.types.TextMessageEndEvent
@@ -69,6 +72,13 @@ class ChatControllerTest {
 
         controller.sendMessage("Hi there")
         advanceUntilIdle()
+
+        controller.handleAgentEvent(TextMessageStartEvent(messageId = "user-1", role = Role.USER))
+        controller.handleAgentEvent(TextMessageContentEvent(messageId = "user-1", delta = "Hi there"))
+        controller.handleAgentEvent(TextMessageEndEvent(messageId = "user-1"))
+        controller.handleAgentEvent(TextMessageStartEvent(messageId = "msg-agent", role = Role.ASSISTANT))
+        controller.handleAgentEvent(TextMessageContentEvent(messageId = "msg-agent", delta = "Hello"))
+        controller.handleAgentEvent(TextMessageEndEvent(messageId = "msg-agent"))
 
         val messages = controller.state.value.messages
         assertEquals(3, messages.size)
@@ -165,10 +175,20 @@ class ChatControllerTest {
     private class StubChatAgent : ChatAgent {
         var nextSendFlow: Flow<BaseEvent>? = null
         val sentMessages = mutableListOf<Pair<String, String>>()
+        private val subscribers = mutableListOf<AgentSubscriber>()
 
         override fun sendMessage(message: String, threadId: String): Flow<BaseEvent>? {
             sentMessages += message to threadId
             return nextSendFlow
+        }
+
+        override fun subscribe(subscriber: AgentSubscriber): AgentSubscription {
+            subscribers += subscriber
+            return object : AgentSubscription {
+                override fun unsubscribe() {
+                    subscribers.remove(subscriber)
+                }
+            }
         }
     }
 }

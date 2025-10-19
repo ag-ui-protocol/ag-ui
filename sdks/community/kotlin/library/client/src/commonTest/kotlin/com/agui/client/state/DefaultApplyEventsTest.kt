@@ -1,7 +1,12 @@
 package com.agui.client.state
 
+import com.agui.client.agent.AbstractAgent
+import com.agui.client.agent.AgentEventParams
+import com.agui.client.agent.AgentStateMutation
+import com.agui.client.agent.AgentSubscriber
 import com.agui.client.chunks.transformChunks
 import com.agui.core.types.*
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
@@ -18,6 +23,10 @@ class DefaultApplyEventsTest {
         threadId = "thread",
         runId = "run"
     )
+
+    private fun dummyAgent(): AbstractAgent = object : AbstractAgent() {
+        override fun run(input: RunAgentInput): Flow<BaseEvent> = flowOf()
+    }
 
     @Test
     fun surfacesRawEvents() = runTest {
@@ -101,6 +110,50 @@ class DefaultApplyEventsTest {
         assertNotNull(latestMessages)
         val assistantMessage = latestMessages.last() as AssistantMessage
         assertEquals("Hello world!", assistantMessage.content)
+    }
+
+    @Test
+    fun respectsNonAssistantRolesForTextMessages() = runTest {
+        val input = baseInput()
+        val events = flowOf<BaseEvent>(
+            TextMessageStartEvent(messageId = "dev1", role = Role.DEVELOPER),
+            TextMessageContentEvent(messageId = "dev1", delta = "Configure"),
+            TextMessageContentEvent(messageId = "dev1", delta = " agent")
+        )
+
+        val states = defaultApplyEvents(input, events).toList()
+
+        val latestMessages = states.last().messages
+        assertNotNull(latestMessages)
+        val developerMessage = latestMessages.last() as DeveloperMessage
+        assertEquals("Configure agent", developerMessage.content)
+    }
+
+    @Test
+    fun subscriberCanStopPropagationBeforeMutation() = runTest {
+        val input = baseInput()
+        val agent = dummyAgent()
+        val subscriber = object : AgentSubscriber {
+            override suspend fun onEvent(params: AgentEventParams): AgentStateMutation? {
+                return AgentStateMutation(
+                    messages = params.messages + UserMessage(id = "u1", content = "hi"),
+                    stopPropagation = true
+                )
+            }
+        }
+
+        val states = defaultApplyEvents(
+            input,
+            flowOf<BaseEvent>(TextMessageStartEvent(messageId = "msg1")),
+            agent = agent,
+            subscribers = listOf(subscriber)
+        ).toList()
+
+        assertEquals(1, states.size)
+        val messages = states.first().messages
+        assertNotNull(messages)
+        val userMessage = messages.first() as UserMessage
+        assertEquals("hi", userMessage.content)
     }
 
     @Test

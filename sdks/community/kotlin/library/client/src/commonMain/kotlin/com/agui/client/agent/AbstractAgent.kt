@@ -47,12 +47,27 @@ abstract class AbstractAgent(
     
     // Current run job for cancellation
     private var currentRunJob: Job? = null
+
+    // Registered subscribers for lifecycle and event hooks
+    private val subscribers = mutableListOf<AgentSubscriber>()
     
     /**
      * Abstract method to be implemented by concrete agents.
      * Produces the event stream for the agent run.
      */
     protected abstract fun run(input: RunAgentInput): Flow<BaseEvent>
+
+    /**
+     * Registers an [AgentSubscriber] to receive lifecycle and event notifications.
+     */
+    fun subscribe(subscriber: AgentSubscriber): AgentSubscription {
+        subscribers += subscriber
+        return object : AgentSubscription {
+            override fun unsubscribe() {
+                subscribers.remove(subscriber)
+            }
+        }
+    }
     
     /**
      * Main entry point to run the agent.
@@ -63,22 +78,31 @@ abstract class AbstractAgent(
      * @throws CancellationException if the agent run is cancelled
      * @throws Exception if an unexpected error occurs during execution
      */
-    suspend fun runAgent(parameters: RunAgentParameters? = null) {
+    suspend fun runAgent(parameters: RunAgentParameters? = null, subscriber: AgentSubscriber? = null) {
         agentId = agentId ?: generateId()
         val input = prepareRunAgentInput(parameters)
-        
+        val activeSubscribers = subscribers.toMutableList().apply {
+            subscriber?.let { add(it) }
+        }
+
+        notifyRunInitialized(input, activeSubscribers)
+
         currentRunJob = agentScope.launch {
             try {
                 run(input)
                     .transformChunks(debug)
                     .verifyEvents(debug)
-                    .let { events -> apply(input, events) }
-                    .let { states -> processApplyEvents(input, states) }
+                    .let { events -> apply(input, events, activeSubscribers) }
+                    .let { states -> processApplyEvents(input, states, activeSubscribers) }
                     .catch { error ->
-                        logger.e(error) { "Agent execution failed" }
-                        onError(error)
+                        val stopPropagation = notifyRunFailed(input, activeSubscribers, error)
+                        if (!stopPropagation) {
+                            logger.e(error) { "Agent execution failed" }
+                            onError(error)
+                        }
                     }
-                    .onCompletion { cause ->
+                    .onCompletion {
+                        notifyRunFinalized(input, activeSubscribers)
                         onFinalize()
                     }
                     .collect()
@@ -86,11 +110,14 @@ abstract class AbstractAgent(
                 logger.d { "Agent run cancelled" }
                 throw e
             } catch (e: Exception) {
-                logger.e(e) { "Unexpected error in agent run" }
-                onError(e)
+                val stopPropagation = notifyRunFailed(input, activeSubscribers, e)
+                if (!stopPropagation) {
+                    logger.e(e) { "Unexpected error in agent run" }
+                    onError(e)
+                }
             }
         }
-        
+
         currentRunJob?.join()
     }
 
@@ -123,31 +150,38 @@ abstract class AbstractAgent(
      * agent.runAgent(parameters) // Suspends until complete
      * ```
      */
-    fun runAgentObservable(input: RunAgentInput): Flow<BaseEvent> {
+    fun runAgentObservable(input: RunAgentInput, subscriber: AgentSubscriber? = null): Flow<BaseEvent> {
         agentId = agentId ?: generateId()
-        
+        val activeSubscribers = subscribers.toMutableList().apply {
+            subscriber?.let { add(it) }
+        }
+
         return run(input)
             .transformChunks(debug)
             .verifyEvents(debug)
+            .onStart {
+                notifyRunInitialized(input, activeSubscribers)
+            }
             .onEach { event ->
-                // Run the full state management pipeline on each individual event
-                // as a side effect, preserving the original event stream
                 try {
-                    flowOf(event)  // Create single-event flow
-                        .let { events -> apply(input, events) }
-                        .let { states -> processApplyEvents(input, states) }
-                        .collect() // Consume the state updates
+                    flowOf(event)
+                        .let { events -> apply(input, events, activeSubscribers) }
+                        .let { states -> processApplyEvents(input, states, activeSubscribers) }
+                        .collect()
                 } catch (e: Exception) {
                     logger.w(e) { "Error in state management pipeline for event: ${event.eventType}" }
-                    // Don't rethrow - state management errors shouldn't break the event stream
                 }
             }
             .catch { error ->
-                logger.e(error) { "Agent execution failed" }
-                onError(error)
+                val stopPropagation = notifyRunFailed(input, activeSubscribers, error)
+                if (!stopPropagation) {
+                    logger.e(error) { "Agent execution failed" }
+                    onError(error)
+                }
                 throw error
             }
-            .onCompletion { cause ->
+            .onCompletion {
+                notifyRunFinalized(input, activeSubscribers)
                 onFinalize()
             }
     }
@@ -160,9 +194,9 @@ abstract class AbstractAgent(
      * @return Flow<BaseEvent> stream of events emitted during agent execution
      * @see runAgentObservable(RunAgentInput) for the full input version
      */
-    fun runAgentObservable(parameters: RunAgentParameters? = null): Flow<BaseEvent> {
+    fun runAgentObservable(parameters: RunAgentParameters? = null, subscriber: AgentSubscriber? = null): Flow<BaseEvent> {
         val input = prepareRunAgentInput(parameters)
-        return runAgentObservable(input)
+        return runAgentObservable(input, subscriber)
     }
     
     /**
@@ -185,11 +219,12 @@ abstract class AbstractAgent(
      */
     protected open fun apply(
         input: RunAgentInput,
-        events: Flow<BaseEvent>
+        events: Flow<BaseEvent>,
+        subscribers: List<AgentSubscriber> = emptyList()
     ): Flow<AgentState> {
-        return defaultApplyEvents(input, events)
+        return defaultApplyEvents(input, events, agent = this, subscribers = subscribers)
     }
-    
+
     /**
      * Processes state updates from the apply stage.
      * Updates the agent's internal state (messages and state) based on the state changes.
@@ -201,17 +236,23 @@ abstract class AbstractAgent(
      */
     protected open fun processApplyEvents(
         input: RunAgentInput,
-        states: Flow<AgentState>
+        states: Flow<AgentState>,
+        subscribers: List<AgentSubscriber> = emptyList()
     ): Flow<AgentState> {
         return states.onEach { agentState ->
-            agentState.messages?.let { 
+            var messagesChanged = false
+            var stateChanged = false
+
+            agentState.messages?.let {
                 messages = it
+                messagesChanged = true
                 if (debug) {
                     logger.d { "Updated messages: ${it.size} messages" }
                 }
             }
-            agentState.state?.let { 
+            agentState.state?.let {
                 state = it
+                stateChanged = true
                 if (debug) {
                     logger.d { "Updated state" }
                 }
@@ -224,6 +265,13 @@ abstract class AbstractAgent(
             }
             agentState.thinking?.let {
                 thinking = it
+            }
+
+            if (messagesChanged) {
+                notifyMessagesChanged(subscribers, input)
+            }
+            if (stateChanged) {
+                notifyStateChanged(subscribers, input)
             }
         }
     }
@@ -295,7 +343,130 @@ abstract class AbstractAgent(
         currentRunJob?.cancel()
         agentScope.cancel()
     }
-    
+
+    private suspend fun notifyRunInitialized(
+        input: RunAgentInput,
+        subscribers: List<AgentSubscriber>
+    ) {
+        if (subscribers.isEmpty()) return
+
+        val mutation = runSubscribersWithMutation(subscribers, messages, state) { subscriber, msgSnapshot, stateSnapshot ->
+            subscriber.onRunInitialized(
+                AgentSubscriberParams(
+                    messages = msgSnapshot,
+                    state = stateSnapshot,
+                    agent = this,
+                    input = input
+                )
+            )
+        }
+        applyMutationToAgent(mutation, input, subscribers)
+    }
+
+    private suspend fun notifyRunFailed(
+        input: RunAgentInput,
+        subscribers: List<AgentSubscriber>,
+        error: Throwable
+    ): Boolean {
+        if (subscribers.isEmpty()) return false
+
+        val mutation = runSubscribersWithMutation(subscribers, messages, state) { subscriber, msgSnapshot, stateSnapshot ->
+            subscriber.onRunFailed(
+                AgentRunFailureParams(
+                    error = error,
+                    messages = msgSnapshot,
+                    state = stateSnapshot,
+                    agent = this,
+                    input = input
+                )
+            )
+        }
+        applyMutationToAgent(mutation, input, subscribers)
+        return mutation.stopPropagation
+    }
+
+    private suspend fun notifyRunFinalized(
+        input: RunAgentInput,
+        subscribers: List<AgentSubscriber>
+    ) {
+        if (subscribers.isEmpty()) return
+
+        val mutation = runSubscribersWithMutation(subscribers, messages, state) { subscriber, msgSnapshot, stateSnapshot ->
+            subscriber.onRunFinalized(
+                AgentSubscriberParams(
+                    messages = msgSnapshot,
+                    state = stateSnapshot,
+                    agent = this,
+                    input = input
+                )
+            )
+        }
+        applyMutationToAgent(mutation, input, subscribers)
+    }
+
+    private suspend fun applyMutationToAgent(
+        mutation: AgentStateMutation,
+        input: RunAgentInput,
+        subscribers: List<AgentSubscriber>
+    ) {
+        var messagesChanged = false
+        var stateChanged = false
+
+        mutation.messages?.let {
+            messages = it.toList()
+            messagesChanged = true
+        }
+        mutation.state?.let {
+            state = it
+            stateChanged = true
+        }
+
+        if (messagesChanged) {
+            notifyMessagesChanged(subscribers, input)
+        }
+        if (stateChanged) {
+            notifyStateChanged(subscribers, input)
+        }
+    }
+
+    private suspend fun notifyMessagesChanged(
+        subscribers: List<AgentSubscriber>,
+        input: RunAgentInput
+    ) {
+        if (subscribers.isEmpty()) return
+
+        val stateSnapshot = state
+        for (subscriber in subscribers) {
+            subscriber.onMessagesChanged(
+                AgentStateChangedParams(
+                    messages = messages.deepCopyMessages(),
+                    state = stateSnapshot,
+                    agent = this,
+                    input = input
+                )
+            )
+        }
+    }
+
+    private suspend fun notifyStateChanged(
+        subscribers: List<AgentSubscriber>,
+        input: RunAgentInput
+    ) {
+        if (subscribers.isEmpty()) return
+
+        val stateSnapshot = state
+        for (subscriber in subscribers) {
+            subscriber.onStateChanged(
+                AgentStateChangedParams(
+                    messages = messages.deepCopyMessages(),
+                    state = stateSnapshot,
+                    agent = this,
+                    input = input
+                )
+            )
+        }
+    }
+
     companion object {
         private fun generateId(): String = "id_${Clock.System.now().toEpochMilliseconds()}"
     }

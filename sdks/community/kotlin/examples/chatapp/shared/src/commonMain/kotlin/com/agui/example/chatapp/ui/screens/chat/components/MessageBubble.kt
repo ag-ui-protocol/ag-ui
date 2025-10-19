@@ -34,7 +34,7 @@ fun MessageBubble(
 ) {
     val isUser = message.role == MessageRole.USER
     val isError = message.role == MessageRole.ERROR
-    val isSystem = message.role == MessageRole.SYSTEM
+    val isSystem = message.role == MessageRole.SYSTEM || message.role == MessageRole.DEVELOPER
     val isToolCall = message.role == MessageRole.TOOL_CALL
     val isStepInfo = message.role == MessageRole.STEP_INFO
     val isEphemeral = message.ephemeralGroupId != null

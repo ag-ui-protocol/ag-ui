@@ -6,7 +6,8 @@ A Kotlin Multiplatform module that exposes the non-UI logic reused by the chat a
 
 - Agent persistence via the multiplatform `AgentRepository`
 - Authentication providers (API Key, Bearer, Basic, OAuth2/custom hook point)
-- Chat orchestration through the UI-agnostic `ChatController`
+- Chat orchestration through the UI-agnostic `ChatController`, which now wires the Kotlin client `AgentSubscriber` hooks to
+  populate conversation history and ephemerals across platforms
 - Platform utilities (settings storage, user ID management, string helpers)
 - Tool confirmation integration shared across platforms
 

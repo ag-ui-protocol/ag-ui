@@ -12,17 +12,17 @@ class ChunkTransformTest {
         val events = flowOf(
             RunStartedEvent(threadId = "t1", runId = "r1"),
             TextMessageChunkEvent(
-                messageId = "msg1", 
+                messageId = "msg1",
                 delta = "Hello"
             ),
             TextMessageChunkEvent(
-                messageId = "msg1", 
+                messageId = "msg1",
                 delta = " world"
             )
         )
-        
+
         val result = events.transformChunks().toList()
-        
+
         assertEquals(5, result.size)
         assertTrue(result[0] is RunStartedEvent)
         assertTrue(result[1] is TextMessageStartEvent)
@@ -33,6 +33,21 @@ class ChunkTransformTest {
         assertEquals(" world", (result[3] as TextMessageContentEvent).delta)
         assertTrue(result[4] is TextMessageEndEvent)
         assertEquals("msg1", (result[4] as TextMessageEndEvent).messageId)
+    }
+
+    @Test
+    fun testTextMessageChunkRolePropagation() = runTest {
+        val events = flowOf(
+            TextMessageChunkEvent(
+                messageId = "msg1",
+                role = Role.DEVELOPER,
+                delta = "Hello"
+            )
+        )
+
+        val result = events.transformChunks().toList()
+        val startEvent = result.first { it is TextMessageStartEvent } as TextMessageStartEvent
+        assertEquals(Role.DEVELOPER, startEvent.role)
     }
     
     @Test

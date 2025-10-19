@@ -125,6 +125,12 @@ open class AgUiAgent(
     }
 
     /**
+     * Registers an [AgentSubscriber] that will receive lifecycle and event callbacks
+     * for every run executed through this agent.
+     */
+    fun subscribe(subscriber: AgentSubscriber): AgentSubscription = agent.subscribe(subscriber)
+
+    /**
      * Close the agent and release resources
      */
     open fun close() {

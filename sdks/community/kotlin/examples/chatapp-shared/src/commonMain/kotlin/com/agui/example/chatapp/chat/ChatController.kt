@@ -1,19 +1,32 @@
 package com.agui.example.chatapp.chat
 
 import co.touchlab.kermit.Logger
+import com.agui.client.agent.AgentEventParams
+import com.agui.client.agent.AgentStateChangedParams
+import com.agui.client.agent.AgentStateMutation
+import com.agui.client.agent.AgentSubscriber
+import com.agui.client.agent.AgentSubscriberParams
+import com.agui.client.agent.AgentSubscription
+import com.agui.core.types.AssistantMessage
 import com.agui.core.types.BaseEvent
+import com.agui.core.types.DeveloperMessage
+import com.agui.core.types.Message
+import com.agui.core.types.Role
 import com.agui.core.types.RunErrorEvent
 import com.agui.core.types.RunFinishedEvent
 import com.agui.core.types.StateDeltaEvent
 import com.agui.core.types.StateSnapshotEvent
 import com.agui.core.types.StepFinishedEvent
 import com.agui.core.types.StepStartedEvent
+import com.agui.core.types.SystemMessage
 import com.agui.core.types.TextMessageContentEvent
 import com.agui.core.types.TextMessageEndEvent
 import com.agui.core.types.TextMessageStartEvent
 import com.agui.core.types.ToolCallArgsEvent
 import com.agui.core.types.ToolCallEndEvent
 import com.agui.core.types.ToolCallStartEvent
+import com.agui.core.types.ToolMessage
+import com.agui.core.types.UserMessage
 import com.agui.example.chatapp.data.auth.AuthManager
 import com.agui.example.chatapp.data.model.AgentConfig
 import com.agui.example.chatapp.data.repository.AgentRepository
@@ -61,14 +74,21 @@ class ChatController(
     val state: StateFlow<ChatState> = _state.asStateFlow()
 
     private var currentAgent: ChatAgent? = null
+    private var agentSubscription: AgentSubscription? = null
     private var currentJob: Job? = null
     private var currentThreadId: String? = null
 
-    private val streamingMessages = mutableMapOf<String, StringBuilder>()
+    private val manualStreamingMessages = mutableMapOf<String, StringBuilder>()
     private val toolCallBuffer = mutableMapOf<String, StringBuilder>()
-    private val pendingToolCalls = mutableMapOf<String, String>() // toolCallId -> toolName
-    private val ephemeralMessageIds = mutableMapOf<EphemeralType, String>()
+    private val pendingToolCalls = mutableMapOf<String, String>()
+    private val streamingMessageIds = mutableSetOf<String>()
+    private val supplementalMessages = linkedMapOf<String, DisplayMessage>()
+    private val ephemeralMessages = mutableMapOf<EphemeralType, DisplayMessage>()
+    private var baseMessages: List<DisplayMessage> = emptyList()
+    private var manualMessages: List<DisplayMessage> = emptyList()
+    private var manualMode = false
 
+    private val agentSubscriber = ControllerAgentSubscriber()
     private val controllerClosed = atomic(false)
 
     init {
@@ -109,11 +129,13 @@ class ChatController(
                 systemPrompt = agentConfig.systemPrompt
             )
 
+            agentSubscription = currentAgent?.subscribe(agentSubscriber)
+
             currentThreadId = "thread_${Clock.System.now().toEpochMilliseconds()}"
 
             _state.update { it.copy(isConnected = true, error = null, background = BackgroundStyle.Default) }
 
-            addDisplayMessage(
+            addSupplementalMessage(
                 DisplayMessage(
                     id = generateMessageId(),
                     role = MessageRole.SYSTEM,
@@ -134,12 +156,19 @@ class ChatController(
     private fun disconnectFromAgent() {
         currentJob?.cancel()
         currentJob = null
+        agentSubscription?.unsubscribe()
+        agentSubscription = null
         currentAgent = null
         currentThreadId = null
-        streamingMessages.clear()
+        manualStreamingMessages.clear()
         toolCallBuffer.clear()
         pendingToolCalls.clear()
-        ephemeralMessageIds.clear()
+        streamingMessageIds.clear()
+        supplementalMessages.clear()
+        ephemeralMessages.clear()
+        baseMessages = emptyList()
+        manualMessages = emptyList()
+        manualMode = false
 
         _state.update {
             it.copy(
@@ -153,14 +182,7 @@ class ChatController(
     fun sendMessage(content: String) {
         if (content.isBlank() || currentAgent == null || controllerClosed.value) return
 
-        addDisplayMessage(
-            DisplayMessage(
-                id = generateMessageId(),
-                role = MessageRole.USER,
-                content = content.trim()
-            )
-        )
-
+        manualMode = false
         startConversation(content.trim())
     }
 
@@ -175,11 +197,11 @@ class ChatController(
                     message = content,
                     threadId = currentThreadId ?: "default"
                 )?.collect { event ->
-                    handleAgentEvent(event)
+                    logger.d { "Received event: ${event::class.simpleName}" }
                 }
             } catch (e: Exception) {
                 logger.e(e) { "Error running agent" }
-                addDisplayMessage(
+                addSupplementalMessage(
                     DisplayMessage(
                         id = generateMessageId(),
                         role = MessageRole.ERROR,
@@ -188,136 +210,23 @@ class ChatController(
                 )
             } finally {
                 _state.update { it.copy(isLoading = false) }
-                finalizeStreamingMessages()
-                ephemeralMessageIds.keys.toList().forEach { type ->
-                    clearEphemeralMessage(type)
-                }
+                finalizeStreamingState()
+                clearAllEphemeralMessages()
             }
         }
     }
 
     internal fun handleAgentEvent(event: BaseEvent) {
         logger.d { "Handling event: ${event::class.simpleName}" }
-
-        when (event) {
-            is ToolCallStartEvent -> {
-                toolCallBuffer[event.toolCallId] = StringBuilder()
-                pendingToolCalls[event.toolCallId] = event.toolCallName
-
-                if (event.toolCallName != "change_background") {
-                    setEphemeralMessage(
-                        content = "Calling ${event.toolCallName}...",
-                        type = EphemeralType.TOOL_CALL,
-                        icon = "🔧"
-                    )
-                }
-            }
-
-            is ToolCallArgsEvent -> {
-                toolCallBuffer[event.toolCallId]?.append(event.delta)
-                val currentArgs = toolCallBuffer[event.toolCallId]?.toString() ?: ""
-
-                val toolName = pendingToolCalls[event.toolCallId]
-                if (toolName != "change_background") {
-                    setEphemeralMessage(
-                        content = "Calling tool with: ${currentArgs.take(50)}${if (currentArgs.length > 50) "..." else ""}",
-                        type = EphemeralType.TOOL_CALL,
-                        icon = "🔧"
-                    )
-                }
-            }
-
-            is ToolCallEndEvent -> {
-                val toolName = pendingToolCalls[event.toolCallId]
-
-                if (toolName != "change_background") {
-                    scope.launch {
-                        delay(1000)
-                        clearEphemeralMessage(EphemeralType.TOOL_CALL)
-                    }
-                }
-
-                logger.i {
-                    "ToolCallEnd id=${event.toolCallId} name=${toolName ?: "<unknown>"}"
-                }
-                toolCallBuffer.remove(event.toolCallId)
-                pendingToolCalls.remove(event.toolCallId)
-            }
-
-            is StepStartedEvent -> {
-                setEphemeralMessage(
-                    content = event.stepName,
-                    type = EphemeralType.STEP,
-                    icon = "●"
-                )
-            }
-
-            is StepFinishedEvent -> {
-                scope.launch {
-                    delay(500)
-                    clearEphemeralMessage(EphemeralType.STEP)
-                }
-            }
-
-            is TextMessageStartEvent -> {
-                logger.i { "TextMessageStart id=${event.messageId}" }
-                streamingMessages[event.messageId] = StringBuilder()
-                addDisplayMessage(
-                    DisplayMessage(
-                        id = event.messageId,
-                        role = MessageRole.ASSISTANT,
-                        content = "",
-                        isStreaming = true
-                    )
-                )
-            }
-
-            is TextMessageContentEvent -> {
-                logger.i {
-                    val deltaPreview = event.delta.replace('\n', ' ')
-                    "TextMessageContent id=${event.messageId} delta='" + deltaPreview.take(80) + if (deltaPreview.length > 80) "…" else "'"
-                }
-                streamingMessages[event.messageId]?.append(event.delta)
-                updateStreamingMessage(event.messageId, event.delta)
-            }
-
-            is TextMessageEndEvent -> {
-                val complete = streamingMessages[event.messageId]?.toString()
-                logger.i {
-                    "TextMessageEnd id=${event.messageId} text='" + summarizeForLog(complete) + "'"
-                }
-                finalizeStreamingMessage(event.messageId)
-            }
-
-            is RunErrorEvent -> {
-                addDisplayMessage(
-                    DisplayMessage(
-                        id = generateMessageId(),
-                        role = MessageRole.ERROR,
-                        content = "${Strings.AGENT_ERROR_PREFIX}${event.message}"
-                    )
-                )
-            }
-
-            is RunFinishedEvent -> {
-                ephemeralMessageIds.keys.toList().forEach { type ->
-                    clearEphemeralMessage(type)
-                }
-            }
-
-            is StateDeltaEvent, is StateSnapshotEvent -> Unit
-            else -> logger.d { "Received event: $event" }
-        }
+        agentSubscriber.handleManualEvent(event)
     }
 
     fun cancelCurrentOperation() {
         currentJob?.cancel()
 
         _state.update { it.copy(isLoading = false) }
-        finalizeStreamingMessages()
-        ephemeralMessageIds.keys.toList().forEach { type ->
-            clearEphemeralMessage(type)
-        }
+        finalizeStreamingState()
+        clearAllEphemeralMessages()
     }
 
     fun clearError() {
@@ -334,86 +243,265 @@ class ChatController(
         }
     }
 
-    private fun setEphemeralMessage(content: String, type: EphemeralType, icon: String = "") {
-        _state.update { state ->
-            val oldId = ephemeralMessageIds[type]
-            val filtered = if (oldId != null) {
-                state.messages.filter { it.id != oldId }
-            } else {
-                state.messages
-            }
-
-            val newMessage = DisplayMessage(
-                id = generateMessageId(),
-                role = when (type) {
-                    EphemeralType.TOOL_CALL -> MessageRole.TOOL_CALL
-                    EphemeralType.STEP -> MessageRole.STEP_INFO
-                },
-                content = "$icon $content".trim(),
-                ephemeralGroupId = type.name,
-                ephemeralType = type
-            )
-
-            ephemeralMessageIds[type] = newMessage.id
-
-            state.copy(messages = filtered + newMessage)
+    private fun updateMessagesFromAgent(messages: List<Message>) {
+        baseMessages = messages.mapNotNull { it.toDisplayMessage() }
+        if (!manualMode) {
+            refreshMessages()
         }
+    }
+
+    private fun Message.toDisplayMessage(): DisplayMessage? = when (this) {
+        is DeveloperMessage -> DisplayMessage(
+            id = id,
+            role = MessageRole.DEVELOPER,
+            content = content,
+            isStreaming = streamingMessageIds.contains(id)
+        )
+        is SystemMessage -> DisplayMessage(
+            id = id,
+            role = MessageRole.SYSTEM,
+            content = content ?: "",
+            isStreaming = streamingMessageIds.contains(id)
+        )
+        is AssistantMessage -> DisplayMessage(
+            id = id,
+            role = MessageRole.ASSISTANT,
+            content = formatAssistantContent(this),
+            isStreaming = streamingMessageIds.contains(id)
+        )
+        is UserMessage -> DisplayMessage(
+            id = id,
+            role = MessageRole.USER,
+            content = content,
+            isStreaming = streamingMessageIds.contains(id)
+        )
+        is ToolMessage -> DisplayMessage(
+            id = id,
+            role = MessageRole.TOOL_CALL,
+            content = content,
+            isStreaming = streamingMessageIds.contains(id)
+        )
+    }
+
+    private fun formatAssistantContent(message: AssistantMessage): String {
+        val base = message.content?.takeIf { it.isNotBlank() }
+        val toolDetails = message.toolCalls.orEmpty()
+            .takeIf { it.isNotEmpty() }
+            ?.joinToString(separator = "\n\n") { call ->
+                val preview = summarizeArguments(call.function.arguments)
+                "🔧 ${call.function.name}($preview)"
+            }
+        return listOfNotNull(base, toolDetails).joinToString(separator = "\n\n")
+    }
+
+    private fun summarizeArguments(arguments: String): String {
+        val trimmed = arguments.trim()
+        return if (trimmed.length <= 80) trimmed else trimmed.take(77) + "…"
+    }
+
+    private fun addSupplementalMessage(message: DisplayMessage) {
+        supplementalMessages[message.id] = message
+        refreshMessages()
+    }
+
+    private fun setEphemeralMessage(content: String, type: EphemeralType, icon: String = "") {
+        val message = DisplayMessage(
+            id = generateMessageId(),
+            role = when (type) {
+                EphemeralType.TOOL_CALL -> MessageRole.TOOL_CALL
+                EphemeralType.STEP -> MessageRole.STEP_INFO
+            },
+            content = "$icon $content".trim(),
+            ephemeralGroupId = type.name,
+            ephemeralType = type
+        )
+        ephemeralMessages[type] = message
+        refreshMessages()
     }
 
     private fun clearEphemeralMessage(type: EphemeralType) {
-        val messageId = ephemeralMessageIds[type]
-        if (messageId != null) {
-            _state.update { state ->
-                state.copy(messages = state.messages.filter { it.id != messageId })
+        if (ephemeralMessages.remove(type) != null) {
+            refreshMessages()
+        }
+    }
+
+    private fun clearAllEphemeralMessages() {
+        if (ephemeralMessages.isNotEmpty()) {
+            ephemeralMessages.clear()
+            refreshMessages()
+        }
+    }
+
+    private fun processStreamingAndEphemeral(event: BaseEvent) {
+        when (event) {
+            is TextMessageStartEvent -> {
+                streamingMessageIds += event.messageId
+                if (manualMode) {
+                    startManualMessage(event)
+                } else {
+                    refreshMessages()
+                }
             }
-            ephemeralMessageIds.remove(type)
-        }
-    }
-
-    private fun updateStreamingMessage(messageId: String, delta: String) {
-        _state.update { state ->
-            state.copy(
-                messages = state.messages.map { msg ->
-                    if (msg.id == messageId) {
-                        msg.copy(content = msg.content + delta)
-                    } else {
-                        msg
+            is TextMessageContentEvent -> if (manualMode) {
+                appendManualMessage(event)
+            }
+            is TextMessageEndEvent -> {
+                streamingMessageIds -= event.messageId
+                if (manualMode) {
+                    endManualMessage(event.messageId)
+                } else {
+                    refreshMessages()
+                }
+            }
+            is ToolCallStartEvent -> {
+                toolCallBuffer[event.toolCallId] = StringBuilder()
+                pendingToolCalls[event.toolCallId] = event.toolCallName
+                if (event.toolCallName != "change_background") {
+                    setEphemeralMessage(
+                        content = "Calling ${event.toolCallName}…",
+                        type = EphemeralType.TOOL_CALL,
+                        icon = "🔧"
+                    )
+                }
+            }
+            is ToolCallArgsEvent -> {
+                toolCallBuffer[event.toolCallId]?.append(event.delta)
+                val argsPreview = toolCallBuffer[event.toolCallId]?.toString().orEmpty()
+                val toolName = pendingToolCalls[event.toolCallId]
+                if (toolName != null && toolName != "change_background") {
+                    setEphemeralMessage(
+                        content = "Calling $toolName with: ${summarizeArguments(argsPreview)}",
+                        type = EphemeralType.TOOL_CALL,
+                        icon = "🔧"
+                    )
+                }
+            }
+            is ToolCallEndEvent -> {
+                val toolName = pendingToolCalls.remove(event.toolCallId)
+                toolCallBuffer.remove(event.toolCallId)
+                if (toolName != "change_background") {
+                    scope.launch {
+                        delay(1000)
+                        clearEphemeralMessage(EphemeralType.TOOL_CALL)
                     }
                 }
-            )
-        }
-    }
-
-    private fun finalizeStreamingMessage(messageId: String) {
-        _state.update { state ->
-            state.copy(
-                messages = state.messages.map { msg ->
-                    if (msg.id == messageId) {
-                        msg.copy(isStreaming = false)
-                    } else {
-                        msg
-                    }
+            }
+            is StepStartedEvent -> {
+                setEphemeralMessage(
+                    content = event.stepName,
+                    type = EphemeralType.STEP,
+                    icon = "●"
+                )
+            }
+            is StepFinishedEvent -> {
+                scope.launch {
+                    delay(500)
+                    clearEphemeralMessage(EphemeralType.STEP)
                 }
-            )
+            }
+            is RunErrorEvent -> {
+                addSupplementalMessage(
+                    DisplayMessage(
+                        id = generateMessageId(),
+                        role = MessageRole.ERROR,
+                        content = "${Strings.AGENT_ERROR_PREFIX}${event.message}"
+                    )
+                )
+            }
+            is RunFinishedEvent -> clearAllEphemeralMessages()
+            is StateDeltaEvent, is StateSnapshotEvent -> Unit
+            else -> Unit
         }
-        streamingMessages.remove(messageId)
     }
 
-    private fun finalizeStreamingMessages() {
-        streamingMessages.keys.forEach { messageId ->
-            finalizeStreamingMessage(messageId)
+    private fun startManualMessage(event: TextMessageStartEvent) {
+        manualStreamingMessages[event.messageId] = StringBuilder()
+        val role = event.role.toMessageRole()
+        val message = DisplayMessage(
+            id = event.messageId,
+            role = role,
+            content = "",
+            isStreaming = true
+        )
+        manualMessages = manualMessages + message
+        refreshMessages()
+    }
+
+    private fun appendManualMessage(event: TextMessageContentEvent) {
+        val builder = manualStreamingMessages[event.messageId] ?: return
+        builder.append(event.delta)
+        manualMessages = manualMessages.map { message ->
+            if (message.id == event.messageId) {
+                message.copy(content = message.content + event.delta)
+            } else {
+                message
+            }
+        }
+        refreshMessages()
+    }
+
+    private fun endManualMessage(messageId: String) {
+        manualStreamingMessages.remove(messageId)
+        manualMessages = manualMessages.map { message ->
+            if (message.id == messageId) {
+                message.copy(isStreaming = false)
+            } else {
+                message
+            }
+        }
+        refreshMessages()
+    }
+
+    private fun finalizeStreamingState() {
+        streamingMessageIds.clear()
+        manualStreamingMessages.clear()
+        manualMessages = manualMessages.map { it.copy(isStreaming = false) }
+        baseMessages = baseMessages.map { it.copy(isStreaming = false) }
+        refreshMessages()
+    }
+
+    private fun refreshMessages() {
+        val conversation = if (manualMode) manualMessages else baseMessages
+        val supplemental = supplementalMessages.values.toList()
+        val ephemerals = ephemeralMessages.values.toList()
+        _state.update {
+            it.copy(messages = conversation + supplemental + ephemerals)
         }
     }
 
-    private fun summarizeForLog(text: String?): String {
-        if (text.isNullOrEmpty()) return ""
-        val noNewlines = text.replace('\n', ' ')
-        return if (noNewlines.length <= 120) noNewlines else noNewlines.take(117) + "…"
+    private fun Role.toMessageRole(): MessageRole = when (this) {
+        Role.DEVELOPER -> MessageRole.DEVELOPER
+        Role.SYSTEM -> MessageRole.SYSTEM
+        Role.ASSISTANT -> MessageRole.ASSISTANT
+        Role.USER -> MessageRole.USER
+        Role.TOOL -> MessageRole.TOOL_CALL
     }
 
-    private fun addDisplayMessage(message: DisplayMessage) {
-        _state.update { state ->
-            state.copy(messages = state.messages + message)
+    private inner class ControllerAgentSubscriber : AgentSubscriber {
+        override suspend fun onRunInitialized(params: AgentSubscriberParams): AgentStateMutation? {
+            manualMode = false
+            updateMessagesFromAgent(params.messages)
+            return null
+        }
+
+        override suspend fun onMessagesChanged(params: AgentStateChangedParams) {
+            manualMode = false
+            updateMessagesFromAgent(params.messages)
+        }
+
+        override suspend fun onEvent(params: AgentEventParams): AgentStateMutation? {
+            processStreamingAndEphemeral(params.event)
+            return null
+        }
+
+        override suspend fun onRunFinalized(params: AgentSubscriberParams): AgentStateMutation? {
+            finalizeStreamingState()
+            return null
+        }
+
+        fun handleManualEvent(event: BaseEvent) {
+            manualMode = true
+            processStreamingAndEphemeral(event)
         }
     }
 
@@ -435,7 +523,7 @@ data class ChatState(
 
 /** Classic chat roles shown in the UI layers. */
 enum class MessageRole {
-    USER, ASSISTANT, SYSTEM, ERROR, TOOL_CALL, STEP_INFO
+    USER, ASSISTANT, SYSTEM, DEVELOPER, ERROR, TOOL_CALL, STEP_INFO
 }
 
 /** Distinguishes transient tool/step messages. */

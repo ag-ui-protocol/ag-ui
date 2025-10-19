@@ -600,7 +600,7 @@ private fun MessageBubble(
     val (background, contentColor) = when (message.role) {
         MessageRole.USER -> WearMaterialTheme.colorScheme.primary to WearMaterialTheme.colorScheme.onPrimary
         MessageRole.ASSISTANT -> WearMaterialTheme.colorScheme.surfaceContainerHigh to WearMaterialTheme.colorScheme.onSurface
-        MessageRole.SYSTEM -> WearMaterialTheme.colorScheme.surfaceContainer to WearMaterialTheme.colorScheme.onSurface
+        MessageRole.SYSTEM, MessageRole.DEVELOPER -> WearMaterialTheme.colorScheme.surfaceContainer to WearMaterialTheme.colorScheme.onSurface
         MessageRole.ERROR -> WearMaterialTheme.colorScheme.error to WearMaterialTheme.colorScheme.onError
         MessageRole.TOOL_CALL -> WearMaterialTheme.colorScheme.tertiary to WearMaterialTheme.colorScheme.onTertiary
         MessageRole.STEP_INFO -> WearMaterialTheme.colorScheme.surfaceContainerLow to WearMaterialTheme.colorScheme.onSurfaceVariant

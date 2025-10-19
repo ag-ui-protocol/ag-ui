@@ -121,6 +121,7 @@ fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> {
                         emit(
                             TextMessageStartEvent(
                                 messageId = messageId,
+                                role = event.role ?: Role.ASSISTANT,
                                 timestamp = event.timestamp,
                                 rawEvent = event.rawEvent
                             )
