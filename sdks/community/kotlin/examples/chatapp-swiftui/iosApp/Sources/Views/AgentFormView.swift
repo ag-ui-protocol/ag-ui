@@ -79,12 +79,12 @@ struct AgentFormView: View {
             case .apiKey:
                 TextField("API Key", text: binding(\.apiKey))
                 TextField("Header Name", text: binding(\.apiHeaderName))
-            case .bearer:
+            case .bearerToken:
                 SecureField("Bearer Token", text: binding(\.bearerToken))
-            case .basic:
+            case .basicAuth:
                 TextField("Username", text: binding(\.basicUsername))
                 SecureField("Password", text: binding(\.basicPassword))
-            case .oauth:
+            case .oauth2:
                 TextField("Client ID", text: binding(\.oauthClientId))
                 SecureField("Client Secret", text: binding(\.oauthClientSecret))
                 TextField("Authorization URL", text: binding(\.oauthAuthorizationURL))

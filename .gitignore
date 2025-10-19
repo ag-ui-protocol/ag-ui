@@ -11,3 +11,6 @@ node_modules
 .vscode
 
 **/mastra.db*
+
+# Ignore heap dumps
+*.hprof

@@ -1,3 +1,13 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle:8.12.0")
+    }
+}
+
 plugins {
     id("org.jetbrains.kotlinx.kover") version "0.7.6"
 

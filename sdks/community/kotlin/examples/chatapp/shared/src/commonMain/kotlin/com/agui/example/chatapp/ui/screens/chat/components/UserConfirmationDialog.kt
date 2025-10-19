@@ -8,7 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.agui.example.chatapp.ui.screens.chat.UserConfirmationRequest
+import com.agui.example.chatapp.chat.UserConfirmationRequest
 
 @Composable
 fun UserConfirmationDialog(

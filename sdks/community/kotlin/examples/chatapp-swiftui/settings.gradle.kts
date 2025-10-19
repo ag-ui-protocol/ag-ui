@@ -1,13 +1,10 @@
 rootProject.name = "chatapp-swiftui"
 
+include(":chatapp-shared")
+project(":chatapp-shared").projectDir = File(rootDir, "../chatapp-shared")
+
 include(":shared")
-project(":shared").projectDir = File(rootDir, "../chatapp/shared")
-include(":tools")
-project(":tools").projectDir = File(rootDir, "../tools")
-include(":androidApp")
-project(":androidApp").projectDir = File(rootDir, "../chatapp/androidApp")
-include(":desktopApp")
-project(":desktopApp").projectDir = File(rootDir, "../chatapp/desktopApp")
+project(":shared").projectDir = File(rootDir, "shared")
 
 pluginManagement {
     repositories {
@@ -21,7 +18,7 @@ pluginManagement {
     plugins {
         val kotlinVersion = "2.2.20"
         val composeVersion = "1.9.0-rc02"
-        val agpVersion = "8.10.1"
+        val agpVersion = "8.12.0"
 
         kotlin("multiplatform") version kotlinVersion
         kotlin("plugin.serialization") version kotlinVersion

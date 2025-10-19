@@ -13,7 +13,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.agui.chatapp.java.R;
 import com.agui.chatapp.java.model.ChatMessage;
-import com.agui.core.types.Role;
+import com.agui.example.chatapp.chat.MessageRole;
 
 /**
  * RecyclerView adapter for displaying chat messages with different layouts
@@ -32,16 +32,13 @@ public class MessageAdapter extends ListAdapter<ChatMessage, MessageAdapter.Mess
     @Override
     public int getItemViewType(int position) {
         ChatMessage message = getItem(position);
-        switch (message.getRole()) {
-            case USER:
-                return VIEW_TYPE_USER;
-            case ASSISTANT:
-                return VIEW_TYPE_ASSISTANT;
-            case SYSTEM:
-            case DEVELOPER:
-            case TOOL:
-            default:
-                return VIEW_TYPE_SYSTEM;
+        MessageRole role = message.getRole();
+        if (role == MessageRole.USER) {
+            return VIEW_TYPE_USER;
+        } else if (role == MessageRole.ASSISTANT) {
+            return VIEW_TYPE_ASSISTANT;
+        } else {
+            return VIEW_TYPE_SYSTEM;
         }
     }
     

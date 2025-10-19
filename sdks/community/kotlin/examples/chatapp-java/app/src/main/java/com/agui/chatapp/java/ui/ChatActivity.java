@@ -21,7 +21,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 
 import com.agui.chatapp.java.R;
 import com.agui.chatapp.java.databinding.ActivityChatBinding;
-import com.agui.chatapp.java.model.AgentProfile;
+import com.agui.example.chatapp.data.model.AgentConfig;
 import com.agui.chatapp.java.ui.adapter.MessageAdapter;
 import com.agui.chatapp.java.viewmodel.ChatViewModel;
 import com.google.android.material.snackbar.Snackbar;
@@ -122,6 +122,7 @@ public class ChatActivity extends AppCompatActivity {
                 Snackbar.make(binding.getRoot(), errorMessage, Snackbar.LENGTH_LONG)
                         .setAction("Settings", v -> openSettings())
                         .show();
+                viewModel.clearError();
             }
         });
 

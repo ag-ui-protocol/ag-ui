@@ -1,6 +1,6 @@
 # AG-UI Kotlin SDK SwiftUI Sample Client
 
-This sample demonstrates how to combine the core **AG-UI Kotlin libraries** with a **SwiftUI** interface that follows native iOS architecture guidelines. It reuses the Kotlin shared module from the Compose Multiplatform chat client for protocol handling, authentication, persistence, tool execution, and streaming, while re-implementing the entire UI layer in Swift.
+This sample demonstrates how to combine the core **AG-UI Kotlin libraries** with a **SwiftUI** interface that follows native iOS architecture guidelines. The multiplatform business logic now lives in the separate `../chatapp-shared` module, while this project adds a lightweight Kotlin bridge that exposes the shared flows to Swift.
 
 ## Features
 
@@ -16,14 +16,13 @@ This sample demonstrates how to combine the core **AG-UI Kotlin libraries** with
 ```
 chatapp-swiftui/
 ├── iosApp/                 # SwiftUI sources and XcodeGen project definition
-├── shared/                 # Reused Kotlin shared module (from chatapp)
+├── shared/                 # Kotlin bridge that wraps chatapp-shared for Swift consumption
 ├── build.gradle.kts
 ├── settings.gradle.kts
 ├── gradlew / gradlew.bat
 └── README.md
 ```
-
-The Gradle build reuses `../chatapp/shared` via an included project reference. No Kotlin sources are duplicated.
+The Gradle build reuses `../chatapp-shared` via an included project reference. Kotlin UI code is implemented natively in Swift.
 
 ## Prerequisites
 
@@ -61,9 +60,9 @@ The generated project includes a local Swift package that wraps the Kotlin frame
 
 The Swift layer follows a unidirectional data flow:
 
-- `ChatAppStore` bridges Kotlin Flows to Combine-friendly `@Published` properties using the new `ChatViewModelBridge` and `AgentRepositoryBridge` helpers exposed from the shared module.
+- `ChatAppStore` bridges Kotlin Flows to Combine-friendly `@Published` properties using the `ChatViewModelBridge` and `AgentRepositoryBridge` helpers exposed from the `shared` bridge module.
 - SwiftUI views (`ChatView`, `AgentListView`, `AgentFormView`) subscribe to the store and dispatch user intents back to Kotlin for processing.
-- Kotlin remains responsible for persistence, AG-UI protocol streaming, authentication, and tool coordination to maintain feature parity with the Compose client.
+- Kotlin remains responsible for persistence, AG-UI protocol streaming, authentication, and tool coordination through the shared `ChatController`, leaving presentation to SwiftUI.
 
 ## Testing & Verification
 

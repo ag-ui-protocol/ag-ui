@@ -12,14 +12,17 @@ final class ChatAppStore: ObservableObject {
     @Published var isPerformingAgentMutation = false
     @Published var repositoryError: String?
 
-    private let chatBridge = ChatViewModelBridge()
-    private let repositoryBridge = AgentRepositoryBridge()
+    private let chatBridge: ChatViewModelBridge
+    private let repositoryBridge: AgentRepositoryBridge
 
     private var chatSubscription: FlowSubscription?
     private var agentsSubscription: FlowSubscription?
     private var activeAgentSubscription: FlowSubscription?
 
-    init() {
+    init(chatBridge: ChatViewModelBridge = ChatViewModelBridge(),
+         repositoryBridge: AgentRepositoryBridge = AgentRepositoryBridge()) {
+        self.chatBridge = chatBridge
+        self.repositoryBridge = repositoryBridge
         self.chatState = chatBridge.currentState()
         self.agents = repositoryBridge.currentAgents()
         self.selectedAgentId = repositoryBridge.currentActiveAgent()?.id ?? chatState.activeAgent?.id
@@ -44,13 +47,11 @@ final class ChatAppStore: ObservableObject {
         }
 
         agentsSubscription = repositoryBridge.observeAgents { [weak self] agents in
-            guard let self else { return }
-            self.agents = agents
+            self?.agents = agents
         }
 
         activeAgentSubscription = repositoryBridge.observeActiveAgent { [weak self] agent in
-            guard let self else { return }
-            self.selectedAgentId = agent?.id
+            self?.selectedAgentId = agent?.id
         }
     }
 
@@ -81,10 +82,8 @@ final class ChatAppStore: ObservableObject {
     func setActiveAgent(id: String?) {
         selectedAgentId = id
         repositoryBridge.setActiveAgent(agentId: id) { [weak self] error in
-            guard let self else { return }
-            if let error {
-                self.repositoryError = error.localizedDescription
-            }
+            guard let self, let error else { return }
+            self.repositoryError = error.message ?? "Unknown error"
         }
     }
 
@@ -106,7 +105,7 @@ final class ChatAppStore: ObservableObject {
         guard let mode = formMode else { return }
 
         let headers = draft.headers.compactMap { $0.toHeaderEntry() }
-        let authMethod = draft.toAuthMethod()
+        let authSnapshot = draft.toAuthMethod()
         let systemPrompt = draft.systemPrompt.isEmpty ? nil : draft.systemPrompt
         let description = draft.description.isEmpty ? nil : draft.description
 
@@ -114,11 +113,11 @@ final class ChatAppStore: ObservableObject {
 
         switch mode {
         case .create:
-            let config = createAgentConfig(
+            let config = ChatBridgeFactory.shared.createAgentConfig(
                 name: draft.name,
                 url: draft.url,
                 description: description,
-                authMethod: authMethod,
+                authMethod: authSnapshot,
                 headers: headers,
                 systemPrompt: systemPrompt
             )
@@ -127,19 +126,19 @@ final class ChatAppStore: ObservableObject {
                 guard let self else { return }
                 self.isPerformingAgentMutation = false
                 if let error {
-                    self.repositoryError = error.localizedDescription
+                    self.repositoryError = error.message ?? "Unknown error"
                 } else {
                     self.formMode = nil
                     self.setActiveAgent(id: config.id)
                 }
             }
         case .edit(let existing):
-            let config = updateAgentConfig(
+            let config = ChatBridgeFactory.shared.updateAgentConfig(
                 existing: existing,
                 name: draft.name,
                 url: draft.url,
                 description: description,
-                authMethod: authMethod,
+                authMethod: authSnapshot,
                 headers: headers,
                 systemPrompt: systemPrompt
             )
@@ -148,7 +147,7 @@ final class ChatAppStore: ObservableObject {
                 guard let self else { return }
                 self.isPerformingAgentMutation = false
                 if let error {
-                    self.repositoryError = error.localizedDescription
+                    self.repositoryError = error.message ?? "Unknown error"
                 } else {
                     self.formMode = nil
                 }
@@ -158,10 +157,8 @@ final class ChatAppStore: ObservableObject {
 
     func deleteAgent(id: String) {
         repositoryBridge.deleteAgent(agentId: id) { [weak self] error in
-            guard let self else { return }
-            if let error {
-                self.repositoryError = error.localizedDescription
-            }
+            guard let self, let error else { return }
+            self.repositoryError = error.message ?? "Unknown error"
         }
     }
 }
@@ -213,50 +210,50 @@ struct AgentDraft {
         description = snapshot.description ?? ""
         systemPrompt = snapshot.systemPrompt ?? ""
         headers = snapshot.customHeaders.map { HeaderField(key: $0.key, value: $0.value) }
-        authSelection = AuthMethodSelection(snapshot.authMethod)
+        authSelection = AuthMethodSelection(kindIdentifier: snapshot.authMethod.kind)
 
-        switch snapshot.authMethod {
-        case let auth as AuthMethodApiKey:
-            apiKey = auth.key
-            apiHeaderName = auth.headerName
-        case let auth as AuthMethodBearerToken:
-            bearerToken = auth.token
-        case let auth as AuthMethodBasicAuth:
-            basicUsername = auth.username
-            basicPassword = auth.password
-        case let auth as AuthMethodOAuth2:
-            oauthClientId = auth.clientId
-            oauthClientSecret = auth.clientSecret ?? ""
-            oauthAuthorizationURL = auth.authorizationUrl
-            oauthTokenURL = auth.tokenUrl
-            oauthScopes = auth.scopes.compactMap { $0 as? String }.joined(separator: ", ")
-            oauthAccessToken = auth.accessToken ?? ""
-            oauthRefreshToken = auth.refreshToken ?? ""
-        case let auth as AuthMethodCustom:
-            customType = auth.type
-            customConfiguration = headersFromMap(map: auth.config).map { HeaderField(key: $0.key, value: $0.value) }
-        default:
+        switch authSelection {
+        case .apiKey:
+            apiKey = snapshot.authMethod.key ?? ""
+            apiHeaderName = snapshot.authMethod.headerName ?? "X-API-Key"
+        case .bearerToken:
+            bearerToken = snapshot.authMethod.token ?? ""
+        case .basicAuth:
+            basicUsername = snapshot.authMethod.username ?? ""
+            basicPassword = snapshot.authMethod.password ?? ""
+        case .oauth2:
+            oauthClientId = snapshot.authMethod.clientId ?? ""
+            oauthClientSecret = snapshot.authMethod.clientSecret ?? ""
+            oauthAuthorizationURL = snapshot.authMethod.authorizationUrl ?? ""
+            oauthTokenURL = snapshot.authMethod.tokenUrl ?? ""
+            oauthScopes = snapshot.authMethod.scopes.joined(separator: ", ")
+            oauthAccessToken = snapshot.authMethod.accessToken ?? ""
+            oauthRefreshToken = snapshot.authMethod.refreshToken ?? ""
+        case .custom:
+            customType = snapshot.authMethod.customType ?? ""
+            customConfiguration = snapshot.authMethod.customConfiguration.map { HeaderField(key: $0.key, value: $0.value) }
+        case .none:
             break
         }
     }
 
-    func toAuthMethod() -> AuthMethod {
+    func toAuthMethod() -> AuthMethodSnapshot {
         switch authSelection {
         case .none:
-            return AuthMethodNone()
+            return makeSnapshot(kind: .none)
         case .apiKey:
-            return AuthMethodApiKey(key: apiKey, headerName: apiHeaderName)
-        case .bearer:
-            return AuthMethodBearerToken(token: bearerToken)
-        case .basic:
-            return AuthMethodBasicAuth(username: basicUsername, password: basicPassword)
-        case .oauth:
+            return makeSnapshot(kind: .apiKey, key: apiKey, headerName: apiHeaderName)
+        case .bearerToken:
+            return makeSnapshot(kind: .bearerToken, token: bearerToken)
+        case .basicAuth:
+            return makeSnapshot(kind: .basicAuth, username: basicUsername, password: basicPassword)
+        case .oauth2:
             let scopes = oauthScopes
                 .split(separator: ",")
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
 
-            return createOAuth2Auth(
+            return ChatBridgeFactory.shared.createOAuth2Auth(
                 clientId: oauthClientId,
                 clientSecret: oauthClientSecret.isEmpty ? nil : oauthClientSecret,
                 authorizationUrl: oauthAuthorizationURL,
@@ -267,28 +264,57 @@ struct AgentDraft {
             )
         case .custom:
             let entries = customConfiguration.compactMap { $0.toHeaderEntry() }
-            return createCustomAuth(type: customType, entries: entries)
+            return ChatBridgeFactory.shared.createCustomAuth(type: customType, entries: entries)
         }
+    }
+
+    private func makeSnapshot(
+        kind: AuthMethodSelection,
+        key: String? = nil,
+        headerName: String? = nil,
+        token: String? = nil,
+        username: String? = nil,
+        password: String? = nil,
+        clientId: String? = nil,
+        clientSecret: String? = nil,
+        authorizationUrl: String? = nil,
+        tokenUrl: String? = nil,
+        scopes: [String] = [],
+        accessToken: String? = nil,
+        refreshToken: String? = nil,
+        customType: String? = nil,
+        customConfiguration: [HeaderEntry] = []
+    ) -> AuthMethodSnapshot {
+        AuthMethodSnapshot(
+            kind: kind.rawValue,
+            key: key,
+            headerName: headerName,
+            token: token,
+            username: username,
+            password: password,
+            clientId: clientId,
+            clientSecret: clientSecret,
+            authorizationUrl: authorizationUrl,
+            tokenUrl: tokenUrl,
+            scopes: scopes,
+            accessToken: accessToken,
+            refreshToken: refreshToken,
+            customType: customType,
+            customConfiguration: customConfiguration
+        )
     }
 }
 
 enum AuthMethodSelection: String, CaseIterable, Identifiable {
     case none
     case apiKey
-    case bearer
-    case basic
-    case oauth
+    case bearerToken
+    case basicAuth
+    case oauth2
     case custom
 
-    init(_ authMethod: AuthMethod) {
-        switch authMethod {
-        case is AuthMethodApiKey: self = .apiKey
-        case is AuthMethodBearerToken: self = .bearer
-        case is AuthMethodBasicAuth: self = .basic
-        case is AuthMethodOAuth2: self = .oauth
-        case is AuthMethodCustom: self = .custom
-        default: self = .none
-        }
+    init(kindIdentifier: String) {
+        self = AuthMethodSelection(rawValue: kindIdentifier) ?? .none
     }
 
     var id: String { rawValue }
@@ -297,9 +323,9 @@ enum AuthMethodSelection: String, CaseIterable, Identifiable {
         switch self {
         case .none: return "None"
         case .apiKey: return "API Key"
-        case .bearer: return "Bearer Token"
-        case .basic: return "Basic Auth"
-        case .oauth: return "OAuth 2.0"
+        case .bearerToken: return "Bearer Token"
+        case .basicAuth: return "Basic Auth"
+        case .oauth2: return "OAuth 2.0"
         case .custom: return "Custom"
         }
     }
@@ -311,10 +337,9 @@ struct HeaderField: Identifiable, Hashable {
     var value: String
 
     func toHeaderEntry() -> HeaderEntry? {
-        guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        return HeaderEntry(key: key, value: value)
+        let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty, !trimmedValue.isEmpty else { return nil }
+        return HeaderEntry(key: trimmedKey, value: trimmedValue)
     }
 }
