@@ -1,31 +1,13 @@
 package com.agui.client.state
 
 import com.agui.client.agent.AgentState
+import com.agui.client.agent.ThinkingTelemetryState
 import com.agui.core.types.*
 import com.reidsync.kxjsonpatch.JsonPatch
 import kotlinx.coroutines.flow.*
-import kotlinx.serialization.json.*
 import co.touchlab.kermit.Logger
 
 private val logger = Logger.withTag("DefaultApplyEvents")
-
-/**
- * Configuration for predictive state updates during tool execution.
- * 
- * This class defines how to update the agent state based on incoming tool arguments
- * before the tool execution is complete. This allows for optimistic UI updates
- * and improved user experience.
- * 
- * @param state_key The JSON pointer path in the state to update
- * @param tool The name of the tool whose arguments should trigger state updates
- * @param tool_argument Optional specific argument name to extract from tool arguments.
- *                      If null, the entire arguments object is used.
- */
-data class PredictStateValue(
-    val state_key: String,
-    val tool: String,
-    val tool_argument: String? = null
-)
 
 /**
  * Default implementation of event application logic with comprehensive event handling.
@@ -36,8 +18,8 @@ data class PredictStateValue(
  * Key features:
  * - Handles all AG-UI protocol events (text messages, tool calls, state changes)
  * - Applies JSON Patch operations for state deltas
- * - Supports predictive state updates during tool execution
  * - Maintains message history and tool call tracking
+ * - Surfaces RAW and CUSTOM events for application-level handling
  * - Provides error handling and recovery for state operations
  * - Integrates with custom state change handlers
  * 
@@ -45,7 +27,7 @@ data class PredictStateValue(
  * - Text message events: Build and update assistant messages incrementally
  * - Tool call events: Track tool calls and their arguments as they stream in
  * - State events: Apply snapshots and deltas using RFC 6902 JSON Patch
- * - Custom events: Handle special events like predictive state configuration
+ * - RAW and CUSTOM events: Forward untyped and application-specific payloads
  * 
  * @param input The initial agent input containing messages, state, and configuration
  * @param events Stream of events from the agent to process
@@ -64,7 +46,37 @@ fun defaultApplyEvents(
     // Mutable state copies
     val messages = input.messages.toMutableList()
     var state = input.state
-    var predictState: List<PredictStateValue>? = null
+    val rawEvents = mutableListOf<RawEvent>()
+    val customEvents = mutableListOf<CustomEvent>()
+    var thinkingActive = false
+    var thinkingVisible = false
+    var thinkingTitle: String? = null
+    val thinkingMessages = mutableListOf<String>()
+    var thinkingBuffer: StringBuilder? = null
+
+    fun finalizeThinkingMessage() {
+        thinkingBuffer?.toString()?.takeIf { it.isNotEmpty() }?.let {
+            thinkingMessages.add(it)
+        }
+        thinkingBuffer = null
+    }
+
+    fun currentThinkingState(): ThinkingTelemetryState? {
+        val inProgress = thinkingBuffer?.toString()
+        val snapshot = mutableListOf<String>().apply {
+            addAll(thinkingMessages)
+            inProgress?.takeIf { it.isNotEmpty() }?.let { add(it) }
+        }
+        val active = thinkingActive || (inProgress?.isNotEmpty() == true)
+        if (!thinkingVisible && !active && snapshot.isEmpty() && thinkingTitle == null) {
+            return null
+        }
+        return ThinkingTelemetryState(
+            isThinking = active,
+            title = thinkingTitle,
+            messages = snapshot
+        )
+    }
     
     return events.transform { event ->
         when (event) {
@@ -143,30 +155,7 @@ fun defaultApplyEvents(
                     )
                     toolCalls[toolCalls.lastIndex] = updatedCall
                     messages[messages.lastIndex] = lastMessage.copy(toolCalls = toolCalls)
-                    
-                    // Handle predictive state updates
-                    var stateUpdated = false
-                    predictState?.find { it.tool == updatedCall.function.name }?.let { config ->
-                        try {
-                            val newState = updatePredictiveState(
-                                state,
-                                updatedCall.function.arguments,
-                                config
-                            )
-                            if (newState != null) {
-                                state = newState
-                                stateUpdated = true
-                            }
-                        } catch (e: Exception) {
-                            logger.d { "Failed to update predictive state: ${e.message}" }
-                        }
-                    }
-                    
-                    if (stateUpdated) {
-                        emit(AgentState(messages = messages.toList(), state = state))
-                    } else {
-                        emit(AgentState(messages = messages.toList()))
-                    }
+                    emit(AgentState(messages = messages.toList()))
                 } else {
                     emit(AgentState(messages = messages.toList()))
                 }
@@ -174,6 +163,26 @@ fun defaultApplyEvents(
             
             is ToolCallEndEvent -> {
                 // No state update needed
+            }
+            
+            is ToolCallResultEvent -> {
+                val toolMessage = ToolMessage(
+                    id = event.messageId,
+                    content = event.content,
+                    toolCallId = event.toolCallId,
+                    name = event.role
+                )
+                messages.add(toolMessage)
+                emit(AgentState(messages = messages.toList()))
+            }
+
+            is RunStartedEvent -> {
+                thinkingActive = false
+                thinkingVisible = false
+                thinkingTitle = null
+                thinkingMessages.clear()
+                thinkingBuffer = null
+                emit(AgentState(thinking = ThinkingTelemetryState(isThinking = false, title = null, messages = emptyList())))
             }
             
             is StateSnapshotEvent -> {
@@ -200,73 +209,61 @@ fun defaultApplyEvents(
                 emit(AgentState(messages = messages.toList()))
             }
             
-            is CustomEvent -> {
-                if (event.name == "PredictState") {
-                    predictState = parsePredictState(event.value)
-                }
+            is RawEvent -> {
+                rawEvents.add(event)
+                emit(AgentState(rawEvents = rawEvents.toList()))
             }
             
-            is StepFinishedEvent -> {
-                // Reset predictive state after step is finished
-                predictState = null
+            is CustomEvent -> {
+                customEvents.add(event)
+                emit(AgentState(customEvents = customEvents.toList()))
+            }
+            
+            is ThinkingStartEvent -> {
+                thinkingActive = true
+                thinkingVisible = true
+                thinkingTitle = event.title
+                thinkingMessages.clear()
+                thinkingBuffer = null
+                currentThinkingState()?.let { emit(AgentState(thinking = it)) }
+            }
+            
+            is ThinkingEndEvent -> {
+                finalizeThinkingMessage()
+                thinkingActive = false
+                currentThinkingState()?.let { emit(AgentState(thinking = it)) }
+            }
+            
+            is ThinkingTextMessageStartEvent -> {
+                thinkingVisible = true
+                if (!thinkingActive) {
+                    thinkingActive = true
+                }
+                finalizeThinkingMessage()
+                thinkingBuffer = StringBuilder()
+                currentThinkingState()?.let { emit(AgentState(thinking = it)) }
+            }
+            
+            is ThinkingTextMessageContentEvent -> {
+                thinkingVisible = true
+                if (!thinkingActive) {
+                    thinkingActive = true
+                }
+                if (thinkingBuffer == null) {
+                    thinkingBuffer = StringBuilder()
+                }
+                thinkingBuffer!!.append(event.delta)
+                currentThinkingState()?.let { emit(AgentState(thinking = it)) }
+            }
+            
+            is ThinkingTextMessageEndEvent -> {
+                finalizeThinkingMessage()
+                currentThinkingState()?.let { emit(AgentState(thinking = it)) }
             }
             
             else -> {
                 // Other events don't affect state
             }
         }
-    }
-}
-
-/**
- * Parses predictive state configuration from a JSON element.
- */
-private fun parsePredictState(value: JsonElement): List<PredictStateValue>? {
-    return try {
-        value.jsonArray.map { element ->
-            val obj = element.jsonObject
-            PredictStateValue(
-                state_key = obj["state_key"]!!.jsonPrimitive.content,
-                tool = obj["tool"]!!.jsonPrimitive.content,
-                tool_argument = obj["tool_argument"]?.jsonPrimitive?.content
-            )
-        }
-    } catch (e: Exception) {
-        logger.d { "Failed to parse predictive state: ${e.message}" }
-        null
-    }
-}
-
-/**
- * Updates state based on tool arguments and predictive state configuration.
- */
-private fun updatePredictiveState(
-    currentState: State,
-    toolArgs: String,
-    config: PredictStateValue
-): State? {
-    return try {
-        // Try to parse the accumulated arguments
-        val parsedArgs = Json.parseToJsonElement(toolArgs).jsonObject
-        
-        val newValue = if (config.tool_argument != null) {
-            // Extract specific argument
-            parsedArgs[config.tool_argument]
-        } else {
-            // Use entire arguments object
-            parsedArgs
-        }
-        
-        if (newValue != null) {
-            // Create updated state
-            val stateObj = currentState.jsonObject.toMutableMap()
-            stateObj[config.state_key] = newValue
-            JsonObject(stateObj)
-        } else {
-            null
-        }
-    } catch (e: Exception) {
-        // Arguments not yet valid JSON, ignore
-        null
     }
 }

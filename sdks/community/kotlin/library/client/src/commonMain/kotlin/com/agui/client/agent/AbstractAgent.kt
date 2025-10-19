@@ -1,6 +1,7 @@
 package com.agui.client.agent
 
 import com.agui.core.types.*
+import com.agui.client.chunks.transformChunks
 import com.agui.client.state.defaultApplyEvents
 import com.agui.client.verify.verifyEvents
 import kotlinx.coroutines.*
@@ -28,6 +29,15 @@ abstract class AbstractAgent(
         protected set
     
     var state: State = config.initialState
+        protected set
+    
+    var rawEvents: List<RawEvent> = emptyList()
+        protected set
+    
+    var customEvents: List<CustomEvent> = emptyList()
+        protected set
+    
+    var thinking: ThinkingTelemetryState? = null
         protected set
     
     val debug: Boolean = config.debug
@@ -60,6 +70,7 @@ abstract class AbstractAgent(
         currentRunJob = agentScope.launch {
             try {
                 run(input)
+                    .transformChunks(debug)
                     .verifyEvents(debug)
                     .let { events -> apply(input, events) }
                     .let { states -> processApplyEvents(input, states) }
@@ -116,6 +127,7 @@ abstract class AbstractAgent(
         agentId = agentId ?: generateId()
         
         return run(input)
+            .transformChunks(debug)
             .verifyEvents(debug)
             .onEach { event ->
                 // Run the full state management pipeline on each individual event
@@ -203,6 +215,15 @@ abstract class AbstractAgent(
                 if (debug) {
                     logger.d { "Updated state" }
                 }
+            }
+            agentState.rawEvents?.let {
+                rawEvents = it
+            }
+            agentState.customEvents?.let {
+                customEvents = it
+            }
+            agentState.thinking?.let {
+                thinking = it
             }
         }
     }
@@ -341,12 +362,32 @@ data class RunAgentParameters(
 
 /**
  * Represents the transformed agent state.
- * Contains the current state of the agent including messages and state data.
+ * Contains the current state of the agent including messages, thinking telemetry,
+ * state data, and auxiliary events.
  * 
  * @property messages Optional list of messages in the current conversation
+ * @property thinking Optional thinking telemetry describing the agent's internal reasoning stream
  * @property state Optional state object containing agent-specific data
+ * @property rawEvents Optional list of RAW events that have been received
+ * @property customEvents Optional list of CUSTOM events that have been received
  */
 data class AgentState(
     val messages: List<Message>? = null,
-    val state: State? = null
+    val thinking: ThinkingTelemetryState? = null,
+    val state: State? = null,
+    val rawEvents: List<RawEvent>? = null,
+    val customEvents: List<CustomEvent>? = null
+)
+
+/**
+ * Represents the agent's thinking telemetry stream.
+ *
+ * @property isThinking Whether the agent is actively thinking
+ * @property title Optional title or description supplied with the thinking step
+ * @property messages Ordered list of thinking text messages emitted by the agent
+ */
+data class ThinkingTelemetryState(
+    val isThinking: Boolean,
+    val title: String? = null,
+    val messages: List<String> = emptyList()
 )

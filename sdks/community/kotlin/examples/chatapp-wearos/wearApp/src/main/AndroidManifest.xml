@@ -9,7 +9,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="AG Chat Wear"
+        android:label="AG-UI Chat"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
