@@ -4,9 +4,8 @@ include(":shared")
 include(":androidApp")
 include(":desktopApp")
 
-// Include example tools module
-include(":tools")
-project(":tools").projectDir = file("../tools")
+include(":chatapp-shared")
+project(":chatapp-shared").projectDir = file("../chatapp-shared")
 
 // Library modules will be pulled from Maven instead of local build
 

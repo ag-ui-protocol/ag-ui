@@ -133,7 +133,7 @@ class ToolExecutionManager(
             // Create tool message response
             val toolMessage = ToolMessage(
                 id = generateMessageId(),
-                content = formatToolResponse(result, toolName),
+                content = formatToolResponse(result),
                 toolCallId = toolCallId
             )
             
@@ -180,30 +180,10 @@ class ToolExecutionManager(
     /**
      * Formats a tool execution result into a response message.
      */
-    private fun formatToolResponse(result: ToolExecutionResult, toolName: String): String {
-        return if (result.success) {
-            // Format successful response
-            buildString {
-                append("Tool '$toolName' executed successfully")
-                if (result.message != null) {
-                    append(": ${result.message}")
-                }
-                if (result.result != null) {
-                    append("\nResult: ${result.result}")
-                }
-            }
-        } else {
-            // Format error response
-            buildString {
-                append("Tool '$toolName' execution failed")
-                if (result.message != null) {
-                    append(": ${result.message}")
-                }
-                if (result.result != null) {
-                    append("\nDetails: ${result.result}")
-                }
-            }
-        }
+    private fun formatToolResponse(result: ToolExecutionResult): String {
+        result.result?.toString()?.takeIf { it.isNotEmpty() }?.let { return it }
+        result.message?.takeIf { it.isNotEmpty() }?.let { return it }
+        return if (result.success) "true" else "false"
     }
     
     /**

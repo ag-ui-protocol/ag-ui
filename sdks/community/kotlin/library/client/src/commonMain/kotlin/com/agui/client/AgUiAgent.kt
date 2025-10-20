@@ -42,9 +42,6 @@ open class AgUiAgent(
         ToolExecutionManager(it, ClientToolResponseHandler(agent))
     }
 
-    // Track threads that have already received tools (for stateless agent optimization)
-    private val threadsWithToolsInfo = mutableSetOf<String>()
-
     /**
      * Run agent with explicit input and return observable event stream
      */
@@ -103,15 +100,9 @@ open class AgUiAgent(
             content = message
         ))
 
-        // Only send tools on the first run for each thread (stateless agent optimization)
-        val isFirstRunForThread = !threadsWithToolsInfo.contains(threadId)
+        // Always provide the current tool registry so the backend can reliably execute tools
         val toolRegistry = config.toolRegistry
-        val toolsToSend = if (isFirstRunForThread && toolRegistry != null) {
-            threadsWithToolsInfo.add(threadId)
-            toolRegistry.getAllTools()
-        } else {
-            emptyList()
-        }
+        val toolsToSend = toolRegistry?.getAllTools() ?: emptyList()
 
         val input = RunAgentInput(
             threadId = threadId,
@@ -130,8 +121,14 @@ open class AgUiAgent(
      * Clear the thread tracking for tools (useful for testing or resetting state)
      */
     fun clearThreadToolsTracking() {
-        threadsWithToolsInfo.clear()
+        // Kept for backward compatibility; no caching is performed anymore.
     }
+
+    /**
+     * Registers an [AgentSubscriber] that will receive lifecycle and event callbacks
+     * for every run executed through this agent.
+     */
+    fun subscribe(subscriber: AgentSubscriber): AgentSubscription = agent.subscribe(subscriber)
 
     /**
      * Close the agent and release resources

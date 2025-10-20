@@ -20,8 +20,8 @@ import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.agui.example.chatapp.ui.screens.chat.DisplayMessage
-import com.agui.example.chatapp.ui.screens.chat.MessageRole
+import com.agui.example.chatapp.chat.DisplayMessage
+import com.agui.example.chatapp.chat.MessageRole
 import com.mikepenz.markdown.m3.Markdown
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
@@ -34,7 +34,7 @@ fun MessageBubble(
 ) {
     val isUser = message.role == MessageRole.USER
     val isError = message.role == MessageRole.ERROR
-    val isSystem = message.role == MessageRole.SYSTEM
+    val isSystem = message.role == MessageRole.SYSTEM || message.role == MessageRole.DEVELOPER
     val isToolCall = message.role == MessageRole.TOOL_CALL
     val isStepInfo = message.role == MessageRole.STEP_INFO
     val isEphemeral = message.ephemeralGroupId != null

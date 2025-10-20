@@ -1,169 +1,80 @@
-# AG-UI Kotlin SDK Java Chat App
+# AG-UI Android (Views) Sample
 
-A Java-based Android chat application demonstrating how to use the Kotlin Multiplatform AG-UI libraries from pure Java code using Android View system and Material 3 design.
+Android View-based chat client that consumes the shared Kotlin Multiplatform core (`chatapp-shared`) while keeping the UI in the traditional XML/ViewBinding stack. The screens remain Java-friendly, but the business logic, agent storage, and streaming behaviour now come directly from the shared Kotlin module used by the Compose and SwiftUI samples.
 
-## Features
+## Highlights
 
-- 🏗️ **Pure Java Implementation**: Demonstrates Kotlin/Java interop with KMP libraries
-- 🎨 **Material 3 Design**: Uses Material Design Components for Android (not Compose)
-- 📱 **Android View System**: Traditional Android View-based UI instead of Compose
-- 🔄 **RxJava Integration**: Converts Kotlin Flow to RxJava Observable for Java consumption
-- 🔐 **Authentication Support**: Bearer Token, API Key, and no-auth options
-- 💬 **Real-time Streaming**: Character-by-character streaming responses
-- ⚙️ **Settings Screen**: Configure agent URL, authentication, and system prompts
-- 📱 **MVVM Architecture**: Uses Android Architecture Components (ViewModel, LiveData)
+- ♻️ **Shared Core** – Reuses the `chatapp-shared` module for repositories, auth, chat orchestration, tool confirmation, and storage.
+- 🧱 **Views + ViewModel** – UI stays on XML/ViewBinding with `ChatActivity` in Java calling into a Kotlin `ChatViewModel`/`ChatController` bridge.
+- 🧑‍🤝‍🧑 **Multi-agent settings** – Same agent CRUD experience as other samples, backed by `AgentRepository` and exposed through a new Kotlin `MultiAgentRepository` wrapper.
+- ⚙️ **Zero RxJava** – Pure coroutines/LiveData interop; no bespoke Java adapters around the AG‑UI flows.
+- 🧩 **Kotlin + Java interop** – Kotlin files provide the glue (ViewModel, repository, list adapter), while the chat screen remains Java to demonstrate interop ergonomics.
 
-## Architecture
-
-This example demonstrates how to use the AG-UI Kotlin SDK from Java without any modifications to the KMP libraries:
+## Project Layout
 
 ```
-Java Application Layer
-├── UI (Activities, Fragments)
-├── ViewModels (Java + Architecture Components)
-├── Repository (SharedPreferences)
-└── Java Adapter Layer
-    ├── AgUiJavaAdapter (Flow → RxJava conversion)
-    ├── AgUiAgentBuilder (Java-friendly builder)
-    └── EventProcessor (Type-safe event handling)
-
-Kotlin Multiplatform Libraries (Unchanged)
-├── kotlin-client (AgUiAgent, StatefulAgUiAgent)
-├── kotlin-core (Message types, Events)
-└── kotlin-tools (Tool execution framework)
+chatapp-java/
+├── app/
+│   ├── src/main/java/com/agui/chatapp/java/
+│   │   ├── ChatJavaApplication.kt     // Initialises shared platform settings
+│   │   ├── repository/                // Kotlin wrapper around chatapp-shared AgentRepository
+│   │   ├── viewmodel/                 // Kotlin ChatViewModel exposing LiveData to Java UI
+│   │   ├── ui/                        // ChatActivity (Java) + SettingsActivity (Kotlin)
+│   │   │   └── adapter/               // MessageAdapter (Java) + AgentListAdapter (Kotlin)
+│   │   └── model/ChatMessage.kt       // UI-friendly view state built from DisplayMessage
+│   └── src/main/res/...               // Unchanged Material 3 XML layouts
+├── settings.gradle                    // Includes :chatapp-shared via composite build
+└── build.gradle                       // Adds Kotlin plugin + AGP 8.12
 ```
 
-## Key Integration Components
-
-### 1. Java Adapter Layer
-- **AgUiJavaAdapter**: Converts Kotlin Flow to RxJava Observable
-- **AgUiAgentBuilder**: Provides Java builder pattern for agent configuration
-- **EventProcessor**: Type-safe event handling for sealed classes
-
-### 2. Interop Libraries Used
-- `kotlinx-coroutines-reactive`: Converts Flow to RxJava
-- `kotlinx-coroutines-jdk8`: CompletableFuture integration
-- `rxjava3`: Reactive streams for Java
-
-### 3. Material 3 Components
-- MaterialToolbar
-- MaterialCardView for message bubbles
-- TextInputLayout with Material styling
-- MaterialButton and MaterialSwitch
-- LinearProgressIndicator
-- Snackbar for notifications
-
-## Building and Running
-
-### Prerequisites
-- Android Studio Arctic Fox or later
-- JDK 21
-- Android SDK 35 (API level 35)
-- AG-UI Kotlin SDK libraries published to Maven Local
-
-### Build Steps
-
-1. **Publish KMP libraries locally** (from `/library` directory):
-   ```bash
-   ./gradlew publishToMavenLocal
-   ```
-
-2. **Open the project** in Android Studio:
-   ```bash
-   # From this directory
-   open . 
-   # Or import the project in Android Studio
-   ```
-
-3. **Build and run**:
-   ```bash
-   ./gradlew :app:assembleDebug
-   ./gradlew :app:installDebug
-   ```
-
-## Usage
-
-1. **Launch the app** - you'll see a prompt to configure an agent
-2. **Tap "Settings"** to configure your agent:
-   - Enter your agent URL
-   - Select authentication type (None, Bearer Token, or API Key)
-   - Enter authentication credentials if needed
-   - Optionally set a system prompt
-   - Test the connection
-   - Save settings
-3. **Return to chat** and start messaging with your agent
-4. **View real-time responses** with character-by-character streaming
-
-## Code Structure
+## How the pieces fit
 
 ```
-app/src/main/java/com/agui/chatapp/java/
-├── adapter/                  # Kotlin-Java interop layer
-│   ├── AgUiJavaAdapter.java     # Flow → RxJava converter
-│   ├── AgUiAgentBuilder.java    # Java-friendly builder
-│   ├── EventCallback.java       # Callback interface
-│   └── EventProcessor.java      # Event type dispatcher
-├── model/
-│   └── ChatMessage.java         # UI model wrapping Message
-├── repository/
-│   └── AgentRepository.java     # SharedPreferences storage
-├── ui/
-│   ├── ChatActivity.java        # Main chat screen
-│   ├── SettingsActivity.java    # Agent configuration
-│   └── adapter/
-│       └── MessageAdapter.java  # RecyclerView adapter
-└── viewmodel/
-    └── ChatViewModel.java        # MVVM ViewModel
+      Java UI (ChatActivity) ─────────┐
+         ↑                            │ LiveData
+         │ uses ViewModelProvider     │
+         │                            ▼
+Kotlin ChatViewModel (AndroidViewModel) ── ChatController (chatapp-shared)
+         │                            │
+         │ coroutines/flows           │
+         ▼                            ▼
+Kotlin MultiAgentRepository ─── AgentRepository (chatapp-shared)
 ```
 
-## Key Integration Techniques
+- `ChatController` handles streaming, tool confirmation, auth, and message state.
+- `AgentRepository` (shared) owns persistent agents; `MultiAgentRepository` wraps it with LiveData/CompletableFuture for the Java UI.
+- `ChatMessage.kt` converts `DisplayMessage` objects into a RecyclerView-friendly model.
 
-### 1. Flow to RxJava Conversion
-```java
-// Convert Kotlin Flow to RxJava Observable
-Flow<BaseEvent> kotlinFlow = agent.chat(message);
-Observable<BaseEvent> javaObservable = 
-    Observable.fromPublisher(ReactiveFlowKt.asPublisher(kotlinFlow));
+## Prerequisites
+
+- Android SDK / command-line tools installed (`sdk.dir` in `local.properties` or `ANDROID_HOME` env var).
+- JDK 21.
+- Kotlin Gradle plugin 2.2.20 (pulled automatically via plugin management).
+
+## Building
+
+```bash
+# From chatapp-java/
+./gradlew :chatapp-shared:assemble     # optional: prebuild shared core
+./gradlew :app:assembleDebug          # build the Android sample
 ```
 
-### 2. Builder Pattern for Configuration
-```java
-// Java-friendly builder instead of Kotlin DSL
-AgUiAgent agent = AgUiAgentBuilder.create(url)
-    .bearerToken("token")
-    .systemPrompt("You are helpful")
-    .debug(true)
-    .buildStateful();
-```
+> ℹ️ The shared core expects an Android context. `ChatJavaApplication` calls `initializeAndroid(this)` on startup.
 
-### 3. Type-Safe Event Handling
-```java
-// Handle Kotlin sealed classes in Java
-EventProcessor.processEvent(event, new EventProcessor.EventHandler() {
-    @Override
-    public void onTextMessageContent(TextMessageContentEvent event) {
-        updateMessage(event.getMessageId(), event.getDelta());
-    }
-    // ... other event handlers
-});
-```
+## Updating agents from the UI
 
-## Dependencies
+- Open Settings ➜ add/edit/delete agents (auth types: None, API Key, Bearer, Basic).
+- Activating an agent calls `AgentRepository.setActiveAgent`, which immediately reconnects the `ChatController`.
+- System prompts and auth headers are stored via multiplatform `Settings` (shared Preferences on Android).
 
-The app demonstrates pure Java consumption of KMP libraries:
+## What changed vs. the original Java sample
 
-- **KMP Libraries**: `kotlin-client`, `kotlin-core`, `kotlin-tools`
-- **Interop**: `kotlinx-coroutines-reactive`, `kotlinx-coroutines-jdk8`
-- **Java Reactive**: `rxjava3`, `rxandroid`
-- **Android**: Architecture Components, Material 3
-- **Storage**: SharedPreferences for persistence
+| Area                | Before                               | Now |
+|--------------------|--------------------------------------|-----|
+| Business logic     | Hand-rolled Java repository & adapter| Shared `chatapp-shared` module |
+| Streaming bridge   | RxJava wrapper over Flow             | Direct `ChatController` + LiveData |
+| Auth models        | Custom Java `AuthMethod`             | Shared KMP `AuthMethod` | 
+| Agent storage      | SharedPreferences manual schema      | Shared multiplatform `AgentRepository` |
+| UI stack           | Java Activities                      | Chat screen still Java; settings + adapters moved to Kotlin for convenience |
 
-## Benefits
-
-- **No KMP Library Changes**: Uses libraries as-is without modifications
-- **Java Team Friendly**: Standard Java patterns and Android Views
-- **Material 3**: Modern design with traditional View system
-- **Full Feature Parity**: Supports all KMP library features
-- **Type Safety**: Maintains type safety across language boundaries
-
-This example proves that teams can adopt AG-UI Kotlin SDK incrementally, starting with Java and migrating to Kotlin/Compose when ready, without requiring changes to the core libraries.
+The sample now mirrors the Compose/SwiftUI architecture while keeping a classical Android view layer for teams that are not ready for Compose.

@@ -247,6 +247,19 @@ add_adk_fastapi_endpoint(app, technical_agent_wrapper, path="/agents/technical")
 add_adk_fastapi_endpoint(app, creative_agent_wrapper, path="/agents/creative")
 ```
 
+## Railway Deployment
+
+Deploy the middleware as a managed FastAPI service using the included Railway manifest.
+
+1. Install the Railway CLI (`npm i -g @railway/cli`) and authenticate with `railway login`.
+2. From the repository root run `railway up` to create or update a service using `railway.toml`.
+3. Set `GOOGLE_API_KEY` or `GOOGLE_APPLICATION_CREDENTIALS` in the Railway dashboard so the ADK agent can call Gemini.
+4. (Optional) Tune behaviour with the environment variables documented in `ag_ui_adk/railway_app.py` such as `ADK_MODEL`, `ADK_APP_NAME`, and `ADK_API_PATH`.
+
+Railway builds from the provided `Dockerfile`, which installs the middleware and runs `uvicorn ag_ui_adk.railway_app:app`. The middleware endpoint is available at `https://<your-service>.railway.app/chat` (or the path set in `ADK_API_PATH`) with `/health` exposed for monitoring.
+
+> Note: A `Procfile` remains for local tooling compatibility, but Railway uses the Dockerfile as the authoritative start command.
+
 ## Tool Support
 
 The middleware provides complete bidirectional tool support, enabling AG-UI Protocol tools to execute within Google ADK agents. All tools supplied by the client are currently implemented as long-running tools that emit events to the client for execution and can be combined with backend tools provided by the agent to create a hybrid combined toolset.
