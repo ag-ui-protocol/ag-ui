@@ -6,7 +6,23 @@
  * to work seamlessly with CopilotKit and other AG-UI frontends.
  */
 
-import { CloudflareAGUIEvents, AGUIEvent } from "./events";
+import {
+  EventType,
+  type BaseEvent,
+  type TextMessageStartEvent,
+  type TextMessageContentEvent,
+  type TextMessageEndEvent,
+  type ToolCallStartEvent,
+  type ToolCallArgsEvent,
+  type ToolCallEndEvent,
+  type ToolCallResultEvent,
+  type RunStartedEvent,
+  type RunFinishedEvent,
+  type RunErrorEvent,
+  type StateSnapshotEvent,
+  type CustomEvent,
+} from "@ag-ui/core";
+import { v4 as uuidv4 } from "uuid";
 import type { CloudflareMessage } from "./types";
 
 /**
@@ -59,7 +75,13 @@ export interface AgentsSDKAdapterOptions {
   trackSQL?: boolean;
 
   /** Custom event transformer */
-  transformEvent?: (event: any) => AGUIEvent | null;
+  transformEvent?: (event: AgentsSDKChunk) => BaseEvent | null;
+
+  /** Thread ID for conversation tracking */
+  threadId?: string;
+
+  /** Run ID for execution tracking */
+  runId?: string;
 }
 
 /**
@@ -108,17 +130,6 @@ interface AgentsSDKChunk {
   state?: Record<string, any>;
 }
 
-/**
- * Tracks the current message or tool call being processed
- */
-interface MessageInProgress {
-  id: string;
-  type: "text" | "tool_call";
-  toolCallId?: string;
-  toolCallName?: string;
-  accumulatedArgs?: string;
-}
-
 export class CloudflareAgentsSDKAdapter {
   private agent: CloudflareAgentsSDKAgent;
   private options: AgentsSDKAdapterOptions;
@@ -128,6 +139,7 @@ export class CloudflareAgentsSDKAdapter {
   private currentMessageType: "text" | "tool_call" | null = null;
   private currentToolCallId: string | null = null;
   private currentToolCallName: string | null = null;
+  private runPaused = false;
 
   constructor(options: AgentsSDKAdapterOptions) {
     this.agent = options.agent;
@@ -145,41 +157,70 @@ export class CloudflareAgentsSDKAdapter {
   async *execute(
     messages: CloudflareMessage[],
     context?: Record<string, any>,
-  ): AsyncGenerator<AGUIEvent> {
-    const runId = this.generateRunId();
+  ): AsyncGenerator<BaseEvent> {
+    const threadId = context?.threadId || this.options.threadId || `thread-${Date.now()}`;
+    const runId = context?.runId || this.options.runId || this.generateRunId();
 
     try {
       // Emit run started
-      yield CloudflareAGUIEvents.runStarted(runId, {
-        agentId: this.agent.id,
-        messageCount: messages.length,
-        ...context,
-      });
+      const runStarted: RunStartedEvent = {
+        type: EventType.RUN_STARTED,
+        threadId,
+        runId,
+        timestamp: Date.now(),
+      };
+      yield runStarted;
 
       // Get initial state
       if (this.options.syncState) {
         const initialState = this.agent.getState();
-        yield CloudflareAGUIEvents.stateSync(runId, initialState);
+        const stateSnapshot: StateSnapshotEvent = {
+          type: EventType.STATE_SNAPSHOT,
+          snapshot: initialState,
+          timestamp: Date.now(),
+        };
+        yield stateSnapshot;
       }
 
       // Check if agent has onChatMessage (AIChatAgent)
       if (typeof (this.agent as any).onChatMessage === "function") {
-        yield* this.handleChatAgent(runId, messages, context);
+        yield* this.handleChatAgent(messages, context);
       } else {
         // Handle as generic agent
-        yield* this.handleGenericAgent(runId, messages, context);
+        yield* this.handleGenericAgent(messages, context);
       }
 
       // Emit final state if changed
       if (this.options.syncState) {
         const finalState = this.agent.getState();
-        yield CloudflareAGUIEvents.stateSync(runId, finalState);
+        const stateSnapshot: StateSnapshotEvent = {
+          type: EventType.STATE_SNAPSHOT,
+          snapshot: finalState,
+          timestamp: Date.now(),
+        };
+        yield stateSnapshot;
       }
 
-      // Emit run finished
-      yield CloudflareAGUIEvents.runFinished(runId);
+      // Only emit RUN_FINISHED if run wasn't paused (HITL)
+      if (!this.runPaused) {
+        const runFinished: RunFinishedEvent = {
+          type: EventType.RUN_FINISHED,
+          threadId,
+          runId,
+          timestamp: Date.now(),
+        };
+        yield runFinished;
+      }
+
+      // Reset pause flag for next run
+      this.runPaused = false;
     } catch (error) {
-      yield CloudflareAGUIEvents.error(runId, error as Error);
+      const runError: RunErrorEvent = {
+        type: EventType.RUN_ERROR,
+        message: error instanceof Error ? error.message : "Unknown error",
+        timestamp: Date.now(),
+      };
+      yield runError;
       throw error;
     }
   }
@@ -190,10 +231,9 @@ export class CloudflareAgentsSDKAdapter {
    * Pattern inspired by LangGraph's handleSingleEvent
    */
   private async *handleChatAgent(
-    runId: string,
     messages: CloudflareMessage[],
     context?: Record<string, any>,
-  ): AsyncGenerator<AGUIEvent> {
+  ): AsyncGenerator<BaseEvent> {
     const lastMessage = messages[messages.length - 1];
 
     if (!lastMessage || lastMessage.role !== "user") {
@@ -215,20 +255,24 @@ export class CloudflareAgentsSDKAdapter {
 
     for await (const chunk of stream) {
       // Handle different chunk types
-      yield* this.handleSingleChunk(runId, chunk);
-
-      // Check for state changes
-      if (this.options.syncState) {
-        const currentState = this.agent.getState();
-        yield CloudflareAGUIEvents.stateSync(runId, currentState);
-      }
+      yield* this.handleSingleChunk(chunk);
     }
 
     // End any message in progress
-    if (this.currentMessageType === "text") {
-      yield CloudflareAGUIEvents.textMessageEnd(runId);
+    if (this.currentMessageType === "text" && this.currentMessageId) {
+      const textEnd: TextMessageEndEvent = {
+        type: EventType.TEXT_MESSAGE_END,
+        messageId: this.currentMessageId,
+        timestamp: Date.now(),
+      };
+      yield textEnd;
     } else if (this.currentMessageType === "tool_call" && this.currentToolCallId) {
-      yield CloudflareAGUIEvents.toolCallEnd(runId, this.currentToolCallId);
+      const toolEnd: ToolCallEndEvent = {
+        type: EventType.TOOL_CALL_END,
+        toolCallId: this.currentToolCallId,
+        timestamp: Date.now(),
+      };
+      yield toolEnd;
     }
     this.currentMessageId = null;
     this.currentMessageType = null;
@@ -241,28 +285,40 @@ export class CloudflareAgentsSDKAdapter {
    * Detects and emits appropriate AG-UI events
    */
   private async *handleSingleChunk(
-    runId: string,
     chunk: any,
-  ): AsyncGenerator<AGUIEvent> {
+  ): AsyncGenerator<BaseEvent> {
     // Normalize chunk to our interface
     const normalizedChunk = this.normalizeChunk(chunk);
 
-    // Handle tool call start
-    if (normalizedChunk.type === "tool_call" && normalizedChunk.toolCall) {
+    // Handle tool call start (only if not done)
+    if (normalizedChunk.type === "tool_call" && normalizedChunk.toolCall && !normalizedChunk.toolCall.done) {
       const { id, name } = normalizedChunk.toolCall;
 
       // End any text message in progress
-      if (this.currentMessageType === "text") {
-        yield CloudflareAGUIEvents.textMessageEnd(runId);
+      if (this.currentMessageType === "text" && this.currentMessageId) {
+        const textEnd: TextMessageEndEvent = {
+          type: EventType.TEXT_MESSAGE_END,
+          messageId: this.currentMessageId,
+          timestamp: Date.now(),
+        };
+        yield textEnd;
       }
 
-      // Start tool call
-      yield CloudflareAGUIEvents.toolCallStart(runId, id, name);
+      // Start tool call only if not already started
+      if (this.currentToolCallId !== id) {
+        const toolStart: ToolCallStartEvent = {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: id,
+          toolCallName: name,
+          timestamp: Date.now(),
+        };
+        yield toolStart;
 
-      this.currentMessageId = this.generateMessageId();
-      this.currentMessageType = "tool_call";
-      this.currentToolCallId = id;
-      this.currentToolCallName = name;
+        this.currentMessageId = this.generateMessageId();
+        this.currentMessageType = "tool_call";
+        this.currentToolCallId = id;
+        this.currentToolCallName = name;
+      }
     }
 
     // Handle tool call arguments (delta)
@@ -270,11 +326,13 @@ export class CloudflareAgentsSDKAdapter {
       if (this.currentMessageType === "tool_call" && this.currentToolCallId) {
         const argsChunk = normalizedChunk.toolCall.argsChunk || "";
 
-        yield CloudflareAGUIEvents.toolCallArgs(
-          runId,
-          this.currentToolCallId,
-          argsChunk
-        );
+        const toolArgs: ToolCallArgsEvent = {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: this.currentToolCallId,
+          delta: argsChunk,
+          timestamp: Date.now(),
+        };
+        yield toolArgs;
       }
     }
 
@@ -287,14 +345,21 @@ export class CloudflareAgentsSDKAdapter {
             ? normalizedChunk.toolCall.args
             : JSON.stringify(normalizedChunk.toolCall.args);
 
-          yield CloudflareAGUIEvents.toolCallArgs(
-            runId,
-            this.currentToolCallId,
-            argsString
-          );
+          const toolArgs: ToolCallArgsEvent = {
+            type: EventType.TOOL_CALL_ARGS,
+            toolCallId: this.currentToolCallId,
+            delta: argsString,
+            timestamp: Date.now(),
+          };
+          yield toolArgs;
         }
 
-        yield CloudflareAGUIEvents.toolCallEnd(runId, this.currentToolCallId);
+        const toolEnd: ToolCallEndEvent = {
+          type: EventType.TOOL_CALL_END,
+          toolCallId: this.currentToolCallId,
+          timestamp: Date.now(),
+        };
+        yield toolEnd;
         this.currentMessageType = null;
         this.currentToolCallId = null;
         this.currentToolCallName = null;
@@ -307,27 +372,38 @@ export class CloudflareAgentsSDKAdapter {
         ? normalizedChunk.toolCall.args
         : JSON.stringify(normalizedChunk.toolCall.args);
 
-      yield CloudflareAGUIEvents.toolCallResult(
-        runId,
-        normalizedChunk.toolCall.id,
-        result
-      );
+      const messageId = uuidv4();
+      const toolResult: ToolCallResultEvent = {
+        type: EventType.TOOL_CALL_RESULT,
+        messageId,
+        toolCallId: normalizedChunk.toolCall.id,
+        content: result,
+        timestamp: Date.now(),
+      };
+      yield toolResult;
     }
 
     // Handle interrupt (requiresApproval, human-in-the-loop)
     if (normalizedChunk.type === "interrupt" && normalizedChunk.interrupt) {
-      yield CloudflareAGUIEvents.custom(
-        runId,
-        "OnInterrupt",
-        normalizedChunk.interrupt.value
-      );
+      const customEvent: CustomEvent = {
+        type: EventType.CUSTOM,
+        name: "OnInterrupt",
+        value: normalizedChunk.interrupt.value,
+        timestamp: Date.now(),
+      };
+      yield customEvent;
     }
 
     // Handle text content
     if (normalizedChunk.type === "text" && normalizedChunk.content) {
       // End any tool call in progress
       if (this.currentMessageType === "tool_call" && this.currentToolCallId) {
-        yield CloudflareAGUIEvents.toolCallEnd(runId, this.currentToolCallId);
+        const toolEnd: ToolCallEndEvent = {
+          type: EventType.TOOL_CALL_END,
+          toolCallId: this.currentToolCallId,
+          timestamp: Date.now(),
+        };
+        yield toolEnd;
         this.currentToolCallId = null;
         this.currentToolCallName = null;
       }
@@ -336,16 +412,38 @@ export class CloudflareAgentsSDKAdapter {
       if (this.currentMessageType !== "text") {
         this.currentMessageId = this.generateMessageId();
         this.currentMessageType = "text";
-        yield CloudflareAGUIEvents.textMessageStart(runId, "assistant");
+        const textStart: TextMessageStartEvent = {
+          type: EventType.TEXT_MESSAGE_START,
+          messageId: this.currentMessageId,
+          role: "assistant",
+          timestamp: Date.now(),
+        };
+        yield textStart;
       }
 
       // Emit text content
-      yield CloudflareAGUIEvents.textMessageContent(runId, normalizedChunk.content);
+      const textContent: TextMessageContentEvent = {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: this.currentMessageId!,
+        delta: normalizedChunk.content,
+        timestamp: Date.now(),
+      };
+      yield textContent;
     }
 
     // Handle state updates
     if (normalizedChunk.type === "state" && normalizedChunk.state) {
-      yield CloudflareAGUIEvents.stateSync(runId, normalizedChunk.state);
+      // Check if run is paused (HITL)
+      if (normalizedChunk.state.runStatus === "paused_for_approval") {
+        this.runPaused = true;
+      }
+
+      const stateSnapshot: StateSnapshotEvent = {
+        type: EventType.STATE_SNAPSHOT,
+        snapshot: normalizedChunk.state,
+        timestamp: Date.now(),
+      };
+      yield stateSnapshot;
     }
   }
 
@@ -416,19 +514,38 @@ export class CloudflareAgentsSDKAdapter {
    * Handle generic Agent (manual message processing)
    */
   private async *handleGenericAgent(
-    runId: string,
     messages: CloudflareMessage[],
     context?: Record<string, any>,
-  ): AsyncGenerator<AGUIEvent> {
+  ): AsyncGenerator<BaseEvent> {
     // For generic agents, we need to manually process
     // This would typically involve calling agent methods
 
-    yield CloudflareAGUIEvents.textMessageStart(runId, "assistant");
+    const messageId = this.generateMessageId();
+
+    const textStart: TextMessageStartEvent = {
+      type: EventType.TEXT_MESSAGE_START,
+      messageId,
+      role: "assistant",
+      timestamp: Date.now(),
+    };
+    yield textStart;
 
     const response = await this.processMessages(messages, context);
 
-    yield CloudflareAGUIEvents.textMessageContent(runId, response);
-    yield CloudflareAGUIEvents.textMessageEnd(runId);
+    const textContent: TextMessageContentEvent = {
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId,
+      delta: response,
+      timestamp: Date.now(),
+    };
+    yield textContent;
+
+    const textEnd: TextMessageEndEvent = {
+      type: EventType.TEXT_MESSAGE_END,
+      messageId,
+      timestamp: Date.now(),
+    };
+    yield textEnd;
   }
 
   /**
@@ -510,14 +627,14 @@ export class CloudflareAgentsSDKAdapter {
   }
 
   /**
-   * Execute SQL query and emit as metadata event
+   * Execute SQL query and optionally emit as metadata event
    */
   async executeSQLWithTracking(query: TemplateStringsArray, ...values: any[]): Promise<any[]> {
-    if (!this.options.trackSQL) {
-      return this.agent.sql(query, ...values);
-    }
-
     const result = await this.agent.sql(query, ...values);
+
+    // TODO: Implement SQL tracking by emitting metadata events when trackSQL is enabled
+    // This would require an event emitter or storing events to be yielded later
+
     return result;
   }
 

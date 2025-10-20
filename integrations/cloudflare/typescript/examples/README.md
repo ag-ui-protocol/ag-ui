@@ -27,7 +27,7 @@ This server provides AG-UI endpoints using Cloudflare Workers AI models, demonst
    pnpm start
    ```
 
-5. Server runs on `http://localhost:4114` with 6 available agents
+5. Server runs on `http://localhost:4114` with 5 available agents
 
 ## Available Agents
 
@@ -128,6 +128,24 @@ pnpm dev
 - `CLOUDFLARE_API_TOKEN` - Your Cloudflare API token (required)
 - `PORT` - Server port (default: 4114)
 - `HOST` - Server host (default: 0.0.0.0)
+
+## ThreadId Handling
+
+All agents properly handle conversation threading:
+
+- Accept `threadId` via `x-thread-id` header or request body
+- Generate unique `threadId` if not provided
+- Echo `threadId` in every SSE event for proper Dojo/CopilotKit compatibility
+
+**Example with threadId**:
+```bash
+curl -X POST http://localhost:4114/agentic_chat \
+  -H "Content-Type: application/json" \
+  -H "x-thread-id: my-conversation-123" \
+  -d '{"messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+This ensures the same `threadId` flows through the entire conversation, preventing split-brain state issues. See `../../THREAD-ISSUE.md` for technical details.
 
 ## Architecture
 

@@ -12,7 +12,8 @@ import {
   isWebSocketUpgrade,
   validateWebSocketUpgrade,
 } from "./cloudflare-utils";
-import type { AGUIEvent } from "./events";
+import { EventType, type BaseEvent, type RunErrorEvent } from "@ag-ui/core";
+import type { Tool, CloudflareModel, CloudflareMessage } from "./types";
 
 export interface WorkersAdapterOptions extends CloudflareAGUIAdapterOptions {
   /** Enable CORS for cross-origin requests */
@@ -63,9 +64,6 @@ export async function handleCloudflareWorker(
   env: WorkersEnv,
   options?: Partial<WorkersAdapterOptions>,
 ): Promise<Response> {
-  // Normalize request with Cloudflare headers
-  const normalized = normalizeRequest(request);
-
   // Handle CORS preflight
   if (request.method === "OPTIONS") {
     return new Response(null, {
@@ -76,6 +74,9 @@ export async function handleCloudflareWorker(
       }),
     });
   }
+
+  // Normalize request with Cloudflare headers
+  const normalized = normalizeRequest(request);
 
   // Handle WebSocket upgrade
   if (isWebSocketUpgrade(normalized.headers)) {
@@ -108,18 +109,26 @@ async function handleAGUIRequest(
   options?: Partial<WorkersAdapterOptions>,
 ): Promise<Response> {
   try {
+    // Validate environment variables
+    if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CLOUDFLARE_API_TOKEN) {
+      return new Response(
+        JSON.stringify({ error: "Missing CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN" }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
     // Parse request body
     const body = (await request.json()) as {
-      messages: Array<{ role: string; content: string }>;
-      model?: string;
-      tools?: any[];
+      messages: CloudflareMessage[];
+      model?: CloudflareModel;
+      tools?: Tool[];
     };
 
     // Create adapter with environment variables
     const adapter = new CloudflareAGUIAdapter({
-      accountId: env.CLOUDFLARE_ACCOUNT_ID!,
-      apiToken: env.CLOUDFLARE_API_TOKEN!,
-      model: (options?.model || body.model || "@cf/meta/llama-3.1-8b-instruct") as any,
+      accountId: env.CLOUDFLARE_ACCOUNT_ID,
+      apiToken: env.CLOUDFLARE_API_TOKEN,
+      model: (options?.model || body.model || "@cf/meta/llama-3.1-8b-instruct") as CloudflareModel,
       gatewayId: env.AI_GATEWAY_ID,
       tools: options?.tools || body.tools,
       ...options,
@@ -139,22 +148,17 @@ async function handleAGUIRequest(
     // Start streaming in background
     (async () => {
       try {
-        for await (const event of adapter.execute(body.messages as any)) {
+        for await (const event of adapter.execute(body.messages)) {
           await writer.write(encoder.encode(formatSSE(event)));
         }
       } catch (error) {
         console.error("Error streaming AG-UI events:", error);
-        await writer.write(
-          encoder.encode(
-            formatSSE({
-              type: "RUN_ERROR",
-              runId: "error",
-              data: {
-                error: error instanceof Error ? error.message : "Unknown error",
-              },
-            } as AGUIEvent),
-          ),
-        );
+        const errorEvent: RunErrorEvent = {
+          type: EventType.RUN_ERROR,
+          message: error instanceof Error ? error.message : "Unknown error",
+          timestamp: Date.now(),
+        };
+        await writer.write(encoder.encode(formatSSE(errorEvent)));
       } finally {
         await writer.close();
       }
@@ -185,8 +189,8 @@ async function handleWebSocketUpgrade(
   request: Request,
   durableObject: DurableObjectNamespace,
 ): Promise<Response> {
-  // Get or create Durable Object for this connection
-  const id = durableObject.idFromName("websocket-session");
+  // Create unique Durable Object for each WebSocket connection
+  const id = durableObject.newUniqueId();
   const stub = durableObject.get(id);
 
   // Forward upgrade request to Durable Object
@@ -196,8 +200,8 @@ async function handleWebSocketUpgrade(
 /**
  * Format AG-UI event as Server-Sent Event
  */
-function formatSSE(event: AGUIEvent): string {
-  return `data: ${JSON.stringify(event)}\n\n`;
+function formatSSE(event: BaseEvent): string {
+  return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
 }
 
 /**
@@ -215,7 +219,7 @@ export function createCloudflareWorkerHandler(options?: Partial<WorkersAdapterOp
   fetch: (request: Request, env: WorkersEnv, ctx: ExecutionContext) => Promise<Response>;
 } {
   return {
-    async fetch(request, env, ctx) {
+    async fetch(request, env, _ctx) {
       return handleCloudflareWorker(request, env, options);
     },
   };
@@ -239,42 +243,47 @@ export function createCloudflareWorkerHandler(options?: Partial<WorkersAdapterOp
  */
 export async function handleWebSocketConnection(
   request: Request,
-  state: DurableObjectState,
+  _state: DurableObjectState,
   env: WorkersEnv,
   options?: Partial<WorkersAdapterOptions>,
 ): Promise<Response> {
+  // Validate environment variables
+  if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CLOUDFLARE_API_TOKEN) {
+    return new Response("Missing credentials", { status: 500 });
+  }
+
+  // Create adapter once for this connection
+  const adapter = new CloudflareAGUIAdapter({
+    accountId: env.CLOUDFLARE_ACCOUNT_ID,
+    apiToken: env.CLOUDFLARE_API_TOKEN,
+    model: options?.model || "@cf/meta/llama-3.1-8b-instruct",
+    gatewayId: env.AI_GATEWAY_ID,
+    ...options,
+  });
+
   // Create WebSocket pair
   const pair = new WebSocketPair();
   const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
 
   // Accept the connection
-  (server as any).accept();
+  server.accept();
 
   // Handle messages
   server.addEventListener("message", async (event: MessageEvent) => {
     try {
       const message = JSON.parse(event.data as string);
 
-      // Create adapter
-      const adapter = new CloudflareAGUIAdapter({
-        accountId: env.CLOUDFLARE_ACCOUNT_ID!,
-        apiToken: env.CLOUDFLARE_API_TOKEN!,
-        model: options?.model || "@cf/meta/llama-3.1-8b-instruct",
-        gatewayId: env.AI_GATEWAY_ID,
-        ...options,
-      });
-
       // Stream events back over WebSocket
       for await (const aguiEvent of adapter.execute(message.messages || [])) {
         server.send(JSON.stringify(aguiEvent));
       }
     } catch (error) {
-      server.send(
-        JSON.stringify({
-          type: "RUN_ERROR",
-          data: { error: error instanceof Error ? error.message : "Unknown error" },
-        }),
-      );
+      const errorEvent: RunErrorEvent = {
+        type: EventType.RUN_ERROR,
+        message: error instanceof Error ? error.message : "Unknown error",
+        timestamp: Date.now(),
+      };
+      server.send(JSON.stringify(errorEvent));
     }
   });
 

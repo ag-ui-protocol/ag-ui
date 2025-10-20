@@ -1,11 +1,25 @@
 import { CloudflareAIClient } from "./client";
-import { CloudflareAGUIEvents, AGUIEvent, EventType } from "./events";
-import { CloudflareAIConfig, CloudflareMessage, Tool, CloudflareCompletionOptions } from "./types";
+import {
+  EventType,
+  type BaseEvent,
+  type RunStartedEvent,
+  type RunFinishedEvent,
+  type RunErrorEvent,
+  type TextMessageStartEvent,
+  type TextMessageContentEvent,
+  type TextMessageEndEvent,
+  type ToolCallStartEvent,
+  type ToolCallArgsEvent,
+  type ToolCallEndEvent,
+  type CustomEvent,
+} from "@ag-ui/core";
+import { CloudflareAIConfig, CloudflareMessage, CloudflareModel, Tool, CloudflareCompletionOptions } from "./types";
 import type {
   CopilotRuntimeChatCompletionRequest,
   CopilotRuntimeChatCompletionResponse,
   CopilotServiceAdapter,
 } from "@copilotkit/runtime";
+import { v4 as uuidv4 } from "uuid";
 
 export interface CloudflareAGUIAdapterOptions extends CloudflareAIConfig {
   systemPrompt?: string;
@@ -14,7 +28,7 @@ export interface CloudflareAGUIAdapterOptions extends CloudflareAIConfig {
 }
 
 export interface AGUIProtocol {
-  execute(messages: any[], context?: Record<string, any>): AsyncGenerator<AGUIEvent>;
+  execute(messages: CloudflareMessage[], context?: Record<string, any>): AsyncGenerator<BaseEvent>;
 }
 
 export type StreamableResult<T> = AsyncGenerator<T>;
@@ -30,6 +44,7 @@ export class CloudflareAGUIAdapter implements AGUIProtocol, CopilotServiceAdapte
   }
 
   // CopilotKit ServiceAdapter interface implementation
+  // CopilotKit v1.10+ expects adapters to handle streaming - it doesn't do it automatically
   async process(
     request: CopilotRuntimeChatCompletionRequest,
   ): Promise<CopilotRuntimeChatCompletionResponse> {
@@ -38,54 +53,42 @@ export class CloudflareAGUIAdapter implements AGUIProtocol, CopilotServiceAdapte
       request.threadId || `thread-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
     const runId = this.generateRunId();
 
-    try {
-      // Convert CopilotKit messages to Cloudflare format
-      const messages: CloudflareMessage[] = request.messages.map((msg: any) => ({
-        role: msg.role as "user" | "assistant" | "system",
-        content: msg.content || msg.text || "",
-      }));
+    // Convert CopilotKit messages to Cloudflare format
+    // Note: Using any here because CopilotKit Message type may vary between versions
+    const messages: CloudflareMessage[] = request.messages.map((msg: any) => ({
+      role: msg.role as "user" | "assistant" | "system",
+      content: msg.content || msg.text || "",
+    }));
 
-      // Add system prompt if configured
-      const allMessages = this.options.systemPrompt
-        ? [{ role: "system" as const, content: this.options.systemPrompt }, ...messages]
-        : messages;
+    // Reuse the execute() streaming logic to maintain consistent behavior
+    // This ensures CopilotKit receives proper AG-UI event streams
+    const stream = this.execute(messages, { threadId, runId });
 
-      // Create completion options
-      const completionOptions: CloudflareCompletionOptions = {
-        messages: allMessages,
-        model: this.options.model, // Use configured model, ignoring request.model as it may not match Cloudflare's model types
-        tools: this.options.tools,
-        stream: false, // CopilotKit handles streaming separately
-      };
-
-      // Get the completion from Cloudflare
-      await this.client.complete(completionOptions);
-
-      // Return response in CopilotKit format
-      return {
-        threadId,
-        runId,
-        extensions: {},
-      };
-    } catch (error) {
-      console.error("Error in CloudflareAGUIAdapter.process:", error);
-      throw error;
-    }
+    // Return response with stream - CopilotKit will consume these events
+    // and maintain thread state based on the threadId/runId in the events
+    return {
+      threadId,
+      runId,
+      stream, // ✅ Stream AG-UI events to CopilotKit
+    } as CopilotRuntimeChatCompletionResponse;
   }
 
   async *execute(
     messages: CloudflareMessage[],
     context?: Record<string, any>,
-  ): AsyncGenerator<AGUIEvent> {
-    const runId = this.generateRunId();
+  ): AsyncGenerator<BaseEvent> {
+    const threadId = context?.threadId || `thread-${Date.now()}`;
+    const runId = context?.runId || this.generateRunId();
 
     try {
       // Emit run started event
-      yield CloudflareAGUIEvents.runStarted(runId, {
-        model: this.options.model,
-        messageCount: messages.length,
-        ...context,
-      });
+      const runStarted: RunStartedEvent = {
+        type: EventType.RUN_STARTED,
+        threadId,
+        runId,
+        timestamp: Date.now(),
+      };
+      yield runStarted;
 
       // Add system prompt if configured
       const allMessages = this.options.systemPrompt
@@ -100,97 +103,224 @@ export class CloudflareAGUIAdapter implements AGUIProtocol, CopilotServiceAdapte
       };
 
       if (this.options.streamingEnabled !== false) {
-        yield* this.handleStreaming(runId, completionOptions);
+        yield* this.handleStreaming(completionOptions);
       } else {
-        yield* this.handleNonStreaming(runId, completionOptions);
+        yield* this.handleNonStreaming(completionOptions);
       }
 
       // Emit run finished event
-      yield CloudflareAGUIEvents.runFinished(runId);
+      const runFinished: RunFinishedEvent = {
+        type: EventType.RUN_FINISHED,
+        threadId,
+        runId,
+        timestamp: Date.now(),
+      };
+      yield runFinished;
     } catch (error) {
+      // ✅ Enhanced error logging with full context
+      console.error("CloudflareAGUIAdapter execution error:", {
+        threadId,
+        runId,
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack,
+          name: error.name,
+        } : error,
+        timestamp: new Date().toISOString(),
+      });
+
       // Emit error event
-      yield CloudflareAGUIEvents.error(runId, error as Error);
+      const runError: RunErrorEvent = {
+        type: EventType.RUN_ERROR,
+        message: error instanceof Error ? error.message : "Unknown error",
+        timestamp: Date.now(),
+      };
+      yield runError;
       throw error;
     }
   }
 
   private async *handleStreaming(
-    runId: string,
     options: CloudflareCompletionOptions,
-  ): AsyncGenerator<AGUIEvent> {
+  ): AsyncGenerator<BaseEvent> {
     let messageStarted = false;
-    let toolCallsInProgress = new Map<string, string>();
-    let accumulatedContent = "";
-
-    yield CloudflareAGUIEvents.textMessageStart(runId, "assistant");
-    messageStarted = true;
+    let currentMessageId: string | null = null;
+    const toolCallsInProgress = new Set<string>();
+    let messageEnded = false;
 
     for await (const chunk of this.client.streamComplete(options)) {
       // Handle text content
       if (chunk.response) {
         if (!messageStarted) {
-          yield CloudflareAGUIEvents.textMessageStart(runId, "assistant");
+          currentMessageId = uuidv4();
+          const textStart: TextMessageStartEvent = {
+            type: EventType.TEXT_MESSAGE_START,
+            messageId: currentMessageId,
+            role: "assistant",
+            timestamp: Date.now(),
+          };
+          yield textStart;
           messageStarted = true;
+          messageEnded = false;
         }
-        yield CloudflareAGUIEvents.textMessageContent(runId, chunk.response);
-        accumulatedContent += chunk.response;
+        const textContent: TextMessageContentEvent = {
+          type: EventType.TEXT_MESSAGE_CONTENT,
+          messageId: currentMessageId!,
+          delta: chunk.response,
+          timestamp: Date.now(),
+        };
+        yield textContent;
       }
 
       // Handle tool calls
       if (chunk.tool_calls) {
         for (const toolCall of chunk.tool_calls) {
-          if (!toolCallsInProgress.has(toolCall.id)) {
+          const toolCallId = toolCall.id ?? "";
+          const toolName = toolCall.function?.name ?? "tool";
+
+          if (!toolCallId) {
+            continue;
+          }
+
+          if (!toolCallsInProgress.has(toolCallId)) {
             // New tool call
-            yield CloudflareAGUIEvents.toolCallStart(runId, toolCall.id, toolCall.function.name);
-            toolCallsInProgress.set(toolCall.id, "");
+            const toolStart: ToolCallStartEvent = {
+              type: EventType.TOOL_CALL_START,
+              toolCallId,
+              toolCallName: toolName,
+              timestamp: Date.now(),
+            };
+            yield toolStart;
+            toolCallsInProgress.add(toolCallId);
           }
 
           // Stream tool call arguments
-          yield CloudflareAGUIEvents.toolCallArgs(runId, toolCall.id, toolCall.function.arguments);
+          const rawArguments = toolCall.function?.arguments;
+          if (rawArguments !== undefined && rawArguments !== null) {
+            const args =
+              typeof rawArguments === "string"
+                ? rawArguments
+                : JSON.stringify(rawArguments);
+
+            if (args.length > 0) {
+              const toolArgs: ToolCallArgsEvent = {
+                type: EventType.TOOL_CALL_ARGS,
+                toolCallId,
+                delta: args,
+                timestamp: Date.now(),
+              };
+              yield toolArgs;
+            }
+          }
         }
       }
 
       // Handle completion
       if (chunk.done) {
-        if (messageStarted) {
-          yield CloudflareAGUIEvents.textMessageEnd(runId);
+        if (messageStarted && currentMessageId) {
+          if (!messageEnded) {
+            const textEnd: TextMessageEndEvent = {
+              type: EventType.TEXT_MESSAGE_END,
+              messageId: currentMessageId,
+              timestamp: Date.now(),
+            };
+            yield textEnd;
+            messageEnded = true;
+          }
+          messageStarted = false;
         }
 
         // End all tool calls
-        for (const [toolCallId] of toolCallsInProgress) {
-          yield CloudflareAGUIEvents.toolCallEnd(runId, toolCallId);
+        for (const toolCallId of toolCallsInProgress) {
+          const toolEnd: ToolCallEndEvent = {
+            type: EventType.TOOL_CALL_END,
+            toolCallId,
+            timestamp: Date.now(),
+          };
+          yield toolEnd;
         }
+        toolCallsInProgress.clear();
 
         // Emit usage metadata if available
         if (chunk.usage) {
-          yield CloudflareAGUIEvents.metadata(runId, {
-            usage: chunk.usage,
-            model: options.model,
-          });
+          const metadata: CustomEvent = {
+            type: EventType.CUSTOM,
+            name: "usage_metadata",
+            value: {
+              usage: chunk.usage,
+              model: options.model,
+            },
+            timestamp: Date.now(),
+          };
+          yield metadata;
         }
       }
     }
   }
 
   private async *handleNonStreaming(
-    runId: string,
     options: CloudflareCompletionOptions,
-  ): AsyncGenerator<AGUIEvent> {
+  ): AsyncGenerator<BaseEvent> {
     const response = await this.client.complete(options);
 
     // Emit text message events
     if (response.content) {
-      yield CloudflareAGUIEvents.textMessageStart(runId, "assistant");
-      yield CloudflareAGUIEvents.textMessageContent(runId, response.content);
-      yield CloudflareAGUIEvents.textMessageEnd(runId);
+      const messageId = uuidv4();
+
+      const textStart: TextMessageStartEvent = {
+        type: EventType.TEXT_MESSAGE_START,
+        messageId,
+        role: "assistant",
+        timestamp: Date.now(),
+      };
+      yield textStart;
+
+      const textContent: TextMessageContentEvent = {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId,
+        delta: response.content,
+        timestamp: Date.now(),
+      };
+      yield textContent;
+
+      const textEnd: TextMessageEndEvent = {
+        type: EventType.TEXT_MESSAGE_END,
+        messageId,
+        timestamp: Date.now(),
+      };
+      yield textEnd;
     }
 
     // Emit tool call events
     if (response.tool_calls) {
       for (const toolCall of response.tool_calls) {
-        yield CloudflareAGUIEvents.toolCallStart(runId, toolCall.id, toolCall.function.name);
-        yield CloudflareAGUIEvents.toolCallArgs(runId, toolCall.id, toolCall.function.arguments);
-        yield CloudflareAGUIEvents.toolCallEnd(runId, toolCall.id);
+        const toolStart: ToolCallStartEvent = {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: toolCall.id,
+          toolCallName: toolCall.function.name,
+          timestamp: Date.now(),
+        };
+        yield toolStart;
+
+        const args =
+          typeof toolCall.function.arguments === "string"
+            ? toolCall.function.arguments
+            : JSON.stringify(toolCall.function.arguments);
+
+        const toolArgs: ToolCallArgsEvent = {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: toolCall.id,
+          delta: args,
+          timestamp: Date.now(),
+        };
+        yield toolArgs;
+
+        const toolEnd: ToolCallEndEvent = {
+          type: EventType.TOOL_CALL_END,
+          toolCallId: toolCall.id,
+          timestamp: Date.now(),
+        };
+        yield toolEnd;
       }
     }
   }
@@ -199,7 +329,7 @@ export class CloudflareAGUIAdapter implements AGUIProtocol, CopilotServiceAdapte
     messages: CloudflareMessage[],
     tools: Tool[],
     context?: Record<string, any>,
-  ): AsyncGenerator<AGUIEvent> {
+  ): AsyncGenerator<BaseEvent> {
     const updatedOptions = { ...this.options, tools };
     const adapter = new CloudflareAGUIAdapter(updatedOptions);
     yield* adapter.execute(messages, context);
@@ -208,10 +338,17 @@ export class CloudflareAGUIAdapter implements AGUIProtocol, CopilotServiceAdapte
   async *progressiveGeneration(
     prompt: string,
     stages: Array<{ name: string; instruction: string }>,
-  ): AsyncGenerator<AGUIEvent> {
+  ): AsyncGenerator<BaseEvent> {
+    const threadId = `thread-${Date.now()}`;
     const runId = this.generateRunId();
 
-    yield CloudflareAGUIEvents.runStarted(runId, { stages: stages.length });
+    const runStarted: RunStartedEvent = {
+      type: EventType.RUN_STARTED,
+      threadId,
+      runId,
+      timestamp: Date.now(),
+    };
+    yield runStarted;
 
     let allContent = "";
     const totalStages = stages.length;
@@ -220,11 +357,16 @@ export class CloudflareAGUIAdapter implements AGUIProtocol, CopilotServiceAdapte
       const stage = stages[i];
 
       // Emit progress event
-      yield CloudflareAGUIEvents.progress(
-        runId,
-        ((i + 1) / totalStages) * 100,
-        `Processing: ${stage.name}`,
-      );
+      const progress: CustomEvent = {
+        type: EventType.CUSTOM,
+        name: "progress",
+        value: {
+          progress: ((i + 1) / totalStages) * 100,
+          message: `Processing: ${stage.name}`,
+        },
+        timestamp: Date.now(),
+      };
+      yield progress;
 
       // Build progressive prompt with context from previous stages
       const stagePrompt =
@@ -242,36 +384,65 @@ export class CloudflareAGUIAdapter implements AGUIProtocol, CopilotServiceAdapte
       };
 
       // Generate content for this stage
-      yield CloudflareAGUIEvents.textMessageStart(runId, "assistant");
+      const messageId = uuidv4();
+      const textStart: TextMessageStartEvent = {
+        type: EventType.TEXT_MESSAGE_START,
+        messageId,
+        role: "assistant",
+        timestamp: Date.now(),
+      };
+      yield textStart;
 
       let stageContent = "";
 
       // Stream content directly from Cloudflare
       for await (const chunk of this.client.streamComplete(completionOptions)) {
         if (chunk.response) {
-          const event = CloudflareAGUIEvents.textMessageContent(runId, chunk.response);
-          yield event;
+          const textContent: TextMessageContentEvent = {
+            type: EventType.TEXT_MESSAGE_CONTENT,
+            messageId,
+            delta: chunk.response,
+            timestamp: Date.now(),
+          };
+          yield textContent;
           stageContent += chunk.response;
         }
 
         if (chunk.done && chunk.usage) {
-          yield CloudflareAGUIEvents.metadata(runId, {
-            stage: stage.name,
-            usage: chunk.usage,
-          });
+          const metadata: CustomEvent = {
+            type: EventType.CUSTOM,
+            name: "stage_metadata",
+            value: {
+              stage: stage.name,
+              usage: chunk.usage,
+            },
+            timestamp: Date.now(),
+          };
+          yield metadata;
         }
       }
 
       allContent += `\n\n## ${stage.name}\n\n${stageContent}`;
 
-      yield CloudflareAGUIEvents.textMessageEnd(runId);
+      const textEnd: TextMessageEndEvent = {
+        type: EventType.TEXT_MESSAGE_END,
+        messageId,
+        timestamp: Date.now(),
+      };
+      yield textEnd;
     }
 
-    yield CloudflareAGUIEvents.runFinished(runId);
+    const runFinished: RunFinishedEvent = {
+      type: EventType.RUN_FINISHED,
+      threadId,
+      runId,
+      timestamp: Date.now(),
+    };
+    yield runFinished;
   }
 
-  setModel(model: string): void {
-    this.options.model = model as any;
+  setModel(model: CloudflareModel): void {
+    this.options.model = model;
   }
 
   getCapabilities() {

@@ -78,7 +78,7 @@ export function getProtocol(headers: Record<string, string>): "http" | "https" {
       const visitor = JSON.parse(headers["cf-visitor"]);
       return visitor.scheme === "https" ? "https" : "http";
     } catch {
-      // Invalid JSON, continue
+      // Malformed CF-Visitor JSON - fall through to other methods
     }
   }
 
@@ -96,28 +96,37 @@ export function getProtocol(headers: Record<string, string>): "http" | "https" {
  * Works with Node.js Request, Cloudflare Workers Request, or plain headers
  */
 export function normalizeRequest(
-  request: Request | { headers: Record<string, string> },
+  request: Request | { headers: Record<string, string | string[]> },
   options?: { fallbackIp?: string },
 ): NormalizedRequest {
   // Extract headers (works with both Request and plain object)
   const headers: Record<string, string> = {};
 
-  if (
-    request instanceof Request ||
-    ("headers" in request && typeof request.headers.get === "function")
-  ) {
-    // Request object (Cloudflare Workers or Fetch API)
-    const reqHeaders = (request as Request).headers;
-    reqHeaders.forEach((value, key) => {
+  if (request instanceof Request) {
+    // Fetch API Request object (Cloudflare Workers, browsers)
+    request.headers.forEach((value, key) => {
       headers[key.toLowerCase()] = value;
     });
   } else if ("headers" in request) {
-    // Plain object with headers
-    Object.entries(request.headers).forEach(([key, value]) => {
-      if (typeof value === "string") {
+    const requestHeaders = request.headers;
+
+    // Check if it's a Headers-like object with .forEach method
+    if (typeof (requestHeaders as any).forEach === "function") {
+      // Headers object from Fetch API
+      (requestHeaders as any).forEach((value: string, key: string) => {
         headers[key.toLowerCase()] = value;
-      }
-    });
+      });
+    } else {
+      // Plain object with headers (Node.js-style)
+      Object.entries(requestHeaders).forEach(([key, value]) => {
+        // Handle both string and string[] (Express/Node.js can have arrays)
+        if (typeof value === "string") {
+          headers[key.toLowerCase()] = value;
+        } else if (Array.isArray(value) && value.length > 0) {
+          headers[key.toLowerCase()] = value[0];
+        }
+      });
+    }
   }
 
   const clientIp = getClientIP(headers, options?.fallbackIp);
@@ -169,7 +178,13 @@ export function validateWebSocketUpgrade(headers: Record<string, string>): strin
 /**
  * Add Cloudflare-specific logging context
  */
-export function getLoggingContext(normalized: NormalizedRequest): Record<string, any> {
+export function getLoggingContext(normalized: NormalizedRequest): {
+  clientIp: string;
+  protocol: "http" | "https";
+  rayId?: string;
+  country?: string;
+  isBehindCloudflare: boolean;
+} {
   return {
     clientIp: normalized.clientIp,
     protocol: normalized.protocol,

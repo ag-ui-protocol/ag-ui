@@ -36,20 +36,7 @@ export class BackendToolRenderingAgent extends CloudflareAgent {
       accountId,
       apiToken,
       model: CLOUDFLARE_MODELS.LLAMA_3_3_70B_FP8, // Using function-calling capable model
-      systemPrompt: `You are a helpful assistant with access to various tools.
-
-When the user asks for information or actions that can be enhanced with rich UI:
-- Use the available tools when appropriate
-- The frontend will render custom components for tool results
-- Be conversational and explain what you're doing
-
-Available capabilities:
-- show_weather: Display weather information in a rich UI card
-- show_stock: Display stock prices with charts
-- show_calendar: Display calendar events
-
-IMPORTANT: Only use tools when the user explicitly asks for them or when they would enhance the response.
-Do NOT call tools for simple greetings or general questions.`,
+      systemPrompt: `You are a helpful assistant with access to UI rendering tools. Use tools when they enhance the response - the frontend will render beautiful, interactive components.`,
       streamingEnabled: true,
     });
   }

@@ -37,7 +37,11 @@ export class ToolBasedGenerativeUiAgent extends CloudflareAgent {
       accountId,
       apiToken,
       model: CLOUDFLARE_MODELS.LLAMA_3_3_70B_FP8, // Using function-calling capable model
-      systemPrompt: "Help the user with writing Haikus. If the user asks for a haiku, use the generate_haiku tool to display the haiku to the user.",
+      systemPrompt: `You are an expert haiku composer. Help users craft traditional Japanese haiku (5-7-5 syllable structure) with English translations.
+
+Always use the "generate_haiku" tool to deliver the finished haiku. The tool schema defines valid image names and CSS gradients - use those exact values.
+
+Keep your conversational responses warm and collaborative, but deliver the actual haiku via the tool call.`,
       streamingEnabled: true,
     });
   }

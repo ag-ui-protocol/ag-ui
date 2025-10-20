@@ -4,10 +4,10 @@ import cors from "cors";
 import { agenticChatHandler } from "./agents/agentic_chat/index.js";
 import { toolBasedGenerativeUiHandler } from "./agents/tool_based_generative_ui/index.js";
 import { agenticGenerativeUiHandler } from "./agents/agentic_generative_ui/index.js";
-import { humanInTheLoopSDKHandler } from "./agents/human_in_the_loop_sdk/index.js";
 import { toolBasedGenerativeUiSDKHandler } from "./agents/tool_based_generative_ui_sdk/index.js";
 import { sharedStateHandler } from "./agents/shared_state/index.js";
 import { backendToolRenderingHandler } from "./agents/backend_tool_rendering/index.js";
+import { humanInTheLoopHandler } from "./agents/human_in_the_loop/index.js";
 
 // Load environment variables
 dotenv.config();
@@ -28,9 +28,10 @@ app.get("/health", (req, res) => {
       "agentic_chat",
       "tool_based_generative_ui",
       "agentic_generative_ui",
-      "human_in_the_loop_sdk",
+      "tool_based_generative_ui_sdk",
       "shared_state",
-      "backend_tool_rendering"
+      "backend_tool_rendering",
+      "human_in_the_loop"
     ]
   });
 });
@@ -39,10 +40,10 @@ app.get("/health", (req, res) => {
 app.post("/agentic_chat", agenticChatHandler);
 app.post("/tool_based_generative_ui", toolBasedGenerativeUiHandler);
 app.post("/agentic_generative_ui", agenticGenerativeUiHandler);
-app.post("/human_in_the_loop_sdk", humanInTheLoopSDKHandler);
 app.post("/tool_based_generative_ui_sdk", toolBasedGenerativeUiSDKHandler);
 app.post("/shared_state", sharedStateHandler);
 app.post("/backend_tool_rendering", backendToolRenderingHandler);
+app.post("/human_in_the_loop", humanInTheLoopHandler);
 
 app.listen(PORT, HOST, () => {
   console.log(`Server running on http://${HOST}:${PORT}`);

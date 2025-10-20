@@ -161,14 +161,19 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
     features: [
       "agentic_chat",
       "tool_based_generative_ui",
+      "agentic_generative_ui",
+      "human_in_the_loop",
+      "shared_state",
+      "backend_tool_rendering",
     ],
   },
   {
     id: "cloudflare-agents-sdk",
     name: "Cloudflare Agents SDK",
     features: [
-      "human_in_the_loop",
       "tool_based_generative_ui",
+      // Note: human_in_the_loop not included - incompatible with CopilotKit's action system
+      // See integrations/cloudflare/HITL-LIMITATIONS.md for details
     ],
   },
   {

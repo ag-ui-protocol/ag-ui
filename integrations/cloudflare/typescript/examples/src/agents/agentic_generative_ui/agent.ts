@@ -17,7 +17,13 @@
 import { CloudflareAgent, CLOUDFLARE_MODELS } from "@ag-ui/cloudflare";
 import { Observable, Subscriber } from "rxjs";
 import type { RunAgentInput, BaseEvent } from "@ag-ui/client";
-import { EventType, type StateSnapshotEvent } from "@ag-ui/core";
+import {
+  EventType,
+  type StateSnapshotEvent,
+  type TextMessageStartEvent,
+  type TextMessageContentEvent,
+  type TextMessageEndEvent,
+} from "@ag-ui/core";
 
 /**
  * Agentic Generative UI Agent
@@ -40,9 +46,7 @@ export class AgenticGenerativeUiAgent extends CloudflareAgent {
       accountId,
       apiToken,
       model: CLOUDFLARE_MODELS.LLAMA_3_1_8B,
-      systemPrompt: `You are a helpful assistant that breaks down tasks into steps.
-When asked to do something, provide 5-10 clear, actionable steps.
-Format each step as a short phrase in gerund form (e.g., "Opening the door", "Mixing ingredients").`,
+      systemPrompt: `You are a helpful assistant that breaks down tasks into 5-10 clear, actionable steps. Format each step as "N. Description".`,
       streamingEnabled: true,
     });
   }
@@ -65,32 +69,112 @@ Format each step as a short phrase in gerund form (e.g., "Opening the door", "Mi
 
   /**
    * Enhanced execution with progressive state updates
+   * Parses numbered lists from the AI response and emits state snapshots
    */
   private async executeRunWithState(
     input: RunAgentInput,
     subscriber: Subscriber<BaseEvent>
   ): Promise<void> {
-    // Call parent execute but also emit state snapshots
     const steps: Array<{ description: string; status: string }> = [];
-    let currentStepText = "";
+    let accumulatedText = "";
+    let messageId: string | null = null;
 
-    // First, run the parent's execution
-    await this.executeRun(input, subscriber);
+    // Create a custom subscriber that intercepts TEXT_MESSAGE events
+    const customSubscriber = {
+      next: (event: BaseEvent) => {
+        // Pass through all events
+        subscriber.next(event);
 
-    // Note: In a real implementation, you would parse the streamed response
-    // and extract steps progressively, emitting STATE_SNAPSHOT events.
-    // For this demo, we'll emit a final state snapshot after the text completes.
+        // Track message ID for context
+        if (event.type === EventType.TEXT_MESSAGE_START) {
+          const startEvent = event as TextMessageStartEvent;
+          messageId = startEvent.messageId;
+        }
 
-    // Emit final state snapshot
-    const stateSnapshot: StateSnapshotEvent = {
-      type: EventType.STATE_SNAPSHOT,
-      snapshot: {
-        steps,
-        completed: true,
+        // Extract steps from text content
+        if (event.type === EventType.TEXT_MESSAGE_CONTENT) {
+          const contentEvent = event as TextMessageContentEvent;
+          const delta = contentEvent.delta || "";
+          accumulatedText += delta;
+
+          // Parse for numbered step patterns (e.g., "1. Step description")
+          const stepMatches = accumulatedText.match(/^\s*\d+\.\s*(.+)$/gm);
+
+          if (stepMatches && stepMatches.length > 0) {
+            // Clear and rebuild steps array
+            steps.length = 0;
+
+            for (const match of stepMatches) {
+              // Extract the description (everything after "N. ")
+              const description = match.replace(/^\s*\d+\.\s*/, "").trim();
+              if (description) {
+                steps.push({
+                  description,
+                  status: "pending",
+                });
+              }
+            }
+
+            // Emit progressive state snapshot
+            const progressSnapshot: StateSnapshotEvent = {
+              type: EventType.STATE_SNAPSHOT,
+              snapshot: {
+                steps: [...steps],
+                completed: false,
+                progress: steps.length,
+              },
+              timestamp: Date.now(),
+            };
+            subscriber.next(progressSnapshot);
+          }
+        }
+
+        // When message ends, emit final state
+        if (event.type === EventType.TEXT_MESSAGE_END) {
+          const finalSnapshot: StateSnapshotEvent = {
+            type: EventType.STATE_SNAPSHOT,
+            snapshot: {
+              steps: [...steps],
+              completed: true,
+              totalSteps: steps.length,
+            },
+            timestamp: Date.now(),
+          };
+          subscriber.next(finalSnapshot);
+        }
       },
-      timestamp: Date.now(),
+      error: (error: Error) => {
+        console.error("AgenticGenerativeUiAgent execution error:", {
+          agent: "agentic_generative_ui",
+          threadId: input.threadId,
+          runId: input.runId,
+          error: {
+            message: error.message,
+            stack: error.stack,
+            name: error.name,
+          },
+        });
+        subscriber.error(error);
+      },
+      complete: () => {
+        // Ensure final state is emitted even if no TEXT_MESSAGE_END
+        if (steps.length > 0) {
+          const finalSnapshot: StateSnapshotEvent = {
+            type: EventType.STATE_SNAPSHOT,
+            snapshot: {
+              steps: [...steps],
+              completed: true,
+              totalSteps: steps.length,
+            },
+            timestamp: Date.now(),
+          };
+          subscriber.next(finalSnapshot);
+        }
+      },
     };
-    subscriber.next(stateSnapshot);
+
+    // Execute with custom subscriber
+    await this.executeRun(input, customSubscriber as Subscriber<BaseEvent>);
   }
 }
 

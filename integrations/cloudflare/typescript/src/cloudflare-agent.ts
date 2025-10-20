@@ -3,6 +3,7 @@ import { Observable, Subscriber } from "rxjs";
 import { v4 as uuidv4 } from "uuid";
 import { CloudflareAIClient } from "./client";
 import type { CloudflareAIConfig, CloudflareMessage, CloudflareCompletionOptions } from "./types";
+import { supportsToolCalling } from "./types";
 import {
   EventType,
   type TextMessageStartEvent,
@@ -46,6 +47,19 @@ export class CloudflareAgent extends AbstractAgent {
     return new Observable((subscriber) => {
       this.executeRun(input, subscriber)
         .catch((error) => {
+          // ✅ Enhanced error logging with full context
+          console.error("CloudflareAgent execution error:", {
+            agent: "CloudflareAgent",
+            model: this.config.model,
+            threadId: input.threadId,
+            runId: input.runId,
+            error: error instanceof Error ? {
+              message: error.message,
+              stack: error.stack,
+              name: error.name,
+            } : error,
+            timestamp: new Date().toISOString(),
+          });
           subscriber.error(error);
         })
         .finally(() => {
@@ -80,12 +94,29 @@ export class CloudflareAgent extends AbstractAgent {
       ? [{ role: "system" as const, content: this.config.systemPrompt }, ...messages]
       : messages;
 
+    // ✅ Validate tool capability before sending tools to model
+    let toolsToUse: any[] | undefined;
+    if (input.tools && input.tools.length > 0) {
+      const modelToUse = this.config.model || "@cf/meta/llama-3.1-8b-instruct";
+      if (supportsToolCalling(modelToUse)) {
+        toolsToUse = this.convertTools(input.tools);
+      } else {
+        console.warn(
+          `[CloudflareAgent] Model "${modelToUse}" does not support tool calling. ` +
+          `Tools will be ignored. Use a compatible model like: ` +
+          `@cf/meta/llama-3.3-70b-instruct-fp8-fast, @cf/meta/llama-4-scout-17b-16e-instruct, ` +
+          `@cf/mistralai/mistral-small-3.1-24b-instruct, or @cf/nousresearch/hermes-2-pro-mistral-7b`
+        );
+        toolsToUse = undefined;
+      }
+    }
+
     // Prepare completion options
     const completionOptions: CloudflareCompletionOptions = {
       messages: allMessages,
       model: this.config.model,
       stream: this.config.streamingEnabled !== false,
-      tools: input.tools && input.tools.length > 0 ? this.convertTools(input.tools) : undefined,
+      tools: toolsToUse,
     };
 
     // Stream from Cloudflare Workers AI
@@ -115,7 +146,8 @@ export class CloudflareAgent extends AbstractAgent {
   ): Promise<void> {
     let messageStarted = false;
     let accumulatedContent = "";
-    const toolCallsInProgress = new Map<string, string>();
+    const toolCallsInProgress = new Set<string>();
+    let messageEnded = false;
 
     for await (const chunk of this.client.streamComplete(options)) {
       // Handle text content
@@ -130,6 +162,7 @@ export class CloudflareAgent extends AbstractAgent {
           };
           subscriber.next(textStart);
           messageStarted = true;
+          messageEnded = false;
         }
 
         // Emit TEXT_MESSAGE_CONTENT
@@ -146,64 +179,89 @@ export class CloudflareAgent extends AbstractAgent {
 
       // Handle tool calls
       if (chunk.tool_calls) {
+        // Make sure we have a parent message started for the tool calls
+        if (!messageStarted) {
+          const textStart: TextMessageStartEvent = {
+            type: EventType.TEXT_MESSAGE_START,
+            messageId,
+            role: "assistant",
+            timestamp: Date.now(),
+          };
+          subscriber.next(textStart);
+          messageStarted = true;
+        }
+
         for (const toolCall of chunk.tool_calls) {
-          if (!toolCallsInProgress.has(toolCall.id)) {
+          const toolCallId = toolCall.id ?? "";
+          const toolCallName = toolCall.function?.name ?? "tool";
+
+          if (!toolCallId) {
+            continue;
+          }
+
+          if (!toolCallsInProgress.has(toolCallId)) {
             // New tool call - emit TOOL_CALL_START
             const toolStart: ToolCallStartEvent = {
               type: EventType.TOOL_CALL_START,
-              toolCallId: toolCall.id,
-              toolCallName: toolCall.function.name,
+              toolCallId,
+              toolCallName,
               parentMessageId: messageId,
               timestamp: Date.now(),
             };
             subscriber.next(toolStart);
-            toolCallsInProgress.set(toolCall.id, "");
+            toolCallsInProgress.add(toolCallId);
           }
 
           // Stream tool call arguments - emit TOOL_CALL_ARGS
-          if (toolCall.function.arguments) {
-            // Parse arguments if they're a JSON string
-            let argsToEmit = toolCall.function.arguments;
-            if (typeof argsToEmit === 'string') {
+          const rawArguments = toolCall.function?.arguments;
+          if (rawArguments !== undefined && rawArguments !== null && toolCallId) {
+            let argsToEmit: string;
+            if (typeof rawArguments === "string") {
+              argsToEmit = rawArguments;
+            } else {
               try {
-                argsToEmit = JSON.parse(argsToEmit);
-              } catch (e) {
-                // If parsing fails, it might be a partial JSON string being streamed
-                // Keep it as a string for now
+                argsToEmit = JSON.stringify(rawArguments);
+              } catch {
+                argsToEmit = String(rawArguments);
               }
             }
 
-            const toolArgs: ToolCallArgsEvent = {
-              type: EventType.TOOL_CALL_ARGS,
-              toolCallId: toolCall.id,
-              delta: argsToEmit,
-              timestamp: Date.now(),
-            };
-            subscriber.next(toolArgs);
+            if (argsToEmit.length > 0) {
+              const toolArgs: ToolCallArgsEvent = {
+                type: EventType.TOOL_CALL_ARGS,
+                toolCallId,
+                delta: argsToEmit,
+                timestamp: Date.now(),
+              };
+              subscriber.next(toolArgs);
+            }
           }
         }
       }
 
       // Handle completion
       if (chunk.done) {
-        // End text message if it was started
-        if (messageStarted) {
-          const textEnd: TextMessageEndEvent = {
-            type: EventType.TEXT_MESSAGE_END,
-            messageId,
-            timestamp: Date.now(),
-          };
-          subscriber.next(textEnd);
-        }
-
-        // End all tool calls
-        for (const [toolCallId] of toolCallsInProgress) {
+        // End all tool calls first
+        for (const toolCallId of toolCallsInProgress) {
           const toolEnd: ToolCallEndEvent = {
             type: EventType.TOOL_CALL_END,
             toolCallId,
             timestamp: Date.now(),
           };
           subscriber.next(toolEnd);
+        }
+        toolCallsInProgress.clear();
+
+        // Then end the parent text message if it was started
+        if (messageStarted && !messageEnded) {
+          const textEnd: TextMessageEndEvent = {
+            type: EventType.TEXT_MESSAGE_END,
+            messageId,
+            timestamp: Date.now(),
+          };
+          subscriber.next(textEnd);
+          messageStarted = false;
+          messageEnded = true;
         }
       }
     }
@@ -257,15 +315,9 @@ export class CloudflareAgent extends AbstractAgent {
         };
         subscriber.next(toolStart);
 
-        // Parse arguments if they're a JSON string
-        let argsToEmit = toolCall.function.arguments;
-        if (typeof argsToEmit === 'string') {
-          try {
-            argsToEmit = JSON.parse(argsToEmit);
-          } catch (e) {
-            // Failed to parse - use string as-is
-          }
-        }
+        const rawArguments = toolCall.function.arguments;
+        const argsToEmit =
+          typeof rawArguments === "string" ? rawArguments : JSON.stringify(rawArguments);
 
         const toolArgs: ToolCallArgsEvent = {
           type: EventType.TOOL_CALL_ARGS,

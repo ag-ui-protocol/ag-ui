@@ -3,65 +3,105 @@
  */
 
 import type { Request, Response } from "express";
+import { EventType, type StateSnapshotEvent } from "@ag-ui/core";
 import { getSharedStateAgent } from "./agent.js";
+import {
+  validateMessagesRequest,
+  getOrCreateThreadId,
+  generateRunId,
+  setSSEHeaders,
+  writeSSEEvent,
+  createSSEErrorHandler,
+} from "../../utils/agent-utils.js";
+import { ensureTools, TODO_MANAGEMENT_TOOLS } from "../../utils/tool-definitions.js";
 
+/**
+ * In-memory state storage per thread
+ * In production, this should be replaced with a persistent store (Redis, DB, etc.)
+ */
+const threadStates = new Map<string, any>();
+
+/**
+ * POST /shared_state
+ *
+ * Demonstrates persistent state management across multiple messages.
+ * State is maintained per thread and updated with each interaction.
+ *
+ * Request body:
+ * - messages: Array of chat messages
+ * - context: Optional context object
+ * - tools: Optional array of tools
+ */
 export async function sharedStateHandler(req: Request, res: Response) {
-  const { messages, context, tools } = req.body;
-
-  if (!messages || !Array.isArray(messages)) {
-    res.status(400).json({ error: "Missing or invalid 'messages' array in request body" });
+  // Validate request
+  if (!validateMessagesRequest(req, res)) {
     return;
   }
 
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
+  // Set SSE headers
+  setSSEHeaders(res);
 
   try {
+    const { messages, context, tools } = req.body;
+    const threadId = getOrCreateThreadId(req);
+
+    // Retrieve previous state for this thread, or initialize empty
+    const previousState = threadStates.get(threadId) || { todos: [] };
+
+    // Create agent input with previous state and todo management tools
     const input = {
-      threadId: req.headers["x-thread-id"] as string || `thread-${Date.now()}`,
-      runId: `run-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+      threadId,
+      runId: generateRunId(),
       messages,
-      tools: tools || [],
+      tools: ensureTools(tools, TODO_MANAGEMENT_TOOLS), // Include todo management tools
       context: context ? [{ description: "Request context", value: JSON.stringify(context) }] : [],
-      state: {},
+      state: previousState, // Pass previous state
       forwardedProps: {},
     };
 
     const agent = getSharedStateAgent();
     const observable = agent.run(input);
 
-    observable.subscribe({
+    const subscription = observable.subscribe({
       next: (event) => {
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
+        // Persist state updates
+        if (event.type === EventType.STATE_SNAPSHOT) {
+          const stateEvent = event as StateSnapshotEvent;
+          threadStates.set(threadId, stateEvent.snapshot);
+        }
+
+        writeSSEEvent(res, event, threadId);
       },
-      error: (error) => {
-        console.error("Agent error:", error);
-        res.write(
-          `data: ${JSON.stringify({
-            type: "RUN_ERROR",
-            message: error instanceof Error ? error.message : "Unknown error",
-            timestamp: Date.now(),
-          })}\n\n`
-        );
-        res.end();
-      },
+      error: createSSEErrorHandler(res, threadId, {
+        agentType: "shared_state",
+        runId: input.runId,
+      }),
       complete: () => {
         res.end();
       },
     });
 
+    // Handle client disconnect
     req.on("close", () => {
+      subscription.unsubscribe();
     });
   } catch (error) {
-    console.error("Handler error:", error);
-    if (!res.headersSent) {
-      res.status(500).json({
-        error: error instanceof Error ? error.message : "Internal server error",
-      });
-    } else {
-      res.end();
-    }
+    createSSEErrorHandler(res, "", { agentType: "shared_state" })(error);
   }
+}
+
+/**
+ * Optional: Clear state for a specific thread
+ * Could be exposed as DELETE /shared_state/:threadId
+ */
+export function clearThreadState(threadId: string): void {
+  threadStates.delete(threadId);
+}
+
+/**
+ * Optional: Get current state for a thread
+ * Could be exposed as GET /shared_state/:threadId
+ */
+export function getThreadState(threadId: string): any {
+  return threadStates.get(threadId) || { todos: [] };
 }

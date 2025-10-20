@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/cloudflare",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "Apache-2.0",
   "description": "AG-UI protocol implementation for Cloudflare (Workers AI, Workers Runtime, Agents SDK)",
   "author": "Audrey Klammer <audrey@klammer.dev>",

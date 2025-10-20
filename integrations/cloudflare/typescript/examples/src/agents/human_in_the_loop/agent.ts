@@ -36,16 +36,7 @@ export class HumanInTheLoopAgent extends CloudflareAgent {
       accountId,
       apiToken,
       model: CLOUDFLARE_MODELS.HERMES_2_PRO_7B,
-      systemPrompt: `You are a helpful assistant that creates task plans.
-
-When the user asks you to do something:
-1. Break it down into 5-10 clear, actionable steps
-2. Use the generate_task_steps tool to present the steps to the user for approval
-3. Each step should have a description and status (enabled/disabled)
-4. Wait for the user to review and confirm before proceeding
-
-IMPORTANT: Only use the generate_task_steps tool when you have a complete plan ready.
-Do NOT call the tool for simple greetings or questions.`,
+      systemPrompt: `You are a helpful assistant that creates collaborative task plans. When asked to help with a task, use the generate_task_steps tool to present 5-10 clear, actionable steps for user review.`,
       streamingEnabled: true,
     });
   }

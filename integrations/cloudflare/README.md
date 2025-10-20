@@ -137,14 +137,15 @@ Direct model inference - available via HTTP endpoints for npm package users:
 
 ### Agents SDK Agents
 
-Framework-based agents - shown in Dojo demo:
+Framework-based agents using Cloudflare Agents SDK:
 
 | Agent | Description | In Dojo Demo | Full Features |
 |-------|-------------|--------------|---------------|
-| `human_in_the_loop_sdk` | Human approval workflow | ✅ Yes | Requires Workers* |
 | `tool_based_generative_ui_sdk` | Haiku generation with UI | ✅ Yes | Works locally |
+| `human_in_the_loop_sdk` | Human approval workflow | ❌ No* | Requires Workers** |
 
-*Full Agents SDK features (WebSocket state sync, Durable Objects) only available when deployed to Cloudflare Workers
+*Not compatible with CopilotKit's action system - see `HITL-LIMITATIONS.md` for details
+**Full Agents SDK features (WebSocket state sync, Durable Objects) only available when deployed to Cloudflare Workers
 
 ## Usage Examples
 
@@ -191,11 +192,14 @@ class MyAgent {
 
 const adapter = new CloudflareAgentsSDKAdapter({
   agent: new MyAgent(),
-  syncState: false  // No state sync in local mode
+  syncState: false,  // No state sync in local mode
+  threadId: 'thread-123'  // Optional: provide threadId for conversation tracking
 });
 
+// Pass threadId in context to ensure it flows through all events
+const context = { threadId: 'thread-123', runId: 'run-456' };
 for await (const event of adapter.execute(messages, context)) {
-  console.log(event);
+  console.log(event);  // All events will include threadId
 }
 ```
 
@@ -263,13 +267,24 @@ Client → Cloudflare Workers → Durable Objects → AG-UI Events
 # Test Workers AI
 curl -X POST http://localhost:4114/agentic_chat \
   -H "Content-Type: application/json" \
+  -H "x-thread-id: thread-123" \
   -d '{"messages":[{"role":"user","content":"Hello"}]}'
 
 # Test Agents SDK
-curl -X POST http://localhost:4114/human_in_the_loop_sdk \
+curl -X POST http://localhost:4114/tool_based_generative_ui_sdk \
   -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"Plan a task"}]}'
+  -H "x-thread-id: thread-123" \
+  -d '{"messages":[{"role":"user","content":"Write a haiku"}]}'
 ```
+
+### ThreadId Handling
+
+All agents properly handle `threadId` for conversation tracking:
+- Accept `threadId` via `x-thread-id` header or request body
+- Generate unique `threadId` if not provided
+- Echo `threadId` in every SSE event for Dojo/CopilotKit compatibility
+
+See `THREAD-ISSUE.md` for detailed implementation notes.
 
 ## Dojo Integration
 

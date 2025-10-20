@@ -1,6 +1,31 @@
 /**
  * Tool-Based Generative UI (Agents SDK version)
- * Uses Cloudflare Agents SDK with CloudflareAgentsSDKAdapter
+ *
+ * This handler demonstrates using CloudflareAgentsSDKAdapter to bridge
+ * the gap between Cloudflare Agents SDK patterns and AG-UI protocol.
+ *
+ * ## Adapter Usage:
+ *
+ * The CloudflareAgentsSDKAdapter converts Agents SDK method calls
+ * (onChatMessage, setState, etc.) into AG-UI protocol events automatically.
+ *
+ * ## Configuration Options:
+ *
+ * ```typescript
+ * const adapter = new CloudflareAgentsSDKAdapter({
+ *   agent,              // Your Agents SDK agent instance
+ *   syncState: false,   // Whether to auto-sync state via STATE_SNAPSHOT events
+ *   trackSQL: false,    // Whether to track SQL operations (if your agent uses them)
+ * });
+ * ```
+ *
+ * ## When to Use This Adapter:
+ *
+ * - Migrating from pure Cloudflare Agents SDK to AG-UI
+ * - Need to maintain compatibility with existing Agents SDK code
+ * - Want to gradually adopt AG-UI protocol features
+ *
+ * @see tool_based_generative_ui/index.ts for the standard CloudflareAgent approach
  */
 
 import { Request, Response } from "express";
@@ -39,18 +64,21 @@ export async function toolBasedGenerativeUiSDKHandler(req: Request, res: Respons
       };
 
       for await (const event of adapter.execute(messages, executionContext)) {
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
+        // Add threadId to event data for SSE stream (CopilotKit/Dojo requirement)
+        const eventWithThread = { ...event, threadId: finalThreadId };
+        res.write(`event: ${event.type}\ndata: ${JSON.stringify(eventWithThread)}\n\n`);
       }
 
       res.end();
     } catch (error) {
+      const errorEvent = {
+        type: "RUN_ERROR",
+        message: error instanceof Error ? error.message : "Unknown error",
+        threadId: finalThreadId,
+        timestamp: Date.now(),
+      };
       res.write(
-        `data: ${JSON.stringify({
-          type: "RUN_ERROR",
-          data: {
-            message: error instanceof Error ? error.message : "Unknown error",
-          },
-        })}\n\n`
+        `event: RUN_ERROR\ndata: ${JSON.stringify(errorEvent)}\n\n`
       );
       res.end();
     }
