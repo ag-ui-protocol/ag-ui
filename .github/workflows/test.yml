@@ -209,3 +209,26 @@ jobs:
 
     - name: Run tests
       run: mvn -B -ntp test
+
+  dart:
+    name: Dart SDK Tests
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: sdks/community/dart
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Dart
+      uses: dart-lang/setup-dart@v1
+      with:
+        sdk: stable
+
+    - name: Install dependencies
+      run: dart pub get
+
+    - name: Run tests
+      run: dart test --exclude-tags requires-server
