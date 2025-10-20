@@ -18,16 +18,6 @@
 		DF4BFFFD64ED916B84C56E73 /* AgentListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1A92CE7AE1057C9C944842 /* AgentListView.swift */; };
 /* End PBXBuildFile section */
 
-/* Begin PBXContainerItemProxy section */
-		2830CC4A32243D8FF9805D26 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 1210CA39C48FEE65618D0569 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 58FCD1206C8ACCA77BE14268;
-			remoteInfo = ChatAppSwiftUI;
-		};
-/* End PBXContainerItemProxy section */
-
 /* Begin PBXCopyFilesBuildPhase section */
 		4B76C59AE89DB8D57877544F /* Embed Frameworks */ = {
 			isa = PBXCopyFilesBuildPhase;
@@ -48,9 +38,7 @@
 		1D2FEC23EEBC2439F1CA6D45 /* ChatAppSwiftUIApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatAppSwiftUIApp.swift; sourceTree = "<group>"; };
 		37A513A00CF92688E27BB12E /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		38D17DED6FE7A7AB5B29A1D1 /* shared.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = shared.xcframework; path = ../shared/build/XCFrameworks/release/shared.xcframework; sourceTree = "<group>"; };
-		49E4BA921B645E9AA15E8A28 /* .gitkeep */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitkeep; sourceTree = "<group>"; };
 		AB1A92CE7AE1057C9C944842 /* AgentListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentListView.swift; sourceTree = "<group>"; };
-		DDCC8BE349570F3B2641FB34 /* ChatAppSwiftUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ChatAppSwiftUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E8169B41E9F48D074B3EC374 /* AgentFormView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentFormView.swift; sourceTree = "<group>"; };
 		E86132EDA7173F80E815D058 /* ChatAppSwiftUI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ChatAppSwiftUI.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -80,17 +68,8 @@
 			isa = PBXGroup;
 			children = (
 				E86132EDA7173F80E815D058 /* ChatAppSwiftUI.app */,
-				DDCC8BE349570F3B2641FB34 /* ChatAppSwiftUITests.xctest */,
 			);
 			name = Products;
-			sourceTree = "<group>";
-		};
-		358B43E72A264028D5BC8013 /* Tests */ = {
-			isa = PBXGroup;
-			children = (
-				49E4BA921B645E9AA15E8A28 /* .gitkeep */,
-			);
-			path = Tests;
 			sourceTree = "<group>";
 		};
 		4AC6D8B2137CFE570A81F442 /* Sources */ = {
@@ -123,7 +102,6 @@
 			isa = PBXGroup;
 			children = (
 				4AC6D8B2137CFE570A81F442 /* Sources */,
-				358B43E72A264028D5BC8013 /* Tests */,
 				5A25C2092CF32DD3532BFFE6 /* Frameworks */,
 				2F1CD112648A55FD5602E8FB /* Products */,
 			);
@@ -151,24 +129,6 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		3EA476FC0BA7A9882893F439 /* ChatAppSwiftUITests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 0B09388588F2881666121024 /* Build configuration list for PBXNativeTarget "ChatAppSwiftUITests" */;
-			buildPhases = (
-				CD4E0330FE3CB248847418FF /* Sources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				FC83AEF05BECF7A6426BA3E8 /* PBXTargetDependency */,
-			);
-			name = ChatAppSwiftUITests;
-			packageProductDependencies = (
-			);
-			productName = ChatAppSwiftUITests;
-			productReference = DDCC8BE349570F3B2641FB34 /* ChatAppSwiftUITests.xctest */;
-			productType = "com.apple.product-type.bundle.unit-test";
-		};
 		58FCD1206C8ACCA77BE14268 /* ChatAppSwiftUI */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 2B515E4F8376311C12D60948 /* Build configuration list for PBXNativeTarget "ChatAppSwiftUI" */;
@@ -215,7 +175,6 @@
 			projectRoot = "";
 			targets = (
 				58FCD1206C8ACCA77BE14268 /* ChatAppSwiftUI */,
-				3EA476FC0BA7A9882893F439 /* ChatAppSwiftUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -234,41 +193,9 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		CD4E0330FE3CB248847418FF /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXSourcesBuildPhase section */
 
-/* Begin PBXTargetDependency section */
-		FC83AEF05BECF7A6426BA3E8 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 58FCD1206C8ACCA77BE14268 /* ChatAppSwiftUI */;
-			targetProxy = 2830CC4A32243D8FF9805D26 /* PBXContainerItemProxy */;
-		};
-/* End PBXTargetDependency section */
-
 /* Begin XCBuildConfiguration section */
-		0BFADBB4A3E35E4D49E241F9 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.agui.example.ChatAppSwiftUITests;
-				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ChatAppSwiftUI.app/ChatAppSwiftUI";
-			};
-			name = Debug;
-		};
 		756A888DC67DCEAC6E1715BE /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -410,23 +337,6 @@
 			};
 			name = Debug;
 		};
-		BFAFD07706E6EFC1A2A9C396 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.agui.example.ChatAppSwiftUITests;
-				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ChatAppSwiftUI.app/ChatAppSwiftUI";
-			};
-			name = Release;
-		};
 		E52D15C66D5E4E76DF2360FA /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -452,15 +362,6 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		0B09388588F2881666121024 /* Build configuration list for PBXNativeTarget "ChatAppSwiftUITests" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				0BFADBB4A3E35E4D49E241F9 /* Debug */,
-				BFAFD07706E6EFC1A2A9C396 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Debug;
-		};
 		2B515E4F8376311C12D60948 /* Build configuration list for PBXNativeTarget "ChatAppSwiftUI" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

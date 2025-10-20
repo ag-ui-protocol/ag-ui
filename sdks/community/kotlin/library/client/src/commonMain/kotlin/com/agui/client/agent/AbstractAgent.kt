@@ -81,6 +81,8 @@ abstract class AbstractAgent(
     suspend fun runAgent(parameters: RunAgentParameters? = null, subscriber: AgentSubscriber? = null) {
         agentId = agentId ?: generateId()
         val input = prepareRunAgentInput(parameters)
+        messages = input.messages
+        state = input.state
         val activeSubscribers = subscribers.toMutableList().apply {
             subscriber?.let { add(it) }
         }
@@ -152,6 +154,8 @@ abstract class AbstractAgent(
      */
     fun runAgentObservable(input: RunAgentInput, subscriber: AgentSubscriber? = null): Flow<BaseEvent> {
         agentId = agentId ?: generateId()
+        messages = input.messages
+        state = input.state
         val activeSubscribers = subscribers.toMutableList().apply {
             subscriber?.let { add(it) }
         }
@@ -164,8 +168,12 @@ abstract class AbstractAgent(
             }
             .onEach { event ->
                 try {
+                    val updatedInput = input.copy(
+                        state = state,
+                        messages = messages.toList()
+                    )
                     flowOf(event)
-                        .let { events -> apply(input, events, activeSubscribers) }
+                        .let { events -> apply(updatedInput, events, activeSubscribers) }
                         .let { states -> processApplyEvents(input, states, activeSubscribers) }
                         .collect()
                 } catch (e: Exception) {
@@ -246,9 +254,16 @@ abstract class AbstractAgent(
             agentState.messages?.let {
                 messages = it
                 messagesChanged = true
-                if (debug) {
-                    logger.d { "Updated messages: ${it.size} messages" }
+                val preview = it.joinToString(" | ") { msg ->
+                    when (msg) {
+                        is AssistantMessage -> "A:${msg.id}:${msg.content?.take(40)}"
+                        is UserMessage -> "U:${msg.id}:${msg.content.take(40)}"
+                        is SystemMessage -> "S:${msg.id}:${msg.content ?: ""}"
+                        is ToolMessage -> "T:${msg.id}:${msg.content.take(40)}"
+                        else -> "${msg::class.simpleName}:${msg.id}"
+                    }
                 }
+                logger.d { "Updated messages(${it.size}): $preview" }
             }
             agentState.state?.let {
                 state = it

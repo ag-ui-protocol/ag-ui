@@ -1,6 +1,6 @@
 package com.agui.example.chatapp.chat
 
-import com.agui.client.AgUiAgent
+import com.agui.client.StatefulAgUiAgent
 import com.agui.client.agent.AgentSubscriber
 import com.agui.client.agent.AgentSubscription
 import com.agui.core.types.BaseEvent
@@ -26,7 +26,7 @@ fun interface ChatAgentFactory {
 
     companion object {
         fun default(): ChatAgentFactory = ChatAgentFactory { config, headers, toolRegistry, userId, systemPrompt ->
-            val agent = AgUiAgent(url = config.url) {
+            val agent = StatefulAgUiAgent(url = config.url) {
                 this.headers.putAll(headers)
                 this.toolRegistry = toolRegistry
                 this.userId = userId

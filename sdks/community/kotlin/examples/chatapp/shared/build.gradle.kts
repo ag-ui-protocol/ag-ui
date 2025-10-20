@@ -68,6 +68,10 @@ kotlin {
                 implementation(kotlin("test"))
                 implementation(libs.kotlinx.coroutines.test)
                 implementation(libs.ktor.client.mock)  // Add this line
+                implementation(project(":chatapp-shared"))
+                implementation(libs.agui.tools)
+                implementation(libs.agui.client)
+                implementation(libs.agui.core)
             }
         }
 

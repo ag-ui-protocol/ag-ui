@@ -35,11 +35,3 @@ targets:
         UILaunchStoryboardName: LaunchScreen
         UIUserInterfaceStyle: Automatic
         UIApplicationSupportsIndirectInputEvents: true
-  ChatAppSwiftUITests:
-    type: bundle.unit-test
-    platform: iOS
-    deploymentTarget: 17.0
-    sources:
-      - path: Tests
-    dependencies:
-      - target: ChatAppSwiftUI

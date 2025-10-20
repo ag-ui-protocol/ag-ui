@@ -20,7 +20,7 @@ private fun createStreamingMessage(messageId: String, role: Role): Message = whe
     Role.SYSTEM -> SystemMessage(id = messageId, content = "")
     Role.ASSISTANT -> AssistantMessage(id = messageId, content = "")
     Role.USER -> UserMessage(id = messageId, content = "")
-    Role.TOOL -> AssistantMessage(id = messageId, content = "")
+    Role.TOOL -> ToolMessage(id = messageId, content = "", toolCallId = messageId)
 }
 
 private fun Message.appendDelta(delta: String): Message = when (this) {
@@ -47,6 +47,11 @@ fun defaultApplyEvents(
     var thinkingTitle: String? = null
     val thinkingMessages = mutableListOf<String>()
     var thinkingBuffer: StringBuilder? = null
+    var initialMessagesEmitted = false
+
+    logger.d {
+        "defaultApplyEvents start: initial messages=${messages.joinToString { "${it.messageRole}:${it.id}" }} state=$state"
+    }
 
     fun finalizeThinkingMessage() {
         thinkingBuffer?.toString()?.takeIf { it.isNotEmpty() }?.let {
@@ -105,6 +110,11 @@ fun defaultApplyEvents(
     }
 
     return events.transform { event ->
+        if (!initialMessagesEmitted && messages.isNotEmpty()) {
+            emit(AgentState(messages = messages.toList()))
+            initialMessagesEmitted = true
+        }
+
         var emitted = false
         var subscriberMessagesUpdated = false
         var subscriberStateUpdated = false
@@ -132,6 +142,9 @@ fun defaultApplyEvents(
             is TextMessageStartEvent -> {
                 val role = event.role
                 messages.add(createStreamingMessage(event.messageId, role))
+                logger.d {
+                    "Added streaming message start id=${event.messageId} role=$role; messages=${messages.joinToString { it.id }}"
+                }
                 emit(AgentState(messages = messages.toList()))
                 emitted = true
             }
@@ -140,8 +153,21 @@ fun defaultApplyEvents(
                 val index = messages.indexOfFirst { it.id == event.messageId }
                 if (index >= 0) {
                     messages[index] = messages[index].appendDelta(event.delta)
+                    logger.d {
+                        val updated = messages[index]
+                        val preview = when (updated) {
+                            is AssistantMessage -> updated.content
+                            is UserMessage -> updated.content
+                            is SystemMessage -> updated.content ?: ""
+                            is DeveloperMessage -> updated.content
+                            else -> ""
+                        }
+                        "Updated message ${event.messageId} content='${preview?.take(80)}'"
+                    }
                     emit(AgentState(messages = messages.toList()))
                     emitted = true
+                } else {
+                    logger.e { "Received content for unknown message ${event.messageId}; current ids=${messages.joinToString { it.id }}. Dropping delta: '${event.delta.take(80)}'" }
                 }
             }
 

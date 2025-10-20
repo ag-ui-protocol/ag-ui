@@ -130,8 +130,8 @@ private fun AgentConfig.toSnapshot(): AgentSnapshot = AgentSnapshot(
     systemPrompt = systemPrompt
 )
 
-private fun DisplayMessage.toSnapshot(): DisplayMessageSnapshot = DisplayMessageSnapshot(
-    id = id,
+private fun DisplayMessage.toSnapshot(stableId: String = id): DisplayMessageSnapshot = DisplayMessageSnapshot(
+    id = stableId,
     role = role,
     content = content,
     timestamp = timestamp,
@@ -148,8 +148,22 @@ private fun BackgroundStyle.toSnapshot(): BackgroundSnapshot =
 
 private fun ChatState.toSnapshot(): ChatStateSnapshot = ChatStateSnapshot(
     activeAgent = activeAgent?.toSnapshot(),
-    messages = messages.map { it.toSnapshot() },
-    ephemeralMessage = ephemeralMessage?.toSnapshot(),
+    messages = messages.map { message ->
+        val stableId = buildString {
+            append(message.id)
+            append(":")
+            append(message.timestamp)
+        }
+        message.toSnapshot(stableId)
+    },
+    ephemeralMessage = ephemeralMessage?.let { message ->
+        val stableId = buildString {
+            append(message.id)
+            append(":")
+            append(message.timestamp)
+        }
+        message.toSnapshot(stableId)
+    },
     isLoading = isLoading,
     isConnected = isConnected,
     error = error,

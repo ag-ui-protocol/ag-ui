@@ -2,14 +2,12 @@ package com.agui.example.chatapp.chat
 
 import com.agui.client.agent.AgentSubscriber
 import com.agui.client.agent.AgentSubscription
+import com.agui.core.types.AssistantMessage
 import com.agui.core.types.BaseEvent
-import com.agui.core.types.Role
 import com.agui.core.types.RunErrorEvent
-import com.agui.core.types.TextMessageContentEvent
-import com.agui.core.types.TextMessageEndEvent
-import com.agui.core.types.TextMessageStartEvent
 import com.agui.core.types.ToolCallEndEvent
 import com.agui.core.types.ToolCallStartEvent
+import com.agui.core.types.UserMessage
 import com.agui.example.chatapp.data.model.AgentConfig
 import com.agui.example.chatapp.data.model.AuthMethod
 import com.agui.example.chatapp.data.repository.AgentRepository
@@ -64,27 +62,27 @@ class ChatControllerTest {
         advanceUntilIdle()
 
         val stub = factory.createdAgents.single()
-        stub.nextSendFlow = flow {
-            emit(TextMessageStartEvent(messageId = "msg-agent"))
-            emit(TextMessageContentEvent(messageId = "msg-agent", delta = "Hello"))
-            emit(TextMessageEndEvent(messageId = "msg-agent"))
-        }
+        stub.nextSendFlow = flow { }
 
         controller.sendMessage("Hi there")
         advanceUntilIdle()
 
-        controller.handleAgentEvent(TextMessageStartEvent(messageId = "user-1", role = Role.USER))
-        controller.handleAgentEvent(TextMessageContentEvent(messageId = "user-1", delta = "Hi there"))
-        controller.handleAgentEvent(TextMessageEndEvent(messageId = "user-1"))
-        controller.handleAgentEvent(TextMessageStartEvent(messageId = "msg-agent", role = Role.ASSISTANT))
-        controller.handleAgentEvent(TextMessageContentEvent(messageId = "msg-agent", delta = "Hello"))
-        controller.handleAgentEvent(TextMessageEndEvent(messageId = "msg-agent"))
+        val pendingSnapshot = controller.state.value.messages.filter { it.role == MessageRole.USER && it.content == "Hi there" }
+        assertEquals(1, pendingSnapshot.size)
+        assertTrue(pendingSnapshot.isNotEmpty())
+
+        controller.updateMessagesFromAgent(
+            listOf(
+                UserMessage(id = "user-1", content = "Hi there"),
+                AssistantMessage(id = "msg-agent", content = "Hello")
+            )
+        )
 
         val messages = controller.state.value.messages
-        assertEquals(3, messages.size)
-        assertEquals(MessageRole.SYSTEM, messages[0].role)
-        assertEquals("Hi there", messages[1].content)
-        val assistant = messages[2]
+        val userMessages = messages.filter { it.role == MessageRole.USER && it.content == "Hi there" }
+        assertEquals(1, userMessages.size)
+        assertFalse(userMessages.single().isStreaming)
+        val assistant = messages.last { it.role == MessageRole.ASSISTANT }
         assertEquals("Hello", assistant.content)
         assertFalse(assistant.isStreaming)
 

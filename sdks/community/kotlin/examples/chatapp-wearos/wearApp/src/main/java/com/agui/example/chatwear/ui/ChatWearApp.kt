@@ -93,8 +93,9 @@ fun ChatWearApp(
             return@ChatWearTheme
         }
 
-        val backgroundColor = remember(chatState.background) {
-            chatState.background.toWearColor(WearMaterialTheme.colorScheme.background)
+        val defaultBackground = WearMaterialTheme.colorScheme.background
+        val backgroundColor = remember(chatState.background, defaultBackground) {
+            chatState.background.toWearColor(defaultBackground)
         }
 
         Scaffold(

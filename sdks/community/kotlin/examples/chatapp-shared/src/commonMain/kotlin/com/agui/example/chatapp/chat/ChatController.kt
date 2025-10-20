@@ -78,15 +78,16 @@ class ChatController(
     private var currentJob: Job? = null
     private var currentThreadId: String? = null
 
-    private val manualStreamingMessages = mutableMapOf<String, StringBuilder>()
     private val toolCallBuffer = mutableMapOf<String, StringBuilder>()
     private val pendingToolCalls = mutableMapOf<String, String>()
     private val streamingMessageIds = mutableSetOf<String>()
     private val supplementalMessages = linkedMapOf<String, DisplayMessage>()
     private val ephemeralMessages = mutableMapOf<EphemeralType, DisplayMessage>()
-    private var baseMessages: List<DisplayMessage> = emptyList()
-    private var manualMessages: List<DisplayMessage> = emptyList()
-    private var manualMode = false
+    private data class StoredMessage(var message: Message, val displayId: String)
+
+    private val messageStore = mutableListOf<StoredMessage>()
+    private val messageIdCounts = mutableMapOf<String, Int>()
+    private val pendingUserMessages = mutableListOf<DisplayMessage>()
 
     private val agentSubscriber = ControllerAgentSubscriber()
     private val controllerClosed = atomic(false)
@@ -160,15 +161,14 @@ class ChatController(
         agentSubscription = null
         currentAgent = null
         currentThreadId = null
-        manualStreamingMessages.clear()
         toolCallBuffer.clear()
         pendingToolCalls.clear()
         streamingMessageIds.clear()
         supplementalMessages.clear()
         ephemeralMessages.clear()
-        baseMessages = emptyList()
-        manualMessages = emptyList()
-        manualMode = false
+        messageStore.clear()
+        messageIdCounts.clear()
+        pendingUserMessages.clear()
 
         _state.update {
             it.copy(
@@ -182,8 +182,17 @@ class ChatController(
     fun sendMessage(content: String) {
         if (content.isBlank() || currentAgent == null || controllerClosed.value) return
 
-        manualMode = false
-        startConversation(content.trim())
+        val trimmed = content.trim()
+        val userMessage = DisplayMessage(
+            id = generateMessageId(),
+            role = MessageRole.USER,
+            content = trimmed,
+            isStreaming = true
+        )
+        pendingUserMessages += userMessage
+        refreshMessages()
+
+        startConversation(trimmed)
     }
 
     private fun startConversation(content: String) {
@@ -243,9 +252,27 @@ class ChatController(
         }
     }
 
-    private fun updateMessagesFromAgent(messages: List<Message>) {
-        baseMessages = messages.mapNotNull { it.toDisplayMessage() }
-        if (!manualMode) {
+    internal fun updateMessagesFromAgent(messages: List<Message>) {
+        if (messages.isEmpty()) {
+            if (messageStore.isNotEmpty()) {
+                messageStore.clear()
+                messageIdCounts.clear()
+                refreshMessages()
+            }
+            return
+        }
+
+        var changed = false
+
+        messages.forEach { message ->
+            changed = applyMessageUpdate(message) || changed
+        }
+
+        if (changed) {
+            val conversation = messageStore.mapNotNull { stored ->
+                stored.message.toDisplayMessage()?.copy(id = stored.displayId)
+            }
+            reconcilePendingUserMessages(conversation)
             refreshMessages()
         }
     }
@@ -275,23 +302,64 @@ class ChatController(
             content = content,
             isStreaming = streamingMessageIds.contains(id)
         )
-        is ToolMessage -> DisplayMessage(
-            id = id,
-            role = MessageRole.TOOL_CALL,
-            content = content,
-            isStreaming = streamingMessageIds.contains(id)
-        )
+        is ToolMessage -> null
     }
 
-    private fun formatAssistantContent(message: AssistantMessage): String {
-        val base = message.content?.takeIf { it.isNotBlank() }
-        val toolDetails = message.toolCalls.orEmpty()
-            .takeIf { it.isNotEmpty() }
-            ?.joinToString(separator = "\n\n") { call ->
-                val preview = summarizeArguments(call.function.arguments)
-                "🔧 ${call.function.name}($preview)"
+    private fun formatAssistantContent(message: AssistantMessage): String =
+        message.content?.takeIf { it.isNotBlank() } ?: ""
+
+    private fun reconcilePendingUserMessages(agentMessages: List<DisplayMessage>) {
+        if (pendingUserMessages.isEmpty()) return
+
+        val userContents = agentMessages
+            .filter { it.role == MessageRole.USER }
+            .map { it.content }
+            .toMutableList()
+
+        if (userContents.isEmpty()) return
+
+        val remaining = mutableListOf<DisplayMessage>()
+        for (pending in pendingUserMessages.asReversed()) {
+            val matchIndex = userContents.indexOfLast { it == pending.content }
+            if (matchIndex >= 0) {
+                userContents.removeAt(matchIndex)
+            } else {
+                remaining.add(0, pending)
             }
-        return listOfNotNull(base, toolDetails).joinToString(separator = "\n\n")
+        }
+
+        pendingUserMessages.clear()
+        pendingUserMessages.addAll(remaining)
+    }
+
+    private fun applyMessageUpdate(message: Message): Boolean {
+        val existing = messageStore.filter { it.message.id == message.id }
+        val identical = existing.firstOrNull { it.message == message }
+        if (identical != null) {
+            return false
+        }
+
+        return when {
+            message is UserMessage -> {
+                val occurrence = messageIdCounts[message.id] ?: 0
+                val stableId = if (occurrence == 0) message.id else "${message.id}#$occurrence"
+                messageIdCounts[message.id] = occurrence + 1
+                messageStore.add(StoredMessage(message, stableId))
+                true
+            }
+            existing.isEmpty() -> {
+                val occurrence = messageIdCounts[message.id] ?: 0
+                val stableId = if (occurrence == 0) message.id else "${message.id}#$occurrence"
+                messageIdCounts[message.id] = occurrence + 1
+                messageStore.add(StoredMessage(message, stableId))
+                true
+            }
+            else -> {
+                val target = existing.last()
+                target.message = message
+                true
+            }
+        }
     }
 
     private fun summarizeArguments(arguments: String): String {
@@ -333,25 +401,16 @@ class ChatController(
     }
 
     private fun processStreamingAndEphemeral(event: BaseEvent) {
+        var needsRefresh = false
         when (event) {
             is TextMessageStartEvent -> {
                 streamingMessageIds += event.messageId
-                if (manualMode) {
-                    startManualMessage(event)
-                } else {
-                    refreshMessages()
-                }
+                needsRefresh = true
             }
-            is TextMessageContentEvent -> if (manualMode) {
-                appendManualMessage(event)
-            }
+            is TextMessageContentEvent -> Unit
             is TextMessageEndEvent -> {
                 streamingMessageIds -= event.messageId
-                if (manualMode) {
-                    endManualMessage(event.messageId)
-                } else {
-                    refreshMessages()
-                }
+                needsRefresh = true
             }
             is ToolCallStartEvent -> {
                 toolCallBuffer[event.toolCallId] = StringBuilder()
@@ -412,80 +471,38 @@ class ChatController(
             is StateDeltaEvent, is StateSnapshotEvent -> Unit
             else -> Unit
         }
-    }
-
-    private fun startManualMessage(event: TextMessageStartEvent) {
-        manualStreamingMessages[event.messageId] = StringBuilder()
-        val role = event.role.toMessageRole()
-        val message = DisplayMessage(
-            id = event.messageId,
-            role = role,
-            content = "",
-            isStreaming = true
-        )
-        manualMessages = manualMessages + message
-        refreshMessages()
-    }
-
-    private fun appendManualMessage(event: TextMessageContentEvent) {
-        val builder = manualStreamingMessages[event.messageId] ?: return
-        builder.append(event.delta)
-        manualMessages = manualMessages.map { message ->
-            if (message.id == event.messageId) {
-                message.copy(content = message.content + event.delta)
-            } else {
-                message
-            }
+        if (needsRefresh) {
+            refreshMessages()
         }
-        refreshMessages()
-    }
-
-    private fun endManualMessage(messageId: String) {
-        manualStreamingMessages.remove(messageId)
-        manualMessages = manualMessages.map { message ->
-            if (message.id == messageId) {
-                message.copy(isStreaming = false)
-            } else {
-                message
-            }
-        }
-        refreshMessages()
     }
 
     private fun finalizeStreamingState() {
         streamingMessageIds.clear()
-        manualStreamingMessages.clear()
-        manualMessages = manualMessages.map { it.copy(isStreaming = false) }
-        baseMessages = baseMessages.map { it.copy(isStreaming = false) }
+        for (i in pendingUserMessages.indices) {
+            pendingUserMessages[i] = pendingUserMessages[i].copy(isStreaming = false)
+        }
         refreshMessages()
     }
 
     private fun refreshMessages() {
-        val conversation = if (manualMode) manualMessages else baseMessages
+        val conversation = messageStore.mapNotNull { stored ->
+            stored.message.toDisplayMessage()?.copy(id = stored.displayId)
+        }
+        val pending = pendingUserMessages.toList()
         val supplemental = supplementalMessages.values.toList()
         val ephemerals = ephemeralMessages.values.toList()
         _state.update {
-            it.copy(messages = conversation + supplemental + ephemerals)
+            it.copy(messages = supplemental + conversation + pending + ephemerals)
         }
-    }
-
-    private fun Role.toMessageRole(): MessageRole = when (this) {
-        Role.DEVELOPER -> MessageRole.DEVELOPER
-        Role.SYSTEM -> MessageRole.SYSTEM
-        Role.ASSISTANT -> MessageRole.ASSISTANT
-        Role.USER -> MessageRole.USER
-        Role.TOOL -> MessageRole.TOOL_CALL
     }
 
     private inner class ControllerAgentSubscriber : AgentSubscriber {
         override suspend fun onRunInitialized(params: AgentSubscriberParams): AgentStateMutation? {
-            manualMode = false
             updateMessagesFromAgent(params.messages)
             return null
         }
 
         override suspend fun onMessagesChanged(params: AgentStateChangedParams) {
-            manualMode = false
             updateMessagesFromAgent(params.messages)
         }
 
@@ -500,12 +517,13 @@ class ChatController(
         }
 
         fun handleManualEvent(event: BaseEvent) {
-            manualMode = true
+            logger.d { "Manual event received: ${event::class.simpleName} (id=${(event as? TextMessageStartEvent)?.messageId ?: (event as? TextMessageContentEvent)?.messageId ?: "n/a"})" }
             processStreamingAndEphemeral(event)
         }
     }
 
     private fun generateMessageId(): String = "msg_${Clock.System.now().toEpochMilliseconds()}"
+
 }
 
 /**
