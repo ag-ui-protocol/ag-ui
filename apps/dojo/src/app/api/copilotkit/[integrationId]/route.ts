@@ -46,7 +46,7 @@ async function buildAppForIntegration(integrationId: string) {
   return app;
 }
 
-export const GET = async (request: Request) => {
+const requestHandler = async (request: Request) => {
   const integrationId = extractIntegrationIdFromUrl(request.url);
   if (!integrationId) return new Response("Integration not found", { status: 404 });
   const app = await buildAppForIntegration(integrationId);
@@ -54,10 +54,5 @@ export const GET = async (request: Request) => {
   return handle(app)(request);
 };
 
-export const POST = async (request: Request) => {
-  const integrationId = extractIntegrationIdFromUrl(request.url);
-  if (!integrationId) return new Response("Integration not found", { status: 404 });
-  const app = await buildAppForIntegration(integrationId);
-  if (!app) return new Response("Integration not found", { status: 404 });
-  return handle(app)(request);
-};
+export const GET = requestHandler;
+export const POST = requestHandler;
