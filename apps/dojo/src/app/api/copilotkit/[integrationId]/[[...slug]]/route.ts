@@ -4,9 +4,7 @@ import {
   copilotRuntimeNextJSAppRouterEndpoint,
 } from "@copilotkit/runtime";
 import { agentsIntegrations } from "@/agents";
-import { handle } from 'hono/vercel'
-
-import { NextRequest } from "next/server";
+import { handle } from 'hono/vercel';
 
 async function createApp(integrationId: string) {
   const integration = agentsIntegrations.find((i) => i.id === integrationId);
@@ -28,7 +26,7 @@ async function createApp(integrationId: string) {
 }
 
 async function routeHandler(
-  request: NextRequest,
+  request: Request,
   { params }: { params: Promise<{ integrationId: string }> }
 ) {
   const { integrationId } = await params;
