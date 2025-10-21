@@ -205,6 +205,11 @@ export abstract class AbstractAgent {
   }
 
   protected prepareRunAgentInput(parameters?: RunAgentParameters): RunAgentInput {
+    const clonedMessages = structuredClone_(this.messages) as Message[];
+    const messagesWithoutActivity = clonedMessages.filter(
+      (message) => message.role !== "activity",
+    );
+
     return {
       threadId: this.threadId,
       runId: parameters?.runId || uuidv4(),
@@ -212,7 +217,7 @@ export abstract class AbstractAgent {
       context: structuredClone_(parameters?.context ?? []),
       forwardedProps: structuredClone_(parameters?.forwardedProps ?? {}),
       state: structuredClone_(this.state),
-      messages: structuredClone_(this.messages),
+      messages: messagesWithoutActivity,
     };
   }
 
