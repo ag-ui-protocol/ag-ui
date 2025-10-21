@@ -121,20 +121,20 @@ importers:
         specifier: ^2.0.42
         version: 2.0.52(zod@3.25.76)
       '@copilotkit/react-core':
-        specifier: 0.0.0-feat-cpk-1-5-20251021095034
-        version: 0.0.0-feat-cpk-1-5-20251021095034(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)
+        specifier: 0.0.0-feat-cpk-1-5-20251021144842
+        version: 0.0.0-feat-cpk-1-5-20251021144842(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)
       '@copilotkit/react-ui':
-        specifier: 0.0.0-feat-cpk-1-5-20251021095034
-        version: 0.0.0-feat-cpk-1-5-20251021095034(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)
+        specifier: 0.0.0-feat-cpk-1-5-20251021144842
+        version: 0.0.0-feat-cpk-1-5-20251021144842(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)
       '@copilotkit/runtime':
-        specifier: 0.0.0-feat-cpk-1-5-20251021095034
-        version: 0.0.0-feat-cpk-1-5-20251021095034(64e53d6a38a9d6a8b11809b6b9b1396b)
+        specifier: 0.0.0-feat-cpk-1-5-20251021144842
+        version: 0.0.0-feat-cpk-1-5-20251021144842(64e53d6a38a9d6a8b11809b6b9b1396b)
       '@copilotkit/runtime-client-gql':
-        specifier: 0.0.0-feat-cpk-1-5-20251021095034
-        version: 0.0.0-feat-cpk-1-5-20251021095034(graphql@16.11.0)(react@19.2.0)
+        specifier: 0.0.0-feat-cpk-1-5-20251021144842
+        version: 0.0.0-feat-cpk-1-5-20251021144842(graphql@16.11.0)(react@19.2.0)
       '@copilotkit/shared':
-        specifier: 0.0.0-feat-cpk-1-5-20251021095034
-        version: 0.0.0-feat-cpk-1-5-20251021095034
+        specifier: 0.0.0-feat-cpk-1-5-20251021144842
+        version: 0.0.0-feat-cpk-1-5-20251021144842
       '@mastra/client-js':
         specifier: ^0.15.2
         version: 0.15.2(openapi-types@12.1.3)(react@19.2.0)(zod@3.25.76)
@@ -1537,8 +1537,8 @@ packages:
   '@clack/prompts@0.11.0':
     resolution: {integrity: sha512-pMN5FcrEw9hUkZA4f+zLlzivQSeQf5dRGJjSUbvVYDLvpKCdQx5OaknvKzgbtXOizhP+SJJJjqEbOe55uKKfAw==}
 
-  '@copilotkit/react-core@0.0.0-feat-cpk-1-5-20251021095034':
-    resolution: {integrity: sha512-XwH1ACzyzl7heVTG43sp6cVSHV/93fxVbbr9pmewE7joCK9OEcRnfHiWlNRtwl9WwPyA+TKei1dZzzRlpxGq8Q==}
+  '@copilotkit/react-core@0.0.0-feat-cpk-1-5-20251021144842':
+    resolution: {integrity: sha512-VZeLhqcz1VARW8QhIAZB7xATb6EQixaKLaCFFO9lOwor5DJoNFb7kFd8AaiEfEDhPYDS87JdvUs8IuBz69+h1Q==}
     peerDependencies:
       '@copilotkitnext/core': 0.0.16
       '@copilotkitnext/react': 0.0.16
@@ -1546,19 +1546,19 @@ packages:
       react-dom: ^18 || ^19 || ^19.0.0-rc
       zod: '>=3.0.0'
 
-  '@copilotkit/react-ui@0.0.0-feat-cpk-1-5-20251021095034':
-    resolution: {integrity: sha512-Ml4EZoGldoqgDClF5MqI4GFu+u4t58Tr8iKidFG6GZ6JMg2+IdRbZh98nYxue2xU7VRi2zZGQnHuFu1H4FLVfg==}
+  '@copilotkit/react-ui@0.0.0-feat-cpk-1-5-20251021144842':
+    resolution: {integrity: sha512-f0JmgnygReKPzVBzXPjqRhjdlaiuveNY3T+3vjyL2pAF9eH/YFWQ2OkMlIzC11URp3+9GtDvc9llRpRdwBiMCg==}
     peerDependencies:
       '@copilotkitnext/core': 0.0.16
       react: ^18 || ^19 || ^19.0.0-rc
 
-  '@copilotkit/runtime-client-gql@0.0.0-feat-cpk-1-5-20251021095034':
-    resolution: {integrity: sha512-mwK1FGBjxJcm5A2lMqK+STkb7ea2wyAsFxTAI9NNTTKIIgpT4Ca8RVHPSjxMan7JXwCP1PE/UJbJojAkP1iilA==}
+  '@copilotkit/runtime-client-gql@0.0.0-feat-cpk-1-5-20251021144842':
+    resolution: {integrity: sha512-JJeHIB+Lu+6V2+pAB/d6j+bdxsX/vF1a0IuWRlfF3+Fqx9gyZ9mG2HbPrIoqsyLi+uQKHBkfnSIEuvhwXczivg==}
     peerDependencies:
       react: ^18 || ^19 || ^19.0.0-rc
 
-  '@copilotkit/runtime@0.0.0-feat-cpk-1-5-20251021095034':
-    resolution: {integrity: sha512-dYwaG0OBlOyaJY1mHoKW7GkdyDasoekGfsWMyl8uDoQ7PNNfo1KS2sllS9AQbC1DV+TZROB8e56uGE+ShmiVvA==}
+  '@copilotkit/runtime@0.0.0-feat-cpk-1-5-20251021144842':
+    resolution: {integrity: sha512-pYJb8JeUABxzbCHFwTx/7Un0iZ3bXDx1R2N43D9gvCy9xpoRy1zTaHVxTBBxnAc8/Ur8UIwVSKoi8JVtkMhwYg==}
     peerDependencies:
       '@ag-ui/client': '>=0.0.39'
       '@ag-ui/core': '>=0.0.39'
@@ -1575,8 +1575,8 @@ packages:
       '@ag-ui/langgraph': '>=0.0.18'
       '@ag-ui/proto': '>=0.0.39'
 
-  '@copilotkit/shared@0.0.0-feat-cpk-1-5-20251021095034':
-    resolution: {integrity: sha512-dL3c5KL2T2o/tnsNuEyGTrcf3T86nOHCEHnP6fKPm0VnzJ6MJnvAeFISvswPvA3bpeFdY9ry+M3nu8+h/YSbyA==}
+  '@copilotkit/shared@0.0.0-feat-cpk-1-5-20251021144842':
+    resolution: {integrity: sha512-yhJBCN6ksVfXk5V8wf5vzOI8z6t3/+g1HEOtNZqC4nKOEOCs+mBf6bO6e+XxpLBuTR3fHpe5k6WWeI2DQIwcRw==}
 
   '@copilotkit/shared@1.10.6':
     resolution: {integrity: sha512-56Rltf4fDBqCpl1ZXARypt5NdE4LTg3tGPPLurZpgPmm31Lv5EAHpfjC7I55vt9A0mXWlTCHtCrpiaAlTyzGJw==}
@@ -11461,10 +11461,10 @@ snapshots:
       picocolors: 1.1.1
       sisteransi: 1.0.5
 
-  '@copilotkit/react-core@0.0.0-feat-cpk-1-5-20251021095034(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)':
+  '@copilotkit/react-core@0.0.0-feat-cpk-1-5-20251021144842(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)':
     dependencies:
-      '@copilotkit/runtime-client-gql': 0.0.0-feat-cpk-1-5-20251021095034(graphql@16.11.0)(react@19.2.0)
-      '@copilotkit/shared': 0.0.0-feat-cpk-1-5-20251021095034
+      '@copilotkit/runtime-client-gql': 0.0.0-feat-cpk-1-5-20251021144842(graphql@16.11.0)(react@19.2.0)
+      '@copilotkit/shared': 0.0.0-feat-cpk-1-5-20251021144842
       '@copilotkitnext/core': 0.0.16
       '@copilotkitnext/react': 0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       '@scarf/scarf': 1.4.0
@@ -11479,11 +11479,11 @@ snapshots:
       - graphql
       - supports-color
 
-  '@copilotkit/react-ui@0.0.0-feat-cpk-1-5-20251021095034(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)':
+  '@copilotkit/react-ui@0.0.0-feat-cpk-1-5-20251021144842(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)':
     dependencies:
-      '@copilotkit/react-core': 0.0.0-feat-cpk-1-5-20251021095034(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)
-      '@copilotkit/runtime-client-gql': 0.0.0-feat-cpk-1-5-20251021095034(graphql@16.11.0)(react@19.2.0)
-      '@copilotkit/shared': 0.0.0-feat-cpk-1-5-20251021095034
+      '@copilotkit/react-core': 0.0.0-feat-cpk-1-5-20251021144842(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)
+      '@copilotkit/runtime-client-gql': 0.0.0-feat-cpk-1-5-20251021144842(graphql@16.11.0)(react@19.2.0)
+      '@copilotkit/shared': 0.0.0-feat-cpk-1-5-20251021144842
       '@copilotkitnext/core': 0.0.16
       '@headlessui/react': 2.2.9(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       react: 19.2.0
@@ -11501,9 +11501,9 @@ snapshots:
       - supports-color
       - zod
 
-  '@copilotkit/runtime-client-gql@0.0.0-feat-cpk-1-5-20251021095034(graphql@16.11.0)(react@19.2.0)':
+  '@copilotkit/runtime-client-gql@0.0.0-feat-cpk-1-5-20251021144842(graphql@16.11.0)(react@19.2.0)':
     dependencies:
-      '@copilotkit/shared': 0.0.0-feat-cpk-1-5-20251021095034
+      '@copilotkit/shared': 0.0.0-feat-cpk-1-5-20251021144842
       '@urql/core': 5.2.0(graphql@16.11.0)
       react: 19.2.0
       untruncate-json: 0.0.1
@@ -11512,7 +11512,7 @@ snapshots:
       - encoding
       - graphql
 
-  '@copilotkit/runtime@0.0.0-feat-cpk-1-5-20251021095034(64e53d6a38a9d6a8b11809b6b9b1396b)':
+  '@copilotkit/runtime@0.0.0-feat-cpk-1-5-20251021144842(64e53d6a38a9d6a8b11809b6b9b1396b)':
     dependencies:
       '@ag-ui/client': 0.0.40
       '@ag-ui/core': 0.0.40-alpha.6
@@ -11520,7 +11520,7 @@ snapshots:
       '@ag-ui/langgraph': link:integrations/langgraph/typescript
       '@ag-ui/proto': 0.0.40-alpha.6
       '@anthropic-ai/sdk': 0.57.0
-      '@copilotkit/shared': 0.0.0-feat-cpk-1-5-20251021095034
+      '@copilotkit/shared': 0.0.0-feat-cpk-1-5-20251021144842
       '@copilotkitnext/agent': 0.0.17
       '@copilotkitnext/runtime': 0.0.17(openai@4.104.0(ws@8.18.3)(zod@3.25.76))
       '@graphql-yoga/plugin-defer-stream': 3.16.0(graphql-yoga@5.16.0(graphql@16.11.0))(graphql@16.11.0)
@@ -11878,7 +11878,7 @@ snapshots:
       - ws
       - youtubei.js
 
-  '@copilotkit/shared@0.0.0-feat-cpk-1-5-20251021095034':
+  '@copilotkit/shared@0.0.0-feat-cpk-1-5-20251021144842':
     dependencies:
       '@ag-ui/core': 0.0.37
       '@segment/analytics-node': 2.3.0
