@@ -8,3 +8,6 @@ docs/sdk/kotlin @contextablemark
 
 sdks/community/go @mattsp1290
 docs/sdk/go @mattsp1290
+
+sdks/community/dart @mattsp1290
+docs/sdk/dart @mattsp1290
