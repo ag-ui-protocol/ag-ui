@@ -34,6 +34,8 @@ class EventType(str, Enum):
     STATE_SNAPSHOT = "STATE_SNAPSHOT"
     STATE_DELTA = "STATE_DELTA"
     MESSAGES_SNAPSHOT = "MESSAGES_SNAPSHOT"
+    ACTIVITY_SNAPSHOT = "ACTIVITY_SNAPSHOT"
+    ACTIVITY_DELTA = "ACTIVITY_DELTA"
     RAW = "RAW"
     CUSTOM = "CUSTOM"
     RUN_STARTED = "RUN_STARTED"
@@ -188,6 +190,24 @@ class MessagesSnapshotEvent(BaseEvent):
     messages: List[Message]
 
 
+class ActivitySnapshotEvent(BaseEvent):
+    """Event containing a snapshot of an activity message."""
+
+    type: Literal[EventType.ACTIVITY_SNAPSHOT] = EventType.ACTIVITY_SNAPSHOT  # pyright: ignore[reportIncompatibleVariableOverride]
+    message_id: str
+    activity_type: str
+    content: Any
+
+
+class ActivityDeltaEvent(BaseEvent):
+    """Event containing a JSON Patch delta for an activity message."""
+
+    type: Literal[EventType.ACTIVITY_DELTA] = EventType.ACTIVITY_DELTA  # pyright: ignore[reportIncompatibleVariableOverride]
+    message_id: str
+    activity_type: str
+    patch: List[Any]
+
+
 class RawEvent(BaseEvent):
     """
     Event containing a raw event.
@@ -266,6 +286,8 @@ Event = Annotated[
         StateSnapshotEvent,
         StateDeltaEvent,
         MessagesSnapshotEvent,
+        ActivitySnapshotEvent,
+        ActivityDeltaEvent,
         RawEvent,
         CustomEvent,
         RunStartedEvent,

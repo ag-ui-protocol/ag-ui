@@ -25,6 +25,9 @@ import {
   RunErrorEvent,
   StepStartedEvent,
   StepFinishedEvent,
+  ActivitySnapshotEvent,
+  ActivityDeltaEvent,
+  ActivityMessage,
 } from "@ag-ui/core";
 import { mergeMap, mergeAll, defaultIfEmpty, concatMap } from "rxjs/operators";
 import { of, EMPTY } from "rxjs";
@@ -512,6 +515,138 @@ export const defaultApplyEvents = (
             messages = newMessages;
 
             applyMutation({ messages });
+          }
+
+          return emitUpdates();
+        }
+
+        case EventType.ACTIVITY_SNAPSHOT: {
+          const activityEvent = event as ActivitySnapshotEvent;
+          const existingIndex = messages.findIndex((m) => m.id === activityEvent.messageId);
+          const existingMessage = existingIndex >= 0 ? messages[existingIndex] : undefined;
+          const existingActivityMessage =
+            existingMessage?.role === "activity" ? (existingMessage as ActivityMessage) : undefined;
+
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onActivitySnapshotEvent?.({
+                event: activityEvent,
+                messages,
+                state,
+                agent,
+                input,
+                activityMessage: existingActivityMessage,
+                existingMessage,
+              }),
+          );
+          applyMutation(mutation);
+
+          if (mutation.stopPropagation !== true) {
+            const activityMessage: ActivityMessage = {
+              id: activityEvent.messageId,
+              role: "activity",
+              activityType: activityEvent.activityType,
+              content: structuredClone_(activityEvent.content),
+            };
+
+            let createdMessage: ActivityMessage | undefined;
+
+            if (existingIndex === -1) {
+              messages.push(activityMessage);
+              createdMessage = activityMessage;
+            } else if (existingActivityMessage) {
+              messages[existingIndex] = {
+                ...existingActivityMessage,
+                activityType: activityEvent.activityType,
+                content: structuredClone_(activityEvent.content),
+              };
+            } else {
+              messages[existingIndex] = activityMessage;
+              createdMessage = activityMessage;
+            }
+
+            applyMutation({ messages });
+
+            if (createdMessage) {
+              await Promise.all(
+                subscribers.map((subscriber) =>
+                  subscriber.onNewMessage?.({
+                    message: createdMessage,
+                    messages,
+                    state,
+                    agent,
+                    input,
+                  }),
+                ),
+              );
+            }
+          }
+
+          return emitUpdates();
+        }
+
+        case EventType.ACTIVITY_DELTA: {
+          const activityEvent = event as ActivityDeltaEvent;
+          const existingIndex = messages.findIndex((m) => m.id === activityEvent.messageId);
+          if (existingIndex === -1) {
+            console.warn(
+              `ACTIVITY_DELTA: No message found with ID '${activityEvent.messageId}' to apply patch`,
+            );
+            return emitUpdates();
+          }
+
+          const existingMessage = messages[existingIndex];
+          if (existingMessage.role !== "activity") {
+            console.warn(
+              `ACTIVITY_DELTA: Message '${activityEvent.messageId}' is not an activity message`,
+            );
+            return emitUpdates();
+          }
+
+          const existingActivityMessage = existingMessage as ActivityMessage;
+
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onActivityDeltaEvent?.({
+                event: activityEvent,
+                messages,
+                state,
+                agent,
+                input,
+                activityMessage: existingActivityMessage,
+              }),
+          );
+          applyMutation(mutation);
+
+          if (mutation.stopPropagation !== true) {
+            try {
+              const baseMessage = structuredClone_(existingActivityMessage);
+              baseMessage.activityType = activityEvent.activityType;
+              baseMessage.content ??= {};
+
+              const result = applyPatch(baseMessage, activityEvent.patch, true, false);
+              const updated = result.newDocument as ActivityMessage;
+
+              messages[existingIndex] = {
+                ...updated,
+                id: existingActivityMessage.id,
+                role: "activity",
+                activityType: activityEvent.activityType,
+              };
+
+              applyMutation({ messages });
+            } catch (error: unknown) {
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              console.warn(
+                `Failed to apply activity patch for '${activityEvent.messageId}': ${errorMessage}`,
+              );
+            }
           }
 
           return emitUpdates();

@@ -101,6 +101,8 @@ export const transformChunks =
           case EventType.THINKING_TEXT_MESSAGE_END:
             return [...closePendingEvent(), event];
           case EventType.RAW:
+          case EventType.ACTIVITY_SNAPSHOT:
+          case EventType.ACTIVITY_DELTA:
             return [event];
           case EventType.TEXT_MESSAGE_CHUNK:
             const messageChunkEvent = event as TextMessageChunkEvent;
@@ -220,10 +222,11 @@ export const transformChunks =
             return toolMessageResult;
         }
         const _exhaustiveCheck: never = event.type;
+        return [];
       }),
       finalize(() => {
         // This ensures that we close any pending events when the source observable completes
-        return closePendingEvent();
+        closePendingEvent();
       }),
     );
   };

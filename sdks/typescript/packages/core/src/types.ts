@@ -89,12 +89,20 @@ export const ToolMessageSchema = z.object({
   error: z.string().optional(),
 });
 
+export const ActivityMessageSchema = z.object({
+  id: z.string(),
+  role: z.literal("activity"),
+  activityType: z.string(),
+  content: z.record(z.any()),
+});
+
 export const MessageSchema = z.discriminatedUnion("role", [
   DeveloperMessageSchema,
   SystemMessageSchema,
   AssistantMessageSchema,
   UserMessageSchema,
   ToolMessageSchema,
+  ActivityMessageSchema,
 ]);
 
 export const RoleSchema = z.union([
@@ -103,6 +111,7 @@ export const RoleSchema = z.union([
   z.literal("assistant"),
   z.literal("user"),
   z.literal("tool"),
+  z.literal("activity"),
 ]);
 
 export const ContextSchema = z.object({
@@ -139,6 +148,7 @@ export type SystemMessage = z.infer<typeof SystemMessageSchema>;
 export type AssistantMessage = z.infer<typeof AssistantMessageSchema>;
 export type UserMessage = z.infer<typeof UserMessageSchema>;
 export type ToolMessage = z.infer<typeof ToolMessageSchema>;
+export type ActivityMessage = z.infer<typeof ActivityMessageSchema>;
 export type Message = z.infer<typeof MessageSchema>;
 export type Context = z.infer<typeof ContextSchema>;
 export type Tool = z.infer<typeof ToolSchema>;

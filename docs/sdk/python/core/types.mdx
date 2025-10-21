@@ -53,7 +53,7 @@ messages in the system.
 Represents the possible roles a message sender can have.
 
 ```python
-Role = Literal["developer", "system", "assistant", "user", "tool"]
+Role = Literal["developer", "system", "assistant", "user", "tool", "activity"]
 ```
 
 ### DeveloperMessage
@@ -197,6 +197,27 @@ class ToolMessage(ConfiguredBaseModel):
 | `tool_call_id` | `str`             | ID of the tool call this message responds to |
 | `error`        | `Optional[str]`   | Error message if the tool call failed        |
 
+### ActivityMessage
+
+`from ag_ui.core import ActivityMessage`
+
+Represents structured activity progress emitted between chat messages.
+
+```python
+class ActivityMessage(ConfiguredBaseModel):
+    id: str
+    role: Literal["activity"]
+    activity_type: str
+    content: Dict[str, Any]
+```
+
+| Property        | Type                    | Description                                             |
+| --------------- | ----------------------- | ------------------------------------------------------- |
+| `id`            | `str`                   | Unique identifier for the activity message              |
+| `role`          | `Literal["activity"]`   | Fixed discriminator identifying the message as activity |
+| `activity_type` | `str`                   | Activity discriminator used for renderer selection      |
+| `content`       | `Dict[str, Any]`        | Structured payload representing the activity state      |
+
 ### Message
 
 `from ag_ui.core import Message`
@@ -205,7 +226,14 @@ A union type representing any type of message in the system.
 
 ```python
 Message = Annotated[
-    Union[DeveloperMessage, SystemMessage, AssistantMessage, UserMessage, ToolMessage],
+    Union[
+        DeveloperMessage,
+        SystemMessage,
+        AssistantMessage,
+        UserMessage,
+        ToolMessage,
+        ActivityMessage,
+    ],
     Field(discriminator="role")
 ]
 ```

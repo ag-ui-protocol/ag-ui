@@ -27,6 +27,8 @@ export enum EventType {
   STATE_SNAPSHOT = "STATE_SNAPSHOT",
   STATE_DELTA = "STATE_DELTA",
   MESSAGES_SNAPSHOT = "MESSAGES_SNAPSHOT",
+  ACTIVITY_SNAPSHOT = "ACTIVITY_SNAPSHOT",
+  ACTIVITY_DELTA = "ACTIVITY_DELTA",
   RAW = "RAW",
   CUSTOM = "CUSTOM",
   RUN_STARTED = "RUN_STARTED",
@@ -139,6 +141,20 @@ export const MessagesSnapshotEventSchema = BaseEventSchema.extend({
   messages: z.array(MessageSchema),
 });
 
+export const ActivitySnapshotEventSchema = BaseEventSchema.extend({
+  type: z.literal(EventType.ACTIVITY_SNAPSHOT),
+  messageId: z.string(),
+  activityType: z.string(),
+  content: z.record(z.any()),
+});
+
+export const ActivityDeltaEventSchema = BaseEventSchema.extend({
+  type: z.literal(EventType.ACTIVITY_DELTA),
+  messageId: z.string(),
+  activityType: z.string(),
+  patch: z.array(z.any()),
+});
+
 export const RawEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.RAW),
   event: z.any(),
@@ -200,6 +216,8 @@ export const EventSchemas = z.discriminatedUnion("type", [
   StateSnapshotEventSchema,
   StateDeltaEventSchema,
   MessagesSnapshotEventSchema,
+  ActivitySnapshotEventSchema,
+  ActivityDeltaEventSchema,
   RawEventSchema,
   CustomEventSchema,
   RunStartedEventSchema,
@@ -227,6 +245,8 @@ export type ThinkingEndEvent = z.infer<typeof ThinkingEndEventSchema>;
 export type StateSnapshotEvent = z.infer<typeof StateSnapshotEventSchema>;
 export type StateDeltaEvent = z.infer<typeof StateDeltaEventSchema>;
 export type MessagesSnapshotEvent = z.infer<typeof MessagesSnapshotEventSchema>;
+export type ActivitySnapshotEvent = z.infer<typeof ActivitySnapshotEventSchema>;
+export type ActivityDeltaEvent = z.infer<typeof ActivityDeltaEventSchema>;
 export type RawEvent = z.infer<typeof RawEventSchema>;
 export type CustomEvent = z.infer<typeof CustomEventSchema>;
 export type RunStartedEvent = z.infer<typeof RunStartedEventSchema>;

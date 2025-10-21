@@ -28,6 +28,10 @@ interface BaseMessage {
 }
 ```
 
+The `role` discriminator can be `"user"`, `"assistant"`, `"system"`,
+`"tool"`, `"developer"`, or `"activity"`. Concrete message types extend this
+shape with the fields they need.
+
 ## Message Types
 
 AG-UI supports several message types to accommodate different participants in a
@@ -105,6 +109,24 @@ interface ToolMessage {
   toolCallId: string // ID of the tool call this message responds to
 }
 ```
+
+### Activity Messages
+
+Structured progress updates that appear between chat messages:
+
+```typescript
+interface ActivityMessage {
+  id: string
+  role: "activity"
+  activityType: string // e.g. "PLAN", "SEARCH", "SCRAPE"
+  content: Record<string, any> // Structured payload rendered by the frontend
+}
+```
+
+Activity messages are populated by `ACTIVITY_SNAPSHOT` and `ACTIVITY_DELTA`
+events. The structured `content` object gives frontends everything they need to
+render bespoke status views, such as checklists, workflow progress, or search
+results in flight.
 
 ### Developer Messages
 
