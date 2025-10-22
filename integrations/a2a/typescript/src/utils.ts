@@ -219,28 +219,71 @@ const isA2AStatusUpdate = (
   event: A2AStreamEvent,
 ): event is import("@a2a-js/sdk").TaskStatusUpdateEvent => event.kind === "status-update";
 
-function convertMessageToEvents(message: A2AMessage, options: ConvertA2AEventOptions): BaseEvent[] {
+function resolveMappedMessageId(
+  originalId: string,
+  options: ConvertA2AEventOptions,
+  aliasKey?: string,
+): string {
+  if (aliasKey) {
+    const existingAliasId = options.messageIdMap.get(aliasKey);
+    if (existingAliasId) {
+      options.messageIdMap.set(originalId, existingAliasId);
+      return existingAliasId;
+    }
+  }
+
+  const existingId = options.messageIdMap.get(originalId);
+  if (existingId) {
+    if (aliasKey) {
+      options.messageIdMap.set(aliasKey, existingId);
+    }
+    return existingId;
+  }
+
+  const newId = randomUUID();
+  options.messageIdMap.set(originalId, newId);
+  if (aliasKey) {
+    options.messageIdMap.set(aliasKey, newId);
+  }
+  return newId;
+}
+
+function convertMessageToEvents(
+  message: A2AMessage,
+  options: ConvertA2AEventOptions,
+  aliasKey?: string,
+): BaseEvent[] {
   const role = options.role ?? "assistant";
   const events: BaseEvent[] = [];
 
   const originalId = message.messageId ?? randomUUID();
-  const mappedId = options.messageIdMap.get(originalId) ?? randomUUID();
-  options.messageIdMap.set(originalId, mappedId);
+  const mappedId = resolveMappedMessageId(originalId, options, aliasKey);
 
   const openToolCalls = new Set<string>();
 
   for (const part of message.parts ?? []) {
     if (part.kind === "text") {
       const textPart = part as A2ATextPart;
-      if (textPart.text) {
-        const chunkEvent: TextMessageChunkEvent = {
-          type: EventType.TEXT_MESSAGE_CHUNK,
-          messageId: mappedId,
-          role,
-          delta: textPart.text,
-        };
-        options.onTextDelta?.({ messageId: mappedId, delta: textPart.text });
-        events.push(chunkEvent);
+      const partText = textPart.text ?? "";
+      if (partText) {
+        const previousText = options.getCurrentText?.(mappedId) ?? "";
+
+        if (partText !== previousText) {
+          const deltaText = partText.startsWith(previousText)
+            ? partText.slice(previousText.length)
+            : partText;
+
+          if (deltaText.length > 0) {
+            const chunkEvent: TextMessageChunkEvent = {
+              type: EventType.TEXT_MESSAGE_CHUNK,
+              messageId: mappedId,
+              role,
+              delta: deltaText,
+            };
+            options.onTextDelta?.({ messageId: mappedId, delta: deltaText });
+            events.push(chunkEvent);
+          }
+        }
       }
       continue;
     }
@@ -331,8 +374,11 @@ export function convertA2AEventToAGUIEvents(
 
   if (isA2AStatusUpdate(event)) {
     const statusMessage = event.status?.message;
+    const statusState = event.status?.state;
+    const aliasKey = statusState && statusState !== "input-required" ? `${event.taskId}:status` : undefined;
+
     if (statusMessage && statusMessage.kind === "message") {
-      return convertMessageToEvents(statusMessage as A2AMessage, options);
+      return convertMessageToEvents(statusMessage as A2AMessage, options, aliasKey);
     }
     return events;
   }

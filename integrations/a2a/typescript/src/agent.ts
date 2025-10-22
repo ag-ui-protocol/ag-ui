@@ -177,6 +177,7 @@ export class A2AAgent extends AbstractAgent {
             (aggregatedText.get(messageId) ?? "") + delta,
           );
         },
+        getCurrentText: (messageId) => aggregatedText.get(messageId),
         source: this.agentUrl ?? "a2a",
       });
       for (const event of events) {
@@ -242,6 +243,7 @@ export class A2AAgent extends AbstractAgent {
           (aggregatedText.get(messageId) ?? "") + delta,
         );
       },
+      getCurrentText: (messageId) => aggregatedText.get(messageId),
       source: this.agentUrl ?? "a2a",
     });
 

@@ -45,6 +45,7 @@ export interface ConvertA2AEventOptions {
   messageIdMap: Map<string, string>;
   onTextDelta?: (payload: { messageId: string; delta: string }) => void;
   source?: string;
+  getCurrentText?: (messageId: string) => string | undefined;
 }
 
 export interface A2AAgentRunResultSummary {
