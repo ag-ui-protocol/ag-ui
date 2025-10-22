@@ -125,6 +125,11 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
       "tool_based_generative_ui",
     ],
   },
+  {
+    id: "a2a-basic",
+    name: "A2A (Direct)",
+    features: ["agentic_chat"],
+  },
   // Disabled until we can support Vercel AI SDK v5
   // {
   //   id: "vercel-ai-sdk",

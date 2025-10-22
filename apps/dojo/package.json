@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@ag-ui/a2a-middleware": "workspace:*",
+    "@ag-ui/a2a": "workspace:*",
     "@ag-ui/adk": "workspace:*",
     "@ag-ui/agno": "workspace:*",
     "@ag-ui/crewai": "workspace:*",

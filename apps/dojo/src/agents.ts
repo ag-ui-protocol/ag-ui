@@ -19,6 +19,7 @@ import { ADKAgent } from "@ag-ui/adk";
 import { SpringAiAgent } from '@ag-ui/spring-ai';
 import { HttpAgent } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
+import { A2AAgent } from "@ag-ui/a2a";
 
 const envVars = getEnvVars();
 export const agentsIntegrations: AgentIntegrationConfig[] = [
@@ -337,6 +338,17 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         }),
         predictive_state_updates: new CrewAIAgent({
           url: `${envVars.crewAiUrl}/predictive_state_updates`,
+        }),
+      };
+    },
+  },
+  {
+    id: "a2a-basic",
+    agents: async () => {
+      return {
+        agentic_chat: new A2AAgent({
+          description: "Direct A2A agent",
+          agentUrl: envVars.a2aUrl,
         }),
       };
     },
