@@ -215,107 +215,125 @@ const isA2AMessage = (event: A2AStreamEvent): event is A2AMessage => event.kind 
 
 const isA2ATask = (event: A2AStreamEvent): event is import("@a2a-js/sdk").Task => event.kind === "task";
 
+const isA2AStatusUpdate = (
+  event: A2AStreamEvent,
+): event is import("@a2a-js/sdk").TaskStatusUpdateEvent => event.kind === "status-update";
+
+function convertMessageToEvents(message: A2AMessage, options: ConvertA2AEventOptions): BaseEvent[] {
+  const role = options.role ?? "assistant";
+  const events: BaseEvent[] = [];
+
+  const originalId = message.messageId ?? randomUUID();
+  const mappedId = options.messageIdMap.get(originalId) ?? randomUUID();
+  options.messageIdMap.set(originalId, mappedId);
+
+  const openToolCalls = new Set<string>();
+
+  for (const part of message.parts ?? []) {
+    if (part.kind === "text") {
+      const textPart = part as A2ATextPart;
+      if (textPart.text) {
+        const chunkEvent: TextMessageChunkEvent = {
+          type: EventType.TEXT_MESSAGE_CHUNK,
+          messageId: mappedId,
+          role,
+          delta: textPart.text,
+        };
+        options.onTextDelta?.({ messageId: mappedId, delta: textPart.text });
+        events.push(chunkEvent);
+      }
+      continue;
+    }
+
+    if (part.kind === "data") {
+      const dataPart = part as A2ADataPart;
+      const payload = dataPart.data;
+
+      if (payload && typeof payload === "object" && (payload as any).type === TOOL_CALL_PART_TYPE) {
+        const toolCallId = (payload as any).id ?? randomUUID();
+        const toolCallName = (payload as any).name ?? "unknown_tool";
+        const args = (payload as any).arguments;
+
+        const startEvent: ToolCallStartEvent = {
+          type: EventType.TOOL_CALL_START,
+          toolCallId,
+          toolCallName,
+          parentMessageId: mappedId,
+        };
+        events.push(startEvent);
+
+        if (args !== undefined) {
+          const argsEvent: ToolCallArgsEvent = {
+            type: EventType.TOOL_CALL_ARGS,
+            toolCallId,
+            delta: JSON.stringify(args),
+          };
+          events.push(argsEvent);
+        }
+
+        openToolCalls.add(toolCallId);
+        continue;
+      }
+
+      if (
+        payload &&
+        typeof payload === "object" &&
+        (payload as any).type === TOOL_RESULT_PART_TYPE &&
+        (payload as any).toolCallId
+      ) {
+        const toolCallId = (payload as any).toolCallId;
+        const toolResultEvent: ToolCallResultEvent = {
+          type: EventType.TOOL_CALL_RESULT,
+          toolCallId,
+          content: JSON.stringify((payload as any).payload ?? payload),
+          messageId: randomUUID(),
+          role: "tool",
+        };
+        events.push(toolResultEvent);
+
+        if (openToolCalls.has(toolCallId)) {
+          const endEvent: ToolCallEndEvent = {
+            type: EventType.TOOL_CALL_END,
+            toolCallId,
+          };
+          events.push(endEvent);
+          openToolCalls.delete(toolCallId);
+        }
+      }
+
+      continue;
+    }
+
+    // Ignore other part kinds for now.
+  }
+
+  for (const toolCallId of openToolCalls) {
+    const endEvent: ToolCallEndEvent = {
+      type: EventType.TOOL_CALL_END,
+      toolCallId,
+    };
+    events.push(endEvent);
+  }
+
+  return events;
+}
+
 export function convertA2AEventToAGUIEvents(
   event: A2AStreamEvent,
   options: ConvertA2AEventOptions,
 ): BaseEvent[] {
   const events: BaseEvent[] = [];
-  const role = options.role ?? "assistant";
   const source = options.source ?? "a2a";
 
   if (isA2AMessage(event)) {
-    const originalId = event.messageId ?? randomUUID();
-    const mappedId = options.messageIdMap.get(originalId) ?? randomUUID();
-    options.messageIdMap.set(originalId, mappedId);
+    return convertMessageToEvents(event, options);
+  }
 
-    const openToolCalls = new Set<string>();
-
-    for (const part of event.parts ?? []) {
-      if (part.kind === "text") {
-        const textPart = part as A2ATextPart;
-        if (textPart.text) {
-          const chunkEvent: TextMessageChunkEvent = {
-            type: EventType.TEXT_MESSAGE_CHUNK,
-            messageId: mappedId,
-            role,
-            delta: textPart.text,
-          };
-          options.onTextDelta?.({ messageId: mappedId, delta: textPart.text });
-          events.push(chunkEvent);
-        }
-        continue;
-      }
-
-      if (part.kind === "data") {
-        const dataPart = part as A2ADataPart;
-        const payload = dataPart.data;
-
-        if (payload && typeof payload === "object" && (payload as any).type === TOOL_CALL_PART_TYPE) {
-          const toolCallId = (payload as any).id ?? randomUUID();
-          const toolCallName = (payload as any).name ?? "unknown_tool";
-          const args = (payload as any).arguments;
-
-          const startEvent: ToolCallStartEvent = {
-            type: EventType.TOOL_CALL_START,
-            toolCallId,
-            toolCallName,
-            parentMessageId: mappedId,
-          };
-          events.push(startEvent);
-
-          if (args !== undefined) {
-            const argsEvent: ToolCallArgsEvent = {
-              type: EventType.TOOL_CALL_ARGS,
-              toolCallId,
-              delta: JSON.stringify(args),
-            };
-            events.push(argsEvent);
-          }
-
-          openToolCalls.add(toolCallId);
-          continue;
-        }
-
-        if (
-          payload &&
-          typeof payload === "object" &&
-          (payload as any).type === TOOL_RESULT_PART_TYPE &&
-          (payload as any).toolCallId
-        ) {
-          const toolCallId = (payload as any).toolCallId;
-          const toolResultEvent: ToolCallResultEvent = {
-            type: EventType.TOOL_CALL_RESULT,
-            toolCallId,
-            content: JSON.stringify((payload as any).payload ?? payload),
-            messageId: randomUUID(),
-            role: "tool",
-          };
-          events.push(toolResultEvent);
-
-          if (openToolCalls.has(toolCallId)) {
-            const endEvent: ToolCallEndEvent = {
-              type: EventType.TOOL_CALL_END,
-              toolCallId,
-            };
-            events.push(endEvent);
-            openToolCalls.delete(toolCallId);
-          }
-        }
-
-        continue;
-      }
-
-      // Ignore other part kinds for now.
+  if (isA2AStatusUpdate(event)) {
+    const statusMessage = event.status?.message;
+    if (statusMessage && statusMessage.kind === "message") {
+      return convertMessageToEvents(statusMessage as A2AMessage, options);
     }
-
-    for (const toolCallId of openToolCalls) {
-      const endEvent: ToolCallEndEvent = {
-        type: EventType.TOOL_CALL_END,
-        toolCallId,
-      };
-      events.push(endEvent);
-    }
-
     return events;
   }
 

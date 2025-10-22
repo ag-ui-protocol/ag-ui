@@ -106,8 +106,6 @@ export class A2AAgent extends AbstractAgent {
             );
           }
 
-          console.log("Summary:", summary);
-
           const runFinished: RunFinishedEvent = {
             type: EventType.RUN_FINISHED,
             threadId: input.threadId,
