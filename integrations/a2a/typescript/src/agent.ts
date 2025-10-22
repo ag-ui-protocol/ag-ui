@@ -10,9 +10,17 @@ import {
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
 import { A2AClient } from "@a2a-js/sdk/client";
-import type { MessageSendConfiguration, MessageSendParams, Message as A2AMessage } from "@a2a-js/sdk";
+import type {
+  MessageSendConfiguration,
+  MessageSendParams,
+  Message as A2AMessage,
+} from "@a2a-js/sdk";
 import { convertAGUIMessagesToA2A, convertA2AEventToAGUIEvents } from "./utils";
-import type { A2AAgentRunResultSummary, ConvertedA2AMessages, A2AStreamEvent } from "./types";
+import type {
+  A2AAgentRunResultSummary,
+  ConvertedA2AMessages,
+  A2AStreamEvent,
+} from "./types";
 import { randomUUID } from "@ag-ui/client";
 
 export interface A2AAgentConfig extends AgentConfig {
@@ -22,20 +30,22 @@ export interface A2AAgentConfig extends AgentConfig {
 
 export class A2AAgent extends AbstractAgent {
   private readonly agentUrl?: string;
-  private readonly client: A2AClient;
+  private readonly a2aClient: A2AClient;
   private readonly messageIdMap = new Map<string, string>();
 
   constructor(config: A2AAgentConfig) {
     const { agentUrl, client, ...rest } = config;
 
     if (!agentUrl && !client) {
-      throw new Error("A2AAgent requires either an agentUrl or a preconfigured A2AClient.");
+      throw new Error(
+        "A2AAgent requires either an agentUrl or a preconfigured A2AClient.",
+      );
     }
 
     super(rest);
 
     this.agentUrl = agentUrl;
-    this.client = client ?? new A2AClient(agentUrl!);
+    this.a2aClient = client ?? new A2AClient(agentUrl!);
   }
 
   protected run(input: RunAgentInput): Observable<BaseEvent> {
@@ -89,8 +99,14 @@ export class A2AAgent extends AbstractAgent {
           try {
             summary = await this.streamMessage(sendParams, subscriber);
           } catch (error) {
-            summary = await this.fallbackToBlocking(sendParams, subscriber, error as Error);
+            summary = await this.fallbackToBlocking(
+              sendParams,
+              subscriber,
+              error as Error,
+            );
           }
+
+          console.log("Summary:", summary);
 
           const runFinished: RunFinishedEvent = {
             type: EventType.RUN_FINISHED,
@@ -138,18 +154,9 @@ export class A2AAgent extends AbstractAgent {
       acceptedOutputModes: ["text"],
     } as MessageSendConfiguration;
 
-    const metadata = {
-      agui: {
-        threadId: input.threadId,
-        runId: input.runId,
-        history: converted.history,
-      },
-    } as Record<string, unknown>;
-
     return {
       message,
       configuration,
-      metadata,
     } as MessageSendParams;
   }
 
@@ -160,14 +167,17 @@ export class A2AAgent extends AbstractAgent {
     const aggregatedText = new Map<string, string>();
     const rawEvents: A2AStreamEvent[] = [];
 
-    const stream = this.client.sendMessageStream(params);
+    const stream = this.a2aClient.sendMessageStream(params);
     for await (const chunk of stream) {
       rawEvents.push(chunk as A2AStreamEvent);
       const events = convertA2AEventToAGUIEvents(chunk as A2AStreamEvent, {
         role: "assistant",
         messageIdMap: this.messageIdMap,
         onTextDelta: ({ messageId, delta }) => {
-          aggregatedText.set(messageId, (aggregatedText.get(messageId) ?? "") + delta);
+          aggregatedText.set(
+            messageId,
+            (aggregatedText.get(messageId) ?? "") + delta,
+          );
         },
         source: this.agentUrl ?? "a2a",
       });
@@ -177,7 +187,9 @@ export class A2AAgent extends AbstractAgent {
     }
 
     return {
-      messages: Array.from(aggregatedText.entries()).map(([messageId, text]) => ({ messageId, text })),
+      messages: Array.from(aggregatedText.entries()).map(
+        ([messageId, text]) => ({ messageId, text }),
+      ),
       rawEvents,
     };
   }
@@ -189,7 +201,9 @@ export class A2AAgent extends AbstractAgent {
   ): Promise<A2AAgentRunResultSummary> {
     const configuration: MessageSendConfiguration = {
       ...params.configuration,
-      acceptedOutputModes: params.configuration?.acceptedOutputModes ?? ["text"],
+      acceptedOutputModes: params.configuration?.acceptedOutputModes ?? [
+        "text",
+      ],
       blocking: true,
     };
 
@@ -206,10 +220,12 @@ export class A2AAgent extends AbstractAgent {
     params: MessageSendParams,
     subscriber: { next: (event: BaseEvent) => void },
   ): Promise<A2AAgentRunResultSummary> {
-    const response = await this.client.sendMessage(params);
+    const response = await this.a2aClient.sendMessage(params);
 
-    if (this.client.isErrorResponse(response)) {
-      const errorMessage = response.error?.message ?? "Unknown error from A2A agent";
+    if (this.a2aClient.isErrorResponse(response)) {
+      const errorMessage =
+        response.error?.message ?? "Unknown error from A2A agent";
+      console.error("A2A sendMessage error", response.error);
       throw new Error(errorMessage);
     }
 
@@ -223,7 +239,10 @@ export class A2AAgent extends AbstractAgent {
       role: "assistant",
       messageIdMap: this.messageIdMap,
       onTextDelta: ({ messageId, delta }) => {
-        aggregatedText.set(messageId, (aggregatedText.get(messageId) ?? "") + delta);
+        aggregatedText.set(
+          messageId,
+          (aggregatedText.get(messageId) ?? "") + delta,
+        );
       },
       source: this.agentUrl ?? "a2a",
     });
@@ -233,7 +252,9 @@ export class A2AAgent extends AbstractAgent {
     }
 
     return {
-      messages: Array.from(aggregatedText.entries()).map(([messageId, text]) => ({ messageId, text })),
+      messages: Array.from(aggregatedText.entries()).map(
+        ([messageId, text]) => ({ messageId, text }),
+      ),
       rawEvents,
     };
   }
