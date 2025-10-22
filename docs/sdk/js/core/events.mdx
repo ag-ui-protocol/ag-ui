@@ -336,6 +336,7 @@ type ActivitySnapshotEvent = BaseEvent & {
   messageId: string
   activityType: string
   content: Record<string, any>
+  replace?: boolean
 }
 ```
 
@@ -344,6 +345,7 @@ type ActivitySnapshotEvent = BaseEvent & {
 | `messageId`    | `string`               | Identifier for the target `ActivityMessage`             |
 | `activityType` | `string`               | Activity discriminator such as `"PLAN"` or `"SEARCH"`     |
 | `content`      | `Record<string, any>`  | Structured payload describing the full activity state   |
+| `replace`      | `boolean` (optional)   | Defaults to `true`; when `false` the snapshot is ignored if a message with the same ID already exists |
 
 ### ActivityDeltaEvent
 

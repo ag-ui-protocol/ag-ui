@@ -197,6 +197,7 @@ class ActivitySnapshotEvent(BaseEvent):
     message_id: str
     activity_type: str
     content: Any
+    replace: bool = True
 
 
 class ActivityDeltaEvent(BaseEvent):

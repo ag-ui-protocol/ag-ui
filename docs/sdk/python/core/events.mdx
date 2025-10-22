@@ -360,6 +360,7 @@ class ActivitySnapshotEvent(BaseEvent):
     message_id: str
     activity_type: str
     content: Any
+    replace: bool = True
 ```
 
 | Property        | Type  | Description                                           |
@@ -367,6 +368,7 @@ class ActivitySnapshotEvent(BaseEvent):
 | `message_id`    | `str` | Identifier for the target `ActivityMessage`           |
 | `activity_type` | `str` | Activity discriminator such as `"PLAN"` or `"SEARCH"` |
 | `content`       | `Any` | Structured payload describing the full activity state |
+| `replace`       | `bool` (default `True`) | When `False`, the snapshot is ignored if a message with the same ID already exists |
 
 ### ActivityDeltaEvent
 

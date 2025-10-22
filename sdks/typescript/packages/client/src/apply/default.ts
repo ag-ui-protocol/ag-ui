@@ -526,6 +526,7 @@ export const defaultApplyEvents = (
           const existingMessage = existingIndex >= 0 ? messages[existingIndex] : undefined;
           const existingActivityMessage =
             existingMessage?.role === "activity" ? (existingMessage as ActivityMessage) : undefined;
+          const replace = activityEvent.replace ?? true;
 
           const mutation = await runSubscribersWithMutation(
             subscribers,
@@ -558,12 +559,14 @@ export const defaultApplyEvents = (
               messages.push(activityMessage);
               createdMessage = activityMessage;
             } else if (existingActivityMessage) {
-              messages[existingIndex] = {
-                ...existingActivityMessage,
-                activityType: activityEvent.activityType,
-                content: structuredClone_(activityEvent.content),
-              };
-            } else {
+              if (replace) {
+                messages[existingIndex] = {
+                  ...existingActivityMessage,
+                  activityType: activityEvent.activityType,
+                  content: structuredClone_(activityEvent.content),
+                };
+              }
+            } else if (replace) {
               messages[existingIndex] = activityMessage;
               createdMessage = activityMessage;
             }

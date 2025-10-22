@@ -217,12 +217,24 @@ class TestEvents(unittest.TestCase):
         self.assertEqual(event.message_id, "msg_activity")
         self.assertEqual(event.activity_type, "PLAN")
         self.assertEqual(event.content, content)
+        self.assertTrue(event.replace)
 
         serialized = event.model_dump(by_alias=True)
         self.assertEqual(serialized["type"], "ACTIVITY_SNAPSHOT")
         self.assertEqual(serialized["messageId"], "msg_activity")
         self.assertEqual(serialized["activityType"], "PLAN")
         self.assertEqual(serialized["content"], content)
+        self.assertTrue(serialized["replace"])
+
+        event_replace_false = ActivitySnapshotEvent(
+            message_id="msg_activity",
+            activity_type="PLAN",
+            content=content,
+            replace=False,
+        )
+        self.assertFalse(event_replace_false.replace)
+        serialized_false = event_replace_false.model_dump(by_alias=True)
+        self.assertFalse(serialized_false["replace"])
 
     def test_activity_delta(self):
         """Test creating and serializing an ActivityDeltaEvent"""

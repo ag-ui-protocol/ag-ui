@@ -13,6 +13,19 @@ describe("Activity events", () => {
     expect(result.type).toBe(EventType.ACTIVITY_SNAPSHOT);
     expect(result.messageId).toBe("msg_activity");
     expect(result.content.tasks).toEqual(["search"]);
+    expect(result.replace).toBe(true);
+  });
+
+  it("respects replace flag in ActivitySnapshotEvent", () => {
+    const result = ActivitySnapshotEventSchema.parse({
+      type: EventType.ACTIVITY_SNAPSHOT,
+      messageId: "msg_activity",
+      activityType: "PLAN",
+      content: { tasks: [] },
+      replace: false,
+    });
+
+    expect(result.replace).toBe(false);
   });
 
   it("parses ActivityDeltaEvent", () => {

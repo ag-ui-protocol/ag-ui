@@ -541,9 +541,10 @@ Provides the complete activity state at a point in time.
 
 | Property       | Description                                          |
 | -------------- | ---------------------------------------------------- |
-| `messageId`    | Unique identifier for the ActivityMessage           |
-| `activityType` | Activity type (e.g., "PLAN", "SEARCH", "SCRAPE")    |
-| `content`      | Complete activity state at this point               |
+| `messageId`    | Unique identifier for the ActivityMessage            |
+| `activityType` | Activity type (e.g., "PLAN", "SEARCH", "SCRAPE")     |
+| `content`      | Complete activity state at this point                |
+| `replace`      | `true` (default) replaces an existing activity message; `false` only creates a new one if none exists |
 
 #### ActivityDeltaEvent
 

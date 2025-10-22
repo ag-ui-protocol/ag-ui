@@ -146,6 +146,7 @@ export const ActivitySnapshotEventSchema = BaseEventSchema.extend({
   messageId: z.string(),
   activityType: z.string(),
   content: z.record(z.any()),
+  replace: z.boolean().optional().default(true),
 });
 
 export const ActivityDeltaEventSchema = BaseEventSchema.extend({
