@@ -15,6 +15,7 @@ type envVars = {
   a2aMiddlewareFinanceUrl: string;
   a2aMiddlewareItUrl: string;
   a2aMiddlewareOrchestratorUrl: string;
+  cloudflareUrl: string;
   customDomainTitle: Record<string, string>;
 }
 
@@ -44,6 +45,7 @@ export default function getEnvVars(): envVars {
     a2aMiddlewareFinanceUrl: process.env.A2A_MIDDLEWARE_FINANCE_URL || 'http://localhost:9002',
     a2aMiddlewareItUrl: process.env.A2A_MIDDLEWARE_IT_URL || 'http://localhost:9003',
     a2aMiddlewareOrchestratorUrl: process.env.A2A_MIDDLEWARE_ORCHESTRATOR_URL || 'http://localhost:9000',
+    cloudflareUrl: process.env.CLOUDFLARE_URL || 'http://localhost:4114',
     customDomainTitle: customDomainTitle,
   }
 }

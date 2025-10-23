@@ -1,0 +1,8 @@
+node_modules
+dist
+*.log
+.env
+.DS_Store
+
+# Development guides (context for AI assistants)
+DEVELOPMENT-GUIDE.md

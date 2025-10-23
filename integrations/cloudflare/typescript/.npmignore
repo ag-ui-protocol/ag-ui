@@ -1,0 +1,8 @@
+src/
+examples/
+tsconfig.json
+tsup.config.ts
+jest.config.js
+*.test.ts
+*.spec.ts
+__tests__/

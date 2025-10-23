@@ -141,6 +141,12 @@ const ALL_SERVICES = {
     cwd: path.join(middlewaresRoot, "a2a-middleware/examples"),
     env: { PORT: 8014 },
   }],
+  cloudflare: [{
+    command: 'pnpm start',
+    name: 'Cloudflare',
+    cwd: path.join(integrationsRoot, 'cloudflare/typescript/examples'),
+    env: { PORT: 4114, HOST: '0.0.0.0' }
+  }],
   'dojo': [{
     command: 'pnpm run start',
     name: 'Dojo',
@@ -157,6 +163,7 @@ const ALL_SERVICES = {
       LLAMA_INDEX_URL: 'http://localhost:8007',
       MASTRA_URL: 'http://localhost:8008',
       PYDANTIC_AI_URL: 'http://localhost:8009',
+      CLOUDFLARE_URL: 'http://localhost:4114',
       ADK_MIDDLEWARE_URL: 'http://localhost:8010',
       A2A_MIDDLEWARE_BUILDINGS_MANAGEMENT_URL: 'http://localhost:8011',
       A2A_MIDDLEWARE_FINANCE_URL: 'http://localhost:8012',
