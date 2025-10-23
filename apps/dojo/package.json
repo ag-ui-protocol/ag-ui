@@ -12,8 +12,9 @@
     "run-everything": "./scripts/prep-dojo-everything.js && ./scripts/run-dojo-everything.js"
   },
   "dependencies": {
-    "@ag-ui/a2a-middleware": "workspace:*",
+    "@a2a-js/sdk": "0.2.5",
     "@ag-ui/a2a": "workspace:*",
+    "@ag-ui/a2a-middleware": "workspace:*",
     "@ag-ui/adk": "workspace:*",
     "@ag-ui/agno": "workspace:*",
     "@ag-ui/crewai": "workspace:*",
@@ -21,10 +22,10 @@
     "@ag-ui/llamaindex": "workspace:*",
     "@ag-ui/mastra": "workspace:*",
     "@ag-ui/middleware-starter": "workspace:*",
-    "@ag-ui/spring-ai": "workspace:*",
     "@ag-ui/pydantic-ai": "workspace:*",
     "@ag-ui/server-starter": "workspace:*",
     "@ag-ui/server-starter-all-features": "workspace:*",
+    "@ag-ui/spring-ai": "workspace:*",
     "@ag-ui/vercel-ai-sdk": "workspace:*",
     "@ai-sdk/openai": "^2.0.42",
     "@copilotkit/react-core": "1.10.6",
