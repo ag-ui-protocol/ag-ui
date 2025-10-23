@@ -629,17 +629,19 @@ export const defaultApplyEvents = (
 
           if (mutation.stopPropagation !== true) {
             try {
-              const baseMessage = structuredClone_(existingActivityMessage);
-              baseMessage.activityType = activityEvent.activityType;
-              baseMessage.content ??= {};
+              const baseContent = structuredClone_(existingActivityMessage.content ?? {});
 
-              const result = applyPatch(baseMessage, activityEvent.patch, true, false);
-              const updated = result.newDocument as ActivityMessage;
+              const result = applyPatch(
+                baseContent,
+                activityEvent.patch ?? [],
+                true,
+                false,
+              );
+              const updatedContent = result.newDocument as ActivityMessage["content"];
 
               messages[existingIndex] = {
-                ...updated,
-                id: existingActivityMessage.id,
-                role: "activity",
+                ...existingActivityMessage,
+                content: structuredClone_(updatedContent),
                 activityType: activityEvent.activityType,
               };
 

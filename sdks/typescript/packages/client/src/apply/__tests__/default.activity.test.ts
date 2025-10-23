@@ -39,7 +39,7 @@ describe("defaultApplyEvents with activity events", () => {
       type: EventType.ACTIVITY_DELTA,
       messageId: "activity-1",
       activityType: "PLAN",
-      patch: [{ op: "replace", path: "/content/tasks/0", value: "✓ search" }],
+      patch: [{ op: "replace", path: "/tasks/0", value: "✓ search" }],
     } as ActivityDeltaEvent);
 
     events$.complete();
@@ -86,7 +86,7 @@ describe("defaultApplyEvents with activity events", () => {
       messageId: "activity-ops",
       activityType: "PLAN",
       patch: [
-        { op: "add", path: "/content/operations/-", value: firstOperation },
+        { op: "add", path: "/operations/-", value: firstOperation },
       ],
     } as ActivityDeltaEvent);
 
@@ -95,7 +95,7 @@ describe("defaultApplyEvents with activity events", () => {
       messageId: "activity-ops",
       activityType: "PLAN",
       patch: [
-        { op: "add", path: "/content/operations/-", value: secondOperation },
+        { op: "add", path: "/operations/-", value: secondOperation },
       ],
     } as ActivityDeltaEvent);
 

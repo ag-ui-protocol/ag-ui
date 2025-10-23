@@ -330,13 +330,13 @@ describe("Agent Result", () => {
           type: EventType.ACTIVITY_DELTA,
           messageId: "activity-ops",
           activityType: "PLAN",
-          patch: [{ op: "add", path: "/content/operations/-", value: firstOperation }],
+          patch: [{ op: "add", path: "/operations/-", value: firstOperation }],
         } as ActivityDeltaEvent,
         {
           type: EventType.ACTIVITY_DELTA,
           messageId: "activity-ops",
           activityType: "PLAN",
-          patch: [{ op: "add", path: "/content/operations/-", value: secondOperation }],
+          patch: [{ op: "add", path: "/operations/-", value: secondOperation }],
         } as ActivityDeltaEvent,
         {
           type: EventType.RUN_FINISHED,
