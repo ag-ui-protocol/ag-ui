@@ -1,5 +1,6 @@
 plugins {
     id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
 }
 
 android {
@@ -40,27 +41,26 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-    
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
     buildFeatures {
         viewBinding true
     }
 }
 
 dependencies {
-    // KMP Libraries (unchanged)
-    implementation 'com.agui:kotlin-client:0.2.1'
-    implementation 'com.agui:kotlin-core:0.2.1' 
-    implementation 'com.agui:kotlin-tools:0.2.1'
-    
-    // Kotlin-Java interop bridges
-    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.10.2'
-    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-reactive:1.10.2'
+    implementation project(':chatapp-shared')
+
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
-    
-    // RxJava for Flow interop
-    implementation 'io.reactivex.rxjava3:rxjava:3.1.8'
-    implementation 'io.reactivex.rxjava3:rxandroid:3.0.2'
-    
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2'
+    implementation libs.kotlinx.datetime
+    implementation libs.multiplatform.settings
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.6'
+    implementation 'androidx.lifecycle:lifecycle-livedata-ktx:2.8.6'
+
     // Android Architecture Components
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'androidx.activity:activity:1.9.2'
@@ -74,11 +74,12 @@ dependencies {
     // Material Design 3
     implementation 'com.google.android.material:material:1.12.0'
     
-    // JSON handling 
+    // Markdown rendering
+    implementation 'io.noties.markwon:core:4.6.2'
+
+    // JSON handling (legacy Java UI helpers)
     implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1'
-    
-    // Logging - using library's logback-android implementation
-    
+
     // Testing
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.mockito:mockito-core:5.8.0'

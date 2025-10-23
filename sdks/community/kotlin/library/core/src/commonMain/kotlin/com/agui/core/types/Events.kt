@@ -283,13 +283,12 @@ data class StepFinishedEvent(
 @SerialName("TEXT_MESSAGE_START")
 data class TextMessageStartEvent(
     val messageId: String,
+    val role: Role = Role.ASSISTANT,
     override val timestamp: Long? = null,
     override val rawEvent: JsonElement? = null
 ) : BaseEvent () {
     @Transient
     override val eventType: EventType = EventType.TEXT_MESSAGE_START
-    // Needed for serialization/deserialization for protocol correctness
-    val role : String = "assistant"
 }
 
 /**
@@ -701,6 +700,7 @@ data class ThinkingTextMessageEndEvent(
 @SerialName("TEXT_MESSAGE_CHUNK")
 data class TextMessageChunkEvent(
     val messageId: String? = null,
+    val role: Role? = null,
     val delta: String? = null,
     override val timestamp: Long? = null,
     override val rawEvent: JsonElement? = null

@@ -1,12 +1,12 @@
 [versions]
 activity-compose = "1.10.1"
-agui-core = "0.2.1"
+agui-core = "0.2.3"
 appcompat = "1.7.1"
 core = "1.6.1"
 core-ktx = "1.16.0"
 junit = "4.13.2"
 junit-version = "1.2.1"
-kotlin = "2.1.21"
+kotlin = "2.2.20"
 #Downgrading to avoid an R8 error
 ktor = "3.1.3"
 kotlinx-serialization = "1.8.1"
@@ -19,7 +19,6 @@ multiplatform-settings-coroutines = "1.2.0"
 okio = "3.13.0"
 runner = "1.6.2"
 slf4j = "2.0.9"
-ui-test-junit4 = "1.8.3"
 voyager-navigator = "1.0.0"
 
 [libraries]
@@ -28,7 +27,6 @@ activity-compose = { module = "androidx.activity:activity-compose", version.ref 
 agui-client = { module = "com.agui:kotlin-client", version.ref = "agui-core" }
 agui-core = { module = "com.agui:kotlin-core", version.ref = "agui-core" }
 agui-tools = { module = "com.agui:kotlin-tools", version.ref = "agui-core" }
-androidx-ui-tooling = { module = "androidx.compose.ui:ui-tooling", version.ref = "ui-test-junit4" }
 appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
 core = { module = "androidx.test:core", version.ref = "core" }
 core-ktx = { module = "androidx.core:core-ktx", version.ref = "core-ktx" }
@@ -58,7 +56,6 @@ multiplatform-settings-coroutines = { module = "com.russhwolf:multiplatform-sett
 okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
 runner = { module = "androidx.test:runner", version.ref = "runner" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4", version.ref = "ui-test-junit4" }
 voyager-navigator = { module = "cafe.adriel.voyager:voyager-navigator", version.ref = "voyager-navigator" }
 voyager-screenmodel = { module = "cafe.adriel.voyager:voyager-screenmodel", version.ref = "voyager-navigator" }
 voyager-transitions = { module = "cafe.adriel.voyager:voyager-transitions", version.ref = "voyager-navigator" }
