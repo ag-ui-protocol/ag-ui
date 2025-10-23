@@ -60,6 +60,13 @@ func (ed *EventDecoder) DecodeEvent(eventName string, data []byte) (Event, error
 		}
 		return &evt, nil
 
+	case EventTypeTextMessageChunk:
+		var evt TextMessageChunkEvent
+		if err := json.Unmarshal(data, &evt); err != nil {
+			return nil, fmt.Errorf("failed to decode TEXT_MESSAGE_CHUNK: %w", err)
+		}
+		return &evt, nil
+
 	case EventTypeTextMessageContent:
 		var evt TextMessageContentEvent
 		if err := json.Unmarshal(data, &evt); err != nil {
