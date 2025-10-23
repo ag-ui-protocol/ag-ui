@@ -27,8 +27,12 @@ pnpm --filter @ag-ui/a2a build
 ```ts
 import { A2AAgent } from "@ag-ui/a2a";
 
+import { A2AClient } from "@a2a-js/sdk/client";
+
+const client = new A2AClient("https://my-a2a-agent");
+
 const agent = new A2AAgent({
-  agentUrl: "https://my-a2a-agent",
+  a2aClient: client,
   initialMessages: [
     { id: "user-1", role: "user", content: "Plan a team offsite" } as any,
   ],
@@ -45,8 +49,7 @@ You can inject your own `A2AClient` instance via the `client` option, override d
 
 | Option | Description |
 | ------ | ----------- |
-| `agentUrl` | Base URL of the A2A agent. Provide this when you want the integration to construct its own `A2AClient`. |
-| `client` | Pass an existing `A2AClient` (e.g. one with custom auth or a test double). When `client` is supplied, `agentUrl` becomes optional. |
+| `a2aClient` | Required. Provide an `A2AClient` instance (with any auth headers or custom fetch logic you need). |
 
 ## Environment variables & authentication
 
@@ -62,7 +65,6 @@ Pass any credentials to the `A2AClient` you provide to `A2AAgent`, or configure 
 - `convertAGUIMessagesToA2A(messages, options)` — reshapes AG-UI history into A2A message objects, forwarding only user/assistant/tool turns and preserving the tool payloads.
 - `convertA2AEventToAGUIEvents(event, options)` — maps an A2A stream event to AG-UI text and tool events (`TEXT_MESSAGE_CHUNK`, `TOOL_CALL_*`, `TOOL_CALL_RESULT`).
 - `sendMessageToA2AAgentTool` — JSON schema describing a `send_message_to_a2a_agent` tool for orchestration agents.
-- `A2AAgent.getRemoteAgents({ agentUrls, agentConfig })` — helper that instantiates a map of `A2AAgent`s keyed by remote agent name or URL.
 
 ## Testing
 

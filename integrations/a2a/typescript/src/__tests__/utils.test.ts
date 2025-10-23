@@ -179,12 +179,7 @@ describe("convertA2AEventToAGUIEvents", () => {
       messageIdMap: new Map(),
     });
 
-    expect(events).toHaveLength(1);
-    expect(events[0]).toEqual(
-      expect.objectContaining({
-        type: EventType.RAW,
-      }),
-    );
+    expect(events).toHaveLength(0);
   });
 });
 

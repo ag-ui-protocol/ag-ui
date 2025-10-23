@@ -25,30 +25,24 @@ import type {
 import { randomUUID } from "@ag-ui/client";
 
 export interface A2AAgentConfig extends AgentConfig {
-  agentUrl?: string;
-  client?: A2AClient;
+  a2aClient: A2AClient;
 }
 
 const A2A_UI_EXTENSION_URI = "https://a2ui.org/ext/a2a-ui/v0.1";
 
 export class A2AAgent extends AbstractAgent {
-  private readonly agentUrl?: string;
   private readonly a2aClient: A2AClient;
   private readonly messageIdMap = new Map<string, string>();
 
   constructor(config: A2AAgentConfig) {
-    const { agentUrl, client, ...rest } = config;
-
-    if (!agentUrl && !client) {
-      throw new Error(
-        "A2AAgent requires either an agentUrl or a preconfigured A2AClient.",
-      );
+    const { a2aClient, ...rest } = config;
+    if (!a2aClient) {
+      throw new Error("A2AAgent requires a configured A2AClient instance.");
     }
 
     super(rest);
 
-    this.agentUrl = agentUrl;
-    this.a2aClient = client ?? new A2AClient(agentUrl!);
+    this.a2aClient = a2aClient;
     this.initializeA2UIExtension(this.a2aClient);
   }
 
@@ -175,7 +169,7 @@ export class A2AAgent extends AbstractAgent {
           );
         },
         getCurrentText: (messageId) => aggregatedText.get(messageId),
-        source: this.agentUrl ?? "a2a",
+        source: "a2a",
         surfaceTracker: tracker,
       });
       for (const event of events) {
@@ -244,7 +238,7 @@ export class A2AAgent extends AbstractAgent {
         );
       },
       getCurrentText: (messageId) => aggregatedText.get(messageId),
-      source: this.agentUrl ?? "a2a",
+      source: "a2a",
       surfaceTracker: tracker,
     });
 
@@ -256,29 +250,6 @@ export class A2AAgent extends AbstractAgent {
       messages: [],
       rawEvents,
     };
-  }
-
-  static async getRemoteAgents(options: {
-    agentUrls: string[];
-    agentConfig?: AgentConfig;
-  }): Promise<Record<string, A2AAgent>> {
-    const { agentUrls, agentConfig } = options;
-
-    const pairs = await Promise.all(
-      agentUrls.map(async (url) => {
-        const client = new A2AClient(url);
-
-        const agent = new A2AAgent({
-          ...(agentConfig ?? {}),
-          agentUrl: url,
-          client,
-        });
-
-        return [agent.agentId ?? url, agent] as const;
-      }),
-    );
-
-    return Object.fromEntries(pairs);
   }
 
   private initializeA2UIExtension(client: A2AClient) {

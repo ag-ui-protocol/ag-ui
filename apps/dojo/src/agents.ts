@@ -20,6 +20,7 @@ import { SpringAiAgent } from "@ag-ui/spring-ai";
 import { HttpAgent } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
 import { A2AAgent } from "@ag-ui/a2a";
+import { A2AClient } from "@a2a-js/sdk/client";
 
 const envVars = getEnvVars();
 export const agentsIntegrations: AgentIntegrationConfig[] = [
@@ -347,10 +348,11 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
   {
     id: "a2a-basic",
     agents: async () => {
+      const a2aClient = new A2AClient(envVars.a2aUrl);
       return {
         agentic_chat: new A2AAgent({
           description: "Direct A2A agent",
-          agentUrl: envVars.a2aUrl,
+          a2aClient,
           debug: process.env.NODE_ENV !== "production",
         }),
       };

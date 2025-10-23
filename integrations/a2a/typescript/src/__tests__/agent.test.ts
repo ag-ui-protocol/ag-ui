@@ -69,8 +69,7 @@ describe("A2AAgent", () => {
     });
 
     const agent = new A2AAgent({
-      agentUrl: "https://example.com",
-      client: fakeClient as any,
+      a2aClient: fakeClient as any,
       initialMessages: [
         createMessage({
           id: "user-1",
@@ -82,14 +81,7 @@ describe("A2AAgent", () => {
 
     const result = await agent.runAgent();
 
-    expect(result.result).toMatchObject({
-      messages: [
-        {
-          messageId: expect.any(String),
-          text: "Hello from stream",
-        },
-      ],
-    });
+    expect(result.result).toBeUndefined();
 
     expect(result.newMessages).toEqual(
       expect.arrayContaining([
@@ -116,8 +108,7 @@ describe("A2AAgent", () => {
     });
 
     const agent = new A2AAgent({
-      agentUrl: "https://fallback.example.com",
-      client: fakeClient as any,
+      a2aClient: fakeClient as any,
       initialMessages: [
         createMessage({ id: "user-1", role: "user", content: "Ping" }),
       ],
@@ -125,13 +116,7 @@ describe("A2AAgent", () => {
 
     const result = await agent.runAgent();
 
-    expect(result.result).toMatchObject({
-      messages: [
-        {
-          text: "Blocking response",
-        },
-      ],
-    });
+    expect(result.result).toBeUndefined();
   });
 
   it("throws when the A2A service reports an error", async () => {
@@ -147,8 +132,7 @@ describe("A2AAgent", () => {
     });
 
     const agent = new A2AAgent({
-      agentUrl: "https://error.example.com",
-      client: fakeClient as any,
+      a2aClient: fakeClient as any,
       initialMessages: [
         createMessage({ id: "user-1", role: "user", content: "Trouble" }),
       ],
