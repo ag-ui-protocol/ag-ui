@@ -1,14 +1,21 @@
-name: Check Generated Files
+name: static
 
 on:
   push:
     branches: [main]
+    paths:
+      - "apps/dojo/**"
+      - "integrations/**"
+      - ".github/workflows/check-generated-files.yml"
   pull_request:
     branches: [main]
+    paths:
+      - "apps/dojo/**"
+      - "integrations/**"
+      - ".github/workflows/check-generated-files.yml"
 
 jobs:
-  check-files-json:
-    name: Check files.json
+  check-dojo-generated-files:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -17,7 +24,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "22"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
