@@ -47,7 +47,7 @@ export class A2AAgent extends AbstractAgent {
   }
 
   clone() {
-    return new A2AAgent({ a2aClient: this.a2aClient });
+    return new A2AAgent({ a2aClient: this.a2aClient, debug: this.debug });
   }
 
   protected run(input: RunAgentInput): Observable<BaseEvent> {
