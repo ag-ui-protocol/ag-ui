@@ -57,6 +57,69 @@ describe("defaultApplyEvents with activity events", () => {
     expect(deltaUpdate?.messages?.[0]?.content).toEqual({ tasks: ["✓ search"] });
   });
 
+  it("appends operations via delta when snapshot starts with an empty array", async () => {
+    const events$ = new Subject<BaseEvent>();
+    const initialState: RunAgentInput = {
+      messages: [],
+      state: {},
+      threadId: "thread-activity",
+      runId: "run-activity",
+      tools: [],
+      context: [],
+    };
+
+    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
+    const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    const firstOperation = { id: "op-1", status: "PENDING" };
+    const secondOperation = { id: "op-2", status: "COMPLETED" };
+
+    events$.next({
+      type: EventType.ACTIVITY_SNAPSHOT,
+      messageId: "activity-ops",
+      activityType: "PLAN",
+      content: { operations: [] },
+    } as ActivitySnapshotEvent);
+
+    events$.next({
+      type: EventType.ACTIVITY_DELTA,
+      messageId: "activity-ops",
+      activityType: "PLAN",
+      patch: [
+        { op: "add", path: "/content/operations/-", value: firstOperation },
+      ],
+    } as ActivityDeltaEvent);
+
+    events$.next({
+      type: EventType.ACTIVITY_DELTA,
+      messageId: "activity-ops",
+      activityType: "PLAN",
+      patch: [
+        { op: "add", path: "/content/operations/-", value: secondOperation },
+      ],
+    } as ActivityDeltaEvent);
+
+    events$.complete();
+
+    const stateUpdates = await stateUpdatesPromise;
+
+    expect(stateUpdates.length).toBe(3);
+
+    const snapshotUpdate = stateUpdates[0];
+    expect(snapshotUpdate?.messages?.[0]?.content).toEqual({ operations: [] });
+
+    const firstDeltaUpdate = stateUpdates[1];
+    expect(firstDeltaUpdate?.messages?.[0]?.content?.operations).toEqual([
+      firstOperation,
+    ]);
+
+    const secondDeltaUpdate = stateUpdates[2];
+    expect(secondDeltaUpdate?.messages?.[0]?.content?.operations).toEqual([
+      firstOperation,
+      secondOperation,
+    ]);
+  });
+
   it("does not replace existing activity message when replace is false", async () => {
     const events$ = new Subject<BaseEvent>();
     const initialState: RunAgentInput = {
