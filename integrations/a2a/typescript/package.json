@@ -1,7 +1,7 @@
 {
   "name": "@ag-ui/a2a",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "license": "Apache-2.0",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
