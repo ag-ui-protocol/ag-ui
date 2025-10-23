@@ -46,6 +46,10 @@ export class A2AAgent extends AbstractAgent {
     this.initializeA2UIExtension(this.a2aClient);
   }
 
+  clone() {
+    return new A2AAgent({ a2aClient: this.a2aClient });
+  }
+
   protected run(input: RunAgentInput): Observable<BaseEvent> {
     return new Observable<BaseEvent>((subscriber) => {
       const run = async () => {
@@ -326,18 +330,21 @@ export class A2AAgent extends AbstractAgent {
     };
 
     const originalSendMessage = client.sendMessage.bind(client);
-    client.sendMessage = (params) => wrapPromise(() => originalSendMessage(params));
+    client.sendMessage = (params) =>
+      wrapPromise(() => originalSendMessage(params));
 
     const originalSendMessageStream = client.sendMessageStream?.bind(client);
     const wrappedSendMessageStream = wrapStream(originalSendMessageStream);
     if (wrappedSendMessageStream) {
-      client.sendMessageStream = wrappedSendMessageStream as typeof client.sendMessageStream;
+      client.sendMessageStream =
+        wrappedSendMessageStream as typeof client.sendMessageStream;
     }
 
     const originalResubscribeTask = client.resubscribeTask?.bind(client);
     const wrappedResubscribeTask = wrapStream(originalResubscribeTask);
     if (wrappedResubscribeTask) {
-      client.resubscribeTask = wrappedResubscribeTask as typeof client.resubscribeTask;
+      client.resubscribeTask =
+        wrappedResubscribeTask as typeof client.resubscribeTask;
     }
   }
 
