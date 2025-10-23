@@ -5,20 +5,24 @@ on:
     branches: [main]
     paths:
       - "integrations/**"
-      - "apps/**"
+      - "apps/dojo/**"
       - "middlewares/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - ".github/workflows/dojo-e2e.yml"
+      - "sdks/python/**"
+      - "sdks/typescript/**"
   pull_request:
     branches: [main]
     paths:
+      - "apps/dojo/**"
       - "integrations/**"
-      - "apps/**"
       - "middlewares/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - ".github/workflows/dojo-e2e.yml"
+      - "sdks/python/**"
+      - "sdks/typescript/**"
 
 jobs:
   dojo:
