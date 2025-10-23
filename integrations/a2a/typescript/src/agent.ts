@@ -28,6 +28,8 @@ export interface A2AAgentConfig extends AgentConfig {
   client?: A2AClient;
 }
 
+const A2A_UI_EXTENSION_URI = "https://a2ui.org/ext/a2a-ui/v0.1";
+
 export class A2AAgent extends AbstractAgent {
   private readonly agentUrl?: string;
   private readonly a2aClient: A2AClient;
@@ -46,6 +48,7 @@ export class A2AAgent extends AbstractAgent {
 
     this.agentUrl = agentUrl;
     this.a2aClient = client ?? new A2AClient(agentUrl!);
+    this.initializeA2UIExtension(this.a2aClient);
   }
 
   protected run(input: RunAgentInput): Observable<BaseEvent> {
@@ -280,5 +283,94 @@ export class A2AAgent extends AbstractAgent {
     );
 
     return Object.fromEntries(pairs);
+  }
+
+  private initializeA2UIExtension(client: A2AClient) {
+    const addExtensionHeader = (headers: Headers) => {
+      const existingValue = headers.get("X-A2A-Extensions") ?? "";
+      const values = existingValue
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+
+      if (!values.includes(A2A_UI_EXTENSION_URI)) {
+        values.push(A2A_UI_EXTENSION_URI);
+        headers.set("X-A2A-Extensions", values.join(", "));
+      }
+    };
+
+    const patchFetch = () => {
+      const originalFetch = globalThis.fetch;
+      if (!originalFetch) {
+        return () => {};
+      }
+
+      const extensionFetch: typeof fetch = async (input, init) => {
+        const headers = new Headers(init?.headers);
+        addExtensionHeader(headers);
+        const nextInit: RequestInit = {
+          ...init,
+          headers,
+        };
+        return originalFetch(input, nextInit);
+      };
+
+      globalThis.fetch = extensionFetch;
+
+      return () => {
+        globalThis.fetch = originalFetch;
+      };
+    };
+
+    const wrapPromise = async <T>(operation: () => Promise<T>): Promise<T> => {
+      const restore = patchFetch();
+      try {
+        return await operation();
+      } finally {
+        restore();
+      }
+    };
+
+    const wrapStream = <T>(
+      original:
+        | ((...args: any[]) => AsyncGenerator<T, void, undefined>)
+        | undefined,
+    ) => {
+      if (!original) {
+        return undefined;
+      }
+
+      return function wrapped(this: unknown, ...args: unknown[]) {
+        const restore = patchFetch();
+        const iterator = original.apply(this, args);
+
+        const wrappedIterator = (async function* () {
+          try {
+            for await (const value of iterator) {
+              yield value;
+            }
+          } finally {
+            restore();
+          }
+        })();
+
+        return wrappedIterator;
+      };
+    };
+
+    const originalSendMessage = client.sendMessage.bind(client);
+    client.sendMessage = (params) => wrapPromise(() => originalSendMessage(params));
+
+    const originalSendMessageStream = client.sendMessageStream?.bind(client);
+    const wrappedSendMessageStream = wrapStream(originalSendMessageStream);
+    if (wrappedSendMessageStream) {
+      client.sendMessageStream = wrappedSendMessageStream as typeof client.sendMessageStream;
+    }
+
+    const originalResubscribeTask = client.resubscribeTask?.bind(client);
+    const wrappedResubscribeTask = wrapStream(originalResubscribeTask);
+    if (wrappedResubscribeTask) {
+      client.resubscribeTask = wrappedResubscribeTask as typeof client.resubscribeTask;
+    }
   }
 }

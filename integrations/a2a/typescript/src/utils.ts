@@ -292,6 +292,8 @@ function convertMessageToEvents(
       const dataPart = part as A2ADataPart;
       const payload = dataPart.data;
 
+      console.log("[A2A] Received data part:", payload);
+
       if (payload && typeof payload === "object" && (payload as any).type === TOOL_CALL_PART_TYPE) {
         const toolCallId = (payload as any).id ?? randomUUID();
         const toolCallName = (payload as any).name ?? "unknown_tool";
