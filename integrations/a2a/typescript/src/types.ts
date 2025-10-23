@@ -23,6 +23,11 @@ export type {
   AGUIMessage as AGUIConversationMessage,
 };
 
+export interface SurfaceTracker {
+  has(surfaceId: string): boolean;
+  add(surfaceId: string): void;
+}
+
 export type A2AStreamEvent =
   | A2AMessage
   | A2ATask
@@ -46,6 +51,7 @@ export interface ConvertA2AEventOptions {
   onTextDelta?: (payload: { messageId: string; delta: string }) => void;
   source?: string;
   getCurrentText?: (messageId: string) => string | undefined;
+  surfaceTracker?: SurfaceTracker;
 }
 
 export interface A2AAgentRunResultSummary {

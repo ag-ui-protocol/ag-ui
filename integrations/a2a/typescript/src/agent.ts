@@ -20,6 +20,7 @@ import type {
   A2AAgentRunResultSummary,
   ConvertedA2AMessages,
   A2AStreamEvent,
+  SurfaceTracker,
 } from "./types";
 import { randomUUID } from "@ag-ui/client";
 
@@ -66,10 +67,6 @@ export class A2AAgent extends AbstractAgent {
             type: EventType.RUN_FINISHED,
             threadId: input.threadId,
             runId: input.runId,
-            result: {
-              messages: [],
-              rawEvents: [],
-            },
           };
           subscriber.next(runFinished);
           subscriber.complete();
@@ -84,11 +81,6 @@ export class A2AAgent extends AbstractAgent {
               type: EventType.RUN_FINISHED,
               threadId: input.threadId,
               runId: input.runId,
-              result: {
-                messages: [],
-                rawEvents: [],
-                info: "No user message to forward to A2A agent.",
-              },
             } as unknown as RunFinishedEvent;
             subscriber.next(runFinished);
             subscriber.complete();
@@ -97,15 +89,16 @@ export class A2AAgent extends AbstractAgent {
 
           const sendParams = await this.createSendParams(converted, input);
 
-          let summary: A2AAgentRunResultSummary | null = null;
+          const surfaceTracker = this.createSurfaceTracker();
 
           try {
-            summary = await this.streamMessage(sendParams, subscriber);
+            await this.streamMessage(sendParams, subscriber, surfaceTracker);
           } catch (error) {
-            summary = await this.fallbackToBlocking(
+            await this.fallbackToBlocking(
               sendParams,
               subscriber,
               error as Error,
+              surfaceTracker,
             );
           }
 
@@ -113,7 +106,6 @@ export class A2AAgent extends AbstractAgent {
             type: EventType.RUN_FINISHED,
             threadId: input.threadId,
             runId: input.runId,
-            result: summary,
           };
           subscriber.next(runFinished);
           subscriber.complete();
@@ -164,9 +156,11 @@ export class A2AAgent extends AbstractAgent {
   private async streamMessage(
     params: MessageSendParams,
     subscriber: { next: (event: BaseEvent) => void },
+    surfaceTracker?: SurfaceTracker,
   ): Promise<A2AAgentRunResultSummary> {
     const aggregatedText = new Map<string, string>();
     const rawEvents: A2AStreamEvent[] = [];
+    const tracker = surfaceTracker ?? this.createSurfaceTracker();
 
     const stream = this.a2aClient.sendMessageStream(params);
     for await (const chunk of stream) {
@@ -182,6 +176,7 @@ export class A2AAgent extends AbstractAgent {
         },
         getCurrentText: (messageId) => aggregatedText.get(messageId),
         source: this.agentUrl ?? "a2a",
+        surfaceTracker: tracker,
       });
       for (const event of events) {
         subscriber.next(event);
@@ -189,9 +184,7 @@ export class A2AAgent extends AbstractAgent {
     }
 
     return {
-      messages: Array.from(aggregatedText.entries()).map(
-        ([messageId, text]) => ({ messageId, text }),
-      ),
+      messages: [],
       rawEvents,
     };
   }
@@ -200,6 +193,7 @@ export class A2AAgent extends AbstractAgent {
     params: MessageSendParams,
     subscriber: { next: (event: BaseEvent) => void },
     error: Error,
+    surfaceTracker?: SurfaceTracker,
   ): Promise<A2AAgentRunResultSummary> {
     const configuration: MessageSendConfiguration = {
       ...params.configuration,
@@ -215,12 +209,14 @@ export class A2AAgent extends AbstractAgent {
         configuration,
       },
       subscriber,
+      surfaceTracker,
     );
   }
 
   private async blockingMessage(
     params: MessageSendParams,
     subscriber: { next: (event: BaseEvent) => void },
+    surfaceTracker?: SurfaceTracker,
   ): Promise<A2AAgentRunResultSummary> {
     const response = await this.a2aClient.sendMessage(params);
 
@@ -233,6 +229,7 @@ export class A2AAgent extends AbstractAgent {
 
     const aggregatedText = new Map<string, string>();
     const rawEvents: A2AStreamEvent[] = [];
+    const tracker = surfaceTracker ?? this.createSurfaceTracker();
 
     const result = response.result as A2AStreamEvent;
     rawEvents.push(result);
@@ -248,6 +245,7 @@ export class A2AAgent extends AbstractAgent {
       },
       getCurrentText: (messageId) => aggregatedText.get(messageId),
       source: this.agentUrl ?? "a2a",
+      surfaceTracker: tracker,
     });
 
     for (const event of events) {
@@ -255,9 +253,7 @@ export class A2AAgent extends AbstractAgent {
     }
 
     return {
-      messages: Array.from(aggregatedText.entries()).map(
-        ([messageId, text]) => ({ messageId, text }),
-      ),
+      messages: [],
       rawEvents,
     };
   }
@@ -372,5 +368,15 @@ export class A2AAgent extends AbstractAgent {
     if (wrappedResubscribeTask) {
       client.resubscribeTask = wrappedResubscribeTask as typeof client.resubscribeTask;
     }
+  }
+
+  private createSurfaceTracker(): SurfaceTracker {
+    const seenSurfaceIds = new Set<string>();
+    return {
+      has: (surfaceId: string) => seenSurfaceIds.has(surfaceId),
+      add: (surfaceId: string) => {
+        seenSurfaceIds.add(surfaceId);
+      },
+    };
   }
 }

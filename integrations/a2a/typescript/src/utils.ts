@@ -32,6 +32,13 @@ const ROLE_MAP: Record<string, "user" | "agent" | undefined> = {
 
 const TOOL_RESULT_PART_TYPE = "tool-result";
 const TOOL_CALL_PART_TYPE = "tool-call";
+const SURFACE_OPERATION_KEYS = [
+  "beginRendering",
+  "surfaceUpdate",
+  "dataModelUpdate",
+] as const;
+
+type SurfaceOperationKey = (typeof SURFACE_OPERATION_KEYS)[number];
 
 const isBinaryContent = (
   content: InputContent,
@@ -66,6 +73,28 @@ const createFilePart = (content: Extract<InputContent, { type: "binary" }>): A2A
         name: content.filename,
       },
     };
+  }
+
+  return null;
+};
+
+const extractSurfaceOperation = (
+  payload: unknown,
+): { surfaceId: string; operation: Record<string, unknown> } | null => {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+
+  for (const key of SURFACE_OPERATION_KEYS) {
+    const value = record[key as SurfaceOperationKey];
+    if (value && typeof value === "object" && (value as { surfaceId?: unknown }).surfaceId) {
+      const surfaceId = (value as { surfaceId?: unknown }).surfaceId;
+      if (typeof surfaceId === "string" && surfaceId.length > 0) {
+        return { surfaceId, operation: record };
+      }
+    }
   }
 
   return null;
@@ -292,8 +321,6 @@ function convertMessageToEvents(
       const dataPart = part as A2ADataPart;
       const payload = dataPart.data;
 
-      console.log("[A2A] Received data part:", payload);
-
       if (payload && typeof payload === "object" && (payload as any).type === TOOL_CALL_PART_TYPE) {
         const toolCallId = (payload as any).id ?? randomUUID();
         const toolCallName = (payload as any).name ?? "unknown_tool";
@@ -344,6 +371,41 @@ function convertMessageToEvents(
           events.push(endEvent);
           openToolCalls.delete(toolCallId);
         }
+
+        continue;
+      }
+
+      const surfaceOperation = extractSurfaceOperation(payload);
+      if (surfaceOperation && options.surfaceTracker) {
+        const tracker = options.surfaceTracker;
+        const { surfaceId, operation } = surfaceOperation;
+        const hasSeenSurface = tracker.has(surfaceId);
+
+        if (!hasSeenSurface) {
+          tracker.add(surfaceId);
+          events.push({
+            type: EventType.ACTIVITY_SNAPSHOT,
+            messageId: surfaceId,
+            activityType: "a2ui-surface",
+            content: { operations: [] },
+            replace: false,
+          } as BaseEvent);
+        }
+
+        events.push({
+          type: EventType.ACTIVITY_DELTA,
+          messageId: surfaceId,
+          activityType: "a2ui-surface",
+          patch: [
+            {
+              op: "add",
+              path: "/operations/-",
+              value: operation,
+            },
+          ],
+        } as BaseEvent);
+
+        continue;
       }
 
       continue;
