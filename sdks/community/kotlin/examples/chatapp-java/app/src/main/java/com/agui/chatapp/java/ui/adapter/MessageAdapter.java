@@ -1,5 +1,6 @@
 package com.agui.chatapp.java.ui.adapter;
 
+import android.text.method.LinkMovementMethod;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -13,7 +14,8 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.agui.chatapp.java.R;
 import com.agui.chatapp.java.model.ChatMessage;
-import com.agui.core.types.Role;
+import com.agui.example.chatapp.chat.MessageRole;
+import io.noties.markwon.Markwon;
 
 /**
  * RecyclerView adapter for displaying chat messages with different layouts
@@ -24,6 +26,8 @@ public class MessageAdapter extends ListAdapter<ChatMessage, MessageAdapter.Mess
     private static final int VIEW_TYPE_USER = 1;
     private static final int VIEW_TYPE_ASSISTANT = 2;
     private static final int VIEW_TYPE_SYSTEM = 3;
+
+    private Markwon markwon;
     
     public MessageAdapter() {
         super(new MessageDiffCallback());
@@ -32,16 +36,13 @@ public class MessageAdapter extends ListAdapter<ChatMessage, MessageAdapter.Mess
     @Override
     public int getItemViewType(int position) {
         ChatMessage message = getItem(position);
-        switch (message.getRole()) {
-            case USER:
-                return VIEW_TYPE_USER;
-            case ASSISTANT:
-                return VIEW_TYPE_ASSISTANT;
-            case SYSTEM:
-            case DEVELOPER:
-            case TOOL:
-            default:
-                return VIEW_TYPE_SYSTEM;
+        MessageRole role = message.getRole();
+        if (role == MessageRole.USER) {
+            return VIEW_TYPE_USER;
+        } else if (role == MessageRole.ASSISTANT) {
+            return VIEW_TYPE_ASSISTANT;
+        } else {
+            return VIEW_TYPE_SYSTEM;
         }
     }
     
@@ -50,7 +51,7 @@ public class MessageAdapter extends ListAdapter<ChatMessage, MessageAdapter.Mess
     public MessageViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         LayoutInflater inflater = LayoutInflater.from(parent.getContext());
         View view;
-        
+
         switch (viewType) {
             case VIEW_TYPE_USER:
                 view = inflater.inflate(R.layout.item_message_user, parent, false);
@@ -63,8 +64,8 @@ public class MessageAdapter extends ListAdapter<ChatMessage, MessageAdapter.Mess
                 view = inflater.inflate(R.layout.item_message_system, parent, false);
                 break;
         }
-        
-        return new MessageViewHolder(view, viewType);
+
+        return new MessageViewHolder(view, viewType, getMarkwon(view));
     }
     
     @Override
@@ -83,16 +84,25 @@ public class MessageAdapter extends ListAdapter<ChatMessage, MessageAdapter.Mess
         }
     }
     
+    private Markwon getMarkwon(View view) {
+        if (markwon == null) {
+            markwon = Markwon.create(view.getContext());
+        }
+        return markwon;
+    }
+
     static class MessageViewHolder extends RecyclerView.ViewHolder {
         private final TextView textSender;
         private final TextView textContent;
         private final TextView textTimestamp;
         private final ProgressBar progressTyping;
         private final int viewType;
+        private final Markwon markwon;
         
-        public MessageViewHolder(@NonNull View itemView, int viewType) {
+        public MessageViewHolder(@NonNull View itemView, int viewType, Markwon markwon) {
             super(itemView);
             this.viewType = viewType;
+            this.markwon = markwon;
             
             textSender = itemView.findViewById(R.id.textSender);
             textContent = itemView.findViewById(R.id.textContent);
@@ -108,7 +118,8 @@ public class MessageAdapter extends ListAdapter<ChatMessage, MessageAdapter.Mess
             
             // Set message content
             if (textContent != null) {
-                textContent.setText(message.getContent());
+                markwon.setMarkdown(textContent, message.getContent());
+                textContent.setMovementMethod(LinkMovementMethod.getInstance());
             }
             
             // Set timestamp

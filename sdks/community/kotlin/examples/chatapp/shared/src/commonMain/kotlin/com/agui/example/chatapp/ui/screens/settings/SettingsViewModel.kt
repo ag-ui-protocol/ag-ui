@@ -1,11 +1,19 @@
 package com.agui.example.chatapp.ui.screens.settings
 
-import cafe.adriel.voyager.core.model.ScreenModel
-import cafe.adriel.voyager.core.model.screenModelScope
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import com.agui.example.chatapp.data.model.AgentConfig
 import com.agui.example.chatapp.data.repository.AgentRepository
 import com.agui.example.chatapp.util.getPlatformSettings
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class SettingsState(
@@ -14,15 +22,18 @@ data class SettingsState(
     val editingAgent: AgentConfig? = null
 )
 
-class SettingsViewModel : ScreenModel {
+class SettingsViewModel(
+    scopeFactory: () -> CoroutineScope = { MainScope() }
+) {
     private val settings = getPlatformSettings()
     private val agentRepository = AgentRepository.getInstance(settings)
+    private val scope = scopeFactory()
 
     private val _state = MutableStateFlow(SettingsState())
     val state: StateFlow<SettingsState> = _state.asStateFlow()
 
     init {
-        screenModelScope.launch {
+        scope.launch {
             // Combine agent flows
             combine(
                 agentRepository.agents,
@@ -39,26 +50,26 @@ class SettingsViewModel : ScreenModel {
     }
 
     fun addAgent(config: AgentConfig) {
-        screenModelScope.launch {
+        scope.launch {
             agentRepository.addAgent(config)
         }
     }
 
     fun updateAgent(config: AgentConfig) {
-        screenModelScope.launch {
+        scope.launch {
             agentRepository.updateAgent(config)
             _state.update { it.copy(editingAgent = null) }
         }
     }
 
     fun deleteAgent(agentId: String) {
-        screenModelScope.launch {
+        scope.launch {
             agentRepository.deleteAgent(agentId)
         }
     }
 
     fun setActiveAgent(agent: AgentConfig) {
-        screenModelScope.launch {
+        scope.launch {
             agentRepository.setActiveAgent(agent)
         }
     }
@@ -70,4 +81,17 @@ class SettingsViewModel : ScreenModel {
     fun cancelEdit() {
         _state.update { it.copy(editingAgent = null) }
     }
+
+    fun dispose() {
+        scope.cancel()
+    }
+}
+
+@Composable
+fun rememberSettingsViewModel(): SettingsViewModel {
+    val viewModel = remember { SettingsViewModel() }
+    DisposableEffect(Unit) {
+        onDispose { viewModel.dispose() }
+    }
+    return viewModel
 }

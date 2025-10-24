@@ -22,3 +22,8 @@ AG-UI Kotlin SDK follows the design patterns of the TypeScript SDK while leverag
 - **kotlin-tools**: Tool execution framework with registry and circuit breakers
 
 The SDK maintains conceptual parity with the TypeScript implementation while providing native Kotlin idioms like sealed classes, suspend functions, and Kotlin Flows for streaming responses.
+
+## Lifecycle subscribers and role fidelity
+
+- **AgentSubscriber hooks** – Agents now expose a subscription API so applications can observe run initialization, per-event delivery, and state mutations before the built-in handlers execute. This enables cross-cutting concerns like analytics, tracing, or custom persistence without forking the pipeline.
+- **Role-aware text streaming** – Text message events preserve their declared roles (developer, system, assistant, user) throughout chunk transformation and state application, ensuring downstream UI state mirrors the protocol payloads exactly.

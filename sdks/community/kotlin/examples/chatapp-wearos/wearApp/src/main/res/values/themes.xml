@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.ChatWear" parent="@android:style/Theme.DeviceDefault">
+        <item name="android:colorBackground">@color/wear_background</item>
+        <item name="android:windowIsTranslucent">false</item>
+    </style>
+</resources>

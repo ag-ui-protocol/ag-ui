@@ -106,6 +106,13 @@ chatAgent.chat("What's my name?").collect { state ->
 }
 ```
 
+Chunked protocol events (`TEXT_MESSAGE_CHUNK`, `TOOL_CALL_CHUNK`) are automatically rewritten into
+their corresponding start/content/end sequences, so Kotlin clients see the same structured events
+as non-chunked streams.
+
+Thinking telemetry (`THINKING_*` events) is surfaced alongside normal messages, allowing UIs to indicate
+when an agent is reasoning internally before responding.
+
 ### Client-Side Tool Integration
 
 ```kotlin
@@ -171,5 +178,23 @@ println("Messages: ${currentState.messages.size}")
 // Monitor state changes
 agent.sendMessage("Hello").collect { state ->
     println("Updated state: ${state.messages.last()}")
+}
+
+// RAW and CUSTOM protocol events are surfaced for inspection
+state.rawEvents?.forEach { raw ->
+    println("Raw event from ${raw.source ?: "unknown"}: ${raw.event}")
+}
+state.customEvents?.forEach { custom ->
+    println("Custom event ${custom.name}: ${custom.value}")
+}
+
+// Thinking telemetry stream
+state.thinking?.let { thinking ->
+    if (thinking.isThinking) {
+        val latest = thinking.messages.lastOrNull().orEmpty()
+        println("Agent is thinking: $latest")
+    } else if (thinking.messages.isNotEmpty()) {
+        println("Agent finished thinking: ${thinking.messages.joinToString()}")
+    }
 }
 ```

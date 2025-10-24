@@ -1,0 +1,27 @@
+<resources>
+    <string name="app_name">AG-UI Chat</string>
+    <string name="chat_input_hint">Ask something…</string>
+    <string name="chip_prompt_summary">Recent prompts</string>
+    <string name="retry">Retry</string>
+    <string name="confirm">Confirm</string>
+    <string name="reject">Reject</string>
+    <string name="cancel_operation">Cancel</string>
+    <string name="manage_agents">Manage agents</string>
+    <string name="switch_agent_button">Switch agent</string>
+    <string name="agent_manager_title">Manage agents</string>
+    <string name="agent_manager_description">Add, edit, or activate agents directly on your watch.</string>
+    <string name="back_to_chat">Back to chat</string>
+    <string name="add_agent">Add agent</string>
+    <string name="edit_agent">Edit agent</string>
+    <string name="agent_name">Name</string>
+    <string name="agent_url">API URL</string>
+    <string name="agent_description">Description</string>
+    <string name="agent_api_key">API key (optional)</string>
+    <string name="agent_api_key_header">API key header</string>
+    <string name="save_agent">Save</string>
+    <string name="no_agents_message">No agents yet. Add one to start chatting.</string>
+    <string name="active_agent_badge">Active</string>
+    <string name="make_active">Activate</string>
+    <string name="edit">Edit</string>
+    <string name="delete">Delete</string>
+</resources>

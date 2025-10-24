@@ -21,7 +21,7 @@ The comprehensive documentation covers:
 
 ```kotlin
 dependencies {
-    implementation("com.agui:kotlin-client:0.2.1")
+    implementation("com.agui:kotlin-client:0.2.3")
 }
 ```
 

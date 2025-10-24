@@ -1,190 +1,253 @@
 package com.agui.client.chunks
 
 import com.agui.core.types.*
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.flow
+import kotlinx.serialization.json.JsonElement
 import co.touchlab.kermit.Logger
 
 private val logger = Logger.withTag("ChunkTransform")
 
+private enum class ChunkMode { TEXT, TOOL }
+
+private data class TextState(
+    val messageId: String,
+    var fromChunk: Boolean
+)
+
+private data class ToolState(
+    val toolCallId: String,
+    var fromChunk: Boolean
+)
+
 /**
- * Transforms chunk events (TEXT_MESSAGE_CHUNK, TOOL_CALL_CHUNK) into structured event sequences.
- * 
- * This transform handles automatic start/end sequences for chunk events:
- * - TEXT_MESSAGE_CHUNK events are converted into TEXT_MESSAGE_START/CONTENT/END sequences
- * - TOOL_CALL_CHUNK events are converted into TOOL_CALL_START/ARGS/END sequences
- * 
- * The transform maintains state to track active sequences and only starts new sequences
- * when no active sequence exists or when IDs change. This allows chunk events to
- * integrate seamlessly with existing message/tool call flows.
- * 
- * @param debug Whether to enable debug logging
- * @return Flow<BaseEvent> with chunk events transformed into structured sequences
+ * Converts chunk events (`TEXT_MESSAGE_CHUNK`, `TOOL_CALL_CHUNK`) into structured
+ * protocol sequences. Behaviour matches the TypeScript SDK so downstream processing
+ * can assume standard start/content/end triads regardless of the upstream stream shape.
  */
 fun Flow<BaseEvent>.transformChunks(debug: Boolean = false): Flow<BaseEvent> {
-    // State tracking for active sequences
-    var mode: String? = null  // "text" or "tool"
-    var textMessageId: String? = null
-    var toolCallId: String? = null
-    var toolCallName: String? = null
-    var parentMessageId: String? = null
-    
-    return transform { event ->
-        if (debug) {
-            logger.d { "[CHUNK_TRANSFORM]: Processing ${event.eventType}" }
+    var mode: ChunkMode? = null
+    var textState: TextState? = null
+    var toolState: ToolState? = null
+
+    suspend fun closeText(
+        timestamp: Long? = null,
+        rawEvent: JsonElement? = null,
+        emit: suspend (BaseEvent) -> Unit
+    ) {
+        val state = textState
+        if (state != null) {
+            if (state.fromChunk) {
+                val event = TextMessageEndEvent(
+                    messageId = state.messageId,
+                    timestamp = timestamp,
+                    rawEvent = rawEvent
+                )
+                if (debug) {
+                    logger.d { "[CHUNK_TRANSFORM]: Emit TEXT_MESSAGE_END (${state.messageId})" }
+                }
+                emit(event)
+            }
+        } else if (debug) {
+            logger.d { "[CHUNK_TRANSFORM]: No text state to close" }
         }
-        
-        when (event) {
-            is TextMessageChunkEvent -> {
-                val messageId = event.messageId
-                val delta = event.delta
-                
-                // Determine if we need to start a new text message
-                val needsNewTextMessage = mode != "text" || 
-                    (messageId != null && messageId != textMessageId)
-                
-                if (needsNewTextMessage) {
-                    if (debug) {
-                        logger.d { "[CHUNK_TRANSFORM]: Starting new text message (id: $messageId)" }
-                    }
-                    
-                    // Close any existing tool call sequence first
-                    if (mode == "tool" && toolCallId != null) {
-                        emit(ToolCallEndEvent(
-                            toolCallId = toolCallId!!,
-                            timestamp = event.timestamp,
-                            rawEvent = event.rawEvent
-                        ))
-                    }
-                    
-                    // Require messageId for the first chunk of a new message
-                    if (messageId == null) {
-                        throw IllegalArgumentException("messageId is required for TEXT_MESSAGE_CHUNK when starting a new text message")
-                    }
-                    
-                    // Start new text message
-                    emit(TextMessageStartEvent(
-                        messageId = messageId,
-                        timestamp = event.timestamp,
-                        rawEvent = event.rawEvent
-                    ))
-                    
-                    mode = "text"
-                    textMessageId = messageId
-                }
-                
-                // Generate content event if delta is present
-                if (delta != null) {
-                    val currentMessageId = textMessageId ?: messageId
-                    if (currentMessageId == null) {
-                        throw IllegalArgumentException("Cannot generate TEXT_MESSAGE_CONTENT without a messageId")
-                    }
-                    
-                    emit(TextMessageContentEvent(
-                        messageId = currentMessageId,
-                        delta = delta,
-                        timestamp = event.timestamp,
-                        rawEvent = event.rawEvent
-                    ))
-                }
-            }
-            
-            is ToolCallChunkEvent -> {
-                val toolId = event.toolCallId
-                val toolName = event.toolCallName
-                val delta = event.delta
-                val parentMsgId = event.parentMessageId
-                
-                // Determine if we need to start a new tool call
-                val needsNewToolCall = mode != "tool" || 
-                    (toolId != null && toolId != toolCallId)
-                
-                if (needsNewToolCall) {
-                    if (debug) {
-                        logger.d { "[CHUNK_TRANSFORM]: Starting new tool call (id: $toolId, name: $toolName)" }
-                    }
-                    
-                    // Close any existing text message sequence first
-                    if (mode == "text" && textMessageId != null) {
-                        emit(TextMessageEndEvent(
-                            messageId = textMessageId!!,
-                            timestamp = event.timestamp,
-                            rawEvent = event.rawEvent
-                        ))
-                    }
-                    
-                    // Require toolCallId and toolCallName for the first chunk of a new tool call
-                    if (toolId == null || toolName == null) {
-                        throw IllegalArgumentException("toolCallId and toolCallName are required for TOOL_CALL_CHUNK when starting a new tool call")
-                    }
-                    
-                    // Start new tool call
-                    emit(ToolCallStartEvent(
-                        toolCallId = toolId,
-                        toolCallName = toolName,
-                        parentMessageId = parentMsgId,
-                        timestamp = event.timestamp,
-                        rawEvent = event.rawEvent
-                    ))
-                    
-                    mode = "tool"
-                    toolCallId = toolId
-                    toolCallName = toolName
-                    parentMessageId = parentMsgId
-                }
-                
-                // Generate args event if delta is present
-                if (delta != null) {
-                    val currentToolCallId = toolCallId ?: toolId
-                    if (currentToolCallId == null) {
-                        throw IllegalArgumentException("Cannot generate TOOL_CALL_ARGS without a toolCallId")
-                    }
-                    
-                    emit(ToolCallArgsEvent(
-                        toolCallId = currentToolCallId,
-                        delta = delta,
-                        timestamp = event.timestamp,
-                        rawEvent = event.rawEvent
-                    ))
-                }
-            }
-            
-            // Track state changes from regular events to maintain consistency
-            is TextMessageStartEvent -> {
-                mode = "text"
-                textMessageId = event.messageId
-                emit(event)
-            }
-            
-            is TextMessageEndEvent -> {
-                if (mode == "text" && textMessageId == event.messageId) {
-                    mode = null
-                    textMessageId = null
+        textState = null
+        if (mode == ChunkMode.TEXT) {
+            mode = null
+        }
+    }
+
+    suspend fun closeTool(
+        timestamp: Long? = null,
+        rawEvent: JsonElement? = null,
+        emit: suspend (BaseEvent) -> Unit
+    ) {
+        val state = toolState
+        if (state != null) {
+            if (state.fromChunk) {
+                val event = ToolCallEndEvent(
+                    toolCallId = state.toolCallId,
+                    timestamp = timestamp,
+                    rawEvent = rawEvent
+                )
+                if (debug) {
+                    logger.d { "[CHUNK_TRANSFORM]: Emit TOOL_CALL_END (${state.toolCallId})" }
                 }
                 emit(event)
             }
-            
-            is ToolCallStartEvent -> {
-                mode = "tool"
-                toolCallId = event.toolCallId
-                toolCallName = event.toolCallName
-                parentMessageId = event.parentMessageId
-                emit(event)
+        } else if (debug) {
+            logger.d { "[CHUNK_TRANSFORM]: No tool state to close" }
+        }
+        toolState = null
+        if (mode == ChunkMode.TOOL) {
+            mode = null
+        }
+    }
+
+    suspend fun closePending(
+        timestamp: Long? = null,
+        rawEvent: JsonElement? = null,
+        emit: suspend (BaseEvent) -> Unit
+    ) {
+        when (mode) {
+            ChunkMode.TEXT -> closeText(timestamp, rawEvent, emit)
+            ChunkMode.TOOL -> closeTool(timestamp, rawEvent, emit)
+            null -> Unit
+        }
+    }
+
+    return flow {
+        collect { event ->
+            if (debug) {
+                logger.d { "[CHUNK_TRANSFORM]: Processing ${event.eventType}" }
             }
-            
-            is ToolCallEndEvent -> {
-                if (mode == "tool" && toolCallId == event.toolCallId) {
-                    mode = null
-                    toolCallId = null
-                    toolCallName = null
-                    parentMessageId = null
+
+            when (event) {
+                is TextMessageChunkEvent -> {
+                    val messageId = event.messageId
+                    val delta = event.delta
+
+                    val needsNewMessage = mode != ChunkMode.TEXT ||
+                        (messageId != null && messageId != textState?.messageId)
+
+                    if (needsNewMessage) {
+                        closePending(event.timestamp, event.rawEvent, this@flow::emit)
+
+                        if (messageId == null) {
+                            throw IllegalArgumentException("First TEXT_MESSAGE_CHUNK must provide messageId")
+                        }
+
+                        emit(
+                            TextMessageStartEvent(
+                                messageId = messageId,
+                                role = event.role ?: Role.ASSISTANT,
+                                timestamp = event.timestamp,
+                                rawEvent = event.rawEvent
+                            )
+                        )
+
+                        mode = ChunkMode.TEXT
+                        textState = TextState(messageId, fromChunk = true)
+                    }
+
+                    val activeMessageId = textState?.messageId ?: messageId
+                        ?: throw IllegalArgumentException("Cannot emit TEXT_MESSAGE_CONTENT without messageId")
+
+                    if (!delta.isNullOrEmpty()) {
+                        emit(
+                            TextMessageContentEvent(
+                                messageId = activeMessageId,
+                                delta = delta,
+                                timestamp = event.timestamp,
+                                rawEvent = event.rawEvent
+                            )
+                        )
+                    }
                 }
-                emit(event)
-            }
-            
-            else -> {
-                // Pass through all other events unchanged
-                emit(event)
+
+                is ToolCallChunkEvent -> {
+                    val toolId = event.toolCallId
+                    val toolName = event.toolCallName
+                    val delta = event.delta
+
+                    val needsNewToolCall = mode != ChunkMode.TOOL ||
+                        (toolId != null && toolId != toolState?.toolCallId)
+
+                    if (needsNewToolCall) {
+                        closePending(event.timestamp, event.rawEvent, this@flow::emit)
+
+                        if (toolId == null || toolName == null) {
+                            throw IllegalArgumentException("First TOOL_CALL_CHUNK must provide toolCallId and toolCallName")
+                        }
+
+                        emit(
+                            ToolCallStartEvent(
+                                toolCallId = toolId,
+                                toolCallName = toolName,
+                                parentMessageId = event.parentMessageId,
+                                timestamp = event.timestamp,
+                                rawEvent = event.rawEvent
+                            )
+                        )
+
+                        mode = ChunkMode.TOOL
+                        toolState = ToolState(toolId, fromChunk = true)
+                    }
+
+                    val activeToolCallId = toolState?.toolCallId ?: toolId
+                        ?: throw IllegalArgumentException("Cannot emit TOOL_CALL_ARGS without toolCallId")
+
+                    if (!delta.isNullOrEmpty()) {
+                        emit(
+                            ToolCallArgsEvent(
+                                toolCallId = activeToolCallId,
+                                delta = delta,
+                                timestamp = event.timestamp,
+                                rawEvent = event.rawEvent
+                            )
+                        )
+                    }
+                }
+
+                is TextMessageStartEvent -> {
+                    closePending(event.timestamp, event.rawEvent, this@flow::emit)
+                    mode = ChunkMode.TEXT
+                    textState = TextState(event.messageId, fromChunk = false)
+                    emit(event)
+                }
+
+                is TextMessageContentEvent -> {
+                    mode = ChunkMode.TEXT
+                    textState = TextState(event.messageId, fromChunk = false)
+                    emit(event)
+                }
+
+                is TextMessageEndEvent -> {
+                    textState = null
+                    if (mode == ChunkMode.TEXT) {
+                        mode = null
+                    }
+                    emit(event)
+                }
+
+                is ToolCallStartEvent -> {
+                    closePending(event.timestamp, event.rawEvent, this@flow::emit)
+                    mode = ChunkMode.TOOL
+                    toolState = ToolState(event.toolCallId, fromChunk = false)
+                    emit(event)
+                }
+
+                is ToolCallArgsEvent -> {
+                    mode = ChunkMode.TOOL
+                    if (toolState?.toolCallId == event.toolCallId) {
+                        toolState?.fromChunk = false
+                    } else {
+                        toolState = ToolState(event.toolCallId, fromChunk = false)
+                    }
+                    emit(event)
+                }
+
+                is ToolCallEndEvent -> {
+                    toolState = null
+                    if (mode == ChunkMode.TOOL) {
+                        mode = null
+                    }
+                    emit(event)
+                }
+
+                is RawEvent -> {
+                    // RAW passthrough without closing chunk state
+                    emit(event)
+                }
+
+                else -> {
+                    closePending(event.timestamp, event.rawEvent, this@flow::emit)
+                    emit(event)
+                }
             }
         }
+
+        closePending(null, null, this@flow::emit)
     }
 }

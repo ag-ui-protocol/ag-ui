@@ -65,12 +65,17 @@ Real-time event streaming using Kotlin Flows:
 - Server-sent events (SSE) parsing
 - Automatic reconnection handling
 - Backpressure management
+- Automatic expansion of `TEXT_MESSAGE_CHUNK` / `TOOL_CALL_CHUNK` events into start/content/end triads
+- Thinking telemetry exposed through `AgentState.thinking`
 
 ### State Management
 Comprehensive state synchronization:
 - JSON Patch-based state updates
 - Automatic state validation
 - Error state handling
+- Tool call results surfaced as `ToolMessage` entries without additional wiring
+- Access to raw/custom protocol events via `AgentState.rawEvents` and `AgentState.customEvents`
+- Thinking streams exposed through `AgentState.thinking`
 
 ### Tool Integration
 Client-side tool execution framework:
@@ -108,6 +113,21 @@ agent.sendMessage("Hello!").collect { state ->
 }
 ```
 
+### Reading Thinking Telemetry
+
+```kotlin
+agent.sendMessage("Plan the next steps").collect { state ->
+    state.thinking?.let { thinking ->
+        if (thinking.isThinking) {
+            val thought = thinking.messages.lastOrNull().orEmpty()
+            println("🤔 Agent thinking: $thought")
+        } else if (thinking.messages.isNotEmpty()) {
+            println("💡 Agent finished thinking: ${thinking.messages.joinToString()}")
+        }
+    }
+}
+```
+
 ### Convenience Builders
 
 The SDK provides convenience builders for common configurations:
@@ -139,6 +159,12 @@ val chatAgent = StatefulAgUiAgent("https://api.example.com/agent") {
 chatAgent.chat("My name is Alice").collect { }
 chatAgent.chat("What's my name?").collect { state ->
     // Agent knows the name from previous message
+    state.customEvents?.forEach { custom ->
+        println("Custom event ${custom.name}: ${custom.value}")
+    }
+    state.rawEvents?.forEach { raw ->
+        println("Raw payload: ${raw.event}")
+    }
 }
 ```
 

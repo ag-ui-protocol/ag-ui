@@ -9,6 +9,19 @@ All notable changes to ag-ui-4k will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Agent subscriber system for opt-in lifecycle and event interception.
+- Text message role fidelity in chunk transformation and state application.
+
+### Changed
+- Default apply pipeline now routes every event through subscribers before mutating state.
+- State application respects developer/system/user roles when constructing streaming messages.
+
+### Tests
+- Expanded chunk transformation and state application coverage for role propagation and subscriber behavior.
+
 ## [0.1.0] - 2025-06-14
 
 ### Added

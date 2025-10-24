@@ -40,14 +40,9 @@ class ClientToolResponseHandler(
             messages = listOf(toolMessage)
         )
 
-        // Send through HTTP agent
+        // Send through HTTP agent by executing a one-off run with the tool message payload.
         try {
-            httpAgent.runAgent(RunAgentParameters(
-                runId = input.runId,
-                tools = input.tools,
-                context = input.context,
-                forwardedProps = input.forwardedProps
-            ))
+            httpAgent.runAgentObservable(input).collect()
             logger.d { "Tool response sent successfully" }
         } catch (e: Exception) {
             logger.e(e) { "Failed to send tool response" }

@@ -1,2 +1,24 @@
+pluginManagement {
+    repositories {
+        google()
+        gradlePluginPortal()
+        mavenCentral()
+    }
+
+    plugins {
+        def kotlinVersion = "2.2.20"
+        def agpVersion = "8.12.0"
+
+        id("org.jetbrains.kotlin.android") version kotlinVersion
+        id("org.jetbrains.kotlin.multiplatform") version kotlinVersion
+        id("org.jetbrains.kotlin.plugin.serialization") version kotlinVersion
+        id("com.android.application") version agpVersion
+        id("com.android.library") version agpVersion
+    }
+}
+
 rootProject.name = "agui-chatapp-java"
-include ':app'
+
+include(":app")
+include(":chatapp-shared")
+project(":chatapp-shared").projectDir = file("../chatapp-shared")

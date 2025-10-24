@@ -12,58 +12,34 @@ import kotlin.test.*
 class AgUiAgentToolsTest {
     
     @Test
-    fun testToolsOnlysentOnFirstMessagePerThread() = runTest {
+    fun testToolsSentOnEveryMessagePerThread() = runTest {
         // Create a mock agent that captures the tools sent in each request
         val mockAgent = MockAgentWithToolsTracking()
         
         val thread1 = "thread_1"
         val thread2 = "thread_2"
         
-        // First message on thread1 - should include tools
+        // Messages on thread1 - each should include tools
         mockAgent.sendMessage("First message", thread1).toList()
         assertTrue(mockAgent.lastRequestHadTools, "First message on thread1 should include tools")
         assertEquals(2, mockAgent.lastToolsCount, "Should have 2 tools")
-        
-        // Second message on thread1 - should NOT include tools
+
         mockAgent.sendMessage("Second message", thread1).toList()
-        assertFalse(mockAgent.lastRequestHadTools, "Second message on thread1 should not include tools")
-        assertEquals(0, mockAgent.lastToolsCount, "Should have 0 tools")
-        
-        // Third message on thread1 - should still NOT include tools
+        assertTrue(mockAgent.lastRequestHadTools, "Second message on thread1 should include tools")
+        assertEquals(2, mockAgent.lastToolsCount, "Should have 2 tools")
+
         mockAgent.sendMessage("Third message", thread1).toList()
-        assertFalse(mockAgent.lastRequestHadTools, "Third message on thread1 should not include tools")
-        assertEquals(0, mockAgent.lastToolsCount, "Should have 0 tools")
-        
-        // First message on thread2 - should include tools (different thread)
+        assertTrue(mockAgent.lastRequestHadTools, "Third message on thread1 should include tools")
+        assertEquals(2, mockAgent.lastToolsCount, "Should have 2 tools")
+
+        // Messages on thread2 should also include tools every time
         mockAgent.sendMessage("First message on thread2", thread2).toList()
         assertTrue(mockAgent.lastRequestHadTools, "First message on thread2 should include tools")
         assertEquals(2, mockAgent.lastToolsCount, "Should have 2 tools")
-        
-        // Second message on thread2 - should NOT include tools
+
         mockAgent.sendMessage("Second message on thread2", thread2).toList()
-        assertFalse(mockAgent.lastRequestHadTools, "Second message on thread2 should not include tools")
-        assertEquals(0, mockAgent.lastToolsCount, "Should have 0 tools")
-    }
-    
-    @Test
-    fun testClearThreadToolsTracking() = runTest {
-        val mockAgent = MockAgentWithToolsTracking()
-        val threadId = "test_thread"
-        
-        // First message - should include tools
-        mockAgent.sendMessage("First message", threadId).toList()
-        assertTrue(mockAgent.lastRequestHadTools, "First message should include tools")
-        
-        // Second message - should NOT include tools
-        mockAgent.sendMessage("Second message", threadId).toList()
-        assertFalse(mockAgent.lastRequestHadTools, "Second message should not include tools")
-        
-        // Clear tracking
-        mockAgent.clearThreadToolsTracking()
-        
-        // Next message should include tools again (tracking was cleared)
-        mockAgent.sendMessage("Message after clear", threadId).toList()
-        assertTrue(mockAgent.lastRequestHadTools, "Message after clearing should include tools again")
+        assertTrue(mockAgent.lastRequestHadTools, "Second message on thread2 should include tools")
+        assertEquals(2, mockAgent.lastToolsCount, "Should have 2 tools")
     }
     
     @Test

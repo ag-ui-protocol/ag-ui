@@ -13,10 +13,11 @@ A Compose Multiplatform chat client for connecting to AI agents using the AG-UI 
 
 ## Architecture
 
-The client follows a clean architecture pattern:
+The client follows a clean architecture pattern and consumes the shared core module located at `../chatapp-shared`:
 
 - **UI Layer**: Compose Multiplatform UI with Material 3
-- **ViewModel Layer**: Screen-specific business logic using Voyager
+- **ViewModel Layer**: Screen-specific adapters around the reusable `ChatController`
+- **Shared Core**: Reusable repository, authentication, and chat orchestration logic
 - **Repository Layer**: Data management and persistence
 - **Authentication Layer**: Extensible auth provider system
 
