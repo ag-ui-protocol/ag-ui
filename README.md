@@ -94,7 +94,7 @@ AG-UI was born from CopilotKit's initial partnership with LangGraph and CrewAI -
 | [AWS Strands Agents](https://github.com/strands-agents/sdk-python) | 🛠️ In Progress           | –                                                                            | 1st Party                |   
 | [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            | Community                |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress           | –                                                                            | Community                |
-| [Cloudflare Agents](https://developers.cloudflare.com/agents/)     | 💡 Open to Contributions | –                                                                            | Community                |
+| [Flowise](https://flowiseai.com/)                                      | ✅ Supported             | ➡️ Docs coming soon 🎮 Demos coming soon                          | Community              |
 
 [View all supported frameworks →](https://ag-ui.com/frameworks)
 
