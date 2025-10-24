@@ -1,0 +1,352 @@
+@import "tailwindcss";
+@import "../styles/typography.css";
+
+@plugin "tailwindcss-animate";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  /* Base Shadcn Colors */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Provider Colors */
+  --color-provider-openai: var(--openai);
+  --color-provider-anthropic: var(--anthropic);
+  --color-provider-cohere: var(--cohere);
+
+  /* CopilotCloud Palette Colors */
+  --color-palette-grey-0: #FFFFFF;
+  --color-palette-grey-25: #FAFCFA;
+  --color-palette-grey-100: #F7F7F9;
+  --color-palette-grey-200: #F0F0F4;
+  --color-palette-grey-300: #E9E9EF;
+  --color-palette-grey-400: #E2E2EA;
+  --color-palette-grey-500: #DBDBE5;
+  --color-palette-grey-600: #AFAFB7;
+  --color-palette-grey-700: #838389;
+  --color-palette-grey-800: #575758;
+  --color-palette-grey-900: #2B2B2B;
+  --color-palette-grey-1000: #010507;
+
+  --color-palette-mint-40030: rgba(133,224,206,0.3);
+  --color-palette-mint-400: #85E0CE;
+  --color-palette-mint-800: #1B936F;
+
+  --color-palette-lilac-40010: rgba(190,194,255,0.1);
+  --color-palette-lilac-40020: rgba(190,194,255,0.2);
+  --color-palette-lilac-40030: rgba(190,194,255,0.3);
+  --color-palette-lilac-400: #BEC2FF;
+
+  --color-palette-yellow-40030: rgba(255,243,136,0.3);
+  --color-palette-yellow-400: #FFF388;
+
+  --color-palette-orange-40020: rgba(255,172,77,0.2);
+  --color-palette-orange-400: #FFAC4D;
+
+  --color-palette-surface-main: #DEDEE9;
+  --color-palette-surface-solidEquivalentDefault70: #F8F8FB;
+  --color-palette-surface-default70: rgba(255,255,255,0.7);
+  --color-palette-surface-default50: rgba(255,255,255,0.5);
+  --color-palette-surface-default30: rgba(255,255,255,0.3);
+  --color-palette-surface-container: #FFFFFF;
+  --color-palette-surface-containerHovered: #FAFCFA;
+  --color-palette-surface-containerFocusedPressed: rgba(190,194,255,0.1);
+  --color-palette-surface-containerActive: #BEC2FF1A;
+  --color-palette-surface-containerActiveHovered: rgba(190,194,255,0.2);
+  --color-palette-surface-containerActiveFocused: rgba(190,194,255,0.3);
+  --color-palette-surface-containerMint: #B5E0CE;
+  --color-palette-surface-containerMint30: rgba(181,224,206,0.3);
+  --color-palette-surface-containerLilac: #BEC2FF;
+  --color-palette-surface-containerInvert: #010507;
+  --color-palette-surface-background: #DBDBE5;
+  --color-palette-surface-progressBarEmpty: #0105071A;
+  --color-palette-surface-progressBarFull: #189370;
+  --color-palette-surface-surfaceActionFilledHoveredAndFocused: #2B2B2B;
+  --color-palette-surface-surfaceActionFilledPressed: #57575B;
+  --color-palette-surface-containerPressed: #BEC2FF4D;
+  --color-palette-surface-containerEnabledSolidEquivalent: #F8F9FF;
+  --color-palette-surface-containerPressedHoverSolidEquivalent: #F1F2FF;
+  --color-palette-surface-containerActivePressedSolidEquivalent: #E5E7FD;
+  --color-palette-surface-containerHoveredAndFocused: #F0F0F4;
+  --color-palette-surface-actionGhostHoveredAndFocused: #0105070D;
+
+  --color-palette-text-primary: #010507;
+  --color-palette-text-secondary: #57575B;
+  --color-palette-text-disabled: #838389;
+  --color-palette-text-invert: #FFFFFF;
+  --color-palette-text-details: #189370;
+  --color-palette-text-title: #3C464A;
+  --color-palette-text-progressBar: #525252;
+  --color-palette-text-link: #0D2E41;
+
+  --color-palette-icon-default: #010507;
+  --color-palette-icon-disabled: #838389;
+  --color-palette-icon-invert: #FFFFFF;
+
+  --color-palette-border-default: #FFFFFF;
+  --color-palette-border-container: #DBDBE5;
+  --color-palette-border-actionEnabled: #BEC2FF;
+  --color-palette-border-divider: #DBDBE5;
+
+  --color-palette-gradient-primary: linear-gradient(90deg, #85E0CE 0%, #FFF388 100%);
+
+  /* CopilotCloud Spacing */
+  --spacing-spacing-1: 4px;
+  --spacing-spacing-2: 8px;
+  --spacing-spacing-3: 12px;
+  --spacing-spacing-4: 16px;
+  --spacing-spacing-5: 20px;
+  --spacing-spacing-6: 24px;
+  --spacing-spacing-7: 28px;
+  --spacing-spacing-8: 32px;
+  --spacing-spacing-9: 36px;
+  --spacing-spacing-10: 40px;
+  --spacing-spacing-11: 44px;
+  --spacing-spacing-12: 48px;
+  --spacing-spacing-13: 52px;
+  --spacing-spacing-14: 56px;
+  --spacing-spacing-15: 60px;
+  --spacing-spacing-16: 64px;
+  --spacing-spacing-17: 68px;
+  --spacing-spacing-18: 72px;
+
+  /* CopilotCloud Border Radius */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-2xl: 48px;
+  --radius-3xl: 200px;
+
+  /* Font Families */
+  --font-family-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-family-mono: 'Spline Sans Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* Elevation/Shadows */
+  --shadow-sm: 0px 1px 3px 0px rgba(1, 5, 7, 0.08);
+  --shadow-md: 0px 6px 6px -2px rgba(1, 5, 7, 0.08);
+  --shadow-lg: 0px 16px 24px -8px rgba(1, 5, 7, 0.12);
+  --shadow-xl: 0px 24px 32px -12px rgba(1, 5, 7, 0.16);
+}
+
+:root {
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+
+  /* Provider Colors */
+  --openai: hsl(160 70% 50%); /* Bright green */
+  --anthropic: hsl(240 80% 60%); /* Bright blue */
+  --cohere: hsl(0 80% 60%); /* Bright red */ --background: oklch(1 0 0); --foreground: oklch(0.145 0 0);
+
+  --cpk-docs-dark-bg: oklch(0.274 0.006 286.033);
+  --cpk-docs-primary: oklch(0.55 0.25 285);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: hsl(210 40% 98%);
+
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-cpk-docs-dark-bg: var(--cpk-docs-dark-bg);
+  --color-cpk-docs-primary: var(--cpk-docs-primary);
+
+  /* supporting variables for color-mix (see related color-mix-* utilities below */
+  --color-mix-from: var(--tw-mix-from);
+  --color-mix-to: var(--tw-mix-to);
+  --color-mix: var(--tw-mix);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    /*
+      TODO: remove important modifier (!)
+      after troubleshooting why the dojo
+      sidebar text is white when on 404 pages
+    */
+    @apply bg-background! text-foreground! font-sans;
+  }
+}
+
+/* hide scroll decoration on code blocks */
+.monaco-editor .overflow-guard .scroll-decoration {
+  @apply hidden!;
+}
+
+@utility mix-from-* {
+  --tw-mix-from-color: --value(--color-*, color, [color]);
+  --tw-mix-from-opacity: --modifier(--opacity-*, [percentage]);
+  --tw-mix-from-opacity: calc(--modifier(number) * 1%);
+  --tw-mix-from-opacity: calc(--modifier([number]) * 100%);
+  --tw-mix-from: --alpha(var(--tw-mix-from-color) / var(--tw-mix-from-opacity, 100%));
+  /* calculate the final color-mix result */
+  --tw-mix: color-mix(color-mix(in srgb, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
+  @supports (color: color-mix(in lab, red, red)) {
+    --tw-mix: color-mix(color-mix(in oklab, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
+  }
+  /* redefining the color variables here to ensure they receive the latest values */
+  --color-mix-from: var(--tw-mix-from);
+  --color-mix-to: var(--tw-mix-to);
+  --color-mix: var(--tw-mix);
+}
+
+@utility mix-to-* {
+  --tw-mix-to-color: --value(--color-*, color, [color]);
+  --tw-mix-to-opacity: --modifier(--opacity-*, [percentage]);
+  --tw-mix-to-opacity: calc(--modifier(number) * 1%);
+  --tw-mix-to-opacity: calc(--modifier([number]) * 100%);
+  --tw-mix-to: --alpha(var(--tw-mix-to-color) / var(--tw-mix-to-opacity, 100%));
+  /* calculate the final color-mix result */
+  --tw-mix: color-mix(color-mix(in srgb, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
+  @supports (color: color-mix(in lab, red, red)) {
+    --tw-mix: color-mix(color-mix(in oklab, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
+  }
+  /* redefining the color variables here to ensure they receive the latest values */
+  --color-mix-from: var(--tw-mix-from);
+  --color-mix-to: var(--tw-mix-to);
+  --color-mix: var(--tw-mix);
+}
+
+@utility mix-* {
+  --tw-mix-percent: --value(--opacity-*, [percentage]);
+  --tw-mix-percent: calc(--value(number) * 1%);
+  --tw-mix-percent: calc(--value([number]) * 100%);
+  --tw-mix-opacity: --modifier(--opacity-*, [percentage]);
+  --tw-mix-opacity: calc(--modifier(number) * 1%);
+  --tw-mix-opacity: calc(--modifier([number]) * 100%);
+  /* calculate the final color-mix result */
+  --tw-mix: color-mix(in srgb, color-mix(in srgb, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
+  @supports (color: color-mix(in lab, red, red)) {
+    --tw-mix: color-mix(in oklab, color-mix(in oklab, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
+  }
+  /* redefining the color variables here to ensure they receive the latest values */
+  --color-mix-from: var(--tw-mix-from);
+  --color-mix-to: var(--tw-mix-to);
+  --color-mix: var(--tw-mix);
+}

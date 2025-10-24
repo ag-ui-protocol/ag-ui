@@ -1,5 +1,13 @@
 **/.claude/settings.local.json
-.vscode/
-.idea/
 
-.DS_Store
+mastra.db*
+
+**/.DS_Store
+
+test-results/
+.turbo
+
+node_modules
+.vscode
+
+**/mastra.db*
