@@ -366,6 +366,7 @@ class ADKAgent:
 
         index = 0
         total_unseen = len(unseen_messages)
+        app_name = self._get_app_name(input)
 
         while index < total_unseen:
             current = unseen_messages[index]
@@ -381,9 +382,30 @@ class ADKAgent:
                     yield event
             else:
                 message_batch: List[Any] = []
+                assistant_message_ids: List[str] = []
+
                 while index < total_unseen and getattr(unseen_messages[index], "role", None) != "tool":
-                    message_batch.append(unseen_messages[index])
+                    candidate = unseen_messages[index]
+                    candidate_role = getattr(candidate, "role", None)
+
+                    if candidate_role == "assistant":
+                        message_id = getattr(candidate, "id", None)
+                        if message_id:
+                            assistant_message_ids.append(message_id)
+                    else:
+                        message_batch.append(candidate)
+
                     index += 1
+
+                if assistant_message_ids:
+                    self._session_manager.mark_messages_processed(
+                        app_name,
+                        input.thread_id,
+                        assistant_message_ids,
+                    )
+
+                if not message_batch:
+                    continue
 
                 async for event in self._start_new_execution(input, message_batch=message_batch):
                     yield event
