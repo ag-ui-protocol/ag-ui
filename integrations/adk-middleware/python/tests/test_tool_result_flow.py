@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from ag_ui.core import (
     RunAgentInput, BaseEvent, EventType, Tool as AGUITool,
-    UserMessage, ToolMessage, RunStartedEvent, RunFinishedEvent, RunErrorEvent
+    UserMessage, ToolMessage, RunStartedEvent, RunFinishedEvent, RunErrorEvent,
+    AssistantMessage, ToolCall, FunctionCall,
 )
 
 from ag_ui_adk import ADKAgent
@@ -529,6 +530,116 @@ class TestToolResultFlow:
         tool_messages = handle_mock.call_args.kwargs['tool_messages']
         assert len(tool_messages) == 1
         assert getattr(tool_messages[0], 'id', None) == "tool_1"
+
+    @pytest.mark.asyncio
+    async def test_run_skips_assistant_history_before_tool_result(self, ag_ui_adk):
+        """Assistant tool call history should not trigger a new execution before tool results arrive."""
+        assistant_call = AssistantMessage(
+            id="assistant_tool",
+            role="assistant",
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="call_1",
+                    function=FunctionCall(name="test_tool", arguments="{}"),
+                )
+            ],
+        )
+
+        tool_result = ToolMessage(
+            id="tool_result",
+            role="tool",
+            content='{"result": "value"}',
+            tool_call_id="call_1",
+        )
+
+        input_data = RunAgentInput(
+            thread_id="thread_assistant_tool",
+            run_id="run_assistant_tool",
+            messages=[
+                UserMessage(id="user_initial", role="user", content="Initial question"),
+                assistant_call,
+                tool_result,
+            ],
+            tools=[],
+            context=[],
+            state={},
+            forwarded_props={},
+        )
+
+        # Mark the initial user message as already processed so only the assistant call and tool result are unseen
+        app_name = ag_ui_adk._get_app_name(input_data)
+        ag_ui_adk._session_manager.mark_messages_processed(app_name, input_data.thread_id, ["user_initial"])
+
+        start_calls = []
+
+        async def mock_start_new_execution(input_data, *, tool_results=None, message_batch=None):
+            start_calls.append((tool_results, message_batch))
+
+            call_id = None
+            if tool_results:
+                call_id = tool_results[0]['message'].tool_call_id
+            elif message_batch:
+                for message in message_batch:
+                    tool_calls = getattr(message, "tool_calls", None)
+                    if tool_calls:
+                        call_id = tool_calls[0].id
+                        break
+
+            if call_id:
+                await ag_ui_adk._add_pending_tool_call_with_context(
+                    input_data.thread_id,
+                    call_id,
+                    ag_ui_adk._get_app_name(input_data),
+                    ag_ui_adk._get_user_id(input_data),
+                )
+
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=input_data.thread_id,
+                run_id=input_data.run_id,
+            )
+            yield RunFinishedEvent(
+                type=EventType.RUN_FINISHED,
+                thread_id=input_data.thread_id,
+                run_id=input_data.run_id,
+            )
+
+        with patch.object(
+            ag_ui_adk,
+            '_start_new_execution',
+            side_effect=mock_start_new_execution,
+        ) as start_mock, patch.object(
+            ag_ui_adk,
+            '_handle_tool_result_submission',
+            wraps=ag_ui_adk._handle_tool_result_submission,
+        ), patch.object(
+            ag_ui_adk,
+            '_add_pending_tool_call_with_context',
+            new_callable=AsyncMock,
+        ) as pending_mock:
+            events = []
+            async for event in ag_ui_adk.run(input_data):
+                events.append(event)
+
+        assert [event.type for event in events] == [
+            EventType.RUN_STARTED,
+            EventType.RUN_FINISHED,
+        ]
+
+        assert start_mock.call_count == 1
+        assert len(start_calls) == 1
+        first_tool_results, first_batch = start_calls[0]
+        assert first_tool_results is not None
+        assert first_batch is None
+        assert first_tool_results[0]['message'].id == "tool_result"
+
+        assert pending_mock.await_count == 1
+        pending_call = pending_mock.await_args_list[0]
+        assert pending_call.args[1] == "call_1"
+
+        processed_ids = ag_ui_adk._session_manager.get_processed_message_ids(app_name, input_data.thread_id)
+        assert "assistant_tool" in processed_ids
 
     @pytest.mark.asyncio
     async def test_run_preserves_order_for_user_then_tool(self, ag_ui_adk):
