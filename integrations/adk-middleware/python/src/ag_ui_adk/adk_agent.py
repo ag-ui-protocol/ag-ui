@@ -367,6 +367,7 @@ class ADKAgent:
         index = 0
         total_unseen = len(unseen_messages)
         app_name = self._get_app_name(input)
+        skip_tool_message_batch = False
 
         while index < total_unseen:
             current = unseen_messages[index]
@@ -378,8 +379,13 @@ class ADKAgent:
                     tool_batch.append(unseen_messages[index])
                     index += 1
 
-                async for event in self._handle_tool_result_submission(input, tool_messages=tool_batch):
+                async for event in self._handle_tool_result_submission(
+                    input,
+                    tool_messages=tool_batch,
+                    include_message_batch=not skip_tool_message_batch,
+                ):
                     yield event
+                skip_tool_message_batch = False
             else:
                 message_batch: List[Any] = []
                 assistant_message_ids: List[str] = []
@@ -405,7 +411,11 @@ class ADKAgent:
                     )
 
                 if not message_batch:
+                    if assistant_message_ids:
+                        skip_tool_message_batch = True
                     continue
+                else:
+                    skip_tool_message_batch = False
 
                 async for event in self._start_new_execution(input, message_batch=message_batch):
                     yield event
@@ -498,17 +508,22 @@ class ADKAgent:
         if not unseen_messages:
             return False
 
-        return all(getattr(message, "role", None) == "tool" for message in unseen_messages)
+        last_message = unseen_messages[-1]
+        return getattr(last_message, "role", None) == "tool"
 
     async def _handle_tool_result_submission(
         self,
         input: RunAgentInput,
+        *,
         tool_messages: Optional[List[Any]] = None,
+        include_message_batch: bool = True,
     ) -> AsyncGenerator[BaseEvent, None]:
         """Handle tool result submission for existing execution.
         
         Args:
             input: The run input containing tool results
+            tool_messages: Optional pre-filtered tool messages to consider
+            include_message_batch: Whether to forward the candidate messages to the execution
             
         Yields:
             AG-UI events from continued execution
@@ -548,7 +563,12 @@ class ADKAgent:
             # Since all tools are long-running, all tool results are standalone
             # and should start new executions with the tool results
             logger.info(f"Starting new execution for tool result in thread {thread_id}")
-            async for event in self._start_new_execution(input, tool_results=tool_results):
+            message_batch = candidate_messages if include_message_batch else None
+            async for event in self._start_new_execution(
+                input,
+                tool_results=tool_results,
+                message_batch=message_batch,
+            ):
                 yield event
                 
         except Exception as e:
@@ -896,17 +916,21 @@ class ADKAgent:
         
         # Create background task
         logger.debug(f"Creating background task for thread {input.thread_id}")
-        task = asyncio.create_task(
-            self._run_adk_in_background(
-                input=input,
-                adk_agent=adk_agent,
-                user_id=user_id,
-                app_name=app_name,
-                event_queue=event_queue,
-                tool_results=tool_results,
-                message_batch=message_batch,
-            )
-        )
+        run_kwargs = {
+            "input": input,
+            "adk_agent": adk_agent,
+            "user_id": user_id,
+            "app_name": app_name,
+            "event_queue": event_queue,
+        }
+
+        if tool_results is not None:
+            run_kwargs["tool_results"] = tool_results
+
+        if message_batch is not None:
+            run_kwargs["message_batch"] = message_batch
+
+        task = asyncio.create_task(self._run_adk_in_background(**run_kwargs))
         logger.debug(f"Background task created for thread {input.thread_id}: {task}")
         
         return ExecutionState(
