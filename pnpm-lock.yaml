@@ -121,20 +121,20 @@ importers:
         specifier: ^2.0.42
         version: 2.0.52(zod@3.25.76)
       '@copilotkit/react-core':
-        specifier: 0.0.0-feat-cpk-1-5-20251024154300
-        version: 0.0.0-feat-cpk-1-5-20251024154300(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)
+        specifier: 0.0.0-feat-cpk-1-5-20251028120232
+        version: 0.0.0-feat-cpk-1-5-20251028120232(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)
       '@copilotkit/react-ui':
-        specifier: 0.0.0-feat-cpk-1-5-20251024154300
-        version: 0.0.0-feat-cpk-1-5-20251024154300(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)
+        specifier: 0.0.0-feat-cpk-1-5-20251028120232
+        version: 0.0.0-feat-cpk-1-5-20251028120232(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)
       '@copilotkit/runtime':
-        specifier: 0.0.0-feat-cpk-1-5-20251024154300
-        version: 0.0.0-feat-cpk-1-5-20251024154300(64e53d6a38a9d6a8b11809b6b9b1396b)
+        specifier: 0.0.0-feat-cpk-1-5-20251028120232
+        version: 0.0.0-feat-cpk-1-5-20251028120232(64e53d6a38a9d6a8b11809b6b9b1396b)
       '@copilotkit/runtime-client-gql':
-        specifier: 0.0.0-feat-cpk-1-5-20251024154300
-        version: 0.0.0-feat-cpk-1-5-20251024154300(graphql@16.11.0)(react@19.2.0)
+        specifier: 0.0.0-feat-cpk-1-5-20251028120232
+        version: 0.0.0-feat-cpk-1-5-20251028120232(graphql@16.11.0)(react@19.2.0)
       '@copilotkit/shared':
-        specifier: 0.0.0-feat-cpk-1-5-20251024154300
-        version: 0.0.0-feat-cpk-1-5-20251024154300
+        specifier: 0.0.0-feat-cpk-1-5-20251028120232
+        version: 0.0.0-feat-cpk-1-5-20251028120232
       '@mastra/client-js':
         specifier: ^0.15.2
         version: 0.15.2(openapi-types@12.1.3)(react@19.2.0)(zod@3.25.76)
@@ -362,7 +362,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -393,7 +393,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -424,7 +424,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -464,7 +464,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -495,7 +495,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -541,7 +541,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -606,7 +606,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -634,7 +634,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -662,7 +662,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -699,7 +699,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -736,7 +736,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -764,7 +764,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -798,7 +798,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -847,7 +847,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -1537,8 +1537,8 @@ packages:
   '@clack/prompts@0.11.0':
     resolution: {integrity: sha512-pMN5FcrEw9hUkZA4f+zLlzivQSeQf5dRGJjSUbvVYDLvpKCdQx5OaknvKzgbtXOizhP+SJJJjqEbOe55uKKfAw==}
 
-  '@copilotkit/react-core@0.0.0-feat-cpk-1-5-20251024154300':
-    resolution: {integrity: sha512-bHkTfVImzOqw8bWKWhG5W6tAx+fFpNPXEmLIUzbnFb2GrYd+LiXu+EykpBl8W8osEwxHaTHx0oj429L0S86pDw==}
+  '@copilotkit/react-core@0.0.0-feat-cpk-1-5-20251028120232':
+    resolution: {integrity: sha512-Qy/uZsKoiPNnXWFBk/+mF1kOyDWa5V6qmVLhIDBtPMWGByWD4Nk5snI6bAtcu+KD6gdW6u1sOtKCeYF+TcP2Lw==}
     peerDependencies:
       '@copilotkitnext/core': 0.0.16
       '@copilotkitnext/react': 0.0.16
@@ -1546,19 +1546,19 @@ packages:
       react-dom: ^18 || ^19 || ^19.0.0-rc
       zod: '>=3.0.0'
 
-  '@copilotkit/react-ui@0.0.0-feat-cpk-1-5-20251024154300':
-    resolution: {integrity: sha512-d1yMZhxJ0Fpjp3WeLqdDuJDFbIdYnJ3+ECnjFTWg/Zn7lMfUWcI1ZHF785W4wnTV5S7HLWZ9ZnCE28NfOgB8HQ==}
+  '@copilotkit/react-ui@0.0.0-feat-cpk-1-5-20251028120232':
+    resolution: {integrity: sha512-/AU/3uG6afIgE27uRliVoFNRsoJy6XxInqN6Feayvb1glWnAEFwTiOfi5GSUZsNyEdj8IR6jL7qyNgtMlauiQw==}
     peerDependencies:
       '@copilotkitnext/core': 0.0.16
       react: ^18 || ^19 || ^19.0.0-rc
 
-  '@copilotkit/runtime-client-gql@0.0.0-feat-cpk-1-5-20251024154300':
-    resolution: {integrity: sha512-d3N6R++MdNiQCNhGgcxy21XqY43GVx29G5XMm2EnbJG94fQYVA3iX8FJt/9flLU+YctjCWA7W7TEj/8d9zaUow==}
+  '@copilotkit/runtime-client-gql@0.0.0-feat-cpk-1-5-20251028120232':
+    resolution: {integrity: sha512-oOfU6Y4T1m75Wb8TTg/2Q07Ssym3m+h2YNLpg9kas1jarpp6uUpYKoc2CjVP4pr60SDd7f7CQEvc4NonOEUprg==}
     peerDependencies:
       react: ^18 || ^19 || ^19.0.0-rc
 
-  '@copilotkit/runtime@0.0.0-feat-cpk-1-5-20251024154300':
-    resolution: {integrity: sha512-KlqnfVg1s84rvHB7yoln5/r5LRHuD265o3tGl83UhBbp51iemut18ohn+o3ESxEwWcOKYwVW62B4ku+MnDi3EA==}
+  '@copilotkit/runtime@0.0.0-feat-cpk-1-5-20251028120232':
+    resolution: {integrity: sha512-HsyFrzmAA6pC/Vx+8BdIdb9hUKYgkwNTg97/yhyQtEefzKyfpXCqrjyaNxLdf0mEFR3yuAa+pGnoQQs7gVuzIg==}
     peerDependencies:
       '@ag-ui/client': '>=0.0.39'
       '@ag-ui/core': '>=0.0.39'
@@ -1575,8 +1575,8 @@ packages:
       '@ag-ui/langgraph': '>=0.0.18'
       '@ag-ui/proto': '>=0.0.39'
 
-  '@copilotkit/shared@0.0.0-feat-cpk-1-5-20251024154300':
-    resolution: {integrity: sha512-PRyAWeq4/pDv4+kG9jAkHElqDKlSVYlSioW6b+PNst/CMzBP2Ulaau422zq20yWNIfpOeTpH9svRwVbPiAu5nw==}
+  '@copilotkit/shared@0.0.0-feat-cpk-1-5-20251028120232':
+    resolution: {integrity: sha512-A8NYaZ9h/i9gnMZepOeRiijlibuto4qD9Ko9PlvTV2ZQklizfwV/vaiGX9r/YvpFSY4yK5r+SGpEBGcAOUchvQ==}
 
   '@copilotkit/shared@1.10.6':
     resolution: {integrity: sha512-56Rltf4fDBqCpl1ZXARypt5NdE4LTg3tGPPLurZpgPmm31Lv5EAHpfjC7I55vt9A0mXWlTCHtCrpiaAlTyzGJw==}
@@ -11461,10 +11461,10 @@ snapshots:
       picocolors: 1.1.1
       sisteransi: 1.0.5
 
-  '@copilotkit/react-core@0.0.0-feat-cpk-1-5-20251024154300(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)':
+  '@copilotkit/react-core@0.0.0-feat-cpk-1-5-20251028120232(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)':
     dependencies:
-      '@copilotkit/runtime-client-gql': 0.0.0-feat-cpk-1-5-20251024154300(graphql@16.11.0)(react@19.2.0)
-      '@copilotkit/shared': 0.0.0-feat-cpk-1-5-20251024154300
+      '@copilotkit/runtime-client-gql': 0.0.0-feat-cpk-1-5-20251028120232(graphql@16.11.0)(react@19.2.0)
+      '@copilotkit/shared': 0.0.0-feat-cpk-1-5-20251028120232
       '@copilotkitnext/core': 0.0.16
       '@copilotkitnext/react': 0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       '@scarf/scarf': 1.4.0
@@ -11479,11 +11479,11 @@ snapshots:
       - graphql
       - supports-color
 
-  '@copilotkit/react-ui@0.0.0-feat-cpk-1-5-20251024154300(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)':
+  '@copilotkit/react-ui@0.0.0-feat-cpk-1-5-20251028120232(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)':
     dependencies:
-      '@copilotkit/react-core': 0.0.0-feat-cpk-1-5-20251024154300(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)
-      '@copilotkit/runtime-client-gql': 0.0.0-feat-cpk-1-5-20251024154300(graphql@16.11.0)(react@19.2.0)
-      '@copilotkit/shared': 0.0.0-feat-cpk-1-5-20251024154300
+      '@copilotkit/react-core': 0.0.0-feat-cpk-1-5-20251028120232(@copilotkitnext/core@0.0.16)(@copilotkitnext/react@0.0.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(zod@3.25.76)
+      '@copilotkit/runtime-client-gql': 0.0.0-feat-cpk-1-5-20251028120232(graphql@16.11.0)(react@19.2.0)
+      '@copilotkit/shared': 0.0.0-feat-cpk-1-5-20251028120232
       '@copilotkitnext/core': 0.0.16
       '@headlessui/react': 2.2.9(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       react: 19.2.0
@@ -11501,9 +11501,9 @@ snapshots:
       - supports-color
       - zod
 
-  '@copilotkit/runtime-client-gql@0.0.0-feat-cpk-1-5-20251024154300(graphql@16.11.0)(react@19.2.0)':
+  '@copilotkit/runtime-client-gql@0.0.0-feat-cpk-1-5-20251028120232(graphql@16.11.0)(react@19.2.0)':
     dependencies:
-      '@copilotkit/shared': 0.0.0-feat-cpk-1-5-20251024154300
+      '@copilotkit/shared': 0.0.0-feat-cpk-1-5-20251028120232
       '@urql/core': 5.2.0(graphql@16.11.0)
       react: 19.2.0
       untruncate-json: 0.0.1
@@ -11512,7 +11512,7 @@ snapshots:
       - encoding
       - graphql
 
-  '@copilotkit/runtime@0.0.0-feat-cpk-1-5-20251024154300(64e53d6a38a9d6a8b11809b6b9b1396b)':
+  '@copilotkit/runtime@0.0.0-feat-cpk-1-5-20251028120232(64e53d6a38a9d6a8b11809b6b9b1396b)':
     dependencies:
       '@ag-ui/client': 0.0.40
       '@ag-ui/core': 0.0.40-alpha.6
@@ -11520,7 +11520,7 @@ snapshots:
       '@ag-ui/langgraph': link:integrations/langgraph/typescript
       '@ag-ui/proto': 0.0.40-alpha.6
       '@anthropic-ai/sdk': 0.57.0
-      '@copilotkit/shared': 0.0.0-feat-cpk-1-5-20251024154300
+      '@copilotkit/shared': 0.0.0-feat-cpk-1-5-20251028120232
       '@copilotkitnext/agent': 0.0.17
       '@copilotkitnext/runtime': 0.0.17(openai@4.104.0(ws@8.18.3)(zod@3.25.76))
       '@graphql-yoga/plugin-defer-stream': 3.16.0(graphql-yoga@5.16.0(graphql@16.11.0))(graphql@16.11.0)
@@ -11878,7 +11878,7 @@ snapshots:
       - ws
       - youtubei.js
 
-  '@copilotkit/shared@0.0.0-feat-cpk-1-5-20251024154300':
+  '@copilotkit/shared@0.0.0-feat-cpk-1-5-20251028120232':
     dependencies:
       '@ag-ui/core': 0.0.37
       '@segment/analytics-node': 2.3.0
@@ -21694,6 +21694,27 @@ snapshots:
   ts-error@1.0.6: {}
 
   ts-interface-checker@0.1.13: {}
+
+  ts-jest@29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3):
+    dependencies:
+      bs-logger: 0.2.6
+      fast-json-stable-stringify: 2.1.0
+      handlebars: 4.7.8
+      jest: 29.7.0(@types/node@20.19.21)
+      json5: 2.2.3
+      lodash.memoize: 4.1.2
+      make-error: 1.3.6
+      semver: 7.7.3
+      type-fest: 4.41.0
+      typescript: 5.9.3
+      yargs-parser: 21.1.1
+    optionalDependencies:
+      '@babel/core': 7.28.4
+      '@jest/transform': 29.7.0
+      '@jest/types': 29.6.3
+      babel-jest: 29.7.0(@babel/core@7.28.4)
+      esbuild: 0.25.10
+      jest-util: 29.7.0
 
   ts-jest@29.4.5(@babel/core@7.28.4)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.4))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3):
     dependencies:
