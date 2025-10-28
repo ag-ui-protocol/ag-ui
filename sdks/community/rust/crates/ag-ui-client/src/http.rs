@@ -49,7 +49,10 @@ pub struct HttpAgentBuilder {
 impl HttpAgentBuilder {
     pub fn new() -> Self {
         Self {
-            ..Default::default()
+            base_url: None,
+            header_map: HeaderMap::new(),
+            http_client: None,
+            agent_id: None
         }
     }
 
