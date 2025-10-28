@@ -1,9 +1,9 @@
 use crate::error::AgUiClientError;
+use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use reqwest::Response;
 use std::pin::Pin;
-use async_trait::async_trait;
 
 /// Represents a parsed Server-Sent Event
 #[derive(Debug)]

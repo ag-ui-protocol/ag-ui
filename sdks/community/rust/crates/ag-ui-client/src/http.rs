@@ -52,7 +52,7 @@ impl HttpAgentBuilder {
             base_url: None,
             header_map: HeaderMap::new(),
             http_client: None,
-            agent_id: None
+            agent_id: None,
         }
     }
 
