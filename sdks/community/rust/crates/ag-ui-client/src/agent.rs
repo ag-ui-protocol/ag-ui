@@ -10,6 +10,7 @@ use crate::event_handler::EventHandler;
 use crate::stream::EventStream;
 use crate::subscriber::IntoSubscribers;
 
+/// Configuration for an Agent.
 #[derive(Debug, Clone)]
 pub struct AgentConfig<StateT = JsonValue> {
     pub agent_id: Option<AgentId>,

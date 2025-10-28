@@ -13,6 +13,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client as HttpClient, Url};
 use std::str::FromStr;
 
+/// Represents an agent that communicates primarily via HTTP.
 pub struct HttpAgent {
     http_client: HttpClient,
     base_url: Url,

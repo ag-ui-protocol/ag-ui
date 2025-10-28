@@ -83,6 +83,8 @@ define_id_type!(ThreadId);
 define_id_type!(RunId);
 define_id_type!(MessageId);
 
+/// A tool call ID.
+/// Used by some providers to denote a specific ID for a tool call generation, where the result of the tool call must also use this ID.
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone)]
 pub struct ToolCallId(String);
 

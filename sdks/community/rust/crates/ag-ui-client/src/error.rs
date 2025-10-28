@@ -1,6 +1,7 @@
 use reqwest::StatusCode;
 use thiserror::Error;
 
+/// Ag-ui client errors
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum AgUiClientError {
@@ -44,6 +45,12 @@ impl AgUiClientError {
         Self::Execution { message: m.into() }
     }
 
+    /// Whether or not the error is retryable.
+    /// Generally, the request is considered retryable if the following errors are received:
+    /// - Connection errors
+    /// - Timeout errors
+    /// - Internal server errors
+    /// - Errors related to too many requests (ie, rate limiting or throttling)
     pub fn is_retryable(&self) -> bool {
         match self {
             AgUiClientError::HttpTransport(e) => e.is_connect() || e.is_timeout() || e.is_request(),

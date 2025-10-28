@@ -16,6 +16,7 @@ pub struct AgentSubscriberParams<'a, StateT: AgentState, FwdPropsT: FwdProps> {
 }
 
 /// Subscriber trait for hooking into Agent run lifecycle events.
+/// Currently makes use of the [`async_trait`] crate.
 #[async_trait::async_trait]
 pub trait AgentSubscriber<StateT = JsonValue, FwdPropsT = JsonValue>: Send + Sync
 where

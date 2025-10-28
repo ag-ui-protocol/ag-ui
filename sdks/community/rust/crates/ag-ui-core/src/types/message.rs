@@ -2,6 +2,7 @@ use crate::types::ids::{MessageId, ToolCallId};
 use crate::types::tool::ToolCall;
 use serde::{Deserialize, Serialize};
 
+/// A generated function call from a model
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FunctionCall {
     pub name: String,
@@ -9,6 +10,7 @@ pub struct FunctionCall {
     pub arguments: String,
 }
 
+/// Message role.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
@@ -38,6 +40,7 @@ impl Role {
     }
 }
 
+/// A basic message, where the only content should be an optional string.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BaseMessage {
     pub id: MessageId,
@@ -48,6 +51,8 @@ pub struct BaseMessage {
     pub name: Option<String>,
 }
 
+/// A developer message.
+/// Typically for debugging - not to be confused with system messages.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeveloperMessage {
     pub id: MessageId,
@@ -74,6 +79,7 @@ impl DeveloperMessage {
     }
 }
 
+/// A system message. This is usually where the system prompt goes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SystemMessage {
     pub id: MessageId,
@@ -100,6 +106,7 @@ impl SystemMessage {
     }
 }
 
+/// An assistant message (ie, from the model).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssistantMessage {
     pub id: MessageId,
@@ -140,6 +147,7 @@ impl AssistantMessage {
     }
 }
 
+/// A user message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserMessage {
     pub id: MessageId,
@@ -166,6 +174,7 @@ impl UserMessage {
     }
 }
 
+/// A tool call result.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolMessage {
     pub id: MessageId,
@@ -199,6 +208,7 @@ impl ToolMessage {
     }
 }
 
+/// Represents the different type of messages that you might receive, but as an enum.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum Message {
