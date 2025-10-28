@@ -47,7 +47,11 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   {
     id: "mastra",
     name: "Mastra",
-    features: ["agentic_chat", "backend_tool_rendering", "tool_based_generative_ui"],
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "tool_based_generative_ui",
+    ],
   },
   {
     id: "mastra-agent-local",
@@ -60,15 +64,15 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
     ],
   },
   {
-    id: 'spring-ai',
-    name: 'Spring AI',
+    id: "spring-ai",
+    name: "Spring AI",
     features: [
-      'agentic_chat', 
-      'shared_state', 
-      'tool_based_generative_ui', 
-      'human_in_the_loop', 
-      'agentic_generative_ui'
-    ]
+      "agentic_chat",
+      "shared_state",
+      "tool_based_generative_ui",
+      "human_in_the_loop",
+      "agentic_generative_ui",
+    ],
   },
   {
     id: "pydantic-ai",
@@ -99,7 +103,11 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   {
     id: "agno",
     name: "Agno",
-    features: ["agentic_chat", "backend_tool_rendering", "tool_based_generative_ui"],
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "tool_based_generative_ui",
+    ],
   },
   {
     id: "llama-index",
@@ -128,7 +136,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   {
     id: "a2a-basic",
     name: "A2A (Direct)",
-    features: ["agentic_chat"],
+    features: ["vnext_chat"],
   },
   // Disabled until we can support Vercel AI SDK v5
   // {

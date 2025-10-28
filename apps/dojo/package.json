@@ -33,6 +33,8 @@
     "@copilotkit/runtime": "1.10.6",
     "@copilotkit/runtime-client-gql": "1.10.6",
     "@copilotkit/shared": "1.10.6",
+    "@copilotkitnext/react": "0.0.19-alpha.0",
+    "@copilotkitnext/runtime": "0.0.19-alpha.0",
     "@mastra/client-js": "^0.15.2",
     "@mastra/core": "^0.20.2",
     "@mastra/dynamodb": "^0.15.6",
