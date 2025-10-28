@@ -231,13 +231,12 @@ where
             }
             Event::ToolCallArgs(e) => {
                 // Default behavior
-                if let Some(last_message) = self.messages.last_mut() {
-                    if let Some(tool_calls) = last_message.tool_calls_mut() {
-                        if let Some(last_tool_call) = tool_calls.last_mut() {
-                            last_tool_call.function.arguments.push_str(&e.delta);
-                            current_mutation.messages = Some(self.messages.clone());
-                        }
-                    }
+                if let Some(last_message) = self.messages.last_mut()
+                    && let Some(tool_calls) = last_message.tool_calls_mut()
+                    && let Some(last_tool_call) = tool_calls.last_mut()
+                {
+                    last_tool_call.function.arguments.push_str(&e.delta);
+                    current_mutation.messages = Some(self.messages.clone());
                 }
 
                 // Get the current tool call buffer and name
