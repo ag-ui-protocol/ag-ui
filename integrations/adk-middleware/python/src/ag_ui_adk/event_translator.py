@@ -182,6 +182,7 @@ class EventTranslator:
                 return
             
             # Handle text content
+            # --- THIS IS THE RESTORED LINE ---
             if adk_event.content and hasattr(adk_event.content, 'parts') and adk_event.content.parts:
                 async for event in self._translate_text_content(
                     adk_event, thread_id, run_id
@@ -256,13 +257,25 @@ class EventTranslator:
         Yields:
             Text message events (START, CONTENT, END)
         """
+        
+        # Check for is_final_response *before* checking for text.
+        # An empty final response is a valid stream-closing signal.
+        is_final_response = False
+        if hasattr(adk_event, 'is_final_response') and callable(adk_event.is_final_response):
+            is_final_response = adk_event.is_final_response()
+        elif hasattr(adk_event, 'is_final_response'):
+            is_final_response = adk_event.is_final_response
+        
         # Extract text from all parts
         text_parts = []
+        # The check for adk_event.content.parts happens in the main translate method
         for part in adk_event.content.parts:
-            if part.text:
+            if part.text: # Note: part.text == "" is False
                 text_parts.append(part.text)
         
-        if not text_parts:
+        # If no text AND it's not a final response, we can safely skip.
+        # Otherwise, we must continue to process the final_response signal.
+        if not text_parts and not is_final_response:
             return
 
         combined_text = "".join(text_parts)
@@ -271,12 +284,7 @@ class EventTranslator:
         is_partial = getattr(adk_event, 'partial', False)
         turn_complete = getattr(adk_event, 'turn_complete', False)
         
-        # Check if this is the final response (complete message - skip to avoid duplication)
-        is_final_response = False
-        if hasattr(adk_event, 'is_final_response') and callable(adk_event.is_final_response):
-            is_final_response = adk_event.is_final_response()
-        elif hasattr(adk_event, 'is_final_response'):
-            is_final_response = adk_event.is_final_response
+        # (is_final_response is already calculated above)
         
         # Handle None values: if a turn is complete or a final chunk arrives, end streaming
         has_finish_reason = bool(getattr(adk_event, 'finish_reason', None))
@@ -291,16 +299,54 @@ class EventTranslator:
                     f"should_send_end={should_send_end}, currently_streaming={self._is_streaming}")
 
         if is_final_response:
+            # This is the final, complete message event.
 
-            if not self._is_streaming and not adk_event.usage_metadata and should_send_end:
-                logger.info(
-                    f"⏭️ Deliver non-llm response via message events event_id={adk_event.id}"
+            # Case 1: A stream is actively running. We must close it.
+            if self._is_streaming and self._streaming_message_id:
+                logger.info("⏭️ Final response event received. Closing active stream.")
+                
+                if self._current_stream_text:
+                    # Save the complete streamed text for de-duplication
+                    self._last_streamed_text = self._current_stream_text
+                    self._last_streamed_run_id = run_id
+                self._current_stream_text = ""
+
+                end_event = TextMessageEndEvent(
+                    type=EventType.TEXT_MESSAGE_END,
+                    message_id=self._streaming_message_id
                 )
+                logger.info(f"📤 TEXT_MESSAGE_END (from final response): {end_event.model_dump_json()}")
+                yield end_event
 
+                self._streaming_message_id = None
+                self._is_streaming = False
+                logger.info("🏁 Streaming completed via final response")
+                return # We are done.
+
+            # Case 2: No stream is active. 
+            # This event contains the *entire* message.
+            # We must send it, *unless* it's a duplicate of a stream that *just* finished.
+            
+            # Check for duplicates from a *previous* stream in this *same run*.
+            is_duplicate = (
+                self._last_streamed_run_id == run_id and
+                self._last_streamed_text is not None and
+                combined_text == self._last_streamed_text
+            )
+
+            if is_duplicate:
+                logger.info(
+                    "⏭️ Skipping final response event (duplicate content detected from finished stream)"
+                )
+            else:
+                # Not a duplicate, or no previous stream. Send the full message.
+                logger.info(
+                    f"⏩ Delivering complete non-streamed message or final content event_id={adk_event.id}"
+                )
                 message_events = [
                     TextMessageStartEvent(
                         type=EventType.TEXT_MESSAGE_START,
-                        message_id=adk_event.id,
+                        message_id=adk_event.id, # Use event ID for non-streamed
                         role="assistant",
                     ),
                     TextMessageContentEvent(
@@ -316,70 +362,14 @@ class EventTranslator:
                 for msg in message_events:
                     yield msg
 
-                self._current_stream_text = ""
-                self._last_streamed_text = None
-                self._last_streamed_run_id = None
-                return
-
-            if not self._is_streaming and adk_event.usage_metadata:
-                if (
-                    self._last_streamed_text is None
-                    or self._last_streamed_run_id != run_id
-                    or combined_text != self._last_streamed_text
-                ):
-                    logger.info(
-                        f"⏩ Deliver final response after stream due to new content event_id={adk_event.id}"
-                    )
-                    message_events = [
-                        TextMessageStartEvent(
-                            type=EventType.TEXT_MESSAGE_START,
-                            message_id=adk_event.id,
-                            role="assistant",
-                        ),
-                        TextMessageContentEvent(
-                            type=EventType.TEXT_MESSAGE_CONTENT,
-                            message_id=adk_event.id,
-                            delta=combined_text,
-                        ),
-                        TextMessageEndEvent(
-                            type=EventType.TEXT_MESSAGE_END,
-                            message_id=adk_event.id,
-                        ),
-                    ]
-                    for msg in message_events:
-                        yield msg
-                else:
-                    logger.info(
-                        "⏭️ Skipping final response event (duplicate content detected)"
-                    )
-
-                self._current_stream_text = ""
-                self._last_streamed_text = None
-                self._last_streamed_run_id = None
-                return
-
-            logger.info("⏭️ Skipping final response event (content already streamed)")
-
-            if self._is_streaming and self._streaming_message_id:
-                if self._current_stream_text:
-                    self._last_streamed_text = self._current_stream_text
-                    self._last_streamed_run_id = run_id
-                self._current_stream_text = ""
-
-                end_event = TextMessageEndEvent(
-                    type=EventType.TEXT_MESSAGE_END,
-                    message_id=self._streaming_message_id
-                )
-                logger.info(f"📤 TEXT_MESSAGE_END (from final response): {end_event.model_dump_json()}")
-                yield end_event
-
-                self._streaming_message_id = None
-                self._is_streaming = False
-                logger.info("🏁 Streaming completed via final response")
-
+            # Clean up state regardless, as this is the end of the line for text.
+            self._current_stream_text = ""
+            self._last_streamed_text = None
+            self._last_streamed_run_id = None
             return
+
         
-        # Handle streaming logic
+        # Handle streaming logic (if not is_final_response)
         if not self._is_streaming:
             # Start of new message - emit START event
             self._streaming_message_id = str(uuid.uuid4())
@@ -593,9 +583,23 @@ class EventTranslator:
             A StateSnapshotEvent
         """
  
+        FullSnapShot = {
+            "context": {
+                "conversation": [],
+                "user": {
+                    "name": state_snapshot.get("user_name", ""),
+                    "timezone": state_snapshot.get("timezone", "UTC")
+                },
+                "app": {
+                    "version": state_snapshot.get("app_version", "unknown")
+                }
+            },
+            "state": state_snapshot.get("custom_state", {})
+        }
+ 
         return StateSnapshotEvent(
             type=EventType.STATE_SNAPSHOT,
-            snapshot=state_snapshot
+            snapshot=FullSnapShot
         )
     
     async def force_close_streaming_message(self) -> AsyncGenerator[BaseEvent, None]:
@@ -636,3 +640,4 @@ class EventTranslator:
         self._last_streamed_run_id = None
         self.long_running_tool_ids.clear()
         logger.debug("Reset EventTranslator state (including streaming state)")
+        
