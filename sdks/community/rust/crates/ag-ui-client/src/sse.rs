@@ -2,7 +2,8 @@ use crate::error::AgUiClientError;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use reqwest::Response;
-use std::future::Future;
+use std::pin::Pin;
+use async_trait::async_trait;
 
 /// Represents a parsed Server-Sent Event
 #[derive(Debug)]
@@ -41,25 +42,24 @@ pub struct SseEvent {
 /// - `data`: The event payload, often JSON data
 ///
 /// Events are separated by double newlines (`\n\n`).
+#[async_trait]
 pub trait SseResponseExt {
     /// Converts a reqwest::Response into a Stream of SSE events
-    fn event_source(
+    async fn event_source(
         self,
-    ) -> impl Future<Output = impl Stream<Item = Result<SseEvent, AgUiClientError>>> + Send;
+    ) -> Pin<Box<dyn Stream<Item = Result<SseEvent, AgUiClientError>> + Send>>;
 }
 
+#[async_trait]
 impl SseResponseExt for Response {
-    #[allow(clippy::manual_async_fn)]
-    fn event_source(
+    async fn event_source(
         self,
-    ) -> impl Future<Output = impl Stream<Item = Result<SseEvent, AgUiClientError>>> + Send {
-        async move {
-            // Create a stream of bytes from the response
-            let stream = self.bytes_stream();
+    ) -> Pin<Box<dyn Stream<Item = Result<SseEvent, AgUiClientError>> + Send>> {
+        // Create a stream of bytes from the response
+        let stream = self.bytes_stream();
 
-            // Process the stream with type conversions
-            SseEventProcessor::new(stream)
-        }
+        // Process the stream with type conversions
+        Box::pin(SseEventProcessor::new(stream))
     }
 }
 
