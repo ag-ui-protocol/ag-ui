@@ -28,7 +28,7 @@ export interface A2AAgentConfig extends AgentConfig {
   a2aClient: A2AClient;
 }
 
-const A2A_UI_EXTENSION_URI = "https://a2ui.org/ext/a2a-ui/v0.1";
+const EXTENSION_URI = "https://a2ui.org/ext/a2a-ui/v0.1";
 
 export class A2AAgent extends AbstractAgent {
   private readonly a2aClient: A2AClient;
@@ -43,7 +43,7 @@ export class A2AAgent extends AbstractAgent {
     super(rest);
 
     this.a2aClient = a2aClient;
-    this.initializeA2UIExtension(this.a2aClient);
+    this.initializeExtension(this.a2aClient);
   }
 
   clone() {
@@ -256,7 +256,7 @@ export class A2AAgent extends AbstractAgent {
     };
   }
 
-  private initializeA2UIExtension(client: A2AClient) {
+  private initializeExtension(client: A2AClient) {
     const addExtensionHeader = (headers: Headers) => {
       const existingValue = headers.get("X-A2A-Extensions") ?? "";
       const values = existingValue
@@ -264,8 +264,8 @@ export class A2AAgent extends AbstractAgent {
         .map((value) => value.trim())
         .filter(Boolean);
 
-      if (!values.includes(A2A_UI_EXTENSION_URI)) {
-        values.push(A2A_UI_EXTENSION_URI);
+      if (!values.includes(EXTENSION_URI)) {
+        values.push(EXTENSION_URI);
         headers.set("X-A2A-Extensions", values.join(", "));
       }
     };
