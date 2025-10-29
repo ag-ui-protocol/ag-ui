@@ -125,19 +125,19 @@ export class ToolBaseGenUIPage {
     return mainHaikuContent;
   }
 
-  async checkHaikuDisplay(page: Page): Promise<void> {
-    const chatHaikuContent = await this.extractChatHaikuContent(page);
-
-    await page.waitForTimeout(3000);
-
-    // Check that the haiku exists somewhere in the carousel
+  private async carouselIncludesHaiku(
+    page: Page,
+    chatHaikuContent: string,
+  ): Promise<boolean> {
     const carousel = page.locator('[data-testid="haiku-carousel"]');
-    await carousel.waitFor({ state: "visible", timeout: 10000 });
+
+    if (!(await carousel.isVisible())) {
+      return false;
+    }
 
     const allCarouselCards = carousel.locator('[data-testid="haiku-card"]');
     const cardCount = await allCarouselCards.count();
 
-    let foundMatch = false;
     for (let i = 0; i < cardCount; i++) {
       const card = allCarouselCards.nth(i);
       const lines = card.locator('[data-testid="haiku-japanese-line"]');
@@ -151,11 +151,21 @@ export class ToolBaseGenUIPage {
 
       const cardContent = cardLines.join("").replace(/\s/g, "");
       if (cardContent === chatHaikuContent) {
-        foundMatch = true;
-        break;
+        return true;
       }
     }
 
-    expect(foundMatch).toBe(true);
+    return false;
+  }
+
+  async checkHaikuDisplay(page: Page): Promise<void> {
+    const chatHaikuContent = await this.extractChatHaikuContent(page);
+
+    await expect
+      .poll(
+        async () => this.carouselIncludesHaiku(page, chatHaikuContent),
+        { timeout: 20000, intervals: [500, 1000, 2000] },
+      )
+      .toBe(true);
   }
 }
