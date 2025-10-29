@@ -19,9 +19,9 @@
     "unlink:global": "pnpm unlink --global"
   },
   "dependencies": {
-    "@a2a-js/sdk": "^0.2.2",
-    "ai": "^4.3.16",
-    "zod": "^3.22.4"
+    "@a2a-js/sdk": "^0.2.5",
+    "ai": "^4.3.19",
+    "zod": "^3.25.76"
   },
   "peerDependencies": {
     "@ag-ui/client": ">=0.0.40",
@@ -30,10 +30,10 @@
   "devDependencies": {
     "@ag-ui/client": "workspace:*",
     "@types/jest": "^29.5.14",
-    "@types/node": "^20.11.19",
+    "@types/node": "^20.19.24",
     "jest": "^29.7.0",
-    "ts-jest": "^29.1.2",
-    "tsup": "^8.0.2",
-    "typescript": "^5.3.3"
+    "ts-jest": "^29.4.5",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3"
   }
 }
