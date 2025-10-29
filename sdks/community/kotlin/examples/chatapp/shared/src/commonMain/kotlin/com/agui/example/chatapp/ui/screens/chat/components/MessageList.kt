@@ -9,7 +9,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.agui.example.chatapp.ui.screens.chat.DisplayMessage
+import com.agui.example.chatapp.chat.DisplayMessage
 import kotlinx.coroutines.launch
 
 @Composable
