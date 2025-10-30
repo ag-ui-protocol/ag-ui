@@ -48,7 +48,7 @@ export const defaultApplyEvents = (
   agent: AbstractAgent,
   subscribers: AgentSubscriber[],
 ): Observable<AgentStateMutation> => {
-  let messages = structuredClone_(input.messages);
+  let messages = structuredClone_(agent.messages);
   let state = structuredClone_(input.state);
   let currentMutation: AgentStateMutation = {};
 

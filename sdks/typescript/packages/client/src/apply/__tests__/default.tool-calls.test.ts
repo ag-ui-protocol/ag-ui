@@ -2,19 +2,24 @@ import { Subject } from "rxjs";
 import { toArray } from "rxjs/operators";
 import { firstValueFrom } from "rxjs";
 import {
+  AssistantMessage,
   BaseEvent,
   EventType,
+  Message,
+  RunAgentInput,
   RunStartedEvent,
-  ToolCallStartEvent,
   ToolCallArgsEvent,
   ToolCallEndEvent,
-  RunAgentInput,
-  AssistantMessage,
+  ToolCallStartEvent,
 } from "@ag-ui/core";
 import { defaultApplyEvents } from "../default";
 import { AbstractAgent } from "@/agent";
 
-const FAKE_AGENT = null as unknown as AbstractAgent;
+const createAgent = (messages: Message[] = []) =>
+  ({
+    messages: messages.map((message) => ({ ...message })),
+    state: {},
+  } as unknown as AbstractAgent);
 
 describe("defaultApplyEvents with tool calls", () => {
   it("should handle a single tool call correctly", async () => {
@@ -33,7 +38,8 @@ describe("defaultApplyEvents with tool calls", () => {
     };
 
     // Create the observable stream
-    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
@@ -120,7 +126,8 @@ describe("defaultApplyEvents with tool calls", () => {
     };
 
     // Create the observable stream
-    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
@@ -224,7 +231,8 @@ describe("defaultApplyEvents with tool calls", () => {
     };
 
     // Create the observable stream
-    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
+    const agent = createAgent(initialState.messages as Message[]);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
@@ -287,7 +295,8 @@ describe("defaultApplyEvents with tool calls", () => {
     };
 
     // Create the observable stream
-    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
@@ -346,7 +355,8 @@ describe("defaultApplyEvents with tool calls", () => {
     };
 
     // Create the observable stream
-    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));

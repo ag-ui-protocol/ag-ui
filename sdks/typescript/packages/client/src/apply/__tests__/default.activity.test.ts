@@ -6,12 +6,17 @@ import {
   ActivitySnapshotEvent,
   BaseEvent,
   EventType,
+  Message,
   RunAgentInput,
 } from "@ag-ui/core";
 import { defaultApplyEvents } from "../default";
 import { AbstractAgent } from "@/agent";
 
-const FAKE_AGENT = null as unknown as AbstractAgent;
+const createAgent = (messages: Message[] = []) =>
+  ({
+    messages: messages.map((message) => ({ ...message })),
+    state: {},
+  } as unknown as AbstractAgent);
 
 describe("defaultApplyEvents with activity events", () => {
   it("creates and updates activity messages via snapshot and delta", async () => {
@@ -25,7 +30,8 @@ describe("defaultApplyEvents with activity events", () => {
       context: [],
     };
 
-    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
     events$.next({
@@ -68,7 +74,8 @@ describe("defaultApplyEvents with activity events", () => {
       context: [],
     };
 
-    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
     const firstOperation = { id: "op-1", status: "PENDING" };
@@ -138,7 +145,8 @@ describe("defaultApplyEvents with activity events", () => {
       context: [],
     };
 
-    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
+    const agent = createAgent(initialState.messages as Message[]);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
     events$.next({
@@ -168,7 +176,8 @@ describe("defaultApplyEvents with activity events", () => {
       context: [],
     };
 
-    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
+    const agent = createAgent(initialState.messages as Message[]);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
     events$.next({
@@ -206,7 +215,8 @@ describe("defaultApplyEvents with activity events", () => {
       context: [],
     };
 
-    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
+    const agent = createAgent(initialState.messages as Message[]);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
     events$.next({
@@ -242,7 +252,8 @@ describe("defaultApplyEvents with activity events", () => {
       context: [],
     };
 
-    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
+    const agent = createAgent(initialState.messages as Message[]);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
     events$.next({
@@ -279,7 +290,8 @@ describe("defaultApplyEvents with activity events", () => {
       context: [],
     };
 
-    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
+    const agent = createAgent(initialState.messages as Message[]);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
 
     events$.next({
@@ -310,7 +322,8 @@ describe("defaultApplyEvents with activity events", () => {
       context: [],
     };
 
-    const firstResult$ = defaultApplyEvents(baseInput, firstRunEvents$, FAKE_AGENT, []);
+    const baseAgent = createAgent(baseInput.messages);
+    const firstResult$ = defaultApplyEvents(baseInput, firstRunEvents$, baseAgent, []);
     const firstUpdatesPromise = firstValueFrom(firstResult$.pipe(toArray()));
 
     firstRunEvents$.next({
@@ -331,7 +344,13 @@ describe("defaultApplyEvents with activity events", () => {
       messages: nextMessages,
     };
 
-    const secondResult$ = defaultApplyEvents(secondInput, secondRunEvents$, FAKE_AGENT, []);
+    const secondAgent = createAgent(secondInput.messages);
+    const secondResult$ = defaultApplyEvents(
+      secondInput,
+      secondRunEvents$,
+      secondAgent,
+      [],
+    );
     const secondUpdatesPromise = firstValueFrom(secondResult$.pipe(toArray()));
 
     secondRunEvents$.next({
