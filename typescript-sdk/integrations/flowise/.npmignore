@@ -1,0 +1,7 @@
+node_modules/
+dist/
+examples/
+src/
+*.ts
+!dist/
+!.npmignore

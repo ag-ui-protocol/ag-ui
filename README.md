@@ -79,44 +79,22 @@ AG-UI is complementary to the other 2 top agentic protocols
 
 AG-UI was born from CopilotKit's initial partnership with LangGraph and CrewAI - and brings the incredibly popular agent-user-interactivity infrastructure to the wider agentic ecosystem.
 
-## Frameworks
-
-| Framework                                                          | Status                   | AG-UI Resources                                                                 |
-| ------------------------------------------------------------------ | ------------------------ | -------------------------------------------------------------------------------- |
-| Direct to LLM                                                  | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/direct-to-llm)  |
-
-#### 🤝 Partnerships
-| Framework | Status | AG-UI Resources |
-| ---------- | ------- | ---------------- |
-| [LangGraph](https://www.langchain.com/langgraph) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/langgraph/) 🎮 [Demos](https://dojo.ag-ui.com/langgraph-fastapi/feature/shared_state) |
-| [Google ADK](https://google.github.io/adk-docs/get-started/) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/adk) 🎮 [Demos](https://dojo.ag-ui.com/adk-middleware) |
-| [CrewAI](https://crewai.com/) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/crewai-flows) 🎮 [Demos](https://dojo.ag-ui.com/crewai/feature/shared_state) |
-
-#### 🧩 1st Party
-| Framework | Status | AG-UI Resources |
-| ---------- | ------- | ---------------- |
-| [Mastra](https://mastra.ai/) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/mastra/) 🎮 [Demos](https://dojo.ag-ui.com/mastra) |
-| [Pydantic AI](https://github.com/pydantic/pydantic-ai) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/pydantic-ai/) 🎮 [Demos](https://dojo.ag-ui.com/pydantic-ai/feature/shared_state) |
-| [Agno](https://github.com/agno-agi/agno) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/agno/) 🎮 [Demos](https://dojo.ag-ui.com/agno) |
-| [LlamaIndex](https://github.com/run-llama/llama_index) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/llamaindex/) 🎮 [Demos](https://dojo.ag-ui.com/llamaindex/feature/shared_state) |
-| [AG2](https://ag2.ai/) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/ag2/) |
-| [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/) | 🛠️ In Progress | – |
-| [AWS Strands Agents](https://github.com/strands-agents/sdk-python) | 🛠️ In Progress | – |
-| [Microsoft Agent Framework](https://azure.microsoft.com/en-us/blog/introducing-microsoft-agent-framework/) | 🛠️ In Progress | – |
-
-#### 🌐 Community
-| Framework | Status | AG-UI Resources |
-| ---------- | ------- | ---------------- |
-| [Vercel AI SDK](https://github.com/vercel/ai) | ✅ Supported | ➡️ [Docs](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/vercel-ai-sdk/typescript) |
-| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress | – |
-| [Cloudflare Agents](https://developers.cloudflare.com/agents/) | 🛠️ In Progress | – |
-
-
-## Protocols
-
-| Protocols | Status | AG-UI Resources | Integrations |
-| ---------- | ------- | ---------------- | ------------- |
-| [A2A]() | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/a2a-protocol) | Partnership |
+| Framework                                                          | Status                   | AG-UI Resources                                                              | Integrations             | 
+| ------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------- | ------------------------ |
+| No-framework                                                       | ✅ Supported             | ➡️ Docs coming soon                                                          |                          |
+| [LangGraph](https://www.langchain.com/langgraph)                   | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/langgraph/) 🎮 [Demos](https://dojo.ag-ui.com/langgraph-fastapi/feature/shared_state)                           | Partnership              |
+| [Mastra](https://mastra.ai/)                                       | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/mastra/) 🎮 [Demos](https://dojo.ag-ui.com/mastra)                               | 1st party                |
+| [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/pydantic-ai/) 🎮 [Demos](https://dojo.ag-ui.com/pydantic-ai/feature/shared_state)                           | 1st party                |
+| [Google ADK](https://google.github.io/adk-docs/get-started/)       | ✅ Supported            | ➡️ [Docs](https://docs.copilotkit.ai/adk) 🎮 [Demos](https://dojo.ag-ui.com/adk-middleware)                                                                            | Partnership                |
+| [Agno](https://github.com/agno-agi/agno)                           | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/agno/) 🎮 [Demos](https://dojo.ag-ui.com/agno)                                  | 1st party                |
+| [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/llamaindex/) 🎮 [Demos](https://dojo.ag-ui.com/llamaindex/feature/shared_state)                            | 1st party                |
+| [CrewAI](https://crewai.com/)                                      | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/crewai-flows) 🎮 [Demos](https://dojo.ag-ui.com/crewai/feature/shared_state)                          | Partnership              |
+| [AG2](https://ag2.ai/)                                             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/ag2/)                                  | 1st party                |
+| [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/)       | 🛠️ In Progress           | –                                                                            | 1st party                |
+| [AWS Strands Agents](https://github.com/strands-agents/sdk-python) | 🛠️ In Progress           | –                                                                            | 1st Party                |   
+| [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            | Community                |
+| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress           | –                                                                            | Community                |
+| [Flowise](https://flowiseai.com/)                                      | ✅ Supported             | ➡️ Docs coming soon 🎮 Demos coming soon                          | Community              |
 
 ---
 
