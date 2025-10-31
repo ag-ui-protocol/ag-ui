@@ -1,7 +1,7 @@
 
 # <img src="https://github.com/user-attachments/assets/ebc0dd08-8732-4519-9b6c-452ce54d8058" alt="ag-ui Logo" width="22"/> AG-UI: The Agent-User Interaction Protocol
 
-AG-UI is a lightweight, event-based protocol that standardizes how AI agents connect to user-facing applications.
+AG-UI is an open, lightweight, event-based protocol that standardizes how AI agents connect to user-facing applications.
 Built for simplicity and flexibility, it enables seamless integration between AI agents, real time user context, and user interfaces.
 
 ---
@@ -14,15 +14,7 @@ Built for simplicity and flexibility, it enables seamless integration between AI
 ![MIT](https://img.shields.io/github/license/copilotkit/copilotkit?color=%236963ff&label=License)
 ![Discord](https://img.shields.io/discord/1379082175625953370?logo=discord&logoColor=%23FFFFFF&label=Discord&color=%236963ff)
 
-  <a href="https://discord.gg/Jd3FzfdJa8" target="_blank">
-   Join our Discord →
-  </a> &nbsp;&nbsp;&nbsp;
-    <a href="https://ag-ui.com/" target="_blank">
-   Read the Docs →
-  </a> &nbsp;&nbsp;&nbsp;
-    <a href="https://x.com/CopilotKit" target="_blank">
-   Follow us →
-  </a> 
+<a href="https://discord.gg/Jd3FzfdJa8" target="_blank"> Join our Discord → </a> &nbsp;&nbsp;&nbsp; <a href="https://ag-ui.com/" target="_blank"> Read the Docs → </a> &nbsp;&nbsp;&nbsp; <a href="https://dojo.ag-ui.com/" target="_blank"> Go to the AG-UI Dojo → </a> &nbsp;&nbsp;&nbsp; <a href="https://x.com/CopilotKit" target="_blank"> Follow us → </a>
 
 <img width="4096" height="1752" alt="Your application-AG-UI protocol" src="https://github.com/user-attachments/assets/dc58c64c-3257-490a-b827-e163475f4166" />
 
@@ -31,9 +23,12 @@ Create a new AG-UI application in seconds:
 ```bash
 npx create-ag-ui-app my-agent-app
 ```
-<h3>Building AG-UI Integrations (new frameworks):</h3>
 
-- [Build new integrations (Quickstart)](https://go.copilotkit.ai/agui-contribute)
+<h3> Useful Links:</h3>
+
+- [The AG-UI Dojo](https://dojo.ag-ui.com/)
+- [Build AG-UI-powered applications(Quickstart)](https://docs.ag-ui.com/quickstart/applications)
+- [Build new AG-UI framework integrations (Quickstart)](https://go.copilotkit.ai/agui-contribute)
 - [Book a call to discuss an AG-UI integration with a new framework](https://calendly.com/markus-copilotkit/ag-ui)
 - [Join the Discord Community](https://discord.gg/Jd3FzfdJa8)
 
@@ -68,8 +63,8 @@ AG-UI is complementary to the other 2 top agentic protocols
 
 <div align="center">
   <img width="2048" height="1182" alt="The Agent Protocol Stack" src="https://github.com/user-attachments/assets/41138f71-50be-4812-98aa-20e0ad595716" />
-</div>  
-   
+</div>
+
 ## 🚀 Features
 
 - 💬 Real-time agentic chat with streaming
@@ -84,41 +79,73 @@ AG-UI is complementary to the other 2 top agentic protocols
 
 AG-UI was born from CopilotKit's initial partnership with LangGraph and CrewAI - and brings the incredibly popular agent-user-interactivity infrastructure to the wider agentic ecosystem.
 
-| Framework                                                          | Status                   | AG-UI Resources                                                              | Integrations             | 
-| ------------------------------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------- | ------------------------ |
-| No-framework                                                       | ✅ Supported             | ➡️ Docs coming soon                                                          |                          |
-| [LangGraph](https://www.langchain.com/langgraph)                   | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/langgraph/) [Demos](https://dojo.ag-ui.com/langgraph-fastapi/feature/shared_state)                           | Partnership              |
-| [CrewAI](https://crewai.com/)                                      | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/crewai-flows) [Demos](https://dojo.ag-ui.com/crewai/feature/shared_state)                          | Partnership              |
-| [Mastra](https://mastra.ai/)                                       | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/mastra/) [Demos](https://dojo.ag-ui.com/mastra/feature/shared_state)                               | 1st party                |
-| [AG2](https://ag2.ai/)                                             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/ag2/) [Demos](https://dojo.ag-ui.com/ag2/feature/shared_state)                                   | 1st party                |
-| [Agno](https://github.com/agno-agi/agno)                           | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/agno/) [Demos](https://dojo.ag-ui.com/agno/feature/shared_state)                                  | 1st party                |
-| [LlamaIndex](https://github.com/run-llama/llama_index)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/llamaindex/) [Demos](https://dojo.ag-ui.com/llamaindex/feature/shared_state)                            | 1st party                |
-| [Pydantic AI](https://github.com/pydantic/pydantic-ai)             | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/pydantic-ai/) [Demos](https://dojo.ag-ui.com/pydantic-ai/feature/shared_state)                           | 1st party                |
-| [Google ADK](https://google.github.io/adk-docs/get-started/)       | 🛠️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/274)           | –                                                                            | 1st party                |
-| [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/)       | 🛠️ In Progress           | –                                                                            | 1st party                |
-| [AWS Strands Agents](https://github.com/strands-agents/sdk-python) | 🛠️ In Progress           | –                                                                            | 1st Party                |   
-| [Vercel AI SDK](https://github.com/vercel/ai)                      | 🛠️ In Progress           | –                                                                            | Community                |
-| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress           | –                                                                            | Community                |
-| [Cloudflare Agents](https://developers.cloudflare.com/agents/)     | 💡 Open to Contributions | –                                                                            | Community                |
+## Frameworks
 
-[View all supported frameworks →](https://ag-ui.com/frameworks)
+| Framework                                                          | Status                   | AG-UI Resources                                                                 |
+| ------------------------------------------------------------------ | ------------------------ | -------------------------------------------------------------------------------- |
+| Direct to LLM                                                  | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/direct-to-llm)  |
+
+#### 🤝 Partnerships
+| Framework | Status | AG-UI Resources |
+| ---------- | ------- | ---------------- |
+| [LangGraph](https://www.langchain.com/langgraph) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/langgraph/) 🎮 [Demos](https://dojo.ag-ui.com/langgraph-fastapi/feature/shared_state) |
+| [Google ADK](https://google.github.io/adk-docs/get-started/) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/adk) 🎮 [Demos](https://dojo.ag-ui.com/adk-middleware) |
+| [CrewAI](https://crewai.com/) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/crewai-flows) 🎮 [Demos](https://dojo.ag-ui.com/crewai/feature/shared_state) |
+
+#### 🧩 1st Party
+| Framework | Status | AG-UI Resources |
+| ---------- | ------- | ---------------- |
+| [Mastra](https://mastra.ai/) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/mastra/) 🎮 [Demos](https://dojo.ag-ui.com/mastra) |
+| [Pydantic AI](https://github.com/pydantic/pydantic-ai) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/pydantic-ai/) 🎮 [Demos](https://dojo.ag-ui.com/pydantic-ai/feature/shared_state) |
+| [Agno](https://github.com/agno-agi/agno) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/agno/) 🎮 [Demos](https://dojo.ag-ui.com/agno) |
+| [LlamaIndex](https://github.com/run-llama/llama_index) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/llamaindex/) 🎮 [Demos](https://dojo.ag-ui.com/llamaindex/feature/shared_state) |
+| [AG2](https://ag2.ai/) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/ag2/) |
+| [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/) | 🛠️ In Progress | – |
+| [AWS Strands Agents](https://github.com/strands-agents/sdk-python) | 🛠️ In Progress | – |
+| [Microsoft Agent Framework](https://azure.microsoft.com/en-us/blog/introducing-microsoft-agent-framework/) | 🛠️ In Progress | – |
+
+#### 🌐 Community
+| Framework | Status | AG-UI Resources |
+| ---------- | ------- | ---------------- |
+| [Vercel AI SDK](https://github.com/vercel/ai) | ✅ Supported | ➡️ [Docs](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/vercel-ai-sdk/typescript) |
+| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress | – |
+| [Cloudflare Agents](https://developers.cloudflare.com/agents/) | 🛠️ In Progress | – |
 
 
-| Language SDK                                                       | Status                    | AG-UI Resources                                                              |
-| ------------------------------------------------------------------ | ------------------------  | ---------------------------------------------------------------------------- |
-| [Kotlin]()                                                         | ✅ Supported              | ➡️ [GitHub Source](https://github.com/Contextable/ag-ui-4k)                  |
-| [.NET]()                                                           | 🛠️ In Progress            | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/38)                     |
-| [Nim]()                                                            | 🛠️ In Progress            | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/29)                     |
-| [Golang]()                                                         | 🛠️ In Progress            | ➡️ [Issue](https://github.com/ag-ui-protocol/ag-ui/issues/156)               |
-| [Rust]()                                                           | 🛠️ In Progress            | ➡️ [Issue](https://github.com/ag-ui-protocol/ag-ui/issues/239)               |
-| [Java]()                                                           | 🛠️ In Progress            | ➡️ [GitHub Source](https://github.com/work-m8/ag-ui-4j)                      |
+## Protocols
 
+| Protocols | Status | AG-UI Resources | Integrations |
+| ---------- | ------- | ---------------- | ------------- |
+| [A2A]() | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/a2a-protocol) | Partnership |
 
-[View all supported frameworks →](https://ag-ui.com/frameworks)
+---
 
+## SDKs
 
-## ✨ Hello World App
+| SDK | Status | AG-UI Resources | Integrations |
+| --- | ------- | ---------------- | ------------- |
+| [Kotlin]() | ✅ Supported | ➡️ [Getting Started](https://github.com/ag-ui-protocol/ag-ui/blob/main/docs/sdk/kotlin/overview.mdx) | Community |
+| [Golang]() | ✅ Supported | ➡️ [Getting Started](https://github.com/ag-ui-protocol/ag-ui/blob/main/docs/sdk/go/overview.mdx) | Community |
+| [Java]() | ✅ Supported | ➡️ [Getting Started](https://github.com/ag-ui-protocol/ag-ui/blob/main/docs/sdk/java/overview.mdx) | Community |
+| [Rust]() | ✅ Supported | ➡️ [Getting Started](https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/community/rust/crates/ag-ui-client) | Community |
+| [.NET]() | 🛠️ In Progress | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/38) | Community |
+| [Nim]() | 🛠️ In Progress | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/29) | Community |
+| [Dart]() | 🛠️ In Progress | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/432) | Community |
+| [Flowise]() | 🛠️ In Progress | ➡️ [GitHub Source](https://github.com/ag-ui-protocol/ag-ui/issues/367) | Community |
+| [Langflow]() | 🛠️ In Progress | ➡️ [GitHub Source](https://github.com/ag-ui-protocol/ag-ui/issues/366) | Community |
 
+## Clients
+
+| Client | Status | AG-UI Resources | Integrations |
+| --- | ------- | ---------------- | ------------- |
+| [CopilotKit](https://github.com/CopilotKit/CopilotKit) | ✅ Supported | ➡️ [Getting Started](https://docs.copilotkit.ai/direct-to-llm/guides/quickstart) | 1st Party |
+| [Terminal + Agent]() | ✅ Supported | ➡️ [Getting Started](https://docs.ag-ui.com/quickstart/clients) | Community |
+| [React Native]() | 🛠️ Help Wanted | ➡️ [GitHub Source](https://github.com/ag-ui-protocol/ag-ui/issues/510) | Community |
+
+[View all supported frameworks →](https://docs.ag-ui.com/introduction#supported-frameworks)
+
+## Examples
+### Hello World App
 
 Video:
 
@@ -128,19 +155,20 @@ https://agui-demo.vercel.app/
 
 
 
-## 🧩 AG-UI Showcase: The AG-UI Dojo (Building-Blocks Viewer)
-The [AG-UI Dojo](https://dojo.ag-ui.com/langgraph-fastapi/feature/shared_state) showcases many of the building blocks that AG-UI supports ([AG-UI Dojo Source Code](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo)) with each Agent Framework integration.
+## The AG-UI Dojo (Building-Blocks Viewer)
+The AG-UI Dojo demonstrates AG-UI's core building blocks through simple, focused examples—each just 50-200 lines of code.
 
-The building blocks are designed to be simple and focused -- between 50-200 lines of code.
+View the source code for the Dojo and all framework integrations [here](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo).
 
-https://github.com/user-attachments/assets/a67d3d54-36b2-4c7a-ac69-a0ca01365d5b
+https://github.com/user-attachments/assets/c298eea8-3f39-4a94-b968-7712429b0c49
+
 
 
 ## 🙋🏽‍♂️ Contributing to AG-UI
 
 Check out the [Contributing guide](https://github.com/ag-ui-protocol/ag-ui/blob/main/CONTRIBUTING.md)
 
-- **[Bi-Weekely AG-UI Working Group](https://lu.ma/CopilotKit?k=c)**  
+- **[Bi-Weekely AG-UI Working Group](https://lu.ma/CopilotKit?k=c)**
   📅 Follow the CopilotKit Luma Events Calendar
 
 ## Roadmap
@@ -150,4 +178,4 @@ Check out the [AG-UI Roadmap](https://github.com/orgs/ag-ui-protocol/projects/1)
 
 ## 📄 License
 
-AG-UI is open source software [licensed as MIT](https://opensource.org/licenses/MIT).  
+AG-UI is open source software [licensed as MIT](https://opensource.org/licenses/MIT).

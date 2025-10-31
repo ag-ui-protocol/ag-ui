@@ -61,20 +61,26 @@ this example UI:
 
 ### Overview
 
-This proposal introduces two new concepts to the AG-UI protocol:
+This proposal introduces new concepts to the AG-UI protocol:
 
-1. **ActivityEvent**: A new event type in the event stream
+1. **ActivitySnapshotEvent** and **ActivityDeltaEvent**: Two new event types following the established state management pattern
 2. **ActivityMessage**: A new message type alongside TextMessage, ToolMessage,
    etc.
 
 Frameworks may emit ActivityEvents, and frontends can render them inline with
 chat.
 
-### New Event: ActivityEvent
+### New Events: ActivitySnapshotEvent and ActivityDeltaEvent
+
+Following the established pattern in AG-UI (similar to `StateSnapshotEvent` and `StateDeltaEvent`), activities are represented using two complementary events:
+
+#### ActivitySnapshotEvent
+
+Provides the complete activity state at a point in time.
 
 ```typescript
-type ActivityEvent = BaseEvent & {
-  type: EventType.ACTIVITY
+type ActivitySnapshotEvent = BaseEvent & {
+  type: EventType.ACTIVITY_SNAPSHOT
   /**
    * Unique identifier for the ActivityMessage this event belongs to.
    */
@@ -84,14 +90,32 @@ type ActivityEvent = BaseEvent & {
    */
   activityType: string
   /**
-   * Snapshot of the full activity state (optional).
+   * Complete activity state at this point in time.
    */
-  snapshot?: Record<string, any>
+  content: Record<string, any>
+}
+```
+
+#### ActivityDeltaEvent
+
+Provides incremental updates to the activity state.
+
+```typescript
+type ActivityDeltaEvent = BaseEvent & {
+  type: EventType.ACTIVITY_DELTA
   /**
-   * Patch to apply to the prior snapshot (optional).
-   * Follows JSON Patch semantics.
+   * Unique identifier for the ActivityMessage this event belongs to.
    */
-  patch?: Record<string, any>
+  messageId: string
+  /**
+   * Activity type, e.g. "PLAN", "SEARCH", "SCRAPE"
+   */
+  activityType: string
+  /**
+   * JSON Patch operations to apply to the current activity state.
+   * Follows RFC 6902 semantics.
+   */
+  patch: JSONPatchOperation[]
 }
 ```
 
@@ -103,10 +127,10 @@ Initial activity snapshot:
 {
   "id": "evt_001",
   "ts": 1714064100000,
-  "type": "ACTIVITY",
+  "type": "ACTIVITY_SNAPSHOT",
   "messageId": "msg_789",
   "activityType": "PLAN",
-  "snapshot": {
+  "content": {
     "tasks": ["check reddit", "search X.com"]
   }
 }
@@ -118,14 +142,16 @@ Incremental update via patch:
 {
   "id": "evt_002",
   "ts": 1714064120000,
-  "type": "ACTIVITY",
+  "type": "ACTIVITY_DELTA",
   "messageId": "msg_789",
   "activityType": "PLAN",
-  "patch": {
-    "op": "replace",
-    "path": "/tasks/0",
-    "value": "✓ check reddit"
-  }
+  "patch": [
+    {
+      "op": "replace",
+      "path": "/tasks/0",
+      "value": "✓ check reddit"
+    }
+  ]
 }
 ```
 
@@ -157,23 +183,25 @@ type ActivityMessage = {
 
 TypeScript SDK additions:
 
-- New `ActivityEvent` type in `@ag-ui/core`
+- New `ActivitySnapshotEvent` and `ActivityDeltaEvent` types in `@ag-ui/core`
 - New `ActivityMessage` type in message unions
 - Activity renderer registry in `@ag-ui/client`
+- JSON Patch utilities for activity updates
 
 Python SDK additions:
 
-- New `ActivityEvent` class in `ag_ui.core.events`
+- New `ActivitySnapshotEvent` and `ActivityDeltaEvent` classes in `ag_ui.core.events`
 - New `ActivityMessage` class in message types
 - Activity serialization/deserialization support
+- JSON Patch utilities for activity updates
 
 ### Integration Impact
 
-- **Planning Frameworks**: Can emit ActivityEvents during planning or tool
+- **Planning Frameworks**: Can emit ActivitySnapshotEvent/ActivityDeltaEvent during planning or tool
   execution phases
 - **Workflow Systems**: Can surface step-by-step workflow progress as
-  ActivityEvents
-- **Other frameworks**: May emit ActivityEvents freely; AG-UI will serialize
+  ActivitySnapshotEvent/ActivityDeltaEvent
+- **Other frameworks**: May emit ActivitySnapshotEvent/ActivityDeltaEvent freely; AG-UI will serialize
   them like other events
 
 ## Examples and Use Cases
@@ -181,11 +209,11 @@ Python SDK additions:
 ### Example 1: Web Search Activity
 
 ```typescript
-// Agent emits search activity
-agent.emitActivity({
+// Agent emits initial search activity snapshot
+agent.emitActivitySnapshot({
   messageId: "msg_123",
   activityType: "SEARCH",
-  snapshot: {
+  content: {
     sources: [
       { name: "Reddit", status: "pending" },
       { name: "X.com", status: "pending" },
@@ -195,14 +223,16 @@ agent.emitActivity({
 })
 
 // Update as search progresses
-agent.emitActivity({
+agent.emitActivityDelta({
   messageId: "msg_123",
   activityType: "SEARCH",
-  patch: {
-    op: "replace",
-    path: "/sources/0/status",
-    value: "complete",
-  },
+  patch: [
+    {
+      op: "replace",
+      path: "/sources/0/status",
+      value: "complete",
+    }
+  ],
 })
 ```
 
@@ -210,19 +240,20 @@ agent.emitActivity({
 
 A data analysis agent performing multiple steps:
 
-1. Loading dataset → ActivityEvent shows progress bar
-2. Cleaning data → ActivityEvent shows rows processed
-3. Running analysis → ActivityEvent shows current computation
-4. Generating report → ActivityEvent shows sections completed
+1. Loading dataset → ActivitySnapshotEvent/ActivityDeltaEvent shows progress bar
+2. Cleaning data → ActivitySnapshotEvent/ActivityDeltaEvent shows rows processed
+3. Running analysis → ActivitySnapshotEvent/ActivityDeltaEvent shows current computation
+4. Generating report → ActivitySnapshotEvent/ActivityDeltaEvent shows sections completed
 
 Each step appears inline with chat, giving users real-time feedback.
 
 ## Testing Strategy
 
-- Unit tests for ActivityEvent serialization/deserialization
-- Integration tests with mock frameworks emitting ActivityEvents
+- Unit tests for ActivitySnapshotEvent/ActivityDeltaEvent serialization/deserialization
+- Integration tests with mock frameworks emitting ActivitySnapshotEvent/ActivityDeltaEvent
 - E2E tests in AG-UI Dojo demonstrating activity rendering
 - Performance benchmarks for high-frequency activity updates
+- JSON Patch application correctness tests
 
 ## References
 

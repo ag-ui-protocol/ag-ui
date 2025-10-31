@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App name -->
+    <string name="app_name">AG-UI Chat</string>
+
+    <!-- Common actions -->
+    <string name="back">Back</string>
+    <string name="add">Add</string>
+    <string name="edit">Edit</string>
+    <string name="delete">Delete</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="settings">Settings</string>
+    <string name="send">Send</string>
+    <string name="activate">Activate</string>
+    <string name="active">Active</string>
+
+    <!-- Chat Screen -->
+    <string name="no_agent_selected">No Agent Selected</string>
+    <string name="no_agent_selected_description">Please go to settings and add or select an agent to start chatting.</string>
+    <string name="go_to_settings">Go to Settings</string>
+    <string name="connected">Connected</string>
+    <string name="type_message_hint">Type a message...</string>
+    <string name="select_agent_hint">Select an agent to chat</string>
+
+    <!-- Settings Screen -->
+    <string name="agents">Agents</string>
+    <string name="no_agents_configured">No agents configured</string>
+    <string name="add_agent_to_start">Add an agent to start chatting</string>
+    <string name="add_agent">Add Agent</string>
+
+    <!-- Agent Configuration -->
+    <string name="edit_agent">Edit Agent</string>
+    <string name="agent_name">Name</string>
+    <string name="agent_name_hint">My Agent</string>
+    <string name="agent_url">URL</string>
+    <string name="agent_url_hint">https://api.example.com/agent</string>
+    <string name="agent_description">Description (optional)</string>
+    <string name="agent_description_hint">A brief description of this agent</string>
+
+    <!-- Authentication -->
+    <string name="authentication">Authentication</string>
+    <string name="auth_none">No Authentication</string>
+    <string name="auth_api_key">API Key</string>
+    <string name="auth_bearer_token">Bearer Token</string>
+    <string name="auth_basic">Basic Auth</string>
+    <string name="auth_oauth2">OAuth 2.0</string>
+    <string name="auth_custom">Custom</string>
+    <string name="header_name">Header Name</string>
+    <string name="header_name_hint">X-API-Key</string>
+    <string name="username">Username</string>
+    <string name="password">Password</string>
+
+    <!-- Validation Messages -->
+    <string name="name_required">Name is required</string>
+    <string name="url_required">URL is required</string>
+    <string name="url_invalid">URL must start with http:// or https://</string>
+
+    <!-- Agent Actions -->
+    <string name="delete_agent_title">Delete Agent</string>
+    <string name="delete_agent_message">Are you sure you want to delete "%1$s"?</string>
+    <string name="last_used">Last used: %1$s</string>
+
+    <!-- Connection States -->
+    <string name="connected_to_agent">Connected to %1$s</string>
+    <string name="failed_to_connect">Failed to connect: %1$s</string>
+    <string name="agent_error">Agent error: %1$s</string>
+    <string name="error_prefix">Error: %1$s</string>
+</resources>

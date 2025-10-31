@@ -1,0 +1,17 @@
+{
+  "python_version": "3.12",
+  "dockerfile_lines": [],
+  "dependencies": ["."],
+  "graphs": {
+    "agentic_chat": "./agents/agentic_chat/agent.py:graph",
+    "backend_tool_rendering": "./agents/backend_tool_rendering/agent.py:graph",
+    "agentic_generative_ui": "./agents/agentic_generative_ui/agent.py:graph",
+    "human_in_the_loop": "./agents/human_in_the_loop/agent.py:graph",
+    "predictive_state_updates": "./agents/predictive_state_updates/agent.py:graph",
+    "shared_state": "./agents/shared_state/agent.py:graph",
+    "tool_based_generative_ui": "./agents/tool_based_generative_ui/agent.py:graph",
+    "agentic_chat_reasoning": "./agents/agentic_chat_reasoning/agent.py:graph",
+    "subgraphs": "./agents/subgraphs/agent.py:graph"
+  },
+  "env": ".env"
+}
