@@ -17,6 +17,7 @@
             "group": "Get Started",
             "pages": [
               "introduction",
+              "agent-interaction-protocols",
               {
                 "group": "Quickstart",
                 "pages": [
