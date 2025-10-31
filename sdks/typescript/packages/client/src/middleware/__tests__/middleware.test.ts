@@ -28,17 +28,23 @@ describe("Middleware", () => {
   class TestMiddleware extends Middleware {
     run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
       return new Observable<BaseEvent>((subscriber) => {
-        subscriber.next({
-          type: EventType.RUN_STARTED,
-          threadId: input.threadId,
-          runId: input.runId,
-          metadata: { middleware: true },
-        });
+        const subscription = next.run(input).subscribe({
+          next: (event) => {
+            if (event.type === EventType.RUN_STARTED) {
+              subscriber.next({
+                ...event,
+                metadata: { ...(event as any).metadata, middleware: true },
+              });
+              return;
+            }
 
-        next.run(input).subscribe({
-          next: (event) => subscriber.next(event),
+            subscriber.next(event);
+          },
+          error: (error) => subscriber.error(error),
           complete: () => subscriber.complete(),
         });
+
+        return () => subscription.unsubscribe();
       });
     }
   }
@@ -65,11 +71,10 @@ describe("Middleware", () => {
       });
     });
 
-    expect(events.length).toBe(3);
+    expect(events.length).toBe(2);
     expect(events[0].type).toBe(EventType.RUN_STARTED);
     expect((events[0] as any).metadata).toEqual({ middleware: true });
-    expect(events[1].type).toBe(EventType.RUN_STARTED);
-    expect(events[2].type).toBe(EventType.RUN_FINISHED);
-    expect((events[2] as any).result).toEqual({ success: true });
+    expect(events[1].type).toBe(EventType.RUN_FINISHED);
+    expect((events[1] as any).result).toEqual({ success: true });
   });
 });

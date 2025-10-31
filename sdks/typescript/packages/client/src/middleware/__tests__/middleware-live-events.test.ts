@@ -42,17 +42,27 @@ describe("Middleware live events", () => {
   class CustomMiddleware extends Middleware {
     run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
       return new Observable<BaseEvent>((subscriber) => {
-        subscriber.next({
-          type: EventType.RUN_STARTED,
-          threadId: input.threadId,
-          runId: input.runId,
-          metadata: { custom: true },
-        } as RunStartedEvent);
+        const subscription = next.run(input).subscribe({
+          next: (event) => {
+            if (event.type === EventType.RUN_STARTED) {
+              const started = event as RunStartedEvent;
+              subscriber.next({
+                ...started,
+                metadata: {
+                  ...(started.metadata ?? {}),
+                  custom: true,
+                },
+              });
+              return;
+            }
 
-        next.run(input).subscribe({
-          next: (event) => subscriber.next(event),
+            subscriber.next(event);
+          },
+          error: (error) => subscriber.error(error),
           complete: () => subscriber.complete(),
         });
+
+        return () => subscription.unsubscribe();
       });
     }
   }
@@ -82,7 +92,7 @@ describe("Middleware live events", () => {
     expect(events.length).toBe(3);
     expect(events[0].type).toBe(EventType.RUN_STARTED);
     expect((events[0] as RunStartedEvent).metadata).toEqual({ custom: true });
-    expect(events[1].type).toBe(EventType.RUN_STARTED);
-    expect(events[2].type).toBe(EventType.TEXT_MESSAGE_CHUNK);
+    expect(events[1].type).toBe(EventType.TEXT_MESSAGE_CHUNK);
+    expect(events[2].type).toBe(EventType.RUN_FINISHED);
   });
 });

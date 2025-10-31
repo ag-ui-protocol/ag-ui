@@ -30,6 +30,8 @@ export abstract class AbstractAgent {
   public subscribers: AgentSubscriber[] = [];
   private middlewares: Middleware[] = [];
 
+  public readonly maxVersion: string = "*";
+
   constructor({
     agentId,
     description,
@@ -94,10 +96,11 @@ export abstract class AbstractAgent {
         }
 
         const chainedAgent = this.middlewares.reduceRight(
-          (nextAgent: AbstractAgent, middleware) => ({
-            run: (i: RunAgentInput) => middleware.run(i, nextAgent),
-          } as AbstractAgent),
-          this // Original agent is the final 'next'
+          (nextAgent: AbstractAgent, middleware) =>
+            ({
+              run: (i: RunAgentInput) => middleware.run(i, nextAgent),
+            }) as AbstractAgent,
+          this, // Original agent is the final 'next'
         );
 
         return chainedAgent.run(input);
@@ -447,10 +450,11 @@ export abstract class AbstractAgent {
       }
 
       const chainedAgent = this.middlewares.reduceRight(
-        (nextAgent: AbstractAgent, middleware) => ({
-          run: (i: RunAgentInput) => middleware.run(i, nextAgent)
-        } as AbstractAgent),
-        this
+        (nextAgent: AbstractAgent, middleware) =>
+          ({
+            run: (i: RunAgentInput) => middleware.run(i, nextAgent),
+          }) as AbstractAgent,
+        this,
       );
 
       return chainedAgent.run(input);

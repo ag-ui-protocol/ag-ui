@@ -73,9 +73,11 @@ describe("Middleware runNextWithState", () => {
       });
     });
 
-    expect(events.length).toBe(3);
+    expect(events.length).toBe(5);
     expect(events[0].type).toBe(EventType.RUN_STARTED);
-    expect(events[1].type).toBe(EventType.TEXT_MESSAGE_CHUNK);
-    expect(events[2].type).toBe(EventType.RUN_FINISHED);
+    expect(events[1].type).toBe(EventType.TEXT_MESSAGE_START);
+    expect(events[2].type).toBe(EventType.TEXT_MESSAGE_CONTENT);
+    expect(events[3].type).toBe(EventType.TEXT_MESSAGE_END);
+    expect(events[4].type).toBe(EventType.RUN_FINISHED);
   });
 });

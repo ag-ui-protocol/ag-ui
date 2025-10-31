@@ -39,25 +39,31 @@ describe("FunctionMiddleware", () => {
 
     const middlewareFn: MiddlewareFunction = (middlewareInput, next) => {
       return new Observable<BaseEvent>((subscriber) => {
-        subscriber.next({
-          type: EventType.RUN_STARTED,
-          threadId: middlewareInput.threadId,
-          runId: middlewareInput.runId,
-        });
-
-        next.run(middlewareInput).subscribe({
+        const subscription = next.run(middlewareInput).subscribe({
           next: (event) => {
+            if (event.type === EventType.RUN_STARTED) {
+              subscriber.next({
+                ...event,
+                metadata: { ...(event as any).metadata, fromMiddleware: true },
+              });
+              return;
+            }
+
             if (event.type === EventType.RUN_FINISHED) {
               subscriber.next({
                 ...event,
                 result: { success: true },
               });
-            } else {
-              subscriber.next(event);
+              return;
             }
+
+            subscriber.next(event);
           },
+          error: (error) => subscriber.error(error),
           complete: () => subscriber.complete(),
         });
+
+        return () => subscription.unsubscribe();
       });
     };
 
@@ -73,6 +79,7 @@ describe("FunctionMiddleware", () => {
 
     expect(events.length).toBe(2);
     expect(events[0].type).toBe(EventType.RUN_STARTED);
+    expect((events[0] as any).metadata).toEqual({ fromMiddleware: true });
     expect(events[1].type).toBe(EventType.RUN_FINISHED);
     expect((events[1] as any).result).toEqual({ success: true });
   });
