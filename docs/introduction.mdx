@@ -19,6 +19,18 @@ Built for simplicity and flexibility, it standardizes how agent state, UI intent
   <img className="hidden dark:block" src="/images/ag-ui-overview-with-partners-dark.png" alt="AG-UI Overview" style={{maxWidth: '100%', height: 'auto', borderRadius: '8px'}} />
 </div>
 
+---
+
+## Agent Interaction Protocols
+
+AG-UI is one of three prominent open [agent interaction protocols](./agent-interaction-protocols).
+
+| **Layer** | **Protocol / Example** | **Purpose** |
+| --- | --- | --- |
+| **Agent ↔ User Interaction** | **AG-UI (Agent–User Interaction Protocol)** | The open, event-based standard that connects agents to user-facing applications — enabling real-time, multimodal, interactive experiences. |
+| **Agent ↔ Tools & Data** | **MCP (Model Context Protocol)** | Open standard (originated by Anthropic) that lets agents securely connect to external systems — tools, workflows, and data sources. |
+| **Agent ↔ Agent** | **A2A** | Open standard (originated by Google) which defines how agents coordinate and share work across distributed agentic systems. |
+
 <Note>
 <strong>Confused about "A2UI" and "AG-UI"?</strong>  That's understandable!  Despite the naming similarities, they are quite different and work well together.  A2UI is a [generative UI specification](./concepts/generative-ui-specs) - allowing agents to deliver UI widgets, where AG-UI provides the complete bi-directional runtime connection between the agent and the application.
 </Note>
