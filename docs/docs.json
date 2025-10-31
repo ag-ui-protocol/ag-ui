@@ -44,7 +44,8 @@
               "concepts/messages",
               "concepts/state",
               "concepts/serialization",
-              "concepts/tools"
+              "concepts/tools",
+              "concepts/generative-ui-specs"
             ]
           },
           {

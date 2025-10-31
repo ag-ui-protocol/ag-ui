@@ -188,20 +188,29 @@ While agents are just software, they exhibit characteristics that make them chal
 
 AG-UI is an event-based protocol that enables dynamic communication between agentic frontends and backends. It builds on top of the foundational protocols of the web (HTTP, WebSockets) as an abstraction layer designed for the agentic age—bridging the gap between traditional client-server architectures and the dynamic, stateful nature of AI agents.
 
-## The AI protocol landscape
+## The AI Protocol Landscape
 
-AG-UI has emerged as the 3rd leg of the AI protocol landscape:
+The agentic ecosystem is rapidly organizing around a family of open, complementary protocols — each addressing a distinct layer of interaction.  AG-UI has emerged as the 3rd leg of the AI protocol landscape:
 <div style={{textAlign: 'center', margin: '2rem 0'}}>
   <img src="/images/ai-protocol-stack.png" alt="AI Protocol Stack" style={{maxWidth: '40%', height: 'auto', borderRadius: '8px'}} />
 </div>
 
-- MCP: Connects agents to tool and to context.
-- A2A: Connects agents to other agents.
-- **AG-UI:** Connects agents to users (through user-facing applications)
+You can connect your application to agents directly via **AG-UI**, **MCP**, and **A2A**.
 
 
-These protocols are complimentary and have distinct technical goals; a single agent can and often does use all 3 simultanously.
-Where these protocols intersect, there are opportunities for seamless handshakes facilitating interoperability—work on these integration points is actively ongoing.
+- **MCP** (Model Context Protocol) Connects agents to tools and to context — but those tools are themselves becoming agentic.
+- **A2A** (Agent to Agent) Connects agents to other agents.
+- **AG-UI (Agent–User Interaction)** Connects agents to users (through user-facing applications).  
+    
+    You can think of AG-UI as the **“kitchen sink” protocol** — informed by bottom-up, real-world needs for building best-in-class agentic applications.
+    
+
+These protocols are complimentary and have distinct technical goals; a single agent can and often does use all 3 simultaneously.
+
+## AG-UI Handshakes with MCP and A2A
+
+AG-UI contributors have recently added handshakes, allowing AG-UI to "front for" agents through MCP and A2A protocols, which allows AG-UI client apps and libraries to seamlessly use MCP and A2A supporting agents.  
+
 AG-UI's mandate is to support the full set of building blocks required by modern agentic applications.
 
 
@@ -209,7 +218,7 @@ AG-UI's mandate is to support the full set of building blocks required by modern
 
 ---
 
-## AG-UI in action
+## AG-UI in Action
 
 <div style={{textAlign: 'center', margin: '3rem 0 1rem 0'}}>
   <video 
