@@ -8,6 +8,9 @@ packages = [{ include = "agents" }]
 [project]
 name = "agents"
 version = "0.0.1"
+dependencies = [
+    "langgraph==0.6.5",
+]
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.14"
