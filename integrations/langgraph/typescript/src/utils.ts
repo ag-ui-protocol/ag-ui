@@ -160,3 +160,56 @@ export function resolveMessageContent(content?: LangGraphMessage['content']): st
 
   return null
 }
+
+export async function streamWithReconnect({
+  client,
+  threadId,
+  assistantId,
+  payload,
+  onStart,
+  onStream,
+  onEnd,
+  }: {
+  client: any;
+  threadId: string | null;
+  assistantId: string;
+  payload: any;
+  onStart: () => void;
+  onStream: (streamResponse: AsyncIterable<any>) => void;
+  onEnd: () => void;
+}) {
+  let runId: string | null = null;
+  let done = false;
+
+  // small helper to read a stream (either .stream or .join_stream)
+  async function readStream(
+    source: AsyncIterable<any>,
+    isJoiningExisting: boolean = false,
+  ) {
+    if (!isJoiningExisting) onStart()
+    onStream(source)
+    for await (const chunk of source) {
+      // capture run id once
+      if (!runId && chunk.run_id) runId = chunk.run_id;
+
+      // langgraph sends final status events, you can mark done there
+      if (chunk.event === "end" || chunk.data?.status === "completed") {
+        done = true;
+      }
+    }
+    if (done) {
+      onEnd()
+    }
+  }
+
+  // 1) first attempt: start the run
+  await readStream(
+    client.runs.stream(threadId, assistantId, payload)
+  );
+
+  // 2) if connection dropped but run not done, reattach
+  while (!done && runId) {
+    // backoff / delay here if you want
+    await readStream(client.runs.join_stream(threadId, runId));
+  }
+}

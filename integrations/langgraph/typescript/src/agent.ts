@@ -64,6 +64,7 @@ import {
   langchainMessagesToAgui,
   resolveMessageContent,
   resolveReasoningContent,
+  streamWithReconnect,
 } from "@/utils";
 
 export type ProcessedEvents =
@@ -174,13 +175,25 @@ export class LangGraphAgent extends AbstractAgent {
     const threadId = input.threadId ?? randomUUID();
     const streamMode =
       input.forwardedProps?.streamMode ?? (["events", "values", "updates"] satisfies StreamMode[]);
-    const preparedStream = await this.prepareStream({ ...input, threadId }, streamMode);
+    const preparedStreamArgs = await this.prepareStream(
+      { ...input, threadId },
+      streamMode,
+    );
 
-    if (!preparedStream) {
+    if (!preparedStreamArgs) {
       return subscriber.error("No stream to regenerate");
     }
 
-    await this.handleStreamEvents(preparedStream, threadId, subscriber, input, Array.isArray(streamMode) ? streamMode : [streamMode]);
+    const { payload, state } = preparedStreamArgs
+
+    await this.handleStreamEvents({
+      payload,
+      state,
+      threadId,
+      subscriber,
+      input,
+      streamMode: Array.isArray(streamMode) ? streamMode : [streamMode]
+    });
   }
 
   async prepareRegenerateStream(input: RegenerateInput, streamMode: StreamMode | StreamMode[]) {
@@ -215,10 +228,10 @@ export class LangGraphAgent extends AbstractAgent {
       checkpointId: fork.checkpoint.checkpoint_id!,
       streamMode,
     };
+
     return {
-      streamResponse: this.client.runs.stream(threadId, this.assistant.assistant_id, payload),
+      payload,
       state: timeTravelCheckpoint as ThreadState<State>,
-      streamMode,
     };
   }
 
@@ -364,191 +377,204 @@ export class LangGraphAgent extends AbstractAgent {
     }
 
     return {
-      // @ts-ignore
-      streamResponse: this.client.runs.stream(threadId, this.assistant.assistant_id, payload),
+      payload,
       state: threadState as ThreadState<State>,
     };
   }
 
-  async handleStreamEvents(
-    stream: Awaited<
-      ReturnType<typeof this.prepareStream> | ReturnType<typeof this.prepareRegenerateStream>
-    >,
+  async handleStreamEvents({
+    threadId,
+    payload,
+    state,
+    subscriber,
+    input,
+    streamMode,
+  }: {
     threadId: string,
+    payload: Omit<RunsStreamPayload, 'streamMode'> & { streamMode: StreamMode | StreamMode[] },
+    state: ThreadState<State>,
     subscriber: Subscriber<ProcessedEvents>,
     input: RunAgentExtendedInput,
-    streamModes: StreamMode | StreamMode[],
-  ) {
+    streamMode: StreamMode | StreamMode[],
+  }) {
     const { forwardedProps } = input;
     const nodeNameInput = forwardedProps?.nodeName;
     this.subscriber = subscriber;
     let shouldExit = false;
-    if (!stream) return;
-
-    let { streamResponse, state } = stream;
+    if (!this.assistant?.assistant_id) return;
 
     this.activeRun!.prevNodeName = null;
     let latestStateValues = {} as ThreadState<State>["values"];
     let updatedState = state;
 
     try {
-      this.dispatchEvent({
-        type: EventType.RUN_STARTED,
+      streamWithReconnect({
+        client: this.client,
+        assistantId: this.assistant.assistant_id,
+        payload,
         threadId,
-        runId: this.activeRun!.id,
-      });
-      this.handleNodeChange(nodeNameInput)
-
-      for await (let streamResponseChunk of streamResponse) {
-        const subgraphsStreamEnabled = input.forwardedProps?.streamSubgraphs;
-        const isSubgraphStream =
-          subgraphsStreamEnabled &&
-          (streamResponseChunk.event.startsWith("events") ||
-            streamResponseChunk.event.startsWith("values"));
-
-        // @ts-ignore
-        if (!streamModes.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream && streamResponseChunk.event !== 'error') {
-          continue;
-        }
-
-        // Force event type, as data is not properly defined on the LG side.
-        type EventsChunkData = {
-          __interrupt__?: any;
-          metadata: Record<string, any>;
-          event: string;
-          data: any;
-          [key: string]: unknown;
-        };
-        const chunk = streamResponseChunk as EventsStreamEvent & { data: EventsChunkData };
-
-        if (streamResponseChunk.event === "error") {
+        onStart: () => {
           this.dispatchEvent({
-            type: EventType.RUN_ERROR,
-            message: streamResponseChunk.data.message,
-            rawEvent: streamResponseChunk,
+            type: EventType.RUN_STARTED,
+            threadId,
+            runId: this.activeRun!.id,
           });
-          break;
-        }
+          this.handleNodeChange(nodeNameInput)
+        },
+        onStream: async (streamResponse) => {
+          for await (let streamResponseChunk of streamResponse) {
+            const subgraphsStreamEnabled = input.forwardedProps?.streamSubgraphs;
+            const isSubgraphStream =
+              subgraphsStreamEnabled &&
+              (streamResponseChunk.event.startsWith("events") ||
+                streamResponseChunk.event.startsWith("values"));
 
-        if (streamResponseChunk.event === "updates") {
-          continue;
-        }
+            // @ts-ignore
+            if (!streamMode.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream && streamResponseChunk.event !== 'error') {
+              continue;
+            }
 
-        if (streamResponseChunk.event === "values") {
-          latestStateValues = chunk.data;
-          continue;
-        } else if (subgraphsStreamEnabled && chunk.event.startsWith("values|")) {
-          latestStateValues = {
-            ...latestStateValues,
-            ...chunk.data,
-          };
-          continue;
-        }
+            // Force event type, as data is not properly defined on the LG side.
+            type EventsChunkData = {
+              __interrupt__?: any;
+              metadata: Record<string, any>;
+              event: string;
+              data: any;
+              [key: string]: unknown;
+            };
+            const chunk = streamResponseChunk as EventsStreamEvent & { data: EventsChunkData };
 
-        const chunkData = chunk.data;
-        const metadata = chunkData.metadata ?? {};
-        const currentNodeName = metadata.langgraph_node;
-        const eventType = chunkData.event;
+            if (streamResponseChunk.event === "error") {
+              this.dispatchEvent({
+                type: EventType.RUN_ERROR,
+                message: streamResponseChunk.data.message,
+                rawEvent: streamResponseChunk,
+              });
+              break;
+            }
 
-        this.activeRun!.id = metadata.run_id;
+            if (streamResponseChunk.event === "updates") {
+              continue;
+            }
 
-        if (currentNodeName && currentNodeName !== this.activeRun!.nodeName) {
-          this.handleNodeChange(currentNodeName)
-        }
+            if (streamResponseChunk.event === "values") {
+              latestStateValues = chunk.data;
+              continue;
+            } else if (subgraphsStreamEnabled && chunk.event.startsWith("values|")) {
+              latestStateValues = {
+                ...latestStateValues,
+                ...chunk.data,
+              };
+              continue;
+            }
 
-        shouldExit =
-          shouldExit ||
-          (eventType === LangGraphEventTypes.OnCustomEvent &&
-            chunkData.name === CustomEventNames.Exit);
+            const chunkData = chunk.data;
+            const metadata = chunkData.metadata ?? {};
+            const currentNodeName = metadata.langgraph_node;
+            const eventType = chunkData.event;
 
-        this.activeRun!.exitingNode =
-          this.activeRun!.nodeName === currentNodeName &&
-          eventType === LangGraphEventTypes.OnChainEnd;
-        if (this.activeRun!.exitingNode) {
-          this.activeRun!.manuallyEmittedState = null;
-        }
+            this.activeRun!.id = metadata.run_id;
 
-        // we only want to update the node name under certain conditions
-        // since we don't need any internal node names to be sent to the frontend
-        if (this.activeRun!.graphInfo?.["nodes"].some((node) => node.id === currentNodeName)) {
-          this.handleNodeChange(currentNodeName)
-        }
+            if (currentNodeName && currentNodeName !== this.activeRun!.nodeName) {
+              this.handleNodeChange(currentNodeName)
+            }
 
-        updatedState.values = this.activeRun!.manuallyEmittedState ?? latestStateValues;
+            shouldExit =
+              shouldExit ||
+              (eventType === LangGraphEventTypes.OnCustomEvent &&
+                chunkData.name === CustomEventNames.Exit);
 
-        if (!this.activeRun!.nodeName) {
-          continue;
-        }
+            this.activeRun!.exitingNode =
+              this.activeRun!.nodeName === currentNodeName &&
+              eventType === LangGraphEventTypes.OnChainEnd;
+            if (this.activeRun!.exitingNode) {
+              this.activeRun!.manuallyEmittedState = null;
+            }
 
-        const hasStateDiff = JSON.stringify(updatedState) !== JSON.stringify(state);
-        // We should not update snapshot while a message is in progress.
-        if (
-          (hasStateDiff ||
-            this.activeRun!.prevNodeName != this.activeRun!.nodeName ||
-            this.activeRun!.exitingNode) &&
-          !Boolean(this.getMessageInProgress(this.activeRun!.id))
-        ) {
-          state = updatedState;
-          this.activeRun!.prevNodeName = this.activeRun!.nodeName;
+            // we only want to update the node name under certain conditions
+            // since we don't need any internal node names to be sent to the frontend
+            if (this.activeRun!.graphInfo?.["nodes"].some((node) => node.id === currentNodeName)) {
+              this.handleNodeChange(currentNodeName)
+            }
+
+            updatedState.values = this.activeRun!.manuallyEmittedState ?? latestStateValues;
+
+            if (!this.activeRun!.nodeName) {
+              continue;
+            }
+
+            const hasStateDiff = JSON.stringify(updatedState) !== JSON.stringify(state);
+            // We should not update snapshot while a message is in progress.
+            if (
+              (hasStateDiff ||
+                this.activeRun!.prevNodeName != this.activeRun!.nodeName ||
+                this.activeRun!.exitingNode) &&
+              !Boolean(this.getMessageInProgress(this.activeRun!.id))
+            ) {
+              state = updatedState;
+              this.activeRun!.prevNodeName = this.activeRun!.nodeName;
+
+              this.dispatchEvent({
+                type: EventType.STATE_SNAPSHOT,
+                snapshot: this.getStateSnapshot(state),
+                rawEvent: chunk,
+              });
+            }
+
+            this.dispatchEvent({
+              type: EventType.RAW,
+              event: chunkData,
+            });
+
+            this.handleSingleEvent(chunkData);
+          }
+        },
+        onEnd: async () => {
+          state = await this.client.threads.getState(threadId);
+          const tasks = state.tasks;
+          const interrupts = (tasks?.[0]?.interrupts ?? []) as Interrupt[];
+          const isEndNode = state.next.length === 0;
+          const writes = state.metadata?.writes ?? {};
+
+          // Initialize a new node name to use in the next if block
+          let newNodeName = this.activeRun!.nodeName!;
+
+          if (!interrupts?.length) {
+            newNodeName = isEndNode ? "__end__" : (state.next[0] ?? Object.keys(writes)[0]);
+          }
+
+          interrupts.forEach((interrupt) => {
+            this.dispatchEvent({
+              type: EventType.CUSTOM,
+              name: LangGraphEventTypes.OnInterrupt,
+              value:
+                typeof interrupt.value === "string" ? interrupt.value : JSON.stringify(interrupt.value),
+              rawEvent: interrupt,
+            });
+          });
+
+          this.handleNodeChange(newNodeName);
+          // Immediately turn off new step
+          this.handleNodeChange(undefined);
 
           this.dispatchEvent({
             type: EventType.STATE_SNAPSHOT,
             snapshot: this.getStateSnapshot(state),
-            rawEvent: chunk,
           });
+          this.dispatchEvent({
+            type: EventType.MESSAGES_SNAPSHOT,
+            messages: langchainMessagesToAgui((state.values as { messages: any[] }).messages ?? []),
+          });
+
+          this.dispatchEvent({
+            type: EventType.RUN_FINISHED,
+            threadId,
+            runId: this.activeRun!.id,
+          });
+          this.activeRun = undefined;
+          return subscriber.complete();
         }
-
-        this.dispatchEvent({
-          type: EventType.RAW,
-          event: chunkData,
-        });
-
-        this.handleSingleEvent(chunkData);
-      }
-
-      state = await this.client.threads.getState(threadId);
-      const tasks = state.tasks;
-      const interrupts = (tasks?.[0]?.interrupts ?? []) as Interrupt[];
-      const isEndNode = state.next.length === 0;
-      const writes = state.metadata?.writes ?? {};
-
-      // Initialize a new node name to use in the next if block
-      let newNodeName = this.activeRun!.nodeName!;
-
-      if (!interrupts?.length) {
-        newNodeName = isEndNode ? "__end__" : (state.next[0] ?? Object.keys(writes)[0]);
-      }
-
-      interrupts.forEach((interrupt) => {
-        this.dispatchEvent({
-          type: EventType.CUSTOM,
-          name: LangGraphEventTypes.OnInterrupt,
-          value:
-            typeof interrupt.value === "string" ? interrupt.value : JSON.stringify(interrupt.value),
-          rawEvent: interrupt,
-        });
-      });
-
-      this.handleNodeChange(newNodeName);
-      // Immediately turn off new step
-      this.handleNodeChange(undefined);
-
-      this.dispatchEvent({
-        type: EventType.STATE_SNAPSHOT,
-        snapshot: this.getStateSnapshot(state),
-      });
-      this.dispatchEvent({
-        type: EventType.MESSAGES_SNAPSHOT,
-        messages: langchainMessagesToAgui((state.values as { messages: any[] }).messages ?? []),
-      });
-
-      this.dispatchEvent({
-        type: EventType.RUN_FINISHED,
-        threadId,
-        runId: this.activeRun!.id,
-      });
-      this.activeRun = undefined;
-      return subscriber.complete();
+      })
     } catch (e) {
       return subscriber.error(e);
     }
