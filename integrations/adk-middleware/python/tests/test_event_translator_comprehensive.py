@@ -907,14 +907,15 @@ class TestEventTranslatorComprehensive:
         async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
             events.append(event)
 
-        # Should have text events, state delta, and custom event
-        assert len(events) == 5  # START, CONTENT, STATE_DELTA, CUSTOM , END
+        # Should have text events, state delta, state snapshot, and custom event
+        assert len(events) == 6  # START, CONTENT, STATE_DELTA, STATE_SNAPSHOT, CUSTOM, END
 
         # Check event types
         event_types = [type(event) for event in events]
         assert TextMessageStartEvent in event_types
         assert TextMessageContentEvent in event_types
         assert StateDeltaEvent in event_types
+        assert StateSnapshotEvent in event_types
         assert CustomEvent in event_types
         assert TextMessageEndEvent in event_types
 
