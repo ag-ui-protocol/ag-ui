@@ -24,6 +24,8 @@ langgraph = "^0.6.1"
 ag-ui-langgraph = { path = "../" }
 python-dotenv = "^1.0.0"
 fastapi = "^0.115.12"
+grpcio = ">=1.76,<2.0"
+grpcio-tools = ">=1.76,<2.0"
 
 [build-system]
 requires = ["poetry-core"]
