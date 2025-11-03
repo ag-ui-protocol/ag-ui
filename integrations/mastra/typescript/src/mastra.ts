@@ -40,7 +40,11 @@ export interface MastraAgentConfig extends AgentConfig {
 interface MastraAgentStreamOptions {
   onTextPart?: (text: string) => void;
   onFinishMessagePart?: () => void;
-  onToolCallPart?: (streamPart: { toolCallId: string; toolName: string; args: any }) => void;
+  onToolCallPart?: (streamPart: {
+    toolCallId: string;
+    toolName: string;
+    args: any;
+  }) => void;
   onToolResultPart?: (streamPart: { toolCallId: string; result: any }) => void;
   onError?: (error: Error) => void;
   onRunFinished?: () => Promise<void>;
@@ -63,7 +67,7 @@ export class MastraAgent extends AbstractAgent {
     return new MastraAgent(this.config);
   }
 
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     let messageId = randomUUID();
 
     return new Observable<BaseEvent>((subscriber) => {
@@ -80,7 +84,11 @@ export class MastraAgent extends AbstractAgent {
         if (this.isLocalMastraAgent(this.agent)) {
           const memory = await this.agent.getMemory();
 
-          if (memory && input.state && Object.keys(input.state || {}).length > 0) {
+          if (
+            memory &&
+            input.state &&
+            Object.keys(input.state || {}).length > 0
+          ) {
             let thread: StorageThreadType | null = await memory.getThreadById({
               threadId: input.threadId,
             });
@@ -96,9 +104,14 @@ export class MastraAgent extends AbstractAgent {
               };
             }
 
-            const existingMemory = JSON.parse((thread.metadata?.workingMemory as string) ?? "{}");
+            const existingMemory = JSON.parse(
+              (thread.metadata?.workingMemory as string) ?? "{}",
+            );
             const { messages, ...rest } = input.state;
-            const workingMemory = JSON.stringify({ ...existingMemory, ...rest });
+            const workingMemory = JSON.stringify({
+              ...existingMemory,
+              ...rest,
+            });
 
             // Update thread metadata with new working memory
             await memory.saveThread({
@@ -220,7 +233,9 @@ export class MastraAgent extends AbstractAgent {
     });
   }
 
-  isLocalMastraAgent(agent: LocalMastraAgent | RemoteMastraAgent): agent is LocalMastraAgent {
+  isLocalMastraAgent(
+    agent: LocalMastraAgent | RemoteMastraAgent,
+  ): agent is LocalMastraAgent {
     return "getMemory" in agent;
   }
 
@@ -372,7 +387,9 @@ export class MastraAgent extends AbstractAgent {
     return getRemoteAgents(options);
   }
 
-  static getLocalAgents(options: GetLocalAgentsOptions): Record<string, AbstractAgent> {
+  static getLocalAgents(
+    options: GetLocalAgentsOptions,
+  ): Record<string, AbstractAgent> {
     return getLocalAgents(options);
   }
 

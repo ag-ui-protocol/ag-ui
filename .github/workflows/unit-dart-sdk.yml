@@ -1,0 +1,36 @@
+name: unit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdks/community/dart/**"
+      - ".github/workflows/unit-dart-sdk.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "sdks/community/dart/**"
+      - ".github/workflows/unit-dart-sdk.yml"
+
+jobs:
+  dart:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: sdks/community/dart
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Run tests
+        run: dart test --exclude-tags requires-server

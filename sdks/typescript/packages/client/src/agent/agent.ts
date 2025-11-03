@@ -3,7 +3,7 @@ import { Message, State, RunAgentInput, BaseEvent, ToolCall, AssistantMessage } 
 
 import { AgentConfig, RunAgentParameters } from "./types";
 import { v4 as uuidv4 } from "uuid";
-import { structuredClone_ } from "@/utils";
+import { structuredClone_, parseSemanticVersion } from "@/utils";
 import { catchError, map, tap } from "rxjs/operators";
 import { finalize } from "rxjs/operators";
 import { pipe, Observable, from, of, EMPTY } from "rxjs";
@@ -14,6 +14,8 @@ import { lastValueFrom } from "rxjs";
 import { transformChunks } from "@/chunks";
 import { AgentStateMutation, AgentSubscriber, runSubscribersWithMutation } from "./subscriber";
 import { AGUIConnectNotImplementedError } from "@ag-ui/core";
+import { Middleware, MiddlewareFunction, FunctionMiddleware } from "@/middleware";
+import packageJson from "../../package.json";
 
 export interface RunAgentResult {
   result: any;
@@ -29,6 +31,8 @@ export abstract class AbstractAgent {
   public debug: boolean = false;
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
+  private middlewares: Middleware[] = [];
+  public maxVersion = packageJson.version;
 
   constructor({
     agentId,
@@ -44,6 +48,7 @@ export abstract class AbstractAgent {
     this.messages = structuredClone_(initialMessages ?? []);
     this.state = structuredClone_(initialState ?? {});
     this.debug = debug ?? false;
+    parseSemanticVersion(this.maxVersion);
   }
 
   public subscribe(subscriber: AgentSubscriber) {
@@ -55,7 +60,17 @@ export abstract class AbstractAgent {
     };
   }
 
-  protected abstract run(input: RunAgentInput): Observable<BaseEvent>;
+  abstract run(input: RunAgentInput): Observable<BaseEvent>;
+
+
+  public use(...middlewares: (Middleware | MiddlewareFunction)[]): this {
+    const normalizedMiddlewares = middlewares.map((middleware) =>
+      typeof middleware === "function" ? new FunctionMiddleware(middleware) : middleware,
+    );
+    this.middlewares.push(...normalizedMiddlewares);
+    return this;
+  }
+
 
   public async runAgent(
     parameters?: RunAgentParameters,
@@ -81,7 +96,22 @@ export abstract class AbstractAgent {
       await this.onInitialize(input, subscribers);
 
       const pipeline = pipe(
-        () => this.run(input),
+        () => {
+          // Build middleware chain using reduceRight so middlewares can intercept runs.
+          if (this.middlewares.length === 0) {
+            return this.run(input);
+          }
+
+          const chainedAgent = this.middlewares.reduceRight(
+            (nextAgent: AbstractAgent, middleware) =>
+              ({
+                run: (i: RunAgentInput) => middleware.run(i, nextAgent),
+              }) as AbstractAgent,
+            this, // Original agent is the final 'next'
+          );
+
+          return chainedAgent.run(input);
+        },
         transformChunks(this.debug),
         verifyEvents(this.debug),
         (source$) => this.apply(input, source$, subscribers),
@@ -481,7 +511,24 @@ export abstract class AbstractAgent {
     this.agentId = this.agentId ?? uuidv4();
     const input = this.prepareRunAgentInput(config);
 
-    return this.run(input).pipe(
+    // Build middleware chain for legacy bridge
+    const runObservable = (() => {
+      if (this.middlewares.length === 0) {
+        return this.run(input);
+      }
+
+      const chainedAgent = this.middlewares.reduceRight(
+        (nextAgent: AbstractAgent, middleware) =>
+          ({
+            run: (i: RunAgentInput) => middleware.run(i, nextAgent),
+          }) as AbstractAgent,
+        this,
+      );
+
+      return chainedAgent.run(input);
+    })();
+
+    return runObservable.pipe(
       transformChunks(this.debug),
       verifyEvents(this.debug),
       convertToLegacyEvents(this.threadId, input.runId, this.agentId),

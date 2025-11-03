@@ -4,7 +4,13 @@ from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Litera
 import inspect
 
 from langgraph.graph.state import CompiledStateGraph
-from langchain.schema import BaseMessage, SystemMessage
+
+try:
+    from langchain.schema import BaseMessage, SystemMessage
+except ImportError:
+    # Langchain >= 1.0.0
+    from langchain_core.messages import BaseMessage, SystemMessage
+    
 from langchain_core.runnables import RunnableConfig, ensure_config
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command

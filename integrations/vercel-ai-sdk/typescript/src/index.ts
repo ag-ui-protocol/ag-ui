@@ -34,9 +34,12 @@ import { z } from "zod";
 
 type VercelUserContent = Extract<CoreMessage, { role: "user" }>["content"];
 type VercelUserArrayContent = Extract<VercelUserContent, any[]>;
-type VercelUserPart = VercelUserArrayContent extends Array<infer Part> ? Part : never;
+type VercelUserPart =
+  VercelUserArrayContent extends Array<infer Part> ? Part : never;
 
-const toVercelUserParts = (inputContent: Message["content"]): VercelUserPart[] => {
+const toVercelUserParts = (
+  inputContent: Message["content"],
+): VercelUserPart[] => {
   if (!Array.isArray(inputContent)) {
     return [];
   }
@@ -52,7 +55,9 @@ const toVercelUserParts = (inputContent: Message["content"]): VercelUserPart[] =
   return parts;
 };
 
-const toVercelUserContent = (content: Message["content"]): VercelUserContent => {
+const toVercelUserContent = (
+  content: Message["content"],
+): VercelUserContent => {
   if (!content) {
     return "";
   }
@@ -104,7 +109,7 @@ export class VercelAISDKAgent extends AbstractAgent {
     return new VercelAISDKAgent(this.config);
   }
 
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     const finalMessages: Message[] = input.messages;
 
     return new Observable<ProcessedEvent>((subscriber) => {
@@ -216,12 +221,16 @@ export class VercelAISDKAgent extends AbstractAgent {
   }
 }
 
-export function convertMessagesToVercelAISDKMessages(messages: Message[]): CoreMessage[] {
+export function convertMessagesToVercelAISDKMessages(
+  messages: Message[],
+): CoreMessage[] {
   const result: CoreMessage[] = [];
 
   for (const message of messages) {
     if (message.role === "assistant") {
-      const parts: any[] = message.content ? [{ type: "text", text: message.content }] : [];
+      const parts: any[] = message.content
+        ? [{ type: "text", text: message.content }]
+        : [];
       for (const toolCall of message.toolCalls ?? []) {
         parts.push({
           type: "tool-call",
@@ -268,7 +277,10 @@ export function convertMessagesToVercelAISDKMessages(messages: Message[]): CoreM
   return result;
 }
 
-export function convertJsonSchemaToZodSchema(jsonSchema: any, required: boolean): z.ZodSchema {
+export function convertJsonSchemaToZodSchema(
+  jsonSchema: any,
+  required: boolean,
+): z.ZodSchema {
   if (jsonSchema.type === "object") {
     const spec: { [key: string]: z.ZodSchema } = {};
 
@@ -301,7 +313,9 @@ export function convertJsonSchemaToZodSchema(jsonSchema: any, required: boolean)
   throw new Error("Invalid JSON schema");
 }
 
-export function convertToolToVerlAISDKTools(tools: RunAgentInput["tools"]): ToolSet {
+export function convertToolToVerlAISDKTools(
+  tools: RunAgentInput["tools"],
+): ToolSet {
   return tools.reduce(
     (acc: ToolSet, tool: RunAgentInput["tools"][number]) => ({
       ...acc,
