@@ -14,7 +14,12 @@ import { lastValueFrom } from "rxjs";
 import { transformChunks } from "@/chunks";
 import { AgentStateMutation, AgentSubscriber, runSubscribersWithMutation } from "./subscriber";
 import { AGUIConnectNotImplementedError } from "@ag-ui/core";
-import { Middleware, MiddlewareFunction, FunctionMiddleware } from "@/middleware";
+import {
+  Middleware,
+  MiddlewareFunction,
+  FunctionMiddleware,
+  BackwardCompatibility_0_0_39,
+} from "@/middleware";
 import packageJson from "../../package.json";
 
 export interface RunAgentResult {
@@ -48,7 +53,12 @@ export abstract class AbstractAgent {
     this.messages = structuredClone_(initialMessages ?? []);
     this.state = structuredClone_(initialState ?? {});
     this.debug = debug ?? false;
-    parseSemanticVersion(this.maxVersion);
+
+    const parsedMaxVersion = parseSemanticVersion(this.maxVersion);
+
+    if (parsedMaxVersion.compare(parseSemanticVersion("0.0.39")) <= 0) {
+      this.middlewares.unshift(new BackwardCompatibility_0_0_39());
+    }
   }
 
   public subscribe(subscriber: AgentSubscriber) {
@@ -62,7 +72,6 @@ export abstract class AbstractAgent {
 
   abstract run(input: RunAgentInput): Observable<BaseEvent>;
 
-
   public use(...middlewares: (Middleware | MiddlewareFunction)[]): this {
     const normalizedMiddlewares = middlewares.map((middleware) =>
       typeof middleware === "function" ? new FunctionMiddleware(middleware) : middleware,
@@ -70,7 +79,6 @@ export abstract class AbstractAgent {
     this.middlewares.push(...normalizedMiddlewares);
     return this;
   }
-
 
   public async runAgent(
     parameters?: RunAgentParameters,

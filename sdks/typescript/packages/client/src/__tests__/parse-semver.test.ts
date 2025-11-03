@@ -3,7 +3,7 @@ import { parseSemanticVersion } from "../utils";
 describe("parseSemanticVersion", () => {
   it("parses full semantic versions", () => {
     const parsed = parseSemanticVersion("1.2.3");
-    expect(parsed).toEqual({
+    expect(parsed).toMatchObject({
       major: 1,
       minor: 2,
       patch: 3,
@@ -11,6 +11,7 @@ describe("parseSemanticVersion", () => {
       build: [],
       source: "1.2.3",
     });
+    expect(parsed.compare(parsed)).toBe(0);
   });
 
   it("defaults missing segments to zero", () => {
@@ -20,7 +21,7 @@ describe("parseSemanticVersion", () => {
 
   it("parses prerelease and build metadata", () => {
     const parsed = parseSemanticVersion("2.0.1-alpha.1+build.5");
-    expect(parsed).toEqual({
+    expect(parsed).toMatchObject({
       major: 2,
       minor: 0,
       patch: 1,
@@ -28,6 +29,7 @@ describe("parseSemanticVersion", () => {
       build: ["build", "5"],
       source: "2.0.1-alpha.1+build.5",
     });
+    expect(parsed.compare(parseSemanticVersion("2.0.1-alpha.2"))).toBeLessThan(0);
   });
 
   it("rejects non-semantic labels like latest", () => {
