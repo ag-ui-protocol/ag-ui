@@ -8,7 +8,7 @@ import com.agui.client.agent.AgentSubscriber
 import com.agui.client.agent.ThinkingTelemetryState
 import com.agui.client.agent.runSubscribersWithMutation
 import com.agui.core.types.*
-import com.reidsync.kxjsonpatch.JsonPatch
+import com.agui.client.jsonpatch.JsonPatch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.transform
 import co.touchlab.kermit.Logger
