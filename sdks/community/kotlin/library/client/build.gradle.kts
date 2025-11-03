@@ -76,9 +76,6 @@ kotlin {
                 implementation(libs.kotlinx.serialization.json)
                 implementation(libs.kotlinx.datetime)
 
-                // Json Patching
-                implementation(libs.kotlin.json.patch)
-                
                 // HTTP client dependencies - core only (no engine)
                 implementation(libs.ktor.client.core)
                 implementation(libs.ktor.client.content.negotiation)
