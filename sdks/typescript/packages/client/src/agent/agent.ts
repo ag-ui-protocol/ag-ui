@@ -37,7 +37,10 @@ export abstract class AbstractAgent {
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
   private middlewares: Middleware[] = [];
-  public maxVersion = packageJson.version;
+
+  get maxVersion() {
+    return packageJson.version;
+  }
 
   constructor({
     agentId,
