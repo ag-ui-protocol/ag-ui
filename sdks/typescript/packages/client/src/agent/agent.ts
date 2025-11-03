@@ -3,7 +3,7 @@ import { Message, State, RunAgentInput, BaseEvent, ToolCall, AssistantMessage } 
 
 import { AgentConfig, RunAgentParameters } from "./types";
 import { v4 as uuidv4 } from "uuid";
-import { structuredClone_ } from "@/utils";
+import { structuredClone_, parseSemanticVersion } from "@/utils";
 import { catchError, map, tap } from "rxjs/operators";
 import { finalize } from "rxjs/operators";
 import { pipe, Observable, from, of } from "rxjs";
@@ -14,6 +14,7 @@ import { lastValueFrom } from "rxjs";
 import { transformChunks } from "@/chunks";
 import { AgentStateMutation, AgentSubscriber, runSubscribersWithMutation } from "./subscriber";
 import { Middleware, MiddlewareFunction, FunctionMiddleware } from "@/middleware";
+import packageJson from "../../package.json";
 
 export interface RunAgentResult {
   result: any;
@@ -29,8 +30,7 @@ export abstract class AbstractAgent {
   public debug: boolean = false;
   public subscribers: AgentSubscriber[] = [];
   private middlewares: Middleware[] = [];
-
-  public readonly maxVersion: string = "*";
+  public maxVersion = packageJson.version;
 
   constructor({
     agentId,
@@ -46,6 +46,7 @@ export abstract class AbstractAgent {
     this.messages = structuredClone_(initialMessages ?? []);
     this.state = structuredClone_(initialState ?? {});
     this.debug = debug ?? false;
+    parseSemanticVersion(this.maxVersion);
   }
 
   public subscribe(subscriber: AgentSubscriber) {

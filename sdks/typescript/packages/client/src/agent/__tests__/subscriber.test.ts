@@ -28,14 +28,18 @@ jest.mock("uuid", () => ({
 }));
 
 // Mock utils with handling for undefined values
-jest.mock("@/utils", () => ({
-  structuredClone_: (obj: any) => {
-    if (obj === undefined) return undefined;
-    const jsonString = JSON.stringify(obj);
-    if (jsonString === undefined || jsonString === "undefined") return undefined;
-    return JSON.parse(jsonString);
-  },
-}));
+jest.mock("@/utils", () => {
+  const actual = jest.requireActual<typeof import("@/utils")>("@/utils");
+  return {
+    ...actual,
+    structuredClone_: (obj: any) => {
+      if (obj === undefined) return undefined;
+      const jsonString = JSON.stringify(obj);
+      if (jsonString === undefined || jsonString === "undefined") return undefined;
+      return JSON.parse(jsonString);
+    },
+  };
+});
 
 // Mock the verify modules but NOT apply - we want to test against real defaultApplyEvents
 jest.mock("@/verify", () => ({
