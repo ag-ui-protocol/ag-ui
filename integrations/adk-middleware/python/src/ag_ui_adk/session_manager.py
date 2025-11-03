@@ -2,7 +2,7 @@
 
 """Session manager that adds production features to ADK's native session service."""
 
-from typing import Dict, Optional, Set, Any, Union
+from typing import Dict, Optional, Set, Any, Union, Iterable
 import asyncio
 import logging
 import time
@@ -67,6 +67,7 @@ class SessionManager:
         # Minimal tracking: just keys and user counts
         self._session_keys: Set[str] = set()  # "app_name:session_id" keys
         self._user_sessions: Dict[str, Set[str]] = {}  # user_id -> set of session_keys
+        self._processed_message_ids: Dict[str, Set[str]] = {}
         
         self._cleanup_task: Optional[asyncio.Task] = None
         self._initialized = True
@@ -108,7 +109,7 @@ class SessionManager:
         
         Returns the ADK session object directly.
         """
-        session_key = f"{app_name}:{session_id}"
+        session_key = self._make_session_key(app_name, session_id)
         
         # Check user limits before creating
         if session_key not in self._session_keys and self._max_per_user:
@@ -504,19 +505,40 @@ class SessionManager:
     def _track_session(self, session_key: str, user_id: str):
         """Track a session key for enumeration."""
         self._session_keys.add(session_key)
-        
+
         if user_id not in self._user_sessions:
             self._user_sessions[user_id] = set()
         self._user_sessions[user_id].add(session_key)
-    
+
     def _untrack_session(self, session_key: str, user_id: str):
         """Remove session tracking."""
         self._session_keys.discard(session_key)
-        
+        self._processed_message_ids.pop(session_key, None)
+
         if user_id in self._user_sessions:
             self._user_sessions[user_id].discard(session_key)
             if not self._user_sessions[user_id]:
                 del self._user_sessions[user_id]
+
+    def _make_session_key(self, app_name: str, session_id: str) -> str:
+        return f"{app_name}:{session_id}"
+
+    def get_processed_message_ids(self, app_name: str, session_id: str) -> Set[str]:
+        session_key = self._make_session_key(app_name, session_id)
+        return set(self._processed_message_ids.get(session_key, set()))
+
+    def mark_messages_processed(
+        self,
+        app_name: str,
+        session_id: str,
+        message_ids: Iterable[str],
+    ) -> None:
+        session_key = self._make_session_key(app_name, session_id)
+        processed_ids = self._processed_message_ids.setdefault(session_key, set())
+
+        for message_id in message_ids:
+            if message_id:
+                processed_ids.add(message_id)
     
     async def _remove_oldest_user_session(self, user_id: str):
         """Remove the oldest session for a user based on lastUpdateTime."""
@@ -544,7 +566,7 @@ class SessionManager:
                 logger.error(f"Error checking session {session_key}: {e}")
         
         if oldest_session:
-            session_key = f"{oldest_session.app_name}:{oldest_session.id}"
+            session_key = self._make_session_key(oldest_session.app_name, oldest_session.id)
             await self._delete_session(oldest_session)
             logger.info(f"Removed oldest session for user {user_id}: {session_key}")
     

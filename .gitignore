@@ -5,6 +5,8 @@ mastra.db*
 **/.DS_Store
 
 test-results/
+
+**/target
 .turbo
 
 node_modules

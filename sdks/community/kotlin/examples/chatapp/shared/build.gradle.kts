@@ -7,6 +7,7 @@ plugins {
 }
 
 kotlin {
+    applyDefaultHierarchyTemplate()
     jvmToolchain(21)
     androidTarget {
         compilations.all {
@@ -27,7 +28,6 @@ kotlin {
             }
         }
     }
-
     listOf(
         iosX64(),
         iosArm64(),
@@ -50,41 +50,16 @@ kotlin {
                 implementation(compose.components.uiToolingPreview)
                 implementation(compose.materialIconsExtended)
 
-                // ag-ui library - consolidated client module includes agent functionality
-                implementation(libs.agui.client)
-                implementation(project(":tools"))
-
-                // Navigation
-                implementation(libs.voyager.navigator)
-                implementation(libs.voyager.screenmodel)
-                implementation(libs.voyager.transitions)
+                implementation(project(":chatapp-shared"))
 
                 // Coroutines
                 implementation(libs.kotlinx.coroutines.core)
 
-                // Atomics for multiplatform thread safety
-                implementation("org.jetbrains.kotlinx:atomicfu:0.23.2")
-
-                // Serialization
-                implementation(libs.kotlinx.serialization.json)
-
-                // Preferences
-                implementation(libs.multiplatform.settings)
-                implementation(libs.multiplatform.settings.coroutines)
-
-                // Logging
-                implementation("co.touchlab:kermit:2.0.6")
-
                 // DateTime
                 implementation(libs.kotlinx.datetime)
 
-                // Base64 encoding/decoding
-                implementation(libs.okio)
-
                 // Markdown rendering
-                implementation(libs.richtext.commonmark)
-                implementation(libs.richtext.ui)
-                implementation(libs.richtext.ui.material3)
+                implementation(libs.markdown.renderer.m3)
             }
         }
 
@@ -93,6 +68,10 @@ kotlin {
                 implementation(kotlin("test"))
                 implementation(libs.kotlinx.coroutines.test)
                 implementation(libs.ktor.client.mock)  // Add this line
+                implementation(project(":chatapp-shared"))
+                implementation(libs.agui.tools)
+                implementation(libs.agui.client)
+                implementation(libs.agui.core)
             }
         }
 
@@ -101,6 +80,13 @@ kotlin {
                 api(libs.activity.compose)
                 api(libs.appcompat)
                 api(libs.core.ktx)
+                implementation(libs.androidx.compose.runtime)
+                implementation(libs.androidx.compose.runtime.saveable)
+                implementation(libs.androidx.compose.foundation)
+                implementation(libs.androidx.compose.material)
+                implementation(libs.androidx.compose.material3)
+                implementation(libs.androidx.compose.ui)
+                implementation(libs.androidx.compose.ui.tooling.preview)
                 implementation(libs.ktor.client.android)
             }
         }
@@ -119,11 +105,10 @@ kotlin {
                 implementation(libs.ext.junit)
                 implementation(libs.core)
                 implementation(libs.ktor.client.android)
-                implementation(project(":tools"))
 
                 // Fixed Compose testing dependencies with explicit versions
                 implementation(libs.ui.test.junit4)
-                implementation("androidx.compose.ui:ui-test-manifest:1.8.3")
+                implementation(libs.androidx.compose.ui.test.manifest)
                 implementation(libs.activity.compose)
                 implementation(libs.androidx.ui.tooling)
             }
@@ -144,29 +129,8 @@ kotlin {
         }
 
         // Get the existing specific iOS targets
-        val iosX64Main by getting
-        val iosArm64Main by getting
-        val iosSimulatorArm64Main by getting
-
-        // Create an iosMain source set and link the others to it
-        val iosMain by creating {
-            dependsOn(commonMain)
-            iosX64Main.dependsOn(this)
-            iosArm64Main.dependsOn(this)
-            iosSimulatorArm64Main.dependsOn(this)
-        }
-
-        // Also create iosTest
-        val iosX64Test by getting
-        val iosArm64Test by getting
-        val iosSimulatorArm64Test by getting
-
-        val iosTest by creating {
-            dependsOn(commonTest)
-            iosX64Test.dependsOn(this)
-            iosArm64Test.dependsOn(this)
-            iosSimulatorArm64Test.dependsOn(this)
-        }
+        val iosMain by getting
+        val iosTest by getting
     }
 }
 

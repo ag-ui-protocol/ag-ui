@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.agui.examples"
-version = "0.2.1"
+version = "0.2.3"
 
 repositories {
     google()
@@ -23,8 +23,8 @@ kotlin {
                     freeCompilerArgs.add("-opt-in=kotlin.RequiresOptIn")
                     freeCompilerArgs.add("-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi")
                     freeCompilerArgs.add("-opt-in=kotlinx.serialization.ExperimentalSerializationApi")
-                    languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
-                    apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
+                    languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_2)
+                    apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_2)
                 }
             }
         }
@@ -64,8 +64,8 @@ kotlin {
         val commonMain by getting {
             dependencies {
                 // Core and tools dependencies
-                api("com.agui:kotlin-core:0.2.1")
-                api("com.agui:kotlin-tools:0.2.1")
+                api("com.agui:kotlin-core:0.2.3")
+                api("com.agui:kotlin-tools:0.2.3")
                 
                 // Kotlinx libraries
                 implementation(libs.kotlinx.coroutines.core)
@@ -79,7 +79,7 @@ kotlin {
                 implementation(kotlin("test"))
                 implementation(libs.kotlinx.coroutines.test)
                 // Add client module for integration testing (includes agent functionality)
-                implementation("com.agui:kotlin-client:0.2.1")
+                implementation("com.agui:kotlin-client:0.2.3")
             }
         }
         

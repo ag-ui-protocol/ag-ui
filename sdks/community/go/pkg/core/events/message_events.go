@@ -195,9 +195,12 @@ type TextMessageChunkEvent struct {
 }
 
 // NewTextMessageChunkEvent creates a new text message chunk event
-func NewTextMessageChunkEvent() *TextMessageChunkEvent {
+func NewTextMessageChunkEvent(messageID, role, delta *string) *TextMessageChunkEvent {
 	return &TextMessageChunkEvent{
 		BaseEvent: NewBaseEvent(EventTypeTextMessageChunk),
+		MessageID: messageID,
+		Role:      role,
+		Delta:     delta,
 	}
 }
 
