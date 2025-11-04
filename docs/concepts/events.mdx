@@ -459,11 +459,12 @@ incrementally update it as new information arrives.
 
 Delivers a complete snapshot of an activity message.
 
-| Property        | Description                                                      |
-| --------------- | ---------------------------------------------------------------- |
-| `messageId`     | Identifier for the `ActivityMessage` this event updates          |
-| `activityType`  | Activity discriminator (for example `"PLAN"`, `"SEARCH"`)       |
-| `content`       | Structured JSON payload representing the full activity state     |
+| Property        | Description                                                                                  |
+| --------------- | -------------------------------------------------------------------------------------------- |
+| `messageId`     | Identifier for the `ActivityMessage` this event updates                                      |
+| `activityType`  | Activity discriminator (for example `"PLAN"`, `"SEARCH"`)                                     |
+| `content`       | Structured JSON payload representing the full activity state                                 |
+| `replace`       | Optional. Defaults to `true`. When `false`, ignore the snapshot if the message already exists |
 
 Frontends should either create a new `ActivityMessage` or replace the existing
 one with the payload supplied by the snapshot.
@@ -528,33 +529,6 @@ implementation across frontends and agents.
 ## Draft Events
 
 These events are currently in draft status and may change before finalization. They represent proposed extensions to the protocol that are under active development and discussion.
-
-### Activity Events
-
-<span style={{backgroundColor: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '0.75em', fontWeight: 'bold'}}>DRAFT</span> [View Proposal](/drafts/activity-events)
-
-Activity events represent ongoing agent progress between chat messages, allowing frameworks to surface fine-grained activity updates chronologically.
-
-#### ActivitySnapshotEvent
-
-Provides the complete activity state at a point in time.
-
-| Property       | Description                                          |
-| -------------- | ---------------------------------------------------- |
-| `messageId`    | Unique identifier for the ActivityMessage            |
-| `activityType` | Activity type (e.g., "PLAN", "SEARCH", "SCRAPE")     |
-| `content`      | Complete activity state at this point                |
-| `replace`      | `true` (default) replaces an existing activity message; `false` only creates a new one if none exists |
-
-#### ActivityDeltaEvent
-
-Provides incremental updates to the activity state using JSON Patch operations.
-
-| Property       | Description                                          |
-| -------------- | ---------------------------------------------------- |
-| `messageId`    | Unique identifier for the ActivityMessage           |
-| `activityType` | Activity type (e.g., "PLAN", "SEARCH", "SCRAPE")    |
-| `patch`        | JSON Patch operations (RFC 6902) to apply           |
 
 ### Reasoning Events
 

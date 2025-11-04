@@ -51,7 +51,6 @@
             "group": "Draft Proposals",
             "pages": [
               "drafts/overview",
-              "drafts/activity-events",
               "drafts/reasoning",
               "drafts/multimodal-messages",
               "drafts/interrupts",
