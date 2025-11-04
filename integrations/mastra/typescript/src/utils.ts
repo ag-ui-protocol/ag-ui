@@ -7,55 +7,59 @@ import { RuntimeContext } from "@mastra/core/runtime-context";
 import { MastraAgent } from "./mastra";
 
 export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] {
-  const result: CoreMessage[] = [];
+  const result: Array<Record<string, unknown>> = [];
 
   for (const message of messages) {
     if (message.role === "assistant") {
-      const parts: any[] = message.content ? [{ type: "text", text: message.content }] : [];
+      const parts: Array<Record<string, unknown>> = [];
+
+      if (message.content) {
+        parts.push({ type: "text", text: message.content });
+      }
+
       for (const toolCall of message.toolCalls ?? []) {
         parts.push({
           type: "tool-call",
           toolCallId: toolCall.id,
           toolName: toolCall.function.name,
-          args: JSON.parse(toolCall.function.arguments),
+          input: safeJsonParse(toolCall.function.arguments),
         });
       }
+
       result.push({
         role: "assistant",
         content: parts,
       });
-    } else if (message.role === "user") {
+      continue;
+    }
+
+    if (message.role === "user") {
       result.push({
         role: "user",
-        content: message.content || "",
+        content: message.content ?? "",
       });
-    } else if (message.role === "tool") {
-      let toolName = "unknown";
-      for (const msg of messages) {
-        if (msg.role === "assistant") {
-          for (const toolCall of msg.toolCalls ?? []) {
-            if (toolCall.id === message.toolCallId) {
-              toolName = toolCall.function.name;
-              break;
-            }
-          }
-        }
-      }
+      continue;
+    }
+
+    if (message.role === "tool") {
+      const toolName = findToolNameForMessage(messages, message.toolCallId) ?? "unknown";
+
       result.push({
         role: "tool",
         content: [
           {
             type: "tool-result",
             toolCallId: message.toolCallId,
-            toolName: toolName,
-            result: message.content,
+            toolName,
+            output: toToolResultOutput(message.content),
           },
         ],
       });
+      continue;
     }
   }
 
-  return result;
+  return result as unknown as CoreMessage[];
 }
 
 export interface GetRemoteAgentsOptions {
@@ -157,4 +161,49 @@ export function getNetwork({ mastra, networkId, resourceId, runtimeContext }: Ge
     resourceId,
     runtimeContext,
   }) as AbstractAgent;
+}
+
+function safeJsonParse(value: string | undefined): unknown {
+  if (!value) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function toToolResultOutput(content: string | undefined) {
+  if (!content) {
+    return { type: "text" as const, value: "" };
+  }
+
+  const parsed = safeJsonParse(content);
+  if (typeof parsed === "string") {
+    return { type: "text" as const, value: parsed };
+  }
+
+  return { type: "json" as const, value: parsed };
+}
+
+function findToolNameForMessage(messages: Message[], toolCallId: string | undefined) {
+  if (!toolCallId) {
+    return undefined;
+  }
+
+  for (const msg of messages) {
+    if (msg.role !== "assistant") {
+      continue;
+    }
+
+    for (const toolCall of msg.toolCalls ?? []) {
+      if (toolCall.id === toolCallId) {
+        return toolCall.function.name;
+      }
+    }
+  }
+
+  return undefined;
 }
