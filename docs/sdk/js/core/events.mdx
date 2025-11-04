@@ -201,6 +201,29 @@ type TextMessageEndEvent = BaseEvent & {
 | ----------- | -------- | ----------------------------------------- |
 | `messageId` | `string` | Matches the ID from TextMessageStartEvent |
 
+### TextMessageChunkEvent
+
+Convenience event that expands to `TextMessageStart` → `TextMessageContent` →
+`TextMessageEnd` automatically in the JS/TS client.
+
+```typescript
+type TextMessageChunkEvent = BaseEvent & {
+  type: EventType.TEXT_MESSAGE_CHUNK
+  messageId?: string // required on the first chunk for a message
+  role?: 'developer' | 'system' | 'assistant' | 'user'
+  delta?: string
+}
+```
+
+Behavior
+- Omit start/end: The client transforms chunk sequences into the standard
+  start/content/end triad, so you don’t need to emit them manually.
+- First chunk requirements: The first chunk for a message must include
+  `messageId`. When `role` is omitted, it defaults to `assistant`.
+- Streaming: Subsequent chunks with the same `messageId` emit
+  `TextMessageContent` events. `TextMessageEnd` is emitted automatically when a
+  different message starts or when the stream completes.
+
 ## Tool Call Events
 
 These events represent the lifecycle of tool calls made by agents.
@@ -430,3 +453,26 @@ const EventSchemas = z.discriminatedUnion("type", [
 
 This allows for runtime validation of events and provides TypeScript type
 inference.
+### ToolCallChunkEvent
+
+Convenience event that expands to `ToolCallStart` → `ToolCallArgs` →
+`ToolCallEnd` automatically in the JS/TS client.
+
+```typescript
+type ToolCallChunkEvent = BaseEvent & {
+  type: EventType.TOOL_CALL_CHUNK
+  toolCallId?: string // required on the first chunk for a tool call
+  toolCallName?: string // required on the first chunk for a tool call
+  parentMessageId?: string
+  delta?: string
+}
+```
+
+Behavior
+- Omit start/end: The client transforms chunk sequences into the standard
+  start/args/end triad.
+- First chunk requirements: The first chunk must include both `toolCallId` and
+  `toolCallName`; `parentMessageId` is propagated to `ToolCallStart` if given.
+- Streaming: Subsequent chunks with the same `toolCallId` emit `ToolCallArgs`.
+  `ToolCallEnd` is emitted automatically when the tool call changes or when the
+  stream completes.

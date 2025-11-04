@@ -237,18 +237,23 @@ automatic scrolling to ensure the full message is visible.
 
 ### TextMessageChunk
 
-A self-contained text message event that combines start, content, and end.
+Convenience event that expands to Start → Content → End automatically.
 
-The `TextMessageChunk` event provides a convenient way to send complete text messages 
-in a single event instead of the three-event sequence (start, content, end). This is 
-particularly useful for simple messages or when the entire content is available at once. 
-The event includes both the message metadata and content, making it more efficient for 
-non-streaming scenarios.
+The `TextMessageChunk` event lets you omit explicit `TextMessageStart` and
+`TextMessageEnd` events. The client stream transformer expands chunks into the
+standard triad:
+
+- First chunk for a message must include `messageId` and will emit
+  `TextMessageStart` (role defaults to `assistant` when not provided).
+- Each chunk with a `delta` emits a `TextMessageContent` for the current
+  `messageId`.
+- `TextMessageEnd` is emitted automatically when the stream switches to a new
+  message ID or when the stream completes.
 
 | Property    | Description                                                                           |
 | ----------- | ------------------------------------------------------------------------------------- |
-| `messageId` | Optional unique identifier for the message                                            |
-| `role`      | Optional role of the sender ("developer", "system", "assistant", "user", "tool")    |
+| `messageId` | Optional unique identifier for the message; required on the first chunk of a message  |
+| `role`      | Optional role of the sender ("developer", "system", "assistant", "user")              |
 | `delta`     | Optional text content of the message                                                  |
 
 ## Tool Call Events
@@ -358,6 +363,28 @@ the tool's output.
 | `toolCallId` | Matches the ID from the corresponding `ToolCallStart` event |
 | `content`    | The actual result/output content from the tool execution    |
 | `role`       | Optional role identifier, typically "tool" for tool results |
+
+### ToolCallChunk
+
+Convenience event that expands to Start → Args → End automatically.
+
+The `ToolCallChunk` event lets you omit explicit `ToolCallStart` and
+`ToolCallEnd` events. The client stream transformer expands chunks into the
+standard tool-call triad:
+
+- First chunk for a tool call must include `toolCallId` and `toolCallName` and
+  will emit `ToolCallStart` (propagating any `parentMessageId`).
+- Each chunk with a `delta` emits a `ToolCallArgs` for the current
+  `toolCallId`.
+- `ToolCallEnd` is emitted automatically when the stream switches to a new
+  `toolCallId` or when the stream completes.
+
+| Property          | Description                                                                 |
+| ----------------- | --------------------------------------------------------------------------- |
+| `toolCallId`      | Optional on later chunks; required on the first chunk of a tool call        |
+| `toolCallName`    | Optional on later chunks; required on the first chunk of a tool call        |
+| `parentMessageId` | Optional ID of the parent message                                           |
+| `delta`           | Optional argument data chunk (often a JSON fragment)                        |
 
 ## State Management Events
 
