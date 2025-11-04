@@ -10,6 +10,7 @@ from ag_ui.core.types import (
     AssistantMessage,
     UserMessage,
     ToolMessage,
+    ActivityMessage,
     Message,
     RunAgentInput,
     TextInputContent,
@@ -57,6 +58,24 @@ class TestBaseTypes(unittest.TestCase):
         serialized = tool_msg.model_dump(by_alias=True)
         self.assertIn("toolCallId", serialized)
         self.assertEqual(serialized["toolCallId"], "call_456")
+
+    def test_activity_message(self):
+        """Test creating and serializing an activity message"""
+        content = {"steps": ["search", "summarize"]}
+        msg = ActivityMessage(
+            id="activity_123",
+            activity_type="PLAN",
+            content=content,
+        )
+
+        self.assertEqual(msg.role, "activity")
+        self.assertEqual(msg.activity_type, "PLAN")
+        self.assertEqual(msg.content, content)
+
+        serialized = msg.model_dump(by_alias=True)
+        self.assertEqual(serialized["role"], "activity")
+        self.assertEqual(serialized["activityType"], "PLAN")
+        self.assertEqual(serialized["content"], content)
 
     def test_parse_camel_case_json_tool_message(self):
         """Test parsing JSON with camelCase field names"""
@@ -186,7 +205,13 @@ class TestBaseTypes(unittest.TestCase):
                 "role": "tool", 
                 "content": "Tool result", 
                 "toolCallId": "call_303"
-            }
+            },
+            {
+                "id": "activity_404",
+                "role": "activity",
+                "activityType": "PLAN",
+                "content": {"steps": []},
+            },
         ]
 
         expected_types = [
@@ -194,7 +219,8 @@ class TestBaseTypes(unittest.TestCase):
             SystemMessage,
             AssistantMessage,
             UserMessage,
-            ToolMessage
+            ToolMessage,
+            ActivityMessage,
         ]
 
         for data, expected_type in zip(message_data, expected_types):

@@ -32,13 +32,15 @@ export const featureConfig: FeatureConfig[] = [
   createFeatureConfig({
     id: "human_in_the_loop",
     name: "Human in the loop",
-    description: "Plan a task together and direct the Copilot to take the right steps",
+    description:
+      "Plan a task together and direct the Copilot to take the right steps",
     tags: ["HITL", "Interactivity"],
   }),
   createFeatureConfig({
     id: "agentic_generative_ui",
     name: "Agentic Generative UI",
-    description: "Assign a long running task to your Copilot and see how it performs!",
+    description:
+      "Assign a long running task to your Copilot and see how it performs!",
     tags: ["Generative ui (agent)", "Long running task"],
   }),
   createFeatureConfig({
@@ -56,7 +58,8 @@ export const featureConfig: FeatureConfig[] = [
   createFeatureConfig({
     id: "predictive_state_updates",
     name: "Predictive State Updates",
-    description: "Use collaboration to edit a document in real time with your Copilot",
+    description:
+      "Use collaboration to edit a document in real time with your Copilot",
     tags: ["State", "Streaming", "Tools"],
   }),
   createFeatureConfig({
@@ -68,7 +71,8 @@ export const featureConfig: FeatureConfig[] = [
   createFeatureConfig({
     id: "subgraphs",
     name: "Subgraphs",
-    description: "Have your tasks performed by multiple agents, working together",
+    description:
+      "Have your tasks performed by multiple agents, working together",
     tags: ["Chat", "Multi-agent architecture", "Streaming", "Subgraphs"],
   }),
   createFeatureConfig({
@@ -76,6 +80,12 @@ export const featureConfig: FeatureConfig[] = [
     name: "A2A Chat",
     description: "Chat with your Copilot and call frontend tools",
     tags: ["Chat", "Tools", "Streaming"],
+  }),
+  createFeatureConfig({
+    id: "vnext_chat",
+    name: "VNext Chat",
+    description: "Chat based on CopilotKit vnext",
+    tags: ["Chat", "VNext", "Streaming"],
   }),
 ];
 

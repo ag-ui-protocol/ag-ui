@@ -15,9 +15,15 @@ const toMastraTextContent = (content: Message["content"]): string => {
     return content;
   }
 
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  type TextInput = Extract<InputContent, { type: "text" }>;
+
   const textParts = content
-    .filter((part): part is Extract<InputContent, { type: "text" }> => part.type === "text")
-    .map((part) => part.text.trim())
+    .filter((part): part is TextInput => part.type === "text")
+    .map((part: TextInput) => part.text.trim())
     .filter(Boolean);
 
   return textParts.join("\n");
