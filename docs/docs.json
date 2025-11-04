@@ -43,6 +43,7 @@
               "concepts/middleware",
               "concepts/messages",
               "concepts/state",
+              "concepts/serialization",
               "concepts/tools"
             ]
           },
@@ -52,7 +53,6 @@
               "drafts/overview",
               "drafts/activity-events",
               "drafts/reasoning",
-              "drafts/serialization",
               "drafts/multimodal-messages",
               "drafts/interrupts",
               "drafts/generative-ui",
@@ -87,7 +87,8 @@
                   "sdk/js/client/abstract-agent",
                   "sdk/js/client/http-agent",
                   "sdk/js/client/middleware",
-                  "sdk/js/client/subscriber"
+                  "sdk/js/client/subscriber",
+                  "sdk/js/client/compaction"
                 ]
               },
               "sdk/js/encoder",
