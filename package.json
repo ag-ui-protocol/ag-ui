@@ -28,5 +28,14 @@
   "engines": {
     "node": ">=18"
   },
-  "version": "0.0.1"
+  "version": "0.0.1",
+  "pnpm": {
+    "overrides": {
+      "@copilotkit/runtime>openai": "^5.12.2",
+      "@browserbasehq/stagehand>openai": "^4.62.1",
+      "@mastra/core>ai": "5.0.59",
+      "@openrouter/ai-sdk-provider>ai": "5.0.59",
+      "ai": "5.0.59"
+    }
+  }
 }

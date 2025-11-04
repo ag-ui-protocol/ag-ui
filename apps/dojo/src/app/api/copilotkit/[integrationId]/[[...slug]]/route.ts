@@ -1,10 +1,11 @@
+import "reflect-metadata";
 import {
   CopilotRuntime,
   ExperimentalEmptyAdapter,
   copilotRuntimeNextJSAppRouterEndpoint,
 } from "@copilotkit/runtime";
 import { agentsIntegrations } from "@/agents";
-import { handle } from 'hono/vercel';
+import { handle } from "hono/vercel";
 
 async function createApp(integrationId: string) {
   const integration = agentsIntegrations.find((i) => i.id === integrationId);
