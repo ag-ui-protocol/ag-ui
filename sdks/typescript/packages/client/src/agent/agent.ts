@@ -3,7 +3,8 @@ import { Message, State, RunAgentInput, BaseEvent, ToolCall, AssistantMessage } 
 
 import { AgentConfig, RunAgentParameters } from "./types";
 import { v4 as uuidv4 } from "uuid";
-import { structuredClone_, parseSemanticVersion } from "@/utils";
+import { structuredClone_ } from "@/utils";
+import { compareVersions } from "compare-versions";
 import { catchError, map, tap } from "rxjs/operators";
 import { finalize } from "rxjs/operators";
 import { pipe, Observable, from, of, EMPTY } from "rxjs";
@@ -57,9 +58,7 @@ export abstract class AbstractAgent {
     this.state = structuredClone_(initialState ?? {});
     this.debug = debug ?? false;
 
-    const parsedMaxVersion = parseSemanticVersion(this.maxVersion);
-
-    if (parsedMaxVersion.compare(parseSemanticVersion("0.0.39")) <= 0) {
+    if (compareVersions(this.maxVersion, "0.0.39") <= 0) {
       this.middlewares.unshift(new BackwardCompatibility_0_0_39());
     }
   }

@@ -6,6 +6,7 @@ import {
 import { handle } from "hono/vercel";
 import type { NextRequest } from "next/server";
 import { BasicAgent } from "@copilotkitnext/agent";
+import type { AbstractAgent } from "@ag-ui/client";
 
 type RouteParams = {
   params: Promise<{
@@ -22,11 +23,13 @@ function getHandler(integrationId: string) {
     return cached;
   }
 
+  const defaultAgent = new BasicAgent({
+    model: "openai/gpt-4o",
+  }) as unknown as AbstractAgent; // Cast until upstream marks run() public.
+
   const runtime = new CopilotRuntime({
     agents: {
-      default: new BasicAgent({
-        model: "openai/gpt-4o",
-      }),
+      default: defaultAgent,
     },
     runner: new InMemoryAgentRunner(),
   });

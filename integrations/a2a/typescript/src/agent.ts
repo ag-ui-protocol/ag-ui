@@ -50,7 +50,7 @@ export class A2AAgent extends AbstractAgent {
     return new A2AAgent({ a2aClient: this.a2aClient, debug: this.debug });
   }
 
-  protected run(input: RunAgentInput): Observable<BaseEvent> {
+  public override run(input: RunAgentInput): Observable<BaseEvent> {
     return new Observable<BaseEvent>((subscriber) => {
       const run = async () => {
         const runStarted: RunStartedEvent = {

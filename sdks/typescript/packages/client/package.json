@@ -25,9 +25,10 @@
   },
   "dependencies": {
     "@ag-ui/core": "workspace:*",
-    "@ag-ui/proto": "workspace:*",
     "@ag-ui/encoder": "workspace:*",
+    "@ag-ui/proto": "workspace:*",
     "@types/uuid": "^10.0.0",
+    "compare-versions": "^6.1.1",
     "fast-json-patch": "^3.1.1",
     "rxjs": "7.8.1",
     "untruncate-json": "^0.0.1",
