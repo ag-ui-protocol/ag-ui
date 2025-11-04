@@ -4,16 +4,16 @@ import { AgentIntegrationConfig } from "./types/integration";
 import { MiddlewareStarterAgent } from "@ag-ui/middleware-starter";
 import { ServerStarterAgent } from "@ag-ui/server-starter";
 import { ServerStarterAllFeaturesAgent } from "@ag-ui/server-starter-all-features";
-// import { MastraClient } from "@mastra/client-js";
-// import { MastraAgent } from "@ag-ui/mastra";
-// import { VercelAISDKAgent } from "@ag-ui/vercel-ai-sdk";
-// import { openai } from "@ai-sdk/openai";
+import { MastraClient } from "@mastra/client-js";
+import { MastraAgent } from "@ag-ui/mastra";
+import { VercelAISDKAgent } from "@ag-ui/vercel-ai-sdk";
+import { openai } from "@ai-sdk/openai";
 import { LangGraphAgent, LangGraphHttpAgent } from "@ag-ui/langgraph";
 import { AgnoAgent } from "@ag-ui/agno";
 import { LlamaIndexAgent } from "@ag-ui/llamaindex";
 import { CrewAIAgent } from "@ag-ui/crewai";
 import getEnvVars from "./env";
-// import { mastra } from "./mastra";
+import { mastra } from "./mastra";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 import { ADKAgent } from "@ag-ui/adk";
 import { SpringAiAgent } from "@ag-ui/spring-ai";
@@ -116,34 +116,32 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
       };
     },
   },
-  // Disable until we can support Vercel AI SDK v5
-  // {
-  //   id: "mastra",
-  //   agents: async () => {
-  //     const mastraClient = new MastraClient({
-  //       baseUrl: envVars.mastraUrl,
-  //     });
+  {
+    id: "mastra",
+    agents: async () => {
+      const mastraClient = new MastraClient({
+        baseUrl: envVars.mastraUrl,
+      });
 
-  //     return MastraAgent.getRemoteAgents({
-  //       mastraClient,
-  //     });
-  //   },
-  // },
-  // {
-  //   id: "mastra-agent-local",
-  //   agents: async () => {
-  //     return MastraAgent.getLocalAgents({ mastra });
-  //   },
-  // },
-  // Disabled until we can support Vercel AI SDK v5
-  // {
-  //   id: "vercel-ai-sdk",
-  //   agents: async () => {
-  //     return {
-  //       agentic_chat: new VercelAISDKAgent({ model: openai("gpt-4o") }),
-  //     };
-  //   },
-  // },
+      return MastraAgent.getRemoteAgents({
+        mastraClient,
+      });
+    },
+  },
+  {
+    id: "mastra-agent-local",
+    agents: async () => {
+      return MastraAgent.getLocalAgents({ mastra });
+    },
+  },
+  {
+    id: "vercel-ai-sdk",
+    agents: async () => {
+      return {
+        agentic_chat: new VercelAISDKAgent({ model: openai("gpt-4o") }),
+      };
+    },
+  },
   {
     id: "langgraph",
     agents: async () => {

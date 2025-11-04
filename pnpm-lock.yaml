@@ -149,23 +149,23 @@ importers:
         specifier: 0.0.20
         version: 0.0.20(openai@5.12.2(ws@8.18.3)(zod@3.25.76))
       '@mastra/client-js':
-        specifier: ^0.15.2
-        version: 0.15.2(openapi-types@12.1.3)(zod@3.25.76)
+        specifier: ^0.16.8
+        version: 0.16.8(openapi-types@12.1.3)(zod@3.25.76)
       '@mastra/core':
-        specifier: ^0.20.2
-        version: 0.20.2(openapi-types@12.1.3)(zod@3.25.76)
+        specifier: ^0.23.3
+        version: 0.23.3(openapi-types@12.1.3)(zod@3.25.76)
       '@mastra/dynamodb':
         specifier: ^0.15.9
-        version: 0.15.9(@mastra/core@0.20.2(openapi-types@12.1.3)(zod@3.25.76))
+        version: 0.15.9(@mastra/core@0.23.3(openapi-types@12.1.3)(zod@3.25.76))
       '@mastra/libsql':
-        specifier: ^0.15.2
-        version: 0.15.2(@mastra/core@0.20.2(openapi-types@12.1.3)(zod@3.25.76))
+        specifier: '^0.16.1 '
+        version: 0.16.1(@mastra/core@0.23.3(openapi-types@12.1.3)(zod@3.25.76))
       '@mastra/loggers':
         specifier: ^0.10.18
-        version: 0.10.18(@mastra/core@0.20.2(openapi-types@12.1.3)(zod@3.25.76))
+        version: 0.10.18(@mastra/core@0.23.3(openapi-types@12.1.3)(zod@3.25.76))
       '@mastra/memory':
         specifier: ^0.15.10
-        version: 0.15.10(@mastra/core@0.20.2(openapi-types@12.1.3)(zod@3.25.76))(zod@3.25.76)
+        version: 0.15.10(@mastra/core@0.23.3(openapi-types@12.1.3)(zod@3.25.76))(zod@3.25.76)
       '@mdx-js/loader':
         specifier: ^3.1.1
         version: 3.1.1
@@ -528,8 +528,8 @@ importers:
         specifier: ^1.10.5
         version: 1.10.6(2e6c3d49f6c2f234f3a715a40804546d)
       '@mastra/client-js':
-        specifier: ^0.15.2
-        version: 0.15.2(openapi-types@12.1.3)(zod@3.25.76)
+        specifier: ^0.16.8
+        version: 0.16.8(openapi-types@12.1.3)(zod@3.25.76)
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
@@ -544,7 +544,7 @@ importers:
         specifier: workspace:*
         version: link:../../../sdks/typescript/packages/core
       '@mastra/core':
-        specifier: ^0.23.2
+        specifier: ^0.23.3
         version: 0.23.3(openapi-types@12.1.3)(zod@3.25.76)
       '@types/jest':
         specifier: ^29.5.14
@@ -2887,6 +2887,11 @@ packages:
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
+  '@mastra/client-js@0.16.8':
+    resolution: {integrity: sha512-8YUiw+i0D52znwUI8CDeY7MkQum+nT5FxPcCorq8VP7u4xcF09do1aa5OFQZVEkok7SIhJzCJTiAI2B4NEczDQ==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
+
   '@mastra/core@0.12.1':
     resolution: {integrity: sha512-iWvkIBnhFXZH+XkpV7Yy0YJphVM7BBtnJmv0z9hHgcvo6poH8+YUpEAHsveuvt4rcvNkR34yfdEQxzhh5bcabA==}
     engines: {node: '>=20'}
@@ -2925,6 +2930,11 @@ packages:
     resolution: {integrity: sha512-WBOIXal7nj7qDxryIMBx4DnWGyiw3+iDoT/2cuoKIVFSGVrf5tE3but5u2Dv8gawjM3DGizVCmJhv5cpSheOHg==}
     peerDependencies:
       '@mastra/core': '>=0.19.0-alpha.1 <0.22.0-0'
+
+  '@mastra/libsql@0.16.1':
+    resolution: {integrity: sha512-jkYCsv00qzhjq4nyscChovW8cfeb8r8VkgzW+iPU9SBLu7pDX2HGgC/WSvSOeH1Ll0twqL2iql6gKXGAnDmRfw==}
+    peerDependencies:
+      '@mastra/core': '>=0.21.2-0 <0.24.0-0'
 
   '@mastra/loggers@0.10.18':
     resolution: {integrity: sha512-Ti711VpYqAwUbxEkYnJ11KeERROI7c6Nf9nNh/t85rCbLspLB/wpwX/FYH9/JUqC0fe5U2kKfergoTs9SKq9Qw==}
@@ -13054,6 +13064,31 @@ snapshots:
       - valibot
       - zod-openapi
 
+  '@mastra/client-js@0.16.8(openapi-types@12.1.3)(zod@3.25.76)':
+    dependencies:
+      '@ai-sdk/ui-utils': 1.2.11(zod@3.25.76)
+      '@lukeed/uuid': 2.0.1
+      '@mastra/core': 0.23.3(openapi-types@12.1.3)(zod@3.25.76)
+      json-schema: 0.4.0
+      rxjs: 7.8.1
+      zod: 3.25.76
+      zod-to-json-schema: 3.24.6(zod@3.25.76)
+    transitivePeerDependencies:
+      - '@hono/arktype-validator'
+      - '@hono/effect-validator'
+      - '@hono/typebox-validator'
+      - '@hono/valibot-validator'
+      - '@hono/zod-validator'
+      - '@sinclair/typebox'
+      - '@valibot/to-json-schema'
+      - arktype
+      - effect
+      - encoding
+      - openapi-types
+      - supports-color
+      - valibot
+      - zod-openapi
+
   '@mastra/core@0.12.1(openapi-types@12.1.3)(zod@3.25.76)':
     dependencies:
       '@ai-sdk/provider': 1.1.3
@@ -13268,11 +13303,11 @@ snapshots:
       - supports-color
       - typescript
 
-  '@mastra/dynamodb@0.15.9(@mastra/core@0.20.2(openapi-types@12.1.3)(zod@3.25.76))':
+  '@mastra/dynamodb@0.15.9(@mastra/core@0.23.3(openapi-types@12.1.3)(zod@3.25.76))':
     dependencies:
       '@aws-sdk/client-dynamodb': 3.919.0
       '@aws-sdk/lib-dynamodb': 3.919.0(@aws-sdk/client-dynamodb@3.919.0)
-      '@mastra/core': 0.20.2(openapi-types@12.1.3)(zod@3.25.76)
+      '@mastra/core': 0.23.3(openapi-types@12.1.3)(zod@3.25.76)
       electrodb: 3.5.0(@aws-sdk/client-dynamodb@3.919.0)
     transitivePeerDependencies:
       - aws-crt
@@ -13293,9 +13328,23 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
+  '@mastra/libsql@0.16.1(@mastra/core@0.23.3(openapi-types@12.1.3)(zod@3.25.76))':
+    dependencies:
+      '@libsql/client': 0.15.15
+      '@mastra/core': 0.23.3(openapi-types@12.1.3)(zod@3.25.76)
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
   '@mastra/loggers@0.10.18(@mastra/core@0.20.2(openapi-types@12.1.3)(zod@3.25.76))':
     dependencies:
       '@mastra/core': 0.20.2(openapi-types@12.1.3)(zod@3.25.76)
+      pino: 9.14.0
+      pino-pretty: 13.1.2
+
+  '@mastra/loggers@0.10.18(@mastra/core@0.23.3(openapi-types@12.1.3)(zod@3.25.76))':
+    dependencies:
+      '@mastra/core': 0.23.3(openapi-types@12.1.3)(zod@3.25.76)
       pino: 9.14.0
       pino-pretty: 13.1.2
 
@@ -13342,6 +13391,26 @@ snapshots:
   '@mastra/memory@0.15.10(@mastra/core@0.20.2(openapi-types@12.1.3)(zod@3.25.76))(zod@3.25.76)':
     dependencies:
       '@mastra/core': 0.20.2(openapi-types@12.1.3)(zod@3.25.76)
+      '@mastra/schema-compat': 0.11.6(ai@5.0.59(zod@3.25.76))(zod@3.25.76)
+      '@upstash/redis': 1.35.6
+      ai: 5.0.59(zod@3.25.76)
+      ai-v5: ai@5.0.60(zod@3.25.76)
+      async-mutex: 0.5.0
+      js-tiktoken: 1.0.21
+      json-schema: 0.4.0
+      pg: 8.16.3
+      pg-pool: 3.10.1(pg@8.16.3)
+      postgres: 3.4.7
+      redis: 5.9.0
+      xxhash-wasm: 1.1.0
+      zod: 3.25.76
+      zod-to-json-schema: 3.24.6(zod@3.25.76)
+    transitivePeerDependencies:
+      - pg-native
+
+  '@mastra/memory@0.15.10(@mastra/core@0.23.3(openapi-types@12.1.3)(zod@3.25.76))(zod@3.25.76)':
+    dependencies:
+      '@mastra/core': 0.23.3(openapi-types@12.1.3)(zod@3.25.76)
       '@mastra/schema-compat': 0.11.6(ai@5.0.59(zod@3.25.76))(zod@3.25.76)
       '@upstash/redis': 1.35.6
       ai: 5.0.59(zod@3.25.76)
@@ -18283,7 +18352,7 @@ snapshots:
       isstream: 0.1.2
       jsonwebtoken: 9.0.2
       mime-types: 2.1.35
-      retry-axios: 2.6.0(axios@1.13.2(debug@4.4.3))
+      retry-axios: 2.6.0(axios@1.13.2)
       tough-cookie: 4.1.4
     transitivePeerDependencies:
       - supports-color
@@ -21135,7 +21204,7 @@ snapshots:
       onetime: 5.1.2
       signal-exit: 3.0.7
 
-  retry-axios@2.6.0(axios@1.13.2(debug@4.4.3)):
+  retry-axios@2.6.0(axios@1.13.2):
     dependencies:
       axios: 1.13.2(debug@4.4.3)
 
