@@ -18,13 +18,14 @@ import {
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
 import {
-  CoreMessage,
-  LanguageModelV1,
-  processDataStream,
+  ModelMessage,
+  LanguageModel,
   streamText,
   tool as createVercelAISDKTool,
+  Tool,
   ToolChoice,
   ToolSet,
+  stepCountIs,
 } from "ai";
 import { randomUUID } from "@ag-ui/client";
 import { z } from "zod";
@@ -39,13 +40,13 @@ type ProcessedEvent =
   | ToolCallStartEvent;
 
 interface VercelAISDKAgentConfig extends AgentConfig {
-  model: LanguageModelV1;
+  model: LanguageModel;
   maxSteps?: number;
   toolChoice?: ToolChoice<Record<string, unknown>>;
 }
 
 export class VercelAISDKAgent extends AbstractAgent {
-  model: LanguageModelV1;
+  model: LanguageModel;
   maxSteps: number;
   toolChoice: ToolChoice<Record<string, unknown>>;
   constructor({ model, maxSteps, toolChoice, ...rest }: VercelAISDKAgentConfig) {
@@ -65,12 +66,15 @@ export class VercelAISDKAgent extends AbstractAgent {
         runId: input.runId,
       } as RunStartedEvent);
 
+      const toolSet = convertToolToVercelAISDKTools(input.tools);
+      const stopCondition = this.maxSteps > 0 ? stepCountIs(this.maxSteps) : undefined;
+
       const response = streamText({
         model: this.model,
-        messages: convertMessagesToVercelAISDKMessages(input.messages),
-        tools: convertToolToVerlAISDKTools(input.tools),
-        maxSteps: this.maxSteps,
+        messages: convertMessagesToModelMessages(input.messages),
         toolChoice: this.toolChoice,
+        ...(Object.keys(toolSet).length > 0 ? { tools: toolSet } : {}),
+        ...(stopCondition ? { stopWhen: stopCondition } : {}),
       });
 
       let messageId = randomUUID();
@@ -82,93 +86,130 @@ export class VercelAISDKAgent extends AbstractAgent {
       };
       finalMessages.push(assistantMessage);
 
-      processDataStream({
-        stream: response.toDataStreamResponse().body!,
-        onTextPart: (text) => {
-          assistantMessage.content += text;
-          const event: TextMessageChunkEvent = {
-            type: EventType.TEXT_MESSAGE_CHUNK,
-            role: "assistant",
-            messageId,
-            delta: text,
-          };
-          subscriber.next(event);
-        },
-        onFinishMessagePart: () => {
-          // Emit message snapshot
-          const event: MessagesSnapshotEvent = {
-            type: EventType.MESSAGES_SNAPSHOT,
-            messages: finalMessages,
-          };
-          subscriber.next(event);
+      let hasCompleted = false;
+      const seenToolCallIds = new Set<string>();
 
-          // Emit run finished event
-          subscriber.next({
-            type: EventType.RUN_FINISHED,
-            threadId: input.threadId,
-            runId: input.runId,
-          } as RunFinishedEvent);
+      const finalizeRun = () => {
+        if (hasCompleted) {
+          return;
+        }
+        hasCompleted = true;
 
-          // Complete the observable
-          subscriber.complete();
-        },
-        onToolCallPart(streamPart) {
-          let toolCall: ToolCall = {
-            id: streamPart.toolCallId,
-            type: "function",
-            function: {
-              name: streamPart.toolName,
-              arguments: JSON.stringify(streamPart.args),
-            },
-          };
-          assistantMessage.toolCalls!.push(toolCall);
+        const snapshotEvent: MessagesSnapshotEvent = {
+          type: EventType.MESSAGES_SNAPSHOT,
+          messages: finalMessages,
+        };
+        subscriber.next(snapshotEvent);
 
-          const startEvent: ToolCallStartEvent = {
-            type: EventType.TOOL_CALL_START,
-            parentMessageId: messageId,
-            toolCallId: streamPart.toolCallId,
-            toolCallName: streamPart.toolName,
-          };
-          subscriber.next(startEvent);
+        subscriber.next({
+          type: EventType.RUN_FINISHED,
+          threadId: input.threadId,
+          runId: input.runId,
+        } as RunFinishedEvent);
 
-          const argsEvent: ToolCallArgsEvent = {
-            type: EventType.TOOL_CALL_ARGS,
-            toolCallId: streamPart.toolCallId,
-            delta: JSON.stringify(streamPart.args),
-          };
-          subscriber.next(argsEvent);
+        subscriber.complete();
+      };
 
-          const endEvent: ToolCallEndEvent = {
-            type: EventType.TOOL_CALL_END,
-            toolCallId: streamPart.toolCallId,
-          };
-          subscriber.next(endEvent);
-        },
-        onToolResultPart(streamPart) {
-          const toolMessage: ToolMessage = {
-            role: "tool",
-            id: randomUUID(),
-            toolCallId: streamPart.toolCallId,
-            content: JSON.stringify(streamPart.result),
-          };
-          finalMessages.push(toolMessage);
-        },
-        onErrorPart(streamPart) {
-          subscriber.error(streamPart);
-        },
-      }).catch((error) => {
-        console.error("catch error", error);
-        // Handle error
-        subscriber.error(error);
-      });
+      const processStream = async () => {
+        try {
+          for await (const part of response.fullStream) {
+            switch (part.type) {
+              case "text-delta": {
+                if (!part.text) {
+                  break;
+                }
+                assistantMessage.content += part.text;
+                const event: TextMessageChunkEvent = {
+                  type: EventType.TEXT_MESSAGE_CHUNK,
+                  role: "assistant",
+                  messageId,
+                  delta: part.text,
+                };
+                subscriber.next(event);
+                break;
+              }
+              case "tool-call": {
+                if (seenToolCallIds.has(part.toolCallId)) {
+                  break;
+                }
+                seenToolCallIds.add(part.toolCallId);
+                const argumentsJson = safeStringify(part.input);
+                let toolCall: ToolCall = {
+                  id: part.toolCallId,
+                  type: "function",
+                  function: {
+                    name: part.toolName,
+                    arguments: argumentsJson,
+                  },
+                };
+                assistantMessage.toolCalls!.push(toolCall);
+
+                const startEvent: ToolCallStartEvent = {
+                  type: EventType.TOOL_CALL_START,
+                  parentMessageId: messageId,
+                  toolCallId: part.toolCallId,
+                  toolCallName: part.toolName,
+                };
+                subscriber.next(startEvent);
+
+                const argsEvent: ToolCallArgsEvent = {
+                  type: EventType.TOOL_CALL_ARGS,
+                  toolCallId: part.toolCallId,
+                  delta: argumentsJson,
+                };
+                subscriber.next(argsEvent);
+
+                const endEvent: ToolCallEndEvent = {
+                  type: EventType.TOOL_CALL_END,
+                  toolCallId: part.toolCallId,
+                };
+                subscriber.next(endEvent);
+                break;
+              }
+              case "tool-result": {
+                if (part.preliminary) {
+                  break;
+                }
+                const toolMessage: ToolMessage = {
+                  role: "tool",
+                  id: randomUUID(),
+                  toolCallId: part.toolCallId,
+                  content: safeStringify(part.output),
+                };
+                finalMessages.push(toolMessage);
+                break;
+              }
+              case "tool-error": {
+                subscriber.error(part.error ?? new Error(`Tool ${part.toolName} failed`));
+                return;
+              }
+              case "error": {
+                subscriber.error(part.error ?? new Error("Stream error"));
+                return;
+              }
+              case "finish": {
+                finalizeRun();
+                return;
+              }
+              default:
+                break;
+            }
+          }
+          finalizeRun();
+        } catch (error) {
+          subscriber.error(error);
+        }
+      };
+
+      processStream();
 
       return () => {};
     });
   }
 }
 
-export function convertMessagesToVercelAISDKMessages(messages: Message[]): CoreMessage[] {
-  const result: CoreMessage[] = [];
+export function convertMessagesToModelMessages(messages: Message[]): ModelMessage[] {
+  const result: ModelMessage[] = [];
 
   for (const message of messages) {
     if (message.role === "assistant") {
@@ -178,7 +219,7 @@ export function convertMessagesToVercelAISDKMessages(messages: Message[]): CoreM
           type: "tool-call",
           toolCallId: toolCall.id,
           toolName: toolCall.function.name,
-          args: JSON.parse(toolCall.function.arguments),
+          input: JSON.parse(toolCall.function.arguments),
         });
       }
       result.push({
@@ -209,7 +250,7 @@ export function convertMessagesToVercelAISDKMessages(messages: Message[]): CoreM
             type: "tool-result",
             toolCallId: message.toolCallId,
             toolName: toolName,
-            result: message.content,
+            output: parseToolMessageContent(message.content),
           },
         ],
       });
@@ -219,9 +260,9 @@ export function convertMessagesToVercelAISDKMessages(messages: Message[]): CoreM
   return result;
 }
 
-export function convertJsonSchemaToZodSchema(jsonSchema: any, required: boolean): z.ZodSchema {
+export function convertJsonSchemaToZodSchema(jsonSchema: any, required: boolean): z.ZodTypeAny {
   if (jsonSchema.type === "object") {
-    const spec: { [key: string]: z.ZodSchema } = {};
+    const spec: Record<string, z.ZodTypeAny> = {};
 
     if (!jsonSchema.properties || !Object.keys(jsonSchema.properties).length) {
       return !required ? z.object(spec).optional() : z.object(spec);
@@ -252,15 +293,42 @@ export function convertJsonSchemaToZodSchema(jsonSchema: any, required: boolean)
   throw new Error("Invalid JSON schema");
 }
 
-export function convertToolToVerlAISDKTools(tools: RunAgentInput["tools"]): ToolSet {
-  return tools.reduce(
-    (acc: ToolSet, tool: RunAgentInput["tools"][number]) => ({
-      ...acc,
-      [tool.name]: createVercelAISDKTool({
-        description: tool.description,
-        parameters: convertJsonSchemaToZodSchema(tool.parameters, true),
-      }),
-    }),
-    {},
-  );
+export function convertToolToVercelAISDKTools(tools: RunAgentInput["tools"]): ToolSet {
+  const toolSet: Record<string, unknown> = {};
+
+  for (const tool of tools) {
+    const inputSchema = convertJsonSchemaToZodSchema(tool.parameters, true) as z.ZodTypeAny;
+    const toolDefinition = {
+      description: tool.description,
+      inputSchema,
+      outputSchema: z.any(),
+    } as unknown;
+    toolSet[tool.name] = createVercelAISDKTool(toolDefinition as any);
+  }
+
+  return toolSet as ToolSet;
+}
+
+function safeStringify(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value ?? {});
+  } catch {
+    return JSON.stringify({ value: String(value) });
+  }
+}
+
+function parseToolMessageContent(content: string) {
+  if (!content) {
+    return { type: "text" as const, value: "" };
+  }
+
+  try {
+    const parsed = JSON.parse(content);
+    return { type: "json" as const, value: parsed };
+  } catch {
+    return { type: "text" as const, value: content };
+  }
 }
