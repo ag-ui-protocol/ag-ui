@@ -16,9 +16,11 @@ import getEnvVars from "./env";
 import { mastra } from "./mastra";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 import { ADKAgent } from "@ag-ui/adk";
-import { SpringAiAgent } from '@ag-ui/spring-ai';
+import { SpringAiAgent } from "@ag-ui/spring-ai";
 import { HttpAgent } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
+import { A2AAgent } from "@ag-ui/a2a";
+import { A2AClient } from "@a2a-js/sdk/client";
 
 const envVars = getEnvVars();
 export const agentsIntegrations: AgentIntegrationConfig[] = [
@@ -81,7 +83,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         backend_tool_rendering: new ADKAgent({
           url: `${envVars.adkMiddlewareUrl}/backend_tool_rendering`,
         }),
-        shared_state: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/adk-shared-state-agent` }),
+        shared_state: new ADKAgent({
+          url: `${envVars.adkMiddlewareUrl}/adk-shared-state-agent`,
+        }),
         // predictive_state_updates: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/adk-predictive-state-agent` }),
       };
     },
@@ -273,26 +277,26 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     },
   },
   {
-    id: 'spring-ai',
+    id: "spring-ai",
     agents: async () => {
       return {
         agentic_chat: new SpringAiAgent({
-          url: `${envVars.springAiUrl}/agentic_chat/agui`
+          url: `${envVars.springAiUrl}/agentic_chat/agui`,
         }),
         shared_state: new SpringAiAgent({
-          url: `${envVars.springAiUrl}/shared_state/agui`
+          url: `${envVars.springAiUrl}/shared_state/agui`,
         }),
         tool_based_generative_ui: new SpringAiAgent({
-          url: `${envVars.springAiUrl}/tool_based_generative_ui/agui`
+          url: `${envVars.springAiUrl}/tool_based_generative_ui/agui`,
         }),
         human_in_the_loop: new SpringAiAgent({
-          url: `${envVars.springAiUrl}/human_in_the_loop/agui`
+          url: `${envVars.springAiUrl}/human_in_the_loop/agui`,
         }),
         agentic_generative_ui: new SpringAiAgent({
-          url: `${envVars.springAiUrl}/agentic_generative_ui/agui`
-        })
-      }
-    }
+          url: `${envVars.springAiUrl}/agentic_generative_ui/agui`,
+        }),
+      };
+    },
   },
   {
     id: "llama-index",
@@ -337,6 +341,19 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         }),
         predictive_state_updates: new CrewAIAgent({
           url: `${envVars.crewAiUrl}/predictive_state_updates`,
+        }),
+      };
+    },
+  },
+  {
+    id: "a2a-basic",
+    agents: async () => {
+      const a2aClient = new A2AClient(envVars.a2aUrl);
+      return {
+        agentic_chat: new A2AAgent({
+          description: "Direct A2A agent",
+          a2aClient,
+          debug: process.env.NODE_ENV !== "production",
         }),
       };
     },

@@ -29,6 +29,8 @@ class EventType(str, Enum):
     STATE_SNAPSHOT = "STATE_SNAPSHOT"
     STATE_DELTA = "STATE_DELTA"
     MESSAGES_SNAPSHOT = "MESSAGES_SNAPSHOT"
+    ACTIVITY_SNAPSHOT = "ACTIVITY_SNAPSHOT"
+    ACTIVITY_DELTA = "ACTIVITY_DELTA"
     RAW = "RAW"
     CUSTOM = "CUSTOM"
     RUN_STARTED = "RUN_STARTED"
@@ -73,12 +75,16 @@ class RunStartedEvent(BaseEvent):
     type: Literal[EventType.RUN_STARTED]
     thread_id: str
     run_id: str
+    parent_run_id: Optional[str] = None
+    input: Optional[RunAgentInput] = None
 ```
 
-| Property    | Type  | Description                   |
-| ----------- | ----- | ----------------------------- |
-| `thread_id` | `str` | ID of the conversation thread |
-| `run_id`    | `str` | ID of the agent run           |
+| Property         | Type                       | Description                                                                                                                              |
+| ---------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `thread_id`      | `str`                      | ID of the conversation thread                                                                                                            |
+| `run_id`         | `str`                      | ID of the agent run                                                                                                                      |
+| `parent_run_id`  | `Optional[str]`            | (Optional) Lineage pointer for branching/time travel. If present, refers to a prior run within the same thread                          |
+| `input`          | `Optional[RunAgentInput]`  | (Optional) The exact agent input payload sent to the agent for this run. May omit messages already in history                            |
 
 ### RunFinishedEvent
 
@@ -341,6 +347,48 @@ class MessagesSnapshotEvent(BaseEvent):
 | Property   | Type            | Description              |
 | ---------- | --------------- | ------------------------ |
 | `messages` | `List[Message]` | Array of message objects |
+
+### ActivitySnapshotEvent
+
+`from ag_ui.core import ActivitySnapshotEvent`
+
+Delivers a complete snapshot of an activity message.
+
+```python
+class ActivitySnapshotEvent(BaseEvent):
+    type: Literal[EventType.ACTIVITY_SNAPSHOT]
+    message_id: str
+    activity_type: str
+    content: Any
+    replace: bool = True
+```
+
+| Property        | Type  | Description                                           |
+| --------------- | ----- | ----------------------------------------------------- |
+| `message_id`    | `str` | Identifier for the target `ActivityMessage`           |
+| `activity_type` | `str` | Activity discriminator such as `"PLAN"` or `"SEARCH"` |
+| `content`       | `Any` | Structured payload describing the full activity state |
+| `replace`       | `bool` (default `True`) | When `False`, the snapshot is ignored if a message with the same ID already exists |
+
+### ActivityDeltaEvent
+
+`from ag_ui.core import ActivityDeltaEvent`
+
+Provides incremental updates to an activity snapshot using JSON Patch.
+
+```python
+class ActivityDeltaEvent(BaseEvent):
+    type: Literal[EventType.ACTIVITY_DELTA]
+    message_id: str
+    activity_type: str
+    patch: List[Any]
+```
+
+| Property        | Type         | Description                                                          |
+| --------------- | ------------ | -------------------------------------------------------------------- |
+| `message_id`    | `str`        | Identifier for the target `ActivityMessage`                          |
+| `activity_type` | `str`        | Activity discriminator mirroring the most recent snapshot            |
+| `patch`         | `List[Any]`  | JSON Patch operations applied to the structured activity content     |
 
 ## Special Events
 

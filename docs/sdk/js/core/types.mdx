@@ -20,6 +20,7 @@ Input parameters for running an agent. In the HTTP API, this is the body of the
 type RunAgentInput = {
   threadId: string
   runId: string
+  parentRunId?: string
   state: any
   messages: Message[]
   tools: Tool[]
@@ -32,6 +33,7 @@ type RunAgentInput = {
 | ---------------- | ----------- | ---------------------------------------------- |
 | `threadId`       | `string`    | ID of the conversation thread                  |
 | `runId`          | `string`    | ID of the current run                          |
+| `parentRunId`    | `string (optional)` | ID of the run that spawned this run          |
 | `state`          | `any`       | Current state of the agent                     |
 | `messages`       | `Message[]` | Array of messages in the conversation          |
 | `tools`          | `Tool[]`    | Array of tools available to the agent          |
@@ -48,7 +50,7 @@ messages in the system.
 Represents the possible roles a message sender can have.
 
 ```typescript
-type Role = "developer" | "system" | "assistant" | "user" | "tool"
+type Role = "developer" | "system" | "assistant" | "user" | "tool" | "activity"
 ```
 
 ### DeveloperMessage
@@ -121,17 +123,49 @@ Represents a message from a user.
 type UserMessage = {
   id: string
   role: "user"
-  content: string
+  content: string | InputContent[]
   name?: string
 }
 ```
 
-| Property  | Type     | Description                                 |
-| --------- | -------- | ------------------------------------------- |
-| `id`      | `string` | Unique identifier for the message           |
-| `role`    | `"user"` | Role of the message sender, fixed as "user" |
-| `content` | `string` | Text content of the message (required)      |
-| `name`    | `string` | Optional name of the sender                 |
+| Property  | Type                        | Description                                                           |
+| --------- | --------------------------- | --------------------------------------------------------------------- |
+| `id`      | `string`                    | Unique identifier for the message                                     |
+| `role`    | `"user"`                    | Role of the message sender, fixed as "user"                           |
+| `content` | `string \| InputContent[]` | Either plain text or an ordered array of multimodal content fragments |
+| `name`    | `string`                    | Optional name of the sender                                           |
+
+### InputContent
+
+Union of supported multimodal fragments.
+
+```typescript
+type InputContent = TextInputContent | BinaryInputContent
+```
+
+### TextInputContent
+
+```typescript
+type TextInputContent = {
+  type: "text"
+  text: string
+}
+```
+
+### BinaryInputContent
+
+```typescript
+type BinaryInputContent = {
+  type: "binary"
+  mimeType: string
+  id?: string
+  url?: string
+  data?: string
+  filename?: string
+}
+```
+
+> At least one of `id`, `url`, or `data` must be provided.
 
 ### ToolMessage
 
@@ -155,6 +189,26 @@ type ToolMessage = {
 | `toolCallId` | `string` | ID of the tool call this message responds to |
 | `error`      | `string` | Error message if the tool call failed        |
 
+### ActivityMessage
+
+Represents structured activity progress emitted between chat messages.
+
+```typescript
+type ActivityMessage = {
+  id: string
+  role: "activity"
+  activityType: string
+  content: Record<string, any>
+}
+```
+
+| Property       | Type                  | Description                                             |
+| -------------- | --------------------- | ------------------------------------------------------- |
+| `id`           | `string`              | Unique identifier for the activity message              |
+| `role`         | `"activity"`          | Fixed discriminator identifying the message as activity |
+| `activityType` | `string`              | Activity discriminator used for renderer selection      |
+| `content`      | `Record<string, any>` | Structured payload representing the activity state      |
+
 ### Message
 
 A union type representing any type of message in the system.
@@ -166,6 +220,7 @@ type Message =
   | AssistantMessage
   | UserMessage
   | ToolMessage
+  | ActivityMessage
 ```
 
 ### ToolCall
