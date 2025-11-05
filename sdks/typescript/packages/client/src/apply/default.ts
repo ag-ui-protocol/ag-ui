@@ -69,8 +69,59 @@ export const defaultApplyEvents = (
     return EMPTY;
   };
 
+  const emitMessagesSnapshot = async () => {
+    const snapshotEvent: MessagesSnapshotEvent = {
+      type: EventType.MESSAGES_SNAPSHOT,
+      messages: structuredClone_(messages),
+    };
+
+    const snapshotOnEventMutation = await runSubscribersWithMutation(
+      subscribers,
+      messages,
+      state,
+      (subscriber, messages, state) =>
+        subscriber.onEvent?.({
+          event: snapshotEvent,
+          agent,
+          input,
+          messages,
+          state,
+        }),
+    );
+    applyMutation(snapshotOnEventMutation);
+
+    if (snapshotOnEventMutation.stopPropagation === true) {
+      return;
+    }
+
+    snapshotEvent.messages = structuredClone_(messages);
+
+    const snapshotMutation = await runSubscribersWithMutation(
+      subscribers,
+      messages,
+      state,
+      (subscriber, messages, state) =>
+        subscriber.onMessagesSnapshotEvent?.({
+          event: snapshotEvent,
+          messages,
+          state,
+          agent,
+          input,
+        }),
+    );
+    applyMutation(snapshotMutation);
+
+    if (snapshotMutation.stopPropagation !== true && snapshotMutation.messages === undefined) {
+      applyMutation({ messages: structuredClone_(messages) });
+    }
+  };
+
   return events$.pipe(
     concatMap(async (event) => {
+      if (event.type === EventType.RUN_FINISHED) {
+        await emitMessagesSnapshot();
+      }
+
       const mutation = await runSubscribersWithMutation(
         subscribers,
         messages,
