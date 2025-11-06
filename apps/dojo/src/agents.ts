@@ -19,8 +19,8 @@ import { ADKAgent } from "@ag-ui/adk";
 import { SpringAiAgent } from "@ag-ui/spring-ai";
 import { HttpAgent } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
-import { A2AAgent } from "@ag-ui/a2a";
-import { A2AClient } from "@a2a-js/sdk/client";
+// import { A2AAgent } from "@ag-ui/a2a";
+// import { A2AClient } from "@a2a-js/sdk/client";
 
 const envVars = getEnvVars();
 export const agentsIntegrations: AgentIntegrationConfig[] = [
@@ -118,24 +118,24 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
       };
     },
   },
-  {
-    id: "mastra",
-    agents: async () => {
-      const mastraClient = new MastraClient({
-        baseUrl: envVars.mastraUrl,
-      });
+  // {
+  //   id: "mastra",
+  //   agents: async () => {
+  //     const mastraClient = new MastraClient({
+  //       baseUrl: envVars.mastraUrl,
+  //     });
 
-      return MastraAgent.getRemoteAgents({
-        mastraClient,
-      });
-    },
-  },
-  {
-    id: "mastra-agent-local",
-    agents: async () => {
-      return MastraAgent.getLocalAgents({ mastra });
-    },
-  },
+  //     return MastraAgent.getRemoteAgents({
+  //       mastraClient,
+  //     });
+  //   },
+  // },
+  // {
+  //   id: "mastra-agent-local",
+  //   agents: async () => {
+  //     return MastraAgent.getLocalAgents({ mastra });
+  //   },
+  // },
   {
     id: "vercel-ai-sdk",
     agents: async () => {
@@ -344,51 +344,51 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
       };
     },
   },
-  {
-    id: "a2a-basic",
-    agents: async () => {
-      const a2aClient = new A2AClient(envVars.a2aUrl);
-      return {
-        agentic_chat: new A2AAgent({
-          description: "Direct A2A agent",
-          a2aClient,
-          debug: process.env.NODE_ENV !== "production",
-        }),
-      };
-    },
-  },
-  {
-    id: "a2a",
-    agents: async () => {
-      // A2A agents: building management, finance, it agents
-      const agentUrls = [
-        envVars.a2aMiddlewareBuildingsManagementUrl,
-        envVars.a2aMiddlewareFinanceUrl,
-        envVars.a2aMiddlewareItUrl,
-      ];
-      // AGUI orchestration/routing agent
-      const orchestrationAgent = new HttpAgent({
-        url: envVars.a2aMiddlewareOrchestratorUrl,
-      });
-      return {
-        a2a_chat: new A2AMiddlewareAgent({
-          description: "Middleware that connects to remote A2A agents",
-          agentUrls,
-          orchestrationAgent,
-          instructions: `
-          You are an HR agent. You are responsible for hiring employees and other typical HR tasks.
+  // {
+  //   id: "a2a-basic",
+  //   agents: async () => {
+  //     const a2aClient = new A2AClient(envVars.a2aUrl);
+  //     return {
+  //       agentic_chat: new A2AAgent({
+  //         description: "Direct A2A agent",
+  //         a2aClient,
+  //         debug: process.env.NODE_ENV !== "production",
+  //       }),
+  //     };
+  //   },
+  // },
+  // {
+  //   id: "a2a",
+  //   agents: async () => {
+  //     // A2A agents: building management, finance, it agents
+  //     const agentUrls = [
+  //       envVars.a2aMiddlewareBuildingsManagementUrl,
+  //       envVars.a2aMiddlewareFinanceUrl,
+  //       envVars.a2aMiddlewareItUrl,
+  //     ];
+  //     // AGUI orchestration/routing agent
+  //     const orchestrationAgent = new HttpAgent({
+  //       url: envVars.a2aMiddlewareOrchestratorUrl,
+  //     });
+  //     return {
+  //       a2a_chat: new A2AMiddlewareAgent({
+  //         description: "Middleware that connects to remote A2A agents",
+  //         agentUrls,
+  //         orchestrationAgent,
+  //         instructions: `
+  //         You are an HR agent. You are responsible for hiring employees and other typical HR tasks.
 
-          It's very important to contact all the departments necessary to complete the task.
-          For example, to hire an employee, you must contact all 3 departments: Finance, IT and Buildings Management. Help the Buildings Management department to find a table.
+  //         It's very important to contact all the departments necessary to complete the task.
+  //         For example, to hire an employee, you must contact all 3 departments: Finance, IT and Buildings Management. Help the Buildings Management department to find a table.
 
-          You can make tool calls on behalf of other agents.
-          DO NOT FORGET TO COMMUNICATE BACK TO THE RELEVANT AGENT IF MAKING A TOOL CALL ON BEHALF OF ANOTHER AGENT!!!
+  //         You can make tool calls on behalf of other agents.
+  //         DO NOT FORGET TO COMMUNICATE BACK TO THE RELEVANT AGENT IF MAKING A TOOL CALL ON BEHALF OF ANOTHER AGENT!!!
 
-          When choosing a seat with the buildings management agent, You MUST use the \`pickTable\` tool to have the user pick a seat.
-          The buildings management agent will then use the \`pickSeat\` tool to pick a seat.
-          `,
-        }),
-      };
-    },
-  },
+  //         When choosing a seat with the buildings management agent, You MUST use the \`pickTable\` tool to have the user pick a seat.
+  //         The buildings management agent will then use the \`pickSeat\` tool to pick a seat.
+  //         `,
+  //       }),
+  //     };
+  //   },
+  // },
 ];
