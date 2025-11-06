@@ -1,5 +1,5 @@
-import { AbstractAgent, RunAgentResult } from "../agent";
-import { BaseEvent, EventType, Message, RunAgentInput, TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent, RunStartedEvent, RunFinishedEvent } from "@ag-ui/core";
+import { AbstractAgent } from "../agent";
+import { BaseEvent, EventType, Message, RunAgentInput, TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent, RunStartedEvent, RunFinishedEvent, ActivitySnapshotEvent } from "@ag-ui/core";
 import { Observable, of } from "rxjs";
 
 describe("AbstractAgent multiple runs", () => {
@@ -272,5 +272,66 @@ describe("AbstractAgent multiple runs", () => {
     expect(agent.messages.length).toBe(2);
     expect(agent.messages[0].content).toBe("Initial message");
     expect(agent.messages[1].content).toBe("Response message");
+  });
+
+  it("should retain activity messages across runs", async () => {
+    const agent = new TestAgent({
+      threadId: "test-thread",
+      initialMessages: [],
+    });
+
+    const firstRunEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        threadId: "test-thread",
+        runId: "run-1",
+      } as RunStartedEvent,
+      {
+        type: EventType.ACTIVITY_SNAPSHOT,
+        messageId: "activity-1",
+        activityType: "PLAN",
+        content: { tasks: ["task 1"] },
+      } as ActivitySnapshotEvent,
+      {
+        type: EventType.RUN_FINISHED,
+      } as RunFinishedEvent,
+    ];
+
+    agent.setEvents(firstRunEvents);
+    await agent.runAgent({ runId: "run-1" });
+
+    expect(agent.messages.length).toBe(1);
+    expect(agent.messages[0].role).toBe("activity");
+
+    const secondRunEvents: BaseEvent[] = [
+      {
+        type: EventType.RUN_STARTED,
+        threadId: "test-thread",
+        runId: "run-2",
+      } as RunStartedEvent,
+      {
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "msg-2",
+        role: "assistant",
+      } as TextMessageStartEvent,
+      {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "msg-2",
+        delta: "Hello from run 2",
+      } as TextMessageContentEvent,
+      {
+        type: EventType.TEXT_MESSAGE_END,
+        messageId: "msg-2",
+      } as TextMessageEndEvent,
+      {
+        type: EventType.RUN_FINISHED,
+      } as RunFinishedEvent,
+    ];
+
+    agent.setEvents(secondRunEvents);
+    await agent.runAgent({ runId: "run-2" });
+
+    expect(agent.messages.length).toBe(2);
+    expect(agent.messages.some((message) => message.role === "activity" && message.id === "activity-1")).toBe(true);
   });
 });

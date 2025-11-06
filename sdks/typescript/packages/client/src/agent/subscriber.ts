@@ -21,6 +21,9 @@ import {
   RawEvent,
   CustomEvent,
   ToolCall,
+  ActivitySnapshotEvent,
+  ActivityDeltaEvent,
+  ActivityMessage,
 } from "@ag-ui/core";
 import { AbstractAgent } from "./agent";
 import { structuredClone_ } from "@/utils";
@@ -121,6 +124,21 @@ export interface AgentSubscriber {
 
   onMessagesSnapshotEvent?(
     params: { event: MessagesSnapshotEvent } & AgentSubscriberParams,
+  ): MaybePromise<AgentStateMutation | void>;
+
+  onActivitySnapshotEvent?(
+    params: {
+      event: ActivitySnapshotEvent;
+      activityMessage?: ActivityMessage;
+      existingMessage?: Message;
+    } & AgentSubscriberParams,
+  ): MaybePromise<AgentStateMutation | void>;
+
+  onActivityDeltaEvent?(
+    params: {
+      event: ActivityDeltaEvent;
+      activityMessage?: ActivityMessage;
+    } & AgentSubscriberParams,
   ): MaybePromise<AgentStateMutation | void>;
 
   onRawEvent?(

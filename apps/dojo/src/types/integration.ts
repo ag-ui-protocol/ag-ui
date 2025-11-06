@@ -10,7 +10,8 @@ export type Feature =
   | "backend_tool_rendering"
   | "agentic_chat_reasoning"
   | "subgraphs"
-  | "a2a_chat";
+  | "a2a_chat"
+  | "vnext_chat";
 
 export interface MenuIntegrationConfig {
   id: string;

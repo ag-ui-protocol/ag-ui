@@ -6,5 +6,11 @@ module.exports = {
   passWithNoTests: true,
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
+    "^@ag-ui/core$": "<rootDir>/../core/src/index.ts",
+    "^@ag-ui/core/(.*)$": "<rootDir>/../core/src/$1",
+    "^@ag-ui/proto$": "<rootDir>/../proto/src/index.ts",
+    "^@ag-ui/proto/(.*)$": "<rootDir>/../proto/src/$1",
+    "^@ag-ui/encoder$": "<rootDir>/../encoder/src/index.ts",
+    "^@ag-ui/encoder/(.*)$": "<rootDir>/../encoder/src/$1",
   },
 };

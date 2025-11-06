@@ -19,6 +19,7 @@ yarn add @ag-ui/client
 - 📡 **Event streaming** – Full AG-UI event processing with validation and transformation
 - 🔄 **State management** – Automatic message/state tracking with reactive updates
 - 🪝 **Subscriber system** – Middleware-style hooks for logging, persistence, and custom logic
+- 🎯 **Middleware support** – Transform and filter events with function or class-based middleware
 
 ## Quick example
 
@@ -35,6 +36,32 @@ const result = await agent.runAgent({
 });
 
 console.log(result.newMessages);
+```
+
+## Using Middleware
+
+```ts
+import { HttpAgent, FilterToolCallsMiddleware } from "@ag-ui/client";
+
+const agent = new HttpAgent({
+  url: "https://api.example.com/agent",
+});
+
+// Add middleware to transform or filter events
+agent.use(
+  // Function middleware for logging
+  (input, next) => {
+    console.log("Starting run:", input.runId);
+    return next.run(input);
+  },
+
+  // Class middleware for filtering tool calls
+  new FilterToolCallsMiddleware({
+    allowedToolCalls: ["search", "calculate"]
+  })
+);
+
+await agent.runAgent();
 ```
 
 ## Documentation

@@ -58,4 +58,19 @@ export class HttpAgent extends AbstractAgent {
     const httpEvents = runHttpRequest(this.url, this.requestInit(input));
     return transformHttpEventStream(httpEvents);
   }
+
+  public clone(): HttpAgent {
+    const cloned = super.clone() as HttpAgent;
+    cloned.url = this.url;
+    cloned.headers = structuredClone_(this.headers ?? {});
+
+    const newController = new AbortController();
+    const originalSignal = this.abortController.signal as AbortSignal & { reason?: unknown };
+    if (originalSignal.aborted) {
+      newController.abort(originalSignal.reason);
+    }
+    cloned.abortController = newController;
+
+    return cloned;
+  }
 }
