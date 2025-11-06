@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { EyeIcon as Eye, CodeIcon as Code, BookOpenTextIcon as Book } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { DemoList } from "@/components/demo-list/demo-list";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { ChevronDown } from "lucide-react";
@@ -31,6 +31,7 @@ interface SidebarProps {
 export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { theme, setTheme } = useTheme();
   const isDarkTheme = theme === "dark"
   const { view, frameworkPickerHidden, viewPickerHidden, featurePickerHidden, setView} = useURLParams();
@@ -56,7 +57,10 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
   // Handle selecting a demo
   const handleDemoSelect = (demoId: string) => {
     if (currentIntegration) {
-      router.push(`/${currentIntegration.id}/feature/${demoId}`);
+      const queryString = searchParams.toString();
+      const newPath = `/${currentIntegration.id}/feature/${demoId}`;
+      const url = queryString ? `${newPath}?${queryString}` : newPath;
+      router.push(url);
       // Close mobile sidebar when demo is selected
       if (isMobile && onMobileClose) {
         onMobileClose();
@@ -66,7 +70,10 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
 
   // Handle integration selection
   const handleIntegrationSelect = (integrationId: string) => {
-    router.push(`/${integrationId}`);
+    const queryString = searchParams.toString();
+    const newPath = `/${integrationId}`;
+    const url = queryString ? `${newPath}?${queryString}` : newPath;
+    router.push(url);
   };
 
   const tabClass = `cursor-pointer flex-1 h-8 px-2 text-sm text-primary shadow-none bg-none border-none font-medium gap-1 rounded-lg data-[state=active]:bg-white data-[state=active]:text-primary data-[state=active]:shadow-none`
