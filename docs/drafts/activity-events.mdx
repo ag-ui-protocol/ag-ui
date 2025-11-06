@@ -1,0 +1,262 @@
+---
+title: Activity Events
+description:
+  Proposal for representing ongoing agent progress between chat messages
+---
+
+# Activity Events Proposal
+
+## Summary
+
+### Problem Statement
+
+Users want to render "activity" updates inline with chat, not just at run start
+or end. Currently, there's no standardized way to represent ongoing agent
+progress between chat messages.
+
+### Motivation
+
+AG-UI is extended with **ActivityEvents** and **ActivityMessages** to represent
+ongoing agent progress in between chat messages. This allows frameworks to
+surface fine-grained activity updates chronologically, giving users immediate
+visibility into what an agent is doing without waiting for the next message or
+run boundary.
+
+## Status
+
+- **Status**: Draft
+- **Author(s)**: Markus Ecker (mail@mme.xyz)
+
+## Background
+
+Users want real-time visibility into agent activities as they happen. Consider
+this example UI:
+
+```
++------------------------------------------------------------+
+| I will search the internet for relevant information        | <- TextMessage
++------------------------------------------------------------+
++------------------------------------------------------------+
+| ✓ checking reddit                                          | <- ActivityMessage
+| searching X.com...                                         |
++------------------------------------------------------------+
+```
+
+### Use Cases
+
+- **Workflows**: Step-by-step progress through workflow execution
+- **Planning**: Intermediate planning or tool use visibility
+- **Custom frameworks**: Signals representing ongoing work in any agent system
+
+## Challenges
+
+- **Flexibility**: Must handle arbitrary activity data from different frameworks
+- **Serializability**: Events must be replayable and rehydrated for session
+  recovery
+- **Extensibility**: Developers should define custom renderers per activity
+  type, with a generic fallback
+- **Chronology**: Activities must interleave naturally with chat and run events
+
+## Detailed Specification
+
+### Overview
+
+This proposal introduces new concepts to the AG-UI protocol:
+
+1. **ActivitySnapshotEvent** and **ActivityDeltaEvent**: Two new event types following the established state management pattern
+2. **ActivityMessage**: A new message type alongside TextMessage, ToolMessage,
+   etc.
+
+Frameworks may emit ActivityEvents, and frontends can render them inline with
+chat.
+
+### New Events: ActivitySnapshotEvent and ActivityDeltaEvent
+
+Following the established pattern in AG-UI (similar to `StateSnapshotEvent` and `StateDeltaEvent`), activities are represented using two complementary events:
+
+#### ActivitySnapshotEvent
+
+Provides the complete activity state at a point in time.
+
+```typescript
+type ActivitySnapshotEvent = BaseEvent & {
+  type: EventType.ACTIVITY_SNAPSHOT
+  /**
+   * Unique identifier for the ActivityMessage this event belongs to.
+   */
+  messageId: string
+  /**
+   * Activity type, e.g. "PLAN", "SEARCH", "SCRAPE"
+   */
+  activityType: string
+  /**
+   * Complete activity state at this point in time.
+   */
+  content: Record<string, any>
+}
+```
+
+#### ActivityDeltaEvent
+
+Provides incremental updates to the activity state.
+
+```typescript
+type ActivityDeltaEvent = BaseEvent & {
+  type: EventType.ACTIVITY_DELTA
+  /**
+   * Unique identifier for the ActivityMessage this event belongs to.
+   */
+  messageId: string
+  /**
+   * Activity type, e.g. "PLAN", "SEARCH", "SCRAPE"
+   */
+  activityType: string
+  /**
+   * JSON Patch operations to apply to the current activity state.
+   * Follows RFC 6902 semantics.
+   */
+  patch: JSONPatchOperation[]
+}
+```
+
+#### Example Events
+
+Initial activity snapshot:
+
+```json
+{
+  "id": "evt_001",
+  "ts": 1714064100000,
+  "type": "ACTIVITY_SNAPSHOT",
+  "messageId": "msg_789",
+  "activityType": "PLAN",
+  "content": {
+    "tasks": ["check reddit", "search X.com"]
+  }
+}
+```
+
+Incremental update via patch:
+
+```json
+{
+  "id": "evt_002",
+  "ts": 1714064120000,
+  "type": "ACTIVITY_DELTA",
+  "messageId": "msg_789",
+  "activityType": "PLAN",
+  "patch": [
+    {
+      "op": "replace",
+      "path": "/tasks/0",
+      "value": "✓ check reddit"
+    }
+  ]
+}
+```
+
+### New Message: ActivityMessage
+
+```typescript
+type ActivityMessage = {
+  id: string
+  role: "activity"
+  activityType: string
+  /**
+   * Finalized activity content as of compaction.
+   */
+  content: Record<string, any>
+}
+```
+
+### Rendering Strategy
+
+- **Generic renderer**: Displays raw snapshot/patch as JSON or formatted text
+- **Custom renderer**: Developers can register a renderer per `activityType`:
+  - `"PLAN"` → Interactive checklist component
+  - `"SEARCH"` → Live status with progress indicators
+  - `"WORKFLOW"` → Step-by-step workflow visualization
+
+## Implementation Considerations
+
+### Client SDK Changes
+
+TypeScript SDK additions:
+
+- New `ActivitySnapshotEvent` and `ActivityDeltaEvent` types in `@ag-ui/core`
+- New `ActivityMessage` type in message unions
+- Activity renderer registry in `@ag-ui/client`
+- JSON Patch utilities for activity updates
+
+Python SDK additions:
+
+- New `ActivitySnapshotEvent` and `ActivityDeltaEvent` classes in `ag_ui.core.events`
+- New `ActivityMessage` class in message types
+- Activity serialization/deserialization support
+- JSON Patch utilities for activity updates
+
+### Integration Impact
+
+- **Planning Frameworks**: Can emit ActivitySnapshotEvent/ActivityDeltaEvent during planning or tool
+  execution phases
+- **Workflow Systems**: Can surface step-by-step workflow progress as
+  ActivitySnapshotEvent/ActivityDeltaEvent
+- **Other frameworks**: May emit ActivitySnapshotEvent/ActivityDeltaEvent freely; AG-UI will serialize
+  them like other events
+
+## Examples and Use Cases
+
+### Example 1: Web Search Activity
+
+```typescript
+// Agent emits initial search activity snapshot
+agent.emitActivitySnapshot({
+  messageId: "msg_123",
+  activityType: "SEARCH",
+  content: {
+    sources: [
+      { name: "Reddit", status: "pending" },
+      { name: "X.com", status: "pending" },
+      { name: "Google", status: "pending" },
+    ],
+  },
+})
+
+// Update as search progresses
+agent.emitActivityDelta({
+  messageId: "msg_123",
+  activityType: "SEARCH",
+  patch: [
+    {
+      op: "replace",
+      path: "/sources/0/status",
+      value: "complete",
+    }
+  ],
+})
+```
+
+### Use Case: Multi-Step Workflow Visibility
+
+A data analysis agent performing multiple steps:
+
+1. Loading dataset → ActivitySnapshotEvent/ActivityDeltaEvent shows progress bar
+2. Cleaning data → ActivitySnapshotEvent/ActivityDeltaEvent shows rows processed
+3. Running analysis → ActivitySnapshotEvent/ActivityDeltaEvent shows current computation
+4. Generating report → ActivitySnapshotEvent/ActivityDeltaEvent shows sections completed
+
+Each step appears inline with chat, giving users real-time feedback.
+
+## Testing Strategy
+
+- Unit tests for ActivitySnapshotEvent/ActivityDeltaEvent serialization/deserialization
+- Integration tests with mock frameworks emitting ActivitySnapshotEvent/ActivityDeltaEvent
+- E2E tests in AG-UI Dojo demonstrating activity rendering
+- Performance benchmarks for high-frequency activity updates
+- JSON Patch application correctness tests
+
+## References
+
+- [JSON Patch RFC 6902](https://tools.ietf.org/html/rfc6902)
+- [AG-UI Events Documentation](/concepts/events)
+- [AG-UI Messages Documentation](/concepts/messages)

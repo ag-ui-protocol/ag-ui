@@ -8,7 +8,7 @@ import logging
 
 from ag_ui.core import (
     Message, UserMessage, AssistantMessage, SystemMessage, ToolMessage,
-    ToolCall, FunctionCall, TextInputContent, BinaryInputContent
+    ToolCall, FunctionCall
 )
 from google.adk.events import Event as ADKEvent
 from google.genai import types
@@ -38,19 +38,18 @@ def convert_ag_ui_messages_to_adk(messages: List[Message]) -> List[ADKEvent]:
             
             # Convert content based on message type
             if isinstance(message, (UserMessage, SystemMessage)):
-                flattened_content = flatten_message_content(message.content)
-                if flattened_content:
+                if message.content:
                     event.content = types.Content(
                         role=message.role,
-                        parts=[types.Part(text=flattened_content)]
+                        parts=[types.Part(text=message.content)]
                     )
-
+            
             elif isinstance(message, AssistantMessage):
                 parts = []
-
+                
                 # Add text content if present
                 if message.content:
-                    parts.append(types.Part(text=flatten_message_content(message.content)))
+                    parts.append(types.Part(text=message.content))
                 
                 # Add tool calls if present
                 if message.tool_calls:
@@ -206,30 +205,23 @@ def convert_json_patch_to_state(patches: List[Dict[str, Any]]) -> Dict[str, Any]
 
 
 def extract_text_from_content(content: types.Content) -> str:
-    """Extract all text from ADK Content object."""
+    """Extract all text from ADK Content object.
+    
+    Args:
+        content: ADK Content object
+        
+    Returns:
+        Combined text from all text parts
+    """
     if not content or not content.parts:
         return ""
-
+    
     text_parts = []
     for part in content.parts:
         if part.text:
             text_parts.append(part.text)
-
+    
     return "\n".join(text_parts)
-
-
-def flatten_message_content(content: Any) -> str:
-    if content is None:
-        return ""
-
-    if isinstance(content, str):
-        return content
-
-    if isinstance(content, list):
-        text_parts = [part.text for part in content if isinstance(part, TextInputContent) and part.text]
-        return "\n".join(text_parts)
-
-    return str(content)
 
 
 def create_error_message(error: Exception, context: str = "") -> str:

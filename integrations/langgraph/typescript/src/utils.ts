@@ -1,6 +1,6 @@
 import { Message as LangGraphMessage } from "@langchain/langgraph-sdk";
 import { State, SchemaKeys, LangGraphReasoning } from "./types";
-import { Message, ToolCall, TextInputContent, BinaryInputContent, InputContent , UserMessage} from "@ag-ui/client";
+import { Message, ToolCall } from "@ag-ui/client";
 
 export const DEFAULT_SCHEMA_KEYS = ["messages", "tools"];
 
@@ -26,118 +26,21 @@ export function getStreamPayloadInput({
   return input;
 }
 
-/**
- * Convert LangChain's multimodal content to AG-UI format
- */
-function convertLangchainMultimodalToAgui(
-  content: Array<{ type: string; text?: string; image_url?: any }>
-): InputContent[] {
-  const aguiContent: InputContent[] = [];
-
-  for (const item of content) {
-    if (item.type === "text" && item.text) {
-      aguiContent.push({
-        type: "text",
-        text: item.text,
-      });
-    } else if (item.type === "image_url") {
-      const imageUrl = typeof item.image_url === "string"
-        ? item.image_url
-        : item.image_url?.url;
-
-      if (!imageUrl) continue;
-
-      // Parse data URLs to extract base64 data
-      if (imageUrl.startsWith("data:")) {
-        // Format: data:mime_type;base64,data
-        const [header, data] = imageUrl.split(",", 2);
-        const mimeType = header.includes(":")
-          ? header.split(":")[1].split(";")[0]
-          : "image/png";
-
-        aguiContent.push({
-          type: "binary",
-          mimeType,
-          data: data || "",
-        });
-      } else {
-        // Regular URL or ID
-        aguiContent.push({
-          type: "binary",
-          mimeType: "image/png", // Default MIME type
-          url: imageUrl,
-        });
-      }
-    }
-  }
-
-  return aguiContent;
-}
-
-/**
- * Convert AG-UI multimodal content to LangChain's format
- */
-function convertAguiMultimodalToLangchain(
-  content: InputContent[]
-): Array<{ type: string; text?: string; image_url?: { url: string } }> {
-  const langchainContent: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
-
-  for (const item of content) {
-    if (item.type === "text") {
-      langchainContent.push({
-        type: "text",
-        text: item.text,
-      });
-    } else if (item.type === "binary") {
-      // LangChain uses image_url format (OpenAI-style)
-      let url: string;
-
-      // Prioritize url, then data, then id
-      if (item.url) {
-        url = item.url;
-      } else if (item.data) {
-        // Construct data URL from base64 data
-        url = `data:${item.mimeType};base64,${item.data}`;
-      } else if (item.id) {
-        // Use id as a reference
-        url = item.id;
-      } else {
-        continue; // Skip if no source is provided
-      }
-
-      langchainContent.push({
-        type: "image_url",
-        image_url: { url },
-      });
-    }
-  }
-
-  return langchainContent;
-}
-
 export function langchainMessagesToAgui(messages: LangGraphMessage[]): Message[] {
   return messages.map((message) => {
     switch (message.type) {
       case "human":
-        // Handle multimodal content
-        let userContent: string | InputContent[];
-        if (Array.isArray(message.content)) {
-          userContent = convertLangchainMultimodalToAgui(message.content as any);
-        } else {
-          userContent = stringifyIfNeeded(resolveMessageContent(message.content));
-        }
-
         return {
           id: message.id!,
           role: "user",
-          content: userContent,
+          content: stringifyIfNeeded(resolveMessageContent(message.content)),
         };
       case "ai":
-        const aiContent = resolveMessageContent(message.content)
+        const content = resolveMessageContent(message.content)
         return {
           id: message.id!,
           role: "assistant",
-          content: aiContent ? stringifyIfNeeded(aiContent) : '',
+          content: content ? stringifyIfNeeded(content) : '',
           toolCalls: message.tool_calls?.map((tc) => ({
             id: tc.id!,
             type: "function",
@@ -170,22 +73,12 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
   return messages.map((message, index) => {
     switch (message.role) {
       case "user":
-        // Handle multimodal content
-        let content: UserMessage['content'];
-        if (typeof message.content === "string") {
-          content = message.content;
-        } else if (Array.isArray(message.content)) {
-          content = convertAguiMultimodalToLangchain(message.content) as any;
-        } else {
-          content = String(message.content);
-        }
-
         return {
           id: message.id,
           role: message.role,
-          content,
+          content: message.content,
           type: "human",
-        } as LangGraphMessage;
+        };
       case "assistant":
         return {
           id: message.id,
@@ -224,42 +117,6 @@ export function aguiMessagesToLangChain(messages: Message[]): LangGraphMessage[]
 function stringifyIfNeeded(item: any) {
   if (typeof item === "string") return item;
   return JSON.stringify(item);
-}
-
-/**
- * Flatten multimodal content into plain text.
- * Used for backwards compatibility or when multimodal is not supported.
- */
-function flattenUserContent(content: Message["content"]): string {
-  if (typeof content === "string") {
-    return content;
-  }
-
-  if (!Array.isArray(content)) {
-    return "";
-  }
-
-  const parts: string[] = [];
-
-  for (const item of content) {
-    if (item.type === "text" && "text" in item) {
-      if (item.text) {
-        parts.push(item.text);
-      }
-    } else if (item.type === "binary" && "mimeType" in item) {
-      // Add descriptive placeholder for binary content
-      const binaryItem = item as BinaryInputContent;
-      if (binaryItem.filename) {
-        parts.push(`[Binary content: ${binaryItem.filename}]`);
-      } else if (binaryItem.url) {
-        parts.push(`[Binary content: ${binaryItem.url}]`);
-      } else {
-        parts.push(`[Binary content: ${binaryItem.mimeType}]`);
-      }
-    }
-  }
-
-  return parts.join("\n");
 }
 
 export function resolveReasoningContent(eventData: any): LangGraphReasoning | null {

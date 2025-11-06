@@ -13,7 +13,3 @@ node_modules
 .vscode
 
 **/mastra.db*
-
-.pnpm-store
-
-**/.poetry-cache

@@ -40,12 +40,8 @@ export interface MastraAgentConfig extends AgentConfig {
 interface MastraAgentStreamOptions {
   onTextPart?: (text: string) => void;
   onFinishMessagePart?: () => void;
-  onToolCallPart?: (streamPart: {
-    toolCallId: string;
-    toolName: string;
-    args: any;
-  }) => void;
-  onToolResultPart?: (streamPart: { toolCallId: string; result: any }) => void;
+  onToolCallPart?: (streamPart: { toolCallId: string; toolName: string; args: unknown }) => void;
+  onToolResultPart?: (streamPart: { toolCallId: string; output: unknown }) => void;
   onError?: (error: Error) => void;
   onRunFinished?: () => Promise<void>;
 }
@@ -55,16 +51,11 @@ export class MastraAgent extends AbstractAgent {
   resourceId?: string;
   runtimeContext?: RuntimeContext;
 
-  constructor(private config: MastraAgentConfig) {
-    const { agent, resourceId, runtimeContext, ...rest } = config;
+  constructor({ agent, resourceId, runtimeContext, ...rest }: MastraAgentConfig) {
     super(rest);
     this.agent = agent;
     this.resourceId = resourceId;
     this.runtimeContext = runtimeContext ?? new RuntimeContext();
-  }
-
-  public clone() {
-    return new MastraAgent(this.config);
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {
@@ -84,11 +75,7 @@ export class MastraAgent extends AbstractAgent {
         if (this.isLocalMastraAgent(this.agent)) {
           const memory = await this.agent.getMemory();
 
-          if (
-            memory &&
-            input.state &&
-            Object.keys(input.state || {}).length > 0
-          ) {
+          if (memory && input.state && Object.keys(input.state || {}).length > 0) {
             let thread: StorageThreadType | null = await memory.getThreadById({
               threadId: input.threadId,
             });
@@ -104,14 +91,9 @@ export class MastraAgent extends AbstractAgent {
               };
             }
 
-            const existingMemory = JSON.parse(
-              (thread.metadata?.workingMemory as string) ?? "{}",
-            );
+            const existingMemory = JSON.parse((thread.metadata?.workingMemory as string) ?? "{}");
             const { messages, ...rest } = input.state;
-            const workingMemory = JSON.stringify({
-              ...existingMemory,
-              ...rest,
-            });
+            const workingMemory = JSON.stringify({ ...existingMemory, ...rest });
 
             // Update thread metadata with new working memory
             await memory.saveThread({
@@ -163,7 +145,7 @@ export class MastraAgent extends AbstractAgent {
               const toolCallResultEvent: ToolCallResultEvent = {
                 type: EventType.TOOL_CALL_RESULT,
                 toolCallId: streamPart.toolCallId,
-                content: JSON.stringify(streamPart.result),
+                content: safeStringify(streamPart.output),
                 messageId: randomUUID(),
                 role: "tool",
               };
@@ -233,9 +215,7 @@ export class MastraAgent extends AbstractAgent {
     });
   }
 
-  isLocalMastraAgent(
-    agent: LocalMastraAgent | RemoteMastraAgent,
-  ): agent is LocalMastraAgent {
+  isLocalMastraAgent(agent: LocalMastraAgent | RemoteMastraAgent): agent is LocalMastraAgent {
     return "getMemory" in agent;
   }
 
@@ -288,37 +268,13 @@ export class MastraAgent extends AbstractAgent {
         // Process it using the agent's built-in streaming mechanism
         if (response && typeof response === "object") {
           for await (const chunk of response.fullStream) {
-            switch (chunk.type) {
-              case "text-delta": {
-                onTextPart?.(chunk.payload.text);
-                break;
-              }
-              case "tool-call": {
-                onToolCallPart?.({
-                  toolCallId: chunk.payload.toolCallId,
-                  toolName: chunk.payload.toolName,
-                  args: chunk.payload.args,
-                });
-                break;
-              }
-              case "tool-result": {
-                onToolResultPart?.({
-                  toolCallId: chunk.payload.toolCallId,
-                  result: chunk.payload.result,
-                });
-                break;
-              }
-
-              case "error": {
-                onError?.(new Error(chunk.payload.error as string));
-                break;
-              }
-
-              case "finish": {
-                onFinishMessagePart?.();
-                break;
-              }
-            }
+            handleStreamChunk(chunk, {
+              onTextPart,
+              onToolCallPart,
+              onToolResultPart,
+              onFinishMessagePart,
+              onError,
+            });
           }
 
           await onRunFinished?.();
@@ -343,34 +299,27 @@ export class MastraAgent extends AbstractAgent {
         if (response && typeof response.processDataStream === "function") {
           await response.processDataStream({
             onChunk: async (chunk) => {
-              switch (chunk.type) {
-                case "text-delta": {
-                  onTextPart?.(chunk.payload.text);
-                  break;
-                }
-                case "tool-call": {
-                  onToolCallPart?.({
-                    toolCallId: chunk.payload.toolCallId,
-                    toolName: chunk.payload.toolName,
-                    args: chunk.payload.args,
-                  });
-                  break;
-                }
-                case "tool-result": {
-                  onToolResultPart?.({
-                    toolCallId: chunk.payload.toolCallId,
-                    result: chunk.payload.result,
-                  });
-                  break;
-                }
-
-                case "finish": {
-                  onFinishMessagePart?.();
-                  break;
-                }
-              }
+              handleStreamChunk(chunk, {
+                onTextPart,
+                onToolCallPart,
+                onToolResultPart,
+                onFinishMessagePart,
+                onError,
+              });
             },
           });
+          await onRunFinished?.();
+        } else if (response && typeof (response as { fullStream?: unknown }).fullStream === "object") {
+          const fullStream = (response as unknown as { fullStream: AsyncIterable<unknown> }).fullStream;
+          for await (const chunk of fullStream) {
+            handleStreamChunk(chunk, {
+              onTextPart,
+              onToolCallPart,
+              onToolResultPart,
+              onFinishMessagePart,
+              onError,
+            });
+          }
           await onRunFinished?.();
         } else {
           throw new Error("Invalid response from remote agent");
@@ -387,9 +336,7 @@ export class MastraAgent extends AbstractAgent {
     return getRemoteAgents(options);
   }
 
-  static getLocalAgents(
-    options: GetLocalAgentsOptions,
-  ): Record<string, AbstractAgent> {
+  static getLocalAgents(options: GetLocalAgentsOptions): Record<string, AbstractAgent> {
     return getLocalAgents(options);
   }
 
@@ -400,4 +347,171 @@ export class MastraAgent extends AbstractAgent {
   static getNetwork(options: GetNetworkOptions) {
     return getNetwork(options);
   }
+}
+
+function handleStreamChunk(
+  chunk: unknown,
+  handlers: {
+    onTextPart?: (text: string) => void;
+    onToolCallPart?: (streamPart: { toolCallId: string; toolName: string; args: unknown }) => void;
+    onToolResultPart?: (streamPart: { toolCallId: string; output: unknown }) => void;
+    onFinishMessagePart?: () => void;
+    onError?: (error: Error) => void;
+  },
+) {
+  if (!chunk || typeof chunk !== "object" || !("type" in chunk)) {
+    return;
+  }
+
+  const type = (chunk as { type: string }).type;
+
+  switch (type) {
+    case "text-delta": {
+      const text = extractTextDelta(chunk);
+      if (typeof text === "string" && text.length > 0) {
+        handlers.onTextPart?.(text);
+      }
+      break;
+    }
+
+    case "tool-call": {
+      const toolCall = extractToolCall(chunk);
+      if (toolCall) {
+        handlers.onToolCallPart?.(toolCall);
+      }
+      break;
+    }
+
+    case "tool-result": {
+      const toolResult = extractToolResult(chunk);
+      if (toolResult) {
+        handlers.onToolResultPart?.(toolResult);
+      }
+      break;
+    }
+
+    case "tool-error": {
+      handlers.onError?.(
+        new Error(
+          safeStringify((chunk as { error?: unknown }).error ?? "Tool execution failed"),
+        ),
+      );
+      break;
+    }
+
+    case "error": {
+      handlers.onError?.(extractError(chunk) ?? new Error("Stream error"));
+      break;
+    }
+
+    case "finish": {
+      handlers.onFinishMessagePart?.();
+      break;
+    }
+
+    default:
+      break;
+  }
+}
+
+function extractTextDelta(chunk: unknown): string | undefined {
+  if (!chunk || typeof chunk !== "object") {
+    return undefined;
+  }
+
+  const candidate = chunk as Record<string, unknown>;
+  if (typeof candidate.text === "string") {
+    return candidate.text;
+  }
+  if (typeof candidate.delta === "string") {
+    return candidate.delta;
+  }
+  const payload = candidate.payload as Record<string, unknown> | undefined;
+  if (payload) {
+    if (typeof payload.text === "string") {
+      return payload.text;
+    }
+    if (typeof payload.delta === "string") {
+      return payload.delta;
+    }
+  }
+  return undefined;
+}
+
+function extractToolCall(chunk: unknown):
+  | { toolCallId: string; toolName: string; args: unknown }
+  | undefined {
+  if (!chunk || typeof chunk !== "object") {
+    return undefined;
+  }
+
+  const candidate = chunk as Record<string, unknown>;
+  const toolCallId = getString(candidate.toolCallId) ?? getString(candidate.tool_call_id);
+  const toolName = getString(candidate.toolName) ?? getString(candidate.tool_name);
+  const input = candidate.input ?? candidate.args;
+  const payload = candidate.payload as Record<string, unknown> | undefined;
+
+  return toolCallId && toolName
+    ? {
+        toolCallId,
+        toolName,
+        args: input ?? payload?.input ?? payload?.args,
+      }
+    : undefined;
+}
+
+function extractToolResult(chunk: unknown):
+  | { toolCallId: string; output: unknown }
+  | undefined {
+  if (!chunk || typeof chunk !== "object") {
+    return undefined;
+  }
+
+  const candidate = chunk as Record<string, unknown>;
+  const toolCallId = getString(candidate.toolCallId) ?? getString(candidate.tool_call_id);
+  const output = candidate.output ?? candidate.result;
+  const payload = candidate.payload as Record<string, unknown> | undefined;
+
+  return toolCallId
+    ? {
+        toolCallId,
+        output: output ?? payload?.output ?? payload?.result,
+      }
+    : undefined;
+}
+
+function extractError(chunk: unknown): Error | undefined {
+  if (!chunk || typeof chunk !== "object") {
+    return undefined;
+  }
+
+  const candidate = chunk as Record<string, unknown>;
+  const payload = candidate.payload as Record<string, unknown> | undefined;
+  const errorValue = candidate.error ?? payload?.error ?? payload?.message;
+
+  if (!errorValue) {
+    return undefined;
+  }
+
+  if (errorValue instanceof Error) {
+    return errorValue;
+  }
+
+  const message = typeof errorValue === "string" ? errorValue : safeStringify(errorValue);
+  return new Error(message);
+}
+
+function safeStringify(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value ?? {});
+  } catch {
+    return String(value);
+  }
+}
+
+function getString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }

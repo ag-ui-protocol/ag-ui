@@ -19,12 +19,12 @@ import {
 } from "@ag-ui/core";
 import { AbstractAgent } from "../../agent";
 
-const createAgent = (messages: Message[] = []) =>
-  ({
-    messages: messages.map((message) => ({ ...message })),
-    state: {},
-    agentId: "test-agent",
-  } as unknown as AbstractAgent);
+// Mock agent for testing
+const FAKE_AGENT = {
+  messages: [],
+  state: {},
+  agentId: "test-agent",
+} as unknown as AbstractAgent;
 
 describe("defaultApplyEvents concurrent operations", () => {
   // Test: Concurrent text messages should create separate messages
@@ -41,8 +41,7 @@ describe("defaultApplyEvents concurrent operations", () => {
     };
 
     // Create the observable stream
-    const agent = createAgent(initialState.messages);
-    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
@@ -126,8 +125,7 @@ describe("defaultApplyEvents concurrent operations", () => {
     };
 
     // Create the observable stream
-    const agent = createAgent(initialState.messages);
-    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
@@ -220,8 +218,7 @@ describe("defaultApplyEvents concurrent operations", () => {
     };
 
     // Create the observable stream
-    const agent = createAgent(initialState.messages);
-    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
@@ -336,8 +333,7 @@ describe("defaultApplyEvents concurrent operations", () => {
     };
 
     // Create the observable stream
-    const agent = createAgent(initialState.messages);
-    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
@@ -448,8 +444,7 @@ describe("defaultApplyEvents concurrent operations", () => {
     };
 
     // Create the observable stream
-    const agent = createAgent(initialState.messages);
-    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
@@ -557,8 +552,7 @@ describe("defaultApplyEvents concurrent operations", () => {
     };
 
     // Create the observable stream
-    const agent = createAgent(initialState.messages);
-    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
