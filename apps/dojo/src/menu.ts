@@ -169,6 +169,19 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
     ],
   },
   {
+    id: "microsoft-agent-framework-dotnet",
+    name: "Microsoft Agent Framework (Dotnet)",
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "human_in_the_loop",
+      "agentic_generative_ui",
+      "predictive_state_updates",
+      "shared_state",
+      "tool_based_generative_ui",
+    ],
+  },
+  {
     id: "a2a",
     name: "A2A",
     features: ["a2a_chat"],
