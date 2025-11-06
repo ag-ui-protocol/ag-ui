@@ -5,42 +5,26 @@ import {
   copilotRuntimeNextJSAppRouterEndpoint,
 } from "@copilotkit/runtime";
 import { agentsIntegrations } from "@/agents";
-import { handle } from "hono/vercel";
 
-async function createApp(integrationId: string) {
+import { NextRequest } from "next/server";
+
+export async function POST(request: NextRequest) {
+  const integrationId = request.url.split("/").pop();
+
   const integration = agentsIntegrations.find((i) => i.id === integrationId);
   if (!integration) {
-    throw new Error(`Integration not found: ${integrationId}`);
+    return new Response("Integration not found", { status: 404 });
   }
   const agents = await integration.agents();
-
   const runtime = new CopilotRuntime({
     // @ts-ignore for now
     agents,
   });
-
-  return copilotRuntimeNextJSAppRouterEndpoint({
+  const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
     runtime,
     serviceAdapter: new ExperimentalEmptyAdapter(),
     endpoint: `/api/copilotkit/${integrationId}`,
   });
-}
 
-async function routeHandler(
-  request: Request,
-  { params }: { params: Promise<{ integrationId: string }> }
-) {
-  const { integrationId } = await params;
-  try {
-    const app = await createApp(integrationId);
-    return handle(app)(request);
-  } catch (error) {
-    return new Response(
-      error instanceof Error ? error.message : "Integration not found",
-      { status: 404 }
-    );
-  }
+  return handleRequest(request);
 }
-
-export const GET = routeHandler;
-export const POST = routeHandler;
