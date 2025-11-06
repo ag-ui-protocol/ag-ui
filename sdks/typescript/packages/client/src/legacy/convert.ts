@@ -41,6 +41,27 @@ import {
 } from "./types";
 import untruncateJson from "untruncate-json";
 
+const flattenMessageContentToText = (content: Message["content"]) => {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return undefined;
+  }
+
+  const textParts = content
+    .filter((part): part is { type: "text"; text: string } => part.type === "text")
+    .map((part) => part.text)
+    .filter((text) => text.length > 0);
+
+  if (textParts.length === 0) {
+    return undefined;
+  }
+
+  return textParts.join("\n");
+};
+
 interface PredictStateValue {
   state_key: string;
   tool: string;
@@ -392,11 +413,12 @@ export function convertMessagesToLegacyFormat(messages: Message[]): LegacyMessag
 
   for (const message of messages) {
     if (message.role === "assistant" || message.role === "user" || message.role === "system") {
-      if (message.content) {
+      const textContent = flattenMessageContentToText(message.content);
+      if (textContent) {
         const textMessage: LegacyTextMessage = {
           id: message.id,
           role: message.role,
-          content: message.content,
+          content: textContent,
         };
         result.push(textMessage);
       }

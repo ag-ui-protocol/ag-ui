@@ -1,7 +1,7 @@
 {
   "name": "@ag-ui/llamaindex",
   "author": "Logan Markewich <logan@runllama.ai>",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",

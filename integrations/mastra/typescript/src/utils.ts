@@ -1,4 +1,4 @@
-import type { Message } from "@ag-ui/client";
+import type { InputContent, Message } from "@ag-ui/client";
 import { AbstractAgent } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
 import type { CoreMessage, Mastra } from "@mastra/core";
@@ -6,60 +6,84 @@ import { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RuntimeContext } from "@mastra/core/runtime-context";
 import { MastraAgent } from "./mastra";
 
+const toMastraTextContent = (content: Message["content"]): string => {
+  if (!content) {
+    return "";
+  }
+
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  type TextInput = Extract<InputContent, { type: "text" }>;
+
+  const textParts = content
+    .filter((part): part is TextInput => part.type === "text")
+    .map((part: TextInput) => part.text.trim())
+    .filter(Boolean);
+
+  return textParts.join("\n");
+};
+
 export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] {
-  const result: Array<Record<string, unknown>> = [];
+  const result: CoreMessage[] = [];
 
   for (const message of messages) {
     if (message.role === "assistant") {
-      const parts: Array<Record<string, unknown>> = [];
-
-      if (message.content) {
-        parts.push({ type: "text", text: message.content });
+      const assistantContent = toMastraTextContent(message.content);
+      const parts: any[] = [];
+      if (assistantContent) {
+        parts.push({ type: "text", text: assistantContent });
       }
-
       for (const toolCall of message.toolCalls ?? []) {
         parts.push({
           type: "tool-call",
           toolCallId: toolCall.id,
           toolName: toolCall.function.name,
-          input: safeJsonParse(toolCall.function.arguments),
+          args: JSON.parse(toolCall.function.arguments),
         });
       }
-
       result.push({
         role: "assistant",
         content: parts,
       });
-      continue;
-    }
-
-    if (message.role === "user") {
+    } else if (message.role === "user") {
+      const userContent = toMastraTextContent(message.content);
       result.push({
         role: "user",
-        content: message.content ?? "",
+        content: userContent,
       });
-      continue;
-    }
-
-    if (message.role === "tool") {
-      const toolName = findToolNameForMessage(messages, message.toolCallId) ?? "unknown";
-
+    } else if (message.role === "tool") {
+      let toolName = "unknown";
+      for (const msg of messages) {
+        if (msg.role === "assistant") {
+          for (const toolCall of msg.toolCalls ?? []) {
+            if (toolCall.id === message.toolCallId) {
+              toolName = toolCall.function.name;
+              break;
+            }
+          }
+        }
+      }
       result.push({
         role: "tool",
         content: [
           {
             type: "tool-result",
             toolCallId: message.toolCallId,
-            toolName,
-            output: toToolResultOutput(message.content),
+            toolName: toolName,
+            result: message.content,
           },
         ],
       });
-      continue;
     }
   }
 
-  return result as unknown as CoreMessage[];
+  return result;
 }
 
 export interface GetRemoteAgentsOptions {
@@ -161,49 +185,4 @@ export function getNetwork({ mastra, networkId, resourceId, runtimeContext }: Ge
     resourceId,
     runtimeContext,
   }) as AbstractAgent;
-}
-
-function safeJsonParse(value: string | undefined): unknown {
-  if (!value) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}
-
-function toToolResultOutput(content: string | undefined) {
-  if (!content) {
-    return { type: "text" as const, value: "" };
-  }
-
-  const parsed = safeJsonParse(content);
-  if (typeof parsed === "string") {
-    return { type: "text" as const, value: parsed };
-  }
-
-  return { type: "json" as const, value: parsed };
-}
-
-function findToolNameForMessage(messages: Message[], toolCallId: string | undefined) {
-  if (!toolCallId) {
-    return undefined;
-  }
-
-  for (const msg of messages) {
-    if (msg.role !== "assistant") {
-      continue;
-    }
-
-    for (const toolCall of msg.toolCalls ?? []) {
-      if (toolCall.id === toolCallId) {
-        return toolCall.function.name;
-      }
-    }
-  }
-
-  return undefined;
 }

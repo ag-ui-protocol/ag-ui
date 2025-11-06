@@ -18,17 +18,65 @@ import {
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
 import {
-  ModelMessage,
-  LanguageModel,
+  CoreMessage,
+  LanguageModelV1,
+  processDataStream,
   streamText,
   tool as createVercelAISDKTool,
-  Tool,
   ToolChoice,
   ToolSet,
-  stepCountIs,
+  FilePart,
+  ImagePart,
+  TextPart,
 } from "ai";
 import { randomUUID } from "@ag-ui/client";
 import { z } from "zod";
+
+type VercelUserContent = Extract<CoreMessage, { role: "user" }>["content"];
+type VercelUserArrayContent = Extract<VercelUserContent, any[]>;
+type VercelUserPart =
+  VercelUserArrayContent extends Array<infer Part> ? Part : never;
+
+const toVercelUserParts = (
+  inputContent: Message["content"],
+): VercelUserPart[] => {
+  if (!Array.isArray(inputContent)) {
+    return [];
+  }
+
+  const parts: VercelUserPart[] = [];
+
+  for (const part of inputContent) {
+    if (part.type === "text") {
+      parts.push({ type: "text", text: part.text } as VercelUserPart);
+    }
+  }
+
+  return parts;
+};
+
+const toVercelUserContent = (
+  content: Message["content"],
+): VercelUserContent => {
+  if (!content) {
+    return "";
+  }
+
+  if (typeof content === "string") {
+    return content;
+  }
+
+  const parts = toVercelUserParts(content);
+  if (parts.length === 0) {
+    return "";
+  }
+
+  if (parts.length === 1 && parts[0].type === "text") {
+    return parts[0].text;
+  }
+
+  return parts;
+};
 
 type ProcessedEvent =
   | MessagesSnapshotEvent
@@ -40,20 +88,25 @@ type ProcessedEvent =
   | ToolCallStartEvent;
 
 interface VercelAISDKAgentConfig extends AgentConfig {
-  model: LanguageModel;
+  model: LanguageModelV1;
   maxSteps?: number;
   toolChoice?: ToolChoice<Record<string, unknown>>;
 }
 
 export class VercelAISDKAgent extends AbstractAgent {
-  model: LanguageModel;
+  model: LanguageModelV1;
   maxSteps: number;
   toolChoice: ToolChoice<Record<string, unknown>>;
-  constructor({ model, maxSteps, toolChoice, ...rest }: VercelAISDKAgentConfig) {
+  constructor(private config: VercelAISDKAgentConfig) {
+    const { model, maxSteps, toolChoice, ...rest } = config;
     super({ ...rest });
     this.model = model;
     this.maxSteps = maxSteps ?? 1;
     this.toolChoice = toolChoice ?? "auto";
+  }
+
+  public clone() {
+    return new VercelAISDKAgent(this.config);
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {
@@ -66,15 +119,12 @@ export class VercelAISDKAgent extends AbstractAgent {
         runId: input.runId,
       } as RunStartedEvent);
 
-      const toolSet = convertToolToVercelAISDKTools(input.tools);
-      const stopCondition = this.maxSteps > 0 ? stepCountIs(this.maxSteps) : undefined;
-
       const response = streamText({
         model: this.model,
-        messages: convertMessagesToModelMessages(input.messages),
+        messages: convertMessagesToVercelAISDKMessages(input.messages),
+        tools: convertToolToVerlAISDKTools(input.tools),
+        maxSteps: this.maxSteps,
         toolChoice: this.toolChoice,
-        ...(Object.keys(toolSet).length > 0 ? { tools: toolSet } : {}),
-        ...(stopCondition ? { stopWhen: stopCondition } : {}),
       });
 
       let messageId = randomUUID();
@@ -86,140 +136,107 @@ export class VercelAISDKAgent extends AbstractAgent {
       };
       finalMessages.push(assistantMessage);
 
-      let hasCompleted = false;
-      const seenToolCallIds = new Set<string>();
+      processDataStream({
+        stream: response.toDataStreamResponse().body!,
+        onTextPart: (text) => {
+          assistantMessage.content += text;
+          const event: TextMessageChunkEvent = {
+            type: EventType.TEXT_MESSAGE_CHUNK,
+            role: "assistant",
+            messageId,
+            delta: text,
+          };
+          subscriber.next(event);
+        },
+        onFinishMessagePart: () => {
+          // Emit message snapshot
+          const event: MessagesSnapshotEvent = {
+            type: EventType.MESSAGES_SNAPSHOT,
+            messages: finalMessages,
+          };
+          subscriber.next(event);
 
-      const finalizeRun = () => {
-        if (hasCompleted) {
-          return;
-        }
-        hasCompleted = true;
+          // Emit run finished event
+          subscriber.next({
+            type: EventType.RUN_FINISHED,
+            threadId: input.threadId,
+            runId: input.runId,
+          } as RunFinishedEvent);
 
-        const snapshotEvent: MessagesSnapshotEvent = {
-          type: EventType.MESSAGES_SNAPSHOT,
-          messages: finalMessages,
-        };
-        subscriber.next(snapshotEvent);
+          // Complete the observable
+          subscriber.complete();
+        },
+        onToolCallPart(streamPart) {
+          let toolCall: ToolCall = {
+            id: streamPart.toolCallId,
+            type: "function",
+            function: {
+              name: streamPart.toolName,
+              arguments: JSON.stringify(streamPart.args),
+            },
+          };
+          assistantMessage.toolCalls!.push(toolCall);
 
-        subscriber.next({
-          type: EventType.RUN_FINISHED,
-          threadId: input.threadId,
-          runId: input.runId,
-        } as RunFinishedEvent);
+          const startEvent: ToolCallStartEvent = {
+            type: EventType.TOOL_CALL_START,
+            parentMessageId: messageId,
+            toolCallId: streamPart.toolCallId,
+            toolCallName: streamPart.toolName,
+          };
+          subscriber.next(startEvent);
 
-        subscriber.complete();
-      };
+          const argsEvent: ToolCallArgsEvent = {
+            type: EventType.TOOL_CALL_ARGS,
+            toolCallId: streamPart.toolCallId,
+            delta: JSON.stringify(streamPart.args),
+          };
+          subscriber.next(argsEvent);
 
-      const processStream = async () => {
-        try {
-          for await (const part of response.fullStream) {
-            switch (part.type) {
-              case "text-delta": {
-                if (!part.text) {
-                  break;
-                }
-                assistantMessage.content += part.text;
-                const event: TextMessageChunkEvent = {
-                  type: EventType.TEXT_MESSAGE_CHUNK,
-                  role: "assistant",
-                  messageId,
-                  delta: part.text,
-                };
-                subscriber.next(event);
-                break;
-              }
-              case "tool-call": {
-                if (seenToolCallIds.has(part.toolCallId)) {
-                  break;
-                }
-                seenToolCallIds.add(part.toolCallId);
-                const argumentsJson = safeStringify(part.input);
-                let toolCall: ToolCall = {
-                  id: part.toolCallId,
-                  type: "function",
-                  function: {
-                    name: part.toolName,
-                    arguments: argumentsJson,
-                  },
-                };
-                assistantMessage.toolCalls!.push(toolCall);
-
-                const startEvent: ToolCallStartEvent = {
-                  type: EventType.TOOL_CALL_START,
-                  parentMessageId: messageId,
-                  toolCallId: part.toolCallId,
-                  toolCallName: part.toolName,
-                };
-                subscriber.next(startEvent);
-
-                const argsEvent: ToolCallArgsEvent = {
-                  type: EventType.TOOL_CALL_ARGS,
-                  toolCallId: part.toolCallId,
-                  delta: argumentsJson,
-                };
-                subscriber.next(argsEvent);
-
-                const endEvent: ToolCallEndEvent = {
-                  type: EventType.TOOL_CALL_END,
-                  toolCallId: part.toolCallId,
-                };
-                subscriber.next(endEvent);
-                break;
-              }
-              case "tool-result": {
-                if (part.preliminary) {
-                  break;
-                }
-                const toolMessage: ToolMessage = {
-                  role: "tool",
-                  id: randomUUID(),
-                  toolCallId: part.toolCallId,
-                  content: safeStringify(part.output),
-                };
-                finalMessages.push(toolMessage);
-                break;
-              }
-              case "tool-error": {
-                subscriber.error(part.error ?? new Error(`Tool ${part.toolName} failed`));
-                return;
-              }
-              case "error": {
-                subscriber.error(part.error ?? new Error("Stream error"));
-                return;
-              }
-              case "finish": {
-                finalizeRun();
-                return;
-              }
-              default:
-                break;
-            }
-          }
-          finalizeRun();
-        } catch (error) {
-          subscriber.error(error);
-        }
-      };
-
-      processStream();
+          const endEvent: ToolCallEndEvent = {
+            type: EventType.TOOL_CALL_END,
+            toolCallId: streamPart.toolCallId,
+          };
+          subscriber.next(endEvent);
+        },
+        onToolResultPart(streamPart) {
+          const toolMessage: ToolMessage = {
+            role: "tool",
+            id: randomUUID(),
+            toolCallId: streamPart.toolCallId,
+            content: JSON.stringify(streamPart.result),
+          };
+          finalMessages.push(toolMessage);
+        },
+        onErrorPart(streamPart) {
+          subscriber.error(streamPart);
+        },
+      }).catch((error) => {
+        console.error("catch error", error);
+        // Handle error
+        subscriber.error(error);
+      });
 
       return () => {};
     });
   }
 }
 
-export function convertMessagesToModelMessages(messages: Message[]): ModelMessage[] {
-  const result: ModelMessage[] = [];
+export function convertMessagesToVercelAISDKMessages(
+  messages: Message[],
+): CoreMessage[] {
+  const result: CoreMessage[] = [];
 
   for (const message of messages) {
     if (message.role === "assistant") {
-      const parts: any[] = message.content ? [{ type: "text", text: message.content }] : [];
+      const parts: any[] = message.content
+        ? [{ type: "text", text: message.content }]
+        : [];
       for (const toolCall of message.toolCalls ?? []) {
         parts.push({
           type: "tool-call",
           toolCallId: toolCall.id,
           toolName: toolCall.function.name,
-          input: JSON.parse(toolCall.function.arguments),
+          args: JSON.parse(toolCall.function.arguments),
         });
       }
       result.push({
@@ -229,7 +246,7 @@ export function convertMessagesToModelMessages(messages: Message[]): ModelMessag
     } else if (message.role === "user") {
       result.push({
         role: "user",
-        content: message.content || "",
+        content: toVercelUserContent(message.content),
       });
     } else if (message.role === "tool") {
       let toolName = "unknown";
@@ -250,7 +267,7 @@ export function convertMessagesToModelMessages(messages: Message[]): ModelMessag
             type: "tool-result",
             toolCallId: message.toolCallId,
             toolName: toolName,
-            output: parseToolMessageContent(message.content),
+            result: message.content,
           },
         ],
       });
@@ -260,9 +277,12 @@ export function convertMessagesToModelMessages(messages: Message[]): ModelMessag
   return result;
 }
 
-export function convertJsonSchemaToZodSchema(jsonSchema: any, required: boolean): z.ZodTypeAny {
+export function convertJsonSchemaToZodSchema(
+  jsonSchema: any,
+  required: boolean,
+): z.ZodSchema {
   if (jsonSchema.type === "object") {
-    const spec: Record<string, z.ZodTypeAny> = {};
+    const spec: { [key: string]: z.ZodSchema } = {};
 
     if (!jsonSchema.properties || !Object.keys(jsonSchema.properties).length) {
       return !required ? z.object(spec).optional() : z.object(spec);
@@ -293,42 +313,17 @@ export function convertJsonSchemaToZodSchema(jsonSchema: any, required: boolean)
   throw new Error("Invalid JSON schema");
 }
 
-export function convertToolToVercelAISDKTools(tools: RunAgentInput["tools"]): ToolSet {
-  const toolSet: Record<string, unknown> = {};
-
-  for (const tool of tools) {
-    const inputSchema = convertJsonSchemaToZodSchema(tool.parameters, true) as z.ZodTypeAny;
-    const toolDefinition = {
-      description: tool.description,
-      inputSchema,
-      outputSchema: z.any(),
-    } as unknown;
-    toolSet[tool.name] = createVercelAISDKTool(toolDefinition as any);
-  }
-
-  return toolSet as ToolSet;
-}
-
-function safeStringify(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  try {
-    return JSON.stringify(value ?? {});
-  } catch {
-    return JSON.stringify({ value: String(value) });
-  }
-}
-
-function parseToolMessageContent(content: string) {
-  if (!content) {
-    return { type: "text" as const, value: "" };
-  }
-
-  try {
-    const parsed = JSON.parse(content);
-    return { type: "json" as const, value: parsed };
-  } catch {
-    return { type: "text" as const, value: content };
-  }
+export function convertToolToVerlAISDKTools(
+  tools: RunAgentInput["tools"],
+): ToolSet {
+  return tools.reduce(
+    (acc: ToolSet, tool: RunAgentInput["tools"][number]) => ({
+      ...acc,
+      [tool.name]: createVercelAISDKTool({
+        description: tool.description,
+        parameters: convertJsonSchemaToZodSchema(tool.parameters, true),
+      }),
+    }),
+    {},
+  );
 }

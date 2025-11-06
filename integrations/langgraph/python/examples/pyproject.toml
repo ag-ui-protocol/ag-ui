@@ -4,6 +4,7 @@ version = "0.1.0"
 description = ""
 readme = "README.md"
 packages = [{ include = "agents" }]
+authors = ["Ran Shem Tov"]
 
 [project]
 name = "agents"
