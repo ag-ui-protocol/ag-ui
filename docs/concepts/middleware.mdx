@@ -1,0 +1,307 @@
+---
+title: "Middleware"
+description: "Transform and intercept events in AG-UI agents"
+---
+
+# Middleware
+
+Middleware in AG-UI provides a powerful way to transform, filter, and augment the event streams that flow through agents. It enables you to add cross-cutting concerns like logging, authentication, rate limiting, and event filtering without modifying the core agent logic.
+
+## What is Middleware?
+
+Middleware sits between the agent execution and the event consumer, allowing you to:
+
+1. **Transform events** – Modify or enhance events as they flow through the pipeline
+2. **Filter events** – Selectively allow or block certain events
+3. **Add metadata** – Inject additional context or tracking information
+4. **Handle errors** – Implement custom error recovery strategies
+5. **Monitor execution** – Add logging, metrics, or debugging capabilities
+
+## How Middleware Works
+
+Middleware forms a chain where each middleware wraps the next, creating layers of functionality. When an agent runs, the event stream flows through each middleware in sequence.
+
+```typescript
+import { AbstractAgent } from "@ag-ui/client"
+
+const agent = new MyAgent()
+
+// Middleware chain: logging -> auth -> filter -> agent
+agent.use(loggingMiddleware, authMiddleware, filterMiddleware)
+
+// When agent runs, events flow through all middleware
+await agent.runAgent()
+```
+
+## Function-Based Middleware
+
+For simple transformations, you can use function-based middleware. This is the most concise way to add middleware:
+
+```typescript
+import { MiddlewareFunction } from "@ag-ui/client"
+import { EventType } from "@ag-ui/core"
+
+const prefixMiddleware: MiddlewareFunction = (input, next) => {
+  return next.run(input).pipe(
+    map(event => {
+      if (event.type === EventType.TEXT_MESSAGE_CHUNK) {
+        return {
+          ...event,
+          delta: `[AI]: ${event.delta}`
+        }
+      }
+      return event
+    })
+  )
+}
+
+agent.use(prefixMiddleware)
+```
+
+## Class-Based Middleware
+
+For more complex scenarios requiring state or configuration, use class-based middleware:
+
+```typescript
+import { Middleware } from "@ag-ui/client"
+import { Observable } from "rxjs"
+import { tap } from "rxjs/operators"
+
+class MetricsMiddleware extends Middleware {
+  private eventCount = 0
+
+  constructor(private metricsService: MetricsService) {
+    super()
+  }
+
+  run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
+    const startTime = Date.now()
+
+    return next.run(input).pipe(
+      tap(event => {
+        this.eventCount++
+        this.metricsService.recordEvent(event.type)
+      }),
+      finalize(() => {
+        const duration = Date.now() - startTime
+        this.metricsService.recordDuration(duration)
+        this.metricsService.recordEventCount(this.eventCount)
+      })
+    )
+  }
+}
+
+agent.use(new MetricsMiddleware(metricsService))
+```
+
+## Built-in Middleware
+
+AG-UI provides several built-in middleware components for common use cases:
+
+### FilterToolCallsMiddleware
+
+Filter tool calls based on allowed or disallowed lists:
+
+```typescript
+import { FilterToolCallsMiddleware } from "@ag-ui/client"
+
+// Only allow specific tools
+const allowedFilter = new FilterToolCallsMiddleware({
+  allowedToolCalls: ["search", "calculate"]
+})
+
+// Or block specific tools
+const blockedFilter = new FilterToolCallsMiddleware({
+  disallowedToolCalls: ["delete", "modify"]
+})
+
+agent.use(allowedFilter)
+```
+
+## Middleware Patterns
+
+### Logging Middleware
+
+```typescript
+const loggingMiddleware: MiddlewareFunction = (input, next) => {
+  console.log("Request:", input.messages)
+
+  return next.run(input).pipe(
+    tap(event => console.log("Event:", event.type)),
+    catchError(error => {
+      console.error("Error:", error)
+      throw error
+    })
+  )
+}
+```
+
+### Authentication Middleware
+
+```typescript
+class AuthMiddleware extends Middleware {
+  constructor(private apiKey: string) {
+    super()
+  }
+
+  run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
+    // Add authentication to the context
+    const authenticatedInput = {
+      ...input,
+      context: [
+        ...input.context,
+        { type: "auth", apiKey: this.apiKey }
+      ]
+    }
+
+    return next.run(authenticatedInput)
+  }
+}
+```
+
+### Rate Limiting Middleware
+
+```typescript
+class RateLimitMiddleware extends Middleware {
+  private lastCall = 0
+
+  constructor(private minInterval: number) {
+    super()
+  }
+
+  run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
+    const now = Date.now()
+    const timeSinceLastCall = now - this.lastCall
+
+    if (timeSinceLastCall < this.minInterval) {
+      const delay = this.minInterval - timeSinceLastCall
+      return timer(delay).pipe(
+        switchMap(() => {
+          this.lastCall = Date.now()
+          return next.run(input)
+        })
+      )
+    }
+
+    this.lastCall = now
+    return next.run(input)
+  }
+}
+```
+
+## Combining Middleware
+
+You can combine multiple middleware to create sophisticated processing pipelines:
+
+```typescript
+// Function middleware for simple logging
+const logMiddleware: MiddlewareFunction = (input, next) => {
+  console.log(`Starting run ${input.runId}`)
+  return next.run(input)
+}
+
+// Class middleware for authentication
+const authMiddleware = new AuthMiddleware(apiKey)
+
+// Built-in middleware for filtering
+const filterMiddleware = new FilterToolCallsMiddleware({
+  allowedToolCalls: ["search", "summarize"]
+})
+
+// Apply all middleware in order
+agent.use(
+  logMiddleware,        // First: log the request
+  authMiddleware,       // Second: add authentication
+  filterMiddleware      // Third: filter tool calls
+)
+```
+
+## Execution Order
+
+Middleware executes in the order it's added, with each middleware wrapping the next:
+
+1. First middleware receives the original input
+2. It can modify the input before passing to the next middleware
+3. Each middleware processes events from the next in the chain
+4. The final middleware calls the actual agent
+
+```typescript
+agent.use(middleware1, middleware2, middleware3)
+
+// Execution flow:
+// → middleware1
+//   → middleware2
+//     → middleware3
+//       → agent.run()
+//     ← events flow back through middleware3
+//   ← events flow back through middleware2
+// ← events flow back through middleware1
+```
+
+## Best Practices
+
+1. **Keep middleware focused** – Each middleware should have a single responsibility
+2. **Handle errors gracefully** – Use RxJS error handling operators
+3. **Avoid blocking operations** – Use async patterns for I/O operations
+4. **Document side effects** – Clearly indicate if middleware modifies state
+5. **Test middleware independently** – Write unit tests for each middleware
+6. **Consider performance** – Be mindful of processing overhead in the event stream
+
+## Advanced Use Cases
+
+### Conditional Middleware
+
+Apply middleware based on runtime conditions:
+
+```typescript
+const conditionalMiddleware: MiddlewareFunction = (input, next) => {
+  if (input.context.some(c => c.type === "debug")) {
+    // Apply debug logging
+    return next.run(input).pipe(
+      tap(event => console.debug(event))
+    )
+  }
+  return next.run(input)
+}
+```
+
+### Event Transformation
+
+Transform specific event types:
+
+```typescript
+const transformMiddleware: MiddlewareFunction = (input, next) => {
+  return next.run(input).pipe(
+    map(event => {
+      if (event.type === EventType.TOOL_CALL_START) {
+        // Add timestamp to tool calls
+        return {
+          ...event,
+          metadata: {
+            ...event.metadata,
+            timestamp: Date.now()
+          }
+        }
+      }
+      return event
+    })
+  )
+}
+```
+
+### Stream Control
+
+Control the flow of events:
+
+```typescript
+const throttleMiddleware: MiddlewareFunction = (input, next) => {
+  return next.run(input).pipe(
+    // Throttle text message chunks to prevent overwhelming the UI
+    throttleTime(50, undefined, { leading: true, trailing: true })
+  )
+}
+```
+
+## Conclusion
+
+Middleware provides a flexible and powerful way to extend AG-UI agents without modifying their core logic. Whether you need simple event transformation or complex stateful processing, the middleware system offers the tools to build robust, maintainable agent applications.

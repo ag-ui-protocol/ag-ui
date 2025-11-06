@@ -10,8 +10,11 @@ from ag_ui.core.types import (
     AssistantMessage,
     UserMessage,
     ToolMessage,
+    ActivityMessage,
     Message,
-    RunAgentInput
+    RunAgentInput,
+    TextInputContent,
+    BinaryInputContent,
 )
 
 
@@ -55,6 +58,24 @@ class TestBaseTypes(unittest.TestCase):
         serialized = tool_msg.model_dump(by_alias=True)
         self.assertIn("toolCallId", serialized)
         self.assertEqual(serialized["toolCallId"], "call_456")
+
+    def test_activity_message(self):
+        """Test creating and serializing an activity message"""
+        content = {"steps": ["search", "summarize"]}
+        msg = ActivityMessage(
+            id="activity_123",
+            activity_type="PLAN",
+            content=content,
+        )
+
+        self.assertEqual(msg.role, "activity")
+        self.assertEqual(msg.activity_type, "PLAN")
+        self.assertEqual(msg.content, content)
+
+        serialized = msg.model_dump(by_alias=True)
+        self.assertEqual(serialized["role"], "activity")
+        self.assertEqual(serialized["activityType"], "PLAN")
+        self.assertEqual(serialized["content"], content)
 
     def test_parse_camel_case_json_tool_message(self):
         """Test parsing JSON with camelCase field names"""
@@ -143,6 +164,31 @@ class TestBaseTypes(unittest.TestCase):
         self.assertEqual(serialized["role"], "user")
         self.assertEqual(serialized["content"], "User query")
 
+    def test_user_message_multimodal_content(self):
+        """Test creating and serializing a multimodal user message"""
+        contents = [
+            TextInputContent(text="Check this out"),
+            BinaryInputContent(mime_type="image/png", url="https://example.com/image.png"),
+        ]
+        msg = UserMessage(
+            id="user_multi",
+            content=contents,
+        )
+        self.assertIsInstance(msg.content, list)
+        self.assertEqual(len(msg.content), 2)
+        serialized = msg.model_dump(by_alias=True)
+        self.assertIsInstance(serialized["content"], list)
+        self.assertEqual(serialized["content"][0]["type"], "text")
+        self.assertEqual(serialized["content"][0]["text"], "Check this out")
+        self.assertEqual(serialized["content"][1]["mimeType"], "image/png")
+        self.assertEqual(serialized["content"][1]["url"], "https://example.com/image.png")
+
+    def test_binary_input_requires_payload_source(self):
+        """Binary content must specify at least one delivery channel"""
+        with self.assertRaises(ValidationError):
+            BinaryInputContent(mime_type="image/png")
+
+
     def test_message_union_deserialization(self):
         """Test that the Message union correctly deserializes to the appropriate type"""
         # Create type adapter for the union
@@ -159,7 +205,13 @@ class TestBaseTypes(unittest.TestCase):
                 "role": "tool", 
                 "content": "Tool result", 
                 "toolCallId": "call_303"
-            }
+            },
+            {
+                "id": "activity_404",
+                "role": "activity",
+                "activityType": "PLAN",
+                "content": {"steps": []},
+            },
         ]
 
         expected_types = [
@@ -167,7 +219,8 @@ class TestBaseTypes(unittest.TestCase):
             SystemMessage,
             AssistantMessage,
             UserMessage,
-            ToolMessage
+            ToolMessage,
+            ActivityMessage,
         ]
 
         for data, expected_type in zip(message_data, expected_types):
@@ -209,6 +262,7 @@ class TestBaseTypes(unittest.TestCase):
         run_agent_input_data = {
             "threadId": "thread_12345",
             "runId": "run_67890",
+            "parentRunId": "run_parent_123",
             "state": {"conversation_state": "active", "custom_data": {"key": "value"}},
             "messages": [
                 # System message
@@ -256,7 +310,14 @@ class TestBaseTypes(unittest.TestCase):
                 {
                     "id": "user_002",
                     "role": "user",
-                    "content": "Can you explain these results?"
+                    "content": [
+                        {"type": "text", "text": "Can you explain these results?"},
+                        {
+                            "type": "binary",
+                            "mimeType": "image/png",
+                            "url": "https://example.com/results-chart.png"
+                        }
+                    ]
                 }
             ],
             "tools": [
@@ -307,6 +368,7 @@ class TestBaseTypes(unittest.TestCase):
         # Verify basic fields
         self.assertEqual(run_agent_input.thread_id, "thread_12345")
         self.assertEqual(run_agent_input.run_id, "run_67890")
+        self.assertEqual(run_agent_input.parent_run_id, "run_parent_123")
         self.assertEqual(run_agent_input.state["conversation_state"], "active")
 
         # Verify messages count and types
@@ -321,6 +383,12 @@ class TestBaseTypes(unittest.TestCase):
         # Verify specific message content
         self.assertEqual(run_agent_input.messages[0].content, "You are a helpful assistant.")
         self.assertEqual(run_agent_input.messages[1].content, "Can you help me analyze this data?")
+        multimodal_content = run_agent_input.messages[5].content
+        self.assertIsInstance(multimodal_content, list)
+        self.assertEqual(multimodal_content[0].type, "text")
+        self.assertEqual(multimodal_content[0].text, "Can you explain these results?")
+        self.assertEqual(multimodal_content[1].mime_type, "image/png")
+        self.assertEqual(multimodal_content[1].url, "https://example.com/results-chart.png")
 
         # Verify assistant message with tool call
         assistant_msg = run_agent_input.messages[3]
@@ -368,15 +436,17 @@ class TestBaseTypes(unittest.TestCase):
         with self.assertRaises(ValidationError):
             UserMessage.model_validate(missing_id_data)
 
-        # Test extra fields
+        # Test extra fields are now allowed for backwards compatibility
         extra_field_data = {
             "id": "msg_456",
             "role": "user",
             "content": "Hello",
-            "extra_field": "This shouldn't be here"  # Extra field
+            "extra_field": "This is allowed for backwards compatibility"  # Extra field
         }
-        with self.assertRaises(ValidationError):
-            UserMessage.model_validate(extra_field_data)
+        # Should not raise an error - extra fields are allowed
+        msg = UserMessage.model_validate(extra_field_data)
+        self.assertEqual(msg.id, "msg_456")
+        self.assertEqual(msg.content, "Hello")
 
         # Test invalid tool_call_id in ToolMessage
         invalid_tool_data = {

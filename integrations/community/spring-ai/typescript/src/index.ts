@@ -4,4 +4,8 @@
 
 import { HttpAgent } from "@ag-ui/client";
 
-export class SpringAiAgent extends HttpAgent {}
+export class SpringAiAgent extends HttpAgent {
+  public override get maxVersion(): string {
+    return "0.0.39";
+  }
+}

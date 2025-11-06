@@ -5,5 +5,6 @@ export * from "./run";
 export * from "./legacy";
 export * from "./agent";
 export * from "./utils";
+export * from "./compact";
 export * from "@ag-ui/core";
 export * from "./chunks";

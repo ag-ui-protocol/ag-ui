@@ -1,4 +1,4 @@
-import type { Message } from "@ag-ui/client";
+import type { InputContent, Message } from "@ag-ui/client";
 import { AbstractAgent } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
 import type { CoreMessage, Mastra } from "@mastra/core";
@@ -6,12 +6,39 @@ import { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RuntimeContext } from "@mastra/core/runtime-context";
 import { MastraAgent } from "./mastra";
 
+const toMastraTextContent = (content: Message["content"]): string => {
+  if (!content) {
+    return "";
+  }
+
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  type TextInput = Extract<InputContent, { type: "text" }>;
+
+  const textParts = content
+    .filter((part): part is TextInput => part.type === "text")
+    .map((part: TextInput) => part.text.trim())
+    .filter(Boolean);
+
+  return textParts.join("\n");
+};
+
 export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] {
   const result: CoreMessage[] = [];
 
   for (const message of messages) {
     if (message.role === "assistant") {
-      const parts: any[] = message.content ? [{ type: "text", text: message.content }] : [];
+      const assistantContent = toMastraTextContent(message.content);
+      const parts: any[] = [];
+      if (assistantContent) {
+        parts.push({ type: "text", text: assistantContent });
+      }
       for (const toolCall of message.toolCalls ?? []) {
         parts.push({
           type: "tool-call",
@@ -25,9 +52,10 @@ export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] 
         content: parts,
       });
     } else if (message.role === "user") {
+      const userContent = toMastraTextContent(message.content);
       result.push({
         role: "user",
-        content: message.content || "",
+        content: userContent,
       });
     } else if (message.role === "tool") {
       let toolName = "unknown";
