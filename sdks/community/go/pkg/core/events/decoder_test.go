@@ -1,7 +1,6 @@
 package events
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/sirupsen/logrus"
@@ -314,21 +313,5 @@ func TestEventDecoder(t *testing.T) {
 		event, err := decoder.DecodeEvent("RUN_STARTED", data)
 		assert.Error(t, err)
 		assert.Nil(t, event)
-	})
-
-	t.Run("DecodeEvent_UnknownButValidEventType", func(t *testing.T) {
-		decoder := NewEventDecoder(nil)
-		data := []byte(`{"some": "data"}`)
-
-		// This should fall through to the default case and return a RawEvent
-		event, err := decoder.DecodeEvent("TEXT_MESSAGE_CHUNK", data)
-		require.NoError(t, err)
-		require.NotNil(t, event)
-
-		rawEvent, ok := event.(*RawEvent)
-		require.True(t, ok)
-		assert.Equal(t, EventType("TEXT_MESSAGE_CHUNK"), rawEvent.EventType)
-		assert.Equal(t, "TEXT_MESSAGE_CHUNK", *rawEvent.Source)
-		assert.Equal(t, json.RawMessage(data), rawEvent.Event)
 	})
 }

@@ -25,9 +25,58 @@ import {
   tool as createVercelAISDKTool,
   ToolChoice,
   ToolSet,
+  FilePart,
+  ImagePart,
+  TextPart,
 } from "ai";
 import { randomUUID } from "@ag-ui/client";
 import { z } from "zod";
+
+type VercelUserContent = Extract<CoreMessage, { role: "user" }>["content"];
+type VercelUserArrayContent = Extract<VercelUserContent, any[]>;
+type VercelUserPart =
+  VercelUserArrayContent extends Array<infer Part> ? Part : never;
+
+const toVercelUserParts = (
+  inputContent: Message["content"],
+): VercelUserPart[] => {
+  if (!Array.isArray(inputContent)) {
+    return [];
+  }
+
+  const parts: VercelUserPart[] = [];
+
+  for (const part of inputContent) {
+    if (part.type === "text") {
+      parts.push({ type: "text", text: part.text } as VercelUserPart);
+    }
+  }
+
+  return parts;
+};
+
+const toVercelUserContent = (
+  content: Message["content"],
+): VercelUserContent => {
+  if (!content) {
+    return "";
+  }
+
+  if (typeof content === "string") {
+    return content;
+  }
+
+  const parts = toVercelUserParts(content);
+  if (parts.length === 0) {
+    return "";
+  }
+
+  if (parts.length === 1 && parts[0].type === "text") {
+    return parts[0].text;
+  }
+
+  return parts;
+};
 
 type ProcessedEvent =
   | MessagesSnapshotEvent
@@ -48,11 +97,16 @@ export class VercelAISDKAgent extends AbstractAgent {
   model: LanguageModelV1;
   maxSteps: number;
   toolChoice: ToolChoice<Record<string, unknown>>;
-  constructor({ model, maxSteps, toolChoice, ...rest }: VercelAISDKAgentConfig) {
+  constructor(private config: VercelAISDKAgentConfig) {
+    const { model, maxSteps, toolChoice, ...rest } = config;
     super({ ...rest });
     this.model = model;
     this.maxSteps = maxSteps ?? 1;
     this.toolChoice = toolChoice ?? "auto";
+  }
+
+  public clone() {
+    return new VercelAISDKAgent(this.config);
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {
@@ -167,12 +221,16 @@ export class VercelAISDKAgent extends AbstractAgent {
   }
 }
 
-export function convertMessagesToVercelAISDKMessages(messages: Message[]): CoreMessage[] {
+export function convertMessagesToVercelAISDKMessages(
+  messages: Message[],
+): CoreMessage[] {
   const result: CoreMessage[] = [];
 
   for (const message of messages) {
     if (message.role === "assistant") {
-      const parts: any[] = message.content ? [{ type: "text", text: message.content }] : [];
+      const parts: any[] = message.content
+        ? [{ type: "text", text: message.content }]
+        : [];
       for (const toolCall of message.toolCalls ?? []) {
         parts.push({
           type: "tool-call",
@@ -188,7 +246,7 @@ export function convertMessagesToVercelAISDKMessages(messages: Message[]): CoreM
     } else if (message.role === "user") {
       result.push({
         role: "user",
-        content: message.content || "",
+        content: toVercelUserContent(message.content),
       });
     } else if (message.role === "tool") {
       let toolName = "unknown";
@@ -219,7 +277,10 @@ export function convertMessagesToVercelAISDKMessages(messages: Message[]): CoreM
   return result;
 }
 
-export function convertJsonSchemaToZodSchema(jsonSchema: any, required: boolean): z.ZodSchema {
+export function convertJsonSchemaToZodSchema(
+  jsonSchema: any,
+  required: boolean,
+): z.ZodSchema {
   if (jsonSchema.type === "object") {
     const spec: { [key: string]: z.ZodSchema } = {};
 
@@ -252,7 +313,9 @@ export function convertJsonSchemaToZodSchema(jsonSchema: any, required: boolean)
   throw new Error("Invalid JSON schema");
 }
 
-export function convertToolToVerlAISDKTools(tools: RunAgentInput["tools"]): ToolSet {
+export function convertToolToVerlAISDKTools(
+  tools: RunAgentInput["tools"],
+): ToolSet {
   return tools.reduce(
     (acc: ToolSet, tool: RunAgentInput["tools"][number]) => ({
       ...acc,

@@ -4,15 +4,24 @@ import { Message, State, RunAgentInput, BaseEvent, ToolCall, AssistantMessage } 
 import { AgentConfig, RunAgentParameters } from "./types";
 import { v4 as uuidv4 } from "uuid";
 import { structuredClone_ } from "@/utils";
+import { compareVersions } from "compare-versions";
 import { catchError, map, tap } from "rxjs/operators";
 import { finalize } from "rxjs/operators";
-import { pipe, Observable, from, of } from "rxjs";
+import { pipe, Observable, from, of, EMPTY } from "rxjs";
 import { verifyEvents } from "@/verify";
 import { convertToLegacyEvents } from "@/legacy/convert";
 import { LegacyRuntimeProtocolEvent } from "@/legacy/types";
 import { lastValueFrom } from "rxjs";
 import { transformChunks } from "@/chunks";
 import { AgentStateMutation, AgentSubscriber, runSubscribersWithMutation } from "./subscriber";
+import { AGUIConnectNotImplementedError } from "@ag-ui/core";
+import {
+  Middleware,
+  MiddlewareFunction,
+  FunctionMiddleware,
+  BackwardCompatibility_0_0_39,
+} from "@/middleware";
+import packageJson from "../../package.json";
 
 export interface RunAgentResult {
   result: any;
@@ -27,6 +36,12 @@ export abstract class AbstractAgent {
   public state: State;
   public debug: boolean = false;
   public subscribers: AgentSubscriber[] = [];
+  public isRunning: boolean = false;
+  private middlewares: Middleware[] = [];
+
+  get maxVersion() {
+    return packageJson.version;
+  }
 
   constructor({
     agentId,
@@ -42,6 +57,10 @@ export abstract class AbstractAgent {
     this.messages = structuredClone_(initialMessages ?? []);
     this.state = structuredClone_(initialState ?? {});
     this.debug = debug ?? false;
+
+    if (compareVersions(this.maxVersion, "0.0.39") <= 0) {
+      this.middlewares.unshift(new BackwardCompatibility_0_0_39());
+    }
   }
 
   public subscribe(subscriber: AgentSubscriber) {
@@ -55,47 +74,131 @@ export abstract class AbstractAgent {
 
   abstract run(input: RunAgentInput): Observable<BaseEvent>;
 
+  public use(...middlewares: (Middleware | MiddlewareFunction)[]): this {
+    const normalizedMiddlewares = middlewares.map((middleware) =>
+      typeof middleware === "function" ? new FunctionMiddleware(middleware) : middleware,
+    );
+    this.middlewares.push(...normalizedMiddlewares);
+    return this;
+  }
+
   public async runAgent(
     parameters?: RunAgentParameters,
     subscriber?: AgentSubscriber,
   ): Promise<RunAgentResult> {
-    this.agentId = this.agentId ?? uuidv4();
-    const input = this.prepareRunAgentInput(parameters);
-    let result: any = undefined;
-    const currentMessageIds = new Set(this.messages.map((message) => message.id));
+    try {
+      this.isRunning = true;
+      this.agentId = this.agentId ?? uuidv4();
+      const input = this.prepareRunAgentInput(parameters);
+      let result: any = undefined;
+      const currentMessageIds = new Set(this.messages.map((message) => message.id));
 
-    const subscribers: AgentSubscriber[] = [
-      {
-        onRunFinishedEvent: (params) => {
-          result = params.result;
+      const subscribers: AgentSubscriber[] = [
+        {
+          onRunFinishedEvent: (params) => {
+            result = params.result;
+          },
         },
-      },
-      ...this.subscribers,
-      subscriber ?? {},
-    ];
+        ...this.subscribers,
+        subscriber ?? {},
+      ];
 
-    await this.onInitialize(input, subscribers);
+      await this.onInitialize(input, subscribers);
 
-    const pipeline = pipe(
-      () => this.run(input),
-      transformChunks(this.debug),
-      verifyEvents(this.debug),
-      (source$) => this.apply(input, source$, subscribers),
-      (source$) => this.processApplyEvents(input, source$, subscribers),
-      catchError((error) => {
-        return this.onError(input, error, subscribers);
-      }),
-      finalize(() => {
-        void this.onFinalize(input, subscribers);
-      }),
-    );
+      const pipeline = pipe(
+        () => {
+          // Build middleware chain using reduceRight so middlewares can intercept runs.
+          if (this.middlewares.length === 0) {
+            return this.run(input);
+          }
 
-    return lastValueFrom(pipeline(of(null))).then(() => {
+          const chainedAgent = this.middlewares.reduceRight(
+            (nextAgent: AbstractAgent, middleware) =>
+              ({
+                run: (i: RunAgentInput) => middleware.run(i, nextAgent),
+              }) as AbstractAgent,
+            this, // Original agent is the final 'next'
+          );
+
+          return chainedAgent.run(input);
+        },
+        transformChunks(this.debug),
+        verifyEvents(this.debug),
+        (source$) => this.apply(input, source$, subscribers),
+        (source$) => this.processApplyEvents(input, source$, subscribers),
+        catchError((error) => {
+          this.isRunning = false;
+          return this.onError(input, error, subscribers);
+        }),
+        finalize(() => {
+          this.isRunning = false;
+          void this.onFinalize(input, subscribers);
+        }),
+      );
+
+      await lastValueFrom(pipeline(of(null)));
       const newMessages = structuredClone_(this.messages).filter(
         (message: Message) => !currentMessageIds.has(message.id),
       );
       return { result, newMessages };
-    });
+    } finally {
+      this.isRunning = false;
+    }
+  }
+
+  protected connect(input: RunAgentInput): Observable<BaseEvent> {
+    throw new AGUIConnectNotImplementedError();
+  }
+  public async connectAgent(
+    parameters?: RunAgentParameters,
+    subscriber?: AgentSubscriber,
+  ): Promise<RunAgentResult> {
+    try {
+      this.isRunning = true;
+      this.agentId = this.agentId ?? uuidv4();
+      const input = this.prepareRunAgentInput(parameters);
+      let result: any = undefined;
+      const currentMessageIds = new Set(this.messages.map((message) => message.id));
+
+      const subscribers: AgentSubscriber[] = [
+        {
+          onRunFinishedEvent: (params) => {
+            result = params.result;
+          },
+        },
+        ...this.subscribers,
+        subscriber ?? {},
+      ];
+
+      await this.onInitialize(input, subscribers);
+
+      const pipeline = pipe(
+        () => this.connect(input),
+        transformChunks(this.debug),
+        verifyEvents(this.debug),
+        (source$) => this.apply(input, source$, subscribers),
+        (source$) => this.processApplyEvents(input, source$, subscribers),
+        catchError((error) => {
+          this.isRunning = false;
+          if (!(error instanceof AGUIConnectNotImplementedError)) {
+            return this.onError(input, error, subscribers);
+          }
+          return EMPTY;
+        }),
+        finalize(() => {
+          this.isRunning = false;
+          void this.onFinalize(input, subscribers);
+        }),
+      );
+
+      await lastValueFrom(pipeline(of(null))); // wait for stream completion before toggling isRunning
+      const newMessages = structuredClone_(this.messages).filter(
+        (message: Message) => !currentMessageIds.has(message.id),
+      );
+      return { result, newMessages };
+    } finally {
+      this.isRunning = false;
+    }
   }
 
   public abortRun() {}
@@ -142,6 +245,11 @@ export abstract class AbstractAgent {
   }
 
   protected prepareRunAgentInput(parameters?: RunAgentParameters): RunAgentInput {
+    const clonedMessages = structuredClone_(this.messages) as Message[];
+    const messagesWithoutActivity = clonedMessages.filter(
+      (message) => message.role !== "activity",
+    );
+
     return {
       threadId: this.threadId,
       runId: parameters?.runId || uuidv4(),
@@ -149,7 +257,7 @@ export abstract class AbstractAgent {
       context: structuredClone_(parameters?.context ?? []),
       forwardedProps: structuredClone_(parameters?.forwardedProps ?? {}),
       state: structuredClone_(this.state),
-      messages: structuredClone_(this.messages),
+      messages: messagesWithoutActivity,
     };
   }
 
@@ -281,12 +389,14 @@ export abstract class AbstractAgent {
   public clone() {
     const cloned = Object.create(Object.getPrototypeOf(this));
 
-    for (const key of Object.getOwnPropertyNames(this)) {
-      const value = (this as any)[key];
-      if (typeof value !== "function") {
-        cloned[key] = structuredClone_(value);
-      }
-    }
+    cloned.agentId = this.agentId;
+    cloned.description = this.description;
+    cloned.threadId = this.threadId;
+    cloned.messages = structuredClone_(this.messages);
+    cloned.state = structuredClone_(this.state);
+    cloned.debug = this.debug;
+    cloned.isRunning = this.isRunning;
+    cloned.subscribers = [...this.subscribers];
 
     return cloned;
   }
@@ -416,7 +526,24 @@ export abstract class AbstractAgent {
     this.agentId = this.agentId ?? uuidv4();
     const input = this.prepareRunAgentInput(config);
 
-    return this.run(input).pipe(
+    // Build middleware chain for legacy bridge
+    const runObservable = (() => {
+      if (this.middlewares.length === 0) {
+        return this.run(input);
+      }
+
+      const chainedAgent = this.middlewares.reduceRight(
+        (nextAgent: AbstractAgent, middleware) =>
+          ({
+            run: (i: RunAgentInput) => middleware.run(i, nextAgent),
+          }) as AbstractAgent,
+        this,
+      );
+
+      return chainedAgent.run(input);
+    })();
+
+    return runObservable.pipe(
       transformChunks(this.debug),
       verifyEvents(this.debug),
       convertToLegacyEvents(this.threadId, input.runId, this.agentId),
