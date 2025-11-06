@@ -35,7 +35,9 @@
       "@browserbasehq/stagehand>openai": "^4.62.1",
       "@mastra/core>ai": "5.0.59",
       "@openrouter/ai-sdk-provider>ai": "5.0.59",
-      "ai": "5.0.59"
+      "ai": "5.0.59",
+      "streamdown": "1.3.0",
+      "mermaid": "11.12.0"
     }
   }
 }
