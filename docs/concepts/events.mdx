@@ -19,6 +19,7 @@ Events in the protocol are categorized by their purpose:
 | Text Message Events     | Handle streaming textual content        |
 | Tool Call Events        | Manage tool executions by agents        |
 | State Management Events | Synchronize state between agents and UI |
+| Activity Events         | Represent ongoing activity progress     |
 | Special Events          | Support custom functionality            |
 | Draft Events            | Proposed events under development       |
 
@@ -83,10 +84,12 @@ elements such as progress indicators or loading states. It also provides crucial
 identifiers that can be used to associate subsequent events with this specific
 run.
 
-| Property   | Description                   |
-| ---------- | ----------------------------- |
-| `threadId` | ID of the conversation thread |
-| `runId`    | ID of the agent run           |
+| Property       | Description                                                                                                                                                      |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `threadId`     | ID of the conversation thread                                                                                                                                    |
+| `runId`        | ID of the agent run                                                                                                                                              |
+| `parentRunId`  | (Optional) Lineage pointer for branching/time travel. If present, refers to a prior run within the same thread, creating a git-like append-only log             |
+| `input`        | (Optional) The exact agent input payload that was sent to the agent for this run. May omit messages already present in history; compactEvents() will normalize   |
 
 ### RunFinished
 
@@ -234,18 +237,23 @@ automatic scrolling to ensure the full message is visible.
 
 ### TextMessageChunk
 
-A self-contained text message event that combines start, content, and end.
+Convenience event that expands to Start → Content → End automatically.
 
-The `TextMessageChunk` event provides a convenient way to send complete text messages 
-in a single event instead of the three-event sequence (start, content, end). This is 
-particularly useful for simple messages or when the entire content is available at once. 
-The event includes both the message metadata and content, making it more efficient for 
-non-streaming scenarios.
+The `TextMessageChunk` event lets you omit explicit `TextMessageStart` and
+`TextMessageEnd` events. The client stream transformer expands chunks into the
+standard triad:
+
+- First chunk for a message must include `messageId` and will emit
+  `TextMessageStart` (role defaults to `assistant` when not provided).
+- Each chunk with a `delta` emits a `TextMessageContent` for the current
+  `messageId`.
+- `TextMessageEnd` is emitted automatically when the stream switches to a new
+  message ID or when the stream completes.
 
 | Property    | Description                                                                           |
 | ----------- | ------------------------------------------------------------------------------------- |
-| `messageId` | Optional unique identifier for the message                                            |
-| `role`      | Optional role of the sender ("developer", "system", "assistant", "user", "tool")    |
+| `messageId` | Optional unique identifier for the message; required on the first chunk of a message  |
+| `role`      | Optional role of the sender ("developer", "system", "assistant", "user")              |
 | `delta`     | Optional text content of the message                                                  |
 
 ## Tool Call Events
@@ -356,6 +364,28 @@ the tool's output.
 | `content`    | The actual result/output content from the tool execution    |
 | `role`       | Optional role identifier, typically "tool" for tool results |
 
+### ToolCallChunk
+
+Convenience event that expands to Start → Args → End automatically.
+
+The `ToolCallChunk` event lets you omit explicit `ToolCallStart` and
+`ToolCallEnd` events. The client stream transformer expands chunks into the
+standard tool-call triad:
+
+- First chunk for a tool call must include `toolCallId` and `toolCallName` and
+  will emit `ToolCallStart` (propagating any `parentMessageId`).
+- Each chunk with a `delta` emits a `ToolCallArgs` for the current
+  `toolCallId`.
+- `ToolCallEnd` is emitted automatically when the stream switches to a new
+  `toolCallId` or when the stream completes.
+
+| Property          | Description                                                                 |
+| ----------------- | --------------------------------------------------------------------------- |
+| `toolCallId`      | Optional on later chunks; required on the first chunk of a tool call        |
+| `toolCallName`    | Optional on later chunks; required on the first chunk of a tool call        |
+| `parentMessageId` | Optional ID of the parent message                                           |
+| `delta`           | Optional argument data chunk (often a JSON fragment)                        |
+
 ## State Management Events
 
 These events are used to manage and synchronize the agent's state with the
@@ -445,6 +475,41 @@ displayed to users.
 | ---------- | ------------------------ |
 | `messages` | Array of message objects |
 
+## Activity Events
+
+Activity Events expose structured, in-progress activity updates that occur
+between chat messages. They follow the same snapshot/delta pattern as the state
+system so that UIs can render a complete activity view immediately and then
+incrementally update it as new information arrives.
+
+### ActivitySnapshot
+
+Delivers a complete snapshot of an activity message.
+
+| Property        | Description                                                                                  |
+| --------------- | -------------------------------------------------------------------------------------------- |
+| `messageId`     | Identifier for the `ActivityMessage` this event updates                                      |
+| `activityType`  | Activity discriminator (for example `"PLAN"`, `"SEARCH"`)                                     |
+| `content`       | Structured JSON payload representing the full activity state                                 |
+| `replace`       | Optional. Defaults to `true`. When `false`, ignore the snapshot if the message already exists |
+
+Frontends should either create a new `ActivityMessage` or replace the existing
+one with the payload supplied by the snapshot.
+
+### ActivityDelta
+
+Applies incremental updates to an existing activity using JSON Patch operations.
+
+| Property        | Description                                                          |
+| --------------- | -------------------------------------------------------------------- |
+| `messageId`     | Identifier for the target activity message                            |
+| `activityType`  | Activity discriminator (mirrors the value from the most recent snapshot) |
+| `patch`         | Array of RFC 6902 JSON Patch operations to apply to the activity data |
+
+Activity deltas should be applied in order to the previously synchronized
+activity content. If an application detects divergence, it can request or emit a
+fresh `ActivitySnapshot` to resynchronize.
+
 ## Special Events
 
 Special events provide flexibility in the protocol by allowing for
@@ -491,32 +556,6 @@ implementation across frontends and agents.
 ## Draft Events
 
 These events are currently in draft status and may change before finalization. They represent proposed extensions to the protocol that are under active development and discussion.
-
-### Activity Events
-
-<span style={{backgroundColor: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '0.75em', fontWeight: 'bold'}}>DRAFT</span> [View Proposal](/drafts/activity-events)
-
-Activity events represent ongoing agent progress between chat messages, allowing frameworks to surface fine-grained activity updates chronologically.
-
-#### ActivitySnapshotEvent
-
-Provides the complete activity state at a point in time.
-
-| Property       | Description                                          |
-| -------------- | ---------------------------------------------------- |
-| `messageId`    | Unique identifier for the ActivityMessage           |
-| `activityType` | Activity type (e.g., "PLAN", "SEARCH", "SCRAPE")    |
-| `content`      | Complete activity state at this point               |
-
-#### ActivityDeltaEvent
-
-Provides incremental updates to the activity state using JSON Patch operations.
-
-| Property       | Description                                          |
-| -------------- | ---------------------------------------------------- |
-| `messageId`    | Unique identifier for the ActivityMessage           |
-| `activityType` | Activity type (e.g., "PLAN", "SEARCH", "SCRAPE")    |
-| `patch`        | JSON Patch operations (RFC 6902) to apply           |
 
 ### Reasoning Events
 
@@ -606,7 +645,7 @@ The `RunFinished` event gains new fields to support interrupt-aware workflows.
 | `outcome`   | Optional: "success" or "interrupt"                  |
 | `interrupt` | Optional: Contains interrupt details when paused    |
 
-<span style={{backgroundColor: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '0.75em', fontWeight: 'bold'}}>DRAFT</span> [View Proposal](/drafts/serialization)
+See [Serialization](/concepts/serialization) for lineage and input capture.
 
 #### RunStarted (Extended)
 
