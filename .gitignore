@@ -5,9 +5,15 @@ mastra.db*
 **/.DS_Store
 
 test-results/
+
+**/target
 .turbo
 
 node_modules
 .vscode
 
 **/mastra.db*
+
+.pnpm-store
+
+**/.poetry-cache

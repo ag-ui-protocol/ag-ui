@@ -19,6 +19,7 @@ pnpm dev
 # Run linting
 pnpm lint
 
+
 # Run type checking
 pnpm check-types
 

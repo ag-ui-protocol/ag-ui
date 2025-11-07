@@ -38,6 +38,23 @@ sse_data = encoder.encode(event)
 # Output: data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_123","delta":"Hello from Python!"}\n\n
 ```
 
+### Multimodal user message
+
+```python
+from ag_ui.core import UserMessage, TextInputContent, BinaryInputContent
+
+message = UserMessage(
+    id="user-123",
+    content=[
+        TextInputContent(text="Please describe this image"),
+        BinaryInputContent(mime_type="image/png", url="https://example.com/cat.png"),
+    ],
+)
+
+payload = message.model_dump(by_alias=True)
+# {"id": "user-123", "role": "user", "content": [...]}
+```
+
 ## Packages
 
 - **`ag_ui.core`** – Types, events, and data models for AG-UI protocol

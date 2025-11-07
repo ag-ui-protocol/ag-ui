@@ -29,6 +29,8 @@ class EventType(str, Enum):
     STATE_SNAPSHOT = "STATE_SNAPSHOT"
     STATE_DELTA = "STATE_DELTA"
     MESSAGES_SNAPSHOT = "MESSAGES_SNAPSHOT"
+    ACTIVITY_SNAPSHOT = "ACTIVITY_SNAPSHOT"
+    ACTIVITY_DELTA = "ACTIVITY_DELTA"
     RAW = "RAW"
     CUSTOM = "CUSTOM"
     RUN_STARTED = "RUN_STARTED"
@@ -73,12 +75,16 @@ class RunStartedEvent(BaseEvent):
     type: Literal[EventType.RUN_STARTED]
     thread_id: str
     run_id: str
+    parent_run_id: Optional[str] = None
+    input: Optional[RunAgentInput] = None
 ```
 
-| Property    | Type  | Description                   |
-| ----------- | ----- | ----------------------------- |
-| `thread_id` | `str` | ID of the conversation thread |
-| `run_id`    | `str` | ID of the agent run           |
+| Property         | Type                       | Description                                                                                                                              |
+| ---------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `thread_id`      | `str`                      | ID of the conversation thread                                                                                                            |
+| `run_id`         | `str`                      | ID of the agent run                                                                                                                      |
+| `parent_run_id`  | `Optional[str]`            | (Optional) Lineage pointer for branching/time travel. If present, refers to a prior run within the same thread                          |
+| `input`          | `Optional[RunAgentInput]`  | (Optional) The exact agent input payload sent to the agent for this run. May omit messages already in history                            |
 
 ### RunFinishedEvent
 
@@ -342,6 +348,48 @@ class MessagesSnapshotEvent(BaseEvent):
 | ---------- | --------------- | ------------------------ |
 | `messages` | `List[Message]` | Array of message objects |
 
+### ActivitySnapshotEvent
+
+`from ag_ui.core import ActivitySnapshotEvent`
+
+Delivers a complete snapshot of an activity message.
+
+```python
+class ActivitySnapshotEvent(BaseEvent):
+    type: Literal[EventType.ACTIVITY_SNAPSHOT]
+    message_id: str
+    activity_type: str
+    content: Any
+    replace: bool = True
+```
+
+| Property        | Type  | Description                                           |
+| --------------- | ----- | ----------------------------------------------------- |
+| `message_id`    | `str` | Identifier for the target `ActivityMessage`           |
+| `activity_type` | `str` | Activity discriminator such as `"PLAN"` or `"SEARCH"` |
+| `content`       | `Any` | Structured payload describing the full activity state |
+| `replace`       | `bool` (default `True`) | When `False`, the snapshot is ignored if a message with the same ID already exists |
+
+### ActivityDeltaEvent
+
+`from ag_ui.core import ActivityDeltaEvent`
+
+Provides incremental updates to an activity snapshot using JSON Patch.
+
+```python
+class ActivityDeltaEvent(BaseEvent):
+    type: Literal[EventType.ACTIVITY_DELTA]
+    message_id: str
+    activity_type: str
+    patch: List[Any]
+```
+
+| Property        | Type         | Description                                                          |
+| --------------- | ------------ | -------------------------------------------------------------------- |
+| `message_id`    | `str`        | Identifier for the target `ActivityMessage`                          |
+| `activity_type` | `str`        | Activity discriminator mirroring the most recent snapshot            |
+| `patch`         | `List[Any]`  | JSON Patch operations applied to the structured activity content     |
+
 ## Special Events
 
 ### RawEvent
@@ -413,3 +461,50 @@ Event = Annotated[
 
 This allows for runtime validation of events and type checking at development
 time.
+### TextMessageChunkEvent
+
+Convenience event for complete text messages without manually emitting
+`TextMessageStart`/`TextMessageEnd`.
+
+```python
+from ag_ui.core import TextMessageChunkEvent
+
+class TextMessageChunkEvent(BaseEvent):
+    type: Literal[EventType.TEXT_MESSAGE_CHUNK]
+    message_id: Optional[str] = None  # required on first chunk for a message
+    role: Optional[TextMessageRole] = None  # defaults to "assistant" in JS client
+    delta: Optional[str] = None
+```
+
+Behavior
+- Convenience: Some consumers (e.g., the JS/TS client) expand chunk events into
+  the standard start/content/end sequence automatically, allowing producers to
+  omit explicit start/end events when using chunks.
+- First chunk requirements: The first chunk for a given message must include
+  `message_id`.
+- Streaming: Subsequent chunks with the same `message_id` correspond to content
+  pieces; completion triggers an implied end in clients that perform expansion.
+
+### ToolCallChunkEvent
+
+Convenience event for tool calls without manually emitting
+`ToolCallStart`/`ToolCallEnd`.
+
+```python
+from ag_ui.core import ToolCallChunkEvent
+
+class ToolCallChunkEvent(BaseEvent):
+    type: Literal[EventType.TOOL_CALL_CHUNK]
+    tool_call_id: Optional[str] = None      # required on first chunk
+    tool_call_name: Optional[str] = None    # required on first chunk
+    parent_message_id: Optional[str] = None
+    delta: Optional[str] = None
+```
+
+Behavior
+- Convenience: Consumers may expand chunk sequences into the standard
+  start/args/end triad (the JS/TS client does this automatically).
+- First chunk requirements: Include both `tool_call_id` and `tool_call_name` on
+  the first chunk.
+- Streaming: Subsequent chunks with the same `tool_call_id` correspond to args
+  pieces; completion triggers an implied end in clients that perform expansion.

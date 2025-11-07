@@ -40,7 +40,7 @@ requires-dist = [
 
 [[package]]
 name = "ag-ui-adk"
-version = "0.3.1"
+version = "0.3.2"
 source = { directory = "../" }
 dependencies = [
     { name = "ag-ui-protocol" },

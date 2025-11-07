@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch, AsyncMock
 from ag_ui.core import (
     EventType, TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent,
     ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent, ToolCallResultEvent,
-    StateDeltaEvent, CustomEvent
+    StateDeltaEvent, StateSnapshotEvent, CustomEvent
 )
 from google.adk.events import Event as ADKEvent
 from ag_ui_adk.event_translator import EventTranslator
@@ -185,6 +185,7 @@ class TestEventTranslatorComprehensive:
         # Mock event with state delta
         mock_actions = MagicMock()
         mock_actions.state_delta = {"key1": "value1", "key2": "value2"}
+        mock_actions.state_snapshot = None
         mock_adk_event.actions = mock_actions
 
         events = []
@@ -200,6 +201,55 @@ class TestEventTranslatorComprehensive:
         assert len(patches) == 2
         assert any(patch["path"] == "/key1" and patch["value"] == "value1" for patch in patches)
         assert any(patch["path"] == "/key2" and patch["value"] == "value2" for patch in patches)
+
+    @pytest.mark.asyncio
+    async def test_translate_state_snapshot_event_passthrough(self, translator, mock_adk_event):
+        """Test state snapshot events preserve the ADK payload."""
+
+        state_snapshot = {
+            "user_name": "Alice",
+            "timezone": "UTC",
+            "custom_state": {
+                "view": {"active_tab": "details"},
+                "progress": 0.75,
+            },
+            "extra_field": [1, 2, 3],
+        }
+
+        mock_adk_event.actions = SimpleNamespace(
+            state_delta=None,
+            state_snapshot=state_snapshot,
+        )
+
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
+
+        snapshot_events = [event for event in events if isinstance(event, StateSnapshotEvent)]
+        assert snapshot_events, "Expected a StateSnapshotEvent to be emitted"
+
+        snapshot_event = snapshot_events[0]
+        assert snapshot_event.type == EventType.STATE_SNAPSHOT
+        assert snapshot_event.snapshot == state_snapshot
+        assert snapshot_event.snapshot["user_name"] == "Alice"
+        assert snapshot_event.snapshot["custom_state"]["view"]["active_tab"] == "details"
+        assert "extra_field" in snapshot_event.snapshot
+
+    def test_create_state_snapshot_event_passthrough(self, translator):
+        """Direct helper should forward the snapshot unchanged."""
+
+        state_snapshot = {
+            "user_name": "Bob",
+            "custom_state": {"step": 3},
+            "timezone": "PST",
+        }
+
+        event = translator._create_state_snapshot_event(state_snapshot)
+
+        assert isinstance(event, StateSnapshotEvent)
+        assert event.type == EventType.STATE_SNAPSHOT
+        assert event.snapshot == state_snapshot
+        assert set(event.snapshot.keys()) == {"user_name", "custom_state", "timezone"}
 
     @pytest.mark.asyncio
     async def test_translate_custom_event(self, translator, mock_adk_event):
@@ -341,7 +391,10 @@ class TestEventTranslatorComprehensive:
         async for event in translator.translate(mock_adk_event_with_content, "thread_1", "run_1"):
             events.append(event)
 
-        assert len(events) == 0  # No events
+        assert len(events) == 3  # START, CONTENT, END for first final payload
+        assert isinstance(events[0], TextMessageStartEvent)
+        assert isinstance(events[1], TextMessageContentEvent)
+        assert isinstance(events[2], TextMessageEndEvent)
 
     @pytest.mark.asyncio
     async def test_translate_text_content_final_response_from_agent_callback(self, translator, mock_adk_event_with_content):
@@ -360,6 +413,123 @@ class TestEventTranslatorComprehensive:
         assert isinstance(events[0], TextMessageStartEvent)
         assert isinstance(events[1], TextMessageContentEvent)
         assert events[1].delta == mock_adk_event_with_content.content.parts[0].text
+        assert isinstance(events[2], TextMessageEndEvent)
+
+    @pytest.mark.asyncio
+    async def test_translate_text_content_final_response_after_stream_duplicate_suppressed(self, translator):
+        """Final LLM payload matching streamed text should be suppressed."""
+
+        stream_event = MagicMock(spec=ADKEvent)
+        stream_event.id = "event-1"
+        stream_event.author = "model"
+        stream_event.content = MagicMock()
+        stream_part = MagicMock()
+        stream_part.text = "Hello"
+        stream_event.content.parts = [stream_part]
+        stream_event.partial = False
+        stream_event.turn_complete = False
+        stream_event.is_final_response = False
+        stream_event.usage_metadata = {"tokens": 1}
+
+        events = []
+        async for event in translator.translate(stream_event, "thread_1", "run_1"):
+            events.append(event)
+
+        assert len(events) == 2  # START + CONTENT
+        assert isinstance(events[0], TextMessageStartEvent)
+        assert isinstance(events[1], TextMessageContentEvent)
+
+        final_stream_event = MagicMock(spec=ADKEvent)
+        final_stream_event.id = "event-2"
+        final_stream_event.author = "model"
+        final_stream_event.content = MagicMock()
+        final_stream_part = MagicMock()
+        final_stream_part.text = ""
+        final_stream_event.content.parts = [final_stream_part]
+        final_stream_event.partial = False
+        final_stream_event.turn_complete = True
+        final_stream_event.is_final_response = True
+        final_stream_event.usage_metadata = {"tokens": 1}
+
+        events = []
+        async for event in translator.translate(final_stream_event, "thread_1", "run_1"):
+            events.append(event)
+
+        assert len(events) == 1  # END only
+        assert isinstance(events[0], TextMessageEndEvent)
+
+        final_payload = MagicMock(spec=ADKEvent)
+        final_payload.id = "event-3"
+        final_payload.author = "model"
+        final_payload.content = MagicMock()
+        final_payload_part = MagicMock()
+        final_payload_part.text = "Hello"
+        final_payload.content.parts = [final_payload_part]
+        final_payload.partial = False
+        final_payload.turn_complete = True
+        final_payload.is_final_response = True
+        final_payload.usage_metadata = {"tokens": 2}
+
+        events = []
+        async for event in translator.translate(final_payload, "thread_1", "run_1"):
+            events.append(event)
+
+        assert events == []  # duplicate suppressed
+
+    @pytest.mark.asyncio
+    async def test_translate_text_content_final_response_after_stream_new_content(self, translator):
+        """Final LLM payload with new content should be emitted."""
+
+        stream_event = MagicMock(spec=ADKEvent)
+        stream_event.id = "event-1"
+        stream_event.author = "model"
+        stream_event.content = MagicMock()
+        stream_part = MagicMock()
+        stream_part.text = "Hello"
+        stream_event.content.parts = [stream_part]
+        stream_event.partial = False
+        stream_event.turn_complete = False
+        stream_event.is_final_response = False
+        stream_event.usage_metadata = {"tokens": 1}
+
+        async for _ in translator.translate(stream_event, "thread_1", "run_1"):
+            pass
+
+        final_stream_event = MagicMock(spec=ADKEvent)
+        final_stream_event.id = "event-2"
+        final_stream_event.author = "model"
+        final_stream_event.content = MagicMock()
+        final_stream_part = MagicMock()
+        final_stream_part.text = ""
+        final_stream_event.content.parts = [final_stream_part]
+        final_stream_event.partial = False
+        final_stream_event.turn_complete = True
+        final_stream_event.is_final_response = True
+        final_stream_event.usage_metadata = {"tokens": 1}
+
+        async for _ in translator.translate(final_stream_event, "thread_1", "run_1"):
+            pass
+
+        final_payload = MagicMock(spec=ADKEvent)
+        final_payload.id = "event-3"
+        final_payload.author = "model"
+        final_payload.content = MagicMock()
+        final_payload_part = MagicMock()
+        final_payload_part.text = "Hello again"
+        final_payload.content.parts = [final_payload_part]
+        final_payload.partial = False
+        final_payload.turn_complete = True
+        final_payload.is_final_response = True
+        final_payload.usage_metadata = {"tokens": 2}
+
+        events = []
+        async for event in translator.translate(final_payload, "thread_1", "run_1"):
+            events.append(event)
+
+        assert len(events) == 3
+        assert isinstance(events[0], TextMessageStartEvent)
+        assert isinstance(events[1], TextMessageContentEvent)
+        assert events[1].delta == "Hello again"
         assert isinstance(events[2], TextMessageEndEvent)
 
     @pytest.mark.asyncio
@@ -737,14 +907,15 @@ class TestEventTranslatorComprehensive:
         async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
             events.append(event)
 
-        # Should have text events, state delta, and custom event
-        assert len(events) == 5  # START, CONTENT, STATE_DELTA, CUSTOM , END
+        # Should have text events, state delta, state snapshot, and custom event
+        assert len(events) == 6  # START, CONTENT, STATE_DELTA, STATE_SNAPSHOT, CUSTOM, END
 
         # Check event types
         event_types = [type(event) for event in events]
         assert TextMessageStartEvent in event_types
         assert TextMessageContentEvent in event_types
         assert StateDeltaEvent in event_types
+        assert StateSnapshotEvent in event_types
         assert CustomEvent in event_types
         assert TextMessageEndEvent in event_types
 

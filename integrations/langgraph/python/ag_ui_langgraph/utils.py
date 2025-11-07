@@ -13,6 +13,8 @@ from ag_ui.core import (
     ToolMessage as AGUIToolMessage,
     ToolCall as AGUIToolCall,
     FunctionCall as AGUIFunctionCall,
+    TextInputContent,
+    BinaryInputContent,
 )
 from .types import State, SchemaKeys, LangGraphReasoning
 
@@ -41,14 +43,56 @@ def stringify_if_needed(item: Any) -> str:
         return item
     return json.dumps(item)
 
+def convert_langchain_multimodal_to_agui(content: List[Dict[str, Any]]) -> List[Union[TextInputContent, BinaryInputContent]]:
+    """Convert LangChain's multimodal content to AG-UI format."""
+    agui_content = []
+    for item in content:
+        if isinstance(item, dict):
+            if item.get("type") == "text":
+                agui_content.append(TextInputContent(
+                    type="text",
+                    text=item.get("text", "")
+                ))
+            elif item.get("type") == "image_url":
+                image_url_data = item.get("image_url", {})
+                url = image_url_data.get("url", "") if isinstance(image_url_data, dict) else image_url_data
+
+                # Parse data URLs to extract base64 data
+                if url.startswith("data:"):
+                    # Format: data:mime_type;base64,data
+                    parts = url.split(",", 1)
+                    header = parts[0]
+                    data = parts[1] if len(parts) > 1 else ""
+                    mime_type = header.split(":")[1].split(";")[0] if ":" in header else "image/png"
+
+                    agui_content.append(BinaryInputContent(
+                        type="binary",
+                        mime_type=mime_type,
+                        data=data
+                    ))
+                else:
+                    # Regular URL or ID
+                    agui_content.append(BinaryInputContent(
+                        type="binary",
+                        mime_type="image/png",  # Default MIME type
+                        url=url
+                    ))
+    return agui_content
+
 def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]:
     agui_messages: List[AGUIMessage] = []
     for message in messages:
         if isinstance(message, HumanMessage):
+            # Handle multimodal content
+            if isinstance(message.content, list):
+                content = convert_langchain_multimodal_to_agui(message.content)
+            else:
+                content = stringify_if_needed(resolve_message_content(message.content))
+
             agui_messages.append(AGUIUserMessage(
                 id=str(message.id),
                 role="user",
-                content=stringify_if_needed(resolve_message_content(message.content)),
+                content=content,
                 name=message.name,
             ))
         elif isinstance(message, AIMessage):
@@ -91,14 +135,49 @@ def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]
             raise TypeError(f"Unsupported message type: {type(message)}")
     return agui_messages
 
+def convert_agui_multimodal_to_langchain(content: List[Union[TextInputContent, BinaryInputContent]]) -> List[Dict[str, Any]]:
+    """Convert AG-UI multimodal content to LangChain's multimodal format."""
+    langchain_content = []
+    for item in content:
+        if isinstance(item, TextInputContent):
+            langchain_content.append({
+                "type": "text",
+                "text": item.text
+            })
+        elif isinstance(item, BinaryInputContent):
+            # LangChain uses image_url format (OpenAI-style)
+            content_dict = {"type": "image_url"}
+
+            # Prioritize url, then data, then id
+            if item.url:
+                content_dict["image_url"] = {"url": item.url}
+            elif item.data:
+                # Construct data URL from base64 data
+                content_dict["image_url"] = {"url": f"data:{item.mime_type};base64,{item.data}"}
+            elif item.id:
+                # Use id as a reference (some providers may support this)
+                content_dict["image_url"] = {"url": item.id}
+
+            langchain_content.append(content_dict)
+
+    return langchain_content
+
 def agui_messages_to_langchain(messages: List[AGUIMessage]) -> List[BaseMessage]:
     langchain_messages = []
     for message in messages:
         role = message.role
         if role == "user":
+            # Handle multimodal content
+            if isinstance(message.content, str):
+                content = message.content
+            elif isinstance(message.content, list):
+                content = convert_agui_multimodal_to_langchain(message.content)
+            else:
+                content = str(message.content)
+
             langchain_messages.append(HumanMessage(
                 id=message.id,
-                content=message.content,
+                content=content,
                 name=message.name,
             ))
         elif role == "assistant":
@@ -176,6 +255,36 @@ def resolve_message_content(content: Any) -> str | None:
         return content_text
 
     return None
+
+
+def flatten_user_content(content: Any) -> str:
+    """
+    Flatten multimodal content into plain text.
+    Used for backwards compatibility or when multimodal is not supported.
+    """
+    if content is None:
+        return ""
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, TextInputContent):
+                if item.text:
+                    parts.append(item.text)
+            elif isinstance(item, BinaryInputContent):
+                # Add descriptive placeholder for binary content
+                if item.filename:
+                    parts.append(f"[Binary content: {item.filename}]")
+                elif item.url:
+                    parts.append(f"[Binary content: {item.url}]")
+                else:
+                    parts.append(f"[Binary content: {item.mime_type}]")
+        return "\n".join(parts)
+
+    return str(content)
 
 def camel_to_snake(name):
     return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
