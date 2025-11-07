@@ -223,10 +223,16 @@ class EventTranslator:
                     
             
             # Handle state changes
-            if hasattr(adk_event, 'actions') and adk_event.actions and hasattr(adk_event.actions, 'state_delta') and adk_event.actions.state_delta:
-                yield self._create_state_delta_event(
-                    adk_event.actions.state_delta, thread_id, run_id
-                )
+            if hasattr(adk_event, 'actions') and adk_event.actions:
+                if hasattr(adk_event.actions, 'state_delta') and adk_event.actions.state_delta:
+                    yield self._create_state_delta_event(
+                        adk_event.actions.state_delta, thread_id, run_id
+                    )
+
+                if hasattr(adk_event.actions, 'state_snapshot'):
+                    state_snapshot = adk_event.actions.state_snapshot
+                    if state_snapshot is not None:
+                        yield self._create_state_snapshot_event(state_snapshot)
                 
             
             # Handle custom events or metadata
@@ -583,23 +589,9 @@ class EventTranslator:
             A StateSnapshotEvent
         """
  
-        FullSnapShot = {
-            "context": {
-                "conversation": [],
-                "user": {
-                    "name": state_snapshot.get("user_name", ""),
-                    "timezone": state_snapshot.get("timezone", "UTC")
-                },
-                "app": {
-                    "version": state_snapshot.get("app_version", "unknown")
-                }
-            },
-            "state": state_snapshot.get("custom_state", {})
-        }
- 
         return StateSnapshotEvent(
             type=EventType.STATE_SNAPSHOT,
-            snapshot=FullSnapShot
+            snapshot=state_snapshot
         )
     
     async def force_close_streaming_message(self) -> AsyncGenerator[BaseEvent, None]:

@@ -16,6 +16,8 @@ from ag_ui.core.events import (
     StateSnapshotEvent,
     StateDeltaEvent,
     MessagesSnapshotEvent,
+    ActivitySnapshotEvent,
+    ActivityDeltaEvent,
     RawEvent,
     CustomEvent,
     RunStartedEvent,
@@ -202,6 +204,58 @@ class TestEvents(unittest.TestCase):
         self.assertEqual(serialized["messages"][0]["role"], "user")
         self.assertEqual(serialized["messages"][1]["toolCalls"][0]["function"]["name"], "get_weather")
 
+    def test_activity_snapshot(self):
+        """Test creating and serializing an ActivitySnapshotEvent"""
+        content = {"tasks": ["search", "summarize"]}
+        event = ActivitySnapshotEvent(
+            message_id="msg_activity",
+            activity_type="PLAN",
+            content=content,
+            timestamp=1648214400000,
+        )
+
+        self.assertEqual(event.message_id, "msg_activity")
+        self.assertEqual(event.activity_type, "PLAN")
+        self.assertEqual(event.content, content)
+        self.assertTrue(event.replace)
+
+        serialized = event.model_dump(by_alias=True)
+        self.assertEqual(serialized["type"], "ACTIVITY_SNAPSHOT")
+        self.assertEqual(serialized["messageId"], "msg_activity")
+        self.assertEqual(serialized["activityType"], "PLAN")
+        self.assertEqual(serialized["content"], content)
+        self.assertTrue(serialized["replace"])
+
+        event_replace_false = ActivitySnapshotEvent(
+            message_id="msg_activity",
+            activity_type="PLAN",
+            content=content,
+            replace=False,
+        )
+        self.assertFalse(event_replace_false.replace)
+        serialized_false = event_replace_false.model_dump(by_alias=True)
+        self.assertFalse(serialized_false["replace"])
+
+    def test_activity_delta(self):
+        """Test creating and serializing an ActivityDeltaEvent"""
+        patch = [{"op": "replace", "path": "/tasks/0", "value": "✓ search"}]
+        event = ActivityDeltaEvent(
+            message_id="msg_activity",
+            activity_type="PLAN",
+            patch=patch,
+            timestamp=1648214400000,
+        )
+
+        self.assertEqual(event.message_id, "msg_activity")
+        self.assertEqual(event.activity_type, "PLAN")
+        self.assertEqual(event.patch, patch)
+
+        serialized = event.model_dump(by_alias=True)
+        self.assertEqual(serialized["type"], "ACTIVITY_DELTA")
+        self.assertEqual(serialized["messageId"], "msg_activity")
+        self.assertEqual(serialized["activityType"], "PLAN")
+        self.assertEqual(serialized["patch"], patch)
+
     def test_raw_event(self):
         """Test creating and serializing a RawEvent"""
         raw_data = {"origin": "server", "data": {"key": "value"}}
@@ -339,18 +393,26 @@ class TestEvents(unittest.TestCase):
                 "timestamp": 1648214400000
             },
             {
+                "type": "ACTIVITY_SNAPSHOT",
+                "messageId": "msg_activity",
+                "activityType": "PLAN",
+                "content": {"tasks": []},
+                "timestamp": 1648214400000,
+            },
+            {
                 "type": "RUN_ERROR",
                 "message": "Error occurred",
                 "code": "ERR_001",
                 "timestamp": 1648214400000
             }
         ]
-        
+
         expected_types = [
             TextMessageStartEvent,
             TextMessageContentEvent,
             ToolCallStartEvent,
             StateSnapshotEvent,
+            ActivitySnapshotEvent,
             RunErrorEvent
         ]
         
@@ -391,6 +453,16 @@ class TestEvents(unittest.TestCase):
                 messages=[
                     UserMessage(id="user_1", content="Hello")
                 ]
+            ),
+            ActivitySnapshotEvent(
+                message_id="msg_activity",
+                activity_type="PLAN",
+                content={"tasks": []},
+            ),
+            ActivityDeltaEvent(
+                message_id="msg_activity",
+                activity_type="PLAN",
+                patch=[{"op": "add", "path": "/tasks/-", "value": "search"}],
             ),
             RunStartedEvent(
                 thread_id="thread_123",

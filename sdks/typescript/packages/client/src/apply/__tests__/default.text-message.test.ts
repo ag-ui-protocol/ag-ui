@@ -4,6 +4,7 @@ import { firstValueFrom } from "rxjs";
 import {
   BaseEvent,
   EventType,
+  Message,
   RunStartedEvent,
   TextMessageStartEvent,
   TextMessageContentEvent,
@@ -13,7 +14,11 @@ import {
 import { defaultApplyEvents } from "../default";
 import { AbstractAgent } from "@/agent";
 
-const FAKE_AGENT = null as unknown as AbstractAgent;
+const createAgent = (messages: Message[] = []) =>
+  ({
+    messages: messages.map((message) => ({ ...message })),
+    state: {},
+  } as unknown as AbstractAgent);
 
 describe("defaultApplyEvents with text messages", () => {
   it("should handle text message events correctly", async () => {
@@ -29,7 +34,8 @@ describe("defaultApplyEvents with text messages", () => {
     };
 
     // Create the observable stream
-    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
@@ -102,7 +108,8 @@ describe("defaultApplyEvents with text messages", () => {
     };
 
     // Create the observable stream
-    const result$ = defaultApplyEvents(initialState, events$, FAKE_AGENT, []);
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
 
     // Collect all emitted state updates in an array
     const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
