@@ -1,7 +1,7 @@
 {
   "name": "@ag-ui/spring-ai",
   "author": "Pascal Wilbrink<pascal.wilbrink@gmail.com>",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",

@@ -1,11 +1,12 @@
 import { AbstractAgent } from "../agent";
 import { AgentSubscriber } from "../subscriber";
 import {
+  ActivityDeltaEvent,
+  ActivitySnapshotEvent,
   BaseEvent,
   EventType,
   Message,
   RunAgentInput,
-  State,
   MessagesSnapshotEvent,
   RunFinishedEvent,
   RunStartedEvent,
@@ -18,14 +19,18 @@ jest.mock("uuid", () => ({
 }));
 
 // Mock utils
-jest.mock("@/utils", () => ({
-  structuredClone_: (obj: any) => {
-    if (obj === undefined) return undefined;
-    const jsonString = JSON.stringify(obj);
-    if (jsonString === undefined || jsonString === "undefined") return undefined;
-    return JSON.parse(jsonString);
-  },
-}));
+jest.mock("@/utils", () => {
+  const actual = jest.requireActual<typeof import("@/utils")>("@/utils");
+  return {
+    ...actual,
+    structuredClone_: (obj: any) => {
+      if (obj === undefined) return undefined;
+      const jsonString = JSON.stringify(obj);
+      if (jsonString === undefined || jsonString === "undefined") return undefined;
+      return JSON.parse(jsonString);
+    },
+  };
+});
 
 // Mock the verify and chunks modules
 jest.mock("@/verify", () => ({
@@ -306,6 +311,60 @@ describe("Agent Result", () => {
       expect(result.newMessages[0].id).toBe("new-1");
       expect(result.newMessages[1].id).toBe("new-2");
       expect(result.newMessages[2].id).toBe("new-3");
+    });
+
+    it("should retain appended activity operations in agent messages", async () => {
+      const firstOperation = { id: "op-1", status: "PENDING" };
+      const secondOperation = { id: "op-2", status: "COMPLETE" };
+
+      agent.setEventsToEmit([
+        {
+          type: EventType.RUN_STARTED,
+          threadId: "test-thread",
+          runId: "run-ops",
+        } as RunStartedEvent,
+        {
+          type: EventType.ACTIVITY_SNAPSHOT,
+          messageId: "activity-ops",
+          activityType: "PLAN",
+          content: { operations: [] },
+          replace: false,
+        } as ActivitySnapshotEvent,
+        {
+          type: EventType.ACTIVITY_DELTA,
+          messageId: "activity-ops",
+          activityType: "PLAN",
+          patch: [{ op: "add", path: "/operations/-", value: firstOperation }],
+        } as ActivityDeltaEvent,
+        {
+          type: EventType.ACTIVITY_DELTA,
+          messageId: "activity-ops",
+          activityType: "PLAN",
+          patch: [{ op: "add", path: "/operations/-", value: secondOperation }],
+        } as ActivityDeltaEvent,
+        {
+          type: EventType.RUN_FINISHED,
+          threadId: "test-thread",
+          runId: "run-ops",
+        } as RunFinishedEvent,
+      ]);
+
+      const result = await agent.runAgent({ runId: "run-ops" });
+
+      const activityMessage = agent.messages.find((message) => message.id === "activity-ops");
+
+      expect(activityMessage).toBeTruthy();
+      expect(activityMessage?.role).toBe("activity");
+      expect(activityMessage?.activityType).toBe("PLAN");
+      expect(activityMessage?.content).toEqual({
+        operations: [firstOperation, secondOperation],
+      });
+
+      expect(result.newMessages).toHaveLength(1);
+      expect(result.newMessages[0].id).toBe("activity-ops");
+      expect(result.newMessages[0].content).toEqual({
+        operations: [firstOperation, secondOperation],
+      });
     });
   });
 

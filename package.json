@@ -13,11 +13,11 @@
     "check-types": "turbo run check-types",
     "test": "turbo run test",
     "create-integration": "pnpm dlx tsx create-integration.ts",
-    "bump": "pnpm --filter './packages/*' exec -- pnpm version",
-    "bump:alpha": "pnpm --filter './packages/*' exec -- pnpm version --preid alpha",
-    "publish": "pnpm -r clean && pnpm install && turbo run build && pnpm publish -r --filter='./packages/*'",
+    "bump": "pnpm --filter './sdks/typescript/packages/*' exec -- pnpm version",
+    "bump:alpha": "pnpm --filter './sdks/typescript/packages/*' exec -- pnpm version --preid alpha",
+    "publish": "pnpm -r clean && pnpm install && turbo run build && pnpm publish -r --filter='./sdks/typescript/packages/*'",
     "publish:integrations": "pnpm -r clean && pnpm install && turbo run build && pnpm publish -r --filter='./integrations/*'",
-    "publish:alpha": "pnpm -r clean && pnpm install && turbo run build && pnpm publish -r --no-git-checks --filter='./packages/*' --tag alpha"
+    "publish:alpha": "pnpm -r clean && pnpm install && turbo run build && pnpm publish -r --no-git-checks --filter='./sdks/typescript/packages/*' --tag alpha"
   },
   "devDependencies": {
     "prettier": "^3.5.3",

@@ -1,0 +1,193 @@
+name: Auto-approve community PRs
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  auto-approve:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch PR branch
+        run: |
+          git fetch origin ${{ github.event.pull_request.head.ref }}:${{ github.event.pull_request.head.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Auto-approve based on CODEOWNERS
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          node << 'EOF'
+          const { execSync } = require('child_process');
+          const fs = require('fs');
+          const path = require('path');
+
+          const prAuthor = process.env.PR_AUTHOR;
+          const prNumber = process.env.PR_NUMBER;
+
+          // Get changed files
+          const changedFiles = execSync(
+            `git diff --name-only origin/${process.env.BASE_REF}...origin/${process.env.HEAD_REF}`,
+            { encoding: 'utf-8' }
+          )
+            .trim()
+            .split('\n')
+            .filter(f => f.trim());
+
+          console.log(`Changed files (${changedFiles.length}):`);
+          changedFiles.forEach(f => console.log(`  - ${f}`));
+
+          // Parse CODEOWNERS file
+          const codeownersPath = '.github/CODEOWNERS';
+          const codeownersContent = fs.readFileSync(codeownersPath, 'utf-8');
+          const lines = codeownersContent.split('\n');
+
+          // Map of path patterns to owners (excluding root * rule)
+          const codeownersRules = [];
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            // Skip empty lines and comments
+            if (!trimmed || trimmed.startsWith('#')) {
+              continue;
+            }
+
+            // Skip root * line
+            if (trimmed.startsWith('* ')) {
+              console.log('Skipping root * rule');
+              continue;
+            }
+
+            // Parse pattern and owners
+            const parts = trimmed.split(/\s+/);
+            if (parts.length < 2) {
+              continue;
+            }
+
+            const pattern = parts[0];
+            const owners = parts.slice(1).map(o => o.replace('@', ''));
+
+            codeownersRules.push({ pattern, owners });
+          }
+
+          console.log('\nCODEOWNERS rules (excluding root):');
+          codeownersRules.forEach(rule => {
+            console.log(`  ${rule.pattern} -> ${rule.owners.join(', ')}`);
+          });
+
+          // Function to check if a file matches a CODEOWNERS pattern
+          // CODEOWNERS patterns match:
+          // - Exact file/directory path
+          // - pattern/ matches everything in that directory
+          // - pattern/** matches everything recursively in that directory
+          function matchesPattern(file, pattern) {
+            // Normalize paths (handle both / and \ separators)
+            const normalizePath = (p) => p.replace(/\\/g, '/');
+            const normalizedFile = normalizePath(file);
+            const normalizedPattern = normalizePath(pattern);
+
+            // Exact match
+            if (normalizedFile === normalizedPattern) {
+              return true;
+            }
+
+            // Pattern ends with /**: matches recursively in directory
+            if (normalizedPattern.endsWith('/**')) {
+              const dirPrefix = normalizedPattern.slice(0, -3);
+              return normalizedFile.startsWith(dirPrefix + '/');
+            }
+
+            // Pattern ends with /: matches everything in directory
+            if (normalizedPattern.endsWith('/')) {
+              const dirPrefix = normalizedPattern.slice(0, -1);
+              return normalizedFile.startsWith(dirPrefix + '/');
+            }
+
+            // Pattern is a directory prefix (matches subdirectories)
+            if (normalizedFile.startsWith(normalizedPattern + '/')) {
+              return true;
+            }
+
+            return false;
+          }
+
+          // Check each changed file
+          // CODEOWNERS rules are evaluated top-to-bottom, first match wins
+          const unapprovedFiles = [];
+
+          for (const file of changedFiles) {
+            let matched = false;
+            let owned = false;
+
+            // Find the first matching rule (CODEOWNERS uses first match semantics)
+            for (const rule of codeownersRules) {
+              if (matchesPattern(file, rule.pattern)) {
+                matched = true;
+                // First match wins in CODEOWNERS, so check ownership here
+                owned = rule.owners.includes(prAuthor);
+                break; // Stop at first match
+              }
+            }
+
+            // File must be matched by a non-root CODEOWNERS rule AND author must own it
+            if (!matched || !owned) {
+              unapprovedFiles.push(file);
+            }
+          }
+
+          // Decision
+          if (unapprovedFiles.length === 0) {
+            console.log(`\n✅ All changed files are owned by ${prAuthor} according to CODEOWNERS`);
+
+            // Check if already approved by this workflow
+            try {
+              const reviews = JSON.parse(
+                execSync(`gh pr view ${prNumber} --json reviews`, { encoding: 'utf-8' })
+              );
+
+              // Check if there's already an approval from GitHub Actions bot
+              // (look for approval with the auto-approve message)
+              const hasAutoApproval = reviews.reviews.some(
+                review => review.state === 'APPROVED' &&
+                          review.body &&
+                          review.body.includes('Auto-approved: PR author has CODEOWNERS access')
+              );
+
+              if (hasAutoApproval) {
+                console.log('PR already auto-approved by this workflow');
+              } else {
+                // Approve the PR using GitHub Actions bot account
+                execSync(
+                  `gh pr review ${prNumber} --approve --body "Auto-approved: PR author ${prAuthor} has CODEOWNERS access to all changed files (excluding root rule)"`,
+                  { stdio: 'inherit' }
+                );
+                console.log(`PR approved automatically for ${prAuthor}`);
+              }
+            } catch (error) {
+              console.error('Error checking/approving PR:', error.message);
+              // Don't fail the workflow if approval fails (might already be approved, etc.)
+              console.log('Continuing despite approval error...');
+            }
+          } else {
+            console.log(`\n❌ Not auto-approved: Some files are not owned by ${prAuthor}`);
+            console.log('Unauthorized files:');
+            unapprovedFiles.forEach(f => console.log(`  - ${f}`));
+          }
+          EOF
