@@ -1,0 +1,24 @@
+{
+  "name": "@ag-ui/claude-example",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@ag-ui/claude": "workspace:*",
+    "@ag-ui/client": "workspace:*",
+    "@ag-ui/core": "workspace:*",
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.17",
+    "@types/cors": "^2.8.13",
+    "@types/node": "^20.11.19",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}
+
