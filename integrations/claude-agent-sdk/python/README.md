@@ -1,6 +1,6 @@
 # Claude Agent SDK Middleware for AG-UI Protocol
 
-This Python middleware enables [Anthropic Claude Agent SDK](https://docs.claude.com/zh-CN/api/agent-sdk/python) agents to be used with the AG-UI Protocol, providing a bridge between the two frameworks.
+This Python middleware enables [Anthropic Claude Agent SDK](https://docs.claude.com/api/agent-sdk/python) agents to be used with the AG-UI Protocol, providing a bridge between the two frameworks.
 
 ## Prerequisites
 
@@ -334,7 +334,7 @@ AG-UI tools are automatically converted to Claude SDK `SdkMcpTool` format and ex
 - `cwd`: Working directory for file operations
 - `max_tokens`: Maximum tokens for responses
 - `temperature`: Temperature for response generation
-- And more - see [Claude Agent SDK documentation](https://docs.claude.com/zh-CN/api/agent-sdk/python)
+- And more - see [Claude Agent SDK documentation](https://docs.claude.com/api/agent-sdk/python)
 
 See [CONFIGURATION.md](./CONFIGURATION.md) for detailed configuration options.
 
@@ -350,7 +350,7 @@ See [CONFIGURATION.md](./CONFIGURATION.md) for detailed configuration options.
 
 ## Implementation Status
 
-✅ **Core Implementation Complete**: The integration has been updated based on the [Claude Agent SDK documentation](https://docs.claude.com/zh-CN/api/agent-sdk/python#claudesdkclient).
+✅ **Core Implementation Complete**: The integration has been updated based on the [Claude Agent SDK documentation](https://docs.claude.com/api/agent-sdk/python#claudesdkclient).
 
 Key features implemented:
 - ✅ `ClaudeSDKClient` integration for persistent sessions

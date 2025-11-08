@@ -41,17 +41,40 @@ export class ClaudeAgent extends AbstractAgent {
   private baseUrl?: string;
   private sessionTimeout: number;
   private enablePersistentSessions: boolean;
-  private permissionMode: 'ask' | 'auto' | 'none';
+  private permissionMode: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
+  private stderr?: (data: string) => void;
+  private verbose?: boolean;
 
   constructor(config: ClaudeAgentConfig) {
     super(config);
-    this.apiKey = config.apiKey || process.env.ANTHROPIC_API_KEY;
-    this.baseUrl = config.baseUrl || process.env.ANTHROPIC_BASE_URL;
+    // SDK automatically reads ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY from environment
+    // Only set these if explicitly provided in config (optional)
+    this.apiKey = config.apiKey;
+    this.baseUrl = config.baseUrl;
     this.sessionTimeout = config.sessionTimeout || 30 * 60 * 1000; // 30 minutes
     this.enablePersistentSessions = config.enablePersistentSessions !== false;
-    this.permissionMode = config.permissionMode || 'ask';
+    // Map legacy permission modes to new SDK values for backward compatibility
+    this.permissionMode = this.mapPermissionMode(config.permissionMode || 'bypassPermissions');
+    this.stderr = config.stderr;
+    this.verbose = config.verbose;
     this.sessionManager = SessionManager.getInstance(this.sessionTimeout);
     this.executionStateManager = new ExecutionStateManager();
+  }
+
+  /**
+   * Map legacy permission modes to new SDK values for backward compatibility
+   */
+  private mapPermissionMode(mode?: string): 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' {
+    const modeMap: Record<string, 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan'> = {
+      'ask': 'default',
+      'auto': 'bypassPermissions',
+      'none': 'bypassPermissions',
+      'default': 'default',
+      'acceptEdits': 'acceptEdits',
+      'bypassPermissions': 'bypassPermissions',
+      'plan': 'plan',
+    };
+    return modeMap[mode || 'bypassPermissions'] || 'bypassPermissions';
   }
 
   /**
@@ -82,13 +105,14 @@ export class ClaudeAgent extends AbstractAgent {
       // Emit run started event
       const runStartedEvent: RunStartedEvent = {
         type: EventType.RUN_STARTED,
+        threadId: sessionId,
         runId,
       };
       subscriber.next(runStartedEvent);
       execution.addEvent(runStartedEvent);
 
       // Get or create session
-      const session = this.sessionManager.getSession(sessionId, input.agentId);
+      const session = this.sessionManager.getSession(sessionId, 'default');
 
       // Get unseen messages
       const unseenMessages = this.sessionManager.getUnseenMessages(
@@ -100,10 +124,10 @@ export class ClaudeAgent extends AbstractAgent {
       const isToolResult = isToolResultSubmission(input.messages || []);
 
       // Prepare tools
-      const tools = input.context?.tools || [];
+      const tools = input.tools || [];
       
       // Prepare options for Claude SDK
-      const options = this.prepareClaudeOptions(tools);
+      const options = await this.prepareClaudeOptions(tools);
 
       // Extract prompt from messages
       const prompt = convertAgUiMessagesToPrompt(unseenMessages);
@@ -111,8 +135,7 @@ export class ClaudeAgent extends AbstractAgent {
       // Emit step started event
       const stepStartedEvent: StepStartedEvent = {
         type: EventType.STEP_STARTED,
-        runId,
-        stepId: `step_${runId}_1`,
+        stepName: `step_${runId}_1`,
       };
       subscriber.next(stepStartedEvent);
       execution.addEvent(stepStartedEvent);
@@ -123,6 +146,7 @@ export class ClaudeAgent extends AbstractAgent {
         options,
         session,
         runId,
+        sessionId,
         subscriber,
         execution
       );
@@ -133,8 +157,7 @@ export class ClaudeAgent extends AbstractAgent {
       // Emit step finished event
       const stepFinishedEvent: StepFinishedEvent = {
         type: EventType.STEP_FINISHED,
-        runId,
-        stepId: `step_${runId}_1`,
+        stepName: `step_${runId}_1`,
       };
       subscriber.next(stepFinishedEvent);
       execution.addEvent(stepFinishedEvent);
@@ -142,6 +165,7 @@ export class ClaudeAgent extends AbstractAgent {
       // Emit run finished event
       const runFinishedEvent: RunFinishedEvent = {
         type: EventType.RUN_FINISHED,
+        threadId: sessionId,
         runId,
       };
       subscriber.next(runFinishedEvent);
@@ -154,8 +178,7 @@ export class ClaudeAgent extends AbstractAgent {
       // Emit run error event
       const runErrorEvent: RunErrorEvent = {
         type: EventType.RUN_ERROR,
-        runId,
-        error: formatErrorMessage(error),
+        message: formatErrorMessage(error),
       };
       subscriber.next(runErrorEvent);
       execution.addEvent(runErrorEvent);
@@ -170,17 +193,43 @@ export class ClaudeAgent extends AbstractAgent {
 
   /**
    * Prepare Claude SDK options
+   * SDK automatically reads ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY from environment
+   * But baseUrl needs to be explicitly passed for third-party APIs
    */
-  private prepareClaudeOptions(tools: any[]): Options {
-    const options: Options = {
-      apiKey: this.apiKey,
-      baseUrl: this.baseUrl,
+  private async prepareClaudeOptions(tools: any[]): Promise<Options> {
+    // Get baseUrl from config or environment
+    const baseUrl = this.baseUrl || process.env.ANTHROPIC_BASE_URL;
+    const apiKey = this.apiKey || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
+    
+    // Debug logging
+    console.log('[Claude Agent] Preparing SDK options:', {
+      hasApiKey: !!apiKey,
+      hasBaseUrl: !!baseUrl,
+      baseUrl: baseUrl || 'not set',
       permissionMode: this.permissionMode,
+      hasStderr: !!this.stderr,
+      verbose: this.verbose,
+    });
+    
+    const options: Options = {
+      permissionMode: this.permissionMode,
+      // Add stderr callback for debugging - CRITICAL for error logging
+      ...(this.stderr && { stderr: this.stderr }),
+      // Add verbose flag for detailed logging
+      ...(this.verbose !== undefined && { verbose: this.verbose }),
+      env: process.env
     };
+    
+    // Verify stderr callback is set
+    if (this.stderr) {
+      console.log('[Claude Agent] ✓ stderr callback is configured for error logging');
+    } else {
+      console.warn('[Claude Agent] ⚠️  stderr callback not configured - CLI errors may not be visible');
+    }
 
     // Add tools if provided
     if (tools && tools.length > 0) {
-      const mcpServer = ToolAdapter.createMcpServerForTools(tools);
+      const mcpServer = await ToolAdapter.createMcpServerForTools(tools);
       options.mcpServers = {
         ag_ui_tools: mcpServer,
       };
@@ -194,41 +243,34 @@ export class ClaudeAgent extends AbstractAgent {
 
   /**
    * Call Claude SDK
+   * Note: Currently only stateless mode is supported via query() function
    */
   private async callClaudeSDK(
     prompt: string,
     options: Options,
     session: any,
     runId: string,
+    sessionId: string,
     subscriber: Subscriber<ProcessedEvents>,
     execution: ExecutionState
   ): Promise<void> {
-    const eventTranslator = new EventTranslator(runId);
+    const eventTranslator = new EventTranslator(runId, sessionId);
 
-    if (this.enablePersistentSessions) {
-      // Persistent session mode
-      await this.callClaudeSDKPersistent(
-        prompt,
-        options,
-        session,
-        eventTranslator,
-        subscriber,
-        execution
-      );
-    } else {
-      // Stateless mode
-      await this.callClaudeSDKStateless(
-        prompt,
-        options,
-        eventTranslator,
-        subscriber,
-        execution
-      );
-    }
+    // The current @anthropic-ai/claude-agent-sdk only supports stateless mode
+    // via the query() function. We use stateless mode for both cases.
+    await this.callClaudeSDKStateless(
+      prompt,
+      options,
+      eventTranslator,
+      subscriber,
+      execution
+    );
   }
 
   /**
    * Call Claude SDK in persistent session mode
+   * Note: The current SDK only supports stateless mode via query() function
+   * This method falls back to stateless mode
    */
   private async callClaudeSDKPersistent(
     prompt: string,
@@ -238,31 +280,10 @@ export class ClaudeAgent extends AbstractAgent {
     subscriber: Subscriber<ProcessedEvents>,
     execution: ExecutionState
   ): Promise<void> {
-    // Get or create Claude SDK client
-    let client = this.sessionManager.getClient(session.id);
-
-    if (!client) {
-      // Import Claude SDK dynamically
-      const { ClaudeSDKClient } = await this.importClaudeSDK();
-      client = new ClaudeSDKClient(options);
-      this.sessionManager.setClient(session.id, client);
-    }
-
-    // Send query
-    await client.query(prompt);
-
-    // Receive and process responses
-    for await (const message of client.receiveResponse()) {
-      if (execution.isAborted()) {
-        break;
-      }
-
-      const events = eventTranslator.translateMessage(message);
-      for (const event of events) {
-        subscriber.next(event);
-        execution.addEvent(event);
-      }
-    }
+    // The current @anthropic-ai/claude-agent-sdk only supports stateless mode
+    // via the query() function. For persistent sessions, we use query() 
+    // but maintain session state in our SessionManager
+    await this.callClaudeSDKStateless(prompt, options, eventTranslator, subscriber, execution);
   }
 
   /**
@@ -275,23 +296,78 @@ export class ClaudeAgent extends AbstractAgent {
     subscriber: Subscriber<ProcessedEvents>,
     execution: ExecutionState
   ): Promise<void> {
-    // Import Claude SDK dynamically
-    const { query } = await this.importClaudeSDK();
+    try {
+      // Log environment variables for debugging
+      console.log('[Claude Agent] Environment check:');
+      console.log('  ANTHROPIC_API_KEY:', process.env.ANTHROPIC_API_KEY ? 'SET' : 'NOT SET');
+      console.log('  ANTHROPIC_AUTH_TOKEN:', process.env.ANTHROPIC_AUTH_TOKEN ? 'SET' : 'NOT SET');
+      console.log('  ANTHROPIC_BASE_URL:', process.env.ANTHROPIC_BASE_URL || 'NOT SET (using default)');
+      console.log('[Claude Agent] Options passed to SDK:', {
+        hasApiKey: !!options.apiKey,
+        hasBaseUrl: !!options.baseUrl,
+        permissionMode: options.permissionMode,
+        hasMcpServers: !!options.mcpServers,
+      });
 
-    // Call query function
-    const queryResult = query({ prompt, options });
+      // Import Claude SDK dynamically
+      const { query } = await this.importClaudeSDK();
 
-    // Process responses
-    for await (const message of queryResult) {
-      if (execution.isAborted()) {
-        break;
+      console.log('[Claude Agent] Calling SDK query()...');
+
+      // Call query function
+      // SDK will automatically read API key from environment variables (ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN)
+      // if not provided in options.apiKey
+      const queryResult = query({ prompt, options });
+
+      // Process responses
+      for await (const message of queryResult) {
+        console.log('[Claude Agent] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('[Claude Agent] Received message type:', message?.type || 'unknown');
+        console.log('[Claude Agent] Full message:', JSON.stringify(message, null, 2));
+        
+        if (execution.isAborted()) {
+          console.log('[Claude Agent] Execution aborted by user');
+          break;
+        }
+
+        const events = eventTranslator.translateMessage(message);
+        console.log('[Claude Agent] Translated events count:', events.length);
+        for (const event of events) {
+          console.log('[Claude Agent] Sending event:', JSON.stringify(event, null, 2));
+          subscriber.next(event);
+          execution.addEvent(event);
+        }
+        console.log('[Claude Agent] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       }
-
-      const events = eventTranslator.translateMessage(message);
-      for (const event of events) {
-        subscriber.next(event);
-        execution.addEvent(event);
+      
+      console.log('[Claude Agent] Query completed successfully');
+    } catch (error: any) {
+      // Log detailed error information
+      console.error('[Claude Agent] ERROR Details:');
+      console.error('  Message:', error.message);
+      console.error('  Stack:', error.stack);
+      console.error('  Error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+      
+      // Handle Claude Code process errors
+      if (error.message && error.message.includes('exited with code')) {
+        throw new Error(
+          `Claude Code process failed. Please ensure:\n` +
+          `1. Claude CLI is installed and accessible (run: claude --version)\n` +
+          `2. ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN is set correctly in environment variables\n` +
+          `3. You have proper permissions to run Claude Code\n` +
+          `4. If using ANTHROPIC_BASE_URL, ensure it supports Claude Code protocol\n` +
+          `\nOriginal error: ${error.message}\n` +
+          `Error stack: ${error.stack || 'No stack trace'}`
+        );
       }
+      // Handle API key errors from SDK
+      if (error.message && (error.message.includes('API key') || error.message.includes('auth'))) {
+        throw new Error(
+          `API key error: ${error.message}\n` +
+          `Please ensure ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN is set in environment variables.`
+        );
+      }
+      throw error;
     }
   }
 

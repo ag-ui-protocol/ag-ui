@@ -4,21 +4,27 @@
   "private": true,
   "scripts": {
     "dev": "tsx src/server.ts",
+    "simple": "tsx simple-example.ts",
+    "pure": "tsx pure-sdk-example.ts",
+    "pure-tools": "tsx pure-sdk-with-tools.ts",
+    "direct": "tsx direct-api-example.ts",
     "build": "tsc"
   },
   "dependencies": {
     "@ag-ui/claude": "workspace:*",
     "@ag-ui/client": "workspace:*",
     "@ag-ui/core": "workspace:*",
-    "express": "^4.18.2",
-    "cors": "^2.8.5"
+    "@anthropic-ai/sdk": "^0.68.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.18.2"
   },
   "devDependencies": {
-    "@types/express": "^4.17.17",
     "@types/cors": "^2.8.13",
+    "@types/dotenv": "^8.2.0",
+    "@types/express": "^4.17.17",
     "@types/node": "^20.11.19",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3"
   }
 }
-

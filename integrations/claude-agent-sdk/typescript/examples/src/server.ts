@@ -2,33 +2,81 @@
  * Example Express server using Claude Agent SDK
  */
 
-import express from 'express';
+import dotenv from 'dotenv';
+import { resolve } from 'path';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { ClaudeAgent } from '@ag-ui/claude';
 import type { RunAgentInput } from '@ag-ui/client';
 
+// Load environment variables from .env.local or .env
+// Try multiple locations in order of priority
+dotenv.config({ path: resolve(__dirname, '../.env.local') }); // examples/.env.local (highest priority)
+dotenv.config({ path: resolve(__dirname, '../../.env.local') }); // typescript/.env.local
+dotenv.config({ path: resolve(__dirname, '../.env') }); // examples/.env
+dotenv.config({ path: resolve(__dirname, '../../.env') }); // typescript/.env
+
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 8000;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
+// Validate and log environment variables
+console.log('=== Environment Variables ===');
+console.log('ANTHROPIC_API_KEY:', process.env.ANTHROPIC_API_KEY ? 'SET (' + process.env.ANTHROPIC_API_KEY.substring(0, 10) + '...)' : 'NOT SET');
+console.log('ANTHROPIC_AUTH_TOKEN:', process.env.ANTHROPIC_AUTH_TOKEN ? 'SET (' + process.env.ANTHROPIC_AUTH_TOKEN.substring(0, 10) + '...)' : 'NOT SET');
+console.log('ANTHROPIC_BASE_URL:', process.env.ANTHROPIC_BASE_URL || 'NOT SET (will use default)');
+console.log('PORT:', process.env.PORT || '8000 (default)');
+console.log('PERMISSION_MODE:', process.env.PERMISSION_MODE || 'bypassPermissions (default)');
+console.log('VERBOSE:', process.env.VERBOSE || 'false (default)');
+console.log('=============================\n');
+
+// SDK will automatically read ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY from environment
+// Do NOT pass apiKey in config - let SDK handle it automatically
+if (!process.env.ANTHROPIC_AUTH_TOKEN && !process.env.ANTHROPIC_API_KEY) {
+  console.error('❌ ERROR: Neither ANTHROPIC_API_KEY nor ANTHROPIC_AUTH_TOKEN found in environment variables.');
+  console.error('SDK will not be able to authenticate. Please set one in .env.local or .env file.');
+  process.exit(1);
+}
+
 // Initialize Claude Agent
+// Do NOT pass apiKey or baseUrl - SDK reads from environment variables automatically
 const agent = new ClaudeAgent({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-  enablePersistentSessions: true,
-  sessionTimeout: 30 * 60 * 1000, // 30 minutes
-  permissionMode: 'ask', // or 'auto' or 'none'
+  enablePersistentSessions: process.env.ENABLE_PERSISTENT_SESSIONS !== 'false',
+  sessionTimeout: process.env.SESSION_TIMEOUT 
+    ? parseInt(process.env.SESSION_TIMEOUT) 
+    : 30 * 60 * 1000, // 30 minutes
+  // Valid permission modes: 'default', 'acceptEdits', 'bypassPermissions', 'plan'
+  permissionMode: (process.env.PERMISSION_MODE as any) || 'bypassPermissions',
+  // Add stderr callback for debugging - CRITICAL for capturing CLI errors
+  stderr: (data: string) => {
+    // Log all stderr output from Claude CLI
+    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.error('[Claude CLI stderr]:', data);
+    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
+    // Also log to file if needed for debugging
+    if (process.env.LOG_TO_FILE === 'true') {
+      const fs = require('fs');
+      const timestamp = new Date().toISOString();
+      fs.appendFileSync('/tmp/claude-cli-stderr.log', `[${timestamp}] ${data}\n`);
+    }
+  },
+  // Enable verbose logging
+  verbose: process.env.VERBOSE === 'true',
 });
 
+console.log('✓ Claude Agent initialized with stderr callback for error logging');
+
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok' });
 });
 
-// Main agent endpoint
-app.post('/api/run-agent', async (req, res) => {
+// Chat endpoint for CopilotKit compatibility
+app.post('/chat', async (req: Request, res: Response) => {
   try {
     const input: RunAgentInput = req.body;
 
@@ -44,11 +92,52 @@ app.post('/api/run-agent', async (req, res) => {
 
     // Run the agent and stream events
     agent.run(input).subscribe({
-      next: (event) => {
+      next: (event: any) => {
         // Send event as SSE
         res.write(`data: ${JSON.stringify(event)}\n\n`);
       },
-      error: (error) => {
+      error: (error: any) => {
+        console.error('Agent error:', error);
+        res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+        res.end();
+      },
+      complete: () => {
+        res.end();
+      },
+    });
+
+    // Handle client disconnect
+    req.on('close', () => {
+      console.log('Client disconnected');
+    });
+  } catch (error: any) {
+    console.error('Request error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Main agent endpoint
+app.post('/api/run-agent', async (req: Request, res: Response) => {
+  try {
+    const input: RunAgentInput = req.body;
+
+    // Validate input
+    if (!input.messages || input.messages.length === 0) {
+      return res.status(400).json({ error: 'Messages are required' });
+    }
+
+    // Set headers for Server-Sent Events
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    // Run the agent and stream events
+    agent.run(input).subscribe({
+      next: (event: any) => {
+        // Send event as SSE
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      },
+      error: (error: any) => {
         console.error('Agent error:', error);
         res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
         res.end();
@@ -137,7 +226,7 @@ const exampleTools = [
 ];
 
 // Example endpoint with tools
-app.post('/api/run-agent-with-tools', async (req, res) => {
+app.post('/api/run-agent-with-tools', async (req: Request, res: Response) => {
   try {
     const input: RunAgentInput = {
       ...req.body,
@@ -152,10 +241,10 @@ app.post('/api/run-agent-with-tools', async (req, res) => {
     res.setHeader('Connection', 'keep-alive');
 
     agent.run(input).subscribe({
-      next: (event) => {
+      next: (event: any) => {
         res.write(`data: ${JSON.stringify(event)}\n\n`);
       },
-      error: (error) => {
+      error: (error: any) => {
         console.error('Agent error:', error);
         res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
         res.end();
@@ -175,7 +264,7 @@ app.post('/api/run-agent-with-tools', async (req, res) => {
 });
 
 // Cleanup endpoint
-app.post('/api/cleanup', async (req, res) => {
+app.post('/api/cleanup', async (req: Request, res: Response) => {
   try {
     await agent.cleanup();
     res.json({ message: 'Cleanup successful' });
@@ -188,6 +277,7 @@ app.post('/api/cleanup', async (req, res) => {
 // Start server
 app.listen(port, () => {
   console.log(`Claude Agent server listening on port ${port}`);
+  console.log(`Chat endpoint: http://localhost:${port}/chat`);
   console.log(`API endpoint: http://localhost:${port}/api/run-agent`);
   console.log(`With tools: http://localhost:${port}/api/run-agent-with-tools`);
 });
