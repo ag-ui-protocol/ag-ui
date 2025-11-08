@@ -235,7 +235,7 @@ class LangGraphAgent:
                 CustomEvent(
                     type=EventType.CUSTOM,
                     name=LangGraphEventTypes.OnInterrupt.value,
-                    value=json.dumps(interrupt.value, default=json_safe_stringify) if not isinstance(interrupt.value, str) else interrupt.value,
+                    value=dump_json_safe(interrupt.value),
                     raw_event=interrupt,
                 )
             )
@@ -311,7 +311,7 @@ class LangGraphAgent:
                     CustomEvent(
                         type=EventType.CUSTOM,
                         name=LangGraphEventTypes.OnInterrupt.value,
-                        value=json.dumps(interrupt.value) if not isinstance(interrupt.value, str) else interrupt.value,
+                        value=dump_json_safe(interrupt.value),
                         raw_event=interrupt,
                     )
                 )
@@ -741,7 +741,7 @@ class LangGraphAgent:
                     ToolCallArgsEvent(
                         type=EventType.TOOL_CALL_ARGS,
                         tool_call_id=tool_call_output.tool_call_id,
-                        delta=json.dumps(event["data"]["input"]),
+                        delta=dump_json_safe(event["data"]["input"]),
                         raw_event=event
                     )
                 )
@@ -758,7 +758,7 @@ class LangGraphAgent:
                     type=EventType.TOOL_CALL_RESULT,
                     tool_call_id=tool_call_output.tool_call_id,
                     message_id=str(uuid.uuid4()),
-                    content=tool_call_output.content,
+                    content=dump_json_safe(tool_call_output.content),
                     role="tool"
                 )
             )
@@ -917,3 +917,7 @@ class LangGraphAgent:
             kwargs.update(fork)
 
         return kwargs
+
+
+def dump_json_safe(value):
+    return json.dumps(value, default=json_safe_stringify) if not isinstance(value, str) else value
