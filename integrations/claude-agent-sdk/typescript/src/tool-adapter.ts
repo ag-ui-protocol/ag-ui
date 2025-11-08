@@ -10,6 +10,13 @@ import type {
   CallToolResult,
 } from './types';
 
+// Extended Tool type that includes runtime properties
+type ExtendedTool = Tool & {
+  client?: boolean;
+  handler?: (args: any) => any | Promise<any>;
+  longRunning?: boolean;
+};
+
 /**
  * ToolAdapter handles conversion of AG-UI tools to Claude SDK format
  */
@@ -18,13 +25,13 @@ export class ToolAdapter {
    * Convert AG-UI tools to Claude SDK MCP tool definitions
    */
   static convertAgUiToolsToSdk(tools: Tool[]): SdkMcpToolDefinition<any>[] {
-    return tools.map((tool) => this.convertSingleTool(tool));
+    return tools.map((tool) => this.convertSingleTool(tool as ExtendedTool));
   }
 
   /**
    * Convert a single AG-UI tool to Claude SDK format
    */
-  private static convertSingleTool(tool: Tool): SdkMcpToolDefinition<any> {
+  private static convertSingleTool(tool: ExtendedTool): SdkMcpToolDefinition<any> {
     const zodSchema = this.convertJsonSchemaToZod(tool.parameters || {});
 
     return {
@@ -168,14 +175,18 @@ export class ToolAdapter {
   /**
    * Create an MCP server configuration for AG-UI tools
    */
-  static createMcpServerForTools(tools: Tool[]): McpSdkServerConfigWithInstance {
-    const sdkTools = this.convertAgUiToolsToSdk(tools);
+  static async createMcpServerForTools(tools: Tool[]): Promise<any> {
+    const sdkTools = this.convertAgUiToolsToSdk(tools as ExtendedTool[]);
 
-    return {
+    // Import createSdkMcpServer from Claude Agent SDK
+    const { createSdkMcpServer } = await import('@anthropic-ai/claude-agent-sdk');
+    
+    // Use the official SDK function to create a properly formatted MCP server
+    return createSdkMcpServer({
       name: 'ag_ui_tools',
       version: '1.0.0',
-      tools: sdkTools,
-    };
+      tools: sdkTools as any, // Cast to any to avoid type incompatibility
+    });
   }
 
   /**
@@ -203,7 +214,7 @@ export class ToolAdapter {
    * Check if a tool is a long-running client tool
    */
   static isClientTool(toolName: string, tools: Tool[]): boolean {
-    const tool = tools.find((t) => t.name === toolName);
+    const tool = tools.find((t) => t.name === toolName) as ExtendedTool | undefined;
     return tool?.client === true;
   }
 
@@ -211,7 +222,7 @@ export class ToolAdapter {
    * Check if a tool is marked as long-running
    */
   static isLongRunningTool(toolName: string, tools: Tool[]): boolean {
-    const tool = tools.find((t) => t.name === toolName);
+    const tool = tools.find((t) => t.name === toolName) as ExtendedTool | undefined;
     return tool?.client === true || tool?.longRunning === true;
   }
 

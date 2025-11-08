@@ -17,3 +17,6 @@ node_modules
 .pnpm-store
 
 **/.poetry-cache
+integrations/claude-agent-sdk/typescript/.env.local
+**/pnpm-lock.yaml
+pnpm-lock.yaml

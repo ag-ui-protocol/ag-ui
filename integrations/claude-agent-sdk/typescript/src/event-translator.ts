@@ -10,14 +10,11 @@ import {
   ToolCallArgsEvent,
   ToolCallEndEvent,
   ToolCallResultEvent,
-  RunFinishedEvent,
-  RunErrorEvent,
   EventType,
 } from '@ag-ui/client';
 import type {
   SDKMessage,
   SDKAssistantMessage,
-  SDKResultMessage,
   ContentBlock,
   TextBlock,
   ToolUseBlock,
@@ -25,8 +22,6 @@ import type {
   ProcessedEvents,
 } from './types';
 import {
-  isAssistantMessage,
-  isResultMessage,
   hasContentProperty,
   isTextBlock,
   isToolUseBlock,
@@ -35,27 +30,34 @@ import {
 
 /**
  * EventTranslator converts Claude SDK messages to AG-UI protocol events
+ * 
+ * NOTE: This translator only handles SDK message translation.
+ * Run lifecycle events (RUN_STARTED, RUN_FINISHED, etc.) and step events
+ * are handled by ClaudeAgent.
  */
 export class EventTranslator {
   private messageIdCounter = 0;
   private currentMessageId: string | null = null;
   private runId: string;
+  private threadId: string;
 
-  constructor(runId: string) {
+  constructor(runId: string, threadId: string) {
     this.runId = runId;
+    this.threadId = threadId;
   }
 
   /**
    * Translate a Claude SDK message to AG-UI events
+   * NOTE: Does not emit RUN_STARTED, RUN_FINISHED, or STEP events - those are handled by ClaudeAgent
    */
   translateMessage(message: SDKMessage): ProcessedEvents[] {
     const events: ProcessedEvents[] = [];
 
     if (hasContentProperty(message)) {
       events.push(...this.translateAssistantMessage(message as SDKAssistantMessage));
-    } else if (isResultMessage(message)) {
-      events.push(...this.translateResultMessage(message));
     }
+    // Note: ResultMessage (success/error) is ignored here
+    // Run completion is handled by ClaudeAgent, not EventTranslator
 
     return events;
   }
@@ -66,7 +68,10 @@ export class EventTranslator {
   private translateAssistantMessage(message: SDKAssistantMessage): ProcessedEvents[] {
     const events: ProcessedEvents[] = [];
 
-    for (const block of message.content) {
+    // Content is in message.message.content for SDKAssistantMessage
+    const content = message.message?.content || [];
+    
+    for (const block of content) {
       if (isTextBlock(block)) {
         events.push(...this.translateTextBlock(block));
       } else if (isToolUseBlock(block)) {
@@ -81,6 +86,7 @@ export class EventTranslator {
 
   /**
    * Translate a TextBlock to text message events
+   * NOTE: Step events are handled by ClaudeAgent, not here
    */
   private translateTextBlock(block: TextBlock): ProcessedEvents[] {
     const events: ProcessedEvents[] = [];
@@ -90,14 +96,18 @@ export class EventTranslator {
     events.push({
       type: EventType.TEXT_MESSAGE_START,
       messageId,
+      role: 'assistant',
     });
 
-    // Content event
-    events.push({
-      type: EventType.TEXT_MESSAGE_CONTENT,
-      messageId,
-      content: block.text,
-    });
+    // Content event - split text into delta chunks
+    const text = block.text;
+    if (text.length > 0) {
+      events.push({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId,
+        delta: text,
+      });
+    }
 
     // End event
     events.push({
@@ -110,6 +120,7 @@ export class EventTranslator {
 
   /**
    * Translate a ToolUseBlock to tool call events
+   * NOTE: Step events are handled by ClaudeAgent, not here
    */
   private translateToolUseBlock(block: ToolUseBlock): ProcessedEvents[] {
     const events: ProcessedEvents[] = [];
@@ -119,15 +130,18 @@ export class EventTranslator {
     events.push({
       type: EventType.TOOL_CALL_START,
       toolCallId,
-      toolName: block.name,
+      toolCallName: block.name,
     });
 
     // Args event - send args as JSON string
-    events.push({
-      type: EventType.TOOL_CALL_ARGS,
-      toolCallId,
-      args: JSON.stringify(block.input),
-    });
+    const argsJson = JSON.stringify(block.input);
+    if (argsJson.length > 0) {
+      events.push({
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId,
+        delta: argsJson,
+      });
+    }
 
     // End event
     events.push({
@@ -162,34 +176,14 @@ export class EventTranslator {
       resultContent = JSON.stringify(block.content);
     }
 
+    const messageId = this.generateMessageId();
     events.push({
       type: EventType.TOOL_CALL_RESULT,
       toolCallId: block.tool_use_id,
-      result: resultContent,
-      isError: block.is_error || false,
+      messageId,
+      content: resultContent,
+      ...(block.is_error && { role: 'tool' as const }),
     });
-
-    return events;
-  }
-
-  /**
-   * Translate a ResultMessage to run finished or error event
-   */
-  private translateResultMessage(message: SDKResultMessage): ProcessedEvents[] {
-    const events: ProcessedEvents[] = [];
-
-    if (message.subtype === 'success') {
-      events.push({
-        type: EventType.RUN_FINISHED,
-        runId: this.runId,
-      });
-    } else if (message.subtype === 'error') {
-      events.push({
-        type: EventType.RUN_ERROR,
-        runId: this.runId,
-        error: message.error?.message || 'Unknown error',
-      });
-    }
 
     return events;
   }

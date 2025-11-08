@@ -1,8 +1,8 @@
 # CopilotKit + Claude Agent SDK Integration Demo
 
-这个示例展示了如何使用 AG-UI Protocol 将 Claude Agent SDK 集成到 CopilotKit 中。
+This example demonstrates how to integrate Claude Agent SDK into CopilotKit using AG-UI Protocol.
 
-## 架构图
+## Architecture Diagram
 
 ```
 ┌─────────────────────────────────────┐
@@ -33,22 +33,22 @@
 └─────────────────────────────────────┘
 ```
 
-## 快速开始
+## Quick Start
 
-### 1. 启动 Claude Agent SDK 服务器
+### 1. Start Claude Agent SDK Server
 
-在一个终端中：
+In one terminal:
 
 ```bash
 cd ../../python/examples/server
 python fastapi_server.py
 ```
 
-服务器将在 `http://localhost:8000/chat` 运行。
+The server will run at `http://localhost:8000/chat`.
 
-### 2. 安装并启动 CopilotKit 前端
+### 2. Install and Start CopilotKit Frontend
 
-在另一个终端中：
+In another terminal:
 
 ```bash
 cd integrations/claude-agent-sdk/typescript/examples/copilotkit
@@ -56,21 +56,21 @@ npm install
 npm run dev
 ```
 
-前端将在 `http://localhost:3000` 运行。
+The frontend will run at `http://localhost:3000`.
 
-### 3. 打开浏览器
+### 3. Open Browser
 
-访问 `http://localhost:3000` 查看 CopilotKit 聊天界面。
+Visit `http://localhost:3000` to see the CopilotKit chat interface.
 
-## 功能特性
+## Features
 
-- ✅ **持续对话**: 使用 `ClaudeSDKClient` 维护对话历史
-- ✅ **工具支持**: Claude 可以调用前端工具
-- ✅ **流式响应**: 通过 Server-Sent Events 实时流式传输
-- ✅ **会话管理**: 跨多个请求的持久会话
-- ✅ **完整功能**: 支持中断、钩子、自定义工具（使用 `ClaudeSDKClient` 时）
+- ✅ **Persistent Conversations**: Uses `ClaudeSDKClient` to maintain conversation history
+- ✅ **Tool Support**: Claude can call frontend tools
+- ✅ **Streaming Responses**: Real-time streaming via Server-Sent Events
+- ✅ **Session Management**: Persistent sessions across multiple requests
+- ✅ **Full Features**: Supports interrupts, hooks, custom tools (when using `ClaudeSDKClient`)
 
-## 目录结构
+## Directory Structure
 
 ```
 copilotkit/
@@ -78,54 +78,54 @@ copilotkit/
 │   └── app/
 │       ├── api/
 │       │   └── copilotkit/
-│       │       └── route.ts        # CopilotKit 运行时端点
-│       ├── layout.tsx              # Next.js 布局
-│       ├── page.tsx                # 前端聊天界面
-│       └── globals.css             # 全局样式
-├── package.json                    # 依赖配置
-├── tsconfig.json                   # TypeScript 配置
-├── next.config.js                  # Next.js 配置
-├── tailwind.config.js              # Tailwind CSS 配置
-├── postcss.config.js               # PostCSS 配置
-└── README.md                       # 详细文档
+│       │       └── route.ts        # CopilotKit runtime endpoint
+│       ├── layout.tsx              # Next.js layout
+│       ├── page.tsx                # Frontend chat interface
+│       └── globals.css             # Global styles
+├── package.json                    # Dependencies configuration
+├── tsconfig.json                   # TypeScript configuration
+├── next.config.js                  # Next.js configuration
+├── tailwind.config.js              # Tailwind CSS configuration
+├── postcss.config.js               # PostCSS configuration
+└── README.md                       # Detailed documentation
 ```
 
-## 工作原理
+## How It Works
 
-### 1. 前端 (React + CopilotKit)
+### 1. Frontend (React + CopilotKit)
 
-`src/app/page.tsx` 使用 CopilotKit 的 React 组件：
-- `CopilotKit`: 包装应用并连接到运行时
-- `CopilotChat`: 提供聊天 UI
-- `useFrontendTool`: 定义 Claude 可以调用的前端工具
+`src/app/page.tsx` uses CopilotKit React components:
+- `CopilotKit`: Wraps the app and connects to runtime
+- `CopilotChat`: Provides chat UI
+- `useFrontendTool`: Defines frontend tools that Claude can call
 
-### 2. API 路由 (Next.js)
+### 2. API Route (Next.js)
 
 `src/app/api/copilotkit/route.ts`:
-- 创建指向 Claude Agent SDK 服务器的 `HttpAgent` (来自 `@ag-ui/client`)
-- 将其包装在 `CopilotRuntime` 中
-- 暴露 CopilotKit 调用的 POST 端点
+- Creates `HttpAgent` (from `@ag-ui/client`) pointing to Claude Agent SDK server
+- Wraps it in `CopilotRuntime`
+- Exposes POST endpoint that CopilotKit calls
 
-### 3. 后端 (Claude Agent SDK)
+### 3. Backend (Claude Agent SDK)
 
-Claude Agent SDK 服务器 (`../../python/examples/server/fastapi_server.py`):
-- 处理 AG-UI Protocol 请求
-- 将它们转换为 Claude Agent SDK 调用
-- 返回 AG-UI Protocol 事件
-- 支持 CORS 以便前端集成
+Claude Agent SDK server (`../../python/examples/server/fastapi_server.py`):
+- Handles AG-UI Protocol requests
+- Converts them to Claude Agent SDK calls
+- Returns AG-UI Protocol events
+- Supports CORS for frontend integration
 
-## 环境变量
+## Environment Variables
 
-- `CLAUDE_AGENT_URL`: Claude Agent SDK 服务器的 URL (默认: `http://localhost:8000/chat`)
+- `CLAUDE_AGENT_URL`: URL of Claude Agent SDK server (default: `http://localhost:8000/chat`)
 
-## 故障排除
+## Troubleshooting
 
-1. **连接错误**: 确保 Claude Agent SDK 服务器在正确的端口运行
-2. **CORS 问题**: FastAPI 服务器包含 CORS 中间件。如果需要添加更多源，请编辑 `fastapi_server.py`
-3. **Agent 未找到**: 检查前端的 agent ID (`agentic_chat`) 是否与 API 路由中的匹配
+1. **Connection Error**: Ensure Claude Agent SDK server is running on the correct port
+2. **CORS Issues**: FastAPI server includes CORS middleware. Edit `fastapi_server.py` if you need to add more origins
+3. **Agent Not Found**: Check if the agent ID (`agentic_chat`) in the frontend matches the one in the API route
 
-## 参考文档
+## References
 
-- [CopilotKit 文档](https://docs.copilotkit.ai/adk/quickstart?path=exiting-agent)
-- [AG-UI Protocol 文档](https://ag-ui-protocol.github.io/ag-ui/)
-- [Claude Agent SDK 文档](https://docs.claude.com/zh-CN/api/agent-sdk/python)
+- [CopilotKit Documentation](https://docs.copilotkit.ai/adk/quickstart?path=exiting-agent)
+- [AG-UI Protocol Documentation](https://ag-ui-protocol.github.io/ag-ui/)
+- [Claude Agent SDK Documentation](https://docs.claude.com/api/agent-sdk/python)

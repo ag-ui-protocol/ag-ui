@@ -33,7 +33,11 @@ export interface Options {
   baseUrl?: string;
   mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
   allowedTools?: string[];
-  permissionMode?: 'ask' | 'auto' | 'none';
+  // Valid permission modes from Agent SDK: 'default', 'acceptEdits', 'bypassPermissions', 'plan'
+  // Legacy values 'ask', 'auto', 'none' are also supported for backward compatibility
+  permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'ask' | 'auto' | 'none';
+  stderr?: (data: string) => void;
+  verbose?: boolean;
   [key: string]: any;
 }
 
@@ -54,8 +58,14 @@ export type SDKMessage =
 
 export interface SDKAssistantMessage {
   type: 'assistant';
-  content: ContentBlock[];
-  id?: string;
+  message: {
+    id?: string;
+    content: ContentBlock[];
+    [key: string]: any;
+  };
+  parent_tool_use_id?: string | null;
+  uuid?: string;
+  session_id?: string;
 }
 
 export interface SDKUserMessage {
@@ -177,8 +187,12 @@ export interface ClaudeAgentConfig extends AgentConfig {
   baseUrl?: string;
   sessionTimeout?: number;
   enablePersistentSessions?: boolean;
-  permissionMode?: 'ask' | 'auto' | 'none';
+  // Valid permission modes from Agent SDK: 'default', 'acceptEdits', 'bypassPermissions', 'plan'
+  // Legacy values 'ask', 'auto', 'none' are mapped internally for backward compatibility
+  permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'ask' | 'auto' | 'none';
   mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
+  stderr?: (data: string) => void;
+  verbose?: boolean;
 }
 
 // Execution state types
@@ -217,7 +231,16 @@ export function isThinkingBlock(block: ContentBlock): block is ThinkingBlock {
 }
 
 export function hasContentProperty(message: SDKMessage): message is SDKAssistantMessage | SDKPartialAssistantMessage {
-  return 'content' in message && Array.isArray(message.content);
+  // For SDKAssistantMessage, content is in message.content
+  if (message.type === 'assistant') {
+    return 'message' in message && 
+           message.message !== null &&
+           typeof message.message === 'object' &&
+           'content' in message.message && 
+           Array.isArray((message.message as any).content);
+  }
+  // For SDKPartialAssistantMessage, content might be at top level
+  return 'content' in message && Array.isArray((message as any).content);
 }
 
 // Tool execution types

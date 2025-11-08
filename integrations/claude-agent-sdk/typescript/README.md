@@ -1,45 +1,45 @@
 # @ag-ui/claude
 
-Claude Agent SDK 与 AG-UI Protocol 的集成，让 Claude 代理能够无缝工作在 AG-UI 应用中。
+Integration of Claude Agent SDK with AG-UI Protocol, enabling Claude agents to work seamlessly in AG-UI applications.
 
-## 特性
+## Features
 
-- ✅ **完整的 AG-UI Protocol 支持** - 实现所有标准事件类型
-- ✅ **持久会话管理** - 支持多轮对话和会话状态维护
-- ✅ **工具集成** - 支持客户端和后端工具
-- ✅ **流式响应** - 实时流式传输 AI 响应
-- ✅ **无状态模式** - 可选的无状态执行模式
-- ✅ **TypeScript 支持** - 完整的类型定义
-- ✅ **可观察对象 API** - 基于 RxJS Observable 的事件流
-- ✅ **自动会话清理** - 自动清理过期会话
+- ✅ **Full AG-UI Protocol Support** - Implements all standard event types
+- ✅ **Persistent Session Management** - Supports multi-turn conversations and session state maintenance
+- ✅ **Tool Integration** - Supports both client-side and backend tools
+- ✅ **Streaming Responses** - Real-time streaming of AI responses
+- ✅ **Stateless Mode** - Optional stateless execution mode
+- ✅ **TypeScript Support** - Complete type definitions
+- ✅ **Observable API** - RxJS Observable-based event streams
+- ✅ **Automatic Session Cleanup** - Automatically cleans up expired sessions
 
-## 安装
+## Installation
 
 ```bash
 npm install @ag-ui/claude @ag-ui/client @ag-ui/core
 ```
 
-还需要安装 Claude Agent SDK：
+You also need to install Claude Agent SDK:
 
 ```bash
 npm install @anthropic-ai/claude-agent-sdk
 ```
 
-## 快速开始
+## Quick Start
 
-### 基础用法
+### Basic Usage
 
 ```typescript
 import { ClaudeAgent } from '@ag-ui/claude';
 import type { RunAgentInput } from '@ag-ui/client';
 
-// 初始化 agent
+// Initialize agent
 const agent = new ClaudeAgent({
   apiKey: process.env.ANTHROPIC_API_KEY,
   enablePersistentSessions: true,
 });
 
-// 准备输入
+// Prepare input
 const input: RunAgentInput = {
   agentId: 'my_agent',
   threadId: 'thread_123',
@@ -49,7 +49,7 @@ const input: RunAgentInput = {
   context: {},
 };
 
-// 运行 agent 并订阅事件
+// Run agent and subscribe to events
 agent.run(input).subscribe({
   next: (event) => {
     console.log('Event:', event);
@@ -63,7 +63,7 @@ agent.run(input).subscribe({
 });
 ```
 
-### 使用工具
+### Using Tools
 
 ```typescript
 import { ClaudeAgent } from '@ag-ui/claude';
@@ -92,7 +92,7 @@ const input: RunAgentInput = {
           required: ['operation', 'a', 'b'],
         },
         handler: async ({ operation, a, b }) => {
-          // 后端工具实现
+          // Backend tool implementation
           if (operation === 'add') return a + b;
           // ...
         },
@@ -110,7 +110,7 @@ agent.run(input).subscribe({
 });
 ```
 
-### Express 服务器示例
+### Express Server Example
 
 ```typescript
 import express from 'express';
@@ -146,104 +146,104 @@ app.post('/api/run-agent', async (req, res) => {
 app.listen(3000);
 ```
 
-## API 文档
+## API Documentation
 
 ### ClaudeAgent
 
-主要的 agent 类，继承自 `AbstractAgent`。
+Main agent class that extends `AbstractAgent`.
 
-#### 构造函数
+#### Constructor
 
 ```typescript
 constructor(config: ClaudeAgentConfig)
 ```
 
-**配置选项：**
+**Configuration Options:**
 
-- `apiKey?: string` - Anthropic API 密钥（默认从 `ANTHROPIC_API_KEY` 环境变量读取）
-- `baseUrl?: string` - API 基础 URL（默认从 `ANTHROPIC_BASE_URL` 环境变量读取）
-- `enablePersistentSessions?: boolean` - 是否启用持久会话（默认：`true`）
-- `sessionTimeout?: number` - 会话超时时间（毫秒，默认：30 分钟）
-- `permissionMode?: 'ask' | 'auto' | 'none'` - 权限模式（默认：`'ask'`）
+- `apiKey?: string` - Anthropic API key (defaults to `ANTHROPIC_API_KEY` environment variable)
+- `baseUrl?: string` - API base URL (defaults to `ANTHROPIC_BASE_URL` environment variable)
+- `enablePersistentSessions?: boolean` - Whether to enable persistent sessions (default: `true`)
+- `sessionTimeout?: number` - Session timeout in milliseconds (default: 30 minutes)
+- `permissionMode?: 'ask' | 'auto' | 'none'` - Permission mode (default: `'ask'`)
 
-#### 方法
+#### Methods
 
 ##### `run(input: RunAgentInput): Observable<ProcessedEvents>`
 
-运行 agent 并返回事件流的 Observable。
+Runs the agent and returns an Observable of event streams.
 
-**参数：**
+**Parameters:**
 - `input.agentId: string` - Agent ID
-- `input.threadId?: string` - 会话 ID（用于持久会话）
-- `input.messages: Message[]` - 消息历史
-- `input.context?: { tools?: Tool[] }` - 上下文（包括工具定义）
+- `input.threadId?: string` - Session ID (for persistent sessions)
+- `input.messages: Message[]` - Message history
+- `input.context?: { tools?: Tool[] }` - Context (including tool definitions)
 
-**返回：** Observable，发出 AG-UI Protocol 事件
+**Returns:** Observable that emits AG-UI Protocol events
 
 ##### `abortExecution(runId: string): void`
 
-中止正在运行的执行。
+Aborts a running execution.
 
 ##### `cleanup(): Promise<void>`
 
-清理所有会话和资源。
+Cleans up all sessions and resources.
 
 ### SessionManager
 
-会话管理器，采用单例模式。
+Session manager using singleton pattern.
 
-#### 方法
+#### Methods
 
-- `getInstance(sessionTimeout?: number): SessionManager` - 获取单例实例
-- `getSession(sessionId: string, userId?: string): Session` - 获取或创建会话
-- `hasSession(sessionId: string): boolean` - 检查会话是否存在
-- `deleteSession(sessionId: string): boolean` - 删除会话
-- `trackMessage(sessionId: string, messageId: string): void` - 标记消息已处理
-- `getUnseenMessages(sessionId: string, messages: Message[]): Message[]` - 获取未处理的消息
-- `getStateValue(sessionId: string, key: string): any` - 获取会话状态值
-- `setStateValue(sessionId: string, key: string, value: any): void` - 设置会话状态值
+- `getInstance(sessionTimeout?: number): SessionManager` - Get singleton instance
+- `getSession(sessionId: string, userId?: string): Session` - Get or create session
+- `hasSession(sessionId: string): boolean` - Check if session exists
+- `deleteSession(sessionId: string): boolean` - Delete session
+- `trackMessage(sessionId: string, messageId: string): void` - Mark message as processed
+- `getUnseenMessages(sessionId: string, messages: Message[]): Message[]` - Get unprocessed messages
+- `getStateValue(sessionId: string, key: string): any` - Get session state value
+- `setStateValue(sessionId: string, key: string, value: any): void` - Set session state value
 
 ### EventTranslator
 
-事件转换器，将 Claude SDK 消息转换为 AG-UI 事件。
+Event translator that converts Claude SDK messages to AG-UI events.
 
-#### 方法
+#### Methods
 
-- `translateMessage(message: SDKMessage): ProcessedEvents[]` - 转换单个消息
+- `translateMessage(message: SDKMessage): ProcessedEvents[]` - Translate a single message
 
 ### ToolAdapter
 
-工具适配器，处理工具格式转换。
+Tool adapter that handles tool format conversion.
 
-#### 静态方法
+#### Static Methods
 
-- `convertAgUiToolsToSdk(tools: Tool[]): SdkMcpToolDefinition[]` - 转换工具到 SDK 格式
-- `createMcpServerForTools(tools: Tool[]): McpSdkServerConfigWithInstance` - 创建 MCP 服务器
-- `formatToolNameForSdk(toolName: string, serverName?: string): string` - 格式化工具名称
-- `parseToolNameFromSdk(sdkToolName: string): string` - 解析工具名称
+- `convertAgUiToolsToSdk(tools: Tool[]): SdkMcpToolDefinition[]` - Convert tools to SDK format
+- `createMcpServerForTools(tools: Tool[]): McpSdkServerConfigWithInstance` - Create MCP server
+- `formatToolNameForSdk(toolName: string, serverName?: string): string` - Format tool name
+- `parseToolNameFromSdk(sdkToolName: string): string` - Parse tool name
 
-## 事件类型
+## Event Types
 
-agent 发出以下 AG-UI Protocol 事件：
+The agent emits the following AG-UI Protocol events:
 
-- `RunStartedEvent` - 执行开始
-- `RunFinishedEvent` - 执行完成
-- `RunErrorEvent` - 执行错误
-- `StepStartedEvent` - 步骤开始
-- `StepFinishedEvent` - 步骤完成
-- `TextMessageStartEvent` - 文本消息开始
-- `TextMessageContentEvent` - 文本消息内容（流式）
-- `TextMessageEndEvent` - 文本消息结束
-- `ToolCallStartEvent` - 工具调用开始
-- `ToolCallArgsEvent` - 工具参数
-- `ToolCallEndEvent` - 工具调用结束
-- `ToolCallResultEvent` - 工具执行结果
+- `RunStartedEvent` - Execution started
+- `RunFinishedEvent` - Execution completed
+- `RunErrorEvent` - Execution error
+- `StepStartedEvent` - Step started
+- `StepFinishedEvent` - Step completed
+- `TextMessageStartEvent` - Text message started
+- `TextMessageContentEvent` - Text message content (streaming)
+- `TextMessageEndEvent` - Text message ended
+- `ToolCallStartEvent` - Tool call started
+- `ToolCallArgsEvent` - Tool arguments
+- `ToolCallEndEvent` - Tool call ended
+- `ToolCallResultEvent` - Tool execution result
 
-## 工具支持
+## Tool Support
 
-### 后端工具
+### Backend Tools
 
-后端工具在服务器端执行：
+Backend tools are executed on the server side:
 
 ```typescript
 {
@@ -251,15 +251,15 @@ agent 发出以下 AG-UI Protocol 事件：
   description: 'Performs calculations',
   parameters: { /* JSON Schema */ },
   handler: async (args) => {
-    // 工具逻辑
+    // Tool logic
     return result;
   }
 }
 ```
 
-### 客户端工具
+### Client Tools
 
-客户端工具在前端执行，设置 `client: true`：
+Client tools are executed on the frontend. Set `client: true`:
 
 ```typescript
 {
@@ -270,23 +270,23 @@ agent 发出以下 AG-UI Protocol 事件：
 }
 ```
 
-## 会话管理
+## Session Management
 
-### 持久会话模式
+### Persistent Session Mode
 
-启用持久会话后，agent 会为每个 `threadId` 维护独立的会话：
+When persistent sessions are enabled, the agent maintains independent sessions for each `threadId`:
 
 ```typescript
 const agent = new ClaudeAgent({
   apiKey: 'your_key',
   enablePersistentSessions: true,
-  sessionTimeout: 30 * 60 * 1000, // 30 分钟
+  sessionTimeout: 30 * 60 * 1000, // 30 minutes
 });
 ```
 
-### 无状态模式
+### Stateless Mode
 
-禁用持久会话后，每次调用都是独立的：
+When persistent sessions are disabled, each call is independent:
 
 ```typescript
 const agent = new ClaudeAgent({
@@ -295,31 +295,31 @@ const agent = new ClaudeAgent({
 });
 ```
 
-## 测试
+## Testing
 
-运行单元测试：
+Run unit tests:
 
 ```bash
 npm test
 ```
 
-运行特定测试：
+Run specific tests:
 
 ```bash
 npm test -- agent.test.ts
 ```
 
-## 示例
+## Examples
 
-查看 `examples/` 目录获取完整的示例：
+See the `examples/` directory for complete examples:
 
-- **Express Server** - 完整的 Express.js 服务器示例
-- **工具集成** - 后端和客户端工具示例
-- **会话管理** - 多轮对话示例
+- **Express Server** - Complete Express.js server example
+- **Tool Integration** - Backend and client tool examples
+- **Session Management** - Multi-turn conversation examples
 
-## 架构
+## Architecture
 
-集成架构基于 Python 版本：
+The integration architecture is based on the Python version:
 
 ```
 AG-UI Protocol          Claude Middleware          Claude Agent SDK
@@ -331,21 +331,20 @@ RunAgentInput ──────> ClaudeAgent.run() ──────> SDK Clie
 BaseEvent[] <──────── translate events <──────── Response[]
 ```
 
-主要组件：
+Key Components:
 
-- **ClaudeAgent**: 主协调器，管理执行流程
-- **EventTranslator**: 事件转换（Claude SDK → AG-UI）
-- **SessionManager**: 会话生命周期管理
-- **ToolAdapter**: 工具格式转换
-- **ExecutionState**: 执行状态跟踪
+- **ClaudeAgent**: Main coordinator, manages execution flow
+- **EventTranslator**: Event translation (Claude SDK → AG-UI)
+- **SessionManager**: Session lifecycle management
+- **ToolAdapter**: Tool format conversion
+- **ExecutionState**: Execution state tracking
 
-## 参考
+## References
 
-- [Python 实现](../python/) - Python SDK 实现参考
-- [Claude Agent SDK 文档](https://docs.claude.com/zh-CN/api/agent-sdk/typescript)
-- [AG-UI Protocol 文档](https://docs.ag-ui.com/)
+- [Python Implementation](../python/) - Python SDK implementation reference
+- [Claude Agent SDK Documentation](https://docs.claude.com/api/agent-sdk/typescript)
+- [AG-UI Protocol Documentation](https://docs.ag-ui.com/)
 
-## 许可证
+## License
 
 Apache-2.0
-

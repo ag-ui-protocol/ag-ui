@@ -53,7 +53,7 @@ from claude_agent_sdk import ClaudeAgentOptions
 
 # Example 1: Using persistent sessions (ClaudeSDKClient) - RECOMMENDED
 # Supports multi-turn conversations, interrupts, hooks, custom tools, etc.
-# See: https://docs.claude.com/zh-CN/api/agent-sdk/python#在-query-和-claudesdkclient-之间选择
+# See: https://docs.claude.com/api/agent-sdk/python#choosing-between-query-and-claudesdkclient
 agent = ClaudeAgent(
     use_persistent_sessions=True,  # Use ClaudeSDKClient for full features
     app_name="example_app",

@@ -4,26 +4,44 @@ This example demonstrates how to use the Claude Agent SDK with Express.js to cre
 
 ## Setup
 
-1. Install dependencies:
+### 1. Configure Environment Variables
+
+Copy the environment variable template file and configure it:
 
 ```bash
 cd examples
-npm install
+cp env.example .env.local
 ```
 
-2. Set your Anthropic API key:
+Edit the `.env.local` file and set the required environment variables:
 
 ```bash
-export ANTHROPIC_API_KEY=your_api_key_here
+# Required: Claude API key
+ANTHROPIC_API_KEY=your_api_key_here
+
+# Optional configuration
+CLAUDE_CLI_PATH=/path/to/claude-agent-sdk/cli/claude  # Claude CLI path
+PORT=3000                                              # Server port
+APP_NAME=claude-example                                # Application name
+SYSTEM_PROMPT=You are a helpful assistant             # System prompt
+ENABLE_PERSISTENT_SESSIONS=true                        # Enable persistent sessions
+SESSION_TIMEOUT=1800000                                # Session timeout (milliseconds)
+PERMISSION_MODE=ask                                    # Permission mode: ask, auto, none
 ```
 
-3. Run the server:
+### 2. Install Dependencies
 
 ```bash
-npm run dev
+pnpm install
 ```
 
-The server will start on `http://localhost:3000`.
+### 3. Run the Server
+
+```bash
+pnpm dev
+```
+
+The server will start at `http://localhost:3000`.
 
 ## API Endpoints
 
