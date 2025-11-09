@@ -20,7 +20,6 @@ Edit the `.env.local` file and set the required environment variables:
 ANTHROPIC_API_KEY=your_api_key_here
 
 # Optional configuration
-CLAUDE_CLI_PATH=/path/to/claude-agent-sdk/cli/claude  # Claude CLI path
 PORT=3000                                              # Server port
 APP_NAME=claude-example                                # Application name
 SYSTEM_PROMPT=You are a helpful assistant             # System prompt
