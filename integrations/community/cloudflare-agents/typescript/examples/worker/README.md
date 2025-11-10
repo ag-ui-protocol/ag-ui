@@ -18,7 +18,7 @@ Open `client.html` in your browser and connect to the WebSocket endpoint.
 
 This example emits the standard AG-UI event flow:
 
-```
+```text
 RUN_STARTED → TEXT_MESSAGE_START → TEXT_MESSAGE_CONTENT → TEXT_MESSAGE_END → RUN_FINISHED
 ```
 
