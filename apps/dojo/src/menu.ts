@@ -101,6 +101,19 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
     ],
   },
   {
+    id: "microsoft-agent-framework-dotnet",
+    name: "Microsoft Agent Framework (.NET)",
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "human_in_the_loop",
+      // commented out while fixing
+      // "agentic_generative_ui",
+      "shared_state",
+      "tool_based_generative_ui",
+    ],
+  },
+  {
     id: "agno",
     name: "Agno",
     features: [
@@ -164,19 +177,6 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
       "agentic_chat_reasoning",
       "agentic_generative_ui",
       "predictive_state_updates",
-      "shared_state",
-      "tool_based_generative_ui",
-    ],
-  },
-  {
-    id: "microsoft-agent-framework-dotnet",
-    name: "Microsoft Agent Framework (.NET)",
-    features: [
-      "agentic_chat",
-      "backend_tool_rendering",
-      "human_in_the_loop",
-      // commented out while fixing
-      // "agentic_generative_ui",
       "shared_state",
       "tool_based_generative_ui",
     ],
