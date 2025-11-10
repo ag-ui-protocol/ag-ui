@@ -25,11 +25,6 @@ USER dotnet
 # Copy the built application from builder stage
 COPY --from=builder /app/out .
 
-# Environment variables for Azure OpenAI (can be overridden at runtime)
-ENV AZURE_OPENAI_ENDPOINT="" \
-    AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="gpt-4o-mini" \
-    ASPNETCORE_URLS="http://+:8080"
-
 # Expose default ASP.NET Core port
 EXPOSE 8080
 
