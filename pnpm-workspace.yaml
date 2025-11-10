@@ -3,5 +3,6 @@ packages:
   - "middlewares/*"
   - "sdks/typescript/packages/*"
   - "integrations/*/typescript"
+  - "integrations/*/typescript/examples"
   - "integrations/community/*/typescript"
   - "integrations/mastra/typescript/examples"

@@ -1,0 +1,33 @@
+[project]
+name = "ag_ui_claude"
+version = "0.1.0"
+readme = "README.md"
+authors = [
+    { name = "AG-UI Contributors" }
+]
+requires-python = ">=3.9, <3.14"
+dependencies = [
+    "ag-ui-protocol>=0.1.7",
+    "claude-agent-sdk>=0.1.0",  # Adjust version based on actual availability
+    "fastapi>=0.115.2",
+    "pydantic>=2.11.7",
+    "uvicorn>=0.35.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.0,<0.9"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "flake8>=7.3.0",
+    "isort>=6.0.1",
+    "mypy>=1.16.1",
+    "pluggy>=1.6.0",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+    "pytest-cov>=6.2.1",
+    "python-dotenv>=1.0.0",
+]
+
