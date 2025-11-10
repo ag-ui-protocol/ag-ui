@@ -1,1 +1,0 @@
-export { compactEvents } from "./compact";

@@ -57,7 +57,7 @@ export const mastra = new Mastra({
 
           Your primary function is to help users get weather details for specific locations. When responding:
           - Always ask for a location if none is provided
-          - If the location name isn’t in English, please translate it
+          - If the location name isn't in English, please translate it
           - If giving a location with multiple parts (e.g. "New York, NY"), use the most relevant part (e.g. "New York")
           - Include relevant details like humidity, wind conditions, and precipitation
           - Keep responses concise but informative
@@ -105,7 +105,7 @@ export const mastra = new Mastra({
                       "One-Pot Meal",
                       "Vegetarian",
                       "Vegan",
-                    ]),
+                    ])
                   )
                   .describe("A list of special preferences for the recipe"),
                 cooking_time: z
@@ -117,21 +117,25 @@ export const mastra = new Mastra({
                       icon: z
                         .string()
                         .describe(
-                          "The icon emoji (not emoji code like '\x1f35e', but the actual emoji like 🥕) of the ingredient",
+                          "The icon emoji (not emoji code like '\x1f35e', but the actual emoji like 🥕) of the ingredient"
                         ),
                       name: z.string().describe("The name of the ingredient"),
-                      amount: z.string().describe("The amount of the ingredient"),
-                    }),
+                      amount: z
+                        .string()
+                        .describe("The amount of the ingredient"),
+                    })
                   )
                   .describe(
-                    "Entire list of ingredients for the recipe, including the new ingredients and the ones that are already in the recipe",
+                    "Entire list of ingredients for the recipe, including the new ingredients and the ones that are already in the recipe"
                   ),
                 instructions: z
                   .array(z.string())
                   .describe(
-                    "Entire list of instructions for the recipe, including the new instructions and the ones that are already there",
+                    "Entire list of instructions for the recipe, including the new instructions and the ones that are already there"
                   ),
-                changes: z.string().describe("A description of the changes made to the recipe"),
+                changes: z
+                  .string()
+                  .describe("A description of the changes made to the recipe"),
               }),
             }),
           },

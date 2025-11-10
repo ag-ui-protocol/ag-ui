@@ -16,17 +16,18 @@
     "node": ">=20.9.0"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^2.0.23",
+    "@ai-sdk/openai": "^2.0.57",
     "@mastra/client-js": "^0.15.2",
     "@mastra/core": "^0.20.2",
-    "@mastra/libsql": "^0.15.1",
-    "@mastra/loggers": "^0.10.15",
-    "@mastra/memory": "^0.15.6",
-    "zod": "^3.25.48"
+    "@mastra/libsql": "^0.15.2",
+    "@mastra/loggers": "^0.10.18",
+    "@mastra/memory": "^0.15.10",
+    "ai": "^5.0.82",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/node": "^22.15.29",
+    "@types/node": "^22.18.13",
     "mastra": "^0.15.1",
-    "typescript": "^5.8.3"
+    "typescript": "^5.9.3"
   }
 }

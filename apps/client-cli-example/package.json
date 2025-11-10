@@ -18,12 +18,12 @@
     "@mastra/libsql": "0.12.0",
     "@mastra/loggers": "0.10.5",
     "@mastra/memory": "0.12.0",
-    "open": "^10.1.2",
-    "zod": "^3.22.4"
+    "open": "^10.2.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/node": "^20",
-    "tsx": "^4.7.0",
-    "typescript": "^5"
+    "@types/node": "^20.19.24",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
   }
 }

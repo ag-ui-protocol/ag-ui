@@ -2,7 +2,6 @@ output.txt
 node_modules
 dist
 .mastra
-.npm-cache
 .env.development
 .env
 *.db
