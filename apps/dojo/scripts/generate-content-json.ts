@@ -114,6 +114,7 @@ async function getFile(_filePath: string | undefined, _fileName?: string) {
     const extension = fileName.split(".").pop();
     let language = extension;
     if (extension === "py") language = "python";
+    else if (extension === "cs") language = "csharp";
     else if (extension === "css") language = "css";
     else if (extension === "md" || extension === "mdx") language = "markdown";
     else if (extension === "tsx") language = "typescript";
