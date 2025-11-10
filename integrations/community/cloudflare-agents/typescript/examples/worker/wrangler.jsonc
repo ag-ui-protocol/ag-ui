@@ -1,0 +1,10 @@
+{
+  "name": "agui-cf-min",
+  "main": "src/worker.ts",
+  "compatibility_date": "2025-10-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "MY_AGENT", "class_name": "MyAgent" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MyAgent"] }]
+}

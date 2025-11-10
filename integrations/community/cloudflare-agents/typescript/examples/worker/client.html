@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>AG-UI × Cloudflare Agents WS Demo</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        padding: 1rem;
+        background: #fafafa;
+      }
+      pre {
+        background: #eee;
+        padding: 1rem;
+        border-radius: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>AG-UI × Cloudflare Agents WebSocket Demo</h1>
+    <p>
+      Opens a WebSocket to <code>/agents/my-agent/demo</code> and logs events
+      below.
+    </p>
+
+    <button id="connect">Connect</button>
+    <button id="send" disabled>Send "hello"</button>
+    <pre id="log"></pre>
+
+    <script>
+      let ws;
+      const log = (msg) => {
+        const el = document.getElementById("log");
+        el.textContent += msg + "\n";
+      };
+
+      document.getElementById("connect").onclick = () => {
+        // For local dev, use ws://127.0.0.1:8787/agents/my-agent/demo
+        // For production, use wss://your-domain.workers.dev/agents/my-agent/demo
+        ws = new WebSocket("ws://127.0.0.1:8787/agents/my-agent/demo");
+        ws.onopen = () => {
+          log("[open] connected");
+          document.getElementById("send").disabled = false;
+        };
+        ws.onmessage = (e) => log(e.data);
+        ws.onclose = () => log("[close]");
+        ws.onerror = (err) => log("[error] " + err);
+      };
+
+      document.getElementById("send").onclick = () => {
+        ws.send("hello from browser");
+        log("[sent] hello from browser");
+      };
+    </script>
+  </body>
+</html>
