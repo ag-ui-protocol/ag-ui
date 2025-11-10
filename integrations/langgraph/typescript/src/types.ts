@@ -65,6 +65,8 @@ export interface RunMetadata {
   threadId?: string;
   graphInfo?: AssistantGraph
   hasFunctionStreaming?: boolean;
+  // True once the platform-assigned run id is known (set from stream metadata)
+  serverRunIdKnown?: boolean;
 }
 
 export type MessagesInProgressRecord = Record<string, MessageInProgress | null>;

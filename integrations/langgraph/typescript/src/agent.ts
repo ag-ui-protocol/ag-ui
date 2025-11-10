@@ -123,6 +123,9 @@ export class LangGraphAgent extends AbstractAgent {
   messagesInProcess: MessagesInProgressRecord;
   thinkingProcess: null | ThinkingInProgress;
   activeRun?: RunMetadata;
+  // Stop control flags
+  private cancelRequested: boolean = false;
+  private cancelSent: boolean = false;
   // @ts-expect-error no need to initialize subscriber right now
   subscriber: Subscriber<ProcessedEvents>;
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
@@ -167,6 +170,9 @@ export class LangGraphAgent extends AbstractAgent {
       threadId: input.threadId,
       hasFunctionStreaming: false,
     };
+    // Reset cancel flags for this run
+    this.cancelRequested = false;
+    this.cancelSent = false;
     this.subscriber = subscriber;
     if (!this.assistant) {
       this.assistant = await this.getAssistant();
@@ -400,6 +406,28 @@ export class LangGraphAgent extends AbstractAgent {
       this.handleNodeChange(nodeNameInput)
 
       for await (let streamResponseChunk of streamResponse) {
+        // If a cancel was requested and we haven't sent it yet, try now.
+        if (
+          this.cancelRequested &&
+          !this.cancelSent &&
+          this.activeRun?.threadId &&
+          this.activeRun?.id
+        ) {
+          try {
+            await this.client.runs.cancel(this.activeRun.threadId, this.activeRun.id);
+          } catch (_) {
+            // Ignore cancellation errors
+          } finally {
+            this.cancelSent = true;
+          }
+          // Best-effort: ask iterator to close early
+          try {
+            // Many async iterables used for streaming implement return()
+            await (streamResponse as any)?.return?.();
+          } catch (_) {}
+          break;
+        }
+
         const subgraphsStreamEnabled = input.forwardedProps?.streamSubgraphs;
         const isSubgraphStream =
           subgraphsStreamEnabled &&
@@ -450,7 +478,21 @@ export class LangGraphAgent extends AbstractAgent {
         const currentNodeName = metadata.langgraph_node;
         const eventType = chunkData.event;
 
-        this.activeRun!.id = metadata.run_id;
+        // Set server-assigned run id as soon as available
+        if (metadata.run_id) {
+          this.activeRun!.id = metadata.run_id;
+          this.activeRun!.serverRunIdKnown = true;
+          // If cancel was requested earlier (before server id was known), send it now.
+          if (this.cancelRequested && !this.cancelSent && this.activeRun?.threadId) {
+            try {
+              await this.client.runs.cancel(this.activeRun.threadId!, this.activeRun.id);
+            } catch (_) {
+              // Ignore cancellation errors
+            } finally {
+              this.cancelSent = true;
+            }
+          }
+        }
 
         if (currentNodeName && currentNodeName !== this.activeRun!.nodeName) {
           this.handleNodeChange(currentNodeName)
@@ -547,6 +589,9 @@ export class LangGraphAgent extends AbstractAgent {
         threadId,
         runId: this.activeRun!.id,
       });
+      // Reset cancel flags when run completes
+      this.cancelRequested = false;
+      this.cancelSent = false;
       this.activeRun = undefined;
       return subscriber.complete();
     } catch (e) {
@@ -805,6 +850,24 @@ export class LangGraphAgent extends AbstractAgent {
         })
         break;
     }
+  }
+
+  // Request cancellation of the current run via LangGraph Platform SDK
+  public abortRun() {
+    this.cancelRequested = true;
+    const threadId = this.activeRun?.threadId;
+    const runId = this.activeRun?.id;
+    if (threadId && runId && !this.cancelSent) {
+      void this.client.runs
+        .cancel(threadId, runId)
+        .then(() => {
+          this.cancelSent = true;
+        })
+        .catch(() => {
+          // Ignore cancellation errors; streaming loop will also check cancelRequested
+        });
+    }
+    super.abortRun();
   }
 
   handleThinkingEvent(reasoningData: LangGraphReasoning) {
