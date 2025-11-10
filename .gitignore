@@ -19,5 +19,3 @@ node_modules
 **/.poetry-cache
 **/.env.local
 integrations/claude-agent-sdk/**/.env.local
-**/pnpm-lock.yaml
-pnpm-lock.yaml
