@@ -45,6 +45,14 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
     ],
   },
   {
+    id: "langchain",
+    name: "LangChain",
+    features: [
+      "agentic_chat",
+      "tool_based_generative_ui",
+    ],
+  },
+  {
     id: "mastra",
     name: "Mastra",
     features: [

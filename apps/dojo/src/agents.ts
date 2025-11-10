@@ -22,6 +22,7 @@ import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
 import { AWSStrandsAgent } from "@ag-ui/aws-strands-integration";
 import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
+import { langChainAgents } from "@ag-ui/langchain/src/examples";
 
 const envVars = getEnvVars();
 export const agentsIntegrations: AgentIntegrationConfig[] = [
@@ -263,6 +264,10 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         }),
       };
     },
+  },
+  {
+    id: "langchain",
+    agents: async () => langChainAgents,
   },
   {
     id: "agno",

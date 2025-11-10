@@ -19,6 +19,7 @@
     "@ag-ui/agno": "workspace:*",
     "@ag-ui/crewai": "workspace:*",
     "@ag-ui/langgraph": "workspace:*",
+    "@ag-ui/langchain": "workspace:*",
     "@ag-ui/llamaindex": "workspace:*",
     "@ag-ui/mastra": "workspace:*",
     "@ag-ui/middleware-starter": "workspace:*",
