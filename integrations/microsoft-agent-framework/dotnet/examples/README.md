@@ -35,7 +35,7 @@ Update (or create) an environment variable before starting the dojo frontend:
 $env:AGENT_FRAMEWORK_DOTNET_URL="http://localhost:8889"
 ```
 
-The dojo will then display a **Microsoft Agent Framework (Dotnet)** entry alongside the existing Python integration. Each endpoint demonstrates a different AG-UI capability:
+The dojo will then display a **Microsoft Agent Framework (.NET)** entry alongside the existing Python integration. Each endpoint demonstrates a different AG-UI capability:
 
 - `/agentic_chat`
 - `/backend_tool_rendering`
