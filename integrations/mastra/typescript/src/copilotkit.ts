@@ -8,7 +8,9 @@ import {
 import { RuntimeContext } from "@mastra/core/runtime-context";
 import { registerApiRoute } from "@mastra/core/server";
 import { MastraAgent } from "./mastra";
-export function registerCopilotKit<T extends Record<string, any> | unknown = unknown>({
+export function registerCopilotKit<
+  T extends Record<string, any> | unknown = unknown,
+>({
   path,
   resourceId,
   serviceAdapter = new ExperimentalEmptyAdapter(),
@@ -19,7 +21,10 @@ export function registerCopilotKit<T extends Record<string, any> | unknown = unk
   resourceId: string;
   serviceAdapter?: CopilotServiceAdapter;
   agents?: Record<string, AbstractAgent>;
-  setContext?: (c: any, runtimeContext: RuntimeContext<T>) => void | Promise<void>;
+  setContext?: (
+    c: any,
+    runtimeContext: RuntimeContext<T>
+  ) => void | Promise<void>;
 }) {
   return registerApiRoute(path, {
     method: `ALL`,
@@ -41,7 +46,7 @@ export function registerCopilotKit<T extends Record<string, any> | unknown = unk
         });
 
       const runtime = new CopilotRuntime({
-        agents: aguiAgents,
+        agents: Promise.resolve(aguiAgents) as any,
       });
 
       const handler = copilotRuntimeNodeHttpEndpoint({
@@ -50,7 +55,7 @@ export function registerCopilotKit<T extends Record<string, any> | unknown = unk
         serviceAdapter,
       });
 
-      return handler.handle(c.req.raw, {});
+      return (handler as any).handle(c.req.raw, {});
     },
   });
 }
