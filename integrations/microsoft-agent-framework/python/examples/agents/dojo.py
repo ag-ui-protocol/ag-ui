@@ -47,7 +47,7 @@ app = FastAPI(title="Microsoft Agent Framework Python Dojo")
 # Then pass different clients to different agents:
 # add_agent_framework_fastapi_endpoint(app, simple_agent(azure_client), "/agentic_chat")
 # add_agent_framework_fastapi_endpoint(app, weather_agent(openai_client), "/backend_tool_rendering")
-#
+
 chat_client = AzureOpenAIChatClient()
 
 # Agentic Chat - simple_agent
