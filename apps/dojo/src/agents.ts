@@ -6,8 +6,6 @@ import { ServerStarterAgent } from "@ag-ui/server-starter";
 import { ServerStarterAllFeaturesAgent } from "@ag-ui/server-starter-all-features";
 import { MastraClient } from "@mastra/client-js";
 import { MastraAgent } from "@ag-ui/mastra";
-import { VercelAISDKAgent } from "@ag-ui/vercel-ai-sdk";
-import { openai } from "@ai-sdk/openai";
 import { LangGraphAgent, LangGraphHttpAgent } from "@ag-ui/langgraph";
 import { AgnoAgent } from "@ag-ui/agno";
 import { LlamaIndexAgent } from "@ag-ui/llamaindex";
@@ -119,6 +117,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     },
   },
   {
+    // To use this, run "pnpm mastra:dev" in a separate terminal window
     id: "mastra",
     agents: async () => {
       const mastraClient = new MastraClient({

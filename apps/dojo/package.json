@@ -79,7 +79,7 @@
     "tailwindcss-animate": "^1.0.7",
     "untruncate-json": "^0.0.1",
     "uuid": "^11.1.0",
-    "zod": "^3.25.67"
+    "zod": "^4.1.12"
   },
   "peerDependencies": {
     "@ag-ui/client": "workspace:*",
@@ -100,6 +100,7 @@
     "concurrently": "^9.2.0",
     "eslint": "^9",
     "eslint-config-next": "15.2.1",
+    "mastra": "1.0.0-beta.1",
     "tailwindcss": "^4",
     "tsx": "^4.7.0",
     "typescript": "^5",

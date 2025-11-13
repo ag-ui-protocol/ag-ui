@@ -1,11 +1,9 @@
-import { openai } from "@ai-sdk/openai";
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { LibSQLStore } from "@mastra/libsql";
 import { DynamoDBStore } from "@mastra/dynamodb";
-
-import { createStep, createWorkflow, Mastra } from "@mastra/core";
-import { createTool } from "@mastra/core";
+import { Mastra } from "@mastra/core";
+import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { weatherTool } from "./tools";
 
@@ -14,11 +12,15 @@ function getStorage(): LibSQLStore | DynamoDBStore {
     return new DynamoDBStore({
       name: "dynamodb",
       config: {
+        id: "storage-dynamodb",
         tableName: process.env.DYNAMODB_TABLE_NAME,
       },
     });
   } else {
-    return new LibSQLStore({ url: "file::memory:" });
+    return new LibSQLStore({
+      id: "storage-memory",
+      url: "file::memory:"
+    });
   }
 }
 
@@ -36,7 +38,7 @@ export const mastra = new Mastra({
         - Include relevant details like humidity, wind conditions, and precipitation
         - Keep responses concise but informative
     `,
-      model: openai("gpt-4o"),
+      model: "openai/gpt-4o",
       tools: { get_weather: weatherTool },
       memory: new Memory({
         storage: getStorage(),
@@ -51,7 +53,7 @@ export const mastra = new Mastra({
       }),
     }),
     backend_tool_rendering: new Agent({
-      name: "Weather Agent",
+      name: "backend_tool_rendering",
       instructions: `
           You are a helpful weather assistant that provides accurate weather information.
 
@@ -64,7 +66,7 @@ export const mastra = new Mastra({
 
           Use the weatherTool to fetch current weather data.
     `,
-      model: openai("gpt-4o-mini"),
+      model: "openai/gpt-4o-mini",
       tools: { get_weather: weatherTool },
       memory: new Memory({
         storage: getStorage(),
@@ -84,7 +86,7 @@ export const mastra = new Mastra({
 
         If you have just created or modified the recipe, just answer in one sentence what you did. dont describe the recipe, just say what you did. Do not mention "working memory", "memory", or "state" in your answer.
       `,
-      model: openai("gpt-4o"),
+      model: "openai/gpt-4o",
       memory: new Memory({
         storage: getStorage(),
         options: {
@@ -143,7 +145,7 @@ export const mastra = new Mastra({
       instructions: `
         You are a helpful assistant for creating haikus.
       `,
-      model: openai("gpt-4o"),
+      model: "openai/gpt-4o",
       tools: {
         generate_haiku: createTool({
           id: "generate_haiku",
@@ -158,7 +160,7 @@ export const mastra = new Mastra({
               .describe("An array of three lines of the haiku in English"),
           }),
           outputSchema: z.string(),
-          execute: async ({ context }) => {
+          execute: async () => {
             return "Haiku generated.";
           },
         }),
