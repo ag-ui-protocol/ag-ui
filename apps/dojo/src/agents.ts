@@ -408,6 +408,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         tool_based_generative_ui: new HttpAgent({
           url: `${envVars.agentFrameworkDotnetUrl}/tool_based_generative_ui`,
         }),
+        predictive_state_updates: new HttpAgent({
+          url: `${envVars.agentFrameworkDotnetUrl}/predictive_state_updates`,
+        }),
       };
     },
   },
