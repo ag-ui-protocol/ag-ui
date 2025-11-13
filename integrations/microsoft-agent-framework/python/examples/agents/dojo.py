@@ -32,7 +32,7 @@ from agent_framework_ag_ui_examples.agents import (
     ui_generator_agent,
     weather_agent,
 )
-from azure.identity import AzureCliCredential
+from azure.identity import DefaultAzureCredential
 
 load_dotenv()
 
@@ -50,7 +50,7 @@ app = FastAPI(title="Microsoft Agent Framework Python Dojo")
 # add_agent_framework_fastapi_endpoint(app, weather_agent(openai_client), "/backend_tool_rendering")
 
 # If using api_key authentication remove the credential parameter
-chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+chat_client = AzureOpenAIChatClient(credential=DefaultAzureCredential())
 
 # Agentic Chat - simple_agent
 add_agent_framework_fastapi_endpoint(app, simple_agent(chat_client), "/agentic_chat")
