@@ -112,6 +112,16 @@ const ALL_TARGETS = {
     name: "Dojo",
     cwd: gitRoot,
   },
+  "microsoft-agent-framework-python": {
+    command: "uv sync",
+    name: "Microsoft Agent Framework (Python)",
+    cwd: path.join(integrationsRoot, "microsoft-agent-framework/python/examples"),
+  },
+  "microsoft-agent-framework-dotnet": {
+    command: "dotnet restore AGUIDojoServer/AGUIDojoServer.csproj",
+    name: "Microsoft Agent Framework (.NET)",
+    cwd: path.join(integrationsRoot, "microsoft-agent-framework/dotnet/examples"),
+  },
 };
 
 function printDryRunServices(procs) {
