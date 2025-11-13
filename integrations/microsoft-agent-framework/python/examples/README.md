@@ -32,9 +32,25 @@ OPENAI_CHAT_MODEL_ID=your_model_here
 
 # Or for Azure OpenAI
 AZURE_OPENAI_ENDPOINT=your_endpoint_here
-AZURE_OPENAI_API_KEY=your_api_key_here
+# If using token auth, this env var is not necessary
+# AZURE_OPENAI_API_KEY=your_api_key_here
 AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=your_deployment_here
 ```
+
+## Authentication
+
+The sample uses `AzureCliCredential` for authentication. Run `az login` in your terminal before running the examples, or replace `AzureCliCredential` with your preferred authentication method.
+
+## Required role-based access control (RBAC) roles
+
+To access the Azure OpenAI API, your Azure account or service principal needs one of the following RBAC roles assigned to the Azure OpenAI resource:
+
+- **Cognitive Services OpenAI User**: Provides read access to Azure OpenAI resources and the ability to call the inference APIs. This is the minimum role required for running these examples.
+- **Cognitive Services OpenAI Contributor**: Provides full access to Azure OpenAI resources, including the ability to create, update, and delete deployments and models.
+
+For most scenarios, the **Cognitive Services OpenAI User** role is sufficient. You can assign this role through the Azure portal under the Azure OpenAI resource's "Access control (IAM)" section.
+
+For more detailed information about Azure OpenAI RBAC roles, see: [Role-based access control for Azure OpenAI Service](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/role-based-access-control)
 
 ## Running the Examples
 
