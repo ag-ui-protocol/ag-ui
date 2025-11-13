@@ -1,6 +1,6 @@
 import * as readline from "readline";
-import { agent } from "./agent";
 import { randomUUID } from "@ag-ui/client";
+import { agent } from "./agent";
 
 const rl = readline.createInterface({
   input: process.stdin,

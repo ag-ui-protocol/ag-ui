@@ -1,4 +1,3 @@
-import { openai } from "@ai-sdk/openai";
 import { Agent } from "@mastra/core/agent";
 import { MastraAgent } from "@ag-ui/mastra";
 import { Memory } from "@mastra/memory";
@@ -7,7 +6,6 @@ import { weatherTool } from "./tools/weather.tool";
 import { browserTool } from "./tools/browser.tool";
 
 export const agent = new MastraAgent({
-  // @ts-ignore
   agent: new Agent({
     name: "AG-UI Agent",
     instructions: `
@@ -26,13 +24,13 @@ export const agent = new MastraAgent({
         Use the browserTool to browse the web.
 
   `,
-    model: openai("gpt-4o-mini"),
+    model: "openai/gpt-4o-mini",
     tools: { weatherTool, browserTool },
     memory: new Memory({
       storage: new LibSQLStore({
+        id: "mastra-cli-example-db",
         url: "file:./mastra.db",
       }),
     }),
   }),
-  threadId: "1",
 });
