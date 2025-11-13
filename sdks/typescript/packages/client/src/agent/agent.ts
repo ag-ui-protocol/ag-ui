@@ -7,7 +7,8 @@ import { structuredClone_ } from "@/utils";
 import { compareVersions } from "compare-versions";
 import { catchError, map, tap } from "rxjs/operators";
 import { finalize } from "rxjs/operators";
-import { pipe, Observable, from, of, EMPTY } from "rxjs";
+import { takeUntil } from "rxjs/operators";
+import { pipe, Observable, from, of, EMPTY, Subject } from "rxjs";
 import { verifyEvents } from "@/verify";
 import { convertToLegacyEvents } from "@/legacy/convert";
 import { LegacyRuntimeProtocolEvent } from "@/legacy/types";
@@ -38,6 +39,8 @@ export abstract class AbstractAgent {
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
   private middlewares: Middleware[] = [];
+  // Emits to immediately detach from the active run (stop processing its stream)
+  private activeRunDetach$?: Subject<void>;
 
   get maxVersion() {
     return packageJson.version;
@@ -105,6 +108,9 @@ export abstract class AbstractAgent {
 
       await this.onInitialize(input, subscribers);
 
+      // Per-run detachment signal
+      this.activeRunDetach$ = new Subject<void>();
+
       const pipeline = pipe(
         () => {
           // Build middleware chain using reduceRight so middlewares can intercept runs.
@@ -124,6 +130,8 @@ export abstract class AbstractAgent {
         },
         transformChunks(this.debug),
         verifyEvents(this.debug),
+        // Stop processing immediately when this run is detached
+        (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
         (source$) => this.apply(input, source$, subscribers),
         (source$) => this.processApplyEvents(input, source$, subscribers),
         catchError((error) => {
@@ -172,10 +180,15 @@ export abstract class AbstractAgent {
 
       await this.onInitialize(input, subscribers);
 
+      // Per-run detachment signal
+      this.activeRunDetach$ = new Subject<void>();
+
       const pipeline = pipe(
         () => this.connect(input),
         transformChunks(this.debug),
         verifyEvents(this.debug),
+        // Stop processing immediately when this run is detached
+        (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
         (source$) => this.apply(input, source$, subscribers),
         (source$) => this.processApplyEvents(input, source$, subscribers),
         catchError((error) => {
@@ -202,6 +215,13 @@ export abstract class AbstractAgent {
   }
 
   public abortRun() {}
+
+  public detachRun() {
+    if (this.activeRunDetach$) {
+      this.activeRunDetach$.next();
+      this.activeRunDetach$.complete();
+    }
+  }
 
   protected apply(
     input: RunAgentInput,
