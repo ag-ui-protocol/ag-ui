@@ -614,6 +614,7 @@ describe("Agent Result", () => {
       const onRunFinalized = jest.fn();
 
       const runPromise = streamingAgent.runAgent({}, { onRunFinalized });
+      await waitForAsyncNotifications();
 
       subject.next({
         type: EventType.RUN_STARTED,
@@ -621,8 +622,7 @@ describe("Agent Result", () => {
         runId: "run-detach",
       } as RunStartedEvent);
 
-      streamingAgent.detachRun();
-
+      await streamingAgent.detachActiveRun();
       await runPromise;
       subject.complete();
 
@@ -635,6 +635,7 @@ describe("Agent Result", () => {
       const onMessagesChanged = jest.fn();
 
       const runPromise = streamingAgent.runAgent({}, { onMessagesChanged });
+      await waitForAsyncNotifications();
       const initialMessageCount = streamingAgent.messages.length;
 
       subject.next({
@@ -643,7 +644,7 @@ describe("Agent Result", () => {
         runId: "run-detach",
       } as RunStartedEvent);
 
-      streamingAgent.detachRun();
+      const detachPromise = streamingAgent.detachActiveRun();
 
       subject.next({
         type: EventType.TEXT_MESSAGE_START,
@@ -661,7 +662,7 @@ describe("Agent Result", () => {
       } as TextMessageEndEvent);
 
       subject.complete();
-      await runPromise;
+      await Promise.all([detachPromise, runPromise]);
 
       expect(streamingAgent.messages.length).toBe(initialMessageCount);
       expect(onMessagesChanged).not.toHaveBeenCalled();
@@ -672,6 +673,7 @@ describe("Agent Result", () => {
       streamingAgent.setEventSubject(firstSubject);
 
       const firstRunPromise = streamingAgent.runAgent();
+      await waitForAsyncNotifications();
 
       firstSubject.next({
         type: EventType.RUN_STARTED,
@@ -679,7 +681,7 @@ describe("Agent Result", () => {
         runId: "run-1",
       } as RunStartedEvent);
 
-      streamingAgent.detachRun();
+      await streamingAgent.detachActiveRun();
       firstSubject.complete();
       await firstRunPromise;
 
@@ -688,6 +690,7 @@ describe("Agent Result", () => {
       streamingAgent.setEventSubject(secondSubject);
 
       const secondRunPromise = streamingAgent.runAgent();
+      await waitForAsyncNotifications();
 
       secondSubject.next({
         type: EventType.RUN_STARTED,
@@ -716,8 +719,31 @@ describe("Agent Result", () => {
       secondSubject.complete();
 
       await secondRunPromise;
+      await waitForAsyncNotifications();
 
       expect(streamingAgent.messages.some((message) => message.id === "msg-new")).toBe(true);
+    });
+
+    it("resolve order: detachActiveRun waits for finalize", async () => {
+      const subject = new Subject<BaseEvent>();
+      streamingAgent.setEventSubject(subject);
+      const order: string[] = [];
+
+      const runPromise = streamingAgent.runAgent({}, { onRunFinalized: () => order.push("finalized") });
+      await waitForAsyncNotifications();
+
+      subject.next({
+        type: EventType.RUN_STARTED,
+        threadId: "thread-detach",
+        runId: "run-order",
+      } as RunStartedEvent);
+
+      const detachPromise = streamingAgent.detachActiveRun().then(() => order.push("awaited"));
+      subject.complete();
+
+      await Promise.all([runPromise, detachPromise]);
+
+      expect(order).toEqual(["finalized", "awaited"]);
     });
   });
 });

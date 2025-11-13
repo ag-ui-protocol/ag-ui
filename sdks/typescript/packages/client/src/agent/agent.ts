@@ -41,6 +41,7 @@ export abstract class AbstractAgent {
   private middlewares: Middleware[] = [];
   // Emits to immediately detach from the active run (stop processing its stream)
   private activeRunDetach$?: Subject<void>;
+  private activeRunCompletionPromise?: Promise<void>;
 
   get maxVersion() {
     return packageJson.version;
@@ -108,8 +109,12 @@ export abstract class AbstractAgent {
 
       await this.onInitialize(input, subscribers);
 
-      // Per-run detachment signal
+      // Per-run detachment signal + completion promise
       this.activeRunDetach$ = new Subject<void>();
+      let resolveActiveRunCompletion: (() => void) | undefined;
+      this.activeRunCompletionPromise = new Promise<void>((resolve) => {
+        resolveActiveRunCompletion = resolve;
+      });
 
       const pipeline = pipe(
         () => {
@@ -141,6 +146,10 @@ export abstract class AbstractAgent {
         finalize(() => {
           this.isRunning = false;
           void this.onFinalize(input, subscribers);
+          resolveActiveRunCompletion?.();
+          resolveActiveRunCompletion = undefined;
+          this.activeRunCompletionPromise = undefined;
+          this.activeRunDetach$ = undefined;
         }),
       );
 
@@ -180,8 +189,12 @@ export abstract class AbstractAgent {
 
       await this.onInitialize(input, subscribers);
 
-      // Per-run detachment signal
+      // Per-run detachment signal + completion promise
       this.activeRunDetach$ = new Subject<void>();
+      let resolveActiveRunCompletion: (() => void) | undefined;
+      this.activeRunCompletionPromise = new Promise<void>((resolve) => {
+        resolveActiveRunCompletion = resolve;
+      });
 
       const pipeline = pipe(
         () => this.connect(input),
@@ -201,6 +214,10 @@ export abstract class AbstractAgent {
         finalize(() => {
           this.isRunning = false;
           void this.onFinalize(input, subscribers);
+          resolveActiveRunCompletion?.();
+          resolveActiveRunCompletion = undefined;
+          this.activeRunCompletionPromise = undefined;
+          this.activeRunDetach$ = undefined;
         }),
       );
 
@@ -216,11 +233,14 @@ export abstract class AbstractAgent {
 
   public abortRun() {}
 
-  public detachRun() {
-    if (this.activeRunDetach$) {
-      this.activeRunDetach$.next();
-      this.activeRunDetach$.complete();
+  public async detachActiveRun(): Promise<void> {
+    if (!this.activeRunDetach$) {
+      return;
     }
+    const completion = this.activeRunCompletionPromise ?? Promise.resolve();
+    this.activeRunDetach$.next();
+    this.activeRunDetach$.complete();
+    await completion;
   }
 
   protected apply(
