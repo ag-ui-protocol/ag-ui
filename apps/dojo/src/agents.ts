@@ -387,6 +387,31 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     },
   },
   {
+    id: "microsoft-agent-framework-dotnet",
+    agents: async () => {
+      return {
+        agentic_chat: new HttpAgent({
+          url: `${envVars.agentFrameworkDotnetUrl}/agentic_chat`,
+        }),
+        backend_tool_rendering: new HttpAgent({
+          url: `${envVars.agentFrameworkDotnetUrl}/backend_tool_rendering`,
+        }),
+        human_in_the_loop: new HttpAgent({
+          url: `${envVars.agentFrameworkDotnetUrl}/human_in_the_loop`,
+        }),
+        agentic_generative_ui: new HttpAgent({
+          url: `${envVars.agentFrameworkDotnetUrl}/agentic_generative_ui`,
+        }),
+        shared_state: new HttpAgent({
+          url: `${envVars.agentFrameworkDotnetUrl}/shared_state`,
+        }),
+        tool_based_generative_ui: new HttpAgent({
+          url: `${envVars.agentFrameworkDotnetUrl}/tool_based_generative_ui`,
+        }),
+      };
+    },
+  },
+  {
     id: "a2a",
     agents: async () => {
       // A2A agents: building management, finance, it agents

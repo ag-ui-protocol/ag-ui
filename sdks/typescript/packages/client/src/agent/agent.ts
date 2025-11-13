@@ -397,6 +397,7 @@ export abstract class AbstractAgent {
     cloned.debug = this.debug;
     cloned.isRunning = this.isRunning;
     cloned.subscribers = [...this.subscribers];
+    cloned.middlewares = [...this.middlewares];
 
     return cloned;
   }
