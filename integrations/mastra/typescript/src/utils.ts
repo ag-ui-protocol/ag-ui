@@ -3,7 +3,7 @@ import { AbstractAgent } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
 import type { CoreMessage, Mastra } from "@mastra/core";
 import { Agent as LocalMastraAgent } from "@mastra/core/agent";
-import { RuntimeContext } from "@mastra/core/runtime-context";
+import { RequestContext } from "@mastra/core/request-context";
 import { MastraAgent } from "./mastra";
 
 const toMastraTextContent = (content: Message["content"]): string => {
@@ -116,13 +116,13 @@ export async function getRemoteAgents({
 export interface GetLocalAgentsOptions {
   mastra: Mastra;
   resourceId?: string;
-  runtimeContext?: RuntimeContext;
+  requestContext?: RequestContext;
 }
 
 export function getLocalAgents({
   mastra,
   resourceId,
-  runtimeContext,
+  requestContext,
 }: GetLocalAgentsOptions): Record<string, AbstractAgent> {
   const agents = mastra.getAgents() || {};
 
@@ -132,7 +132,7 @@ export function getLocalAgents({
         agentId,
         agent,
         resourceId,
-        runtimeContext,
+        requestContext,
       });
       return acc;
     },
@@ -146,14 +146,14 @@ export interface GetLocalAgentOptions {
   mastra: Mastra;
   agentId: string;
   resourceId?: string;
-  runtimeContext?: RuntimeContext;
+  requestContext?: RequestContext;
 }
 
 export function getLocalAgent({
   mastra,
   agentId,
   resourceId,
-  runtimeContext,
+  requestContext,
 }: GetLocalAgentOptions) {
   const agent = mastra.getAgent(agentId);
   if (!agent) {
@@ -163,7 +163,7 @@ export function getLocalAgent({
     agentId,
     agent,
     resourceId,
-    runtimeContext,
+    requestContext,
   }) as AbstractAgent;
 }
 
@@ -171,10 +171,10 @@ export interface GetNetworkOptions {
   mastra: Mastra;
   networkId: string;
   resourceId?: string;
-  runtimeContext?: RuntimeContext;
+  requestContext?: RequestContext;
 }
 
-export function getNetwork({ mastra, networkId, resourceId, runtimeContext }: GetNetworkOptions) {
+export function getNetwork({ mastra, networkId, resourceId, requestContext }: GetNetworkOptions) {
   const network = mastra.getAgent(networkId);
   if (!network) {
     throw new Error(`Network ${networkId} not found`);
@@ -183,6 +183,6 @@ export function getNetwork({ mastra, networkId, resourceId, runtimeContext }: Ge
     agentId: network.name!,
     agent: network as unknown as LocalMastraAgent,
     resourceId,
-    runtimeContext,
+    requestContext,
   }) as AbstractAgent;
 }
