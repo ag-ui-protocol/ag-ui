@@ -9,7 +9,20 @@ import { RequestContext } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import { MastraAgent } from "./mastra";
 
-export function registerCopilotKit<T extends Record<string, any> | unknown = unknown>({
+/**
+ * Registers a CopilotKit endpoint that exposes Mastra agents through the AG-UI protocol.
+ * This function creates an API route that handles CopilotKit requests and forwards them to Mastra agents, enabling seamless integration between CopilotKit's UI components and Mastra's agent framework.
+ *
+ * @example
+ * ```ts
+ * registerCopilotKit({
+ *   path: "/api/copilotkit"
+ * });
+ * ```
+ */
+export function registerCopilotKit<
+  T extends Record<string, any> | unknown = unknown,
+>({
   path,
   resourceId,
   serviceAdapter = new ExperimentalEmptyAdapter(),
@@ -17,10 +30,13 @@ export function registerCopilotKit<T extends Record<string, any> | unknown = unk
   setContext,
 }: {
   path: string;
-  resourceId: string;
+  resourceId?: string;
   serviceAdapter?: CopilotServiceAdapter;
   agents?: Record<string, AbstractAgent>;
-  setContext?: (c: any, requestContext: RequestContext<T>) => void | Promise<void>;
+  setContext?: (
+    c: any,
+    requestContext: RequestContext<T>,
+  ) => void | Promise<void>;
 }) {
   return registerApiRoute(path, {
     method: `ALL`,
