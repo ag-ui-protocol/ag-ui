@@ -1,5 +1,6 @@
 import json
 import re
+from enum import Enum
 from typing import List, Any, Dict, Union
 from dataclasses import is_dataclass, asdict
 from datetime import date, datetime
@@ -302,6 +303,9 @@ def json_safe_stringify(o):
         return o.isoformat()
     return str(o)                # last resort
 
+def is_json_primitive(value: Any) -> bool:
+    return isinstance(value, (str, int, float, bool)) or value is None
+
 def make_json_safe(value: Any) -> Any:
     """
     Recursively convert a value into a JSON-serializable structure.
@@ -333,8 +337,18 @@ def make_json_safe(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [make_json_safe(sub_value) for sub_value in value]
 
+    if isinstance(value, Enum):
+        enum_value = value.value
+        if is_json_primitive(enum_value):
+            return enum_value
+        return {
+            "__type__": type(value).__name__,
+            "name": value.name,
+            "value": make_json_safe(enum_value),
+        }
+
     # Already JSON safe
-    if isinstance(value, (str, int, float, bool)) or value is None:
+    if is_json_primitive(value):
         return value
 
     # Arbitrary object: try __dict__ first, fallback to repr
