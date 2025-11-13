@@ -49,6 +49,8 @@ app = FastAPI(title="Microsoft Agent Framework Python Dojo")
 # add_agent_framework_fastapi_endpoint(app, simple_agent(azure_client), "/agentic_chat")
 # add_agent_framework_fastapi_endpoint(app, weather_agent(openai_client), "/backend_tool_rendering")
 
+# Print AZURE_CLIENT_ID in server logs
+print(os.getenv("AZURE_CLIENT_ID", "NOT PROVIDED"))
 # If using api_key authentication remove the credential parameter
 chat_client = AzureOpenAIChatClient(credential=DefaultAzureCredential())
 
