@@ -97,6 +97,48 @@ examples/
 └── README.md                          # This file
 ```
 
+## Using Different Chat Clients
+
+The Microsoft Agent Framework supports multiple chat clients. You can mix and match different clients for different agents:
+
+### Azure OpenAI (Default)
+
+```python
+from agent_framework.azure import AzureOpenAIChatClient
+
+azure_client = AzureOpenAIChatClient()
+agent = simple_agent(azure_client)
+```
+
+### OpenAI
+
+```python
+from agent_framework.openai import OpenAIChatClient
+
+openai_client = OpenAIChatClient(model_id="gpt-4o")
+agent = weather_agent(openai_client)
+```
+
+### Mixing Clients
+
+You can use different chat clients for different agents in the same application:
+
+```python
+from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
+
+# Create clients
+azure_client = AzureOpenAIChatClient()
+openai_client = OpenAIChatClient(model_id="gpt-4o")
+
+# Use different clients for different agents
+agent1 = simple_agent(azure_client)
+agent2 = weather_agent(openai_client)
+agent3 = recipe_agent(azure_client)
+```
+
+See `agents/dojo.py` for a complete example.
+
 ## Development
 
 To add a new example agent:

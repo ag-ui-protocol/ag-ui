@@ -38,6 +38,16 @@ load_dotenv()
 app = FastAPI(title="Microsoft Agent Framework Python Dojo")
 
 # Create a shared chat client for all agents
+# You can use different chat clients for different agents:
+#
+# from agent_framework.openai import OpenAIChatClient
+# openai_client = OpenAIChatClient(model_id="gpt-4o")
+# azure_client = AzureOpenAIChatClient()
+#
+# Then pass different clients to different agents:
+# add_agent_framework_fastapi_endpoint(app, simple_agent(azure_client), "/agentic_chat")
+# add_agent_framework_fastapi_endpoint(app, weather_agent(openai_client), "/backend_tool_rendering")
+#
 chat_client = AzureOpenAIChatClient()
 
 # Agentic Chat - simple_agent
