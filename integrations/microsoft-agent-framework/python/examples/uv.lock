@@ -20,7 +20,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework-ag-ui"
-version = "1.0.0b251106.post1"
+version = "1.0.0b251112"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ag-ui-protocol" },
@@ -28,9 +28,9 @@ dependencies = [
     { name = "fastapi" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/88/89/1dc38ae98ceb586c821e10912088a7140abecb234d8143db67d67bda9077/agent_framework_ag_ui-1.0.0b251106.post1.tar.gz", hash = "sha256:b0ec97d21f34f638f5740f560523936d7895c10c44c5ed659e259aef3b62ee6b", size = 56126, upload-time = "2025-11-06T02:47:29.099Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d1/cf/35fc6a218e16b1825bace44946417b089d84eaa81ce9f28ace8989fbc0ce/agent_framework_ag_ui-1.0.0b251112.tar.gz", hash = "sha256:d98d3b71c477a2651471d340cefa3c9318ff33576ce824b2fb9978e5ae0969de", size = 81837, upload-time = "2025-11-13T00:57:06.27Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c1/e4/f982688d3ad57d26b47364ee4e76b2df9ad1a9de8e3723def66eafd28d41/agent_framework_ag_ui-1.0.0b251106.post1-py3-none-any.whl", hash = "sha256:fdf57edc68f3063c10754173c4f98c9ae1175bee1f21a9d2feb71b06dd59b0e1", size = 44976, upload-time = "2025-11-06T02:47:27.334Z" },
+    { url = "https://files.pythonhosted.org/packages/be/85/453c814b8f10b58033343de4a7664994acb83160eb32503b8973a831229c/agent_framework_ag_ui-1.0.0b251112-py3-none-any.whl", hash = "sha256:80057f1659e024d7950a71b896abff0d478dd69a02027143bcd7e67f7737bcd9", size = 61208, upload-time = "2025-11-13T00:57:04.972Z" },
 ]
 
 [[package]]
@@ -726,14 +726,12 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "agent-framework-ag-ui" },
-    { name = "agent-framework-core" },
     { name = "python-dotenv" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-framework-ag-ui", specifier = ">=1.0.0b251106.post1" },
-    { name = "agent-framework-core", specifier = ">=1.0.0b251105" },
+    { name = "agent-framework-ag-ui", specifier = ">=1.0.0b251112" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
 ]
 

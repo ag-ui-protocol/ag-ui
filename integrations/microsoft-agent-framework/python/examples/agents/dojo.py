@@ -16,49 +16,54 @@ Reference: https://github.com/microsoft/agent-framework/tree/main/python/package
 """
 
 import os
-import uvicorn
-from fastapi import FastAPI
-from dotenv import load_dotenv
 
+import uvicorn
+from dotenv import load_dotenv
+from fastapi import FastAPI
+
+from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework_ag_ui_examples.agents import (
-    simple_agent,
-    weather_agent,
+    document_writer_agent,
     human_in_the_loop_agent,
+    recipe_agent,
+    simple_agent,
     task_steps_agent_wrapped,
     ui_generator_agent,
-    recipe_agent,
-    document_writer_agent,
+    weather_agent,
 )
 
 load_dotenv()
 
 app = FastAPI(title="Microsoft Agent Framework Python Dojo")
 
+# Create a shared chat client for all agents
+chat_client = AzureOpenAIChatClient()
+
 # Agentic Chat - simple_agent
-add_agent_framework_fastapi_endpoint(app, simple_agent, "/agentic_chat")
+add_agent_framework_fastapi_endpoint(app, simple_agent(chat_client), "/agentic_chat")
 
 # Backend Tool Rendering - weather_agent
-add_agent_framework_fastapi_endpoint(app, weather_agent, "/backend_tool_rendering")
+add_agent_framework_fastapi_endpoint(app, weather_agent(chat_client), "/backend_tool_rendering")
 
 # Human in the Loop - human_in_the_loop_agent with state configuration
 add_agent_framework_fastapi_endpoint(
     app,
-    human_in_the_loop_agent,
+    human_in_the_loop_agent(chat_client),
     "/human_in_the_loop",
 )
 
 # Agentic Generative UI - task_steps_agent_wrapped
-add_agent_framework_fastapi_endpoint(app, task_steps_agent_wrapped, "/agentic_generative_ui")
+add_agent_framework_fastapi_endpoint(app, task_steps_agent_wrapped(chat_client), "/agentic_generative_ui")  # type: ignore[arg-type]
 
 # Tool-based Generative UI - ui_generator_agent
-add_agent_framework_fastapi_endpoint(app, ui_generator_agent, "/tool_based_generative_ui")
+add_agent_framework_fastapi_endpoint(app, ui_generator_agent(chat_client), "/tool_based_generative_ui")
 
 # Shared State - recipe_agent
-add_agent_framework_fastapi_endpoint(app, recipe_agent, "/shared_state")
+add_agent_framework_fastapi_endpoint(app, recipe_agent(chat_client), "/shared_state")
 
 # Predictive State Updates - document_writer_agent
-add_agent_framework_fastapi_endpoint(app, document_writer_agent, "/predictive_state_updates")
+add_agent_framework_fastapi_endpoint(app, document_writer_agent(chat_client), "/predictive_state_updates")
 
 
 def main():
