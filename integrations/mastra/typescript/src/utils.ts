@@ -7,7 +7,7 @@ import { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { MastraAgent } from "./mastra";
 
-export const toMastraTextContent = (content: Message["content"]): string => {
+const toMastraTextContent = (content: Message["content"]): string => {
   if (!content) {
     return "";
   }
