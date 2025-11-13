@@ -12,7 +12,7 @@ import type {
   ToolCallStartEvent,
 } from "@ag-ui/client";
 import { AbstractAgent, EventType } from "@ag-ui/client";
-import type { StorageThreadType } from "@mastra/core";
+import type { StorageThreadType } from "@mastra/core/memory";
 import { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { randomUUID } from "@ag-ui/client";

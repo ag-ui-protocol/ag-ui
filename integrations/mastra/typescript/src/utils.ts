@@ -1,7 +1,8 @@
 import type { InputContent, Message } from "@ag-ui/client";
 import { AbstractAgent } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
-import type { CoreMessage, Mastra } from "@mastra/core";
+import type { Mastra } from "@mastra/core";
+import type { CoreMessage } from "@mastra/core/llm";
 import { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { MastraAgent } from "./mastra";
@@ -95,7 +96,7 @@ export async function getRemoteAgents({
   mastraClient,
   resourceId,
 }: GetRemoteAgentsOptions): Promise<Record<string, AbstractAgent>> {
-  const agents = await mastraClient.getAgents();
+  const agents = await mastraClient.listAgents();
 
   return Object.entries(agents).reduce(
     (acc, [agentId]) => {
@@ -124,7 +125,7 @@ export function getLocalAgents({
   resourceId,
   requestContext,
 }: GetLocalAgentsOptions): Record<string, AbstractAgent> {
-  const agents = mastra.getAgents() || {};
+  const agents = mastra.listAgents() || {};
 
   const agentAGUI = Object.entries(agents).reduce(
     (acc, [agentId, agent]) => {
