@@ -239,7 +239,7 @@ export abstract class AbstractAgent {
     }
     const completion = this.activeRunCompletionPromise ?? Promise.resolve();
     this.activeRunDetach$.next();
-    this.activeRunDetach$.complete();
+    this.activeRunDetach$?.complete();
     await completion;
   }
 
@@ -286,9 +286,7 @@ export abstract class AbstractAgent {
 
   protected prepareRunAgentInput(parameters?: RunAgentParameters): RunAgentInput {
     const clonedMessages = structuredClone_(this.messages) as Message[];
-    const messagesWithoutActivity = clonedMessages.filter(
-      (message) => message.role !== "activity",
-    );
+    const messagesWithoutActivity = clonedMessages.filter((message) => message.role !== "activity");
 
     return {
       threadId: this.threadId,
