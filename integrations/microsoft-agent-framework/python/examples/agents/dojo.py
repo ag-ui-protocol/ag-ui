@@ -38,6 +38,26 @@ load_dotenv()
 
 app = FastAPI(title="Microsoft Agent Framework Python Dojo")
 
+# Temp Diagnostic logging for deployment troubleshooting
+print(f"AZURE_OPENAI_ENDPOINT: {'SET' if os.getenv('AZURE_OPENAI_ENDPOINT') else 'MISSING'}")
+print(f"AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: {'SET' if os.getenv('AZURE_OPENAI_CHAT_DEPLOYMENT_NAME') else 'MISSING'}")
+print(f"AZURE_CLIENT_ID: {'SET' if os.getenv('AZURE_CLIENT_ID') else 'MISSING'}")
+print(f"AZURE_TENANT_ID: {'SET' if os.getenv('AZURE_TENANT_ID') else 'MISSING'}")
+print(f"AZURE_CLIENT_SECRET: {'SET' if os.getenv('AZURE_CLIENT_SECRET') else 'MISSING'}")
+
+# Resolve deployment name with fallback to support both Python and .NET env var naming
+deployment_name = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME")
+if deployment_name:
+    print(f"Using deployment name: {deployment_name}")
+else:
+    print("WARNING: No deployment name found in AZURE_OPENAI_CHAT_DEPLOYMENT_NAME")
+
+endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+if endpoint:
+    print(f"Using endpoint: {endpoint}")
+else:
+    print("WARNING: AZURE_OPENAI_ENDPOINT not set")
+
 # Create a shared chat client for all agents
 # You can use different chat clients for different agents:
 
@@ -49,10 +69,13 @@ app = FastAPI(title="Microsoft Agent Framework Python Dojo")
 # add_agent_framework_fastapi_endpoint(app, simple_agent(azure_client), "/agentic_chat")
 # add_agent_framework_fastapi_endpoint(app, weather_agent(openai_client), "/backend_tool_rendering")
 
-# Print AZURE_CLIENT_ID in server logs
-print(os.getenv("AZURE_CLIENT_ID", "NOT PROVIDED"))
 # If using api_key authentication remove the credential parameter
-chat_client = AzureOpenAIChatClient(credential=DefaultAzureCredential())
+# Explicitly pass deployment_name to align with .NET behavior and support both env var names
+chat_client = AzureOpenAIChatClient(
+    credential=DefaultAzureCredential(),
+    deployment_name=deployment_name,
+    endpoint=endpoint,
+)
 
 # Agentic Chat - simple_agent
 add_agent_framework_fastapi_endpoint(app, simple_agent(chat_client), "/agentic_chat")
