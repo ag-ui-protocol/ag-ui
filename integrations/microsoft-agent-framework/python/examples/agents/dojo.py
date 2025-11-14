@@ -21,7 +21,7 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework_ag_ui_examples.agents import (
     document_writer_agent,
