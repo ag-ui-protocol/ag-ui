@@ -1,7 +1,8 @@
 /**
  * Client-side Cloudflare Agents integration
  *
- * Use this to connect AG-UI clients to deployed Cloudflare Agents
+ * WebSocket-based client that connects to deployed Cloudflare Agents
+ * and translates their events into AG-UI protocol events.
  */
 
 import {
@@ -15,10 +16,10 @@ import {
   type RunFinishedEvent,
   type RunErrorEvent,
   type TextMessageChunkEvent,
+  type StateSnapshotEvent,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
 
-/** Configuration for CloudflareAgentsClient */
 export interface CloudflareAgentsClientConfig extends AgentConfig {
   /** WebSocket URL to deployed Cloudflare Agent */
   url: string;
@@ -27,8 +28,8 @@ export interface CloudflareAgentsClientConfig extends AgentConfig {
 /**
  * AG-UI client for connecting to deployed Cloudflare Agents
  *
- * This agent extends AbstractAgent and connects to a Cloudflare Worker
- * running AIChatAgent via WebSocket, converting events to AG-UI protocol.
+ * Extends AbstractAgent and provides WebSocket connection to Cloudflare Workers
+ * running the Cloudflare Agents SDK.
  *
  * @example
  * ```ts
@@ -36,14 +37,19 @@ export interface CloudflareAgentsClientConfig extends AgentConfig {
  *   url: "wss://your-worker.workers.dev"
  * });
  *
- * await agent.runAgent({
- *   // AG-UI parameters
+ * agent.runAgent({
+ *   messages: [{ role: "user", content: "Hello!" }]
+ * }).subscribe({
+ *   next: (event) => console.log(event.type, event),
+ *   error: (err) => console.error(err),
+ *   complete: () => console.log("Done")
  * });
  * ```
  */
 export class CloudflareAgentsClient extends AbstractAgent {
   private url: string;
-  private ws: any = null; // WebSocket type varies by environment
+  private ws: any = null;
+  private currentMessageId: string | null = null;
 
   constructor(config: CloudflareAgentsClientConfig) {
     super(config);
@@ -52,16 +58,73 @@ export class CloudflareAgentsClient extends AbstractAgent {
 
   /**
    * Connect to Cloudflare Agent and stream AG-UI events
+   *
+   * @param input - Run configuration including messages, threadId, runId
+   * @returns Observable stream of AG-UI events
    */
   run(input: RunAgentInput): Observable<BaseEvent> {
     return new Observable((subscriber) => {
-      const wsUrl = this.url.replace(/^http/, "ws");
+      const wsUrl = this.url
+        .replace(/^https:/, "wss:")
+        .replace(/^http:/, "ws:");
+
+      const onOpen = () => {
+        this.ws?.send(
+          JSON.stringify({
+            type: "INIT",
+            messages: input.messages,
+            threadId: input.threadId,
+            runId: input.runId,
+          })
+        );
+      };
+
+      const onMessage = (event: any) => {
+        try {
+          const data =
+            typeof event.data === "string" ? event.data : event.data.toString();
+          const cfEvent = JSON.parse(data);
+
+          const aguiEvent = this.transformEvent(cfEvent);
+          if (aguiEvent) {
+            subscriber.next(aguiEvent);
+          }
+        } catch (err) {
+          console.error("Failed to parse message:", err);
+          subscriber.next({
+            type: EventType.RUN_ERROR,
+            message: `Failed to parse server message: ${err instanceof Error ? err.message : "Unknown error"}`,
+            code: "PARSE_ERROR",
+            timestamp: Date.now(),
+          } as RunErrorEvent);
+        }
+      };
+
+      const onError = (error: any) => {
+        subscriber.next({
+          type: EventType.RUN_ERROR,
+          message: "WebSocket connection error",
+          code: "WS_ERROR",
+          timestamp: Date.now(),
+        } as RunErrorEvent);
+        subscriber.error(error);
+      };
+
+      const onClose = () => {
+        this.currentMessageId = null;
+        const runFinishedEvent: RunFinishedEvent = {
+          type: EventType.RUN_FINISHED,
+          threadId: input.threadId,
+          runId: input.runId,
+          timestamp: Date.now(),
+        };
+        subscriber.next(runFinishedEvent);
+        subscriber.complete();
+      };
 
       try {
-        // Use global WebSocket (browser/Node with ws package)
-        const WebSocketConstructor = typeof WebSocket !== 'undefined'
-          ? WebSocket
-          : null;
+        const WebSocketConstructor =
+          typeof WebSocket !== "undefined" ? WebSocket : null;
 
         if (!WebSocketConstructor) {
           throw new Error(
@@ -71,104 +134,95 @@ export class CloudflareAgentsClient extends AbstractAgent {
 
         this.ws = new WebSocketConstructor(wsUrl);
 
-        // Emit RUN_STARTED
-        subscriber.next({
+        const runStartedEvent: RunStartedEvent = {
           type: EventType.RUN_STARTED,
           threadId: input.threadId,
           runId: input.runId,
           timestamp: Date.now(),
-        } as RunStartedEvent);
-
-        // Handle connection open
-        const onOpen = () => {
-          this.ws?.send(JSON.stringify({
-            type: "INIT",
+          ...(input.parentRunId && { parentRunId: input.parentRunId }),
+          input: {
+            threadId: input.threadId,
+            runId: input.runId,
             messages: input.messages,
-            threadId: input.threadId,
-            runId: input.runId,
-          }));
+            state: input.state || {},
+            tools: input.tools || [],
+            context: input.context || [],
+            ...(input.parentRunId && { parentRunId: input.parentRunId }),
+          },
         };
+        subscriber.next(runStartedEvent);
 
-        // Handle incoming messages
-        const onMessage = (event: any) => {
-          try {
-            const data = typeof event.data === 'string'
-              ? event.data
-              : event.data.toString();
-            const cfEvent = JSON.parse(data);
-
-            // Transform to AG-UI event
-            const aguiEvent = this.transformEvent(cfEvent, input);
-            if (aguiEvent) {
-              subscriber.next(aguiEvent);
-            }
-          } catch (err) {
-            console.error("Failed to parse message:", err);
-          }
-        };
-
-        // Handle errors
-        const onError = (error: any) => {
-          subscriber.next({
-            type: EventType.RUN_ERROR,
-            message: "WebSocket connection error",
-            code: "WS_ERROR",
-            timestamp: Date.now(),
-          } as RunErrorEvent);
-          subscriber.error(error);
-        };
-
-        // Handle close
-        const onClose = () => {
-          subscriber.next({
-            type: EventType.RUN_FINISHED,
-            threadId: input.threadId,
-            runId: input.runId,
-            timestamp: Date.now(),
-          } as RunFinishedEvent);
-          subscriber.complete();
-        };
-
-        // Attach event listeners (works for both browser and ws package)
         if (this.ws.addEventListener) {
-          this.ws.addEventListener('open', onOpen);
-          this.ws.addEventListener('message', onMessage);
-          this.ws.addEventListener('error', onError);
-          this.ws.addEventListener('close', onClose);
+          this.ws.addEventListener("open", onOpen);
+          this.ws.addEventListener("message", onMessage);
+          this.ws.addEventListener("error", onError);
+          this.ws.addEventListener("close", onClose);
         } else {
-          this.ws.on('open', onOpen);
-          this.ws.on('message', onMessage);
-          this.ws.on('error', onError);
-          this.ws.on('close', onClose);
+          this.ws.on("open", onOpen);
+          this.ws.on("message", onMessage);
+          this.ws.on("error", onError);
+          this.ws.on("close", onClose);
         }
-
       } catch (error) {
         subscriber.error(error);
       }
 
-      // Cleanup function
       return () => {
         if (this.ws) {
+          if (this.ws.removeEventListener) {
+            this.ws.removeEventListener("open", onOpen);
+            this.ws.removeEventListener("message", onMessage);
+            this.ws.removeEventListener("error", onError);
+            this.ws.removeEventListener("close", onClose);
+          } else if (this.ws.off) {
+            this.ws.off("open", onOpen);
+            this.ws.off("message", onMessage);
+            this.ws.off("error", onError);
+            this.ws.off("close", onClose);
+          }
           this.ws.close();
           this.ws = null;
         }
+        this.currentMessageId = null;
       };
     });
   }
 
   /**
-   * Transform Cloudflare event to AG-UI event
+   * Transform Cloudflare Agent event to AG-UI protocol event
+   *
+   * Maps Cloudflare SDK events to AG-UI events:
+   * - TEXT_CHUNK → TEXT_MESSAGE_CHUNK
+   * - cf_agent_state → STATE_SNAPSHOT
+   * - READY, PONG → ignored
    */
-  private transformEvent(cfEvent: any, input: RunAgentInput): BaseEvent | null {
+  private transformEvent(cfEvent: any): BaseEvent | null {
     switch (cfEvent.type) {
-      case "TEXT_CHUNK":
+      case "TEXT_CHUNK": {
+        const incomingMessageId = cfEvent.messageId;
+
+        if (incomingMessageId) {
+          this.currentMessageId = incomingMessageId;
+        } else if (!this.currentMessageId) {
+          this.currentMessageId = randomUUID();
+        }
+
         return {
           type: EventType.TEXT_MESSAGE_CHUNK,
-          messageId: cfEvent.messageId || randomUUID(),
+          messageId: this.currentMessageId,
           role: "assistant",
           delta: cfEvent.text,
           timestamp: Date.now(),
         } as TextMessageChunkEvent;
+      }
+
+      case "cf_agent_state": {
+        return {
+          type: EventType.STATE_SNAPSHOT,
+          state: cfEvent.state || {},
+          timestamp: Date.now(),
+        } as StateSnapshotEvent;
+      }
 
       case "READY":
       case "PONG":
@@ -181,18 +235,19 @@ export class CloudflareAgentsClient extends AbstractAgent {
   }
 
   /**
-   * Abort the current run
+   * Abort the current agent run
    */
   override abortRun() {
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
+    this.currentMessageId = null;
     super.abortRun();
   }
 
   /**
-   * Clone this agent
+   * Clone this agent instance
    */
   override clone(): CloudflareAgentsClient {
     return new CloudflareAgentsClient({

@@ -1,19 +1,12 @@
 /**
- * Helper functions for creating AG-UI compatible HTTP responses
- *
- * These helpers make it easy to stream AG-UI events over SSE or NDJSON
- * from Cloudflare Workers.
+ * Helpers for streaming AG-UI events over SSE or NDJSON
  */
 
 import { type BaseEvent } from "@ag-ui/client";
 import { Observable } from "rxjs";
 
 /**
- * Create an SSE response for streaming AG-UI events
- *
- * @param events$ - Observable stream of AG-UI events
- * @param additionalHeaders - Optional additional headers (e.g., CORS)
- * @returns Response with Server-Sent Events stream
+ * Create SSE response for streaming AG-UI events
  */
 export function createSSEResponse(
   events$: Observable<BaseEvent>,
@@ -48,11 +41,7 @@ export function createSSEResponse(
 }
 
 /**
- * Create an NDJSON response for streaming AG-UI events
- *
- * @param events$ - Observable stream of AG-UI events
- * @param additionalHeaders - Optional additional headers (e.g., CORS)
- * @returns Response with newline-delimited JSON stream
+ * Create NDJSON response for streaming AG-UI events
  */
 export function createNDJSONResponse(
   events$: Observable<BaseEvent>,

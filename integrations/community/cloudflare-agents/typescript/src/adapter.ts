@@ -1,8 +1,5 @@
 /**
  * Adapter for converting Vercel AI SDK streams to AG-UI protocol events
- *
- * Bridges Vercel AI SDK streaming API and AG-UI event protocol,
- * enabling Cloudflare Agents to communicate with AG-UI clients.
  */
 
 import { type StreamTextResult } from "ai";
@@ -12,19 +9,17 @@ import {
   type RunFinishedEvent,
   type RunErrorEvent,
   type TextMessageChunkEvent,
-  type ToolCallStartEvent,
-  type ToolCallArgsEvent,
-  type ToolCallEndEvent,
+  type ToolCallChunkEvent,
   type ToolCallResultEvent,
   type MessagesSnapshotEvent,
+  type StateSnapshotEvent,
+  type StepStartedEvent,
+  type StepFinishedEvent,
   type BaseEvent,
   type Message,
 } from "@ag-ui/client";
 import { nanoid } from "nanoid";
 
-/**
- * Adapts Vercel AI SDK streaming responses to AG-UI events
- */
 export class AgentsToAGUIAdapter {
   /**
    * Convert AI SDK stream to AG-UI event stream
@@ -33,13 +28,17 @@ export class AgentsToAGUIAdapter {
    * @param threadId - Thread ID for conversation tracking
    * @param runId - Run ID for execution tracking
    * @param inputMessages - Original input messages for snapshot
+   * @param parentRunId - Optional parent run ID for branching/time travel
+   * @param state - Optional agent state
    * @returns AsyncGenerator yielding AG-UI events
    */
   async *adaptStreamToAGUI(
     stream: StreamTextResult<any, any>,
     threadId: string = nanoid(),
     runId: string = nanoid(),
-    inputMessages: Message[] = []
+    inputMessages: Message[] = [],
+    parentRunId?: string,
+    state?: any
   ): AsyncGenerator<BaseEvent> {
     const messageId = nanoid();
 
@@ -49,19 +48,53 @@ export class AgentsToAGUIAdapter {
         threadId,
         runId,
         timestamp: Date.now(),
+        ...(parentRunId && { parentRunId }),
+        input: {
+          threadId,
+          runId,
+          messages: inputMessages,
+          state: state || {},
+          tools: [],
+          context: [],
+          ...(parentRunId && { parentRunId }),
+        },
       };
       yield runStarted;
 
+      if (state && Object.keys(state).length > 0) {
+        const stateSnapshot: StateSnapshotEvent = {
+          type: EventType.STATE_SNAPSHOT,
+          snapshot: state,
+          timestamp: Date.now(),
+        };
+        yield stateSnapshot;
+      }
+
+      const textGenerationStep: StepStartedEvent = {
+        type: EventType.STEP_STARTED,
+        stepName: "Generating Response",
+        timestamp: Date.now(),
+      };
+      yield textGenerationStep;
+
+      let isFirstChunk = true;
       for await (const chunk of stream.textStream) {
         const textChunk: TextMessageChunkEvent = {
           type: EventType.TEXT_MESSAGE_CHUNK,
-          messageId,
-          role: "assistant",
           delta: chunk,
           timestamp: Date.now(),
+          ...(isFirstChunk && { messageId, role: "assistant" }),
         };
         yield textChunk;
+        isFirstChunk = false;
       }
+
+      const textGenerationStepEnd: StepFinishedEvent = {
+        type: EventType.STEP_FINISHED,
+        stepName: "Generating Response",
+        timestamp: Date.now(),
+      };
+      yield textGenerationStepEnd;
 
       const response = await stream;
       const toolCalls = await response.toolCalls;
@@ -69,33 +102,33 @@ export class AgentsToAGUIAdapter {
       const finalText = await response.text;
 
       if (toolCalls && toolCalls.length > 0) {
+        const toolExecutionStep: StepStartedEvent = {
+          type: EventType.STEP_STARTED,
+          stepName: "Executing Tools",
+          timestamp: Date.now(),
+        };
+        yield toolExecutionStep;
+
         for (const toolCall of toolCalls) {
-          const toolStart: ToolCallStartEvent = {
-            type: EventType.TOOL_CALL_START,
+          const toolCallChunk: ToolCallChunkEvent = {
+            type: EventType.TOOL_CALL_CHUNK,
             toolCallId: toolCall.toolCallId,
             toolCallName: toolCall.toolName,
             parentMessageId: messageId,
-            timestamp: Date.now(),
-          };
-          yield toolStart;
-
-          const toolArgs: ToolCallArgsEvent = {
-            type: EventType.TOOL_CALL_ARGS,
-            toolCallId: toolCall.toolCallId,
             delta: JSON.stringify(
               "input" in toolCall ? toolCall.input : (toolCall as any).args
             ),
             timestamp: Date.now(),
           };
-          yield toolArgs;
-
-          const toolEnd: ToolCallEndEvent = {
-            type: EventType.TOOL_CALL_END,
-            toolCallId: toolCall.toolCallId,
-            timestamp: Date.now(),
-          };
-          yield toolEnd;
+          yield toolCallChunk;
         }
+
+        const toolExecutionStepEnd: StepFinishedEvent = {
+          type: EventType.STEP_FINISHED,
+          stepName: "Executing Tools",
+          timestamp: Date.now(),
+        };
+        yield toolExecutionStepEnd;
       }
 
       if (toolResults && toolResults.length > 0) {
@@ -135,6 +168,12 @@ export class AgentsToAGUIAdapter {
         threadId,
         runId,
         timestamp: Date.now(),
+        result: {
+          text: finalText,
+          messageId,
+          toolCallsCount: toolCalls?.length || 0,
+          toolResultsCount: toolResults?.length || 0,
+        },
       };
       yield runFinished;
     } catch (error) {

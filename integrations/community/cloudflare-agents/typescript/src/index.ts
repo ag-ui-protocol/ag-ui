@@ -1,11 +1,11 @@
 /**
  * @ag-ui/cloudflare-agents
  *
- * Complete AG-UI integration for Cloudflare Agents
+ * AG-UI integration for Cloudflare Agents
  *
- * Provides both client-side and server-side integrations:
  * - Client: Connect to deployed Cloudflare Agents from AG-UI clients
- * - Server: Build Cloudflare Agents that emit AG-UI events
+ * - Adapter: Convert Vercel AI SDK streams to AG-UI events
+ * - Helpers: SSE/NDJSON streaming utilities
  *
  * @packageDocumentation
  */
@@ -15,9 +15,6 @@ export {
   CloudflareAgentsClient,
   type CloudflareAgentsClientConfig,
 } from "./client";
-
-// Server-side: Build AG-UI-enabled Cloudflare Agents
-export { AIChatAgentAGUI } from "./server";
 
 // Adapter for converting AI SDK streams to AG-UI events
 export { AgentsToAGUIAdapter } from "./adapter";

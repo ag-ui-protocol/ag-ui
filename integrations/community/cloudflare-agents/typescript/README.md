@@ -1,420 +1,337 @@
 # @ag-ui/cloudflare-agents
 
-AG-UI integration for Cloudflare Agents - Build AI agents that run on Cloudflare Workers with Durable Objects and stream responses via the AG-UI protocol.
+AG-UI integration for Cloudflare Agents - Connect to and build agents on Cloudflare Workers.
 
-## Features
+## What This Package Provides
 
-- **Cloudflare Agents Integration** – Extends Cloudflare's AIChatAgent with AG-UI protocol support
-- **Edge Computing** – Run AI agents on Cloudflare's global network
-- **Durable Objects** – Persistent state management with automatic hibernation
-- **Real-time Streaming** – SSE and NDJSON streaming support
-- **Tool Calling** – Automatic conversion of AI SDK tool calls to AG-UI events
-- **Vercel AI SDK** – Use any LLM provider supported by Vercel AI SDK
-- **Zero Cold Starts** – Agents wake instantly when needed
+### 🔌 Client (Connect to Agents)
+
+**CloudflareAgentsClient** - WebSocket client for connecting to deployed Cloudflare Agents from AG-UI applications.
+
+```typescript
+import { CloudflareAgentsClient } from "@ag-ui/cloudflare-agents";
+
+const agent = new CloudflareAgentsClient({
+  url: "wss://your-worker.workers.dev",
+});
+
+agent
+  .runAgent({
+    messages: [{ role: "user", content: "Hello!" }],
+  })
+  .subscribe({
+    next: (event) => console.log(event.type, event),
+  });
+```
+
+### 🔄 Adapter (Build Agents)
+
+**AgentsToAGUIAdapter** - Convert Vercel AI SDK streams to AG-UI events in your Cloudflare Workers.
+
+```typescript
+import { AgentsToAGUIAdapter } from "@ag-ui/cloudflare-agents";
+import { streamText } from "ai";
+import { openai } from "@ai-sdk/openai";
+
+const adapter = new AgentsToAGUIAdapter();
+
+const stream = streamText({
+  model: openai("gpt-4"),
+  messages: inputMessages,
+});
+
+for await (const event of adapter.adaptStreamToAGUI(
+  stream,
+  threadId,
+  runId,
+  inputMessages
+)) {
+  ws.send(JSON.stringify(event)); // Send AG-UI events to client
+}
+```
+
+### 🌊 Helpers (Streaming)
+
+**Response creators** - SSE and NDJSON streaming utilities for HTTP endpoints.
+
+```typescript
+import { createSSEResponse, createNDJSONResponse } from "@ag-ui/cloudflare-agents";
+import { from } from "rxjs";
+
+// SSE streaming
+const events$ = from(adapter.adaptStreamToAGUI(stream, ...));
+return createSSEResponse(events$);
+
+// NDJSON streaming
+return createNDJSONResponse(events$);
+```
 
 ## Installation
 
 ```bash
-npm install @ag-ui/cloudflare-agents agents ai @ai-sdk/openai
+npm install @ag-ui/cloudflare-agents
 # or
-pnpm add @ag-ui/cloudflare-agents agents ai @ai-sdk/openai
+pnpm add @ag-ui/cloudflare-agents
 ```
 
 ## Quick Start
 
-### Basic Agent
+### Client-Side: Connect to an Agent
 
 ```typescript
-import { CloudflareAgentsAgent, type Message } from "@ag-ui/cloudflare-agents";
-import type { AgentContext } from "agents";
-import { streamText } from "ai";
-import { openai } from "@ai-sdk/openai";
+import { CloudflareAgentsClient } from "@ag-ui/cloudflare-agents";
 
-interface Env {
-  OPENAI_API_KEY: string;
-}
+const agent = new CloudflareAgentsClient({
+  url: "wss://your-agent.workers.dev",
+});
 
-// Extend CloudflareAgentsAgent
-export class ChatAgent extends CloudflareAgentsAgent<Env> {
-  constructor(ctx: AgentContext, env: Env) {
-    super(ctx, env);
-  }
-
-  protected async generateResponse(messages: Message[]) {
-    return streamText({
-      model: openai("gpt-4o-mini", { apiKey: this.env.OPENAI_API_KEY }),
-      messages,
-    });
-  }
-}
+agent
+  .runAgent({
+    messages: [{ role: "user", content: "What's the weather?" }],
+    threadId: "thread-123",
+  })
+  .subscribe({
+    next: (event) => {
+      if (event.type === "TEXT_MESSAGE_CHUNK") {
+        console.log(event.delta); // Stream text chunks
+      }
+      if (event.type === "STATE_SNAPSHOT") {
+        console.log(event.state); // State updates
+      }
+    },
+    complete: () => console.log("Done"),
+  });
 ```
 
-### Cloudflare Worker Integration
+### Server-Side: Build an Agent
+
+Create a Cloudflare Worker that uses the adapter to emit AG-UI events:
 
 ```typescript
-import { createSSEResponse, type Message } from "@ag-ui/cloudflare-agents";
-import type { AgentContext } from "agents";
-import { ChatAgent } from "./chat-agent";
+import { Agent } from "agents";
+import { streamText } from "ai";
+import { openai } from "@ai-sdk/openai";
+import { AgentsToAGUIAdapter } from "@ag-ui/cloudflare-agents";
 
-export interface Env {
-  OPENAI_API_KEY: string;
-}
+export class MyAgent extends Agent {
+  private adapter = new AgentsToAGUIAdapter();
 
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    if (request.method !== "POST") {
-      return new Response("Method not allowed", { status: 405 });
-    }
+  async onMessage(ws: WebSocket, raw: string | ArrayBuffer) {
+    const data = typeof raw === "string" ? raw : new TextDecoder().decode(raw);
+    const { messages } = JSON.parse(data);
 
-    const body = await request.json() as {
-      messages: Message[];
-      threadId?: string;
-    };
-
-    // Create agent context
-    const ctx = {
-      id: { toString: () => body.threadId || "default" }
-    } as AgentContext;
-
-    // Create and run agent
-    const agent = new ChatAgent(ctx, env);
-    const events$ = agent.run({
-      messages: body.messages,
-      threadId: body.threadId,
+    // Create AI SDK stream
+    const stream = streamText({
+      model: openai("gpt-4"),
+      messages: messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      })),
     });
 
-    // Return SSE stream
-    return createSSEResponse(events$);
-  },
-};
+    // Convert to AG-UI events and stream to client
+    for await (const event of this.adapter.adaptStreamToAGUI(
+      stream,
+      crypto.randomUUID(), // threadId
+      crypto.randomUUID(), // runId
+      messages
+    )) {
+      ws.send(JSON.stringify(event));
+    }
+  }
+}
 ```
 
 ### With Tools
 
 ```typescript
-import { CloudflareAgentsAgent, type Message } from "@ag-ui/cloudflare-agents";
-import type { AgentContext } from "agents";
-import { streamText } from "ai";
-import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
 
-export class WeatherAgent extends CloudflareAgentsAgent<Env> {
-  constructor(ctx: AgentContext, env: Env) {
-    super(ctx, env);
-  }
-
-  protected async generateResponse(messages: Message[]) {
-    return streamText({
-      model: openai("gpt-4o-mini", { apiKey: this.env.OPENAI_API_KEY }),
-      messages,
-      tools: {
-        getWeather: {
-          description: "Get current weather for a location",
-          parameters: z.object({
-            location: z.string().describe("City name"),
-          }),
-          execute: async ({ location }) => {
-            // Call your weather API
-            return {
-              location,
-              temperature: 72,
-              condition: "sunny",
-            };
-          },
-        },
-      },
-    });
-  }
-}
-```
-
-### With Durable Objects
-
-```typescript
-import { DurableObject } from "cloudflare:workers";
-import { CloudflareAgentsAgent, createSSEResponse, type Message } from "@ag-ui/cloudflare-agents";
-import type { AgentContext } from "agents";
-import { streamText } from "ai";
-import { openai } from "@ai-sdk/openai";
-
-export class PersistentChatAgent extends DurableObject {
-  async fetch(request: Request) {
-    const body = await request.json() as { messages: Message[] };
-
-    // Agent with Durable Object context
-    class StatefulAgent extends CloudflareAgentsAgent<Env> {
-      constructor(ctx: AgentContext, env: Env, private storage: DurableObjectStorage) {
-        super(ctx, env);
-      }
-
-      protected async generateResponse(messages: Message[]) {
-        // Access persistent storage
-        const history = await this.storage.get<Message[]>("history") || [];
-
-        return streamText({
-          model: openai("gpt-4o-mini", { apiKey: this.env.OPENAI_API_KEY }),
-          messages: [...history, ...messages],
-        });
+const stream = streamText({
+  model: openai("gpt-4"),
+  messages,
+  tools: {
+    getWeather: {
+      description: "Get current weather",
+      parameters: z.object({
+        location: z.string()
+      }),
+      execute: async ({ location }) => {
+        return { temperature: 72, condition: "sunny" };
       }
     }
-
-    const ctx = { id: this.ctx.id } as AgentContext;
-    const agent = new StatefulAgent(ctx, this.env, this.ctx.storage);
-    const events$ = agent.run({ messages: body.messages });
-
-    return createSSEResponse(events$);
   }
+});
+
+for await (const event of adapter.adaptStreamToAGUI(stream, ...)) {
+  ws.send(JSON.stringify(event));
 }
 ```
 
-## How It Works
+### With Initial State
 
-This integration connects three pieces:
-
-```
-Cloudflare Agents (AIChatAgent)
-    ↓ You extend it
-CloudflareAgentsAgent
-    ↓ You return Vercel AI SDK stream
-Adapter (Vercel AI → AG-UI)
-    ↓ Produces
-AG-UI Protocol Events
-```
-
-### Why Vercel AI SDK?
-
-Cloudflare Agents uses Vercel AI SDK internally, and we leverage it for:
-
-- **Model flexibility** - Works with OpenAI, Anthropic, Google, etc.
-- **Tool calling** - Built-in function calling support
-- **Streaming** - Native async streaming
-- **Community standard** - Most developers already use it
-
-The adapter automatically converts Vercel AI SDK streams into AG-UI protocol events, so you don't have to manually emit `RUN_STARTED`, `TEXT_MESSAGE_CHUNK`, etc.
-
-### What the Adapter Does
-
-Takes **Vercel AI SDK output**:
 ```typescript
-{
-  textStream: AsyncIterable<string>,
-  toolCalls: ToolCall[],
-  text: string
+for await (const event of adapter.adaptStreamToAGUI(
+  stream,
+  threadId,
+  runId,
+  messages,
+  undefined, // parentRunId
+  { count: 0, user: "alice" } // initial state
+)) {
+  ws.send(JSON.stringify(event));
 }
 ```
 
-Converts to **AG-UI events**:
-```typescript
-RUN_STARTED → TEXT_MESSAGE_CHUNK → TOOL_CALL_* → RUN_FINISHED
+## Features
+
+- WebSocket client for connecting to deployed agents
+- Adapter for converting Vercel AI SDK streams to AG-UI events
+- SSE and NDJSON streaming support
+- Automatic tool call event conversion
+- State snapshots and deltas
+- Message history snapshots
+- TypeScript support
+
+## Architecture
+
 ```
+┌─────────────────────────┐
+│  AG-UI Application      │
+│  (Your Frontend)        │
+└───────────┬─────────────┘
+            │ WebSocket
+            ↓
+┌─────────────────────────┐
+│  CloudflareAgentsClient │
+│  (This Package)         │
+└───────────┬─────────────┘
+            │ WebSocket
+            ↓
+┌─────────────────────────┐
+│  Cloudflare Worker      │
+│  + AgentsToAGUIAdapter  │
+│  (Your Deployed Agent)  │
+└───────────┬─────────────┘
+            │ Vercel AI SDK
+            ↓
+┌─────────────────────────┐
+│  LLM Provider           │
+│  (OpenAI, Anthropic...) │
+└─────────────────────────┘
+```
+
+## Event Flow
+
+The adapter automatically handles AG-UI event patterns:
+
+### Lifecycle Pattern
+
+```
+RUN_STARTED → [events...] → RUN_FINISHED
+                         ↘ RUN_ERROR
+```
+
+### Text Streaming Pattern
+
+```
+TEXT_MESSAGE_CHUNK (auto-expands to)
+  ↓
+TEXT_MESSAGE_START
+  ↓
+TEXT_MESSAGE_CONTENT × N
+  ↓
+TEXT_MESSAGE_END
+```
+
+### Tool Call Pattern
+
+```
+TOOL_CALL_CHUNK (auto-expands to)
+  ↓
+TOOL_CALL_START
+  ↓
+TOOL_CALL_ARGS × N
+  ↓
+TOOL_CALL_END
+  ↓
+TOOL_CALL_RESULT
+```
+
+### State Management Pattern
+
+```
+STATE_SNAPSHOT     (complete state)
+STATE_DELTA        (incremental update via JSON Patch)
+```
+
+## Documentation
+
+- **[docs/README.md](./docs/README.md)** - Quick start and overview
+- **[docs/CLIENT.md](./docs/CLIENT.md)** - Client usage and architecture
+- **[docs/ADAPTER.md](./docs/ADAPTER.md)** - Adapter patterns and examples
 
 ## API Reference
 
-### `CloudflareAgentsAgent<Env, State>`
-
-Extends Cloudflare's `AIChatAgent` and adds AG-UI protocol support.
-
-**Constructor:**
-```typescript
-constructor(
-  ctx: AgentContext,
-  env: Env,
-  config?: CloudflareAgentsAgentConfig
-)
-```
-
-**Parameters:**
-- `ctx: AgentContext` - Cloudflare Agents context (from Durable Object or stub)
-- `env: Env` - Environment variables (API keys, etc.)
-- `config?: CloudflareAgentsAgentConfig` - Optional configuration
-
-**Methods:**
-- `run(input: RunAgentInput): Observable<BaseEvent>` - Run agent and get AG-UI events
-- `generateResponse(messages: Message[]): Promise<StreamTextResult>` - Override this to define AI behavior
-
-### `createSSEResponse()`
-
-Create Server-Sent Events response for AG-UI streaming.
+### CloudflareAgentsClient
 
 ```typescript
-createSSEResponse(
-  events$: Observable<BaseEvent>,
-  customHeaders?: Record<string, string>
-): Response
-```
-
-### `createNDJSONResponse()`
-
-Create newline-delimited JSON response.
-
-```typescript
-createNDJSONResponse(
-  events$: Observable<BaseEvent>,
-  customHeaders?: Record<string, string>
-): Response
-```
-
-## AG-UI Events
-
-The integration automatically emits these AG-UI protocol events:
-
-- `RUN_STARTED` - Agent execution begins
-- `TEXT_MESSAGE_CHUNK` - Streaming text responses
-- `TOOL_CALL_START` - Tool invocation begins
-- `TOOL_CALL_ARGS` - Tool arguments received
-- `TOOL_CALL_END` - Tool invocation completes
-- `TOOL_CALL_RESULT` - Tool execution result
-- `MESSAGES_SNAPSHOT` - Complete message history
-- `RUN_FINISHED` - Agent execution completes
-- `RUN_ERROR` - Error occurred
-
-## Examples
-
-### Multi-turn Conversation
-
-```typescript
-const agent = new ChatAgent(ctx, env);
-
-// First turn
-const events1$ = agent.run({
-  threadId: "thread-1",
-  messages: [{ role: "user", content: "Hello!" }],
-});
-
-// Second turn (same thread)
-const events2$ = agent.run({
-  threadId: "thread-1",
-  messages: [
-    { role: "user", content: "Hello!" },
-    { role: "assistant", content: "Hi there!" },
-    { role: "user", content: "How are you?" },
-  ],
-});
-```
-
-### Using Different Models
-
-```typescript
-import { anthropic } from "@ai-sdk/anthropic";
-
-export class ClaudeAgent extends CloudflareAgentsAgent<Env> {
-  protected async generateResponse(messages: Message[]) {
-    return streamText({
-      model: anthropic("claude-3-5-sonnet-20241022", { apiKey: this.env.ANTHROPIC_API_KEY }),
-      messages,
-    });
-  }
+class CloudflareAgentsClient extends AbstractAgent {
+  constructor(config: { url: string; ... });
+  run(input: RunAgentInput): Observable<BaseEvent>;
+  abortRun(): void;
+  clone(): CloudflareAgentsClient;
 }
 ```
 
-## Secrets Management
+### AgentsToAGUIAdapter
 
-### Local Development
-
-⚠️ **NEVER commit secrets to git!** Use `.dev.vars` for local development:
-
-1. Copy the example file:
-```bash
-cp .dev.vars.example .dev.vars
-```
-
-2. Add your API keys to `.dev.vars`:
-```bash
-OPENAI_API_KEY=sk-proj-your-actual-key-here
-```
-
-3. The `.dev.vars` file is automatically gitignored.
-
-### Production Deployment
-
-**DO NOT use `.dev.vars` files in production!** Use Wrangler secrets:
-
-```bash
-# Set production secrets
-wrangler secret put OPENAI_API_KEY --env production
-
-# Set staging secrets
-wrangler secret put OPENAI_API_KEY --env staging
-```
-
-Secrets set via `wrangler secret put` are:
-- Encrypted at rest
-- Not visible in code or logs
-- Environment-specific
-- Accessible via `env.OPENAI_API_KEY`
-
-### Environment Variables vs Secrets
-
-**Use environment variables (in `wrangler.jsonc`)** for:
-- Non-sensitive configuration
-- Public URLs
-- Feature flags
-
-**Use secrets (`.dev.vars` or `wrangler secret put`)** for:
-- API keys
-- Passwords
-- Tokens
-
-Example `wrangler.jsonc`:
-```jsonc
-{
-  "vars": {
-    "ENVIRONMENT": "development",  // ✅ OK - not sensitive
-    "LOG_LEVEL": "debug"           // ✅ OK - not sensitive
-  },
-  "env": {
-    "production": {
-      "vars": {
-        "ENVIRONMENT": "production"
-      }
-      // ❌ DO NOT put secrets here!
-      // Use: wrangler secret put OPENAI_API_KEY --env production
-    }
-  }
+```typescript
+class AgentsToAGUIAdapter {
+  async *adaptStreamToAGUI(
+    stream: StreamTextResult,
+    threadId?: string,
+    runId?: string,
+    inputMessages?: Message[],
+    parentRunId?: string,
+    state?: any
+  ): AsyncGenerator<BaseEvent>;
 }
 ```
+
+### Response Helpers
+
+```typescript
+function createSSEResponse(
+  events$: Observable<BaseEvent>,
+  additionalHeaders?: Record<string, string>
+): Response;
+
+function createNDJSONResponse(
+  events$: Observable<BaseEvent>,
+  additionalHeaders?: Record<string, string>
+): Response;
+```
+
+## Requirements
+
+- Node.js 18+ or modern browser
+- Cloudflare Workers (for deployment)
+- AG-UI framework
 
 ## Deployment
 
-Deploy to Cloudflare Workers:
+Deploy your Cloudflare Worker agent:
 
 ```bash
-# Install Wrangler
+# Install Wrangler CLI
 npm install -g wrangler
 
-# Set production secrets (first time only)
-wrangler secret put OPENAI_API_KEY --env production
+# Set API keys as secrets
+wrangler secret put OPENAI_API_KEY
 
 # Deploy
-wrangler deploy --env production
+wrangler deploy
 ```
 
-Your agent will be available at:
-```
-https://your-worker.workers.dev
-```
-
-## Testing
-
-Use the [AG-UI Dojo](https://agui-demo.vercel.app) to test your agent:
-
-1. Deploy your worker
-2. Open AG-UI Dojo
-3. Enter your worker URL
-4. Start chatting!
-
-## Learn More
-
-- [AG-UI Documentation](https://docs.ag-ui.com)
-- [Cloudflare Agents](https://github.com/cloudflare/agents)
-- [Cloudflare Workers](https://workers.cloudflare.com)
-- [Durable Objects](https://developers.cloudflare.com/durable-objects)
-- [Vercel AI SDK](https://sdk.vercel.ai/docs)
-
-## Contributing
-
-Contributions are welcome! This is a community integration.
-
-## License
-
-MIT
+Your agent will be available at: `https://your-worker.workers.dev`
