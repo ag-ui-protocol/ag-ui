@@ -22,7 +22,6 @@ from google.adk.events import Event as ADKEvent
 import logging
 logger = logging.getLogger(__name__)
 
-
 def _coerce_tool_response(value: Any, _visited: Optional[set[int]] = None) -> Any:
     """Recursively convert arbitrary tool responses into JSON-serializable structures."""
 
@@ -107,7 +106,6 @@ def _coerce_tool_response(value: Any, _visited: Optional[set[int]] = None) -> An
     finally:
         _visited.discard(obj_id)
 
-
 def _serialize_tool_response(response: Any) -> str:
     """Serialize a tool response into a JSON string."""
 
@@ -121,7 +119,6 @@ def _serialize_tool_response(response: Any) -> str:
         except Exception:
             logger.warning("Failed to stringify tool response; returning empty string.")
             return json.dumps("", ensure_ascii=False)
-
 
 class EventTranslator:
     """Translates Google ADK events to AG-UI protocol events.
@@ -172,10 +169,7 @@ class EventTranslator:
             
             # Determine action based on ADK streaming pattern
             should_send_end = turn_complete and not is_partial
-            
-            logger.debug(f"📥 ADK Event: partial={is_partial}, turn_complete={turn_complete}, "
-                       f"is_final_response={is_final_response}, should_send_end={should_send_end}")
-            
+
             # Skip user events (already in the conversation)
             if hasattr(adk_event, 'author') and adk_event.author == "user":
                 logger.debug("Skipping user event")
@@ -300,10 +294,6 @@ class EventTranslator:
             or (has_finish_reason and self._is_streaming)
         )
 
-        logger.info(f"📥 Text event - partial={is_partial}, turn_complete={turn_complete}, "
-                    f"is_final_response={is_final_response}, has_finish_reason={has_finish_reason}, "
-                    f"should_send_end={should_send_end}, currently_streaming={self._is_streaming}")
-
         if is_final_response:
             # This is the final, complete message event.
 
@@ -321,7 +311,6 @@ class EventTranslator:
                     type=EventType.TEXT_MESSAGE_END,
                     message_id=self._streaming_message_id
                 )
-                logger.info(f"📤 TEXT_MESSAGE_END (from final response): {end_event.model_dump_json()}")
                 yield end_event
 
                 self._streaming_message_id = None
@@ -387,7 +376,6 @@ class EventTranslator:
                 message_id=self._streaming_message_id,
                 role="assistant"
             )
-            logger.info(f"📤 TEXT_MESSAGE_START: {start_event.model_dump_json()}")
             yield start_event
         
         # Always emit content (unless empty)
@@ -398,7 +386,6 @@ class EventTranslator:
                 message_id=self._streaming_message_id,
                 delta=combined_text
             )
-            logger.info(f"📤 TEXT_MESSAGE_CONTENT: {content_event.model_dump_json()}")
             yield content_event
         
         # If turn is complete and not partial, emit END event
@@ -407,7 +394,6 @@ class EventTranslator:
                 type=EventType.TEXT_MESSAGE_END,
                 message_id=self._streaming_message_id
             )
-            logger.info(f"📤 TEXT_MESSAGE_END: {end_event.model_dump_json()}")
             yield end_event
 
             # Reset streaming state
@@ -421,13 +407,14 @@ class EventTranslator:
     
     async def translate_lro_function_calls(self,adk_event: ADKEvent)-> AsyncGenerator[BaseEvent, None]:
         """Translate long running function calls from ADK event to AG-UI tool call events.
-        
+
         Args:
             adk_event: The ADK event containing function calls
-            
+
         Yields:
             Tool call events (START, ARGS, END)
         """
+
         long_running_function_call = None
         if adk_event.content and adk_event.content.parts:
             for i, part in enumerate(adk_event.content.parts):
@@ -457,35 +444,39 @@ class EventTranslator:
                         yield ToolCallEndEvent(
                             type=EventType.TOOL_CALL_END,
                             tool_call_id=long_running_function_call.id
-                        )                       
-                        
+                        )
+
                         # Clean up tracking
-                        self._active_tool_calls.pop(long_running_function_call.id, None)   
+                        self._active_tool_calls.pop(long_running_function_call.id, None)
     
     async def _translate_function_calls(
         self,
         function_calls: list[types.FunctionCall],
     ) -> AsyncGenerator[BaseEvent, None]:
         """Translate function calls from ADK event to AG-UI tool call events.
-        
+
         Args:
             adk_event: The ADK event containing function calls
             function_calls: List of function calls from the event
             thread_id: The AG-UI thread ID
             run_id: The AG-UI run ID
-            
+
         Yields:
             Tool call events (START, ARGS, END)
         """
         # Since we're not tracking streaming messages, use None for parent message
         parent_message_id = None
-        
+
         for func_call in function_calls:
             tool_call_id = getattr(func_call, 'id', str(uuid.uuid4()))
-            
+
+            # Check if this tool call ID already exists
+            if tool_call_id in self._active_tool_calls:
+                logger.warning(f"⚠️  DUPLICATE TOOL CALL! Tool call ID {tool_call_id} (name: {func_call.name}) already exists in active calls!")
+
             # Track the tool call
             self._active_tool_calls[tool_call_id] = tool_call_id
-            
+
             # Emit TOOL_CALL_START
             yield ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
@@ -493,27 +484,28 @@ class EventTranslator:
                 tool_call_name=func_call.name,
                 parent_message_id=parent_message_id
             )
-            
+
             # Emit TOOL_CALL_ARGS if we have arguments
             if hasattr(func_call, 'args') and func_call.args:
                 # Convert args to string (JSON format)
                 import json
                 args_str = json.dumps(func_call.args) if isinstance(func_call.args, dict) else str(func_call.args)
-                
+
                 yield ToolCallArgsEvent(
                     type=EventType.TOOL_CALL_ARGS,
                     tool_call_id=tool_call_id,
                     delta=args_str
                 )
-            
+
             # Emit TOOL_CALL_END
             yield ToolCallEndEvent(
                 type=EventType.TOOL_CALL_END,
                 tool_call_id=tool_call_id
             )
-            
+
             # Clean up tracking
             self._active_tool_calls.pop(tool_call_id, None)
+
     
 
     async def _translate_function_response(
@@ -609,7 +601,6 @@ class EventTranslator:
                 type=EventType.TEXT_MESSAGE_END,
                 message_id=self._streaming_message_id
             )
-            logger.info(f"📤 TEXT_MESSAGE_END (forced): {end_event.model_dump_json()}")
             yield end_event
 
             # Reset streaming state

@@ -657,7 +657,8 @@ class SessionManager:
                     if age > self._timeout:
                         # Check for pending tool calls before deletion (HITL scenarios)
                         pending_calls = session.state.get("pending_tool_calls", []) if session.state else []
-                        if pending_calls:
+                        has_pending = len(pending_calls) > 0
+                        if has_pending:
                             logger.info(f"Preserving expired session {session_key} - has {len(pending_calls)} pending tool calls (HITL)")
                         else:
                             await self._delete_session(session)

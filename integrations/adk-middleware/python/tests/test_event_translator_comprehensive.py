@@ -921,24 +921,17 @@ class TestEventTranslatorComprehensive:
 
     @pytest.mark.asyncio
     async def test_event_logging_coverage(self, translator, mock_adk_event_with_content):
-        """Test comprehensive event logging."""
-        with patch('ag_ui_adk.event_translator.logger') as mock_logger:
-            events = []
-            async for event in translator.translate(mock_adk_event_with_content, "thread_1", "run_1"):
-                events.append(event)
+        """Test event translation without diagnostic logging."""
+        # After diagnostic logging cleanup, we just verify events are generated correctly
+        events = []
+        async for event in translator.translate(mock_adk_event_with_content, "thread_1", "run_1"):
+            events.append(event)
 
-            # Should log ADK event processing (now in debug logs)
-            mock_logger.debug.assert_called()
-            debug_calls = [str(call) for call in mock_logger.debug.call_args_list]
-            assert any("ADK Event:" in call for call in debug_calls)
-
-            # Text event logging remains in info
-            mock_logger.info.assert_called()
-            info_calls = [str(call) for call in mock_logger.info.call_args_list]
-            assert any("Text event -" in call for call in info_calls)
-            assert any("TEXT_MESSAGE_START:" in call for call in info_calls)
-            assert any("TEXT_MESSAGE_CONTENT:" in call for call in info_calls)
-            # No TEXT_MESSAGE_END unless is_final_response=True
+        # Verify events are generated
+        assert len(events) > 0
+        event_types = [type(event).__name__ for event in events]
+        # Should have text message events
+        assert any("TextMessage" in event_type for event_type in event_types)
 
     @pytest.mark.asyncio
     async def test_attribute_access_patterns(self, translator, mock_adk_event):
