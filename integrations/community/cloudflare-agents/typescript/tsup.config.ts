@@ -7,4 +7,6 @@ export default defineConfig({
   splitting: false,
   sourcemap: true,
   clean: true,
+  minify: true,
+  external: ["@ag-ui/client", "@ag-ui/core", "rxjs", "ai", "cloudflare:workers"],
 });

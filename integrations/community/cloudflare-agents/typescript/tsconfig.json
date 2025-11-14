@@ -1,23 +1,23 @@
 {
+  //must be this way and unlike other integrations or will break
   "compilerOptions": {
-    "target": "es2017",
-    "module": "esnext",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "target": "ES2020",
+    "module": "ESNext",
+    "lib": ["ES2020"],
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "moduleResolution": "node",
-    "skipLibCheck": true,
     "strict": true,
-    "esModuleInterop": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"]
-    },
-    "stripInternal": true
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "types": ["node", "@cloudflare/workers-types"]
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist", "examples"]
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "tests"]
 }
