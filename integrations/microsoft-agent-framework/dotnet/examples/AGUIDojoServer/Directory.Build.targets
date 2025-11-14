@@ -1,0 +1,7 @@
+<Project>
+  <!-- This file disconnects this project from the parent solution's build targets -->
+  <PropertyGroup>
+    <!-- Disable parent Directory.Build.targets import -->
+    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
+  </PropertyGroup>
+</Project>
