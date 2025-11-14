@@ -44,6 +44,7 @@ print(f"AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: {'SET' if os.getenv('AZURE_OPENAI_CHA
 print(f"AZURE_CLIENT_ID: {'SET' if os.getenv('AZURE_CLIENT_ID') else 'MISSING'}")
 print(f"AZURE_TENANT_ID: {'SET' if os.getenv('AZURE_TENANT_ID') else 'MISSING'}")
 print(f"AZURE_CLIENT_SECRET: {'SET' if os.getenv('AZURE_CLIENT_SECRET') else 'MISSING'}")
+print(f"OPENAI_API_KEY: {'SET' if os.getenv('OPENAI_API_KEY') else 'MISSING'}")
 
 # Resolve deployment name with fallback to support both Python and .NET env var naming
 deployment_name = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME")
@@ -58,6 +59,8 @@ if endpoint:
 else:
     print("WARNING: AZURE_OPENAI_ENDPOINT not set")
 
+api_key = os.getenv("OPENAI_API_KEY")
+
 # Create a shared chat client for all agents
 # You can use different chat clients for different agents:
 
@@ -71,10 +74,9 @@ else:
 
 # If using api_key authentication remove the credential parameter
 # Explicitly pass deployment_name to align with .NET behavior and support both env var names
-chat_client = AzureOpenAIChatClient(
-    credential=DefaultAzureCredential(),
-    deployment_name=deployment_name,
-    endpoint=endpoint,
+chat_client = OpenAIChatClient(
+    model_id=deployment_name,
+    api_key=api_key,
 )
 
 # Agentic Chat - simple_agent
