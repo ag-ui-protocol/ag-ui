@@ -1,6 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
-
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Text.Json;
 using AGUIDojoServer.AgenticUI;
 using AGUIDojoServer.BackendToolRendering;
