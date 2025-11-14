@@ -1,7 +1,0 @@
-<Project>
-  <!-- This file disconnects this project from the parent solution's build configuration -->
-  <PropertyGroup>
-    <!-- Disable parent Directory.Build.props import -->
-    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
-  </PropertyGroup>
-</Project>

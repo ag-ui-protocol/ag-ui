@@ -77,7 +77,6 @@ internal sealed class AgenticUIAgent : DelegatingAIAgent
                     ResponseId = update.ResponseId,
                     AuthorName = update.AuthorName,
                     Role = update.Role,
-                    ContinuationToken = update.ContinuationToken,
                     AdditionalProperties = update.AdditionalProperties,
                 })
             {

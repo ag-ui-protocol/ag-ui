@@ -87,7 +87,6 @@ internal sealed class PredictiveStateUpdatesAgent : DelegatingAIAgent
                             ResponseId = update.ResponseId,
                             AdditionalProperties = update.AdditionalProperties,
                             AuthorName = update.AuthorName,
-                            ContinuationToken = update.ContinuationToken,
                         })
                     {
                         AgentId = update.AgentId
