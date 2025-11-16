@@ -12,9 +12,9 @@ from .types import (
     LangGraphPlatformResultMessage,
     LangGraphPlatformActionExecutionMessage,
     LangGraphPlatformMessage,
-    PredictStateTool
+    PredictStateTool,
 )
-from .endpoint import add_langgraph_fastapi_endpoint
+from .endpoint import add_langgraph_fastapi_endpoints
 
 __all__ = [
     "LangGraphAgent",
@@ -31,5 +31,5 @@ __all__ = [
     "LangGraphPlatformActionExecutionMessage",
     "LangGraphPlatformMessage",
     "PredictStateTool",
-    "add_langgraph_fastapi_endpoint"
+    "add_langgraph_fastapi_endpoints",
 ]
