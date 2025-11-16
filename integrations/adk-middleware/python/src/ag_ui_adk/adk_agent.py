@@ -33,8 +33,6 @@ from .client_proxy_toolset import ClientProxyToolset
 import logging
 logger = logging.getLogger(__name__)
 
-
-
 class ADKAgent:
     """Middleware to bridge AG-UI Protocol with Google ADK agents.
     
@@ -212,7 +210,7 @@ class ADKAgent:
     
     async def _add_pending_tool_call_with_context(self, session_id: str, tool_call_id: str, app_name: str, user_id: str):
         """Add a tool call to the session's pending list for HITL tracking.
-        
+
         Args:
             session_id: The session ID (thread_id)
             tool_call_id: The tool call ID to track
@@ -229,11 +227,11 @@ class ADKAgent:
                 key="pending_tool_calls",
                 default=[]
             )
-            
+
             # Add new tool call if not already present
             if tool_call_id not in pending_calls:
                 pending_calls.append(tool_call_id)
-                
+
                 # Update the state using SessionManager
                 success = await self._session_manager.set_state_value(
                     session_id=session_id,
@@ -242,12 +240,12 @@ class ADKAgent:
                     key="pending_tool_calls",
                     value=pending_calls
                 )
-                
+
                 if success:
                     logger.info(f"Added tool call {tool_call_id} to session {session_id} pending list")
         except Exception as e:
             logger.error(f"Failed to add pending tool call {tool_call_id} to session {session_id}: {e}")
-    
+
     async def _remove_pending_tool_call(self, session_id: str, tool_call_id: str):
         """Remove a tool call from the session's pending list.
 
@@ -286,12 +284,35 @@ class ADKAgent:
                         key="pending_tool_calls",
                         value=pending_calls
                     )
-                    
+
                     if success:
                         logger.info(f"Removed tool call {tool_call_id} from session {session_id} pending list")
         except Exception as e:
             logger.error(f"Failed to remove pending tool call {tool_call_id} from session {session_id}: {e}")
     
+    async def _get_pending_tool_call_ids(self, session_id: str) -> Optional[List[str]]:
+        """Fetch the pending tool call identifiers tracked for a session."""
+        try:
+            metadata = self._get_session_metadata(session_id)
+
+            if metadata:
+                pending_calls = await self._session_manager.get_state_value(
+                    session_id=session_id,
+                    app_name=metadata["app_name"],
+                    user_id=metadata["user_id"],
+                    key="pending_tool_calls",
+                    default=[],
+                )
+
+                if pending_calls is None:
+                    return []
+
+                return list(pending_calls)
+        except Exception as e:
+            logger.error(f"Failed to fetch pending tool calls for session {session_id}: {e}")
+
+        return None
+
     async def _has_pending_tool_calls(self, session_id: str) -> bool:
         """Check if session has pending tool calls (HITL scenario).
 
@@ -301,27 +322,11 @@ class ADKAgent:
         Returns:
             True if session has pending tool calls
         """
-        try:
-            # Use efficient session metadata lookup
-            metadata = self._get_session_metadata(session_id)
+        pending_calls = await self._get_pending_tool_call_ids(session_id)
+        if pending_calls is None:
+            return False
 
-            if metadata:
-                app_name = metadata["app_name"]
-                user_id = metadata["user_id"]
-
-                # Get pending calls using SessionManager
-                pending_calls = await self._session_manager.get_state_value(
-                    session_id=session_id,
-                    app_name=app_name,
-                    user_id=user_id,
-                    key="pending_tool_calls",
-                    default=[]
-                )
-                return len(pending_calls) > 0
-        except Exception as e:
-            logger.error(f"Failed to check pending tool calls for session {session_id}: {e}")
-
-        return False
+        return len(pending_calls) > 0
     
     
     def _default_run_config(self, input: RunAgentInput) -> ADKRunConfig:
@@ -379,9 +384,74 @@ class ADKAgent:
                     tool_batch.append(unseen_messages[index])
                     index += 1
 
+                tool_call_ids = [
+                    getattr(message, "tool_call_id", None)
+                    for message in tool_batch
+                    if getattr(message, "tool_call_id", None)
+                ]
+                pending_tool_call_ids = await self._get_pending_tool_call_ids(input.thread_id)
+
+                should_process_tool_batch = True
+                if pending_tool_call_ids is not None:
+                    if tool_call_ids:
+                        pending_tool_call_id_set = set(pending_tool_call_ids)
+                        should_process_tool_batch = any(
+                            tool_call_id in pending_tool_call_id_set
+                            for tool_call_id in tool_call_ids
+                        )
+                    else:
+                        should_process_tool_batch = len(pending_tool_call_ids) > 0
+
+                if not should_process_tool_batch:
+                    logger.info(
+                        "Skipping tool result batch for thread %s - no matching pending tool calls",
+                        input.thread_id,
+                    )
+                    message_ids = self._collect_message_ids(tool_batch)
+                    if message_ids:
+                        self._session_manager.mark_messages_processed(
+                            app_name,
+                            input.thread_id,
+                            message_ids,
+                        )
+                    skip_tool_message_batch = False
+                    continue
+
+                # Peek ahead: if there's a non-tool message following, collect it too
+                # This allows sending FunctionResponse + user message in ONE invocation
+                trailing_messages: List[Any] = []
+                trailing_assistant_ids: List[str] = []
+                temp_index = index
+
+                # Collect all trailing non-tool messages (skip assistant messages, collect user/system)
+                while temp_index < total_unseen and getattr(unseen_messages[temp_index], "role", None) != "tool":
+                    candidate = unseen_messages[temp_index]
+                    candidate_role = getattr(candidate, "role", None)
+
+                    if candidate_role == "assistant":
+                        message_id = getattr(candidate, "id", None)
+                        if message_id:
+                            trailing_assistant_ids.append(message_id)
+                    else:
+                        trailing_messages.append(candidate)
+
+                    temp_index += 1
+
+                # If we found trailing messages, advance index and mark assistants as processed
+                if trailing_messages or trailing_assistant_ids:
+                    index = temp_index
+
+                    if trailing_assistant_ids:
+                        self._session_manager.mark_messages_processed(
+                            app_name,
+                            input.thread_id,
+                            trailing_assistant_ids,
+                        )
+
                 async for event in self._handle_tool_result_submission(
                     input,
                     tool_messages=tool_batch,
+                    trailing_messages=trailing_messages if trailing_messages else None,
                     include_message_batch=not skip_tool_message_batch,
                 ):
                     yield event
@@ -466,7 +536,12 @@ class ADKAgent:
     
     
     async def _get_unseen_messages(self, input: RunAgentInput) -> List[Any]:
-        """Return messages that have not yet been processed for this session."""
+        """Return messages that have not yet been processed for this session.
+
+        Filters out ALL processed messages, not just stopping at the first one.
+        This handles out-of-order message processing (e.g., LRO tool results arriving
+        after subsequent user messages).
+        """
         if not input.messages:
             return []
 
@@ -474,16 +549,15 @@ class ADKAgent:
         session_id = input.thread_id
         processed_ids = self._session_manager.get_processed_message_ids(app_name, session_id)
 
-        unseen_reversed: List[Any] = []
-
-        for message in reversed(input.messages):
+        # Filter out all processed messages, maintaining chronological order
+        unseen: List[Any] = []
+        for message in input.messages:
             message_id = getattr(message, "id", None)
             if message_id and message_id in processed_ids:
-                break
-            unseen_reversed.append(message)
+                continue
+            unseen.append(message)
 
-        unseen_reversed.reverse()
-        return unseen_reversed
+        return unseen
 
     def _collect_message_ids(self, messages: List[Any]) -> List[str]:
         """Extract message IDs from messages, skipping those without IDs."""
@@ -516,24 +590,26 @@ class ADKAgent:
         input: RunAgentInput,
         *,
         tool_messages: Optional[List[Any]] = None,
+        trailing_messages: Optional[List[Any]] = None,
         include_message_batch: bool = True,
     ) -> AsyncGenerator[BaseEvent, None]:
         """Handle tool result submission for existing execution.
-        
+
         Args:
             input: The run input containing tool results
             tool_messages: Optional pre-filtered tool messages to consider
+            trailing_messages: Optional messages that follow the tool batch (e.g., user message)
             include_message_batch: Whether to forward the candidate messages to the execution
-            
+
         Yields:
             AG-UI events from continued execution
         """
         thread_id = input.thread_id
-        
+
         # Extract tool results that are sent by the frontend
         candidate_messages = tool_messages if tool_messages is not None else await self._get_unseen_messages(input)
         tool_results = await self._extract_tool_results(input, candidate_messages)
-        
+
         # if the tool results are not sent by the fronted then call the tool function
         if not tool_results:
             logger.error(f"Tool result submission without tool results for thread {thread_id}")
@@ -543,13 +619,13 @@ class ADKAgent:
                 code="NO_TOOL_RESULTS"
             )
             return
-        
+
         try:
-            # Check if tool result matches any pending tool calls for better debugging
+            # Remove tool calls from pending list
             for tool_result in tool_results:
                 tool_call_id = tool_result['message'].tool_call_id
                 has_pending = await self._has_pending_tool_calls(thread_id)
-                
+
                 if has_pending:
                     # Could add more specific check here for the exact tool_call_id
                     # but for now just log that we're processing a tool result while tools are pending
@@ -559,11 +635,14 @@ class ADKAgent:
                 else:
                     # No pending tools - this could be a stale result or from a different session
                     logger.warning(f"No pending tool calls found for tool result {tool_call_id} in thread {thread_id}")
-            
+
             # Since all tools are long-running, all tool results are standalone
             # and should start new executions with the tool results
             logger.info(f"Starting new execution for tool result in thread {thread_id}")
-            message_batch = candidate_messages if include_message_batch else None
+
+            # Use trailing_messages if provided, otherwise fall back to candidate_messages
+            message_batch = trailing_messages if trailing_messages else (candidate_messages if include_message_batch else None)
+
             async for event in self._start_new_execution(
                 input,
                 tool_results=tool_results,
@@ -650,7 +729,7 @@ class ADKAgent:
                 
                 event_count += 1
                 logger.debug(f"Got event #{event_count} from queue: {type(event).__name__ if event else 'None'} (thread {execution.thread_id})")
-                
+
                 if event is None:
                     # Execution complete
                     execution.is_complete = True
@@ -701,10 +780,10 @@ class ADKAgent:
         message_batch: Optional[List[Any]] = None,
     ) -> AsyncGenerator[BaseEvent, None]:
         """Start a new ADK execution with tool support.
-        
+
         Args:
             input: The run input
-            
+
         Yields:
             AG-UI events from the execution
         """
@@ -754,7 +833,7 @@ class ADKAgent:
             logger.debug(f"Starting to stream events for execution {execution.thread_id}")
             has_tool_calls = False
             tool_call_ids = []
-            
+
             logger.debug(f"About to iterate over _stream_events for execution {execution.thread_id}")
             async for event in self._stream_events(execution):
                 # Track tool calls for HITL scenarios
@@ -768,13 +847,12 @@ class ADKAgent:
                 if isinstance(event, ToolCallResultEvent) and event.tool_call_id in tool_call_ids:
                     logger.info(f"Detected ToolCallResultEvent with id: {event.tool_call_id}")
                     tool_call_ids.remove(event.tool_call_id)
-                
-                
+
                 logger.debug(f"Yielding event: {type(event).__name__}")
                 yield event
-                
+
             logger.debug(f"Finished iterating over _stream_events for execution {execution.thread_id}")
-            
+
             # If we found tool calls, add them to session state BEFORE cleanup
             if has_tool_calls:
                 app_name = self._get_app_name(input)
@@ -823,10 +901,10 @@ class ADKAgent:
         message_batch: Optional[List[Any]] = None,
     ) -> ExecutionState:
         """Start ADK execution in background with tool support.
-        
+
         Args:
             input: The run input
-            
+
         Returns:
             ExecutionState tracking the background execution
         """
@@ -884,7 +962,6 @@ class ADKAgent:
         # Create dynamic toolset if tools provided and prepare tool updates
         toolset = None
         if input.tools:
-            
             # Get existing tools from the agent
             existing_tools = []
             if hasattr(adk_agent, 'tools') and adk_agent.tools:
@@ -950,7 +1027,7 @@ class ADKAgent:
         message_batch: Optional[List[Any]] = None,
     ):
         """Run ADK agent in background, emitting events to queue.
-        
+
         Args:
             input: The run input
             adk_agent: The ADK agent to run (already prepared with tools and SystemMessage)
@@ -981,8 +1058,7 @@ class ADKAgent:
             # this will always update the backend states with the frontend states
             # Recipe Demo Example: if there is a state "salt" in the ingredients state and in frontend user remove this salt state using UI from the ingredients list then our backend should also update these state changes as well to sync both the states
             await self._session_manager.update_session_state(input.thread_id,app_name,user_id,input.state)
-            
-            
+
             # Convert messages
             unseen_messages = message_batch if message_batch is not None else await self._get_unseen_messages(input)
 
@@ -1000,12 +1076,14 @@ class ADKAgent:
                 if message_ids:
                     self._session_manager.mark_messages_processed(app_name, input.thread_id, message_ids)
 
-            # only use this new_message if there is no tool response from the user
-            new_message = await self._convert_latest_message(input, unseen_messages if message_batch is not None else None)
+            # Convert user messages first (if any)
+            user_message = await self._convert_latest_message(input, unseen_messages if message_batch is not None else None)
 
-            # if there is a tool response submission by the user then we need to only pass the tool response to the adk runner
-            if active_tool_results:
-                parts = []
+            # if there is a tool response submission by the user, add FunctionResponse to session first
+            if active_tool_results and user_message:
+                # We have BOTH tool results AND a user message
+                # Add FunctionResponse as a separate event to the session, then send user message
+                function_response_parts = []
                 for tool_msg in active_tool_results:
                     tool_call_id = tool_msg['message'].tool_call_id
                     content = tool_msg['message'].content
@@ -1039,21 +1117,120 @@ class ADKAgent:
                             response=result,
                         )
                     )
-                    parts.append(updated_function_response_part)
-                new_message = types.Content(parts=parts, role='function')
+                    function_response_parts.append(updated_function_response_part)
+
+                # Add FunctionResponse as separate event to session
+                session = await self._session_manager.get_or_create_session(
+                    session_id=input.thread_id,
+                    app_name=app_name,
+                    user_id=user_id,
+                    initial_state=input.state
+                )
+
+                from google.adk.sessions.session import Event
+                import time
+
+                function_response_content = types.Content(parts=function_response_parts, role='user')
+                function_response_event = Event(
+                    timestamp=time.time(),
+                    author='user',
+                    content=function_response_content
+                )
+
+                session.events.append(function_response_event)
+
+                # Mark user messages from message_batch as processed
+                if message_batch:
+                    user_message_ids = self._collect_message_ids(message_batch)
+                    if user_message_ids:
+                        self._session_manager.mark_messages_processed(app_name, input.thread_id, user_message_ids)
+
+                # Use ONLY the user message as new_message
+                new_message = user_message
+
+            elif active_tool_results:
+                # Tool results WITHOUT user message - send FunctionResponse alone
+                function_response_parts = []
+                for tool_msg in active_tool_results:
+                    tool_call_id = tool_msg['message'].tool_call_id
+                    content = tool_msg['message'].content
+
+                    logger.debug(f"Received tool result for call {tool_call_id}: content='{content}', type={type(content)}")
+
+                    try:
+                        if content and content.strip():
+                            result = json.loads(content)
+                        else:
+                            result = {"success": True, "result": None}
+                            logger.warning(f"Empty tool result content for tool call {tool_call_id}, using empty success result")
+                    except json.JSONDecodeError as json_error:
+                        result = {
+                            "error": f"Invalid JSON in tool result: {str(json_error)}",
+                            "raw_content": content,
+                            "error_type": "JSON_DECODE_ERROR",
+                            "line": getattr(json_error, 'lineno', None),
+                            "column": getattr(json_error, 'colno', None)
+                        }
+                        logger.error(f"Invalid JSON in tool result for call {tool_call_id}: {json_error} at line {getattr(json_error, 'lineno', '?')}, column {getattr(json_error, 'colno', '?')}")
+
+                    updated_function_response_part = types.Part(
+                        function_response=types.FunctionResponse(
+                            id=tool_call_id,
+                            name=tool_msg["tool_name"],
+                            response=result,
+                        )
+                    )
+                    function_response_parts.append(updated_function_response_part)
+
+                new_message = types.Content(parts=function_response_parts, role='user')
+            else:
+                # No tool results, just use the user message
+                new_message = user_message
 
             # Create event translator
             event_translator = EventTranslator()
-            
+
+            try:
+                session = await self._session_manager.get_or_create_session(
+                    session_id=input.thread_id,
+                    app_name=app_name,
+                    user_id=user_id,
+                    initial_state=input.state
+                )
+
+                # Check session events (ADK stores conversation in events)
+                events = getattr(session, 'events', [])
+
+                # If sending FunctionResponse, look for the original FunctionCall in session
+                if active_tool_results:
+                    tool_call_id = active_tool_results[0]['message'].tool_call_id
+                    found_call = False
+                    for evt_idx, evt in enumerate(events):
+                        evt_content = getattr(evt, 'content', None)
+                        if evt_content:
+                            evt_parts = getattr(evt_content, 'parts', [])
+                            for part in evt_parts:
+                                if hasattr(part, 'function_call'):
+                                    fc = part.function_call
+                                    if fc and hasattr(fc, 'id') and fc.id == tool_call_id:
+                                        found_call = True
+                                        break
+                        if found_call:
+                            break
+            except Exception as e:
+                pass
+
             # Run ADK agent
             is_long_running_tool = False
-            async for adk_event in runner.run_async(
-                user_id=user_id,
-                session_id=input.thread_id,
-                new_message=new_message,
-                run_config=run_config
-            ):
+            run_kwargs = {
+                "user_id": user_id,
+                "session_id": input.thread_id,
+                "new_message": new_message,
+                "run_config": run_config
+            }
 
+            async for adk_event in runner.run_async(**run_kwargs):
+                event_invocation_id = getattr(adk_event, 'invocation_id', None)
                 final_response = adk_event.is_final_response()
                 has_content = adk_event.content and hasattr(adk_event.content, 'parts') and adk_event.content.parts
 

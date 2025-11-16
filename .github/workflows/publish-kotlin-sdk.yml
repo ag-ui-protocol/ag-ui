@@ -1,0 +1,166 @@
+name: Publish Kotlin SDK to Maven Central
+
+on:
+  # Manual trigger only - no automatic publishing
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run in dry-run mode (test without uploading)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v3
+
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 36 components
+        run: |
+          echo "Installing Android SDK 36 components..."
+          sdkmanager --install "platforms;android-36"
+          sdkmanager --install "build-tools;36.0.0"
+
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Verify Android SDK installation
+        run: |
+          echo "Checking Android SDK installation..."
+          sdkmanager --list_installed | grep -E "(platforms;android-36|build-tools;36)"
+
+      - name: Run tests
+        working-directory: sdks/community/kotlin/library
+        run: ./gradlew allTests --no-daemon --stacktrace
+
+      - name: Parse test results
+        if: always()
+        working-directory: sdks/community/kotlin/library
+        run: |
+          echo "## Kotlin SDK Test Results Summary"
+          echo ""
+
+          total_tests=0
+          total_failures=0
+          total_errors=0
+
+          for module in core client tools; do
+            xml_dir="$module/build/test-results/jvmTest"
+
+            if [ -d "$xml_dir" ]; then
+              # Sum up test counts from all XML files in the directory
+              module_tests=$(find "$xml_dir" -name "*.xml" -exec grep -h '<testsuite' {} \; | grep -o 'tests="[0-9]*"' | sed 's/tests="\([0-9]*\)"/\1/' | awk '{sum += $1} END {print sum}')
+              module_failures=$(find "$xml_dir" -name "*.xml" -exec grep -h '<testsuite' {} \; | grep -o 'failures="[0-9]*"' | sed 's/failures="\([0-9]*\)"/\1/' | awk '{sum += $1} END {print sum}')
+              module_errors=$(find "$xml_dir" -name "*.xml" -exec grep -h '<testsuite' {} \; | grep -o 'errors="[0-9]*"' | sed 's/errors="\([0-9]*\)"/\1/' | awk '{sum += $1} END {print sum}')
+
+              # Default to 0 if empty
+              module_tests=${module_tests:-0}
+              module_failures=${module_failures:-0}
+              module_errors=${module_errors:-0}
+
+              if [ "$module_tests" -gt 0 ]; then
+                echo "✅ kotlin-$module: $module_tests tests, $module_failures failures, $module_errors errors"
+                total_tests=$((total_tests + module_tests))
+                total_failures=$((total_failures + module_failures))
+                total_errors=$((total_errors + module_errors))
+              fi
+            fi
+          done
+
+          echo ""
+          echo "---"
+          echo "### Overall Results: $total_tests tests, $total_failures failures, $total_errors errors"
+
+          if [ $total_failures -gt 0 ] || [ $total_errors -gt 0 ]; then
+            echo "❌ Some tests failed - aborting publish"
+            exit 1
+          elif [ $total_tests -eq 0 ]; then
+            echo "⚠️ No tests were found or executed - aborting publish"
+            exit 1
+          else
+            echo "✅ All $total_tests tests passed!"
+          fi
+
+      - name: Publish to Maven Central (dry-run)
+        if: inputs.dry_run == true
+        working-directory: sdks/community/kotlin
+        env:
+          JRELEASER_MAVENCENTRAL_SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          JRELEASER_MAVENCENTRAL_SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          JRELEASER_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          JRELEASER_GPG_PUBLIC_KEY: ${{ secrets.GPG_PUBLIC_KEY }}
+          JRELEASER_GPG_SECRET_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          echo "🔍 Running publish script in dry-run mode..."
+          ./publish.sh --dry-run
+
+      - name: Publish to Maven Central
+        if: inputs.dry_run == false
+        working-directory: sdks/community/kotlin
+        env:
+          JRELEASER_MAVENCENTRAL_SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          JRELEASER_MAVENCENTRAL_SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          JRELEASER_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          JRELEASER_GPG_PUBLIC_KEY: ${{ secrets.GPG_PUBLIC_KEY }}
+          JRELEASER_GPG_SECRET_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          echo "🚀 Publishing to Maven Central..."
+          ./publish.sh
+
+      - name: Upload JReleaser logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jreleaser-logs
+          path: sdks/community/kotlin/library/build/jreleaser/
+          retention-days: 7
+
+      - name: Summary
+        if: success() && inputs.dry_run == false
+        working-directory: sdks/community/kotlin/library
+        run: |
+          # Extract version from build.gradle.kts
+          VERSION=$(grep "^version = " build.gradle.kts | sed 's/version = "\(.*\)"/\1/')
+
+          echo "## ✅ Publishing Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The Kotlin SDK has been published to Maven Central." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Published Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- \`com.ag-ui.community:kotlin-core:${VERSION}\` (JVM, Android, iOS)" >> $GITHUB_STEP_SUMMARY
+          echo "- \`com.ag-ui.community:kotlin-client:${VERSION}\` (JVM, Android, iOS)" >> $GITHUB_STEP_SUMMARY
+          echo "- \`com.ag-ui.community:kotlin-tools:${VERSION}\` (JVM, Android, iOS)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** All platforms published including iOS artifacts in .klib format." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Check deployment status: https://central.sonatype.com/publishing" >> $GITHUB_STEP_SUMMARY
+          echo "2. Artifacts will be validated automatically" >> $GITHUB_STEP_SUMMARY
+          echo "3. Publishing completes in ~10-30 minutes" >> $GITHUB_STEP_SUMMARY
+
+      - name: Dry-run Summary
+        if: success() && inputs.dry_run == true
+        run: |
+          echo "## ✅ Dry-run Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The dry-run completed successfully. No artifacts were uploaded." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Run without the dry-run flag to publish to Maven Central." >> $GITHUB_STEP_SUMMARY

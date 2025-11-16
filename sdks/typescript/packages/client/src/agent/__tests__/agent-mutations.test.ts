@@ -17,14 +17,18 @@ jest.mock("uuid", () => ({
 }));
 
 // Mock utils
-jest.mock("@/utils", () => ({
-  structuredClone_: (obj: any) => {
-    if (obj === undefined) return undefined;
-    const jsonString = JSON.stringify(obj);
-    if (jsonString === undefined || jsonString === "undefined") return undefined;
-    return JSON.parse(jsonString);
-  },
-}));
+jest.mock("@/utils", () => {
+  const actual = jest.requireActual<typeof import("@/utils")>("@/utils");
+  return {
+    ...actual,
+    structuredClone_: (obj: any) => {
+      if (obj === undefined) return undefined;
+      const jsonString = JSON.stringify(obj);
+      if (jsonString === undefined || jsonString === "undefined") return undefined;
+      return JSON.parse(jsonString);
+    },
+  };
+});
 
 // Helper function to wait for async notifications to complete
 const waitForAsyncNotifications = async () => {

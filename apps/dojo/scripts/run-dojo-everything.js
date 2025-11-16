@@ -141,6 +141,18 @@ const ALL_SERVICES = {
     cwd: path.join(middlewaresRoot, "a2a-middleware/examples"),
     env: { PORT: 8014 },
   }],
+  'microsoft-agent-framework-python': [{
+    command: 'uv run dev',
+    name: 'Microsoft Agent Framework (Python)',
+    cwd: path.join(integrationsRoot, 'microsoft-agent-framework/python/examples'),
+    env: { PORT: 8015 },
+  }],
+  'microsoft-agent-framework-dotnet': [{
+    command: 'dotnet run --project AGUIDojoServer/AGUIDojoServer.csproj --urls "http://localhost:8889" --no-build',
+    name: 'Microsoft Agent Framework (.NET)',
+    cwd: path.join(integrationsRoot, 'microsoft-agent-framework/dotnet/examples'),
+    env: { PORT: 8016 },
+  }],
   'dojo': [{
     command: 'pnpm run start',
     name: 'Dojo',

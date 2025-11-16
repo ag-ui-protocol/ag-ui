@@ -19,7 +19,9 @@ function parseAgentsFile(): Array<{ id: string; agentKeys: string[] }> {
     const id = idMatch[1];
 
     // Find the return object by looking for the pattern and then manually parsing balanced braces
-    const returnMatch = block.match(/agents:\s*async\s*\(\)\s*=>\s*{\s*return\s*{/);
+    const returnMatch = block.match(
+      /agents:\s*async\s*\(\)\s*=>\s*{\s*return\s*{/,
+    );
     if (!returnMatch) continue;
 
     const startIndex = returnMatch.index! + returnMatch[0].length;
@@ -75,7 +77,8 @@ async function getFile(_filePath: string | undefined, _fileName?: string) {
   const filePath = _fileName ? path.join(_filePath, fileName) : _filePath;
 
   // Check if it's a remote URL
-  const isRemoteUrl = _filePath.startsWith("http://") || _filePath.startsWith("https://");
+  const isRemoteUrl =
+    _filePath.startsWith("http://") || _filePath.startsWith("https://");
 
   let content: string;
 
@@ -93,7 +96,9 @@ async function getFile(_filePath: string | undefined, _fileName?: string) {
       console.log(`Fetching remote file: ${fetchUrl}`);
       const response = await fetch(fetchUrl);
       if (!response.ok) {
-        console.warn(`Failed to fetch remote file: ${fetchUrl}, status: ${response.status}`);
+        console.warn(
+          `Failed to fetch remote file: ${fetchUrl}, status: ${response.status}`,
+        );
         return {};
       }
       content = await response.text();
@@ -109,6 +114,7 @@ async function getFile(_filePath: string | undefined, _fileName?: string) {
     const extension = fileName.split(".").pop();
     let language = extension;
     if (extension === "py") language = "python";
+    else if (extension === "cs") language = "csharp";
     else if (extension === "css") language = "css";
     else if (extension === "md" || extension === "mdx") language = "markdown";
     else if (extension === "tsx") language = "typescript";
@@ -145,10 +151,17 @@ async function getFeatureFrontendFiles(featureId: string) {
 
 const integrationsFolderPath = "../../../integrations";
 const middlewaresFolderPath = "../../../middlewares";
-const agentFilesMapper: Record<string, (agentKeys: string[]) => Record<string, string[]>> = {
+const agentFilesMapper: Record<
+  string,
+  (agentKeys: string[]) => Record<string, string[]>
+> = {
   "middleware-starter": () => ({
     agentic_chat: [
-      path.join(__dirname, middlewaresFolderPath, `/middleware-starter/src/index.ts`),
+      path.join(
+        __dirname,
+        middlewaresFolderPath,
+        `/middleware-starter/src/index.ts`,
+      ),
     ],
   }),
   "pydantic-ai": (agentKeys: string[]) => {
@@ -218,14 +231,20 @@ const agentFilesMapper: Record<string, (agentKeys: string[]) => Record<string, s
     return agentKeys.reduce(
       (acc, agentId) => ({
         ...acc,
-        [agentId]: [path.join(__dirname, '../src/mastra/index.ts') ]
+        [agentId]: [path.join(__dirname, "../src/mastra/index.ts")],
       }),
       {},
     );
   },
 
   "vercel-ai-sdk": () => ({
-    agentic_chat: [path.join(__dirname, integrationsFolderPath, `/vercel-ai-sdk/src/index.ts`)],
+    agentic_chat: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/vercel-ai-sdk/src/index.ts`,
+      ),
+    ],
   }),
 
   langgraph: (agentKeys: string[]) => {
@@ -283,7 +302,7 @@ const agentFilesMapper: Record<string, (agentKeys: string[]) => Record<string, s
       {},
     );
   },
-  'spring-ai': () => ({}),
+  "spring-ai": () => ({}),
   agno: (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({
@@ -344,6 +363,31 @@ const agentFilesMapper: Record<string, (agentKeys: string[]) => Record<string, s
       {},
     );
   },
+  "microsoft-agent-framework-dotnet": (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/microsoft-agent-framework/dotnet/examples/AGUIDojoServer/ChatClientAgentFactory.cs`,
+          ),
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/microsoft-agent-framework/dotnet/examples/AGUIDojoServer/SharedStateAgent.cs`,
+          ),
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/microsoft-agent-framework/dotnet/examples/AGUIDojoServer/Program.cs`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
 };
 
 async function runGenerateContent() {
@@ -352,7 +396,9 @@ async function runGenerateContent() {
     // Use the parsed agent keys instead of executing the agents function
     const agentsPerFeatures = agentConfig.agentKeys;
 
-    const agentFilePaths = agentFilesMapper[agentConfig.id]?.(agentConfig.agentKeys);
+    const agentFilePaths = agentFilesMapper[agentConfig.id]?.(
+      agentConfig.agentKeys,
+    );
     if (!agentFilePaths) {
       continue;
     }
@@ -365,7 +411,9 @@ async function runGenerateContent() {
         // Get all frontend files for the feature
         ...(await getFeatureFrontendFiles(featureId)),
         // Get the agent (python/TS) file
-        ...(await Promise.all(agentFilePathsForFeature.map(async (f) => await getFile(f)))),
+        ...(await Promise.all(
+          agentFilePathsForFeature.map(async (f) => await getFile(f)),
+        )),
       ];
     }
   }
@@ -375,7 +423,10 @@ async function runGenerateContent() {
 
 (async () => {
   const result = await runGenerateContent();
-  fs.writeFileSync(path.join(__dirname, "../src/files.json"), JSON.stringify(result, null, 2));
+  fs.writeFileSync(
+    path.join(__dirname, "../src/files.json"),
+    JSON.stringify(result, null, 2),
+  );
 
   console.log("Successfully generated src/files.json");
 })();

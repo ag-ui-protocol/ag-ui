@@ -3,9 +3,9 @@ import {
   ExperimentalEmptyAdapter,
   copilotRuntimeNextJSAppRouterEndpoint,
 } from "@copilotkit/runtime";
-import { agentsIntegrations } from "@/agents";
-
 import { NextRequest } from "next/server";
+
+import { agentsIntegrations } from "@/agents";
 
 export async function POST(request: NextRequest) {
   const integrationId = request.url.split("/").pop();
@@ -14,6 +14,7 @@ export async function POST(request: NextRequest) {
   if (!integration) {
     return new Response("Integration not found", { status: 404 });
   }
+
   const agents = await integration.agents();
   const runtime = new CopilotRuntime({
     // @ts-ignore for now
@@ -27,3 +28,4 @@ export async function POST(request: NextRequest) {
 
   return handleRequest(request);
 }
+
