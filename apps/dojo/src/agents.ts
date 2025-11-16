@@ -19,6 +19,7 @@ import { ADKAgent } from "@ag-ui/adk";
 import { SpringAiAgent } from '@ag-ui/spring-ai';
 import { HttpAgent } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
+import { AWSStrandsAgent } from "@ag-ui/aws-strands-integration";
 
 const envVars = getEnvVars();
 export const agentsIntegrations: AgentIntegrationConfig[] = [
@@ -372,6 +373,17 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
           The buildings management agent will then use the \`pickSeat\` tool to pick a seat.
           `,
         }),
+      };
+    },
+  },
+  {
+    id: "aws-strands",
+    agents: async () => {
+      return {
+        agentic_chat: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/agentic-chat/` }),
+        backend_tool_rendering: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/backend-tool-rendering/` }),
+        agentic_generative_ui: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/agentic-generative-ui/` }),
+        shared_state: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/shared-state/` }),
       };
     },
   },

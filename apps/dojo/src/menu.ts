@@ -160,4 +160,14 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
     name: "A2A",
     features: ["a2a_chat"],
   },
+  {
+    id: "aws-strands",
+    name: "AWS Strands",
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "agentic_generative_ui",
+      "shared_state",
+    ],
+  },
 ];
