@@ -1016,20 +1016,31 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   async getAssistant(): Promise<Assistant> {
-    const assistants = await this.client.assistants.search();
-    const retrievedAssistant = assistants.find(
-      (searchResult) => searchResult.graph_id === this.graphId,
-    );
-    if (!retrievedAssistant) {
-      console.error(`
+    try {
+      const assistants = await this.client.assistants.search();
+      const retrievedAssistant = assistants.find(
+        (searchResult) => searchResult.graph_id === this.graphId,
+      );
+      if (!retrievedAssistant) {
+        const notFoundMessage = `
       No agent found with graph ID ${this.graphId} found..\n
 
       These are the available agents: [${assistants.map((a) => `${a.graph_id} (ID: ${a.assistant_id})`).join(", ")}]
-      `);
-      throw new Error("No agent id found");
-    }
+      `
+        console.error(notFoundMessage);
+        throw new Error(notFoundMessage);
+      }
 
-    return retrievedAssistant;
+      return retrievedAssistant;
+    } catch (error) {
+      const redefinedError = new Error(`Failed to retrieve assistant: ${(error as Error).message}`)
+      this.dispatchEvent({
+        type: EventType.RUN_ERROR,
+        message: redefinedError.message,
+      });
+      this.subscriber.error()
+      throw redefinedError;
+    }
   }
 
   async getSchemaKeys(): Promise<SchemaKeys> {
