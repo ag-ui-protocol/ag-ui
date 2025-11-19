@@ -8,18 +8,21 @@ import {
 import { RuntimeContext } from "@mastra/core/runtime-context";
 import { registerApiRoute } from "@mastra/core/server";
 import { MastraAgent } from "./mastra";
+import { AgentExecutionOptions } from "@mastra/core/agent";
 export function registerCopilotKit<T extends Record<string, any> | unknown = unknown>({
   path,
   resourceId,
   serviceAdapter = new ExperimentalEmptyAdapter(),
   agents,
   setContext,
+  getAgentExecutionOptions,
 }: {
   path: string;
   resourceId: string;
   serviceAdapter?: CopilotServiceAdapter;
   agents?: Record<string, AbstractAgent>;
   setContext?: (c: any, runtimeContext: RuntimeContext<T>) => void | Promise<void>;
+  getAgentExecutionOptions?: (c: any) => AgentExecutionOptions | Promise<AgentExecutionOptions>;
 }) {
   return registerApiRoute(path, {
     method: `ALL`,
@@ -32,12 +35,15 @@ export function registerCopilotKit<T extends Record<string, any> | unknown = unk
         await setContext(c, runtimeContext);
       }
 
+      const agentExecutionOptions = getAgentExecutionOptions ? await getAgentExecutionOptions(c) : {};
+
       const aguiAgents =
         agents ||
         MastraAgent.getLocalAgents({
           resourceId,
           mastra,
           runtimeContext,
+          agentExecutionOptions,
         });
 
       const runtime = new CopilotRuntime({

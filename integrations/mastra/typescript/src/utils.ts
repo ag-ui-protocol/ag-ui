@@ -2,7 +2,7 @@ import type { InputContent, Message } from "@ag-ui/client";
 import { AbstractAgent } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
 import type { CoreMessage, Mastra } from "@mastra/core";
-import { Agent as LocalMastraAgent } from "@mastra/core/agent";
+import { AgentExecutionOptions, Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RuntimeContext } from "@mastra/core/runtime-context";
 import { MastraAgent } from "./mastra";
 
@@ -117,12 +117,14 @@ export interface GetLocalAgentsOptions {
   mastra: Mastra;
   resourceId?: string;
   runtimeContext?: RuntimeContext;
+  agentExecutionOptions?: AgentExecutionOptions;
 }
 
 export function getLocalAgents({
   mastra,
   resourceId,
   runtimeContext,
+  agentExecutionOptions,
 }: GetLocalAgentsOptions): Record<string, AbstractAgent> {
   const agents = mastra.getAgents() || {};
 
@@ -133,6 +135,7 @@ export function getLocalAgents({
         agent,
         resourceId,
         runtimeContext,
+        agentExecutionOptions,
       });
       return acc;
     },
