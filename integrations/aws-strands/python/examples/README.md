@@ -1,69 +1,82 @@
-# Strands Integration (OpenAI)
+# AWS Strands Example Server
 
-This integration demonstrates how to use Strands Agents SDK with OpenAI models and AG-UI protocol.
+Demo FastAPI server that wires the Strands Agents SDK (Gemini models) into the
+AG-UI protocol. Each route mounts a ready-made agent that showcases different UI
+patterns (vanilla chat, backend tool rendering, shared state, and generative UI).
 
-## Prerequisites
+## Requirements
 
-- Python 3.12 or later
-- Poetry for dependency management
-- OpenAI API key
-- Strands Agents SDK with OpenAI support installed
+- Python 3.12 or 3.13 (the project is pinned to `<3.14`)
+- Poetry 1.8+ (ships with the repo via `curl -sSL https://install.python-poetry.org | python3 -`)
+- Google API key with access to Gemini 2.5 Flash (set as `GOOGLE_API_KEY`)
+- (Optional) AG-UI repo running locally so you can point the Dojo at these routes
 
-## Setup
+## Quick start
 
-1. Install Strands SDK with OpenAI support:
 ```bash
-pip install 'strands-agents[openai]'
-```
+cd integrations/aws-strands/python/examples
 
-2. Configure OpenAI API key:
-```bash
-# Set your OpenAI API key (required)
-export OPENAI_API_KEY=your-api-key-here
-```
+# pick a supported interpreter if your global default is 3.14
+poetry env use python3.13
 
-3. Optional: Configure OpenAI model settings:
-```bash
-# Set the OpenAI model to use (default: gpt-4o)
-export OPENAI_MODEL=gpt-4o
-
-# Set max tokens (default: 2000)
-export OPENAI_MAX_TOKENS=2000
-
-# Set temperature (default: 0.7)
-export OPENAI_TEMPERATURE=0.7
-```
-
-4. Install dependencies:
-```bash
-cd integrations/aws-strands-integration/python/examples
 poetry install
 ```
 
-## Running the server
-
-To run the server:
+Create a `.env` file in this folder (same dir as `pyproject.toml`) so every
+example can load credentials automatically:
 
 ```bash
-cd integrations/aws-strands-integration/python/examples
-
-poetry install && poetry run dev
+GOOGLE_API_KEY=your-gemini-key
+# Optional overrides
+PORT=8000                 # FastAPI listen port
 ```
 
-The server will start on `http://localhost:8000` by default. You can change the port by setting the `PORT` environment variable.
+> The sample agents default to `gemini-2.5-flash` and already set sensible
+> temperature/token parameters; override only if you need a different tier.
 
-## Integration Details
+## Running the demo server
 
-This integration uses the Strands Agents SDK with OpenAI models. The server:
-- Accepts AG-UI protocol requests
-- Connects to OpenAI models via Strands SDK
-- Streams responses back as AG-UI events
-- Handles tool calls and state management
+Either command exposes all mounted apps on `http://localhost:${PORT:-8000}`:
 
-## Notes
+```bash
+poetry run dev          # uses the Poetry script entry point (server:main)
+# or
+poetry run python -m server
+```
 
-- The integration uses OpenAI models (default: gpt-4o)
-- Ensure your OpenAI API key is valid and has access to the specified model
-- The integration supports streaming responses when available in the Strands SDK
-- You can customize the model, max_tokens, and temperature via environment variables
+The root route lists the available demos:
+
+| Route | Description |
+| --- | --- |
+| `/agentic-chat` | Simple chat agent with a frontend-only `change_background` tool |
+| `/backend-tool-rendering` | Backend-executed tools (charts, faux weather) rendered in AG-UI |
+| `/agentic-generative-ui` | Demonstrates `PredictState` + delta streaming for plan tracking |
+| `/shared-state` | Recipe builder showing shared JSON state + tool arguments |
+
+Point the AG-UI Dojo (or any AG-UI client) at these SSE endpoints to see the
+Strands wrapper translate Gemini events into protocol-native messages.
+
+## Environment reference
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `GOOGLE_API_KEY` | Yes | Auth for the Gemini SDK (`strands.models.gemini.GeminiModel`) |
+| `PORT` | No | Overrides the default `8000` uvicorn port |
+
+All OpenTelemetry exporters are disabled by default in code (`OTEL_SDK_DISABLED`
+and `OTEL_PYTHON_DISABLED_INSTRUMENTATIONS`), so you do not need to set those
+manually.
+
+## How it works
+
+- Each `server/api/*.py` file constructs a Strands `Agent`, registers any tools,
+  and wraps it with `ag_ui_strands.StrandsAgent`.
+- `server/__init__.py` mounts the four FastAPI apps under a single router and
+  exposes the `main()` entrypoint that `poetry run dev` calls.
+- The project depends on `ag_ui_strands` via a path dependency (`..`) so you can
+  develop the integration and server side-by-side without publishing a wheel.
+- Want a different Gemini tier? Update the `model_id` argument in the agent
+  definitions inside `server/api/*.py`.
+
+
 

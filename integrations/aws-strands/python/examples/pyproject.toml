@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Strands integration server for AG-UI using OpenAI models"
 authors = ["AG-UI Contributors"]
 readme = "README.md"
-package-mode = false
+packages = [{ include = "server" }]
 
 [tool.poetry.dependencies]
 python = "<3.14,>=3.12"
@@ -20,4 +20,4 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-dev = "aws_strands_server:main"
+dev = "server:main"

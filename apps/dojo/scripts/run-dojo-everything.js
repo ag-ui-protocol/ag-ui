@@ -111,6 +111,12 @@ const ALL_SERVICES = {
     cwd: path.join(integrationsRoot, 'pydantic-ai/python/examples'),
     env: { PORT: 8009 },
   }],
+  'aws-strands': [{
+    command: 'poetry run dev',
+    name: 'AWS Strands',
+    cwd: path.join(integrationsRoot, 'aws-strands/python/examples'),
+    env: { PORT: 8017 },
+  }],
   'adk-middleware': [{
     command: 'uv run dev',
     name: 'ADK Middleware',
@@ -174,6 +180,7 @@ const ALL_SERVICES = {
       A2A_MIDDLEWARE_FINANCE_URL: 'http://localhost:8012',
       A2A_MIDDLEWARE_IT_URL: 'http://localhost:8013',
       A2A_MIDDLEWARE_ORCHESTRATOR_URL: 'http://localhost:8014',
+      AWS_STRANDS_URL: 'http://localhost:8017',
       NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: 'cpkdojo.local___CopilotKit Feature Viewer',
     },
   }],

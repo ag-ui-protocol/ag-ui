@@ -97,6 +97,11 @@ const ALL_TARGETS = {
     name: "Pydantic AI",
     cwd: path.join(integrationsRoot, "pydantic-ai/python/examples"),
   },
+  "aws-strands": {
+    command: "poetry install",
+    name: "AWS Strands",
+    cwd: path.join(integrationsRoot, "aws-strands/python/examples"),
+  },
   "adk-middleware": {
     command: "uv sync",
     name: "ADK Middleware",
