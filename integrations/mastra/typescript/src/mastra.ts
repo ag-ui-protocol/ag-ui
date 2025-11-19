@@ -343,7 +343,6 @@ export class MastraAgent extends AbstractAgent {
           runId,
           messages: convertedMessages,
           clientTools,
-          
           memory: {
             resource: resourceId,
             thread: {
