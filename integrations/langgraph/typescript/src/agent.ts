@@ -503,11 +503,9 @@ export class LangGraphAgent extends AbstractAgent {
           (eventType === LangGraphEventTypes.OnCustomEvent &&
             chunkData.name === CustomEventNames.Exit);
 
-        this.activeRun!.exitingNode =
-          this.activeRun!.nodeName === currentNodeName &&
-          eventType === LangGraphEventTypes.OnChainEnd;
-        if (this.activeRun!.exitingNode) {
-          this.activeRun!.manuallyEmittedState = null;
+        if (eventType === LangGraphEventTypes.OnChainEnd && chunk.data?.output) {
+          latestStateValues = chunk.data?.output
+          this.activeRun!.exitingNode = this.activeRun!.nodeName === currentNodeName;
         }
 
         // we only want to update the node name under certain conditions
@@ -572,17 +570,19 @@ export class LangGraphAgent extends AbstractAgent {
       });
 
       this.handleNodeChange(newNodeName);
-      // Immediately turn off new step
-      this.handleNodeChange(undefined);
 
+      const finalSnapshot = this.getStateSnapshot(state);
       this.dispatchEvent({
         type: EventType.STATE_SNAPSHOT,
-        snapshot: this.getStateSnapshot(state),
+        snapshot: finalSnapshot,
       });
       this.dispatchEvent({
         type: EventType.MESSAGES_SNAPSHOT,
-        messages: langchainMessagesToAgui((state.values as { messages: any[] }).messages ?? []),
+        messages: langchainMessagesToAgui(finalSnapshot.messages ?? []),
       });
+
+      // Immediately turn off new step
+      this.handleNodeChange(undefined);
 
       this.dispatchEvent({
         type: EventType.RUN_FINISHED,
