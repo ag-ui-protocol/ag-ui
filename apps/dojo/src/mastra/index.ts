@@ -4,8 +4,9 @@ import { Memory } from "@mastra/memory";
 import { LibSQLStore } from "@mastra/libsql";
 import { DynamoDBStore } from "@mastra/dynamodb";
 
-import { createStep, createWorkflow, Mastra } from "@mastra/core";
-import { createTool } from "@mastra/core";
+import { Mastra } from "@mastra/core";
+import { createStep, createWorkflow } from "@mastra/core/workflows";
+import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { weatherTool } from "./tools";
 
@@ -14,11 +15,13 @@ function getStorage(): LibSQLStore | DynamoDBStore {
     return new DynamoDBStore({
       name: "dynamodb",
       config: {
-        tableName: process.env.DYNAMODB_TABLE_NAME,
+        tableName: process.env.DYNAMODB_TABLE_NAME!,
+        id: "dynamodb_store",
       },
     });
   } else {
-    return new LibSQLStore({ url: "file::memory:" });
+    // @ts-ignore
+    return new LibSQLStore({ url: "file::memory:", id: "dojo_store" });
   }
 }
 
@@ -39,6 +42,7 @@ export const mastra = new Mastra({
       model: openai("gpt-4o"),
       tools: { get_weather: weatherTool },
       memory: new Memory({
+        // @ts-ignore
         storage: getStorage(),
         options: {
           workingMemory: {
@@ -67,6 +71,7 @@ export const mastra = new Mastra({
       model: openai("gpt-4o-mini"),
       tools: { get_weather: weatherTool },
       memory: new Memory({
+        // @ts-ignore
         storage: getStorage(),
       }),
     }),
@@ -86,6 +91,7 @@ export const mastra = new Mastra({
       `,
       model: openai("gpt-4o"),
       memory: new Memory({
+        // @ts-ignore
         storage: getStorage(),
         options: {
           workingMemory: {
@@ -158,7 +164,7 @@ export const mastra = new Mastra({
               .describe("An array of three lines of the haiku in English"),
           }),
           outputSchema: z.string(),
-          execute: async ({ context }) => {
+          execute: async () => {
             return "Haiku generated.";
           },
         }),

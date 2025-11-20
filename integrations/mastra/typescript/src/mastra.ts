@@ -12,9 +12,9 @@ import type {
   ToolCallStartEvent,
 } from "@ag-ui/client";
 import { AbstractAgent, EventType } from "@ag-ui/client";
-import type { StorageThreadType } from "@mastra/core";
+import type { StorageThreadType } from "@mastra/core/memory";
 import { Agent as LocalMastraAgent } from "@mastra/core/agent";
-import { RuntimeContext } from "@mastra/core/runtime-context";
+import { RequestContext } from "@mastra/core/request-context";
 import { randomUUID } from "@ag-ui/client";
 import { Observable } from "rxjs";
 import { MastraClient } from "@mastra/client-js";
@@ -34,7 +34,7 @@ import {
 export interface MastraAgentConfig extends AgentConfig {
   agent: LocalMastraAgent | RemoteMastraAgent;
   resourceId?: string;
-  runtimeContext?: RuntimeContext;
+  requestContext?: RequestContext;
 }
 
 interface MastraAgentStreamOptions {
@@ -53,14 +53,14 @@ interface MastraAgentStreamOptions {
 export class MastraAgent extends AbstractAgent {
   agent: LocalMastraAgent | RemoteMastraAgent;
   resourceId?: string;
-  runtimeContext?: RuntimeContext;
+  requestContext?: RequestContext;
 
   constructor(private config: MastraAgentConfig) {
-    const { agent, resourceId, runtimeContext, ...rest } = config;
+    const { agent, resourceId, requestContext, ...rest } = config;
     super(rest);
     this.agent = agent;
     this.resourceId = resourceId;
-    this.runtimeContext = runtimeContext ?? new RuntimeContext();
+    this.requestContext = requestContext ?? new RequestContext();
   }
 
   public clone() {
@@ -257,7 +257,7 @@ export class MastraAgent extends AbstractAgent {
     }: MastraAgentStreamOptions,
   ): Promise<void> {
     const clientTools = tools.reduce(
-      (acc, tool) => {
+      (acc: Record<string, any>, tool: any) => {
         acc[tool.name as string] = {
           id: tool.name,
           description: tool.description,
@@ -270,18 +270,20 @@ export class MastraAgent extends AbstractAgent {
     const resourceId = this.resourceId ?? threadId;
 
     const convertedMessages = convertAGUIMessagesToMastra(messages);
-    this.runtimeContext?.set("ag-ui", { context: inputContext });
-    const runtimeContext = this.runtimeContext;
+    this.requestContext?.set("ag-ui", { context: inputContext });
+    const requestContext = this.requestContext;
 
     if (this.isLocalMastraAgent(this.agent)) {
       // Local agent - use the agent's stream method directly
       try {
         const response = await this.agent.stream(convertedMessages, {
-          threadId,
-          resourceId,
+          memory: {
+            thread: threadId,
+            resource: resourceId,
+          },
           runId,
           clientTools,
-          runtimeContext,
+          requestContext,
         });
 
         // For local agents, the response should already be a stream

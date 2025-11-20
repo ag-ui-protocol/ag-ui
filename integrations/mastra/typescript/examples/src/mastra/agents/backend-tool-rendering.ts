@@ -23,6 +23,7 @@ export const backendToolRenderingAgent = new Agent({
   memory: new Memory({
     storage: new LibSQLStore({
       url: "file:../mastra.db", // path is relative to the .mastra/output directory
+      id: "backend_tool_rendering_store",
     }),
   }),
 });

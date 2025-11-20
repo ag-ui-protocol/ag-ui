@@ -2,7 +2,7 @@ import { openai } from "@ai-sdk/openai";
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { LibSQLStore } from "@mastra/libsql";
-import { createTool } from "@mastra/core";
+import { createTool } from "@mastra/core/tools";
 import z from "zod";
 
 export const toolBasedGenerativeUIAgent = new Agent({
@@ -14,6 +14,7 @@ export const toolBasedGenerativeUIAgent = new Agent({
   memory: new Memory({
     storage: new LibSQLStore({
       url: "file:../mastra.db", // path is relative to the .mastra/output directory
+      id: "tool_based_generative_ui_store",
     }),
   }),
 });

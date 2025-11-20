@@ -1,9 +1,10 @@
 import type { InputContent, Message } from "@ag-ui/client";
 import { AbstractAgent } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
-import type { CoreMessage, Mastra } from "@mastra/core";
+import type { Mastra } from "@mastra/core";
+import type { CoreMessage } from "@mastra/core/llm";
 import { Agent as LocalMastraAgent } from "@mastra/core/agent";
-import { RuntimeContext } from "@mastra/core/runtime-context";
+import { RequestContext } from "@mastra/core/request-context";
 import { MastraAgent } from "./mastra";
 
 const toMastraTextContent = (content: Message["content"]): string => {
@@ -95,16 +96,16 @@ export async function getRemoteAgents({
   mastraClient,
   resourceId,
 }: GetRemoteAgentsOptions): Promise<Record<string, AbstractAgent>> {
-  const agents = await mastraClient.getAgents();
+  const agents = await mastraClient.listAgents();
 
   return Object.entries(agents).reduce(
-    (acc, [agentId]) => {
+    (acc, [agentId, agentInfo]) => {
       const agent = mastraClient.getAgent(agentId);
 
       acc[agentId] = new MastraAgent({
-        agentId,
-        agent,
-        resourceId,
+        agentId: agentId,
+        agent: agent,
+        resourceId: resourceId,
       });
 
       return acc;
@@ -116,23 +117,24 @@ export async function getRemoteAgents({
 export interface GetLocalAgentsOptions {
   mastra: Mastra;
   resourceId?: string;
-  runtimeContext?: RuntimeContext;
+  requestContext?: RequestContext;
 }
 
 export function getLocalAgents({
   mastra,
   resourceId,
-  runtimeContext,
+  requestContext,
 }: GetLocalAgentsOptions): Record<string, AbstractAgent> {
-  const agents = mastra.getAgents() || {};
+  // Access agents through the private property or method
+  const agents = (mastra as any).agents || (mastra as any).__agents || {};
 
   const agentAGUI = Object.entries(agents).reduce(
     (acc, [agentId, agent]) => {
       acc[agentId] = new MastraAgent({
-        agentId,
-        agent,
-        resourceId,
-        runtimeContext,
+        agentId: agentId,
+        agent: agent as LocalMastraAgent,
+        resourceId: resourceId,
+        requestContext: requestContext,
       });
       return acc;
     },
@@ -146,24 +148,24 @@ export interface GetLocalAgentOptions {
   mastra: Mastra;
   agentId: string;
   resourceId?: string;
-  runtimeContext?: RuntimeContext;
+  requestContext?: RequestContext;
 }
 
 export function getLocalAgent({
   mastra,
   agentId,
   resourceId,
-  runtimeContext,
+  requestContext,
 }: GetLocalAgentOptions) {
   const agent = mastra.getAgent(agentId);
   if (!agent) {
     throw new Error(`Agent ${agentId} not found`);
   }
   return new MastraAgent({
-    agentId,
-    agent,
-    resourceId,
-    runtimeContext,
+    agentId: agentId,
+    agent: agent,
+    resourceId: resourceId,
+    requestContext: requestContext,
   }) as AbstractAgent;
 }
 
@@ -171,18 +173,18 @@ export interface GetNetworkOptions {
   mastra: Mastra;
   networkId: string;
   resourceId?: string;
-  runtimeContext?: RuntimeContext;
+  requestContext?: RequestContext;
 }
 
-export function getNetwork({ mastra, networkId, resourceId, runtimeContext }: GetNetworkOptions) {
+export function getNetwork({ mastra, networkId, resourceId, requestContext }: GetNetworkOptions) {
   const network = mastra.getAgent(networkId);
   if (!network) {
     throw new Error(`Network ${networkId} not found`);
   }
   return new MastraAgent({
-    agentId: network.name!,
+    agentId: networkId,
     agent: network as unknown as LocalMastraAgent,
-    resourceId,
-    runtimeContext,
+    resourceId: resourceId,
+    requestContext: requestContext,
   }) as AbstractAgent;
 }

@@ -5,7 +5,7 @@ import {
   CopilotServiceAdapter,
   ExperimentalEmptyAdapter,
 } from "@copilotkit/runtime";
-import { RuntimeContext } from "@mastra/core/runtime-context";
+import { RequestContext } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import { MastraAgent } from "./mastra";
 export function registerCopilotKit<T extends Record<string, any> | unknown = unknown>({
@@ -19,17 +19,17 @@ export function registerCopilotKit<T extends Record<string, any> | unknown = unk
   resourceId: string;
   serviceAdapter?: CopilotServiceAdapter;
   agents?: Record<string, AbstractAgent>;
-  setContext?: (c: any, runtimeContext: RuntimeContext<T>) => void | Promise<void>;
+  setContext?: (c: any, requestContext: RequestContext<T>) => void | Promise<void>;
 }) {
   return registerApiRoute(path, {
     method: `ALL`,
     handler: async (c) => {
       const mastra = c.get("mastra");
 
-      const runtimeContext = new RuntimeContext<T>();
+      const requestContext = new RequestContext<T>();
 
       if (setContext) {
-        await setContext(c, runtimeContext);
+        await setContext(c, requestContext);
       }
 
       const aguiAgents =
@@ -37,7 +37,7 @@ export function registerCopilotKit<T extends Record<string, any> | unknown = unk
         MastraAgent.getLocalAgents({
           resourceId,
           mastra,
-          runtimeContext,
+          requestContext,
         });
 
       const runtime = new CopilotRuntime({
