@@ -180,3 +180,15 @@ class RunAgentInput(ConfiguredBaseModel):
 
 # State can be any type
 State = Any
+
+
+GENERATE_UI_TOOL_NAME = "generateUserInterface"
+
+
+class GenerateUserInterfaceToolArguments(ConfiguredBaseModel):
+    """
+    Arguments for the generateUserInterface tool.
+    """
+    description: str
+    data: Optional[Any] = None
+    output: Optional[Any] = None  # JSON Schema for the expected output
