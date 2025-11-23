@@ -4,11 +4,14 @@
 
 Simple adapter following the Agno pattern.
 """
+import logging
 import json
 import uuid
 import asyncio
 from typing import AsyncIterator, Any
 from strands import Agent as StrandsAgentCore
+
+logger = logging.getLogger(__name__)
 from ag_ui.core import (
     RunAgentInput,
     EventType,
@@ -87,6 +90,7 @@ class StrandsAgent:
                 last_msg = input_data.messages[-1]
                 if last_msg.role == "tool":
                     has_pending_tool_result = True
+                    logger.debug(f"Has pending tool result detected: tool_call_id={getattr(last_msg, 'tool_call_id', 'unknown')}, thread_id={input_data.thread_id}")
             
             # Get the latest user message
             user_message = "Hello"
@@ -111,17 +115,22 @@ class StrandsAgent:
             stop_text_streaming = False
             halt_event_stream = False
             
+            logger.debug(f"Starting agent run: thread_id={input_data.thread_id}, run_id={input_data.run_id}, has_pending_tool_result={has_pending_tool_result}, message_count={len(input_data.messages)}")
+            
             # Stream from Strands agent
             agent_stream = self.strands_agent.stream_async(user_message)
             
             async for event in agent_stream:
+                logger.debug(f"Received event: {event}")
                 if halt_event_stream:
+                    logger.debug(f"Breaking event stream: halt_event_stream flag set to True (thread_id={input_data.thread_id})")
                     break
 
                 # Skip lifecycle events
                 if event.get("init_event_loop") or event.get("start_event_loop"):
                     continue
                 if event.get("complete") or event.get("force_stop"):
+                    logger.debug(f"Breaking event stream: received complete or force_stop event (thread_id={input_data.thread_id}, complete={event.get('complete')}, force_stop={event.get('force_stop')})")
                     break
                 
                 # Handle text streaming
@@ -180,6 +189,8 @@ class StrandsAgent:
                         tool_args = call_info.get("args")
                         tool_input = call_info.get("input")
                         behavior = self.config.tool_behaviors.get(tool_name) if tool_name else None
+                        
+                        logger.debug(f"Processing tool result: tool_name={tool_name}, result_tool_id={result_tool_id}, has_pending_tool_result={has_pending_tool_result}, thread_id={input_data.thread_id}")
 
                         if not has_pending_tool_result and not (behavior and behavior.skip_messages_snapshot):
                             assistant_msg = AssistantMessage(
@@ -249,13 +260,24 @@ class StrandsAgent:
                                 )
                                 message_started = False
                             halt_event_stream = True
+                            logger.debug(f"Breaking event stream: stop_streaming_after_result behavior triggered (thread_id={input_data.thread_id}, tool_name={tool_name})")
                             break
                 
                 # Handle tool calls
                 elif "current_tool_use" in event and event["current_tool_use"]:
                     tool_use = event["current_tool_use"]
                     tool_name = tool_use.get("name")
-                    tool_use_id = tool_use.get("toolUseId") or str(uuid.uuid4())
+                    strands_tool_id = tool_use.get("toolUseId")
+                    
+                    # Generate unique ID for frontend tools (to avoid ID conflicts across requests)
+                    # Use Strands' ID for backend tools (so result lookup works)
+                    is_frontend_tool = tool_name in frontend_tool_names
+                    if is_frontend_tool:
+                        tool_use_id = str(uuid.uuid4())
+                    else:
+                        tool_use_id = strands_tool_id or str(uuid.uuid4())
+                    
+                    logger.debug(f"Tool call event received: tool_name={tool_name}, tool_use_id={tool_use_id}, strands_id={strands_tool_id}, is_frontend={is_frontend_tool}, already_seen={tool_use_id in tool_calls_seen}, thread_id={input_data.thread_id}")
 
                     if tool_name and tool_use_id not in tool_calls_seen:
                         tool_input = tool_use.get("input", {})
@@ -268,6 +290,8 @@ class StrandsAgent:
 
                         is_frontend_tool = tool_name in frontend_tool_names
                         behavior = self.config.tool_behaviors.get(tool_name)
+                        
+                        logger.debug(f"Processing tool call: tool_name={tool_name}, tool_use_id={tool_use_id}, is_frontend_tool={is_frontend_tool}, has_pending_tool_result={has_pending_tool_result}, tool_calls_seen_count={len(tool_calls_seen)}, thread_id={input_data.thread_id}")
                         call_context = ToolCallContext(
                             input_data=input_data,
                             tool_name=tool_name,
@@ -297,8 +321,12 @@ class StrandsAgent:
                                     name="PredictState",
                                     value=predict_state_payload,
                                 )
+                        if  has_pending_tool_result:
+
+                            logger.debug(f"Skipping tool call START event due to has_pending_tool_result for {tool_name} (tool_use_id={tool_use_id}, thread_id={input_data.thread_id})")
 
                         if not has_pending_tool_result:
+                            logger.debug(f"Emitting tool call events for {tool_name} (tool_use_id={tool_use_id}, thread_id={input_data.thread_id})")
                             yield ToolCallStartEvent(
                                 type=EventType.TOOL_CALL_START,
                                 tool_call_id=tool_use_id,
@@ -335,6 +363,7 @@ class StrandsAgent:
                             )
 
                             if is_frontend_tool and not (behavior and behavior.continue_after_frontend_call):
+                                logger.debug(f"Breaking event stream: frontend tool call completed (thread_id={input_data.thread_id}, tool_name={tool_name}, tool_call_id={tool_use_id}, has_behavior={behavior is not None}, continue_after_frontend_call={behavior.continue_after_frontend_call if behavior else None})")
                                 break
             
             # End message if started
