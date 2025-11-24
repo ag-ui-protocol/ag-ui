@@ -46,24 +46,18 @@ class JSONPatchOp(BaseModel):
         description='Source path (for move, copy operations)',
     )
 
-
+system_prompt = """
+    You are a helpful assistant assisting with any task. 
+    When asked to do something, you MUST call the function `create_plan` (or `update_plan_step` where fits)
+    that was provided to you.
+    Do not offer to call the function/make a plan. Simply make the plan, even for unrealistic tasks like "take down the moon".
+    If you called the function, you MUST NOT repeat the steps in your next response to the user.
+    Just give a very brief summary (one sentence) of what you did with some emojis. 
+    Always say you actually did the steps, not merely generated them.
+    """
 agent = Agent(
     'openai:gpt-4o-mini',
-    instructions=dedent(
-        """
-        When planning use tools only, without any other messages.
-        IMPORTANT:
-        - Use the `create_plan` tool to set the initial state of the steps
-        - Use the `update_plan_step` tool to update the status of each step
-        - Do NOT repeat the plan or summarise it in a message
-        - Do NOT confirm the creation or updates in a message
-        - Do NOT ask the user for additional information or next steps
-        - Do NOT leave a plan hanging, always complete the plan via `update_plan_step` if one is ongoing.
-
-        Only one plan can be active at a time, so do not call the `create_plan` tool
-        again until all the steps in current plan are completed.
-        """
-    ),
+    instructions=system_prompt,
 )
 
 
