@@ -7,7 +7,7 @@ import os
 import asyncio
 import random
 import uuid
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Annotated
 from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -66,7 +66,7 @@ class TaskStep(BaseModel):
 def plan_task_steps(
     task: str,
     context: str = "",
-    steps: List[Any] = Field(..., description="4-6 pending steps in gerund form"),
+    steps: Annotated[List[Any], Field(description="4-6 pending steps in gerund form")] = None,
 ) -> Dict[str, Any]:
     """
     Plan the concrete steps required to accomplish a task.
@@ -79,7 +79,7 @@ def plan_task_steps(
     Returns:
         JSON payload with the task summary and proposed steps.
     """
-    normalized_steps = _normalize_steps(steps)
+    normalized_steps = _normalize_steps(steps) if steps else []
     if not normalized_steps:
         normalized_steps = _fallback_steps(task or "the task", context)
 
