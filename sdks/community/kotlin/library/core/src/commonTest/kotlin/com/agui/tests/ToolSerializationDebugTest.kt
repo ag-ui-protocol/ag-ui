@@ -8,42 +8,45 @@ import kotlin.test.Test
 class ToolSerializationDebugTest {
     
     @Test
-    fun testUserConfirmationToolSerialization() {
-        // Create the user_confirmation tool exactly as in theConfirmationToolExecutor
-        val userConfirmationTool = Tool(
-            name = "user_confirmation",
-            description = "Request user confirmation for an action with specified importance level",
+    fun testChangeBackgroundToolSerialization() {
+        // Create the change_background tool definition to ensure serialization stays consistent
+        val backgroundTool = Tool(
+            name = "change_background",
+            description = "Update the application's background or surface colour",
             parameters = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("message") {
+                    putJsonObject("color") {
                         put("type", "string")
-                        put("description", "The confirmation message to display to the user")
+                        put(
+                            "description",
+                            "Colour in hex format (e.g. #RRGGBB or #RRGGBBAA) to apply to the background"
+                        )
                     }
-                    putJsonObject("importance") {
+                    putJsonObject("description") {
                         put("type", "string")
-                        put("enum", buildJsonArray {
-                            add("critical")
-                            add("high") 
-                            add("medium")
-                            add("low")
-                        })
-                        put("description", "The importance level of the confirmation")
-                        put("default", "medium")
+                        put(
+                            "description",
+                            "Optional human readable description of the new background"
+                        )
                     }
-                    putJsonObject("details") {
-                        put("type", "string")
-                        put("description", "Optional additional details about the action requiring confirmation")
+                    putJsonObject("reset") {
+                        put("type", "boolean")
+                        put(
+                            "description",
+                            "Set to true to reset the background to the default theme"
+                        )
+                        put("default", JsonPrimitive(false))
                     }
                 }
                 putJsonArray("required") {
-                    add("message")
+                    add("color")
                 }
             }
         )
 
         // Serialize just the tool
-        val toolJson = AgUiJson.encodeToString(userConfirmationTool)
+        val toolJson = AgUiJson.encodeToString(backgroundTool)
         println("\n=== Tool JSON ===")
         println(toolJson)
         
@@ -58,7 +61,7 @@ class ToolSerializationDebugTest {
                     content = "delete user data"
                 )
             ),
-            tools = listOf(userConfirmationTool),
+            tools = listOf(backgroundTool),
             context = emptyList(),
             forwardedProps = JsonObject(emptyMap())
         )

@@ -1,6 +1,6 @@
 [versions]
 core-ktx = "1.16.0"
-kotlin = "2.1.21"
+kotlin = "2.2.20"
 kotlin-json-patch = "1.0.0"
 #Downgrading to avoid an R8 error
 ktor = "3.1.3"
@@ -9,6 +9,7 @@ kotlinx-coroutines = "1.10.2"
 kotlinx-datetime = "0.6.2"
 android-gradle = "8.10.1"
 kermit = "2.0.6"
+jreleaser = "1.20.0"
 
 [libraries]
 # Ktor
@@ -37,6 +38,7 @@ kermit = { module = "co.touchlab:kermit", version.ref = "kermit" }
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 android-library = { id = "com.android.library", version.ref = "android-gradle" }
+jreleaser = { id = "org.jreleaser", version.ref = "jreleaser" }
 
 [bundles]
 ktor-common = [

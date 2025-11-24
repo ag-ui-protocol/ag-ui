@@ -68,6 +68,15 @@ func (fw *flushWriter) Flush() error {
 	return fw.flushError
 }
 
+type httpFlushWriter struct {
+	bytes.Buffer
+	flushCalled bool
+}
+
+func (fw *httpFlushWriter) Flush() {
+	fw.flushCalled = true
+}
+
 func TestNewSSEWriter(t *testing.T) {
 	writer := NewSSEWriter()
 	if writer == nil {
@@ -449,6 +458,39 @@ func TestSSEWriter_Flushing(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSSEWriter_HTTPFlusherFallback(t *testing.T) {
+	ctx := context.Background()
+	writer := NewSSEWriter()
+
+	t.Run("WriteEvent", func(t *testing.T) {
+		fw := &httpFlushWriter{}
+		event := &mockEvent{
+			BaseEvent: events.BaseEvent{
+				EventType: events.EventTypeCustom,
+			},
+		}
+
+		if err := writer.WriteEvent(ctx, fw, event); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !fw.flushCalled {
+			t.Error("expected fallback flusher to be called")
+		}
+	})
+
+	t.Run("WriteBytes", func(t *testing.T) {
+		fw := &httpFlushWriter{}
+		if err := writer.WriteBytes(ctx, fw, []byte(`{"test":"data"}`)); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !fw.flushCalled {
+			t.Error("expected fallback flusher to be called")
+		}
+	})
 }
 
 func TestCustomEvent(t *testing.T) {

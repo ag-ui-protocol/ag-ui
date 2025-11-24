@@ -271,6 +271,32 @@ Called when a complete message history snapshot is provided.
 onMessagesSnapshotEvent?(params: { event: MessagesSnapshotEvent } & AgentSubscriberParams): MaybePromise<AgentStateMutation | void>
 ```
 
+#### onActivitySnapshotEvent()
+
+Called when an activity snapshot is received. The handler receives both the raw
+event and any existing `ActivityMessage` (if present) so you can inspect or
+replace it before the default client logic runs.
+
+```typescript
+onActivitySnapshotEvent?(params: {
+  event: ActivitySnapshotEvent
+  activityMessage?: ActivityMessage
+  existingMessage?: Message
+} & AgentSubscriberParams): MaybePromise<AgentStateMutation | void>
+```
+
+#### onActivityDeltaEvent()
+
+Triggered for each activity delta. Use this hook to transform or debounce the
+incoming JSON Patch operations before they update the conversation transcript.
+
+```typescript
+onActivityDeltaEvent?(params: {
+  event: ActivityDeltaEvent
+  activityMessage?: ActivityMessage
+} & AgentSubscriberParams): MaybePromise<AgentStateMutation | void>
+```
+
 #### onRawEvent()
 
 Handler for raw, unprocessed events.

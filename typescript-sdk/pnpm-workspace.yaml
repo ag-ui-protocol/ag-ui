@@ -1,5 +1,0 @@
-packages:
-  - "apps/*"
-  - "packages/*"
-  - "integrations/*"
-  - "integrations/mastra/example"

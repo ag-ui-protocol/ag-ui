@@ -6,8 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### TypeScript SDK (Main Development)
 ```bash
-# Navigate to typescript-sdk directory for all TypeScript work
-cd typescript-sdk
 
 # Install dependencies (using pnpm)
 pnpm install
@@ -20,6 +18,7 @@ pnpm dev
 
 # Run linting
 pnpm lint
+
 
 # Run type checking
 pnpm check-types
@@ -55,11 +54,11 @@ poetry build
 ### Running Specific Integration Tests
 ```bash
 # For TypeScript packages/integrations
-cd typescript-sdk/packages/<package-name>
+cd packages/<package-name>
 pnpm test
 
 # For running a single test file
-cd typescript-sdk/packages/<package-name>
+cd packages/<package-name>
 pnpm test -- path/to/test.spec.ts
 ```
 
@@ -78,11 +77,11 @@ AG-UI is an event-based protocol that standardizes agent-user interactions. The 
 3. **Event Types**: Lifecycle events (RUN_STARTED/FINISHED), message events (TEXT_MESSAGE_*), tool events (TOOL_CALL_*), and state management events (STATE_SNAPSHOT/DELTA)
 
 ### Repository Structure
-- `/typescript-sdk/`: Main TypeScript implementation
+- `/sdks/typescript/`: Main TypeScript implementation
   - `/packages/`: Core protocol packages (@ag-ui/core, @ag-ui/client, @ag-ui/encoder, @ag-ui/proto)
-  - `/integrations/`: Framework integrations (langgraph, mastra, crewai, etc.)
-  - `/apps/`: Example applications including the AG-UI Dojo demo viewer
-- `/python-sdk/`: Python implementation of the protocol
+- `/integrations/`: Framework integrations (langgraph, mastra, crewai, etc.)
+- `/apps/`: Example applications including the AG-UI Dojo demo viewer
+- `/sdks/python/`: Python implementation of the protocol
 - `/docs/`: Documentation site content
 
 ### Integration Pattern

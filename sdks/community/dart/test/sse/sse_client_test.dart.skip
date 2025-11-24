@@ -1,0 +1,102 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:ag_ui/src/sse/backoff_strategy.dart';
+import 'package:ag_ui/src/sse/sse_client.dart';
+import 'package:ag_ui/src/sse/sse_message.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:test/test.dart';
+
+void main() {
+  group('SseClient', () {
+    test('constructor initializes with default parameters', () {
+      final client = SseClient();
+      expect(client.isConnected, isFalse);
+      expect(client.lastEventId, isNull);
+    });
+
+    test('constructor accepts custom parameters', () {
+      final customHttpClient = MockClient((request) async {
+        return http.Response('', 200);
+      });
+      final customTimeout = Duration(seconds: 30);
+      final customBackoff = ExponentialBackoff();
+
+      final client = SseClient(
+        httpClient: customHttpClient,
+        idleTimeout: customTimeout,
+        backoffStrategy: customBackoff,
+      );
+
+      expect(client.isConnected, isFalse);
+    });
+
+    test('parseStream parses byte stream correctly', () async {
+      final client = SseClient();
+      final controller = StreamController<List<int>>();
+
+      final stream = client.parseStream(controller.stream);
+
+      // Send SSE data
+      controller.add(utf8.encode('data: Hello\n\n'));
+      controller.add(utf8.encode('event: custom\n'));
+      controller.add(utf8.encode('data: World\n\n'));
+      controller.add(utf8.encode('id: msg-1\n'));
+      controller.add(utf8.encode('data: Test\n\n'));
+
+      // Close the controller to complete the stream
+      await controller.close();
+
+      final messages = await stream.toList();
+
+      expect(messages.length, equals(3));
+      expect(messages[0].data, equals('Hello'));
+      expect(messages[0].event, isNull);
+      expect(messages[1].data, equals('World'));
+      expect(messages[1].event, equals('custom'));
+      expect(messages[2].data, equals('Test'));
+      expect(messages[2].id, equals('msg-1'));
+    });
+
+    test('close is idempotent', () async {
+      final client = SseClient();
+
+      // Multiple closes should not throw
+      await client.close();
+      await client.close();
+      await client.close();
+
+      expect(client.isConnected, isFalse);
+    });
+
+    test('isConnected returns false when not connected', () {
+      final client = SseClient();
+      expect(client.isConnected, isFalse);
+    });
+
+    test('lastEventId is initially null', () {
+      final client = SseClient();
+      expect(client.lastEventId, isNull);
+    });
+
+    // Note: Full connection tests with MockClient.streaming are complex
+    // and prone to timing issues. These are better tested via integration
+    // tests with real servers or more sophisticated mocking frameworks.
+    group('connection behavior', () {
+      test('connect throws if already connected', () {
+        // Create a simple mock that returns a streaming response
+        final mockClient = MockClient((request) async {
+          return http.Response('', 200);
+        });
+
+        final client = SseClient(httpClient: mockClient);
+        final url = Uri.parse('https://example.com/sse');
+
+        // Note: We can't easily test the actual connection without
+        // complex stream mocking. This is a limitation of the current
+        // test setup. Consider using integration tests for full coverage.
+      }, skip: 'Requires complex stream mocking');
+    });
+  });
+}

@@ -26,6 +26,8 @@ enum EventType {
   STATE_SNAPSHOT = "STATE_SNAPSHOT",
   STATE_DELTA = "STATE_DELTA",
   MESSAGES_SNAPSHOT = "MESSAGES_SNAPSHOT",
+  ACTIVITY_SNAPSHOT = "ACTIVITY_SNAPSHOT",
+  ACTIVITY_DELTA = "ACTIVITY_DELTA",
   RAW = "RAW",
   CUSTOM = "CUSTOM",
   RUN_STARTED = "RUN_STARTED",
@@ -68,13 +70,17 @@ type RunStartedEvent = BaseEvent & {
   type: EventType.RUN_STARTED
   threadId: string
   runId: string
+  parentRunId?: string
+  input?: RunAgentInput
 }
 ```
 
-| Property   | Type     | Description                   |
-| ---------- | -------- | ----------------------------- |
-| `threadId` | `string` | ID of the conversation thread |
-| `runId`    | `string` | ID of the agent run           |
+| Property       | Type                          | Description                                                                                                                              |
+| -------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `threadId`     | `string`                      | ID of the conversation thread                                                                                                            |
+| `runId`        | `string`                      | ID of the agent run                                                                                                                      |
+| `parentRunId`  | `string` (optional)           | (Optional) Lineage pointer for branching/time travel. If present, refers to a prior run within the same thread                          |
+| `input`        | `RunAgentInput` (optional)    | (Optional) The exact agent input payload sent to the agent for this run. May omit messages already in history                            |
 
 ### RunFinishedEvent
 
@@ -194,6 +200,29 @@ type TextMessageEndEvent = BaseEvent & {
 | Property    | Type     | Description                               |
 | ----------- | -------- | ----------------------------------------- |
 | `messageId` | `string` | Matches the ID from TextMessageStartEvent |
+
+### TextMessageChunkEvent
+
+Convenience event that expands to `TextMessageStart` → `TextMessageContent` →
+`TextMessageEnd` automatically in the JS/TS client.
+
+```typescript
+type TextMessageChunkEvent = BaseEvent & {
+  type: EventType.TEXT_MESSAGE_CHUNK
+  messageId?: string // required on the first chunk for a message
+  role?: 'developer' | 'system' | 'assistant' | 'user'
+  delta?: string
+}
+```
+
+Behavior
+- Omit start/end: The client transforms chunk sequences into the standard
+  start/content/end triad, so you don’t need to emit them manually.
+- First chunk requirements: The first chunk for a message must include
+  `messageId`. When `role` is omitted, it defaults to `assistant`.
+- Streaming: Subsequent chunks with the same `messageId` emit
+  `TextMessageContent` events. `TextMessageEnd` is emitted automatically when a
+  different message starts or when the stream completes.
 
 ## Tool Call Events
 
@@ -320,6 +349,46 @@ type MessagesSnapshotEvent = BaseEvent & {
 | ---------- | ----------- | ------------------------ |
 | `messages` | `Message[]` | Array of message objects |
 
+### ActivitySnapshotEvent
+
+Delivers a complete snapshot of an activity message.
+
+```typescript
+type ActivitySnapshotEvent = BaseEvent & {
+  type: EventType.ACTIVITY_SNAPSHOT
+  messageId: string
+  activityType: string
+  content: Record<string, any>
+  replace?: boolean
+}
+```
+
+| Property       | Type                   | Description                                             |
+| -------------- | ---------------------- | ------------------------------------------------------- |
+| `messageId`    | `string`               | Identifier for the target `ActivityMessage`             |
+| `activityType` | `string`               | Activity discriminator such as `"PLAN"` or `"SEARCH"`     |
+| `content`      | `Record<string, any>`  | Structured payload describing the full activity state   |
+| `replace`      | `boolean` (optional)   | Defaults to `true`; when `false` the snapshot is ignored if a message with the same ID already exists |
+
+### ActivityDeltaEvent
+
+Provides incremental updates to an activity snapshot using JSON Patch.
+
+```typescript
+type ActivityDeltaEvent = BaseEvent & {
+  type: EventType.ACTIVITY_DELTA
+  messageId: string
+  activityType: string
+  patch: any[] // RFC 6902 JSON Patch operations
+}
+```
+
+| Property       | Type          | Description                                                       |
+| -------------- | ------------- | ----------------------------------------------------------------- |
+| `messageId`    | `string`      | Identifier for the target `ActivityMessage`                      |
+| `activityType` | `string`      | Activity discriminator mirroring the most recent snapshot        |
+| `patch`        | `any[]`       | JSON Patch operations applied to the structured activity payload |
+
 ## Special Events
 
 ### RawEvent
@@ -384,3 +453,26 @@ const EventSchemas = z.discriminatedUnion("type", [
 
 This allows for runtime validation of events and provides TypeScript type
 inference.
+### ToolCallChunkEvent
+
+Convenience event that expands to `ToolCallStart` → `ToolCallArgs` →
+`ToolCallEnd` automatically in the JS/TS client.
+
+```typescript
+type ToolCallChunkEvent = BaseEvent & {
+  type: EventType.TOOL_CALL_CHUNK
+  toolCallId?: string // required on the first chunk for a tool call
+  toolCallName?: string // required on the first chunk for a tool call
+  parentMessageId?: string
+  delta?: string
+}
+```
+
+Behavior
+- Omit start/end: The client transforms chunk sequences into the standard
+  start/args/end triad.
+- First chunk requirements: The first chunk must include both `toolCallId` and
+  `toolCallName`; `parentMessageId` is propagated to `ToolCallStart` if given.
+- Streaming: Subsequent chunks with the same `toolCallId` emit `ToolCallArgs`.
+  `ToolCallEnd` is emitted automatically when the tool call changes or when the
+  stream completes.

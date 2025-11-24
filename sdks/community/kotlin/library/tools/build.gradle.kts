@@ -6,10 +6,9 @@ plugins {
     id("signing")
 }
 
-group = "com.agui"
-version = "0.2.1"
+// Group and version inherited from parent build.gradle.kts
 
-repositories {
+repositories{
     google()
     mavenCentral()
 }
@@ -24,8 +23,8 @@ kotlin {
                     freeCompilerArgs.add("-opt-in=kotlin.RequiresOptIn")
                     freeCompilerArgs.add("-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi")
                     freeCompilerArgs.add("-opt-in=kotlinx.serialization.ExperimentalSerializationApi")
-                    languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
-                    apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
+                    languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_2)
+                    apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_2)
                 }
             }
         }
@@ -125,6 +124,7 @@ android {
 publishing {
     publications {
         withType<MavenPublication> {
+            version = project.version.toString()
             pom {
                 name.set("kotlin-tools")
                 description.set("Tool execution system for the Agent User Interaction Protocol")

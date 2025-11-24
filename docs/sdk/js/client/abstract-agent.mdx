@@ -95,6 +95,36 @@ subscribe(subscriber: AgentSubscriber): { unsubscribe: () => void }
 Returns an object with an `unsubscribe()` method to remove the subscriber when
 no longer needed.
 
+### use()
+
+Adds middleware to the agent's event processing pipeline.
+
+```typescript
+use(...middlewares: (Middleware | MiddlewareFunction)[]): this
+```
+
+Middleware can be either:
+- **Function middleware**: Simple functions that transform the event stream
+- **Class middleware**: Instances of the `Middleware` class for stateful operations
+
+```typescript
+// Function middleware
+agent.use((input, next) => {
+  console.log("Processing:", input.runId);
+  return next.run(input);
+});
+
+// Class middleware
+agent.use(new FilterToolCallsMiddleware({
+  allowedToolCalls: ["search"]
+}));
+
+// Chain multiple middleware
+agent.use(loggingMiddleware, authMiddleware, filterMiddleware);
+```
+
+Middleware executes in the order added, with each wrapping the next. See the [Middleware documentation](/sdk/js/client/middleware) for more details.
+
 ### abortRun()
 
 Cancels the current agent execution.
@@ -111,6 +141,33 @@ Creates a deep copy of the agent instance.
 clone(): AbstractAgent
 ```
 
+### connectAgent()
+
+Establishes a persistent connection with an agent that implements the
+`connect()` method.
+
+```typescript
+connectAgent(parameters?: RunAgentParameters, subscriber?: AgentSubscriber): Promise<RunAgentResult>
+```
+
+Similar to `runAgent()` but uses the `connect()` method internally. The agent
+must implement `connect()` or this functionality must be provided by a framework
+like [CopilotKit](https://copilotkit.ai).
+
+## Observable Properties
+
+### events$
+
+An observable stream of all events emitted during agent execution.
+
+```typescript
+events$: Observable<BaseEvent>
+```
+
+This property provides direct access to the agent's event stream. Events are
+stored using a `ReplaySubject`, allowing late subscribers will receive all
+historical events.
+
 ## Properties
 
 - `agentId`: Unique identifier for the agent instance
@@ -118,6 +175,8 @@ clone(): AbstractAgent
 - `threadId`: Conversation thread identifier
 - `messages`: Array of conversation messages
 - `state`: Current agent state object
+- `events$`: Observable stream of all `BaseEvent` objects emitted during agent
+  execution (replayed for late subscribers)
 
 ## Protected Methods
 
@@ -130,6 +189,17 @@ Executes the agent and returns an observable event stream.
 ```typescript
 protected abstract run(input: RunAgentInput): RunAgent
 ```
+
+### connect()
+
+Establishes a persistent connection and returns an observable event stream.
+
+```typescript
+protected connect(input: RunAgentInput): RunAgent
+```
+
+Override this method to implement persistent connections. Default implementation
+throws `ConnectNotImplementedError`.
 
 ### apply()
 

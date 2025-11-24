@@ -7,43 +7,38 @@ import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.ListAdapter;
 import androidx.recyclerview.widget.RecyclerView;
-
 import com.agui.chatapp.java.databinding.ItemAgentCardBinding;
-import com.agui.chatapp.java.model.AgentProfile;
-import com.agui.chatapp.java.model.AuthMethod;
-
+import com.agui.example.chatapp.data.model.AgentConfig;
+import com.agui.example.chatapp.data.model.AuthMethod;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
-/**
- * RecyclerView adapter for displaying agent profiles in a list.
- * Uses Material 3 design with agent cards showing basic info and action buttons.
- */
-public class AgentListAdapter extends ListAdapter<AgentProfile, AgentListAdapter.AgentViewHolder> {
-    
+public class AgentListAdapter extends ListAdapter<AgentConfig, AgentListAdapter.AgentViewHolder> {
+
+    public interface OnAgentActionListener {
+        void onActivateAgent(AgentConfig agent);
+        void onEditAgent(AgentConfig agent);
+        void onDeleteAgent(AgentConfig agent);
+    }
+
+    private final SimpleDateFormat formatter = new SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault());
     private OnAgentActionListener actionListener;
     private String activeAgentId;
-    
-    public interface OnAgentActionListener {
-        void onActivateAgent(AgentProfile agent);
-        void onEditAgent(AgentProfile agent);
-        void onDeleteAgent(AgentProfile agent);
-    }
-    
+
     public AgentListAdapter() {
-        super(new AgentDiffCallback());
+        super(DIFF_CALLBACK);
     }
-    
+
     public void setOnAgentActionListener(OnAgentActionListener listener) {
         this.actionListener = listener;
     }
-    
-    public void setActiveAgentId(String activeAgentId) {
-        this.activeAgentId = activeAgentId;
-        notifyDataSetChanged(); // Refresh to update active state indicators
+
+    public void setActiveAgentId(String id) {
+        this.activeAgentId = id;
+        notifyDataSetChanged();
     }
-    
+
     @NonNull
     @Override
     public AgentViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
@@ -51,51 +46,45 @@ public class AgentListAdapter extends ListAdapter<AgentProfile, AgentListAdapter
                 LayoutInflater.from(parent.getContext()), parent, false);
         return new AgentViewHolder(binding);
     }
-    
+
     @Override
     public void onBindViewHolder(@NonNull AgentViewHolder holder, int position) {
         holder.bind(getItem(position));
     }
-    
-    class AgentViewHolder extends RecyclerView.ViewHolder {
+
+    public class AgentViewHolder extends RecyclerView.ViewHolder {
         private final ItemAgentCardBinding binding;
-        
-        public AgentViewHolder(@NonNull ItemAgentCardBinding binding) {
+
+        AgentViewHolder(ItemAgentCardBinding binding) {
             super(binding.getRoot());
             this.binding = binding;
         }
-        
-        public void bind(AgentProfile agent) {
+
+        void bind(AgentConfig agent) {
             boolean isActive = agent.getId().equals(activeAgentId);
-            
-            // Set basic info
+
             binding.textAgentName.setText(agent.getName());
             binding.textAgentUrl.setText(agent.getUrl());
-            
-            // Description (optional)
+
             if (agent.getDescription() != null && !agent.getDescription().isEmpty()) {
-                binding.textAgentDescription.setText(agent.getDescription());
                 binding.textAgentDescription.setVisibility(View.VISIBLE);
+                binding.textAgentDescription.setText(agent.getDescription());
             } else {
                 binding.textAgentDescription.setVisibility(View.GONE);
             }
-            
-            // Auth method chip
-            binding.chipAuthMethod.setText(getAuthMethodLabel(agent.getAuthMethod()));
-            
-            // Last used info
+
+            binding.chipAuthMethod.setText(labelForAuth(agent.getAuthMethod()));
+
             if (agent.getLastUsedAt() != null) {
-                String lastUsed = formatDateTime(agent.getLastUsedAt());
-                binding.textLastUsed.setText("Last used: " + lastUsed);
+                long millis = agent.getLastUsedAt().toEpochMilliseconds();
                 binding.textLastUsed.setVisibility(View.VISIBLE);
+                binding.textLastUsed.setText("Last used: " + formatter.format(new Date(millis)));
             } else {
                 binding.textLastUsed.setVisibility(View.GONE);
             }
-            
-            // Active indicator
+
             binding.iconActive.setVisibility(isActive ? View.VISIBLE : View.GONE);
-            
-            // Activate button (only show if not active)
+
             if (isActive) {
                 binding.btnActivate.setVisibility(View.GONE);
             } else {
@@ -106,69 +95,43 @@ public class AgentListAdapter extends ListAdapter<AgentProfile, AgentListAdapter
                     }
                 });
             }
-            
-            // Edit button
+
             binding.btnEdit.setOnClickListener(v -> {
                 if (actionListener != null) {
                     actionListener.onEditAgent(agent);
                 }
             });
-            
-            // Delete button
+
             binding.btnDelete.setOnClickListener(v -> {
                 if (actionListener != null) {
                     actionListener.onDeleteAgent(agent);
                 }
             });
-            
-            // Card highlighting for active agent
-            // Use theme-appropriate colors with proper contrast
-            if (isActive) {
-                // Highlight active agent with elevated appearance
-                binding.cardAgent.setCardBackgroundColor(
-                    binding.getRoot().getContext().getColor(com.google.android.material.R.color.cardview_light_background));
-                binding.cardAgent.setCardElevation(8f);
-                binding.cardAgent.setStrokeWidth(2);
-                binding.cardAgent.setStrokeColor(
-                    binding.getRoot().getContext().getColor(com.google.android.material.R.color.design_default_color_primary));
-            } else {
-                // Default appearance for inactive agents
-                binding.cardAgent.setCardBackgroundColor(
-                    binding.getRoot().getContext().getColor(com.google.android.material.R.color.cardview_light_background));
-                binding.cardAgent.setCardElevation(2f);
-                binding.cardAgent.setStrokeWidth(0);
-            }
         }
-        
-        private String getAuthMethodLabel(AuthMethod authMethod) {
-            if (authMethod instanceof AuthMethod.None) {
-                return "No Auth";
-            } else if (authMethod instanceof AuthMethod.ApiKey) {
+
+        private String labelForAuth(AuthMethod method) {
+            if (method instanceof AuthMethod.ApiKey) {
                 return "API Key";
-            } else if (authMethod instanceof AuthMethod.BearerToken) {
+            } else if (method instanceof AuthMethod.BearerToken) {
                 return "Bearer Token";
-            } else if (authMethod instanceof AuthMethod.BasicAuth) {
+            } else if (method instanceof AuthMethod.BasicAuth) {
                 return "Basic Auth";
             } else {
-                return "Unknown";
+                return "No Auth";
             }
         }
-        
-        private String formatDateTime(Long timestamp) {
-            SimpleDateFormat formatter = new SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault());
-            return formatter.format(new Date(timestamp));
-        }
     }
-    
-    static class AgentDiffCallback extends DiffUtil.ItemCallback<AgentProfile> {
-        @Override
-        public boolean areItemsTheSame(@NonNull AgentProfile oldItem, @NonNull AgentProfile newItem) {
-            return oldItem.getId().equals(newItem.getId());
-        }
-        
-        @Override
-        public boolean areContentsTheSame(@NonNull AgentProfile oldItem, @NonNull AgentProfile newItem) {
-            return oldItem.equals(newItem);
-        }
-    }
+
+    private static final DiffUtil.ItemCallback<AgentConfig> DIFF_CALLBACK =
+            new DiffUtil.ItemCallback<AgentConfig>() {
+                @Override
+                public boolean areItemsTheSame(@NonNull AgentConfig oldItem, @NonNull AgentConfig newItem) {
+                    return oldItem.getId().equals(newItem.getId());
+                }
+
+                @Override
+                public boolean areContentsTheSame(@NonNull AgentConfig oldItem, @NonNull AgentConfig newItem) {
+                    return oldItem.equals(newItem);
+                }
+            };
 }
