@@ -12,6 +12,7 @@ dependencies = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "pydantic-ai-slim[openai,ag-ui]==1.22.0",
+    "dotenv>=0.9.9"
 ]
 authors = []
 
