@@ -11,7 +11,7 @@ requires-python = ">=3.10,<4.0"
 dependencies = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
-    "pydantic-ai-slim[openai,ag-ui]==1.20.0",
+    "pydantic-ai-slim[openai,ag-ui]==1.22.0",
 ]
 authors = []
 
