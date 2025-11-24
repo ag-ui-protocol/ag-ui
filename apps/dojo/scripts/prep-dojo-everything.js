@@ -118,7 +118,7 @@ const ALL_TARGETS = {
     cwd: path.join(integrationsRoot, "microsoft-agent-framework/python/examples"),
   },
   "microsoft-agent-framework-dotnet": {
-    command: "dotnet restore AGUIDojoServer/AGUIDojoServer.csproj",
+    command: "dotnet restore AGUIDojoServer/AGUIDojoServer.csproj && dotnet build AGUIDojoServer/AGUIDojoServer.csproj",
     name: "Microsoft Agent Framework (.NET)",
     cwd: path.join(integrationsRoot, "microsoft-agent-framework/dotnet/examples"),
   },
