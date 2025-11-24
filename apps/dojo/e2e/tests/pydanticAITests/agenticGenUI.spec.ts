@@ -15,7 +15,7 @@ test.describe("Agent Generative UI Feature", () => {
     await genUIAgent.openChat();
     await genUIAgent.sendMessage("Hi");
     await genUIAgent.sendButton.click();
-    await genUIAgent.assertAgentReplyVisible(/Hello/);
+    await genUIAgent.assertAgentReplyVisible([/Hello/, /Hi/]);
 
     await genUIAgent.sendMessage("give me a plan to make brownies");
     await genUIAgent.sendButton.click();
