@@ -78,14 +78,18 @@ async def run_task(
 
     return "Task Done!"
 
+system_prompt = """
+    You are a helpful assistant assisting with any task. 
+    When asked to do something, you MUST call the function `run_task`
+    that was provided to you.
+    If you called the function, you MUST NOT repeat the steps in your next response to the user.
+    Just give a very brief summary (one sentence) of what you did with some emojis. 
+    Always say you actually did the steps, not merely generated them.
+    """
 
 agentic_generative_ui_router = get_ag_ui_workflow_router(
     llm=OpenAI(model="gpt-4.1"),
     backend_tools=[run_task],
     initial_state={},
-    system_prompt=(
-        "You are a helpful assistant that can help the user with their task. "
-        "If the user asks you to do any task, use the run_task tool to do it. "
-        "Use your best judgement to describe the steps."
-    )
+    system_prompt=system_prompt
 )
