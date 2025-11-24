@@ -16,6 +16,7 @@ dependencies = [
     "uvicorn>=0.27.0",
     "fastapi>=0.100.0",
     "httpx>=0.24.0",
+    "dotenv>=0.9.9"
 ]
 authors = [
     { name = "Logan Markewich", email = "logan@runllama.ai" },
