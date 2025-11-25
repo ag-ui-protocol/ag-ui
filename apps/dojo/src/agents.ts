@@ -22,7 +22,7 @@ import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
 import { AWSStrandsAgent } from "@ag-ui/aws-strands-integration";
 import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
-import { langChainAgents } from "@ag-ui/langchain/src/examples";
+import { LangChainAgent } from "@ag-ui/langchain";
 
 const envVars = getEnvVars();
 export const agentsIntegrations: AgentIntegrationConfig[] = [
@@ -267,7 +267,32 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
   },
   {
     id: "langchain",
-    agents: async () => langChainAgents,
+    agents: async () => {
+      return {
+        agentic_chat: new LangChainAgent({
+          chainFn: async ({ messages, tools, threadId }) => {
+            // @ts-ignore
+            const { ChatOpenAI } = await import("@langchain/openai");
+            const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
+            const model = chatOpenAI.bindTools(tools, {
+              strict: true,
+            });
+            return model.stream(messages, { tools, metadata: { conversation_id: threadId } });
+          },
+        }),
+        tool_based_generative_ui: new LangChainAgent({
+          chainFn: async ({ messages, tools, threadId }) => {
+            // @ts-ignore
+            const { ChatOpenAI } = await import("@langchain/openai");
+            const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
+            const model = chatOpenAI.bindTools(tools, {
+              strict: true,
+            });
+            return model.stream(messages, { tools, metadata: { conversation_id: threadId } });
+          },
+        }),
+      }
+    },
   },
   {
     id: "agno",
