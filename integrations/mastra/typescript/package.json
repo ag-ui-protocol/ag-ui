@@ -58,7 +58,7 @@
   },
   "dependencies": {
     "@ai-sdk/ui-utils": "^1.1.19",
-    "@mastra/client-js": "^1.0.0-beta.2",
+    "@mastra/client-js": "^1.0.0-beta.5",
     "rxjs": "7.8.1"
   },
   "peerDependencies": {
@@ -70,7 +70,7 @@
   "devDependencies": {
     "@ag-ui/core": "workspace:*",
     "@ag-ui/client": "workspace:*",
-    "@mastra/core": "^1.0.0-beta.2",
+    "@mastra/core": "^1.0.0-beta.5",
     "@types/jest": "^29.5.14",
     "@types/node": "^20.11.19",
     "jest": "^29.7.0",

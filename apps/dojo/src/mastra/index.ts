@@ -27,6 +27,7 @@ function getStorage(): LibSQLStore | DynamoDBStore {
 export const mastra = new Mastra({
   agents: {
     agentic_chat: new Agent({
+      id: 'agentic_chat',
       name: "agentic_chat",
       instructions: `
         You are a helpful weather assistant that provides accurate weather information.
@@ -53,6 +54,7 @@ export const mastra = new Mastra({
       }),
     }),
     backend_tool_rendering: new Agent({
+      id: "backend_tool_rendering",
       name: "backend_tool_rendering",
       instructions: `
           You are a helpful weather assistant that provides accurate weather information.
@@ -73,6 +75,7 @@ export const mastra = new Mastra({
       }),
     }),
     shared_state: new Agent({
+      id: "shared_state",
       name: "shared_state",
       instructions: `
         You are a helpful assistant for creating recipes.
@@ -141,6 +144,7 @@ export const mastra = new Mastra({
       }),
     }),
     tool_based_generative_ui: new Agent({
+      id: "tool_based_generative_ui",
       name: "tool_based_generative_ui",
       instructions: `
         You are a helpful assistant for creating haikus.

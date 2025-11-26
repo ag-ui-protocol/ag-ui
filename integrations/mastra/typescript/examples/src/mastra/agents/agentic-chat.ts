@@ -4,6 +4,7 @@ import { LibSQLStore } from "@mastra/libsql";
 import { weatherTool } from "../tools/weather-tool";
 
 export const agenticChatAgent = new Agent({
+  id: "agentic-chat-agent",
   name: "Weather Agent",
   instructions: `
       You are a helpful weather assistant that provides accurate weather information.

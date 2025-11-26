@@ -117,7 +117,6 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     },
   },
   {
-    // To use this, run "pnpm mastra:dev" in a separate terminal window
     id: "mastra",
     agents: async () => {
       const mastraClient = new MastraClient({

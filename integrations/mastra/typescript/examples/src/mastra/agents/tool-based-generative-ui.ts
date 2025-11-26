@@ -3,6 +3,7 @@ import { Memory } from "@mastra/memory";
 import { LibSQLStore } from "@mastra/libsql";
 
 export const toolBasedGenerativeUIAgent = new Agent({
+  id: "tool-based-generative-ui-agent",
   name: "Haiku Agent",
   instructions: `
       You are a helpful haiku assistant that provides the user with a haiku.
