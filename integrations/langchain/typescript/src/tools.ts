@@ -76,14 +76,17 @@ export type LangChainToolWithName = {
 export function convertAGUIToolToLangChain(tool: AGUITool): DynamicStructuredTool {
   const schema = convertJsonSchemaToZod(tool.parameters, true) as z.ZodTypeAny;
 
-  return new DynamicStructuredTool<z.ZodObject<any>>({
+  // Use explicit type annotation to avoid TS2589 "Type instantiation is excessively deep"
+  // caused by DynamicStructuredTool's complex generic inference
+  const toolInstance: DynamicStructuredTool = new (DynamicStructuredTool as any)({
     name: tool.name,
     description: tool.description,
-    schema: schema as z.ZodObject<any>,
+    schema: schema,
     func: async () => {
       return "";
     },
   });
+  return toolInstance;
 }
 
 /**
