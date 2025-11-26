@@ -1,19 +1,21 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
+using AGUIDojoServer.AgenticUI;
+using AGUIDojoServer.BackendToolRendering;
+using AGUIDojoServer.PredictiveStateUpdates;
+using AGUIDojoServer.SharedState;
 
 namespace AGUIDojoServer;
 
 [JsonSerializable(typeof(WeatherInfo))]
-[JsonSerializable(typeof(RecipeResponse))]
 [JsonSerializable(typeof(Recipe))]
 [JsonSerializable(typeof(Ingredient))]
-[JsonSerializable(typeof(TaskPlan))]
-[JsonSerializable(typeof(TaskPlanStep))]
-[JsonSerializable(typeof(UiComponentResponse))]
-[JsonSerializable(typeof(UiComponent))]
-[JsonSerializable(typeof(UiField))]
-[JsonSerializable(typeof(RecipeState))]
-[JsonSerializable(typeof(DraftDocument))]
-[JsonSerializable(typeof(DraftSection))]
-internal sealed partial class AGUIDojoServerSerializerContext : JsonSerializerContext
-{
-}
+[JsonSerializable(typeof(RecipeResponse))]
+[JsonSerializable(typeof(Plan))]
+[JsonSerializable(typeof(Step))]
+[JsonSerializable(typeof(StepStatus))]
+[JsonSerializable(typeof(StepStatus?))]
+[JsonSerializable(typeof(JsonPatchOperation))]
+[JsonSerializable(typeof(List<JsonPatchOperation>))]
+[JsonSerializable(typeof(List<string>))]
+[JsonSerializable(typeof(DocumentState))]
+internal sealed partial class AGUIDojoServerSerializerContext : JsonSerializerContext;

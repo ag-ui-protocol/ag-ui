@@ -155,6 +155,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ENHANCED**: More specific error codes for better debugging and error reporting
 - **ENHANCED**: Better error messages in tool result processing with specific failure reasons
 
+## [0.3.3] - 2025-11-14
+
+### Added
+- **Transcript tracking**: ADKAgent now replays unseen transcript messages sequentially and keeps per-session ledgers of processed message IDs so system/user/assistant content is never dropped when HITL tool results arrive out of order.
+- **Tool result validation**: Tool result batches are now checked against pending tool call IDs before being forwarded, and skipped batches are marked processed to prevent repeated replays.
+- **State snapshots**: EventTranslator surfaces ADK `state_snapshot` payloads as AG-UI `StateSnapshotEvent`s so clients receive full session dumps alongside deltas.
+
+### Changed
+- **Message conversion**: `flatten_message_content()` now flattens `TextInputContent`/`BinaryInputContent` payloads before building ADK `Content` objects, allowing complex UI messages to flow through unchanged.
+- **Protocol dependency**: Minimum `ag-ui-protocol` version was bumped to `0.1.10` to align with the new event surface area.
+- **Noise reduction**: Removed verbose diagnostic logging around event translation and stream handling while adding duplicate tool call detection to keep logs actionable.
+
+### Fixed
+- **Tool flows**: Guarding tool batches that have no matching pending tool calls eliminates spurious run errors and keeps processed message IDs consistent; regression tests cover combined tool-result/user-message submissions and state snapshot passthrough.
+
 ## [0.3.2] - 2025-07-08
 
 ### Added

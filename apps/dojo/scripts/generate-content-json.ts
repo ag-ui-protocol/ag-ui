@@ -363,6 +363,21 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  "microsoft-agent-framework-python": (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/microsoft-agent-framework/python/examples/agents/dojo.py`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
   "microsoft-agent-framework-dotnet": (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({

@@ -493,6 +493,10 @@ class TestToolResultFlow:
                 run_id=input_data.run_id,
             )
 
+        # Mock pending tool call check to return True so tool result is accepted
+        async def mock_has_pending_tool_calls(session_id):
+            return True
+
         with patch.object(
             ag_ui_adk,
             '_start_new_execution',
@@ -501,29 +505,34 @@ class TestToolResultFlow:
             ag_ui_adk,
             '_handle_tool_result_submission',
             wraps=ag_ui_adk._handle_tool_result_submission,
-        ) as handle_mock:
+        ) as handle_mock, patch.object(
+            ag_ui_adk,
+            '_has_pending_tool_calls',
+            side_effect=mock_has_pending_tool_calls,
+        ), patch.object(
+            ag_ui_adk,
+            '_remove_pending_tool_call',
+            new=AsyncMock(),
+        ):
             events = []
             async for event in ag_ui_adk.run(input_data):
                 events.append(event)
 
-        assert len(events) == 4
+        # The system optimizes by sending tool result + trailing user message together
+        # So we expect ONE run (2 events), not two separate runs (4 events)
+        assert len(events) == 2
         assert [event.type for event in events] == [
-            EventType.RUN_STARTED,
-            EventType.RUN_FINISHED,
             EventType.RUN_STARTED,
             EventType.RUN_FINISHED,
         ]
 
-        # First call should originate from tool processing with populated tool_results
-        assert len(start_calls) == 2
-        first_tool_results, first_batch = start_calls[0]
-        assert first_tool_results is not None and len(first_tool_results) == 1
-        assert first_tool_results[0]['message'].tool_call_id == "call_1"
-        assert first_batch == [input_data.messages[0]]
-
-        second_tool_results, second_batch = start_calls[1]
-        assert second_tool_results is None
-        assert second_batch == [input_data.messages[1]]
+        # Single call with tool results AND the trailing user message
+        assert len(start_calls) == 1
+        tool_results, message_batch = start_calls[0]
+        assert tool_results is not None and len(tool_results) == 1
+        assert tool_results[0]['message'].tool_call_id == "call_1"
+        # Trailing user message is included in the same invocation
+        assert message_batch == [input_data.messages[1]]
 
         assert handle_mock.call_count == 1
         assert 'tool_messages' in handle_mock.call_args.kwargs

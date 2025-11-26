@@ -10,8 +10,11 @@ import {
   MessagesSnapshotEvent,
   RunFinishedEvent,
   RunStartedEvent,
+  TextMessageStartEvent,
+  TextMessageContentEvent,
+  TextMessageEndEvent,
 } from "@ag-ui/core";
-import { Observable, of } from "rxjs";
+import { Observable, of, Subject } from "rxjs";
 
 // Mock uuid module
 jest.mock("uuid", () => ({
@@ -56,6 +59,21 @@ class TestAgent extends AbstractAgent {
 
   run(input: RunAgentInput): Observable<BaseEvent> {
     return of(...this.eventsToEmit);
+  }
+}
+
+class StreamingTestAgent extends AbstractAgent {
+  private eventSubject?: Subject<BaseEvent>;
+
+  setEventSubject(subject: Subject<BaseEvent>) {
+    this.eventSubject = subject;
+  }
+
+  run(input: RunAgentInput): Observable<BaseEvent> {
+    if (!this.eventSubject) {
+      throw new Error("eventSubject not set");
+    }
+    return this.eventSubject.asObservable();
   }
 }
 
@@ -580,6 +598,152 @@ describe("Agent Result", () => {
 
       expect(result.result).toEqual(complexResult);
       expect(result.result).toMatchObject(complexResult);
+    });
+  });
+
+  describe("run detachment", () => {
+    let streamingAgent: StreamingTestAgent;
+
+    beforeEach(() => {
+      streamingAgent = new StreamingTestAgent({ threadId: "thread-detach" });
+    });
+
+    it("finalizes immediately when detached", async () => {
+      const subject = new Subject<BaseEvent>();
+      streamingAgent.setEventSubject(subject);
+      const onRunFinalized = jest.fn();
+
+      const runPromise = streamingAgent.runAgent({}, { onRunFinalized });
+      await waitForAsyncNotifications();
+
+      subject.next({
+        type: EventType.RUN_STARTED,
+        threadId: "thread-detach",
+        runId: "run-detach",
+      } as RunStartedEvent);
+
+      await streamingAgent.detachActiveRun();
+      await runPromise;
+      subject.complete();
+
+      expect(onRunFinalized).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores events emitted after detaching", async () => {
+      const subject = new Subject<BaseEvent>();
+      streamingAgent.setEventSubject(subject);
+      const onMessagesChanged = jest.fn();
+
+      const runPromise = streamingAgent.runAgent({}, { onMessagesChanged });
+      await waitForAsyncNotifications();
+      const initialMessageCount = streamingAgent.messages.length;
+
+      subject.next({
+        type: EventType.RUN_STARTED,
+        threadId: "thread-detach",
+        runId: "run-detach",
+      } as RunStartedEvent);
+
+      const detachPromise = streamingAgent.detachActiveRun();
+
+      subject.next({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "msg-after-detach",
+        role: "assistant",
+      } as TextMessageStartEvent);
+      subject.next({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "msg-after-detach",
+        delta: "Should be ignored",
+      } as TextMessageContentEvent);
+      subject.next({
+        type: EventType.TEXT_MESSAGE_END,
+        messageId: "msg-after-detach",
+      } as TextMessageEndEvent);
+
+      subject.complete();
+      await Promise.all([detachPromise, runPromise]);
+
+      expect(streamingAgent.messages.length).toBe(initialMessageCount);
+      expect(onMessagesChanged).not.toHaveBeenCalled();
+    });
+
+    it("can start a new run on another thread after detaching", async () => {
+      const firstSubject = new Subject<BaseEvent>();
+      streamingAgent.setEventSubject(firstSubject);
+
+      const firstRunPromise = streamingAgent.runAgent();
+      await waitForAsyncNotifications();
+
+      firstSubject.next({
+        type: EventType.RUN_STARTED,
+        threadId: "thread-detach",
+        runId: "run-1",
+      } as RunStartedEvent);
+
+      await streamingAgent.detachActiveRun();
+      firstSubject.complete();
+      await firstRunPromise;
+
+      streamingAgent.threadId = "thread-detach-2";
+      const secondSubject = new Subject<BaseEvent>();
+      streamingAgent.setEventSubject(secondSubject);
+
+      const secondRunPromise = streamingAgent.runAgent();
+      await waitForAsyncNotifications();
+
+      secondSubject.next({
+        type: EventType.RUN_STARTED,
+        threadId: "thread-detach-2",
+        runId: "run-2",
+      } as RunStartedEvent);
+      secondSubject.next({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "msg-new",
+        role: "assistant",
+      } as TextMessageStartEvent);
+      secondSubject.next({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "msg-new",
+        delta: "hello",
+      } as TextMessageContentEvent);
+      secondSubject.next({
+        type: EventType.TEXT_MESSAGE_END,
+        messageId: "msg-new",
+      } as TextMessageEndEvent);
+      secondSubject.next({
+        type: EventType.RUN_FINISHED,
+        threadId: "thread-detach-2",
+        runId: "run-2",
+      } as RunFinishedEvent);
+      secondSubject.complete();
+
+      await secondRunPromise;
+      await waitForAsyncNotifications();
+
+      expect(streamingAgent.messages.some((message) => message.id === "msg-new")).toBe(true);
+    });
+
+    it("resolve order: detachActiveRun waits for finalize", async () => {
+      const subject = new Subject<BaseEvent>();
+      streamingAgent.setEventSubject(subject);
+      const order: string[] = [];
+
+      const runPromise = streamingAgent.runAgent({}, { onRunFinalized: () => order.push("finalized") });
+      await waitForAsyncNotifications();
+
+      subject.next({
+        type: EventType.RUN_STARTED,
+        threadId: "thread-detach",
+        runId: "run-order",
+      } as RunStartedEvent);
+
+      const detachPromise = streamingAgent.detachActiveRun().then(() => order.push("awaited"));
+      subject.complete();
+
+      await Promise.all([runPromise, detachPromise]);
+
+      expect(order).toEqual(["finalized", "awaited"]);
     });
   });
 });

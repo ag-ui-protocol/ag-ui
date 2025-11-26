@@ -1,12 +1,10 @@
-// Copyright (c) Microsoft. All rights reserved.
-
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-namespace AGUIDojoServer;
+namespace AGUIDojoServer.SharedState;
 
 [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated by ChatClientAgentFactory.CreateSharedState")]
 internal sealed class SharedStateAgent : DelegatingAIAgent
@@ -57,8 +55,8 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
             ChatRole.System,
             [
                 new TextContent("Here is the current state in JSON format:"),
-                new TextContent(state.GetRawText()),
-                new TextContent("The new state is:")
+                    new TextContent(state.GetRawText()),
+                    new TextContent("The new state is:")
             ]);
 
         var firstRunMessages = messages.Append(stateUpdateMessage);

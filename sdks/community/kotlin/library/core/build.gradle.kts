@@ -6,8 +6,7 @@ plugins {
     id("signing")
 }
 
-group = "com.agui"
-    version = "0.2.3"
+// Group and version inherited from parent build.gradle.kts
 
 repositories {
     google()
@@ -132,6 +131,7 @@ android {
 publishing {
     publications {
         withType<MavenPublication> {
+            version = project.version.toString()
             pom {
                 name.set("kotlin-core")
                 description.set("Core types and protocol definitions for the Agent User Interaction Protocol")

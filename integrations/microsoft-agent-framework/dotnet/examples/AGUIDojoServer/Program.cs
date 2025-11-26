@@ -1,44 +1,45 @@
-using AGUIDojoServer;
-using Microsoft.Agents.AI;
+﻿using AGUIDojoServer;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
-using Microsoft.AspNetCore.Http.Json;
 using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.Extensions.Options;
 
-var builder = WebApplication.CreateBuilder(args);
+WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddHttpLogging(logging =>
 {
-    logging.LoggingFields = HttpLoggingFields.RequestPropertiesAndHeaders |
-        HttpLoggingFields.RequestBody |
-        HttpLoggingFields.ResponsePropertiesAndHeaders |
-        HttpLoggingFields.ResponseBody;
+    logging.LoggingFields = HttpLoggingFields.RequestPropertiesAndHeaders | HttpLoggingFields.RequestBody
+        | HttpLoggingFields.ResponsePropertiesAndHeaders | HttpLoggingFields.ResponseBody;
     logging.RequestBodyLogLimit = int.MaxValue;
     logging.ResponseBodyLogLimit = int.MaxValue;
 });
 
 builder.Services.AddHttpClient().AddLogging();
+builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolverChain.Add(AGUIDojoServerSerializerContext.Default));
 builder.Services.AddAGUI();
-builder.Services.ConfigureHttpJsonOptions(options =>
-    options.SerializerOptions.TypeInfoResolverChain.Add(AGUIDojoServerSerializerContext.Default));
 
-builder.Services.AddSingleton<ChatClientAgentFactory>();
-
-var app = builder.Build();
+WebApplication app = builder.Build();
 
 app.UseHttpLogging();
 
-var agentFactory = app.Services.GetRequiredService<ChatClientAgentFactory>();
+// Initialize the factory
+ChatClientAgentFactory.Initialize(app.Configuration);
 
-var options = app.Services.GetRequiredService<IOptions<JsonOptions>>().Value.SerializerOptions;
+// Map the AG-UI agent endpoints for different scenarios
+app.MapAGUI("/agentic_chat", ChatClientAgentFactory.CreateAgenticChat());
 
-app.MapAGUI("/agentic_chat", agentFactory.CreateAgenticChat());
-app.MapAGUI("/backend_tool_rendering", agentFactory.CreateBackendToolRendering());
-app.MapAGUI("/human_in_the_loop", agentFactory.CreateHumanInTheLoop());
-app.MapAGUI("/agentic_generative_ui", agentFactory.CreateAgenticGenerativeUi());
-app.MapAGUI("/tool_based_generative_ui", agentFactory.CreateToolBasedGenerativeUi());
-app.MapAGUI("/shared_state", agentFactory.CreateSharedState(options));
+app.MapAGUI("/backend_tool_rendering", ChatClientAgentFactory.CreateBackendToolRendering());
+
+app.MapAGUI("/human_in_the_loop", ChatClientAgentFactory.CreateHumanInTheLoop());
+
+app.MapAGUI("/tool_based_generative_ui", ChatClientAgentFactory.CreateToolBasedGenerativeUI());
+
+var jsonOptions = app.Services.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
+app.MapAGUI("/agentic_generative_ui", ChatClientAgentFactory.CreateAgenticUI(jsonOptions.Value.SerializerOptions));
+
+app.MapAGUI("/shared_state", ChatClientAgentFactory.CreateSharedState(jsonOptions.Value.SerializerOptions));
+
+app.MapAGUI("/predictive_state_updates", ChatClientAgentFactory.CreatePredictiveStateUpdates(jsonOptions.Value.SerializerOptions));
 
 await app.RunAsync();
 
-public partial class Program;
+public partial class Program { }

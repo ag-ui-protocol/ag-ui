@@ -21,7 +21,10 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
+# TODO: Uncomment this when we have a way to authenticate with Azure
+# from azure.identity import DefaultAzureCredential
+# from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework_ag_ui_examples.agents import (
     document_writer_agent,
@@ -32,11 +35,33 @@ from agent_framework_ag_ui_examples.agents import (
     ui_generator_agent,
     weather_agent,
 )
-from azure.identity import AzureCliCredential
 
 load_dotenv()
 
 app = FastAPI(title="Microsoft Agent Framework Python Dojo")
+
+# Temp Diagnostic logging for deployment troubleshooting
+print(f"AZURE_OPENAI_ENDPOINT: {'SET' if os.getenv('AZURE_OPENAI_ENDPOINT') else 'MISSING'}")
+print(f"AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: {'SET' if os.getenv('AZURE_OPENAI_CHAT_DEPLOYMENT_NAME') else 'MISSING'}")
+print(f"AZURE_CLIENT_ID: {'SET' if os.getenv('AZURE_CLIENT_ID') else 'MISSING'}")
+print(f"AZURE_TENANT_ID: {'SET' if os.getenv('AZURE_TENANT_ID') else 'MISSING'}")
+print(f"AZURE_CLIENT_SECRET: {'SET' if os.getenv('AZURE_CLIENT_SECRET') else 'MISSING'}")
+print(f"OPENAI_API_KEY: {'SET' if os.getenv('OPENAI_API_KEY') else 'MISSING'}")
+
+# Resolve deployment name with fallback to support both Python and .NET env var naming
+deployment_name = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME")
+if deployment_name:
+    print(f"Using deployment name: {deployment_name}")
+else:
+    print("WARNING: No deployment name found in AZURE_OPENAI_CHAT_DEPLOYMENT_NAME")
+
+endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+if endpoint:
+    print(f"Using endpoint: {endpoint}")
+else:
+    print("WARNING: AZURE_OPENAI_ENDPOINT not set")
+
+api_key = os.getenv("OPENAI_API_KEY")
 
 # Create a shared chat client for all agents
 # You can use different chat clients for different agents:
@@ -50,7 +75,17 @@ app = FastAPI(title="Microsoft Agent Framework Python Dojo")
 # add_agent_framework_fastapi_endpoint(app, weather_agent(openai_client), "/backend_tool_rendering")
 
 # If using api_key authentication remove the credential parameter
-chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+# Explicitly pass deployment_name to align with .NET behavior and support both env var names
+chat_client = OpenAIChatClient(
+    model_id=deployment_name,
+    api_key=api_key,
+)
+# TODO: Uncomment this to authenticate with Azure
+# chat_client = AzureOpenAIChatClient(
+#     credential=DefaultAzureCredential(),
+#     deployment_name=deployment_name,
+#     endpoint=endpoint,
+# )
 
 # Agentic Chat - simple_agent
 add_agent_framework_fastapi_endpoint(app, simple_agent(chat_client), "/agentic_chat")

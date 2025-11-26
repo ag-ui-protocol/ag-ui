@@ -307,33 +307,15 @@
 }
 
 @utility mix-from-* {
-  --tw-mix-from-color: --value(--color-*);
+  --tw-mix-from-color: --value(--color-*, color, [color]);
   --tw-mix-from-opacity: --modifier(--opacity-*, [percentage]);
   --tw-mix-from-opacity: calc(--modifier(number) * 1%);
   --tw-mix-from-opacity: calc(--modifier([number]) * 100%);
-  --tw-mix-from: --alpha(
-    var(--tw-mix-from-color) / var(--tw-mix-from-opacity, 100%)
-  );
+  --tw-mix-from: --alpha(var(--tw-mix-from-color) / var(--tw-mix-from-opacity, 100%));
   /* calculate the final color-mix result */
-  --tw-mix: color-mix(
-    color-mix(
-        in srgb,
-        var(--color-mix-from),
-        var(--color-mix-to) var(--tw-mix-percent, 50%)
-      )
-      var(--tw-mix-opacity, 100%),
-    transparent
-  );
+  --tw-mix: color-mix(color-mix(in srgb, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
   @supports (color: color-mix(in lab, red, red)) {
-    --tw-mix: color-mix(
-      color-mix(
-          in oklab,
-          var(--color-mix-from),
-          var(--color-mix-to) var(--tw-mix-percent, 50%)
-        )
-        var(--tw-mix-opacity, 100%),
-      transparent
-    );
+    --tw-mix: color-mix(color-mix(in oklab, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
   }
   /* redefining the color variables here to ensure they receive the latest values */
   --color-mix-from: var(--tw-mix-from);
@@ -342,31 +324,15 @@
 }
 
 @utility mix-to-* {
-  --tw-mix-to-color: --value(--color-*);
+  --tw-mix-to-color: --value(--color-*, color, [color]);
   --tw-mix-to-opacity: --modifier(--opacity-*, [percentage]);
   --tw-mix-to-opacity: calc(--modifier(number) * 1%);
   --tw-mix-to-opacity: calc(--modifier([number]) * 100%);
   --tw-mix-to: --alpha(var(--tw-mix-to-color) / var(--tw-mix-to-opacity, 100%));
   /* calculate the final color-mix result */
-  --tw-mix: color-mix(
-    color-mix(
-        in srgb,
-        var(--color-mix-from),
-        var(--color-mix-to) var(--tw-mix-percent, 50%)
-      )
-      var(--tw-mix-opacity, 100%),
-    transparent
-  );
+  --tw-mix: color-mix(color-mix(in srgb, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
   @supports (color: color-mix(in lab, red, red)) {
-    --tw-mix: color-mix(
-      color-mix(
-          in oklab,
-          var(--color-mix-from),
-          var(--color-mix-to) var(--tw-mix-percent, 50%)
-        )
-        var(--tw-mix-opacity, 100%),
-      transparent
-    );
+    --tw-mix: color-mix(color-mix(in oklab, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
   }
   /* redefining the color variables here to ensure they receive the latest values */
   --color-mix-from: var(--tw-mix-from);
@@ -382,27 +348,9 @@
   --tw-mix-opacity: calc(--modifier(number) * 1%);
   --tw-mix-opacity: calc(--modifier([number]) * 100%);
   /* calculate the final color-mix result */
-  --tw-mix: color-mix(
-    in srgb,
-    color-mix(
-        in srgb,
-        var(--color-mix-from),
-        var(--color-mix-to) var(--tw-mix-percent, 50%)
-      )
-      var(--tw-mix-opacity, 100%),
-    transparent
-  );
+  --tw-mix: color-mix(in srgb, color-mix(in srgb, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
   @supports (color: color-mix(in lab, red, red)) {
-    --tw-mix: color-mix(
-      in oklab,
-      color-mix(
-          in oklab,
-          var(--color-mix-from),
-          var(--color-mix-to) var(--tw-mix-percent, 50%)
-        )
-        var(--tw-mix-opacity, 100%),
-      transparent
-    );
+    --tw-mix: color-mix(in oklab, color-mix(in oklab, var(--color-mix-from), var(--color-mix-to) var(--tw-mix-percent, 50%)) var(--tw-mix-opacity, 100%), transparent);
   }
   /* redefining the color variables here to ensure they receive the latest values */
   --color-mix-from: var(--tw-mix-from);

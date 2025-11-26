@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ag-ui-langgraph"
-version = "0.0.19"
+version = "0.0.22"
 description = "Implementation of the AG-UI protocol for LangGraph."
 authors = ["Ran Shem Tov <ran@copilotkit.ai>"]
 readme = "README.md"
@@ -10,11 +10,12 @@ exclude = [
 
 [tool.poetry.dependencies]
 python = "<3.14,>=3.10"
-ag-ui-protocol = "==0.2.0a0"
+ag-ui-protocol = "^0.1.10"
 fastapi = { version = "^0.115.12", optional = true }
 langchain = ">=0.3.0"
 langchain-core = ">=0.3.0"
 langgraph = ">=0.3.25,<1.1.0"
+pydantic = ">=2.0.0"
 
 [tool.poetry.extras]
 fastapi = ["fastapi"]

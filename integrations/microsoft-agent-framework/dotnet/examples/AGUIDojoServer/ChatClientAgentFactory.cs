@@ -1,225 +1,179 @@
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Linq;
+﻿using System.ComponentModel;
 using System.Text.Json;
-using System.Threading;
+using AGUIDojoServer.AgenticUI;
+using AGUIDojoServer.BackendToolRendering;
+using AGUIDojoServer.PredictiveStateUpdates;
+using AGUIDojoServer.SharedState;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Configuration;
 using OpenAI;
-using OpenAI.Chat;
-using ChatResponseFormat = Microsoft.Extensions.AI.ChatResponseFormat;
+using ChatClient = OpenAI.Chat.ChatClient;
 
 namespace AGUIDojoServer;
 
-internal sealed class ChatClientAgentFactory
+internal static class ChatClientAgentFactory
 {
-    private readonly AzureOpenAIClient _azureOpenAIClient;
-    private readonly string _deploymentName;
+    private static AzureOpenAIClient? s_azureOpenAIClient;
+    private static string? s_deploymentName;
 
-    public ChatClientAgentFactory(IConfiguration configuration)
+    public static void Initialize(IConfiguration configuration)
     {
-        string? endpoint = configuration["AZURE_OPENAI_ENDPOINT"];
-        string? deploymentName = configuration["AZURE_OPENAI_DEPLOYMENT_NAME"];
+        string endpoint = configuration["AZURE_OPENAI_ENDPOINT"] ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+        s_deploymentName = configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT_NAME is not set.");
 
-        if (string.IsNullOrWhiteSpace(endpoint))
+        s_azureOpenAIClient = new AzureOpenAIClient(
+            new Uri(endpoint),
+            new DefaultAzureCredential());
+    }
+
+    public static ChatClientAgent CreateAgenticChat()
+    {
+        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+
+        return chatClient.AsIChatClient().CreateAIAgent(
+            name: "AgenticChat",
+            description: "A simple chat agent using Azure OpenAI");
+    }
+
+    public static ChatClientAgent CreateBackendToolRendering()
+    {
+        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+
+        return chatClient.AsIChatClient().CreateAIAgent(
+            name: "BackendToolRenderer",
+            description: "An agent that can render backend tools using Azure OpenAI",
+            tools: [AIFunctionFactory.Create(
+                GetWeather,
+                name: "get_weather",
+                description: "Get the weather for a given location.",
+                AGUIDojoServerSerializerContext.Default.Options)]);
+    }
+
+    public static ChatClientAgent CreateHumanInTheLoop()
+    {
+        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+
+        return chatClient.AsIChatClient().CreateAIAgent(
+            name: "HumanInTheLoopAgent",
+            description: "An agent that involves human feedback in its decision-making process using Azure OpenAI");
+    }
+
+    public static ChatClientAgent CreateToolBasedGenerativeUI()
+    {
+        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+
+        return chatClient.AsIChatClient().CreateAIAgent(
+            name: "ToolBasedGenerativeUIAgent",
+            description: "An agent that uses tools to generate user interfaces using Azure OpenAI");
+    }
+
+    public static AIAgent CreateAgenticUI(JsonSerializerOptions options)
+    {
+        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+        var baseAgent = chatClient.AsIChatClient().CreateAIAgent(new ChatClientAgentOptions
         {
-            throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT must be provided in the environment or configuration.");
-        }
+            Name = "AgenticUIAgent",
+            Description = "An agent that generates agentic user interfaces using Azure OpenAI",
+            Instructions = """
+                When planning use tools only, without any other messages.
+                IMPORTANT:
+                - Use the `create_plan` tool to set the initial state of the steps
+                - Use the `update_plan_step` tool to update the status of each step
+                - Do NOT repeat the plan or summarise it in a message
+                - Do NOT confirm the creation or updates in a message
+                - Do NOT ask the user for additional information or next steps
+                - Do NOT leave a plan hanging, always complete the plan via `update_plan_step` if one is ongoing.
+                - Continue calling update_plan_step until all steps are marked as completed.
 
-        if (string.IsNullOrWhiteSpace(deploymentName))
-        {
-            throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT_NAME must be provided in the environment or configuration.");
-        }
+                Only one plan can be active at a time, so do not call the `create_plan` tool
+                again until all the steps in current plan are completed.
+                """,
+            ChatOptions = new ChatOptions
+            {
+                Tools = [
+                    AIFunctionFactory.Create(
+                        AgenticPlanningTools.CreatePlan,
+                        name: "create_plan",
+                        description: "Create a plan with multiple steps.",
+                        AGUIDojoServerSerializerContext.Default.Options),
+                    AIFunctionFactory.Create(
+                        AgenticPlanningTools.UpdatePlanStepAsync,
+                        name: "update_plan_step",
+                        description: "Update a step in the plan with new description or status.",
+                        AGUIDojoServerSerializerContext.Default.Options)
+                ],
+                AllowMultipleToolCalls = false
+            }
+        });
 
-        _azureOpenAIClient = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential());
-        _deploymentName = deploymentName;
+        return new AgenticUIAgent(baseAgent, options);
     }
 
-    public ChatClientAgent CreateAgenticChat() => CreateAgent(
-        name: "maf-agentic-chat",
-        description: "General helper agent that demonstrates conversational capabilities for the AG-UI dojo.");
-
-    public ChatClientAgent CreateBackendToolRendering()
+    public static AIAgent CreateSharedState(JsonSerializerOptions options)
     {
-        var getWeatherTool = AIFunctionFactory.Create(
-            ([Description("City to generate a forecast for")] string location) => GetWeatherForecast(location),
-            name: "get_weather",
-            description: "Fetch the weather forecast for the provided city.",
-            serializerOptions: AGUIDojoServerSerializerContext.Default.Options);
+        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
 
-        return CreateAgent(
-            name: "maf-backend-tool-rendering",
-            description: "Uses a backend tool to fetch weather data and render it in the dojo UI.",
-            tools: [getWeatherTool]);
-    }
-
-    public ChatClientAgent CreateHumanInTheLoop() => CreateAgent(
-        name: "maf-human-in-the-loop",
-        description: "Before executing actions, summarise the planned work and ask the user for approval. When the user says 'approve', continue executing the plan step by step.");
-
-    public ChatClientAgent CreateAgenticGenerativeUi()
-    {
-        var taskBreakdownTool = AIFunctionFactory.Create(
-            ([Description("The overall task the assistant should complete")] string objective) => GenerateTaskPlan(objective),
-            name: "generate_task_steps",
-            description: "Break the objective into 3-4 short steps for the UI to display.",
-            serializerOptions: AGUIDojoServerSerializerContext.Default.Options);
-
-        return CreateAgent(
-            name: "maf-agentic-generative-ui",
-            description: "Provide step-by-step progress updates and call the generate_task_steps tool to render checkpoints in the dojo.",
-            tools: [taskBreakdownTool]);
-    }
-
-    public ChatClientAgent CreateToolBasedGenerativeUi()
-    {
-        var uiComponentTool = AIFunctionFactory.Create(
-            ([Description("The UI experience the assistant should render")] string request) => GenerateUiComponent(request),
-            name: "render_custom_component",
-            description: "Return a UI definition that the dojo can render.",
-            serializerOptions: AGUIDojoServerSerializerContext.Default.Options);
-
-        return CreateAgent(
-            name: "maf-tool-based-generative-ui",
-            description: "Design interactive UI components via the render_custom_component tool and explain how the user can interact with them.",
-            tools: [uiComponentTool]);
-    }
-
-    public AIAgent CreateSharedState(JsonSerializerOptions options)
-    {
-        ChatClientAgent baseAgent = CreateAgent(
+        var baseAgent = chatClient.AsIChatClient().CreateAIAgent(
             name: "SharedStateAgent",
             description: "An agent that demonstrates shared state patterns using Azure OpenAI");
 
         return new SharedStateAgent(baseAgent, options);
-    }    
-
-    private ChatClientAgent CreateAgent(string name, string description, IEnumerable<AITool>? tools = null)
-    {
-        var chatClient = _azureOpenAIClient.GetChatClient(_deploymentName);
-        return chatClient.CreateAIAgent(
-            name: name,
-            description: description,
-            tools: tools?.ToArray() ?? Array.Empty<AITool>());
     }
 
-    private static WeatherInfo GetWeatherForecast(string location)
+    public static AIAgent CreatePredictiveStateUpdates(JsonSerializerOptions options)
     {
-        return new WeatherInfo
-        {
-            Temperature = 72,
-            Conditions = $"Clear skies over {location}",
-            Humidity = 48,
-            WindSpeed = 6,
-            FeelsLike = 74
-        };
-    }
+        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
 
-    private static TaskPlan GenerateTaskPlan(string objective)
-    {
-        return new TaskPlan
+        var baseAgent = chatClient.AsIChatClient().CreateAIAgent(new ChatClientAgentOptions
         {
-            Steps =
-            [
-                new TaskPlanStep
-                {
-                    Id = "plan",
-                    Title = "Plan",
-                    Summary = $"Outline instructions for \"{objective}\" and gather any missing context."
-                },
-                new TaskPlanStep
-                {
-                    Id = "execute",
-                    Title = "Execute",
-                    Summary = "Carry out the plan and surface intermediate results for review."
-                },
-                new TaskPlanStep
-                {
-                    Id = "review",
-                    Title = "Review",
-                    Summary = "Summarise the outcome, highlight next steps, and confirm with the user."
-                }
-            ]
-        };
-    }
-
-    private static UiComponentResponse GenerateUiComponent(string request)
-    {
-        return new UiComponentResponse
-        {
-            Component = new UiComponent
+            Name = "PredictiveStateUpdatesAgent",
+            Description = "An agent that demonstrates predictive state updates using Azure OpenAI",
+            Instructions = """
+                You are a document editor assistant. When asked to write or edit content:
+                
+                IMPORTANT:
+                - Use the `write_document` tool with the full document text in Markdown format
+                - Format the document extensively so it's easy to read
+                - You can use all kinds of markdown (headings, lists, bold, etc.)
+                - However, do NOT use italic or strike-through formatting
+                - You MUST write the full document, even when changing only a few words
+                - When making edits to the document, try to make them minimal - do not change every word
+                - Keep stories SHORT!
+                - After you are done writing the document you MUST call a confirm_changes tool after you call write_document
+                
+                After the user confirms the changes, provide a brief summary of what you wrote.
+                """,
+            ChatOptions = new ChatOptions
             {
-                Title = "Configuration",
-                Description = $"Controls generated to satisfy: {request}",
-                Fields =
-                [
-                    new UiField
-                    {
-                        Id = "priority",
-                        Label = "Priority",
-                        Control = "select",
-                        Options = ["High", "Medium", "Low"]
-                    },
-                    new UiField
-                    {
-                        Id = "notes",
-                        Label = "Notes",
-                        Control = "textarea"
-                    }
+                Tools = [
+                    AIFunctionFactory.Create(
+                        WriteDocument,
+                        name: "write_document",
+                        description: "Write a document. Use markdown formatting to format the document.",
+                        AGUIDojoServerSerializerContext.Default.Options)
                 ]
             }
-        };
+        });
+
+        return new PredictiveStateUpdatesAgent(baseAgent, options);
     }
 
-    private static RecipeState BuildRecipe(string recipeName)
+    [Description("Get the weather for a given location.")]
+    private static WeatherInfo GetWeather([Description("The location to get the weather for.")] string location) => new()
     {
-        return new RecipeState
-        {
-            Title = string.IsNullOrWhiteSpace(recipeName) ? "Sample Pasta" : recipeName,
-            Ingredients =
-            [
-                "200g spaghetti",
-                "2 cloves garlic",
-                "1 tbsp olive oil",
-                "Salt and pepper to taste"
-            ],
-            Steps =
-            [
-                "Bring a large pot of salted water to a boil.",
-                "Cook the pasta until al dente, reserving 1/4 cup of cooking water.",
-                "Sauté garlic in olive oil, toss with pasta, and adjust seasoning."
-            ]
-        };
-    }
+        Temperature = 20,
+        Conditions = "sunny",
+        Humidity = 50,
+        WindSpeed = 10,
+        FeelsLike = 25
+    };
 
-    private static DraftDocument DraftDocument(string topic)
+    [Description("Write a document in markdown format.")]
+    private static string WriteDocument([Description("The document content to write.")] string document)
     {
-        return new DraftDocument
-        {
-            Sections =
-            [
-                new DraftSection
-                {
-                    Id = "intro",
-                    Title = "Introduction",
-                    Content = $"Introduce the topic \"{topic}\" and clarify the desired outcome."
-                },
-                new DraftSection
-                {
-                    Id = "details",
-                    Title = "Key Points",
-                    Content = "Highlight three supporting facts with short explanations."
-                },
-                new DraftSection
-                {
-                    Id = "summary",
-                    Title = "Next Steps",
-                    Content = "Outline the follow-up actions the reader should take after reviewing the draft."
-                }
-            ]
-        };
+        // Simply return success - the document is tracked via state updates
+        return "Document written successfully";
     }
 }
