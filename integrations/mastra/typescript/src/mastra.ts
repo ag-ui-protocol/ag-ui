@@ -34,7 +34,7 @@ type RemoteMastraAgent = ReturnType<MastraClient["getAgent"]>;
 
 export interface MastraAgentConfig extends AgentConfig {
   agent: LocalMastraAgent | RemoteMastraAgent;
-  resourceId?: string;
+  resourceId: string;
   requestContext?: RequestContext;
 }
 
@@ -53,7 +53,7 @@ interface MastraAgentStreamOptions {
 
 export class MastraAgent extends AbstractAgent {
   agent: LocalMastraAgent | RemoteMastraAgent;
-  resourceId?: string;
+  resourceId: string;
   requestContext?: RequestContext;
 
   constructor(private config: MastraAgentConfig) {
@@ -185,6 +185,7 @@ export class MastraAgent extends AbstractAgent {
                   const memory = await this.agent.getMemory();
                   if (memory) {
                     const workingMemory = await memory.getWorkingMemory({
+                      resourceId: this.resourceId,
                       threadId: input.threadId,
                       memoryConfig: {
                         workingMemory: {

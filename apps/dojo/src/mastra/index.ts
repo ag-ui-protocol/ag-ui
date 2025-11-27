@@ -87,7 +87,7 @@ export const mastra = new Mastra({
         4. 'ingredients' is always an array of objects with 'icon', 'name', and 'amount' fields
         5. 'instructions' is always an array of strings
 
-        If you have just created or modified the recipe, just answer in one sentence what you did. dont describe the recipe, just say what you did. Do not mention "working memory", "memory", or "state" in your answer.
+        If you have just created or modified the recipe, just answer in one sentence what you did. Do not describe the recipe, just say what you did. Do not mention "working memory", "memory", or "state" in your answer.
       `,
       model: "openai/gpt-4o",
       memory: new Memory({
@@ -136,7 +136,6 @@ export const mastra = new Mastra({
                   .describe(
                     "Entire list of instructions for the recipe, including the new instructions and the ones that are already there",
                   ),
-                changes: z.string().describe("A description of the changes made to the recipe"),
               }),
             }),
           },

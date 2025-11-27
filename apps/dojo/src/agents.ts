@@ -125,13 +125,14 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
 
       return MastraAgent.getRemoteAgents({
         mastraClient,
+        resourceId: "mastra-agent-remote",
       });
     },
   },
   {
     id: "mastra-agent-local",
     agents: async () => {
-      return MastraAgent.getLocalAgents({ mastra });
+      return MastraAgent.getLocalAgents({ mastra, resourceId: "mastra-agent-local" });
     },
   },
   // Disabled until we can support Vercel AI SDK v5

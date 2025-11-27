@@ -30,7 +30,7 @@ export function registerCopilotKit<
   setContext,
 }: {
   path: string;
-  resourceId?: string;
+  resourceId: string;
   serviceAdapter?: CopilotServiceAdapter;
   agents?: Record<string, AbstractAgent>;
   setContext?: (

@@ -6,6 +6,7 @@ import { weatherTool } from "./tools/weather.tool";
 import { browserTool } from "./tools/browser.tool";
 
 export const agent = new MastraAgent({
+  resourceId: "cliExample",
   agent: new Agent({
     id: "ag-ui-agent",
     name: "AG-UI Agent",

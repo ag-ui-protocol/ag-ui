@@ -89,7 +89,7 @@ export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] 
 
 export interface GetRemoteAgentsOptions {
   mastraClient: MastraClient;
-  resourceId?: string;
+  resourceId: string;
 }
 
 export async function getRemoteAgents({
@@ -116,7 +116,7 @@ export async function getRemoteAgents({
 
 export interface GetLocalAgentsOptions {
   mastra: Mastra;
-  resourceId?: string;
+  resourceId: string;
   requestContext?: RequestContext;
 }
 
@@ -146,7 +146,7 @@ export function getLocalAgents({
 export interface GetLocalAgentOptions {
   mastra: Mastra;
   agentId: string;
-  resourceId?: string;
+  resourceId: string;
   requestContext?: RequestContext;
 }
 
@@ -171,7 +171,7 @@ export function getLocalAgent({
 export interface GetNetworkOptions {
   mastra: Mastra;
   networkId: string;
-  resourceId?: string;
+  resourceId: string;
   requestContext?: RequestContext;
 }
 

@@ -142,6 +142,7 @@ import { Memory } from "@mastra/memory"
 import { LibSQLStore } from "@mastra/libsql"
 
 export const agent = new MastraAgent({
+  resourceId: "cliExample",
   agent: new Agent({
     id: "ag-ui-assistant",
     name: "AG-UI Assistant",
@@ -557,6 +558,7 @@ import { weatherTool } from "./tools/weather.tool"
 import { browserTool } from "./tools/browser.tool"
 
 export const agent = new MastraAgent({
+  resourceId: "cliExample",
   agent: new Agent({
     id: "ag-ui-assistant",
     name: "AG-UI Assistant",
