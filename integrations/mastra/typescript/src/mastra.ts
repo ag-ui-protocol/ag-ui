@@ -188,7 +188,6 @@ export class MastraAgent extends AbstractAgent {
                       threadId: input.threadId,
                       memoryConfig: {
                         workingMemory: {
-                          scope: "thread",
                           enabled: true,
                         },
                       },

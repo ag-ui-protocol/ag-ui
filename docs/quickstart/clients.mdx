@@ -143,6 +143,7 @@ import { LibSQLStore } from "@mastra/libsql"
 
 export const agent = new MastraAgent({
   agent: new Agent({
+    id: "ag-ui-assistant",
     name: "AG-UI Assistant",
     instructions: `
       You are a helpful AI assistant. Be friendly, conversational, and helpful.
@@ -151,6 +152,7 @@ export const agent = new MastraAgent({
     model: openai("gpt-4o"),
     memory: new Memory({
       storage: new LibSQLStore({
+        id: "storage-memory",
         url: "file:./assistant.db",
       }),
     }),
@@ -556,6 +558,7 @@ import { browserTool } from "./tools/browser.tool"
 
 export const agent = new MastraAgent({
   agent: new Agent({
+    id: "ag-ui-assistant",
     name: "AG-UI Assistant",
     instructions: `
       You are a helpful assistant with weather and web browsing capabilities.
@@ -574,6 +577,7 @@ export const agent = new MastraAgent({
     tools: { weatherTool, browserTool }, // Add both tools
     memory: new Memory({
       storage: new LibSQLStore({
+        id: "storage-memory",
         url: "file:./assistant.db",
       }),
     }),

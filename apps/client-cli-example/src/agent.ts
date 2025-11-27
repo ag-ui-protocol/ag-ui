@@ -7,6 +7,7 @@ import { browserTool } from "./tools/browser.tool";
 
 export const agent = new MastraAgent({
   agent: new Agent({
+    id: "ag-ui-agent",
     name: "AG-UI Agent",
     instructions: `
         You are a helpful assistant that runs a CLI application.

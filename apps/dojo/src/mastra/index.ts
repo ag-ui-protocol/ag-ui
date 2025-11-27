@@ -19,7 +19,7 @@ function getStorage(): LibSQLStore | DynamoDBStore {
   } else {
     return new LibSQLStore({
       id: "storage-memory",
-      url: "file::memory:"
+      url: ":memory:"
     });
   }
 }

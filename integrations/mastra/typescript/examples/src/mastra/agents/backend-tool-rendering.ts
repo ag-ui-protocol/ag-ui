@@ -4,8 +4,8 @@ import { LibSQLStore } from "@mastra/libsql";
 import { weatherTool } from "../tools/weather-tool";
 
 export const backendToolRenderingAgent = new Agent({
-  id: "backend-tool-rendering-agent",
-  name: "Weather Agent",
+  id: "backend_tool_rendering",
+  name: "Weather Agent 2",
   instructions: `
       You are a helpful weather assistant that provides accurate weather information.
 
