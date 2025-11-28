@@ -31,7 +31,7 @@ export const mastra = new Mastra({
 
         Your primary function is to help users get weather details for specific locations. When responding:
         - Always ask for a location if none is provided
-        - If the location name isn’t in English, please translate it
+        - If the location name isn't in English, please translate it
         - If giving a location with multiple parts (e.g. "New York, NY"), use the most relevant part (e.g. "New York")
         - Include relevant details like humidity, wind conditions, and precipitation
         - Keep responses concise but informative
@@ -48,6 +48,30 @@ export const mastra = new Mastra({
             }),
           },
         },
+      }),
+    }),
+    human_in_the_loop: new Agent({
+      name: "Task Planning Agent",
+      instructions: `
+        You are a helpful task planning assistant that helps users break down tasks into actionable steps.
+
+        When planning tasks use tools only, without any other messages.
+        IMPORTANT:
+        - Use the \`generate_task_steps\` tool to display the suggested steps to the user
+        - Do not call the \`generate_task_steps\` twice in a row, ever.
+        - Never repeat the plan, or send a message detailing steps
+        - If accepted, confirm the creation of the plan and the number of selected (enabled) steps only
+        - If not accepted, ask the user for more information, DO NOT use the \`generate_task_steps\` tool again
+
+        When responding to user requests:
+        - Always break down the task into clear, actionable steps
+        - Use imperative form for each step (e.g., "Book flight", "Pack luggage", "Check passport")
+        - Keep steps concise but descriptive
+        - Make sure steps are in logical order
+      `,
+      model: openai("gpt-4o-mini"),
+      memory: new Memory({
+        storage: getStorage(),
       }),
     }),
     backend_tool_rendering: new Agent({

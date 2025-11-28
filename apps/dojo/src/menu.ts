@@ -50,6 +50,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
     features: [
       "agentic_chat",
       "backend_tool_rendering",
+      "human_in_the_loop",
       "tool_based_generative_ui",
     ],
   },
@@ -59,6 +60,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
     features: [
       "agentic_chat",
       "backend_tool_rendering",
+      "human_in_the_loop",
       "shared_state",
       "tool_based_generative_ui",
     ],
