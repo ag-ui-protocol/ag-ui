@@ -273,6 +273,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         backend_tool_rendering: new AgnoAgent({
           url: `${envVars.agnoUrl}/backend_tool_rendering/agui`,
         }),
+        human_in_the_loop: new AgnoAgent({
+          url: `${envVars.agnoUrl}/human_in_the_loop/agui`,
+        }),
       };
     },
   },
