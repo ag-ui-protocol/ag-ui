@@ -1015,3 +1015,141 @@ class TestEventTranslatorComprehensive:
         # Should reset streaming state
         assert translator._is_streaming is False
         assert translator._streaming_message_id is None
+
+    @pytest.fixture
+    def mock_adk_event_empty_text(self):
+        """Create a mock ADK event with empty text content."""
+        event = MagicMock(spec=ADKEvent)
+        event.id = "test_event_id"
+        event.author = "model"
+
+        # Mock content with empty text part
+        mock_content = MagicMock()
+        mock_part = MagicMock()
+        mock_part.text = ""
+        mock_content.parts = [mock_part]
+        event.content = mock_content
+
+        event.partial = False
+        event.turn_complete = True
+        event.is_final_response = False
+        return event
+
+    @pytest.mark.asyncio
+    async def test_empty_text_event_does_not_crash(self, translator, mock_adk_event_empty_text):
+        """Test that empty text events are filtered and don't crash the frontend.
+
+        Previously, empty text content would cause AG-UI's TextMessageContentEvent
+        validation to fail. The fix filters out empty text before reaching validation.
+        """
+        events = []
+        async for event in translator.translate(mock_adk_event_empty_text, "thread_1", "run_1"):
+            events.append(event)
+
+        # Empty text should be filtered out - no events emitted
+        assert len(events) == 0
+        content_events = [e for e in events if isinstance(e, TextMessageContentEvent)]
+        assert len(content_events) == 0
+
+    @pytest.mark.asyncio
+    async def test_whitespace_only_text_event_does_not_crash(self, translator):
+        """Test that whitespace-only text events are also handled.
+
+        While the current fix checks for empty string, whitespace-only
+        content should also not cause issues.
+        """
+        event = MagicMock(spec=ADKEvent)
+        event.id = "test_event_id"
+        event.author = "model"
+
+        mock_content = MagicMock()
+        mock_part = MagicMock()
+        mock_part.text = "   "  # Whitespace only
+        mock_content.parts = [mock_part]
+        event.content = mock_content
+
+        event.partial = False
+        event.turn_complete = True
+        event.is_final_response = False
+
+        events = []
+        async for event in translator.translate(event, "thread_1", "run_1"):
+            events.append(event)
+
+        # Whitespace is valid text content, should be emitted
+        content_events = [e for e in events if isinstance(e, TextMessageContentEvent)]
+        assert len(content_events) == 1
+        assert content_events[0].delta == "   "
+
+    @pytest.mark.asyncio
+    async def test_multiple_empty_parts_filtered(self, translator, mock_adk_event):
+        """Test that multiple empty text parts are all filtered."""
+        mock_content = MagicMock()
+        mock_part1 = MagicMock()
+        mock_part1.text = ""
+        mock_part2 = MagicMock()
+        mock_part2.text = ""
+        mock_part3 = MagicMock()
+        mock_part3.text = ""
+        mock_content.parts = [mock_part1, mock_part2, mock_part3]
+        mock_adk_event.content = mock_content
+
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
+
+        # All empty parts should result in no text events
+        assert len(events) == 0
+
+    @pytest.mark.asyncio
+    async def test_mixed_empty_and_valid_parts_filtering(self, translator, mock_adk_event):
+        """Test that valid text parts are still emitted when mixed with empty parts."""
+        mock_content = MagicMock()
+        mock_part1 = MagicMock()
+        mock_part1.text = ""
+        mock_part2 = MagicMock()
+        mock_part2.text = "Valid content"
+        mock_part3 = MagicMock()
+        mock_part3.text = ""
+        mock_content.parts = [mock_part1, mock_part2, mock_part3]
+        mock_adk_event.content = mock_content
+
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
+
+        # Valid content should still be emitted
+        content_events = [e for e in events if isinstance(e, TextMessageContentEvent)]
+        assert len(content_events) == 1
+        assert content_events[0].delta == "Valid content"
+
+    @pytest.mark.asyncio
+    async def test_empty_combined_text_early_return(self, translator, mock_adk_event):
+        """Test the early return when combined_text is empty.
+        
+        This directly tests the fix at lines 281-283:
+            if not combined_text:
+                return
+        """
+        # Create content where all parts have empty/None text
+        mock_content = MagicMock()
+        mock_part1 = MagicMock()
+        mock_part1.text = ""
+        mock_part2 = MagicMock()
+        mock_part2.text = None
+        mock_content.parts = [mock_part1, mock_part2]
+        mock_adk_event.content = mock_content
+
+        # Verify the translator doesn't start streaming for empty content
+        assert translator._is_streaming is False
+
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
+
+        # No streaming should have started
+        assert translator._is_streaming is False
+        assert len(events) == 0
+        # No TextMessageStartEvent should be created for empty content
+        start_events = [e for e in events if isinstance(e, TextMessageStartEvent)]
+        assert len(start_events) == 0
