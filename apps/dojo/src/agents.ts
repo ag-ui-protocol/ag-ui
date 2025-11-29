@@ -75,7 +75,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
       return {
         agentic_chat: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/chat` }),
         agentic_generative_ui: new ADKAgent({
-          url: `${envVars.adkMiddlewareUrl}/adk-agentic-generative-ui`,
+          url: `${envVars.adkMiddlewareUrl}/adk-agentic-generative-ui/`,
         }),
         tool_based_generative_ui: new ADKAgent({
           url: `${envVars.adkMiddlewareUrl}/adk-tool-based-generative-ui`,
