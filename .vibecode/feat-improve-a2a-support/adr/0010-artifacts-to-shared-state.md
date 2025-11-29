@@ -21,5 +21,4 @@ AG-UI shared state must be driven from A2A outputs without treating artifacts as
 
 - Shared state stays aligned with task/artifact history.
 - Streaming semantics (`append`, `lastChunk`) control snapshot vs append behavior.
-- Clear separation between config mutation (state-control messages) and view projection (artifacts).
-
+- Clear separation between config mutation (Engram messages) and view projection (artifacts).
