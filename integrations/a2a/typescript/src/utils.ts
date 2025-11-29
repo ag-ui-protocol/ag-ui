@@ -8,6 +8,8 @@ import type {
   ToolCallEndEvent,
   ToolCallStartEvent,
   ToolCallResultEvent,
+  StateDeltaEvent,
+  StateSnapshotEvent,
 } from "@ag-ui/client";
 import { EventType, randomUUID } from "@ag-ui/client";
 import type {
@@ -20,6 +22,7 @@ import type {
   ConvertAGUIMessagesOptions,
   ConvertedA2AMessages,
   ConvertA2AEventOptions,
+  SharedStateTracker,
 } from "./types";
 
 const ROLE_MAP: Record<string, "user" | "agent" | undefined> = {
@@ -187,13 +190,20 @@ const messageContentToText = (message: Message): string => {
   return "";
 };
 
+export const ENGRAM_EXTENSION_URI = "urn:agui:engram:v1";
+export const DEFAULT_ARTIFACT_BASE_PATH = "/view/artifacts";
+
 export function convertAGUIMessagesToA2A(
   messages: Message[],
   options: ConvertAGUIMessagesOptions = {},
 ): ConvertedA2AMessages {
   const history: A2AMessage[] = [];
   const includeToolMessages = options.includeToolMessages ?? true;
+  const includeSystemMessages = options.includeSystemMessages ?? false;
+  const includeDeveloperMessages = options.includeDeveloperMessages ?? false;
   const contextId = options.contextId;
+  const taskId = options.taskId;
+  const engramExtensionUri = options.engramExtensionUri ?? ENGRAM_EXTENSION_URI;
 
   for (const message of messages) {
     if (message.role === "activity") {
@@ -204,7 +214,11 @@ export function convertAGUIMessagesToA2A(
       continue;
     }
 
-    if (message.role === "system" || message.role === "developer") {
+    if (message.role === "system" && !includeSystemMessages) {
+      continue;
+    }
+
+    if (message.role === "developer" && !includeDeveloperMessages) {
       continue;
     }
 
@@ -221,6 +235,11 @@ export function convertAGUIMessagesToA2A(
     }
 
     const messageId = message.id ?? randomUUID();
+    const metadata: Record<string, unknown> = {};
+
+    if (message.role === "system" || message.role === "developer") {
+      metadata.originalRole = message.role;
+    }
 
     history.push({
       kind: "message",
@@ -228,15 +247,71 @@ export function convertAGUIMessagesToA2A(
       role: mappedRole,
       parts,
       contextId,
+      taskId,
+      ...(Object.keys(metadata).length ? { metadata } : {}),
     });
+  }
+
+  let targetMessage = history[history.length - 1];
+
+  if (options.engramUpdate) {
+    const engramPayload = {
+      type: "engram",
+      scope: options.engramUpdate.scope ?? "task",
+      update: options.engramUpdate.update,
+      ...(options.engramUpdate.path ? { path: options.engramUpdate.path } : {}),
+    };
+
+    if (!targetMessage || targetMessage.role !== "user") {
+      targetMessage = {
+        kind: "message",
+        messageId: randomUUID(),
+        role: "user",
+        parts: [],
+        contextId,
+        taskId,
+      };
+      history.push(targetMessage);
+    }
+
+    const currentExtensions = new Set(targetMessage.extensions ?? []);
+    currentExtensions.add(engramExtensionUri);
+
+    targetMessage.parts = [
+      ...(targetMessage.parts ?? []),
+      {
+        kind: "data",
+        data: engramPayload,
+      } as A2ADataPart,
+    ];
+    targetMessage.extensions = Array.from(currentExtensions);
+    targetMessage.contextId = targetMessage.contextId ?? contextId;
+    targetMessage.taskId = targetMessage.taskId ?? taskId;
   }
 
   const latestUserMessage = [...history].reverse().find((msg) => msg.role === "user");
 
+  const metadata: Record<string, unknown> = {};
+
+  if (options.context?.length) {
+    metadata.context = options.context;
+  }
+
+  if (history.length) {
+    metadata.history = history;
+  }
+
+  if (options.engramUpdate) {
+    metadata.engram = options.engramUpdate;
+  }
+
   return {
     contextId,
+    taskId,
     history,
     latestUserMessage,
+    targetMessage,
+    metadata: Object.keys(metadata).length ? metadata : undefined,
   };
 }
 
@@ -247,6 +322,145 @@ const isA2ATask = (event: A2AStreamEvent): event is import("@a2a-js/sdk").Task =
 const isA2AStatusUpdate = (
   event: A2AStreamEvent,
 ): event is import("@a2a-js/sdk").TaskStatusUpdateEvent => event.kind === "status-update";
+
+const isA2AArtifactUpdate = (
+  event: A2AStreamEvent,
+): event is import("@a2a-js/sdk").TaskArtifactUpdateEvent => event.kind === "artifact-update";
+
+type JsonPatchOperation = {
+  op: "add" | "replace" | "remove";
+  path: string;
+  value?: unknown;
+};
+
+const encodeJsonPointerSegment = (segment: string): string =>
+  segment.replace(/~/g, "~0").replace(/\//g, "~1");
+
+const normalizeJsonPointer = (path: string): string => {
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  const segments = normalized
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => encodeJsonPointerSegment(segment));
+
+  return `/${segments.join("/")}`;
+};
+
+const applySharedStateUpdate = (
+  tracker: SharedStateTracker,
+  path: string,
+  value: unknown,
+  options: { append?: boolean; rawEvent?: unknown } = {},
+): StateDeltaEvent => {
+  const segments = (path.startsWith("/") ? path.slice(1) : path).split("/").filter(Boolean);
+  const encodedPath = normalizeJsonPointer(path);
+
+  if (segments.length === 0) {
+    tracker.state = value as Record<string, unknown>;
+    return {
+      type: EventType.STATE_DELTA,
+      delta: [{ op: "replace", path: encodedPath, value }],
+      rawEvent: options.rawEvent,
+    };
+  }
+
+  let cursor: Record<string, unknown> = tracker.state;
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    const key = segments[index];
+    const nextValue = cursor[key];
+
+    if (typeof nextValue !== "object" || nextValue === null || Array.isArray(nextValue)) {
+      cursor[key] = {};
+    }
+
+    cursor = cursor[key] as Record<string, unknown>;
+  }
+
+  const leafKey = segments[segments.length - 1];
+  const currentValue = cursor[leafKey];
+  let nextValue = value;
+  let delta: JsonPatchOperation[];
+
+  if (options.append) {
+    if (typeof currentValue === "string" && typeof value === "string") {
+      nextValue = currentValue + value;
+      delta = [
+        {
+          op: "replace",
+          path: encodedPath,
+          value: nextValue,
+        },
+      ];
+    } else if (Array.isArray(currentValue)) {
+      cursor[leafKey] = [...currentValue, value];
+      delta = [
+        {
+          op: "add",
+          path: `${encodedPath}/-`,
+          value,
+        },
+      ];
+
+      return {
+        type: EventType.STATE_DELTA,
+        delta,
+        rawEvent: options.rawEvent,
+      };
+    } else if (currentValue === undefined) {
+      nextValue = Array.isArray(value) ? value : [value];
+      delta = [
+        {
+          op: "add",
+          path: encodedPath,
+          value: nextValue,
+        },
+      ];
+    } else {
+      nextValue = [currentValue, value];
+      delta = [
+        {
+          op: "replace",
+          path: encodedPath,
+          value: nextValue,
+        },
+      ];
+    }
+  } else {
+    const op: JsonPatchOperation["op"] = currentValue === undefined ? "add" : "replace";
+    delta = [
+      {
+        op,
+        path: encodedPath,
+        value,
+      },
+    ];
+  }
+
+  cursor[leafKey] = nextValue;
+
+  return {
+    type: EventType.STATE_DELTA,
+    delta,
+    rawEvent: options.rawEvent,
+  };
+};
+
+const resolveArtifactPath = (
+  artifact: import("@a2a-js/sdk").Artifact,
+  artifactBasePath?: string,
+): string => {
+  const metadata = (artifact.metadata ?? {}) as Record<string, unknown>;
+  const metadataPath =
+    typeof metadata.path === "string" ? (metadata.path as string) : undefined;
+
+  if (metadataPath && metadataPath.trim().length > 0) {
+    const normalized = metadataPath.trim();
+    return normalized.startsWith("/") ? normalized : `/${normalized}`;
+  }
+
+  const sanitizedBase = (artifactBasePath ?? DEFAULT_ARTIFACT_BASE_PATH).replace(/\/$/, "");
+  return `${sanitizedBase}/${artifact.artifactId}`;
+};
 
 function resolveMappedMessageId(
   originalId: string,
@@ -321,89 +535,93 @@ function convertMessageToEvents(
       const dataPart = part as A2ADataPart;
       const payload = dataPart.data;
 
-      if (payload && typeof payload === "object" && (payload as any).type === TOOL_CALL_PART_TYPE) {
-        const toolCallId = (payload as any).id ?? randomUUID();
-        const toolCallName = (payload as any).name ?? "unknown_tool";
-        const args = (payload as any).arguments;
+      if (payload && typeof payload === "object") {
+        const payloadRecord = payload as Record<string, unknown>;
+        const payloadType = payloadRecord.type;
 
-        const startEvent: ToolCallStartEvent = {
-          type: EventType.TOOL_CALL_START,
-          toolCallId,
-          toolCallName,
-          parentMessageId: mappedId,
-        };
-        events.push(startEvent);
+        if (payloadType === TOOL_CALL_PART_TYPE) {
+          const toolCallId =
+            typeof payloadRecord.id === "string" ? payloadRecord.id : randomUUID();
+          const toolCallName =
+            typeof payloadRecord.name === "string" ? payloadRecord.name : "unknown_tool";
+          const args = payloadRecord.arguments;
 
-        if (args !== undefined) {
-          const argsEvent: ToolCallArgsEvent = {
-            type: EventType.TOOL_CALL_ARGS,
+          const startEvent: ToolCallStartEvent = {
+            type: EventType.TOOL_CALL_START,
             toolCallId,
-            delta: JSON.stringify(args),
+            toolCallName,
+            parentMessageId: mappedId,
           };
-          events.push(argsEvent);
+          events.push(startEvent);
+
+          if (args !== undefined) {
+            const argsEvent: ToolCallArgsEvent = {
+              type: EventType.TOOL_CALL_ARGS,
+              toolCallId,
+              delta: JSON.stringify(args),
+            };
+            events.push(argsEvent);
+          }
+
+          openToolCalls.add(toolCallId);
+          continue;
         }
 
-        openToolCalls.add(toolCallId);
-        continue;
-      }
-
-      if (
-        payload &&
-        typeof payload === "object" &&
-        (payload as any).type === TOOL_RESULT_PART_TYPE &&
-        (payload as any).toolCallId
-      ) {
-        const toolCallId = (payload as any).toolCallId;
-        const toolResultEvent: ToolCallResultEvent = {
-          type: EventType.TOOL_CALL_RESULT,
-          toolCallId,
-          content: JSON.stringify((payload as any).payload ?? payload),
-          messageId: randomUUID(),
-          role: "tool",
-        };
-        events.push(toolResultEvent);
-
-        if (openToolCalls.has(toolCallId)) {
-          const endEvent: ToolCallEndEvent = {
-            type: EventType.TOOL_CALL_END,
+        if (payloadType === TOOL_RESULT_PART_TYPE && payloadRecord.toolCallId) {
+          const toolCallId = String(payloadRecord.toolCallId);
+          const toolResultEvent: ToolCallResultEvent = {
+            type: EventType.TOOL_CALL_RESULT,
             toolCallId,
+            content: JSON.stringify(payloadRecord.payload ?? payloadRecord),
+            messageId: randomUUID(),
+            role: "tool",
           };
-          events.push(endEvent);
-          openToolCalls.delete(toolCallId);
+          events.push(toolResultEvent);
+
+          if (openToolCalls.has(toolCallId)) {
+            const endEvent: ToolCallEndEvent = {
+              type: EventType.TOOL_CALL_END,
+              toolCallId,
+            };
+            events.push(endEvent);
+            openToolCalls.delete(toolCallId);
+          }
+
+          continue;
         }
 
-        continue;
-      }
+        const surfaceOperation = extractSurfaceOperation(payloadRecord);
+        if (surfaceOperation && options.surfaceTracker) {
+          const tracker = options.surfaceTracker;
+          const { surfaceId, operation } = surfaceOperation;
+          const hasSeenSurface = tracker.has(surfaceId);
 
-      const surfaceOperation = extractSurfaceOperation(payload);
-      if (surfaceOperation && options.surfaceTracker) {
-        const tracker = options.surfaceTracker;
-        const { surfaceId, operation } = surfaceOperation;
-        const hasSeenSurface = tracker.has(surfaceId);
+          if (!hasSeenSurface) {
+            tracker.add(surfaceId);
+            events.push({
+              type: EventType.ACTIVITY_SNAPSHOT,
+              messageId: surfaceId,
+              activityType: "a2ui-surface",
+              content: { operations: [] },
+              replace: false,
+            } as BaseEvent);
+          }
 
-        if (!hasSeenSurface) {
-          tracker.add(surfaceId);
           events.push({
-            type: EventType.ACTIVITY_SNAPSHOT,
+            type: EventType.ACTIVITY_DELTA,
             messageId: surfaceId,
             activityType: "a2ui-surface",
-            content: { operations: [] },
-            replace: false,
+            patch: [
+              {
+                op: "add",
+                path: "/operations/-",
+                value: operation,
+              },
+            ],
           } as BaseEvent);
-        }
 
-        events.push({
-          type: EventType.ACTIVITY_DELTA,
-          messageId: surfaceId,
-          activityType: "a2ui-surface",
-          patch: [
-            {
-              op: "add",
-              path: "/operations/-",
-              value: operation,
-            },
-          ],
-        } as BaseEvent);
+          continue;
+        }
 
         continue;
       }
@@ -425,46 +643,215 @@ function convertMessageToEvents(
   return events;
 }
 
+const projectStatusUpdate = (
+  event: import("@a2a-js/sdk").TaskStatusUpdateEvent,
+  options: ConvertA2AEventOptions,
+): BaseEvent[] => {
+  const events: BaseEvent[] = [];
+  const statusMessage = event.status?.message;
+  const statusState = event.status?.state;
+  const aliasKey = statusState && statusState !== "input-required" ? `${event.taskId}:status` : undefined;
+
+  if (statusMessage && statusMessage.kind === "message") {
+    events.push(...convertMessageToEvents(statusMessage as A2AMessage, options, aliasKey));
+  }
+
+  if (options.sharedStateTracker) {
+    const statusValue = {
+      state: statusState,
+      timestamp: event.status?.timestamp,
+      taskId: event.taskId,
+      contextId: event.contextId,
+      message: statusMessage,
+    };
+
+    const statusEvent = applySharedStateUpdate(
+      options.sharedStateTracker,
+      `/view/tasks/${event.taskId}/status`,
+      statusValue,
+      { rawEvent: event },
+    );
+
+    events.push(statusEvent);
+  }
+
+  if (events.length === 0) {
+    events.push({
+      type: EventType.RAW,
+      event,
+      source: options.source ?? "a2a",
+    } as RawEvent);
+  }
+
+  return events;
+};
+
+const projectArtifactUpdate = (
+  event: import("@a2a-js/sdk").TaskArtifactUpdateEvent,
+  options: ConvertA2AEventOptions,
+): BaseEvent[] => {
+  const events: BaseEvent[] = [];
+  const artifactPath = resolveArtifactPath(event.artifact, options.artifactBasePath);
+  const append = event.append ?? false;
+  const aliasKey = `artifact:${event.artifact.artifactId}`;
+
+  for (const part of event.artifact.parts ?? []) {
+    if (part.kind === "text") {
+      const message: A2AMessage = {
+        kind: "message",
+        messageId: event.artifact.artifactId,
+        role: "agent",
+        parts: [part],
+        contextId: event.contextId,
+        taskId: event.taskId,
+      };
+
+      events.push(...convertMessageToEvents(message, options, aliasKey));
+
+      if (options.sharedStateTracker) {
+        const stateEvent = applySharedStateUpdate(
+          options.sharedStateTracker,
+          artifactPath,
+          (part as A2ATextPart).text ?? "",
+          { append, rawEvent: event },
+        );
+        events.push(stateEvent);
+      }
+
+      continue;
+    }
+
+    if (part.kind === "data" && options.sharedStateTracker) {
+      const stateEvent = applySharedStateUpdate(
+        options.sharedStateTracker,
+        artifactPath,
+        (part as A2ADataPart).data,
+        { append, rawEvent: event },
+      );
+      events.push(stateEvent);
+      continue;
+    }
+
+    if (part.kind === "file" && options.sharedStateTracker) {
+      const stateEvent = applySharedStateUpdate(
+        options.sharedStateTracker,
+        artifactPath,
+        (part as A2AFilePart).file,
+        { append, rawEvent: event },
+      );
+      events.push(stateEvent);
+    }
+  }
+
+  if (events.length === 0) {
+    events.push({
+      type: EventType.RAW,
+      event,
+      source: options.source ?? "a2a",
+    } as RawEvent);
+  }
+
+  return events;
+};
+
+const projectTask = (
+  event: import("@a2a-js/sdk").Task,
+  options: ConvertA2AEventOptions,
+): BaseEvent[] => {
+  const events: BaseEvent[] = [];
+
+  if (options.sharedStateTracker) {
+    const taskProjection = {
+      taskId: event.id,
+      contextId: event.contextId,
+      status: event.status,
+    };
+
+    events.push(
+      applySharedStateUpdate(
+        options.sharedStateTracker,
+        `/view/tasks/${event.id}`,
+        taskProjection,
+        { rawEvent: event },
+      ),
+    );
+  }
+
+  for (const message of event.history ?? []) {
+    events.push(...convertMessageToEvents(message as A2AMessage, options));
+  }
+
+  for (const artifact of event.artifacts ?? []) {
+    events.push(
+      ...projectArtifactUpdate(
+        {
+          kind: "artifact-update",
+          contextId: event.contextId,
+          taskId: event.id,
+          artifact,
+          append: false,
+          lastChunk: true,
+        },
+        options,
+      ),
+    );
+  }
+
+  if (events.length === 0) {
+    events.push({
+      type: EventType.RAW,
+      event,
+      source: options.source ?? "a2a",
+    } as RawEvent);
+  }
+
+  return events;
+};
+
 export function convertA2AEventToAGUIEvents(
   event: A2AStreamEvent,
   options: ConvertA2AEventOptions,
 ): BaseEvent[] {
-  const events: BaseEvent[] = [];
-  const source = options.source ?? "a2a";
-
   if (isA2AMessage(event)) {
     return convertMessageToEvents(event, options);
   }
 
   if (isA2AStatusUpdate(event)) {
-    const statusMessage = event.status?.message;
-    const statusState = event.status?.state;
-    const aliasKey = statusState && statusState !== "input-required" ? `${event.taskId}:status` : undefined;
+    return projectStatusUpdate(event, options);
+  }
 
-    if (statusMessage && statusMessage.kind === "message") {
-      return convertMessageToEvents(statusMessage as A2AMessage, options, aliasKey);
-    }
-    return events;
+  if (isA2AArtifactUpdate(event)) {
+    return projectArtifactUpdate(event, options);
   }
 
   if (isA2ATask(event)) {
-    const rawEvent: RawEvent = {
-      type: EventType.RAW,
-      event,
-      source,
-    };
-    events.push(rawEvent);
-    return events;
+    return projectTask(event, options);
   }
 
+  const source = options.source ?? "a2a";
   const fallbackEvent: RawEvent = {
     type: EventType.RAW,
     event,
     source,
   };
-  events.push(fallbackEvent);
-  return events;
+
+  return [fallbackEvent];
 }
+
+export const createSharedStateTracker = (
+  initialState?: Record<string, unknown>,
+): SharedStateTracker => {
+  const clone =
+    initialState === undefined
+      ? {}
+      : typeof structuredClone === "function"
+        ? structuredClone(initialState)
+        : JSON.parse(JSON.stringify(initialState));
+
+  return {
+    state: clone,
+  };
+};
 
 export const sendMessageToA2AAgentTool = {
   name: "send_message_to_a2a_agent",

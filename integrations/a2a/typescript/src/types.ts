@@ -10,7 +10,7 @@ import type {
   TaskStatusUpdateEvent as A2ATaskStatusUpdateEvent,
   TaskArtifactUpdateEvent as A2ATaskArtifactUpdateEvent,
 } from "@a2a-js/sdk";
-import type { Message as AGUIMessage } from "@ag-ui/client";
+import type { Context, Message as AGUIMessage } from "@ag-ui/client";
 
 export type {
   A2AMessage,
@@ -23,9 +23,35 @@ export type {
   AGUIMessage as AGUIConversationMessage,
 };
 
+export type A2ARunMode = "send" | "stream";
+
+export interface EngramUpdate {
+  scope?: "task" | "context" | "agent";
+  path?: string;
+  update: unknown;
+}
+
+export interface A2ARunOptions {
+  mode?: A2ARunMode;
+  taskId?: string;
+  contextId?: string;
+  historyLength?: number;
+  includeToolMessages?: boolean;
+  includeSystemMessages?: boolean;
+  includeDeveloperMessages?: boolean;
+  acceptedOutputModes?: string[];
+  engramUpdate?: EngramUpdate;
+  artifactBasePath?: string;
+  subscribeOnly?: boolean;
+}
+
 export interface SurfaceTracker {
   has(surfaceId: string): boolean;
   add(surfaceId: string): void;
+}
+
+export interface SharedStateTracker {
+  state: Record<string, unknown>;
 }
 
 export type A2AStreamEvent =
@@ -36,13 +62,22 @@ export type A2AStreamEvent =
 
 export interface ConvertAGUIMessagesOptions {
   contextId?: string;
+  taskId?: string;
   includeToolMessages?: boolean;
+  includeSystemMessages?: boolean;
+  includeDeveloperMessages?: boolean;
+  engramUpdate?: EngramUpdate;
+  engramExtensionUri?: string;
+  context?: Context[];
 }
 
 export interface ConvertedA2AMessages {
   contextId?: string;
+  taskId?: string;
   history: A2AMessage[];
   latestUserMessage?: A2AMessage;
+  targetMessage?: A2AMessage;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ConvertA2AEventOptions {
@@ -52,6 +87,8 @@ export interface ConvertA2AEventOptions {
   source?: string;
   getCurrentText?: (messageId: string) => string | undefined;
   surfaceTracker?: SurfaceTracker;
+  sharedStateTracker?: SharedStateTracker;
+  artifactBasePath?: string;
 }
 
 export interface A2AAgentRunResultSummary {

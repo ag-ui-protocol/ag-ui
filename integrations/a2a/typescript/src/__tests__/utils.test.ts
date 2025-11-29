@@ -4,6 +4,9 @@ import {
   convertAGUIMessagesToA2A,
   convertA2AEventToAGUIEvents,
   sendMessageToA2AAgentTool,
+  createSharedStateTracker,
+  ENGRAM_EXTENSION_URI,
+  DEFAULT_ARTIFACT_BASE_PATH,
 } from "../utils";
 
 const createMessage = (message: Partial<Message>): Message => message as Message;
@@ -69,7 +72,12 @@ describe("convertAGUIMessagesToA2A", () => {
     );
 
     const toolEntry = converted.history.find((entry) =>
-      entry.parts.some((part) => part.kind === "data" && (part as any).data?.type === "tool-result"),
+      entry.parts.some(
+        (part) =>
+          part.kind === "data" &&
+          typeof (part as { data?: Record<string, unknown> }).data?.type === "string" &&
+          (part as { data?: Record<string, unknown> }).data?.type === "tool-result",
+      ),
     );
     expect(toolEntry?.parts).toEqual(
       expect.arrayContaining([
@@ -80,11 +88,41 @@ describe("convertAGUIMessagesToA2A", () => {
     expect(converted.latestUserMessage?.role).toBe("user");
     expect(
       converted.history.some((msg) =>
-        (msg.parts ?? []).some((part) =>
-          part.kind === "text" && (part as any).text?.includes("Follow project guidelines"),
-        ),
+        (msg.parts ?? []).some((part) => part.kind === "text" && (part as { text?: string }).text?.includes("Follow project guidelines")),
       ),
     ).toBe(false);
+  });
+
+  it("optionally forwards system and developer messages when enabled", () => {
+    const converted = convertAGUIMessagesToA2A(
+      [
+        createMessage({ id: "sys-1", role: "system", content: "sys" }),
+        createMessage({ id: "dev-1", role: "developer", content: "dev" }),
+        createMessage({ id: "user-1", role: "user", content: "user content" }),
+      ],
+      { includeSystemMessages: true, includeDeveloperMessages: true },
+    );
+
+    expect(converted.history).toHaveLength(3);
+    const systemEntry = converted.history.find((entry) => entry.messageId === "sys-1");
+    expect(systemEntry?.role).toBe("user");
+    expect(systemEntry?.metadata).toEqual(expect.objectContaining({ originalRole: "system" }));
+  });
+
+  it("adds Engram extension and payload when provided", () => {
+    const converted = convertAGUIMessagesToA2A(
+      [createMessage({ id: "user-1", role: "user", content: "configure" })],
+      {
+        engramUpdate: { scope: "task", update: { path: "/config", value: "x" } },
+      },
+    );
+
+    const target = converted.targetMessage!;
+    expect(target.extensions).toContain(ENGRAM_EXTENSION_URI);
+    const engramPart = target.parts.find((part) => part.kind === "data") as
+      | { kind: "data"; data?: { scope?: string } }
+      | undefined;
+    expect(engramPart?.data?.scope).toBe("task");
   });
 });
 
@@ -166,6 +204,63 @@ describe("convertA2AEventToAGUIEvents", () => {
     );
   });
 
+  it("projects artifact updates into shared state", () => {
+    const tracker = createSharedStateTracker();
+    const artifactEvent = {
+      kind: "artifact-update" as const,
+      contextId: "ctx",
+      taskId: "task-1",
+      append: false,
+      lastChunk: true,
+      artifact: {
+        artifactId: "artifact-1",
+        parts: [{ kind: "data" as const, data: { foo: "bar" } }],
+      },
+    };
+
+    const events = convertA2AEventToAGUIEvents(artifactEvent, {
+      messageIdMap: new Map(),
+      sharedStateTracker: tracker,
+      artifactBasePath: DEFAULT_ARTIFACT_BASE_PATH,
+    });
+
+    const stateEvent = events.find((event) => event.type === EventType.STATE_DELTA) as {
+      delta?: Array<{ path?: string; value?: unknown }>;
+    };
+
+    expect(stateEvent?.delta?.[0]?.path).toBe("/view/artifacts/artifact-1");
+    expect(
+      (tracker.state as { view?: { artifacts?: Record<string, unknown> } }).view?.artifacts?.[
+        "artifact-1"
+      ],
+    ).toEqual({ foo: "bar" });
+  });
+
+  it("projects status updates into shared state when a tracker is present", () => {
+    const tracker = createSharedStateTracker();
+    const statusEvent = {
+      kind: "status-update" as const,
+      contextId: "ctx",
+      final: false,
+      status: { state: "working" as const, message: undefined, timestamp: "now" },
+      taskId: "task-2",
+    };
+
+    const events = convertA2AEventToAGUIEvents(statusEvent, {
+      messageIdMap: new Map(),
+      sharedStateTracker: tracker,
+    });
+
+    expect(events.some((event) => event.type === EventType.STATE_DELTA)).toBe(true);
+    expect(
+      (tracker.state as { view?: { tasks?: Record<string, unknown> } }).view?.tasks?.["task-2"],
+    ).toEqual(
+      expect.objectContaining({
+        status: expect.objectContaining({ state: "working" }),
+      }),
+    );
+  });
+
   it("maps task status updates to raw events", () => {
     const statusEvent = {
       kind: "status-update" as const,
@@ -175,11 +270,15 @@ describe("convertA2AEventToAGUIEvents", () => {
       taskId: "task-1",
     };
 
-    const events = convertA2AEventToAGUIEvents(statusEvent as any, {
-      messageIdMap: new Map(),
-    });
+    const events = convertA2AEventToAGUIEvents(
+      statusEvent as unknown as import("@a2a-js/sdk").TaskStatusUpdateEvent,
+      {
+        messageIdMap: new Map(),
+      },
+    );
 
-    expect(events).toHaveLength(0);
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe(EventType.RAW);
   });
 });
 

@@ -1,13 +1,14 @@
 import type { Message } from "@ag-ui/client";
 import { A2AAgent } from "../agent";
 import type { MessageSendParams } from "@a2a-js/sdk";
+import type { A2AClient } from "@a2a-js/sdk/client";
 
 const createMessage = (message: Partial<Message>): Message => message as Message;
 
 type SendMessageResponseSuccess = {
   id: string | number | null;
   jsonrpc: "2.0";
-  result: any;
+  result: unknown;
 };
 
 type SendMessageResponseError = {
@@ -19,9 +20,9 @@ type SendMessageResponseError = {
 class FakeA2AClient {
   constructor(
     readonly behaviour: {
-      stream?: () => AsyncGenerator<any, void, unknown>;
+      stream?: () => AsyncGenerator<unknown, void, unknown>;
       send?: () => Promise<SendMessageResponseSuccess | SendMessageResponseError>;
-      card?: () => Promise<any>;
+      card?: () => Promise<unknown>;
     } = {},
   ) {}
 
@@ -69,7 +70,7 @@ describe("A2AAgent", () => {
     });
 
     const agent = new A2AAgent({
-      a2aClient: fakeClient as any,
+      a2aClient: fakeClient as unknown as A2AClient,
       initialMessages: [
         createMessage({
           id: "user-1",
@@ -108,7 +109,7 @@ describe("A2AAgent", () => {
     });
 
     const agent = new A2AAgent({
-      a2aClient: fakeClient as any,
+      a2aClient: fakeClient as unknown as A2AClient,
       initialMessages: [
         createMessage({ id: "user-1", role: "user", content: "Ping" }),
       ],
@@ -132,7 +133,7 @@ describe("A2AAgent", () => {
     });
 
     const agent = new A2AAgent({
-      a2aClient: fakeClient as any,
+      a2aClient: fakeClient as unknown as A2AClient,
       initialMessages: [
         createMessage({ id: "user-1", role: "user", content: "Trouble" }),
       ],
