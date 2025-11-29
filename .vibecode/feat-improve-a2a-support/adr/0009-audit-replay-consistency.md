@@ -16,6 +16,7 @@ We need strong provenance and replay for config and domain changes across humans
 - All meaningful config changes become Engram messages; no silent in-process mutations.
 - Domain/view changes are represented in Task status and Artifacts, not hidden UI state.
 - Other agents use the same Engram mechanism as AG-UI for consistency.
+- Message-only agents remain valid: when only `kind: "message"` text parts are emitted, they continue to render as assistant messages; artifact/status handling is additive for richer agents.
 
 ## Consequences
 

@@ -15,6 +15,7 @@ Agent inputs may be conversational or imperative config changes; these require d
 - Messages without the Engram extension flow through the LLM/planner/workflow lane as conversational or high-level control input.
 - Messages with the Engram extension flow through a config lane: parse `agent_state_update`, apply config/task updates directly, and optionally emit derived context/system cues to the LLM.
 - Task/domain state and UI projections return via Tasks + Artifacts, not via Engram output messages; the same applies to config views that the agent chooses to surface back to AG-UI.
+- If no Engram extension is present, inputs stay in the LLM/conversational lane and default projection semantics apply; adding Engram is opt-in for explicit config control.
 
 ## Consequences
 
