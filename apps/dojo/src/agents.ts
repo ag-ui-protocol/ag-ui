@@ -74,8 +74,8 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/chat` }),
-        agentic_generative_ui: new PydanticAIAgent({
-          url: `${envVars.adkMiddlewareUrl}/agentic_generative_ui/`,
+        agentic_generative_ui: new ADKAgent({
+          url: `${envVars.adkMiddlewareUrl}/adk-agentic-generative-ui`,
         }),
         tool_based_generative_ui: new ADKAgent({
           url: `${envVars.adkMiddlewareUrl}/adk-tool-based-generative-ui`,
