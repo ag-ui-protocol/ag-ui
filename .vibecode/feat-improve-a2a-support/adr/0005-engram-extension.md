@@ -17,6 +17,7 @@ We need a structured way to mutate agent/task configuration via A2A without over
 - Agents apply these messages directly to internal config/state and may emit derived system/context cues to the LLM if needed.
 - Advertise the extension in AgentCard capabilities; use it for other agents and for AG-UI bridge emissions when config-relevant shared state changes.
 - Do not repurpose Secure Passport; Passport remains caller context, while the Engram extension mutates callee configuration.
+- Agents surface **config views** back to AG-UI via Task Artifacts (for example, JSON snapshots of current config); Engram is input-only for config mutation.
 
 ## Consequences
 
