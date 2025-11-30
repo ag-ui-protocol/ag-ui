@@ -294,4 +294,87 @@ describe("A2AAgent integration with real A2AClient", () => {
     expect(rpcHeaders.get("X-A2A-Extensions")).toContain(ENGRAM_EXTENSION_URI);
     expect(rpcHeaders.get("Content-Type")).toBe("application/json");
   });
+
+  it("streams legacy text-only agent output without emitting shared-state deltas", async () => {
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/.well-known/agent.json")) {
+        return new Response(
+          JSON.stringify({
+            url: "https://agent.local/rpc",
+            capabilities: { streaming: true },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (url.endsWith("/rpc")) {
+        const body = init?.body ? JSON.parse(init.body as string) : {};
+        const method = typeof body.method === "string" ? body.method : "";
+
+        if (method === "message/stream") {
+          const rpcId = typeof body.id === "number" ? body.id : 1;
+          const streamEvents = [
+            {
+              kind: "message" as const,
+              messageId: "legacy-text",
+              role: "agent" as const,
+              parts: [{ kind: "text" as const, text: "Hello legacy" }],
+            },
+          ];
+
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                for (const event of streamEvents) {
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      `data: ${JSON.stringify({ jsonrpc: "2.0", id: rpcId, result: event })}\n\n`,
+                    ),
+                  );
+                }
+                controller.close();
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "text/event-stream" } },
+          );
+        }
+
+        throw new Error(`Unhandled RPC method: ${method}`);
+      }
+
+      throw new Error(`Unhandled fetch URL: ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+
+    const client = new A2AClient("https://agent.local");
+    const agent = new A2AAgent({
+      a2aClient: client,
+      initialMessages: [createMessage({ id: "u1", role: "user", content: "hi" })],
+      initialState: { view: { tasks: {}, artifacts: {} } },
+    });
+
+    const observedEvents: BaseEvent[] = [];
+
+    await agent.runAgent(
+      {
+        forwardedProps: { a2a: { mode: "stream" } },
+      },
+      {
+        onEvent: ({ event }) => {
+          observedEvents.push(event);
+        },
+      },
+    );
+
+    const textEvents = observedEvents.filter((event) =>
+      event.type === EventType.TEXT_MESSAGE_CONTENT || event.type === EventType.TEXT_MESSAGE_CHUNK,
+    );
+    expect(
+      textEvents.some((event) => (event as { delta?: unknown }).delta === "Hello legacy"),
+    ).toBe(true);
+    expect(observedEvents.some((event) => event.type === EventType.STATE_DELTA)).toBe(false);
+    expect(agent.state).toEqual({ view: { tasks: {}, artifacts: {} } });
+  });
 });
