@@ -256,4 +256,67 @@ describe("A2A live e2e (local test server)", () => {
       ],
     ).toEqual({ foo: "bar" });
   });
+
+  it("replays snapshots and continues streaming on resubscribe without reopening the run", async () => {
+    if (!server) {
+      throw new Error("Test server failed to start");
+    }
+
+    const client = new A2AClient(server.baseUrl);
+    const agent = new A2AAgent({
+      a2aClient: client,
+      initialMessages: [],
+      initialState: { view: { tasks: {}, artifacts: {} } },
+    });
+
+    const events: BaseEvent[] = [];
+
+    const result = await agent.runAgent(
+      {
+        forwardedProps: {
+          a2a: { mode: "stream", taskId: "task-e2e", subscribeOnly: true, historyLength: 2 },
+        },
+      },
+      {
+        onEvent: ({ event }) => {
+          events.push(event);
+        },
+      },
+    );
+
+    const textChunks = events.filter(
+      (event) =>
+        event.type === EventType.TEXT_MESSAGE_CHUNK || event.type === EventType.TEXT_MESSAGE_CONTENT,
+    );
+    const stateDeltas = events.filter((event) => event.type === EventType.STATE_DELTA);
+
+    expect(
+      textChunks.some((event) => (event as { delta?: unknown }).delta === "Snapshot hello"),
+    ).toBe(true);
+    expect(
+      textChunks.some((event) => (event as { delta?: unknown }).delta === "Resubscribe status"),
+    ).toBe(true);
+    expect(stateDeltas.length).toBeGreaterThanOrEqual(2);
+    expect(
+      (agent.state as { view?: { tasks?: Record<string, unknown>; artifacts?: Record<string, unknown> } })
+        .view?.tasks?.["task-e2e"],
+    ).toEqual(
+      expect.objectContaining({
+        status: expect.objectContaining({ state: expect.any(String) }),
+      }),
+    );
+    expect(
+      (agent.state as { view?: { artifacts?: Record<string, unknown> } }).view?.artifacts?.[
+        "artifact-e2e"
+      ],
+    ).toEqual({ foo: "bar" });
+
+    const combinedAssistantText = result.newMessages
+      .filter((message) => message.role === "assistant")
+      .map((message) => String(message.content ?? ""))
+      .join(" ");
+
+    expect(combinedAssistantText).toContain("Snapshot");
+    expect(combinedAssistantText).toContain("Resubscribe");
+  });
 });
