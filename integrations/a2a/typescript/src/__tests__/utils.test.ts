@@ -125,6 +125,48 @@ describe("convertAGUIMessagesToA2A", () => {
     expect(engramPart?.data?.scope).toBe("task");
   });
 
+  it("attaches Engram metadata while preserving conversational history", () => {
+    const engramUpdate = {
+      scope: "context" as const,
+      path: "/config/features",
+      update: { feature: "a2a-streaming", enabled: true },
+    };
+
+    const converted = convertAGUIMessagesToA2A(
+      [
+        createMessage({ id: "user-1", role: "user", content: "Adjust settings" }),
+        createMessage({ id: "assistant-1", role: "assistant", content: "Working on it" }),
+      ],
+      {
+        engramUpdate,
+        contextId: "ctx-engram",
+        taskId: "task-engram",
+      },
+    );
+
+    const target = converted.targetMessage!;
+    const engramPart = target.parts.find((part) => part.kind === "data") as
+      | { kind: "data"; data?: Record<string, unknown> }
+      | undefined;
+
+    expect(converted.metadata?.engram).toEqual(engramUpdate);
+    expect(converted.metadata?.history).toHaveLength(3);
+    expect(target.extensions).toContain(ENGRAM_EXTENSION_URI);
+    expect(engramPart?.data).toEqual(
+      expect.objectContaining({
+        type: "engram",
+        scope: "context",
+        path: "/config/features",
+        update: { feature: "a2a-streaming", enabled: true },
+      }),
+    );
+    expect(
+      converted.history.some(
+        (message) => message.messageId === "assistant-1" && message.role === "agent",
+      ),
+    ).toBe(true);
+  });
+
   it("preserves full history and context metadata for streaming payloads", () => {
     const context = [{ description: "region", value: "us-west-2" }];
     const converted = convertAGUIMessagesToA2A(
@@ -269,6 +311,66 @@ describe("convertA2AEventToAGUIEvents", () => {
     ).toEqual({ foo: "bar" });
   });
 
+  it("emits text chunks and snapshot projections for non-appending text artifacts", () => {
+    const tracker = createSharedStateTracker({
+      view: { artifacts: { "artifact-snapshot": "Old value" } },
+    });
+    const artifactEvent = {
+      kind: "artifact-update" as const,
+      contextId: "ctx",
+      taskId: "task-snapshot",
+      append: false,
+      lastChunk: true,
+      artifact: {
+        artifactId: "artifact-snapshot",
+        parts: [{ kind: "text" as const, text: "Fresh value" }],
+      },
+    };
+
+    const events = convertA2AEventToAGUIEvents(artifactEvent, {
+      messageIdMap: new Map(),
+      sharedStateTracker: tracker,
+      artifactBasePath: DEFAULT_ARTIFACT_BASE_PATH,
+    });
+
+    expect(
+      events.some(
+        (event) =>
+          event.type === EventType.TEXT_MESSAGE_CHUNK &&
+          (event as { delta?: unknown }).delta === "Fresh value",
+      ),
+    ).toBe(true);
+
+    const stateEvent = events.find((event) => event.type === EventType.STATE_DELTA) as
+      | StateDeltaEvent
+      | undefined;
+    const delta = stateEvent?.delta?.[0];
+
+    expect(delta?.path).toBe("/view/artifacts/artifact-snapshot");
+    expect(delta?.value).toBe("Fresh value");
+    expect(
+      (tracker.state as { view?: { artifacts?: Record<string, unknown> } }).view?.artifacts?.[
+        "artifact-snapshot"
+      ],
+    ).toBe("Fresh value");
+  });
+
+  it("emits legacy text-only agent output without shared-state projections when Engram is absent", () => {
+    const textOnlyEvent = {
+      kind: "message" as const,
+      messageId: "legacy-1",
+      role: "agent" as const,
+      parts: [{ kind: "text" as const, text: "Plain response" }],
+    };
+
+    const events = convertA2AEventToAGUIEvents(textOnlyEvent, { messageIdMap: new Map() });
+
+    expect(
+      events.filter((event) => event.type === EventType.TEXT_MESSAGE_CHUNK && event.delta === "Plain response"),
+    ).toHaveLength(1);
+    expect(events.some((event) => event.type === EventType.STATE_DELTA)).toBe(false);
+  });
+
   it("appends streamed artifact text when append is true", () => {
     const tracker = createSharedStateTracker({
       view: { artifacts: { "artifact-append": "Hello" } },
@@ -301,6 +403,47 @@ describe("convertA2AEventToAGUIEvents", () => {
         "artifact-append"
       ],
     ).toBe("Hello World");
+  });
+
+  it("appends structured artifact data to arrays for streaming updates", () => {
+    const tracker = createSharedStateTracker({
+      view: { artifacts: { "artifact-stream": [{ chunk: 1 }] } },
+    });
+    const artifactEvent = {
+      kind: "artifact-update" as const,
+      contextId: "ctx",
+      taskId: "task-stream",
+      append: true,
+      lastChunk: false,
+      artifact: {
+        artifactId: "artifact-stream",
+        parts: [{ kind: "data" as const, data: { chunk: 2 } }],
+      },
+    };
+
+    const events = convertA2AEventToAGUIEvents(artifactEvent, {
+      messageIdMap: new Map(),
+      sharedStateTracker: tracker,
+      artifactBasePath: DEFAULT_ARTIFACT_BASE_PATH,
+    });
+
+    const stateEvent = events.find((event) => event.type === EventType.STATE_DELTA) as
+      | StateDeltaEvent
+      | undefined;
+    const delta = stateEvent?.delta?.[0];
+
+    expect(delta).toEqual(
+      expect.objectContaining({
+        op: "add",
+        path: "/view/artifacts/artifact-stream/-",
+        value: { chunk: 2 },
+      }),
+    );
+    expect(
+      (tracker.state as { view?: { artifacts?: Record<string, unknown>[] } }).view?.artifacts?.[
+        "artifact-stream"
+      ],
+    ).toEqual([{ chunk: 1 }, { chunk: 2 }]);
   });
 
   it("routes artifacts to metadata-provided paths", () => {
@@ -400,6 +543,91 @@ describe("convertA2AEventToAGUIEvents", () => {
         status: expect.objectContaining({ state: "pending" }),
       }),
     );
+  });
+
+  it("projects surface operations into activity events and de-duplicates snapshots", () => {
+    const seenSurfaceIds = new Set<string>();
+    const surfaceTracker = {
+      has: (surfaceId: string) => seenSurfaceIds.has(surfaceId),
+      add: (surfaceId: string) => {
+        seenSurfaceIds.add(surfaceId);
+      },
+    };
+
+    const surfaceOperation = {
+      surfaceUpdate: {
+        surfaceId: "surface-123",
+        payload: { html: "<div>render</div>" },
+      },
+    };
+
+    const surfaceEvent = {
+      kind: "message" as const,
+      messageId: "surface-msg",
+      role: "agent" as const,
+      parts: [{ kind: "data" as const, data: surfaceOperation }],
+    };
+
+    const firstPass = convertA2AEventToAGUIEvents(surfaceEvent, {
+      messageIdMap: new Map(),
+      surfaceTracker,
+    });
+    const snapshot = firstPass.find((event) => event.type === EventType.ACTIVITY_SNAPSHOT);
+    const delta = firstPass.find((event) => event.type === EventType.ACTIVITY_DELTA) as
+      | { patch?: Array<{ path?: string; value?: unknown }> }
+      | undefined;
+
+    expect(snapshot).toBeDefined();
+    expect(delta?.patch?.[0]?.path).toBe("/operations/-");
+    expect(delta?.patch?.[0]?.value).toEqual(surfaceOperation);
+
+    const secondPass = convertA2AEventToAGUIEvents(surfaceEvent, {
+      messageIdMap: new Map(),
+      surfaceTracker,
+    });
+
+    expect(secondPass.some((event) => event.type === EventType.ACTIVITY_SNAPSHOT)).toBe(false);
+    expect(secondPass.some((event) => event.type === EventType.ACTIVITY_DELTA)).toBe(true);
+  });
+
+  it("replays task snapshots by emitting task state and full message history for audit consistency", () => {
+    const tracker = createSharedStateTracker();
+    const taskSnapshot = {
+      kind: "task" as const,
+      id: "task-audit",
+      contextId: "ctx-audit",
+      status: { state: "working" as const },
+      history: [
+        {
+          kind: "message" as const,
+          messageId: "hist-1",
+          role: "agent" as const,
+          parts: [{ kind: "text" as const, text: "First output" }],
+        },
+        {
+          kind: "message" as const,
+          messageId: "hist-2",
+          role: "agent" as const,
+          parts: [{ kind: "text" as const, text: "Second output" }],
+        },
+      ],
+      artifacts: [],
+    };
+
+    const events = convertA2AEventToAGUIEvents(taskSnapshot, {
+      messageIdMap: new Map(),
+      sharedStateTracker: tracker,
+    });
+
+    const stateDelta = events.find((event) => event.type === EventType.STATE_DELTA) as
+      | StateDeltaEvent
+      | undefined;
+    const textChunks = events.filter((event) => event.type === EventType.TEXT_MESSAGE_CHUNK);
+
+    expect(stateDelta?.delta?.[0]?.path).toBe("/view/tasks/task-audit");
+    expect(
+      textChunks.map((event) => (event as { delta?: unknown }).delta),
+    ).toEqual(expect.arrayContaining(["First output", "Second output"]));
   });
 
   it("maps task status updates to raw events", () => {
