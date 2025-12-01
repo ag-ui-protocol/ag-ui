@@ -477,6 +477,7 @@ func TestJSONSerialization(t *testing.T) {
 			NewRunStartedEvent("thread-1", "run-1"),
 			NewTextMessageStartEvent("msg-1", WithRole("user")),
 			NewTextMessageContentEvent("msg-1", "Hello"),
+			NewTextMessageChunkEvent(strPtr("msg-1"), strPtr("assistant"), strPtr("Chunk")),
 			NewToolCallStartEvent("tool-1", "get_weather", WithParentMessageID("msg-1")),
 			NewStateSnapshotEvent(map[string]any{"counter": 42}),
 			NewCustomEvent("test-event", WithValue("test-value")),

@@ -279,6 +279,8 @@ class EventTranslator:
             return
 
         combined_text = "".join(text_parts)
+        if not combined_text:
+            return
 
         # Use proper ADK streaming detection (handle None values)
         is_partial = getattr(adk_event, 'partial', False)

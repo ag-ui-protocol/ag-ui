@@ -365,6 +365,8 @@ func EventFromJSON(data []byte) (Event, error) {
 		event = &TextMessageStartEvent{}
 	case EventTypeTextMessageContent:
 		event = &TextMessageContentEvent{}
+	case EventTypeTextMessageChunk:
+		event = &TextMessageChunkEvent{}
 	case EventTypeTextMessageEnd:
 		event = &TextMessageEndEvent{}
 	case EventTypeToolCallStart:

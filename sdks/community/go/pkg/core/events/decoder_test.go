@@ -93,6 +93,24 @@ func TestEventDecoder(t *testing.T) {
 		assert.Equal(t, "Hello World", msgEvent.Delta)
 	})
 
+	t.Run("DecodeEvent_TextMessageChunk", func(t *testing.T) {
+		decoder := NewEventDecoder(nil)
+		data := []byte(`{"messageId": "msg-123", "role": "assistant", "delta": "Hi"}`)
+
+		event, err := decoder.DecodeEvent("TEXT_MESSAGE_CHUNK", data)
+		require.NoError(t, err)
+		require.NotNil(t, event)
+
+		msgEvent, ok := event.(*TextMessageChunkEvent)
+		require.True(t, ok)
+		require.NotNil(t, msgEvent.MessageID)
+		require.NotNil(t, msgEvent.Role)
+		require.NotNil(t, msgEvent.Delta)
+		assert.Equal(t, "msg-123", *msgEvent.MessageID)
+		assert.Equal(t, "assistant", *msgEvent.Role)
+		assert.Equal(t, "Hi", *msgEvent.Delta)
+	})
+
 	t.Run("DecodeEvent_TextMessageEnd", func(t *testing.T) {
 		decoder := NewEventDecoder(nil)
 		data := []byte(`{"messageId": "msg-123"}`)
