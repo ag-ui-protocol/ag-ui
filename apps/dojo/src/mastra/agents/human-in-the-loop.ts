@@ -1,10 +1,10 @@
-import { openai } from "@ai-sdk/openai";
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { getStorage } from "../storage";
 
 export const humanInTheLoopAgent = new Agent({
-  name: "Task Planning Agent",
+  id: 'human_in_the_loop',
+  name: "human_in_the_loop",
   instructions: `
     You are a helpful task planning assistant that helps users break down tasks into actionable steps.
 
@@ -22,7 +22,7 @@ export const humanInTheLoopAgent = new Agent({
     - Keep steps concise but descriptive
     - Make sure steps are in logical order
   `,
-  model: openai("gpt-4o-mini"),
+  model: "openai/gpt-4o-mini",
   memory: new Memory({
     storage: getStorage(),
   }),

@@ -4,7 +4,7 @@ import { LibSQLStore } from "@mastra/libsql";
 
 export const toolBasedGenerativeUIAgent = new Agent({
   id: "tool_based_generative_ui",
-  name: "Haiku Agent",
+  name: "Tool Based Generative UI",
   instructions: `
       You are a helpful haiku assistant that provides the user with a haiku.
 `,

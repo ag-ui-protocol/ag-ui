@@ -5,7 +5,7 @@ import { weatherTool } from "../tools/weather-tool";
 
 export const backendToolRenderingAgent = new Agent({
   id: "backend_tool_rendering",
-  name: "Weather Agent 2",
+  name: "Backend Tool Rendering",
   instructions: `
       You are a helpful weather assistant that provides accurate weather information.
 

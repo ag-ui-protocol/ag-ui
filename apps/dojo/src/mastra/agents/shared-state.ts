@@ -1,10 +1,10 @@
-import { openai } from "@ai-sdk/openai";
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { z } from "zod";
 import { getStorage } from "../storage";
 
 export const sharedStateAgent = new Agent({
+  id: 'shared_state',
   name: "shared_state",
   instructions: `
     You are a helpful assistant for creating recipes.
@@ -16,9 +16,9 @@ export const sharedStateAgent = new Agent({
     4. 'ingredients' is always an array of objects with 'icon', 'name', and 'amount' fields
     5. 'instructions' is always an array of strings
 
-    If you have just created or modified the recipe, just answer in one sentence what you did. dont describe the recipe, just say what you did. Do not mention "working memory", "memory", or "state" in your answer.
+    If you have just created or modified the recipe, just answer in one sentence what you did. Do not describe the recipe, just say what you did. Do not mention "working memory", "memory", or "state" in your answer.
   `,
-  model: openai("gpt-4o"),
+  model: "openai/gpt-4o",
   memory: new Memory({
     storage: getStorage(),
     options: {
@@ -65,7 +65,6 @@ export const sharedStateAgent = new Agent({
               .describe(
                 "Entire list of instructions for the recipe, including the new instructions and the ones that are already there",
               ),
-            changes: z.string().describe("A description of the changes made to the recipe"),
           }),
         }),
       },

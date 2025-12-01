@@ -5,7 +5,7 @@ import { weatherTool } from "../tools/weather-tool";
 
 export const agenticChatAgent = new Agent({
   id: "agentic_chat",
-  name: "Weather Agent",
+  name: "Agentic Chat",
   instructions: `
       You are a helpful weather assistant that provides accurate weather information.
 
