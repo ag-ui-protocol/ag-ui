@@ -15,4 +15,4 @@ Branch: feat/improve-a2a-support
 | ADR 0009 | Audit, Replay, and Multi-Agent Consistency | Accepted | 2025-11-29 | .vibecode/feat-improve-a2a-support/adr/0009-audit-replay-consistency.md |
 | ADR 0010 | A2A -> AG-UI Shared State via Tasks and Artifacts | Accepted | 2025-11-29 | .vibecode/feat-improve-a2a-support/adr/0010-artifacts-to-shared-state.md |
 | ADR 0011 | Implicit vs Explicit Semantics for A2A Agents | Accepted | 2025-11-29 | .vibecode/feat-improve-a2a-support/adr/0011-implicit-vs-explicit-semantics.md |
-| ADR 0012 | HITL Interrupts via A2A `input_required` + AG-UI Activity/State | Accepted | 2025-12-01 | .vibecode/feat-improve-a2a-support/adr/0012-hitl-activity-interrupts.md |
+| ADR 0012 | Input Interrupts via A2A `input_required` + AG-UI Activity/State | Accepted | 2025-12-01 | .vibecode/feat-improve-a2a-support/adr/0012-hitl-activity-interrupts.md |

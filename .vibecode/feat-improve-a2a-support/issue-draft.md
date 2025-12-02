@@ -1,0 +1,22 @@
+# Draft GitHub Issue: Add missing AG-UI features to A2A bridge
+
+- **Title:** Add missing AG-UI features to A2A bridge (config lane, shared state, input-required)
+- **Summary:** Build out the A2A bridge so AG-UI can project artifacts/status/activity into shared state and activity events from A2A tasks/status updates, handle the AG-UI config/control lane for shared-state updates, and support input-required/interrupt flows while preserving existing text-only agent behavior.
+- **Missing AG-UI bridge features:**
+  - Config/control lane: support structured AG-UI shared-state/config updates via a dedicated extension, replace the unused extension header, and keep conversational messaging unchanged.
+  - Task-aware reconnect/resubscribe: use task snapshots/historyLength, subscribe-only mode, and resume payloads without reopening closed runs.
+  - Shared-state/activity projection: emit task/status/context snapshots and deltas; project artifacts with default `/view/artifacts/<id>` paths, append/lastChunk handling, and metadata-driven paths; include activity for surfaces and input requests.
+  - Input-required interrupts/resume: emit RUN_FINISHED outcome `interrupt` with pending interrupt state/activity; surface A2A `input_required` task states through the AG-UI Human in the Loop (HITL) experience so reviewers see the request context; resume via `a2a.input.response`, update activity/state, and clear pending interrupts when resolved.
+  - Context/config forwarding (no full transcript): send the current message plus opt-in system/developer/config cues and AG-UI tool results when needed; rely on A2A task history for the full log; preserve existing text-only agents unchanged.
+  - Metadata hygiene: avoid leaking threadId/runId to A2A; prefer contextId/taskId in payloads and metadata.
+- **Scope / Acceptance:**
+  - Add run options (send/stream, taskId) plus:
+    - `subscribe-only` to reconnect without sending a new message (fetch snapshot, then resubscribe).
+    - `resume` to send input responses to the existing task without reopening the prior run.
+  - Use A2A server task snapshots (`getTask`) plus resubscribe for reconnects (no new message send).
+  - Send the current payload with opt-in system/developer/config cues (no full transcript); use a dedicated config/control extension for AG-UI shared-state updates and gate the legacy extension header; rely on A2A task storage for full history.
+  - Project A2A messages/status/artifacts into AG-UI text/tool/activity and shared-state events (snapshots + deltas), with default artifact base paths and append/lastChunk semantics.
+  - Handle `input_required` by emitting `RUN_FINISHED` with outcome `interrupt`, keeping pending interrupts in shared state/activity, surfacing them via the AG-UI Human in the Loop (HITL) flow for context, and resuming via `a2a.input.response` without reviving closed runs.
+  - Keep metadata layering so threadId/runId stay internal; prefer contextId/taskId externally.
+- **Testing plan:** add or update unit, integration, and e2e coverage as needed; run `pnpm --filter @ag-ui/a2a test` (A2A agent/util e2e + integration Jest suites), `pnpm --filter @ag-ui/client test` (client agent/subscriber Jest suites), plus `pnpm lint` and `pnpm build`; follow `docs/testing-strategy.md`. No new mock recordings required.
+- **Out of scope:** non-TypeScript integrations; UI redesign.

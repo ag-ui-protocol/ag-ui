@@ -33,8 +33,8 @@ Align the TypeScript A2A bridge with the new ADR set so AG-UI can run both short
 - [x] Reconnect/resubscribe uses A2A task snapshot APIs (for example, `task/get`) to recover current task state, then resumes streaming without reopening closed runs.
 - [x] System/developer messages are gated by default; forwarding requires explicit opt-in and remaps to A2A’s `user`/`agent` roles with clear extension/metadata tagging.
 - [x] Full AG-UI → A2A forwarding preserves history/context/config when enabled, not just the latest user message; system/developer/config cues are available when explicitly opted in.
-- [x] HITL flow: when A2A emits `TaskState.input_required` with TextPart + `DataPart { type: "a2a.hitl.form" }`, mint `interruptId = "hitl-<taskId>-<n>"`, emit the final assistant message, and emit `RUN_FINISHED` with `outcome: "interrupt"` plus `{ taskId, contextId, interruptId, form }`; resume via a new run in the same `threadId` with `resume { interruptId, payload }` to send `a2a.hitl.formResponse` to the original `taskId`, then continue streaming to completion.
-- [x] Activity/State projection for HITL: emit `ACTIVITY_SNAPSHOT`/`ACTIVITY_DELTA` for pending interrupts with `messageId = interruptId` and stage/decision updates; emit `STATE_SNAPSHOT` + `STATE_DELTA` JSON Patch arrays that track the canonical task map at `/view/tasks/<taskId>` and pending interrupts under `/view/pendingInterrupts`.
+- [x] Input-required flow: when A2A emits `TaskState.input_required` with TextPart + `DataPart { type: "a2a.input.request" }`, mint `interruptId = "input-<taskId>-<n>"`, emit the final assistant message, and emit `RUN_FINISHED` with `outcome: "interrupt"` plus `{ taskId, contextId, interruptId, request }`; resume via a new run in the same `threadId` with `resume { interruptId, payload }` to send `a2a.input.response` to the original `taskId`, then continue streaming to completion.
+- [x] Activity/State projection for input-required: emit `ACTIVITY_SNAPSHOT`/`ACTIVITY_DELTA` for pending interrupts with `messageId = interruptId` and stage/decision updates; emit `STATE_SNAPSHOT` + `STATE_DELTA` JSON Patch arrays that track the canonical task map at `/view/tasks/<taskId>` and pending interrupts under `/view/pendingInterrupts`.
 - [x] Tests must not drive source namespaces: test details must never leak into implementation; tests should reflect intentional source behavior.
 
 ## Technical Requirements
@@ -51,8 +51,8 @@ Align the TypeScript A2A bridge with the new ADR set so AG-UI can run both short
 - Maintain existing text-message chunk/tool-call mapping for A2A `kind: "message"` parts.
 - Ensure surface/activity updates use stable identifiers and avoid duplicating snapshots/deltas.
 - Define default JSON artifact projection path when explicit metadata is absent (set to `/view/artifacts/<artifactId>` with snapshot vs append governed by `append`/`lastChunk`).
-- HITL interrupt/resume: on `input_required`, stop streaming for the run, emit the final assistant message, and emit `RUN_FINISHED` with `outcome: "interrupt"` and payload `{ taskId, contextId, interruptId, form }`; on resume, open a new run in the same thread, send `DataPart { type: "a2a.hitl.formResponse" }` to the original `taskId`, and continue normal streaming without reviving the prior run.
-- Activity events: emit `ACTIVITY_SNAPSHOT` (activityType e.g., `HITL_FORM`) with `messageId = interruptId` and form content; emit `ACTIVITY_DELTA` patches to update `stage`/`decision` after resume/completion, optionally summarizing form values.
+- Input-required interrupt/resume: on `input_required`, stop streaming for the run, emit the final assistant message, and emit `RUN_FINISHED` with `outcome: "interrupt"` and payload `{ taskId, contextId, interruptId, request }`; on resume, open a new run in the same thread, send `DataPart { type: "a2a.input.response" }` to the original `taskId`, and continue normal streaming without reviving the prior run.
+- Activity events: emit `ACTIVITY_SNAPSHOT` (activityType e.g., `INPUT_REQUIRED`) with `messageId = interruptId` and request content; emit `ACTIVITY_DELTA` patches to update `stage`/`decision` after resume/completion, optionally summarizing provided values.
 - State events: emit initial `STATE_SNAPSHOT` and subsequent `STATE_DELTA` JSON Patch arrays maintaining the canonical task map at `/view/tasks/<taskId>` plus `/view/pendingInterrupts`; remove existing aggregate nodes (for example, task-status/audit) so `/view/tasks/<taskId>` stays a pure map.
 
 ### Non-Functional Requirements
@@ -84,11 +84,11 @@ Align the TypeScript A2A bridge with the new ADR set so AG-UI can run both short
 - Misaligned identifiers (threadId vs contextId/taskId) could leak UI provenance or break reconnections.
 - Engram URN semantics need agreement; lack of consensus could stall config-lane adoption.
 - Artifact projection might introduce unexpected UI changes if defaults aren’t clearly scoped to implicit vs explicit agents.
-- HITL UX depends on consistent Activity/State emissions; gaps could leave UI without pending-approval context.
+- Input-required UX depends on consistent Activity/State emissions; gaps could leave UI without pending-approval context.
 
 ### ADR Structure (reference)
 
-- ADRs live in `.vibecode/feat-improve-a2a-support/adr/` with index at `adl.md`; current set is 0001–0012 (interface surfaces, run/task mapping, run modes, canonical input, Engram, AG-UI state projection, metadata layering, LLM vs config lanes, audit/replay, artifacts→shared state, implicit vs explicit semantics, HITL interrupts + Activity/State).
+- ADRs live in `.vibecode/feat-improve-a2a-support/adr/` with index at `adl.md`; current set is 0001–0012 (interface surfaces, run/task mapping, run modes, canonical input, config lane, AG-UI state projection, metadata layering, LLM vs config lanes, audit/replay, artifacts→shared state, implicit vs explicit semantics, input-required interrupts + Activity/State).
 
 ## Architectural Decisions
 
