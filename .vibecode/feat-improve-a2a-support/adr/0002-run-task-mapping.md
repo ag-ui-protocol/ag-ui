@@ -1,7 +1,7 @@
 # ADR 0002: Run <-> Task Mapping
 
 **Status**  
-Proposed
+Accepted
 
 **Date**  
 2025-11-29

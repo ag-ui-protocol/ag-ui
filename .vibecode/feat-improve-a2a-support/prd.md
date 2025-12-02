@@ -1,7 +1,7 @@
 # Product Requirements Document: A2A Integration Alignment with ADRs
 
 Created: 2025-11-29T20:45:00Z
-Status: Draft
+Status: Accepted
 Branch: feat/improve-a2a-support
 
 ## Overview
@@ -24,18 +24,18 @@ Align the TypeScript A2A bridge with the new ADR set so AG-UI can run both short
 
 ## Success Criteria
 
-- [ ] Run invocation supports `mode: "send" | "stream"` and optional `taskId`, with long-lived subscriptions for streaming and short-lived control runs for injections/reconnects per ADR 0002/0003.
-- [ ] AG-UI → A2A conversion forwards all relevant messages (user, assistant, system/developer when needed) and preserves context/config inputs instead of dropping them; latest user message is not the sole payload.
-- [ ] Engram extension is supported (opt-in): messages carrying the Engram URN are routed to the config lane; absence of Engram uses conversational defaults with unchanged text rendering.
-- [ ] A2A outputs (messages, status, artifacts) map to AG-UI events: message parts still emit text/tool events as today; artifacts/status updates project into shared state or activity events per ADR 0009/0010/0011.
-- [ ] Metadata layering prevents leaking AG-UI-only identifiers (threadId/runId) into external A2A payloads; context/task identifiers are used consistently for A2A addressing.
-- [ ] Legacy compatibility: when an agent emits only `kind: "message"` text parts, AG-UI behavior matches current output (assistant text/tool events only).
-- [ ] Reconnect/resubscribe uses A2A task snapshot APIs (for example, `task/get`) to recover current task state, then resumes streaming without reopening closed runs.
-- [ ] System/developer messages are gated by default; forwarding requires explicit opt-in and remaps to A2A’s `user`/`agent` roles with clear extension/metadata tagging.
-- [ ] Full AG-UI → A2A forwarding preserves history/context/config when enabled, not just the latest user message; system/developer/config cues are available when explicitly opted in.
-- [ ] HITL flow: when A2A emits `TaskState.input_required` with TextPart + `DataPart { type: "a2a.hitl.form" }`, mint `interruptId = "hitl-<taskId>-<n>"`, emit the final assistant message, and emit `RUN_FINISHED` with `outcome: "interrupt"` plus `{ taskId, contextId, interruptId, form }`; resume via a new run in the same `threadId` with `resume { interruptId, payload }` to send `a2a.hitl.formResponse` to the original `taskId`, then continue streaming to completion.
-- [ ] Activity/State projection for HITL: emit `ACTIVITY_SNAPSHOT`/`ACTIVITY_DELTA` for pending interrupts with `messageId = interruptId` and stage/decision updates; emit `STATE_SNAPSHOT` + `STATE_DELTA` JSON Patch arrays that track the canonical task map at `/view/tasks/<taskId>` and pending interrupts under `/view/pendingInterrupts`, with legacy aggregate nodes under `/view/tasks/*` relocated to avoid collisions.
-- [ ] Tests must not drive source namespaces: avoid mirroring test-only paths (e.g., legacy `/view/tasks/*` aggregates) in implementation; tests should reflect intentional source behavior.
+- [x] Run invocation supports `mode: "send" | "stream"` and optional `taskId`, with long-lived subscriptions for streaming and short-lived control runs for injections/reconnects per ADR 0002/0003.
+- [x] AG-UI → A2A conversion forwards all relevant messages (user, assistant, system/developer when needed) and preserves context/config inputs instead of dropping them; latest user message is not the sole payload.
+- [x] Engram extension is supported (opt-in): messages carrying the Engram URN are routed to the config lane; absence of Engram uses conversational defaults with unchanged text rendering.
+- [x] A2A outputs (messages, status, artifacts) map to AG-UI events: message parts still emit text/tool events as today; artifacts/status updates project into shared state or activity events per ADR 0009/0010/0011.
+- [x] Metadata layering prevents leaking AG-UI-only identifiers (threadId/runId) into external A2A payloads; context/task identifiers are used consistently for A2A addressing.
+- [x] Legacy compatibility: when an agent emits only `kind: "message"` text parts, AG-UI behavior matches current output (assistant text/tool events only).
+- [x] Reconnect/resubscribe uses A2A task snapshot APIs (for example, `task/get`) to recover current task state, then resumes streaming without reopening closed runs.
+- [x] System/developer messages are gated by default; forwarding requires explicit opt-in and remaps to A2A’s `user`/`agent` roles with clear extension/metadata tagging.
+- [x] Full AG-UI → A2A forwarding preserves history/context/config when enabled, not just the latest user message; system/developer/config cues are available when explicitly opted in.
+- [x] HITL flow: when A2A emits `TaskState.input_required` with TextPart + `DataPart { type: "a2a.hitl.form" }`, mint `interruptId = "hitl-<taskId>-<n>"`, emit the final assistant message, and emit `RUN_FINISHED` with `outcome: "interrupt"` plus `{ taskId, contextId, interruptId, form }`; resume via a new run in the same `threadId` with `resume { interruptId, payload }` to send `a2a.hitl.formResponse` to the original `taskId`, then continue streaming to completion.
+- [x] Activity/State projection for HITL: emit `ACTIVITY_SNAPSHOT`/`ACTIVITY_DELTA` for pending interrupts with `messageId = interruptId` and stage/decision updates; emit `STATE_SNAPSHOT` + `STATE_DELTA` JSON Patch arrays that track the canonical task map at `/view/tasks/<taskId>` and pending interrupts under `/view/pendingInterrupts`, with legacy aggregate nodes under `/view/tasks/*` removed to avoid collisions.
+- [x] Tests must not drive source namespaces: test details must never leak into implementation—do not mirror test-only paths (e.g., legacy `/view/tasks/*` aggregates); tests should reflect intentional source behavior.
 
 ## Technical Requirements
 
@@ -53,7 +53,7 @@ Align the TypeScript A2A bridge with the new ADR set so AG-UI can run both short
 - Define default JSON artifact projection path when explicit metadata is absent (set to `/view/artifacts/<artifactId>` with snapshot vs append governed by `append`/`lastChunk`).
 - HITL interrupt/resume: on `input_required`, stop streaming for the run, emit the final assistant message, and emit `RUN_FINISHED` with `outcome: "interrupt"` and payload `{ taskId, contextId, interruptId, form }`; on resume, open a new run in the same thread, send `DataPart { type: "a2a.hitl.formResponse" }` to the original `taskId`, and continue normal streaming without reviving the prior run.
 - Activity events: emit `ACTIVITY_SNAPSHOT` (activityType e.g., `HITL_FORM`) with `messageId = interruptId` and form content; emit `ACTIVITY_DELTA` patches to update `stage`/`decision` after resume/completion, optionally summarizing form values.
-- State events: emit initial `STATE_SNAPSHOT` and subsequent `STATE_DELTA` JSON Patch arrays maintaining the canonical task map at `/view/tasks/<taskId>` plus `/view/pendingInterrupts`; relocate existing aggregate nodes (for example, task-status/audit) to non-conflicting paths so `/view/tasks/<taskId>` stays a pure map.
+- State events: emit initial `STATE_SNAPSHOT` and subsequent `STATE_DELTA` JSON Patch arrays maintaining the canonical task map at `/view/tasks/<taskId>` plus `/view/pendingInterrupts`; remove existing aggregate nodes (for example, task-status/audit) so `/view/tasks/<taskId>` stays a pure map.
 
 ### Non-Functional Requirements
 

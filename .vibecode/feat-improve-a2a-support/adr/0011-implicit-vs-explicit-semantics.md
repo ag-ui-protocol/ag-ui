@@ -1,7 +1,7 @@
 # ADR 0011: Implicit vs Explicit Semantics for A2A Agents
 
 **Status**  
-Proposed
+Accepted
 
 **Date**  
 2025-11-29

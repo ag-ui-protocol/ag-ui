@@ -1,7 +1,7 @@
 # ADR 0003: Run Invocation Modes (send vs stream)
 
 **Status**  
-Proposed
+Accepted
 
 **Date**  
 2025-11-29

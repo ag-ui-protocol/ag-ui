@@ -1,7 +1,7 @@
 # ADR 0008: LLM Lane vs Config Lane
 
 **Status**  
-Proposed
+Accepted
 
 **Date**  
 2025-11-29

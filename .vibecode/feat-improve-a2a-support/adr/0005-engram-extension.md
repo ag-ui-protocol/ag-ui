@@ -1,7 +1,7 @@
 # ADR 0005: Config/Control via Engram Extension
 
 **Status**  
-Proposed
+Accepted
 
 **Date**  
 2025-11-29

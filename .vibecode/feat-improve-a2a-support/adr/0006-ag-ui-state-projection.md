@@ -1,7 +1,7 @@
 # ADR 0006: AG-UI Shared State as Projection
 
 **Status**  
-Proposed
+Accepted
 
 **Date**  
 2025-11-29

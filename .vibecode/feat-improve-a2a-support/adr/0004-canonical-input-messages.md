@@ -1,7 +1,7 @@
 # ADR 0004: Canonical Input as Messages
 
 **Status**  
-Proposed
+Accepted
 
 **Date**  
 2025-11-29

@@ -1,7 +1,7 @@
 # ADR 0009: Audit, Replay, and Multi-Agent Consistency
 
 **Status**  
-Proposed
+Accepted
 
 **Date**  
 2025-11-29

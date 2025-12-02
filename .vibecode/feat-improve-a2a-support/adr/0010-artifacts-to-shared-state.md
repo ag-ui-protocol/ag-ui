@@ -1,7 +1,7 @@
 # ADR 0010: A2A -> AG-UI Shared State via Tasks and Artifacts
 
 **Status**  
-Proposed
+Accepted
 
 **Date**  
 2025-11-29

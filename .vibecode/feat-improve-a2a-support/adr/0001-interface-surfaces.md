@@ -1,7 +1,7 @@
 # ADR 0001: Interface Surfaces (A2A vs AG-UI vs REST)
 
 **Status**  
-Proposed
+Accepted
 
 **Date**  
 2025-11-29
