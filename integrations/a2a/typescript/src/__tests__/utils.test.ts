@@ -161,7 +161,7 @@ describe("convertAGUIMessagesToA2A", () => {
       | undefined;
 
     expect(converted.metadata?.engram).toEqual(engramUpdate);
-    expect(converted.metadata?.history).toHaveLength(3);
+    expect(converted.metadata?.history).toBeUndefined();
     expect(target.extensions).toContain(ENGRAM_EXTENSION_URI);
     expect(engramPart?.data).toEqual(
       expect.objectContaining({
@@ -178,7 +178,7 @@ describe("convertAGUIMessagesToA2A", () => {
     ).toBe(true);
   });
 
-  it("preserves full history and context metadata for streaming payloads", () => {
+  it("includes context metadata without forwarding full transcripts", () => {
     const context = [{ description: "region", value: "us-west-2" }];
     const converted = convertAGUIMessagesToA2A(
       [
@@ -197,16 +197,10 @@ describe("convertAGUIMessagesToA2A", () => {
       },
     );
 
-    const metadataHistory = (converted.metadata?.history ?? []) as Array<{ messageId?: string }>;
-    const historyIds = metadataHistory.map((entry) => entry.messageId);
-
     expect(converted.contextId).toBe("ctx-a2a");
     expect(converted.taskId).toBe("task-a2a");
     expect(converted.metadata?.context).toEqual(context);
-    expect(metadataHistory.length).toBe(5);
-    expect(historyIds).toEqual(
-      expect.arrayContaining(["sys-1", "dev-1", "user-1", "assistant-1", "user-2"]),
-    );
+    expect(converted.metadata?.history).toBeUndefined();
     expect(converted.latestUserMessage?.messageId).toBe("user-2");
     expect(converted.targetMessage?.extensions ?? []).toHaveLength(0);
   });
@@ -224,9 +218,9 @@ describe("convertAGUIMessagesToA2A", () => {
     const converted = convertAGUIMessagesToA2A(
       [createMessage({ id: "user-1", role: "user", content: "resume" })],
       {
-        contextId: "ctx-hitl",
-        taskId: "task-hitl",
-        resume: { interruptId: "hitl-task-hitl-1", payload: { field: "value" } },
+        contextId: "ctx-input",
+        taskId: "task-input",
+        resume: { interruptId: "input-task-input-1", payload: { field: "value" } },
       },
     );
 
@@ -234,16 +228,16 @@ describe("convertAGUIMessagesToA2A", () => {
     const dataParts = (target.parts ?? []).filter((part) => part.kind === "data") as Array<{
       data?: Record<string, unknown>;
     }>;
-    const formResponse = dataParts.find((part) => part.data?.type === "a2a.hitl.formResponse")?.data;
+    const formResponse = dataParts.find((part) => part.data?.type === "a2a.input.response")?.data;
 
     expect(formResponse).toEqual(
       expect.objectContaining({
-        interruptId: "hitl-task-hitl-1",
+        interruptId: "input-task-input-1",
         values: { field: "value" },
       }),
     );
-    expect(target.contextId).toBe("ctx-hitl");
-    expect(target.taskId).toBe("task-hitl");
+    expect(target.contextId).toBe("ctx-input");
+    expect(target.taskId).toBe("task-input");
   });
 });
 
@@ -598,33 +592,33 @@ describe("convertA2AEventToAGUIEvents", () => {
     );
   });
 
-  it("emits HITL interrupt activity, state projection, and run finish payloads", () => {
+  it("emits input-required activity, state projection, and run finish payloads", () => {
     const tracker = createSharedStateTracker();
     const statusEvent = {
       kind: "status-update" as const,
-      contextId: "ctx-hitl",
+      contextId: "ctx-input",
       final: false,
       status: {
         state: "input-required" as const,
         message: {
           kind: "message" as const,
-          messageId: "status-hitl",
+          messageId: "status-input",
           role: "agent" as const,
           parts: [
             { kind: "text" as const, text: "Need approval" },
-            { kind: "data" as const, data: { type: "a2a.hitl.form", formId: "form-123", fields: [] } },
+            { kind: "data" as const, data: { type: "a2a.input.request", requestId: "request-123", fields: [] } },
           ],
         },
         timestamp: "soon",
       },
-      taskId: "task-hitl",
+      taskId: "task-input",
     };
 
     const events = convertA2AEventToAGUIEvents(statusEvent, {
       messageIdMap: new Map(),
       sharedStateTracker: tracker,
-      threadId: "thread-hitl",
-      runId: "run-hitl",
+      threadId: "thread-input",
+      runId: "run-input",
     });
 
     const runFinished = events.find((event) => event.type === EventType.RUN_FINISHED) as {
@@ -637,46 +631,46 @@ describe("convertA2AEventToAGUIEvents", () => {
       view?: { pendingInterrupts?: Record<string, unknown> };
     }).view?.pendingInterrupts;
 
-    expect(activitySnapshot?.activityType).toBe("HITL_FORM");
+    expect(activitySnapshot?.activityType).toBe("INPUT_REQUIRED");
     expect(runFinished?.result).toEqual(
       expect.objectContaining({
         outcome: "interrupt",
-        taskId: "task-hitl",
+        taskId: "task-input",
         interruptId: activitySnapshot?.messageId,
       }),
     );
-    expect(runFinished?.result?.contextId).toBe("ctx-hitl");
+    expect(runFinished?.result?.contextId).toBe("ctx-input");
     expect(pendingInterrupts?.[activitySnapshot?.messageId ?? ""]).toEqual(
-      expect.objectContaining({ taskId: "task-hitl", formId: "form-123" }),
+      expect.objectContaining({ taskId: "task-input", requestId: "request-123" }),
     );
   });
 
-  it("generates monotonic interruptIds and includes form payloads in RUN_FINISHED results", () => {
+  it("generates monotonic interruptIds and includes request payloads in RUN_FINISHED results", () => {
     const tracker = createSharedStateTracker();
     const options = {
       messageIdMap: new Map<string, string>(),
       sharedStateTracker: tracker,
-      threadId: "thread-hitl",
-      runId: "run-hitl",
+      threadId: "thread-input",
+      runId: "run-input",
     };
 
     const firstInterrupt = {
       kind: "status-update" as const,
-      contextId: "ctx-hitl",
+      contextId: "ctx-input",
       final: false,
       status: {
         state: "input-required" as const,
         message: {
           kind: "message" as const,
-          messageId: "status-hitl-1",
+          messageId: "status-input-1",
           role: "agent" as const,
           parts: [
             { kind: "text" as const, text: "Need approval" },
-            { kind: "data" as const, data: { type: "a2a.hitl.form", formId: "form-1", fields: [] } },
+            { kind: "data" as const, data: { type: "a2a.input.request", requestId: "request-1", fields: [] } },
           ],
         },
       },
-      taskId: "task-hitl",
+      taskId: "task-input",
     };
 
     const firstEvents = convertA2AEventToAGUIEvents(firstInterrupt, options);
@@ -687,10 +681,10 @@ describe("convertA2AEventToAGUIEvents", () => {
     expect(firstRunFinished?.result).toEqual(
       expect.objectContaining({
         outcome: "interrupt",
-        taskId: "task-hitl",
-        contextId: "ctx-hitl",
-        interruptId: "hitl-task-hitl-1",
-        form: expect.objectContaining({ formId: "form-1" }),
+        taskId: "task-input",
+        contextId: "ctx-input",
+        interruptId: "input-task-input-1",
+        request: expect.objectContaining({ requestId: "request-1" }),
       }),
     );
 
@@ -698,9 +692,9 @@ describe("convertA2AEventToAGUIEvents", () => {
       kind: "message" as const,
       messageId: "resume-msg",
       role: "user" as const,
-      contextId: "ctx-hitl",
-      taskId: "task-hitl",
-      parts: [{ kind: "data" as const, data: { type: "a2a.hitl.formResponse", values: { choice: "ok" } } }],
+      contextId: "ctx-input",
+      taskId: "task-input",
+      parts: [{ kind: "data" as const, data: { type: "a2a.input.response", values: { choice: "ok" } } }],
     };
     convertA2AEventToAGUIEvents(formResponse, {
       messageIdMap: new Map(),
@@ -713,10 +707,10 @@ describe("convertA2AEventToAGUIEvents", () => {
         ...firstInterrupt.status,
         message: {
           ...(firstInterrupt.status?.message as { [key: string]: unknown }),
-          messageId: "status-hitl-2",
+          messageId: "status-input-2",
           parts: [
             { kind: "text" as const, text: "Need another approval" },
-            { kind: "data" as const, data: { type: "a2a.hitl.form", formId: "form-2", fields: [] } },
+            { kind: "data" as const, data: { type: "a2a.input.request", requestId: "request-2", fields: [] } },
           ],
         },
       },
@@ -729,47 +723,47 @@ describe("convertA2AEventToAGUIEvents", () => {
 
     expect(secondRunFinished?.result).toEqual(
       expect.objectContaining({
-        interruptId: "hitl-task-hitl-2",
-        form: expect.objectContaining({ formId: "form-2" }),
+        interruptId: "input-task-input-2",
+        request: expect.objectContaining({ requestId: "request-2" }),
       }),
     );
   });
 
-  it("clears pending interrupts and emits activity delta on HITL form responses", () => {
+  it("clears pending interrupts and emits activity delta on input responses", () => {
     const tracker = createSharedStateTracker();
     const statusEvent = {
       kind: "status-update" as const,
-      contextId: "ctx-hitl",
+      contextId: "ctx-input",
       final: false,
       status: {
         state: "input-required" as const,
         message: {
           kind: "message" as const,
-          messageId: "status-hitl",
+          messageId: "status-input",
           role: "agent" as const,
           parts: [
             { kind: "text" as const, text: "Need approval" },
-            { kind: "data" as const, data: { type: "a2a.hitl.form", formId: "form-123" } },
+            { kind: "data" as const, data: { type: "a2a.input.request", requestId: "request-123" } },
           ],
         },
       },
-      taskId: "task-hitl",
+      taskId: "task-input",
     };
 
     convertA2AEventToAGUIEvents(statusEvent, {
       messageIdMap: new Map(),
       sharedStateTracker: tracker,
-      threadId: "thread-hitl",
-      runId: "run-hitl",
+      threadId: "thread-input",
+      runId: "run-input",
     });
 
     const responseEvent = {
       kind: "message" as const,
       messageId: "resume-msg",
       role: "user" as const,
-      contextId: "ctx-hitl",
-      taskId: "task-hitl",
-      parts: [{ kind: "data" as const, data: { type: "a2a.hitl.formResponse", values: { choice: "ok" } } }],
+      contextId: "ctx-input",
+      taskId: "task-input",
+      parts: [{ kind: "data" as const, data: { type: "a2a.input.response", values: { choice: "ok" } } }],
     };
 
     const events = convertA2AEventToAGUIEvents(responseEvent, {

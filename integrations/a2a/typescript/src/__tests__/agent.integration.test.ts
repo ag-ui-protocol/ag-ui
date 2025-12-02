@@ -387,9 +387,8 @@ describe("A2AAgent integration with real A2AClient", () => {
     expect(rpcPayload?.params?.metadata).not.toHaveProperty("threadId");
     expect(rpcPayload?.params?.metadata).not.toHaveProperty("runId");
 
-    // Then history and artifact defaults are forwarded
-    const history = rpcPayload?.params?.metadata?.history as unknown[];
-    expect(Array.isArray(history) ? history.length : 0).toBeGreaterThan(1);
+    // Then we do not resend transcript history; only the current payload plus metadata
+    expect(rpcPayload?.params?.metadata?.history).toBeUndefined();
 
     const rpcHeaders = new Headers(fetchMock.mock.calls[1]?.[1]?.headers);
     expect(rpcHeaders.get("X-A2A-Extensions")).toBeNull();
@@ -655,11 +654,11 @@ describe("A2AAgent integration with real A2AClient", () => {
               id: body.id ?? 1,
               result: {
                 kind: "message",
-                messageId: "hitl-send-ack",
+                messageId: "input-send-ack",
                 role: "agent",
                 parts: [{ kind: "text", text: "ack" }],
-                contextId: body.params?.message?.contextId ?? "ctx-hitl",
-                taskId: "task-hitl",
+                contextId: body.params?.message?.contextId ?? "ctx-input",
+                taskId: "task-input",
               },
             }),
             { status: 200, headers: { "Content-Type": "application/json" } },
@@ -765,7 +764,7 @@ describe("A2AAgent integration with real A2AClient", () => {
     ).toBe(true);
   });
 
-  it("finishes with interrupt outcome and projects pending interrupts on HITL input-required status", async () => {
+  it("finishes with interrupt outcome and projects pending interrupts on input-required status", async () => {
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.endsWith("/.well-known/agent.json")) {
@@ -790,11 +789,11 @@ describe("A2AAgent integration with real A2AClient", () => {
               id: body.id ?? 1,
               result: {
                 kind: "message",
-                messageId: "hitl-send-ack",
+                messageId: "input-send-ack",
                 role: "agent",
                 parts: [{ kind: "text", text: "ack" }],
-                contextId: body.params?.message?.contextId ?? "ctx-hitl",
-                taskId: "task-hitl",
+                contextId: body.params?.message?.contextId ?? "ctx-input",
+              taskId: "task-input",
               },
             }),
             { status: 200, headers: { "Content-Type": "application/json" } },
@@ -808,8 +807,8 @@ describe("A2AAgent integration with real A2AClient", () => {
               id: body.id ?? 1,
               result: {
                 kind: "task",
-                id: body.params?.id ?? "task-hitl",
-                contextId: "ctx-hitl",
+                id: body.params?.id ?? "task-input",
+                contextId: "ctx-input",
                 status: { state: "working" },
                 history: [],
                 artifacts: [],
@@ -823,18 +822,18 @@ describe("A2AAgent integration with real A2AClient", () => {
           const streamEvents = [
             {
               kind: "status-update" as const,
-              contextId: "ctx-hitl",
-              taskId: "task-hitl",
+              contextId: "ctx-input",
+              taskId: "task-input",
               final: false,
               status: {
                 state: "input-required" as const,
                 message: {
                   kind: "message" as const,
-                  messageId: "hitl-status",
+                  messageId: "input-status",
                   role: "agent" as const,
                   parts: [
                     { kind: "text" as const, text: "Need approval" },
-                    { kind: "data" as const, data: { type: "a2a.hitl.form", formId: "form-123" } },
+                    { kind: "data" as const, data: { type: "a2a.input.request", requestId: "request-123" } },
                   ],
                 },
               },
@@ -855,7 +854,7 @@ describe("A2AAgent integration with real A2AClient", () => {
     const client = new A2AClient("https://agent.local");
     const agent = new A2AAgent({
       a2aClient: client,
-      initialMessages: [createMessage({ id: "user-1", role: "user", content: "Start HITL" })],
+      initialMessages: [createMessage({ id: "user-1", role: "user", content: "Start input request" })],
       initialState: { view: { tasks: {}, artifacts: {}, pendingInterrupts: {} } },
     });
 
@@ -867,7 +866,7 @@ describe("A2AAgent integration with real A2AClient", () => {
       | { result?: Record<string, unknown> }
       | undefined;
     expect(runFinished?.result).toEqual(
-      expect.objectContaining({ outcome: "interrupt", taskId: "task-hitl", contextId: "ctx-hitl" }),
+      expect.objectContaining({ outcome: "interrupt", taskId: "task-input", contextId: "ctx-input" }),
     );
     expect(
       (agent.state as { view?: { pendingInterrupts?: Record<string, unknown> } }).view?.pendingInterrupts,
@@ -875,9 +874,9 @@ describe("A2AAgent integration with real A2AClient", () => {
     const activitySnapshot = observed.find(
       (event) => event.type === EventType.ACTIVITY_SNAPSHOT,
     ) as { messageId?: string; activityType?: string; content?: { stage?: string; taskId?: string } };
-    expect(activitySnapshot?.activityType).toBe("HITL_FORM");
+    expect(activitySnapshot?.activityType).toBe("INPUT_REQUIRED");
     expect(activitySnapshot?.content?.stage).toBe("awaiting_input");
-    expect(activitySnapshot?.content?.taskId).toBe("task-hitl");
+    expect(activitySnapshot?.content?.taskId).toBe("task-input");
     const pendingPatch = observed
       .filter((event) => event.type === EventType.STATE_DELTA)
       .flatMap((event) => (event as { delta?: Array<{ path?: string }> }).delta ?? [])

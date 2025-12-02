@@ -219,12 +219,9 @@ describe("A2AAgent", () => {
     );
     expect(metadata).not.toHaveProperty("threadId");
     expect(metadata).not.toHaveProperty("runId");
-
-    const history = metadata.history as unknown[];
-    expect(Array.isArray(history) ? history.length : 0).toBeGreaterThan(1);
   });
 
-  it("forwards history, context, and engram metadata without exposing thread or run identifiers", async () => {
+  it("forwards context and config metadata without exposing thread or run identifiers", async () => {
     const fakeClient = new FakeA2AClient({
       send: async (params) => ({
         id: null,
@@ -263,13 +260,9 @@ describe("A2AAgent", () => {
     });
 
     const params = fakeClient.sendCalls[0];
-    const history = params.metadata?.history as Array<{ messageId?: string }> | undefined;
-
     expect(params.message?.contextId).not.toBe("thread-forwarding");
-    expect(history?.map((entry) => entry.messageId)).toEqual(
-      expect.arrayContaining(["sys-1", "dev-1", "user-1"]),
-    );
-    expect(params.message?.metadata?.history).toEqual(history);
+    expect(params.metadata?.history).toBeUndefined();
+    expect(params.message?.metadata?.history).toBeUndefined();
     expect(params.message?.metadata?.context).toEqual([{ description: "region", value: "us-west" }]);
     expect(params.message?.metadata?.engram).toEqual({ scope: "task", update: { feature: true } });
     expect(params.metadata).not.toHaveProperty("threadId");
@@ -395,23 +388,23 @@ describe("A2AAgent", () => {
     expect(headers?.get("X-A2A-Extensions")).toBe("custom-ext");
   });
 
-  it("stops streaming and emits interrupt run finish on HITL input-required status", async () => {
+  it("stops streaming and emits interrupt run finish on input-required status", async () => {
     const fakeClient = new FakeA2AClient({
       stream: async function* () {
         yield {
           kind: "status-update",
-          taskId: "task-hitl",
-          contextId: "ctx-hitl",
+          taskId: "task-input",
+          contextId: "ctx-input",
           final: false,
           status: {
             state: "input-required",
             message: {
               kind: "message",
-              messageId: "status-hitl",
+              messageId: "status-input",
               role: "agent",
               parts: [
                 { kind: "text", text: "Need approval" },
-                { kind: "data", data: { type: "a2a.hitl.form", formId: "form-abc" } },
+                { kind: "data", data: { type: "a2a.input.request", requestId: "request-abc" } },
               ],
             },
           },
@@ -434,7 +427,7 @@ describe("A2AAgent", () => {
 
     await agent.runAgent(
       {
-        forwardedProps: { a2a: { mode: "stream", taskId: "task-hitl", subscribeOnly: false } },
+        forwardedProps: { a2a: { mode: "stream", taskId: "task-input", subscribeOnly: false } },
       },
       { onEvent: ({ event }) => observed.push(event) },
     );
@@ -451,7 +444,7 @@ describe("A2AAgent", () => {
       .map((event) => (event as { delta?: string }).delta);
 
     expect(runFinished?.result).toEqual(
-      expect.objectContaining({ outcome: "interrupt", taskId: "task-hitl" }),
+      expect.objectContaining({ outcome: "interrupt", taskId: "task-input" }),
     );
     expect(deltas).toContain("Need approval");
     expect(deltas).not.toContain("should not appear");

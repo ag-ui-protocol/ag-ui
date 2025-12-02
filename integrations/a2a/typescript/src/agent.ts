@@ -290,10 +290,6 @@ export class A2AAgent extends AbstractAgent {
 
     const messageMetadata: Record<string, unknown> = { ...(message.metadata ?? {}) };
 
-    if (converted.metadata?.history) {
-      messageMetadata.history = converted.metadata.history;
-    }
-
     if (converted.metadata?.context) {
       messageMetadata.context = converted.metadata.context;
     }

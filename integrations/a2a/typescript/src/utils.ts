@@ -311,20 +311,20 @@ export function convertAGUIMessagesToA2A(
       history.push(targetMessage);
     }
 
-    const formResponsePayload = {
-      type: "a2a.hitl.formResponse",
+    const inputResponsePayload = {
+      type: "a2a.input.response",
       interruptId: resume.interruptId,
       values: resume.payload,
       payload: resume.payload,
     };
 
-    targetMessage.parts = [
-      ...(targetMessage.parts ?? []),
-      {
-        kind: "data",
-        data: formResponsePayload,
-      } as A2ADataPart,
-    ];
+      targetMessage.parts = [
+        ...(targetMessage.parts ?? []),
+        {
+          kind: "data",
+          data: inputResponsePayload,
+        } as A2ADataPart,
+      ];
     targetMessage.contextId = targetMessage.contextId ?? contextId;
     targetMessage.taskId = targetMessage.taskId ?? taskId;
   }
@@ -335,10 +335,6 @@ export function convertAGUIMessagesToA2A(
 
   if (options.context?.length) {
     metadata.context = options.context;
-  }
-
-  if (history.length) {
-    metadata.history = history;
   }
 
   if (options.engramUpdate) {
@@ -468,7 +464,7 @@ const nextInterruptId = (tracker: SharedStateTracker, taskId: string): string =>
   tracker.interruptCounters = counters;
   const nextValue = (counters.get(taskId) ?? 0) + 1;
   counters.set(taskId, nextValue);
-  return `hitl-${taskId}-${nextValue}`;
+  return `input-${taskId}-${nextValue}`;
 };
 
 const resolveDecisionFromState = (state?: string): string | undefined => {
@@ -503,14 +499,14 @@ const resolveStageFromState = (state?: string): string | undefined => {
   return "completed";
 };
 
-const extractHitlFormData = (
+const extractInputRequestData = (
   message?: A2AMessage,
-): { form: Record<string, unknown>; formId?: string; reason?: string } | null => {
+): { request: Record<string, unknown>; requestId?: string; reason?: string } | null => {
   if (!message || message.kind !== "message") {
     return null;
   }
 
-  let formPayload: Record<string, unknown> | null = null;
+  let requestPayload: Record<string, unknown> | null = null;
 
   for (const part of message.parts ?? []) {
     if (part.kind !== "data") {
@@ -518,13 +514,13 @@ const extractHitlFormData = (
     }
 
     const data = (part as A2ADataPart).data;
-    if (data && typeof data === "object" && (data as { type?: unknown }).type === "a2a.hitl.form") {
-      formPayload = data as Record<string, unknown>;
+    if (data && typeof data === "object" && (data as { type?: unknown }).type === "a2a.input.request") {
+      requestPayload = data as Record<string, unknown>;
       break;
     }
   }
 
-  if (!formPayload) {
+  if (!requestPayload) {
     return null;
   }
 
@@ -535,14 +531,16 @@ const extractHitlFormData = (
     .join("\n")
     .trim();
 
-  const formId =
-    typeof (formPayload as { formId?: unknown }).formId === "string"
-      ? (formPayload as { formId?: string }).formId
+  const requestId =
+    typeof (requestPayload as { formId?: unknown; requestId?: unknown }).formId === "string"
+      ? (requestPayload as { formId?: string }).formId
+      : typeof (requestPayload as { requestId?: unknown }).requestId === "string"
+        ? (requestPayload as { requestId?: string }).requestId
       : undefined;
 
   return {
-    form: formPayload,
-    formId,
+    request: requestPayload,
+    requestId,
     reason: reason || undefined,
   };
 };
@@ -859,18 +857,18 @@ function convertMessageToEvents(
           continue;
         }
 
-        if (payloadType === "a2a.hitl.formResponse" && options.sharedStateTracker) {
-          const tracker = options.sharedStateTracker;
-          const pending = findPendingInterruptForTask(tracker, message.taskId);
+    if (payloadType === "a2a.input.response" && options.sharedStateTracker) {
+      const tracker = options.sharedStateTracker;
+      const pending = findPendingInterruptForTask(tracker, message.taskId);
 
           if (pending) {
             events.push({
-              type: EventType.ACTIVITY_DELTA,
-              messageId: pending.interruptId,
-              activityType: "HITL_FORM",
-              patch: [
-                { op: "replace", path: "/stage", value: "working" },
-                { op: "replace", path: "/decision", value: "provided" },
+          type: EventType.ACTIVITY_DELTA,
+          messageId: pending.interruptId,
+          activityType: "INPUT_REQUIRED",
+          patch: [
+            { op: "replace", path: "/stage", value: "working" },
+            { op: "replace", path: "/decision", value: "provided" },
                 {
                   op: "add",
                   path: "/response",
@@ -1018,7 +1016,7 @@ const projectStatusUpdate = (
       );
     }
 
-    const formData = statusState === "input-required" ? extractHitlFormData(statusMessage as A2AMessage) : null;
+    const formData = statusState === "input-required" ? extractInputRequestData(statusMessage as A2AMessage) : null;
     const existingPending = findPendingInterruptForTask(tracker, event.taskId);
 
     if (statusState === "input-required" && formData) {
@@ -1040,7 +1038,7 @@ const projectStatusUpdate = (
           {
             interruptId,
             taskId: event.taskId,
-            formId: formData.formId,
+            requestId: formData.requestId,
             reason: formData.reason,
             contextId: event.contextId,
           },
@@ -1051,12 +1049,12 @@ const projectStatusUpdate = (
       events.push({
         type: EventType.ACTIVITY_SNAPSHOT,
         messageId: interruptId,
-        activityType: "HITL_FORM",
+        activityType: "INPUT_REQUIRED",
         content: {
           stage: "awaiting_input",
           taskId: event.taskId,
           contextId: event.contextId,
-          form: formData.form,
+          request: formData.request,
           reason: formData.reason,
         },
         replace: false,
@@ -1072,7 +1070,7 @@ const projectStatusUpdate = (
             taskId: event.taskId,
             contextId: event.contextId,
             interruptId,
-            form: formData.form,
+            request: formData.request,
           },
           rawEvent: event,
         } as BaseEvent;
@@ -1083,9 +1081,9 @@ const projectStatusUpdate = (
 
       if (stage || decision) {
         events.push({
-          type: EventType.ACTIVITY_DELTA,
-          messageId: existingPending.interruptId,
-          activityType: "HITL_FORM",
+        type: EventType.ACTIVITY_DELTA,
+        messageId: existingPending.interruptId,
+        activityType: "INPUT_REQUIRED",
           patch: [
             ...(stage ? [{ op: "replace", path: "/stage", value: stage }] : []),
             ...(decision ? [{ op: "replace", path: "/decision", value: decision }] : []),

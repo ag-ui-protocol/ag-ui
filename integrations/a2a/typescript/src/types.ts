@@ -25,7 +25,7 @@ export type {
 
 export type A2ARunMode = "send" | "stream";
 
-export interface HitlResumePayload {
+export interface InputResumePayload {
   interruptId: string;
   payload: unknown;
 }
@@ -48,7 +48,7 @@ export interface A2ARunOptions {
   engramUpdate?: EngramUpdate;
   artifactBasePath?: string;
   subscribeOnly?: boolean;
-  resume?: HitlResumePayload;
+  resume?: InputResumePayload;
 }
 
 export interface SurfaceTracker {
@@ -77,7 +77,7 @@ export interface ConvertAGUIMessagesOptions {
   engramUpdate?: EngramUpdate;
   engramExtensionUri?: string;
   context?: Context[];
-  resume?: HitlResumePayload;
+  resume?: InputResumePayload;
 }
 
 export interface ConvertedA2AMessages {

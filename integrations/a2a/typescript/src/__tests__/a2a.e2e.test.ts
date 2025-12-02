@@ -55,7 +55,7 @@ const startA2AServer = async (): Promise<TestServer> => {
           const parts = (body.params?.message?.parts ?? []) as Array<
             { kind?: string; data?: { type?: string; [key: string]: unknown } }
           >;
-          const hasFormResponse = parts.some((part) => part.data?.type === "a2a.hitl.formResponse");
+          const hasFormResponse = parts.some((part) => part.data?.type === "a2a.input.response");
           if (hasFormResponse) {
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(
@@ -179,21 +179,21 @@ const startA2AServer = async (): Promise<TestServer> => {
             });
             res.end();
             return;
-          } else if (body.params?.taskId === "task-hitl-e2e") {
+          } else if (body.params?.taskId === "task-input-e2e") {
             sendEvent({
               kind: "status-update",
               contextId: "ctx-e2e",
-              taskId: "task-hitl-e2e",
+              taskId: "task-input-e2e",
               final: false,
               status: {
                 state: "input-required",
                 message: {
                   kind: "message",
-                  messageId: "status-hitl",
+                  messageId: "status-input",
                   role: "agent",
                   parts: [
                     { kind: "text", text: "Need approval" },
-                    { kind: "data", data: { type: "a2a.hitl.form", formId: "form-123" } },
+                    { kind: "data", data: { type: "a2a.input.request", requestId: "request-123" } },
                   ],
                 },
               },
@@ -488,7 +488,7 @@ describe("A2A live e2e (local test server)", () => {
     expect(artifactPatches.some((patch) => patch.value === "final")).toBe(true);
   });
 
-  it("emits interrupt outcome and pending interrupts on HITL input_required", async () => {
+  it("emits interrupt outcome and pending interrupts on input_required", async () => {
     if (!server) {
       throw new Error("Test server failed to start");
     }
@@ -496,7 +496,7 @@ describe("A2A live e2e (local test server)", () => {
     const client = new A2AClient(server.baseUrl);
     const agent = new A2AAgent({
       a2aClient: client,
-      initialMessages: [createMessage({ id: "user-hitl", role: "user", content: "hitl" })],
+      initialMessages: [createMessage({ id: "user-input", role: "user", content: "input" })],
       initialState: { view: { tasks: {}, artifacts: {}, pendingInterrupts: {} } },
     });
 
@@ -504,7 +504,7 @@ describe("A2A live e2e (local test server)", () => {
 
     await agent.runAgent(
       {
-        forwardedProps: { a2a: { mode: "stream", taskId: "task-hitl-e2e", contextId: "ctx-e2e" } },
+        forwardedProps: { a2a: { mode: "stream", taskId: "task-input-e2e", contextId: "ctx-e2e" } },
       },
       { onEvent: ({ event }) => events.push(event) },
     );
@@ -518,14 +518,14 @@ describe("A2A live e2e (local test server)", () => {
       | { result?: Record<string, unknown> }
       | undefined;
     expect(runFinished?.result).toEqual(
-      expect.objectContaining({ outcome: "interrupt", taskId: "task-hitl-e2e", contextId: "ctx-e2e" }),
+      expect.objectContaining({ outcome: "interrupt", taskId: "task-input-e2e", contextId: "ctx-e2e" }),
     );
     expect(
       (agent.state as { view?: { pendingInterrupts?: Record<string, unknown> } }).view?.pendingInterrupts,
     ).not.toEqual({});
   });
 
-  it("resumes a HITL interrupt via formResponse and completes the task", async () => {
+  it("resumes an input interrupt via response and completes the task", async () => {
     if (!server) {
       throw new Error("Test server failed to start");
     }
@@ -533,15 +533,15 @@ describe("A2A live e2e (local test server)", () => {
     const client = new A2AClient(server.baseUrl);
     const agent = new A2AAgent({
       a2aClient: client,
-      initialMessages: [createMessage({ id: "user-hitl-1", role: "user", content: "start hitl" })],
+      initialMessages: [createMessage({ id: "user-input-1", role: "user", content: "start input" })],
       initialState: { view: { tasks: {}, artifacts: {}, pendingInterrupts: {} } },
     });
 
     const interruptEvents: BaseEvent[] = [];
     await agent.runAgent(
       {
-        forwardedProps: { a2a: { mode: "stream", taskId: "task-hitl-e2e", contextId: "ctx-e2e" } },
-        runId: "run-hitl-1",
+        forwardedProps: { a2a: { mode: "stream", taskId: "task-input-e2e", contextId: "ctx-e2e" } },
+        runId: "run-input-1",
       },
       { onEvent: ({ event }) => interruptEvents.push(event) },
     );
@@ -559,12 +559,12 @@ describe("A2A live e2e (local test server)", () => {
         forwardedProps: {
           a2a: {
             mode: "send",
-            taskId: "task-hitl-e2e",
+            taskId: "task-input-e2e",
             contextId: "ctx-e2e",
             resume: { interruptId: interruptId ?? "", payload: { approved: true } },
           },
         },
-        runId: "run-hitl-2",
+        runId: "run-input-2",
       },
       { onEvent: ({ event }) => resumeEvents.push(event) },
     );
@@ -576,14 +576,14 @@ describe("A2A live e2e (local test server)", () => {
     expect(
       messageParts.some(
         (part) =>
-          part.data?.type === "a2a.hitl.formResponse" &&
+          part.data?.type === "a2a.input.response" &&
           (part.data.values as Record<string, unknown> | undefined)?.approved === true,
       ),
     ).toBe(true);
     expect(
       ((sendCall?.body as { params?: { message?: { taskId?: string; contextId?: string } } } | undefined)?.params
         ?.message?.taskId),
-    ).toBe("task-hitl-e2e");
+    ).toBe("task-input-e2e");
     expect(
       ((sendCall?.body as { params?: { message?: { taskId?: string; contextId?: string } } } | undefined)?.params
         ?.message?.contextId),
@@ -593,7 +593,7 @@ describe("A2A live e2e (local test server)", () => {
     expect(
       stateDeltas.some((event) =>
         (event as { delta?: Array<{ path?: string; value?: unknown }> }).delta?.some(
-          (patch) => patch.path === "/view/tasks/task-hitl-e2e/status" && (patch.value as { state?: string })?.state === "succeeded",
+          (patch) => patch.path === "/view/tasks/task-input-e2e/status" && (patch.value as { state?: string })?.state === "succeeded",
         ),
       ),
     ).toBe(true);
