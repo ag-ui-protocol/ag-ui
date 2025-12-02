@@ -106,49 +106,137 @@ describe("AgentSubscriber", () => {
   });
 
   describe("subscribe/unsubscribe functionality", () => {
-    it("should allow subscribing and unsubscribing", () => {
-      // Initially no subscribers
-      expect(agent.subscribers).toHaveLength(0);
+    it("delivers events to a subscriber until it unsubscribes", async () => {
+      const runStartedEvent: RunStartedEvent = {
+        type: EventType.RUN_STARTED,
+        threadId: "test-thread",
+        runId: "run-subscribe",
+      };
 
-      // Subscribe
+      const runFinishedEvent: RunFinishedEvent = {
+        type: EventType.RUN_FINISHED,
+        threadId: "test-thread",
+        runId: "run-subscribe",
+        result: "done",
+      };
+
+      agent.setEventsToEmit([runStartedEvent, runFinishedEvent]);
+
       const subscription = agent.subscribe(mockSubscriber);
-      expect(agent.subscribers).toHaveLength(1);
-      expect(agent.subscribers[0]).toBe(mockSubscriber);
 
-      // Unsubscribe
+      await agent.runAgent();
+
+      expect(mockSubscriber.onRunStartedEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: runStartedEvent,
+          messages: agent.messages,
+          state: agent.state,
+          agent,
+        }),
+      );
+
       subscription.unsubscribe();
-      expect(agent.subscribers).toHaveLength(0);
+      jest.clearAllMocks();
+
+      agent.setEventsToEmit([runStartedEvent, runFinishedEvent]);
+      await agent.runAgent();
+
+      expect(mockSubscriber.onRunStartedEvent).not.toHaveBeenCalled();
+      expect(mockSubscriber.onRunFinishedEvent).not.toHaveBeenCalled();
     });
 
-    it("should support multiple subscribers", () => {
+    it("notifies all active subscribers during a run", async () => {
       const subscriber2: AgentSubscriber = {
-        onEvent: jest.fn(),
+        onRunStartedEvent: jest.fn(),
+        onRunFinishedEvent: jest.fn(),
       };
+
+      const runStartedEvent: RunStartedEvent = {
+        type: EventType.RUN_STARTED,
+        threadId: "test-thread",
+        runId: "run-multi",
+      };
+
+      const runFinishedEvent: RunFinishedEvent = {
+        type: EventType.RUN_FINISHED,
+        threadId: "test-thread",
+        runId: "run-multi",
+        result: "multi",
+      };
+
+      agent.setEventsToEmit([runStartedEvent, runFinishedEvent]);
 
       agent.subscribe(mockSubscriber);
       agent.subscribe(subscriber2);
 
-      expect(agent.subscribers).toHaveLength(2);
-      expect(agent.subscribers[0]).toBe(mockSubscriber);
-      expect(agent.subscribers[1]).toBe(subscriber2);
+      await agent.runAgent();
+
+      expect(mockSubscriber.onRunStartedEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: runStartedEvent,
+          messages: agent.messages,
+          state: agent.state,
+          agent,
+        }),
+      );
+      expect(subscriber2.onRunStartedEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: runStartedEvent,
+          messages: agent.messages,
+          state: agent.state,
+          agent,
+        }),
+      );
+      expect(mockSubscriber.onRunFinishedEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: runFinishedEvent,
+          result: "multi",
+        }),
+      );
+      expect(subscriber2.onRunFinishedEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: runFinishedEvent,
+          result: "multi",
+        }),
+      );
     });
 
-    it("should only remove the specific subscriber on unsubscribe", () => {
+    it("keeps other subscribers active when one unsubscribes", async () => {
       const subscriber2: AgentSubscriber = {
-        onEvent: jest.fn(),
+        onRunStartedEvent: jest.fn(),
       };
 
-      const subscription1 = agent.subscribe(mockSubscriber);
-      const subscription2 = agent.subscribe(subscriber2);
+      const runStartedEvent: RunStartedEvent = {
+        type: EventType.RUN_STARTED,
+        threadId: "test-thread",
+        runId: "run-unsub",
+      };
 
-      expect(agent.subscribers).toHaveLength(2);
+      const runFinishedEvent: RunFinishedEvent = {
+        type: EventType.RUN_FINISHED,
+        threadId: "test-thread",
+        runId: "run-unsub",
+        result: "complete",
+      };
+
+      agent.setEventsToEmit([runStartedEvent, runFinishedEvent]);
+
+      const subscription1 = agent.subscribe(mockSubscriber);
+      agent.subscribe(subscriber2);
+
+      await agent.runAgent();
+
+      expect(mockSubscriber.onRunStartedEvent).toHaveBeenCalled();
+      expect(subscriber2.onRunStartedEvent).toHaveBeenCalled();
 
       subscription1.unsubscribe();
-      expect(agent.subscribers).toHaveLength(1);
-      expect(agent.subscribers[0]).toBe(subscriber2);
+      jest.clearAllMocks();
 
-      subscription2.unsubscribe();
-      expect(agent.subscribers).toHaveLength(0);
+      agent.setEventsToEmit([runStartedEvent, runFinishedEvent]);
+      await agent.runAgent();
+
+      expect(mockSubscriber.onRunStartedEvent).not.toHaveBeenCalled();
+      expect(subscriber2.onRunStartedEvent).toHaveBeenCalledTimes(1);
     });
   });
 
