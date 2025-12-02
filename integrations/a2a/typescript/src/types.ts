@@ -25,6 +25,11 @@ export type {
 
 export type A2ARunMode = "send" | "stream";
 
+export interface HitlResumePayload {
+  interruptId: string;
+  payload: unknown;
+}
+
 export interface EngramUpdate {
   scope?: "task" | "context" | "agent";
   path?: string;
@@ -43,6 +48,7 @@ export interface A2ARunOptions {
   engramUpdate?: EngramUpdate;
   artifactBasePath?: string;
   subscribeOnly?: boolean;
+  resume?: HitlResumePayload;
 }
 
 export interface SurfaceTracker {
@@ -52,6 +58,8 @@ export interface SurfaceTracker {
 
 export interface SharedStateTracker {
   state: Record<string, unknown>;
+  emittedSnapshot?: boolean;
+  interruptCounters?: Map<string, number>;
 }
 
 export type A2AStreamEvent =
@@ -69,6 +77,7 @@ export interface ConvertAGUIMessagesOptions {
   engramUpdate?: EngramUpdate;
   engramExtensionUri?: string;
   context?: Context[];
+  resume?: HitlResumePayload;
 }
 
 export interface ConvertedA2AMessages {
@@ -89,9 +98,13 @@ export interface ConvertA2AEventOptions {
   surfaceTracker?: SurfaceTracker;
   sharedStateTracker?: SharedStateTracker;
   artifactBasePath?: string;
+  threadId?: string;
+  runId?: string;
+  taskId?: string;
 }
 
 export interface A2AAgentRunResultSummary {
   messages: Array<{ messageId: string; text: string }>;
   rawEvents: A2AStreamEvent[];
+  finishedEarly?: boolean;
 }

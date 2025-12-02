@@ -1,5 +1,5 @@
 import { EventType } from "@ag-ui/client";
-import type { Message, StateDeltaEvent, TextMessageChunkEvent } from "@ag-ui/client";
+import type { Message, StateDeltaEvent, StateSnapshotEvent, TextMessageChunkEvent } from "@ag-ui/client";
 import {
   convertAGUIMessagesToA2A,
   convertA2AEventToAGUIEvents,
@@ -199,6 +199,32 @@ describe("convertAGUIMessagesToA2A", () => {
     expect(converted.latestUserMessage?.messageId).toBe("user-2");
     expect(converted.targetMessage?.extensions ?? []).toHaveLength(0);
   });
+
+  it("appends form response payloads when resume metadata is provided", () => {
+    const converted = convertAGUIMessagesToA2A(
+      [createMessage({ id: "user-1", role: "user", content: "resume" })],
+      {
+        contextId: "ctx-hitl",
+        taskId: "task-hitl",
+        resume: { interruptId: "hitl-task-hitl-1", payload: { field: "value" } },
+      },
+    );
+
+    const target = converted.targetMessage!;
+    const dataParts = (target.parts ?? []).filter((part) => part.kind === "data") as Array<{
+      data?: Record<string, unknown>;
+    }>;
+    const formResponse = dataParts.find((part) => part.data?.type === "a2a.hitl.formResponse")?.data;
+
+    expect(formResponse).toEqual(
+      expect.objectContaining({
+        interruptId: "hitl-task-hitl-1",
+        values: { field: "value" },
+      }),
+    );
+    expect(target.contextId).toBe("ctx-hitl");
+    expect(target.taskId).toBe("task-hitl");
+  });
 });
 
 describe("convertA2AEventToAGUIEvents", () => {
@@ -303,7 +329,10 @@ describe("convertA2AEventToAGUIEvents", () => {
       delta?: Array<{ path?: string; value?: unknown }>;
     };
 
-    expect(stateEvent?.delta?.[0]?.path).toBe("/view/artifacts/artifact-1");
+    const targetPatch = stateEvent?.delta?.find(
+      (entry) => entry.path === "/view/artifacts/artifact-1",
+    );
+    expect(targetPatch?.path).toBe("/view/artifacts/artifact-1");
     expect(
       (tracker.state as { view?: { artifacts?: Record<string, unknown> } }).view?.artifacts?.[
         "artifact-1"
@@ -470,7 +499,8 @@ describe("convertA2AEventToAGUIEvents", () => {
       (event) => event.type === EventType.STATE_DELTA,
     ) as StateDeltaEvent | undefined;
 
-    expect(stateEvent?.delta?.[0]?.path).toBe("/view/config");
+    const targetPatch = stateEvent?.delta?.find((entry) => entry.path === "/view/config");
+    expect(targetPatch?.path).toBe("/view/config");
     expect(
       (tracker.state as { view?: { config?: unknown } }).view?.config,
     ).toEqual({ feature: "enabled" });
@@ -517,7 +547,7 @@ describe("convertA2AEventToAGUIEvents", () => {
         },
         timestamp: "later",
       },
-      taskId: "task-status",
+      taskId: "task-with-status",
     };
 
     const events = convertA2AEventToAGUIEvents(statusEvent, {
@@ -533,15 +563,131 @@ describe("convertA2AEventToAGUIEvents", () => {
     ) as StateDeltaEvent | undefined;
 
     expect(textEvent?.delta).toBe("Provisioning");
-    expect(stateEvent?.delta?.[0]?.path).toBe("/view/tasks/task-status/status");
+    const targetPatch = stateEvent?.delta?.find(
+      (entry) => entry.path === "/view/tasks/task-with-status/status",
+    );
+    expect(targetPatch?.path).toBe("/view/tasks/task-with-status/status");
     expect(
       (tracker.state as { view?: { tasks?: Record<string, unknown> } }).view?.tasks?.[
-        "task-status"
+        "task-with-status"
       ],
     ).toEqual(
       expect.objectContaining({
         status: expect.objectContaining({ state: "pending" }),
       }),
+    );
+  });
+
+  it("emits HITL interrupt activity, state projection, and run finish payloads", () => {
+    const tracker = createSharedStateTracker();
+    const statusEvent = {
+      kind: "status-update" as const,
+      contextId: "ctx-hitl",
+      final: false,
+      status: {
+        state: "input-required" as const,
+        message: {
+          kind: "message" as const,
+          messageId: "status-hitl",
+          role: "agent" as const,
+          parts: [
+            { kind: "text" as const, text: "Need approval" },
+            { kind: "data" as const, data: { type: "a2a.hitl.form", formId: "form-123", fields: [] } },
+          ],
+        },
+        timestamp: "soon",
+      },
+      taskId: "task-hitl",
+    };
+
+    const events = convertA2AEventToAGUIEvents(statusEvent, {
+      messageIdMap: new Map(),
+      sharedStateTracker: tracker,
+      threadId: "thread-hitl",
+      runId: "run-hitl",
+    });
+
+    const runFinished = events.find((event) => event.type === EventType.RUN_FINISHED) as {
+      result?: Record<string, unknown>;
+    };
+    const activitySnapshot = events.find(
+      (event) => event.type === EventType.ACTIVITY_SNAPSHOT,
+    ) as { messageId?: string; activityType?: string };
+    const pendingInterrupts = (tracker.state as {
+      view?: { pendingInterrupts?: Record<string, unknown> };
+    }).view?.pendingInterrupts;
+
+    expect(activitySnapshot?.activityType).toBe("HITL_FORM");
+    expect(runFinished?.result).toEqual(
+      expect.objectContaining({
+        outcome: "interrupt",
+        taskId: "task-hitl",
+        interruptId: activitySnapshot?.messageId,
+      }),
+    );
+    expect(runFinished?.result?.contextId).toBe("ctx-hitl");
+    expect(pendingInterrupts?.[activitySnapshot?.messageId ?? ""]).toEqual(
+      expect.objectContaining({ taskId: "task-hitl", formId: "form-123" }),
+    );
+  });
+
+  it("clears pending interrupts and emits activity delta on HITL form responses", () => {
+    const tracker = createSharedStateTracker();
+    const statusEvent = {
+      kind: "status-update" as const,
+      contextId: "ctx-hitl",
+      final: false,
+      status: {
+        state: "input-required" as const,
+        message: {
+          kind: "message" as const,
+          messageId: "status-hitl",
+          role: "agent" as const,
+          parts: [
+            { kind: "text" as const, text: "Need approval" },
+            { kind: "data" as const, data: { type: "a2a.hitl.form", formId: "form-123" } },
+          ],
+        },
+      },
+      taskId: "task-hitl",
+    };
+
+    convertA2AEventToAGUIEvents(statusEvent, {
+      messageIdMap: new Map(),
+      sharedStateTracker: tracker,
+      threadId: "thread-hitl",
+      runId: "run-hitl",
+    });
+
+    const responseEvent = {
+      kind: "message" as const,
+      messageId: "resume-msg",
+      role: "user" as const,
+      contextId: "ctx-hitl",
+      taskId: "task-hitl",
+      parts: [{ kind: "data" as const, data: { type: "a2a.hitl.formResponse", values: { choice: "ok" } } }],
+    };
+
+    const events = convertA2AEventToAGUIEvents(responseEvent, {
+      messageIdMap: new Map(),
+      sharedStateTracker: tracker,
+    });
+
+    const activityDelta = events.find(
+      (event) => event.type === EventType.ACTIVITY_DELTA,
+    ) as { patch?: Array<{ path?: string; value?: unknown }> };
+    const stateDelta = events.find(
+      (event) => event.type === EventType.STATE_DELTA,
+    ) as StateDeltaEvent | undefined;
+
+    expect(
+      activityDelta?.patch?.some((entry) => entry.path === "/stage" && entry.value === "working"),
+    ).toBe(true);
+    expect(
+      stateDelta?.delta?.some((entry) => entry.op === "remove" && `${entry.path}`.includes("/view/pendingInterrupts")),
+    ).toBe(true);
+    expect((tracker.state as { view?: { pendingInterrupts?: Record<string, unknown> } }).view?.pendingInterrupts).toEqual(
+      {},
     );
   });
 
@@ -594,7 +740,7 @@ describe("convertA2AEventToAGUIEvents", () => {
     const tracker = createSharedStateTracker();
     const taskSnapshot = {
       kind: "task" as const,
-      id: "task-audit",
+      id: "task-history",
       contextId: "ctx-audit",
       status: { state: "working" as const },
       history: [
@@ -624,7 +770,10 @@ describe("convertA2AEventToAGUIEvents", () => {
       | undefined;
     const textChunks = events.filter((event) => event.type === EventType.TEXT_MESSAGE_CHUNK);
 
-    expect(stateDelta?.delta?.[0]?.path).toBe("/view/tasks/task-audit");
+    const targetPatch = stateDelta?.delta?.find(
+      (entry) => entry.path === "/view/tasks/task-history",
+    );
+    expect(targetPatch?.path).toBe("/view/tasks/task-history");
     expect(
       textChunks.map((event) => (event as { delta?: unknown }).delta),
     ).toEqual(expect.arrayContaining(["First output", "Second output"]));

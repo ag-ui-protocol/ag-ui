@@ -131,20 +131,25 @@ export class A2AAgent extends AbstractAgent {
             surfaceTracker,
             sharedStateTracker,
             artifactBasePath: runOptions.artifactBasePath,
+            threadId: input.threadId,
+            runId: input.runId,
+            taskId: runOptions.taskId ?? converted.taskId,
           };
+
+          let summary: A2AAgentRunResultSummary | undefined;
 
           try {
             if (runOptions.mode === "send") {
               if (!sendParams) {
                 throw new Error("A2A send mode requires a message payload.");
               }
-              await this.blockingMessage(
+              summary = await this.blockingMessage(
                 sendParams as MessageSendParams,
                 subscriber,
                 convertOptions,
               );
             } else if (runOptions.taskId && runOptions.subscribeOnly) {
-              await this.resubscribeToTask(
+              summary = await this.resubscribeToTask(
                 runOptions.taskId,
                 subscriber,
                 convertOptions,
@@ -154,7 +159,7 @@ export class A2AAgent extends AbstractAgent {
               if (!sendParams) {
                 throw new Error("A2A stream mode requires a message payload.");
               }
-              await this.streamMessage(
+              summary = await this.streamMessage(
                 sendParams as MessageSendParams,
                 subscriber,
                 convertOptions,
@@ -162,7 +167,7 @@ export class A2AAgent extends AbstractAgent {
             }
           } catch (error) {
             if (runOptions.mode === "stream" && !runOptions.subscribeOnly) {
-              await this.fallbackToBlocking(
+              summary = await this.fallbackToBlocking(
                 sendParams as MessageSendParams,
                 subscriber,
                 error as Error,
@@ -173,12 +178,14 @@ export class A2AAgent extends AbstractAgent {
             }
           }
 
-          const runFinished: RunFinishedEvent = {
-            type: EventType.RUN_FINISHED,
-            threadId: input.threadId,
-            runId: input.runId,
-          };
-          subscriber.next(runFinished);
+          if (!summary?.finishedEarly) {
+            const runFinished: RunFinishedEvent = {
+              type: EventType.RUN_FINISHED,
+              threadId: input.threadId,
+              runId: input.runId,
+            };
+            subscriber.next(runFinished);
+          }
           subscriber.complete();
         } catch (error) {
           const runError: RunErrorEvent = {
@@ -257,6 +264,7 @@ export class A2AAgent extends AbstractAgent {
       engramUpdate: options.engramUpdate,
       context: input.context,
       engramExtensionUri: ENGRAM_EXTENSION_URI,
+      resume: options.resume,
     });
   }
 
@@ -278,6 +286,28 @@ export class A2AAgent extends AbstractAgent {
       contextId: baseMessage.contextId ?? converted.contextId ?? options.contextId,
       taskId: baseMessage.taskId ?? options.taskId,
     };
+
+    const messageMetadata: Record<string, unknown> = { ...(message.metadata ?? {}) };
+
+    if (converted.metadata?.history) {
+      messageMetadata.history = converted.metadata.history;
+    }
+
+    if (converted.metadata?.context) {
+      messageMetadata.context = converted.metadata.context;
+    }
+
+    if (converted.metadata?.engram) {
+      messageMetadata.engram = converted.metadata.engram;
+    }
+
+    if (converted.metadata?.resume) {
+      messageMetadata.resume = converted.metadata.resume;
+    }
+
+    if (Object.keys(messageMetadata).length) {
+      message.metadata = messageMetadata;
+    }
 
     const configuration: MessageSendConfiguration = {
       acceptedOutputModes: options.acceptedOutputModes,
@@ -310,6 +340,7 @@ export class A2AAgent extends AbstractAgent {
     convertOptions: ConvertA2AEventOptions,
   ): Promise<A2AAgentRunResultSummary> {
     const rawEvents: A2AStreamEvent[] = [];
+    let finishedEarly = false;
 
     const stream = this.a2aClient.sendMessageStream(params);
     for await (const chunk of stream) {
@@ -317,12 +348,20 @@ export class A2AAgent extends AbstractAgent {
       const events = convertA2AEventToAGUIEvents(chunk as A2AStreamEvent, convertOptions);
       for (const event of events) {
         subscriber.next(event);
+        if (event.type === EventType.RUN_FINISHED) {
+          finishedEarly = true;
+        }
+      }
+
+      if (finishedEarly) {
+        break;
       }
     }
 
     return {
       messages: [],
       rawEvents,
+      finishedEarly,
     };
   }
 
@@ -371,13 +410,18 @@ export class A2AAgent extends AbstractAgent {
 
     const events = convertA2AEventToAGUIEvents(result, convertOptions);
 
+    let finishedEarly = false;
     for (const event of events) {
       subscriber.next(event);
+      if (event.type === EventType.RUN_FINISHED) {
+        finishedEarly = true;
+      }
     }
 
     return {
       messages: [],
       rawEvents,
+      finishedEarly,
     };
   }
 
@@ -388,6 +432,7 @@ export class A2AAgent extends AbstractAgent {
     historyLength?: number,
   ): Promise<A2AAgentRunResultSummary> {
     const rawEvents: A2AStreamEvent[] = [];
+    let finishedEarly = false;
     const taskResponse = await this.a2aClient.getTask({ id: taskId, historyLength });
 
     if (this.a2aClient.isErrorResponse(taskResponse)) {
@@ -403,6 +448,17 @@ export class A2AAgent extends AbstractAgent {
       );
       for (const event of snapshotEvents) {
         subscriber.next(event);
+        if (event.type === EventType.RUN_FINISHED) {
+          finishedEarly = true;
+        }
+      }
+
+      if (finishedEarly) {
+        return {
+          messages: [],
+          rawEvents,
+          finishedEarly,
+        };
       }
     }
 
@@ -412,27 +468,26 @@ export class A2AAgent extends AbstractAgent {
       const events = convertA2AEventToAGUIEvents(chunk as A2AStreamEvent, convertOptions);
       for (const event of events) {
         subscriber.next(event);
+        if (event.type === EventType.RUN_FINISHED) {
+          finishedEarly = true;
+        }
+      }
+
+      if (finishedEarly) {
+        break;
       }
     }
 
     return {
       messages: [],
       rawEvents,
+      finishedEarly,
     };
   }
 
   private initializeExtension(client: A2AClient) {
     const addExtensionHeader = (headers: Headers) => {
-      const existingValue = headers.get("X-A2A-Extensions") ?? "";
-      const values = existingValue
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean);
-
-      if (!values.includes(ENGRAM_EXTENSION_URI)) {
-        values.push(ENGRAM_EXTENSION_URI);
-        headers.set("X-A2A-Extensions", values.join(", "));
-      }
+      headers.set("X-A2A-Extensions", ENGRAM_EXTENSION_URI);
     };
 
     const patchFetch = () => {

@@ -111,6 +111,14 @@ const safeJsonParse = (value: string): unknown => {
   }
 };
 
+const cloneValue = <T>(value: T): T => {
+  if (typeof structuredClone === "function") {
+    return structuredClone(value);
+  }
+
+  return JSON.parse(JSON.stringify(value));
+};
+
 const messageContentToParts = (message: Message): A2APart[] => {
   const parts: A2APart[] = [];
   const { content } = message as { content?: Message["content"] };
@@ -204,6 +212,7 @@ export function convertAGUIMessagesToA2A(
   const contextId = options.contextId;
   const taskId = options.taskId;
   const engramExtensionUri = options.engramExtensionUri ?? ENGRAM_EXTENSION_URI;
+  const resume = options.resume;
 
   for (const message of messages) {
     if (message.role === "activity") {
@@ -289,6 +298,37 @@ export function convertAGUIMessagesToA2A(
     targetMessage.taskId = targetMessage.taskId ?? taskId;
   }
 
+  if (resume) {
+    if (!targetMessage || targetMessage.role !== "user") {
+      targetMessage = {
+        kind: "message",
+        messageId: randomUUID(),
+        role: "user",
+        parts: [],
+        contextId,
+        taskId,
+      };
+      history.push(targetMessage);
+    }
+
+    const formResponsePayload = {
+      type: "a2a.hitl.formResponse",
+      interruptId: resume.interruptId,
+      values: resume.payload,
+      payload: resume.payload,
+    };
+
+    targetMessage.parts = [
+      ...(targetMessage.parts ?? []),
+      {
+        kind: "data",
+        data: formResponsePayload,
+      } as A2ADataPart,
+    ];
+    targetMessage.contextId = targetMessage.contextId ?? contextId;
+    targetMessage.taskId = targetMessage.taskId ?? taskId;
+  }
+
   const latestUserMessage = [...history].reverse().find((msg) => msg.role === "user");
 
   const metadata: Record<string, unknown> = {};
@@ -305,6 +345,10 @@ export function convertAGUIMessagesToA2A(
     metadata.engram = options.engramUpdate;
   }
 
+  if (resume) {
+    metadata.resume = resume;
+  }
+
   return {
     contextId,
     taskId,
@@ -314,6 +358,194 @@ export function convertAGUIMessagesToA2A(
     metadata: Object.keys(metadata).length ? metadata : undefined,
   };
 }
+
+const createStateSnapshotEvent = (
+  tracker: SharedStateTracker,
+  rawEvent?: unknown,
+): StateSnapshotEvent => ({
+  type: EventType.STATE_SNAPSHOT,
+  snapshot: cloneValue(tracker.state),
+  rawEvent,
+});
+
+const collectStateEvents = (
+  tracker: SharedStateTracker,
+  rawEvent: unknown,
+  ...stateEvents: Array<StateDeltaEvent | StateSnapshotEvent | null | undefined>
+): BaseEvent[] => {
+  const events: BaseEvent[] = [];
+
+  if (!tracker.emittedSnapshot) {
+    tracker.emittedSnapshot = true;
+    events.push(createStateSnapshotEvent(tracker, rawEvent));
+  }
+
+  for (const stateEvent of stateEvents) {
+    if (stateEvent) {
+      events.push(stateEvent);
+    }
+  }
+
+  return events;
+};
+
+const removeSharedStatePath = (
+  tracker: SharedStateTracker,
+  path: string,
+  options: { rawEvent?: unknown } = {},
+): StateDeltaEvent | null => {
+  const segments = (path.startsWith("/") ? path.slice(1) : path).split("/").filter(Boolean);
+  if (segments.length === 0) {
+    tracker.state = {};
+    return {
+      type: EventType.STATE_DELTA,
+      delta: [{ op: "remove", path: "/" }],
+      rawEvent: options.rawEvent,
+    };
+  }
+
+  let cursor: Record<string, unknown> = tracker.state;
+
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    const key = segments[index];
+    const nextValue = cursor[key];
+
+    if (typeof nextValue !== "object" || nextValue === null || Array.isArray(nextValue)) {
+      return null;
+    }
+
+    cursor = nextValue as Record<string, unknown>;
+  }
+
+  const leafKey = segments[segments.length - 1];
+  if (!(leafKey in cursor)) {
+    return null;
+  }
+
+  delete cursor[leafKey];
+
+  return {
+    type: EventType.STATE_DELTA,
+    delta: [{ op: "remove", path: normalizeJsonPointer(path) }],
+    rawEvent: options.rawEvent,
+  };
+};
+
+const getPendingInterruptEntries = (
+  tracker: SharedStateTracker,
+): Record<string, { taskId?: string; [key: string]: unknown }> => {
+  const view = (tracker.state.view ?? {}) as Record<string, unknown>;
+  const pending = view.pendingInterrupts;
+
+  if (pending && typeof pending === "object" && !Array.isArray(pending)) {
+    return pending as Record<string, { taskId?: string; [key: string]: unknown }>;
+  }
+
+  return {};
+};
+
+const findPendingInterruptForTask = (
+  tracker: SharedStateTracker,
+  taskId?: string,
+): { interruptId: string; entry: { [key: string]: unknown } } | null => {
+  if (!taskId) {
+    return null;
+  }
+
+  const pendingEntries = getPendingInterruptEntries(tracker);
+
+  for (const [interruptId, entry] of Object.entries(pendingEntries)) {
+    if (entry && typeof entry === "object" && (entry as { taskId?: string }).taskId === taskId) {
+      return { interruptId, entry };
+    }
+  }
+
+  return null;
+};
+
+const nextInterruptId = (tracker: SharedStateTracker, taskId: string): string => {
+  const counters = tracker.interruptCounters ?? new Map<string, number>();
+  tracker.interruptCounters = counters;
+  const nextValue = (counters.get(taskId) ?? 0) + 1;
+  counters.set(taskId, nextValue);
+  return `hitl-${taskId}-${nextValue}`;
+};
+
+const resolveDecisionFromState = (state?: string): string | undefined => {
+  if (!state) {
+    return undefined;
+  }
+
+  if (state === "rejected" || state === "failed" || state === "canceled") {
+    return "rejected";
+  }
+
+  if (state === "working" || state === "input-required") {
+    return "provided";
+  }
+
+  return "approved";
+};
+
+const resolveStageFromState = (state?: string): string | undefined => {
+  if (!state) {
+    return undefined;
+  }
+
+  if (state === "input-required") {
+    return "awaiting_input";
+  }
+
+  if (state === "working") {
+    return "working";
+  }
+
+  return "completed";
+};
+
+const extractHitlFormData = (
+  message?: A2AMessage,
+): { form: Record<string, unknown>; formId?: string; reason?: string } | null => {
+  if (!message || message.kind !== "message") {
+    return null;
+  }
+
+  let formPayload: Record<string, unknown> | null = null;
+
+  for (const part of message.parts ?? []) {
+    if (part.kind !== "data") {
+      continue;
+    }
+
+    const data = (part as A2ADataPart).data;
+    if (data && typeof data === "object" && (data as { type?: unknown }).type === "a2a.hitl.form") {
+      formPayload = data as Record<string, unknown>;
+      break;
+    }
+  }
+
+  if (!formPayload) {
+    return null;
+  }
+
+  const reason = (message.parts ?? [])
+    .filter((part): part is A2ATextPart => part.kind === "text")
+    .map((part) => part.text ?? "")
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+
+  const formId =
+    typeof (formPayload as { formId?: unknown }).formId === "string"
+      ? (formPayload as { formId?: string }).formId
+      : undefined;
+
+  return {
+    form: formPayload,
+    formId,
+    reason: reason || undefined,
+  };
+};
 
 const isA2AMessage = (event: A2AStreamEvent): event is A2AMessage => event.kind === "message";
 
@@ -350,10 +582,12 @@ const applySharedStateUpdate = (
   tracker: SharedStateTracker,
   path: string,
   value: unknown,
-  options: { append?: boolean; rawEvent?: unknown } = {},
+  options: { append?: boolean; rawEvent?: unknown; includeContainers?: boolean } = {},
 ): StateDeltaEvent => {
   const segments = (path.startsWith("/") ? path.slice(1) : path).split("/").filter(Boolean);
   const encodedPath = normalizeJsonPointer(path);
+  const containerOps: JsonPatchOperation[] = [];
+  const includeContainers = options.includeContainers ?? true;
 
   if (segments.length === 0) {
     tracker.state = value as Record<string, unknown>;
@@ -368,8 +602,17 @@ const applySharedStateUpdate = (
   for (let index = 0; index < segments.length - 1; index += 1) {
     const key = segments[index];
     const nextValue = cursor[key];
+    const containerPath = normalizeJsonPointer(segments.slice(0, index + 1).join("/"));
 
-    if (typeof nextValue !== "object" || nextValue === null || Array.isArray(nextValue)) {
+    if (includeContainers && (typeof nextValue !== "object" || nextValue === null || Array.isArray(nextValue))) {
+      const op: JsonPatchOperation["op"] = nextValue === undefined ? "add" : "replace";
+      cursor[key] = {};
+      containerOps.push({
+        op,
+        path: containerPath,
+        value: {},
+      });
+    } else if (typeof nextValue !== "object" || nextValue === null || Array.isArray(nextValue)) {
       cursor[key] = {};
     }
 
@@ -403,7 +646,7 @@ const applySharedStateUpdate = (
 
       return {
         type: EventType.STATE_DELTA,
-        delta,
+        delta: [...containerOps, ...delta],
         rawEvent: options.rawEvent,
       };
     } else if (currentValue === undefined) {
@@ -440,7 +683,7 @@ const applySharedStateUpdate = (
 
   return {
     type: EventType.STATE_DELTA,
-    delta,
+    delta: [...containerOps, ...delta],
     rawEvent: options.rawEvent,
   };
 };
@@ -590,6 +833,40 @@ function convertMessageToEvents(
           continue;
         }
 
+        if (payloadType === "a2a.hitl.formResponse" && options.sharedStateTracker) {
+          const tracker = options.sharedStateTracker;
+          const pending = findPendingInterruptForTask(tracker, message.taskId);
+
+          if (pending) {
+            events.push({
+              type: EventType.ACTIVITY_DELTA,
+              messageId: pending.interruptId,
+              activityType: "HITL_FORM",
+              patch: [
+                { op: "replace", path: "/stage", value: "working" },
+                { op: "replace", path: "/decision", value: "provided" },
+                {
+                  op: "add",
+                  path: "/response",
+                  value: payloadRecord.values ?? payloadRecord,
+                },
+              ],
+            } as BaseEvent);
+
+            const removeEvent = removeSharedStatePath(
+              tracker,
+              `/view/pendingInterrupts/${pending.interruptId}`,
+              { rawEvent: message },
+            );
+
+            if (removeEvent) {
+              events.push(...collectStateEvents(tracker, message, removeEvent));
+            }
+          }
+
+          continue;
+        }
+
         const surfaceOperation = extractSurfaceOperation(payloadRecord);
         if (surfaceOperation && options.surfaceTracker) {
           const tracker = options.surfaceTracker;
@@ -651,28 +928,161 @@ const projectStatusUpdate = (
   const statusMessage = event.status?.message;
   const statusState = event.status?.state;
   const aliasKey = statusState && statusState !== "input-required" ? `${event.taskId}:status` : undefined;
+  const tracker = options.sharedStateTracker;
+  const stateDeltas: Array<StateDeltaEvent | null | undefined> = [];
+  const statusText =
+    statusMessage && statusMessage.kind === "message"
+      ? (statusMessage.parts ?? [])
+          .filter((part): part is A2ATextPart => part.kind === "text")
+          .map((part) => part.text ?? "")
+          .filter(Boolean)
+          .join("\n")
+          .trim()
+      : undefined;
 
   if (statusMessage && statusMessage.kind === "message") {
     events.push(...convertMessageToEvents(statusMessage as A2AMessage, options, aliasKey));
   }
 
-  if (options.sharedStateTracker) {
-    const statusValue = {
+  let runFinishedEvent: BaseEvent | undefined;
+
+  if (tracker) {
+    const statusValue: Record<string, unknown> = {
       state: statusState,
-      timestamp: event.status?.timestamp,
       taskId: event.taskId,
-      contextId: event.contextId,
-      message: statusMessage,
     };
 
-    const statusEvent = applySharedStateUpdate(
-      options.sharedStateTracker,
-      `/view/tasks/${event.taskId}/status`,
-      statusValue,
-      { rawEvent: event },
+    if (event.contextId) {
+      statusValue.contextId = event.contextId;
+    }
+
+    if (event.status?.timestamp !== undefined) {
+      statusValue.timestamp = event.status.timestamp;
+    }
+
+    if (statusMessage?.kind === "message") {
+      statusValue.messageId = statusMessage.messageId;
+    }
+
+    if (statusText) {
+      statusValue.messageText = statusText;
+    }
+
+    const includeContainers = tracker.emittedSnapshot === true;
+
+    stateDeltas.push(
+      applySharedStateUpdate(tracker, `/view/tasks/${event.taskId}/status`, statusValue, {
+        rawEvent: event,
+        includeContainers,
+      }),
+    );
+    stateDeltas.push(
+      applySharedStateUpdate(tracker, `/view/tasks/${event.taskId}/contextId`, event.contextId, {
+        rawEvent: event,
+        includeContainers,
+      }),
     );
 
-    events.push(statusEvent);
+    if (options.runId) {
+      stateDeltas.push(
+        applySharedStateUpdate(tracker, `/view/tasks/${event.taskId}/lastRunId`, options.runId, {
+          rawEvent: event,
+          includeContainers,
+        }),
+      );
+    }
+
+    const formData = statusState === "input-required" ? extractHitlFormData(statusMessage as A2AMessage) : null;
+    const existingPending = findPendingInterruptForTask(tracker, event.taskId);
+
+    if (statusState === "input-required" && formData) {
+      const interruptId =
+        existingPending?.interruptId ?? nextInterruptId(tracker, event.taskId ?? "task");
+
+      stateDeltas.push(
+        applySharedStateUpdate(
+          tracker,
+          `/view/tasks/${event.taskId}/lastInterruptId`,
+          interruptId,
+          { rawEvent: event, includeContainers },
+        ),
+      );
+      stateDeltas.push(
+        applySharedStateUpdate(
+          tracker,
+          `/view/pendingInterrupts/${interruptId}`,
+          {
+            interruptId,
+            taskId: event.taskId,
+            formId: formData.formId,
+            reason: formData.reason,
+            contextId: event.contextId,
+          },
+          { rawEvent: event, includeContainers },
+        ),
+      );
+
+      events.push({
+        type: EventType.ACTIVITY_SNAPSHOT,
+        messageId: interruptId,
+        activityType: "HITL_FORM",
+        content: {
+          stage: "awaiting_input",
+          taskId: event.taskId,
+          contextId: event.contextId,
+          form: formData.form,
+          reason: formData.reason,
+        },
+        replace: false,
+      } as BaseEvent);
+
+      if (options.threadId && options.runId) {
+        runFinishedEvent = {
+          type: EventType.RUN_FINISHED,
+          threadId: options.threadId,
+          runId: options.runId,
+          result: {
+            outcome: "interrupt",
+            taskId: event.taskId,
+            contextId: event.contextId,
+            interruptId,
+            form: formData.form,
+          },
+          rawEvent: event,
+        } as BaseEvent;
+      }
+    } else if (existingPending) {
+      const decision = resolveDecisionFromState(statusState);
+      const stage = resolveStageFromState(statusState);
+
+      if (stage || decision) {
+        events.push({
+          type: EventType.ACTIVITY_DELTA,
+          messageId: existingPending.interruptId,
+          activityType: "HITL_FORM",
+          patch: [
+            ...(stage ? [{ op: "replace", path: "/stage", value: stage }] : []),
+            ...(decision ? [{ op: "replace", path: "/decision", value: decision }] : []),
+          ],
+        } as BaseEvent);
+      }
+
+      stateDeltas.push(
+        removeSharedStatePath(
+          tracker,
+          `/view/pendingInterrupts/${existingPending.interruptId}`,
+          { rawEvent: event },
+        ),
+      );
+    }
+  }
+
+  if (tracker && stateDeltas.some(Boolean)) {
+    events.push(...collectStateEvents(tracker, event, ...stateDeltas));
+  }
+
+  if (runFinishedEvent) {
+    events.push(runFinishedEvent);
   }
 
   if (events.length === 0) {
@@ -694,6 +1104,9 @@ const projectArtifactUpdate = (
   const artifactPath = resolveArtifactPath(event.artifact, options.artifactBasePath);
   const append = event.append ?? false;
   const aliasKey = `artifact:${event.artifact.artifactId}`;
+  const tracker = options.sharedStateTracker;
+  const stateDeltas: Array<StateDeltaEvent | null | undefined> = [];
+  const includeContainers = tracker?.emittedSnapshot === true;
 
   for (const part of event.artifact.parts ?? []) {
     if (part.kind === "text") {
@@ -708,39 +1121,43 @@ const projectArtifactUpdate = (
 
       events.push(...convertMessageToEvents(message, options, aliasKey));
 
-      if (options.sharedStateTracker) {
-        const stateEvent = applySharedStateUpdate(
-          options.sharedStateTracker,
-          artifactPath,
-          (part as A2ATextPart).text ?? "",
-          { append, rawEvent: event },
+      if (tracker) {
+        stateDeltas.push(
+          applySharedStateUpdate(tracker, artifactPath, (part as A2ATextPart).text ?? "", {
+            append,
+            rawEvent: event,
+            includeContainers,
+          }),
         );
-        events.push(stateEvent);
       }
 
       continue;
     }
 
-    if (part.kind === "data" && options.sharedStateTracker) {
-      const stateEvent = applySharedStateUpdate(
-        options.sharedStateTracker,
-        artifactPath,
-        (part as A2ADataPart).data,
-        { append, rawEvent: event },
+    if (part.kind === "data" && tracker) {
+      stateDeltas.push(
+        applySharedStateUpdate(tracker, artifactPath, (part as A2ADataPart).data, {
+          append,
+          rawEvent: event,
+          includeContainers,
+        }),
       );
-      events.push(stateEvent);
       continue;
     }
 
-    if (part.kind === "file" && options.sharedStateTracker) {
-      const stateEvent = applySharedStateUpdate(
-        options.sharedStateTracker,
-        artifactPath,
-        (part as A2AFilePart).file,
-        { append, rawEvent: event },
+    if (part.kind === "file" && tracker) {
+      stateDeltas.push(
+        applySharedStateUpdate(tracker, artifactPath, (part as A2AFilePart).file, {
+          append,
+          rawEvent: event,
+          includeContainers,
+        }),
       );
-      events.push(stateEvent);
     }
+  }
+
+  if (tracker && stateDeltas.some(Boolean)) {
+    events.push(...collectStateEvents(tracker, event, ...stateDeltas));
   }
 
   if (events.length === 0) {
@@ -759,21 +1176,22 @@ const projectTask = (
   options: ConvertA2AEventOptions,
 ): BaseEvent[] => {
   const events: BaseEvent[] = [];
+  const tracker = options.sharedStateTracker;
+  const stateDeltas: Array<StateDeltaEvent | null | undefined> = [];
+  const includeContainers = tracker?.emittedSnapshot === true;
 
-  if (options.sharedStateTracker) {
+  if (tracker) {
     const taskProjection = {
       taskId: event.id,
       contextId: event.contextId,
       status: event.status,
     };
 
-    events.push(
-      applySharedStateUpdate(
-        options.sharedStateTracker,
-        `/view/tasks/${event.id}`,
-        taskProjection,
-        { rawEvent: event },
-      ),
+    stateDeltas.push(
+      applySharedStateUpdate(tracker, `/view/tasks/${event.id}`, taskProjection, {
+        rawEvent: event,
+        includeContainers,
+      }),
     );
   }
 
@@ -795,6 +1213,10 @@ const projectTask = (
         options,
       ),
     );
+  }
+
+  if (tracker && stateDeltas.some(Boolean)) {
+    events.push(...collectStateEvents(tracker, event, ...stateDeltas));
   }
 
   if (events.length === 0) {
@@ -841,15 +1263,12 @@ export function convertA2AEventToAGUIEvents(
 export const createSharedStateTracker = (
   initialState?: Record<string, unknown>,
 ): SharedStateTracker => {
-  const clone =
-    initialState === undefined
-      ? {}
-      : typeof structuredClone === "function"
-        ? structuredClone(initialState)
-        : JSON.parse(JSON.stringify(initialState));
+  const clone = initialState === undefined ? {} : cloneValue(initialState);
 
   return {
     state: clone,
+    emittedSnapshot: false,
+    interruptCounters: new Map<string, number>(),
   };
 };
 
