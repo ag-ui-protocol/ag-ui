@@ -97,7 +97,7 @@ class StrandsAgent:
             user_message = "Hello"
             if input_data.messages:
                 for msg in reversed(input_data.messages):
-                    if msg.role == "user" and msg.content:
+                    if (msg.role == "user" or msg.role == "tool") and msg.content:
                         user_message = msg.content
                         break
 
