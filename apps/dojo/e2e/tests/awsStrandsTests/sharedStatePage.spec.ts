@@ -13,7 +13,7 @@ test.describe("Shared State Feature", () => {
     );
 
     await sharedStateAgent.openChat();
-    await sharedStateAgent.sendMessage('Please give me a pasta recipe of your choosing, but one of the ingredients should be "Pasta"');
+    await sharedStateAgent.sendMessage('Please give me a pasta recipe of your choosing, but one of the ingredients should be "Pasta". Not a type of pasta, exactly the word "Pasta".');
     await sharedStateAgent.loader();
     await sharedStateAgent.awaitIngredientCard('Pasta');
     await sharedStateAgent.getInstructionItems(
@@ -44,7 +44,7 @@ test.describe("Shared State Feature", () => {
     await page.waitForTimeout(1000);
 
     // Ask chat for all ingredients
-    await sharedStateAgent.sendMessage("Give me all the ingredients");
+    await sharedStateAgent.sendMessage("Please list all of the ingredients");
     await sharedStateAgent.loader();
 
     // Verify chat response includes both existing and new ingredients
