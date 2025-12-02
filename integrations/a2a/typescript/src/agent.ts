@@ -134,6 +134,7 @@ export class A2AAgent extends AbstractAgent {
             threadId: input.threadId,
             runId: input.runId,
             taskId: runOptions.taskId ?? converted.taskId,
+            contextId: runOptions.contextId,
           };
 
           let summary: A2AAgentRunResultSummary | undefined;
@@ -433,7 +434,13 @@ export class A2AAgent extends AbstractAgent {
   ): Promise<A2AAgentRunResultSummary> {
     const rawEvents: A2AStreamEvent[] = [];
     let finishedEarly = false;
-    const taskResponse = await this.a2aClient.getTask({ id: taskId, historyLength });
+    const taskParams = {
+      id: taskId,
+      taskId,
+      ...(historyLength ? { historyLength } : {}),
+      ...(convertOptions.contextId ? { contextId: convertOptions.contextId } : {}),
+    };
+    const taskResponse = await this.a2aClient.getTask(taskParams as { id: string; historyLength?: number });
 
     if (this.a2aClient.isErrorResponse(taskResponse)) {
       const message = taskResponse.error?.message ?? "Failed to fetch A2A task snapshot";
@@ -462,7 +469,7 @@ export class A2AAgent extends AbstractAgent {
       }
     }
 
-    const stream = this.a2aClient.resubscribeTask({ id: taskId });
+    const stream = this.a2aClient.resubscribeTask(taskParams as { id: string });
     for await (const chunk of stream) {
       rawEvents.push(chunk as A2AStreamEvent);
       const events = convertA2AEventToAGUIEvents(chunk as A2AStreamEvent, convertOptions);

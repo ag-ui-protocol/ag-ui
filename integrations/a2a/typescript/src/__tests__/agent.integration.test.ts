@@ -295,6 +295,378 @@ describe("A2AAgent integration with real A2AClient", () => {
     expect(rpcHeaders.get("Content-Type")).toBe("application/json");
   });
 
+  it("creates a new task on send mode without taskId and keeps AG-UI IDs out of metadata", async () => {
+    const rpcBodies: Array<Record<string, unknown>> = [];
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/.well-known/agent.json")) {
+        return new Response(
+          JSON.stringify({ url: "https://agent.local/rpc", capabilities: { streaming: true } }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url.endsWith("/rpc")) {
+        const parsedBody = init?.body ? JSON.parse(init.body as string) : {};
+        rpcBodies.push(parsedBody);
+
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: parsedBody.id ?? 1,
+            result: {
+              kind: "message",
+              messageId: "new-task-msg",
+              role: "agent",
+              parts: [{ kind: "text", text: "New task started" }],
+              contextId: "ctx-new",
+              taskId: "task-new",
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      throw new Error(`Unhandled fetch URL: ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+
+    const client = new A2AClient("https://agent.local");
+    const agent = new A2AAgent({
+      a2aClient: client,
+      initialMessages: [createMessage({ id: "user-1", role: "user", content: "kick off" })],
+      initialState: { view: { tasks: {}, artifacts: {} } },
+    });
+
+    const result = await agent.runAgent({
+      forwardedProps: { a2a: { mode: "send" } },
+      runId: "run-hidden",
+    });
+
+    expect(result.newMessages.some((message) => String(message.content).includes("New task"))).toBe(
+      true,
+    );
+
+    const rpcPayload = rpcBodies.find((body) => body.method === "message/send") as {
+      params?: { metadata?: Record<string, unknown>; message?: { contextId?: string; taskId?: string } };
+    };
+    expect(rpcPayload?.params?.metadata).toEqual(expect.objectContaining({ mode: "send" }));
+    expect(rpcPayload?.params?.metadata).not.toHaveProperty("threadId");
+    expect(rpcPayload?.params?.metadata).not.toHaveProperty("runId");
+  });
+
+  it("routes Engram updates to the config lane only when provided", async () => {
+    const rpcBodies: Array<Record<string, unknown>> = [];
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/.well-known/agent.json")) {
+        return new Response(JSON.stringify({ url: "https://agent.local/rpc" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (url.endsWith("/rpc")) {
+        const parsedBody = init?.body ? JSON.parse(init.body as string) : {};
+        rpcBodies.push(parsedBody);
+
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: parsedBody.id ?? 1,
+            result: {
+              kind: "message",
+              messageId: "engram-msg",
+              role: "agent",
+              parts: [{ kind: "text", text: "config ack" }],
+              contextId: "ctx-config",
+              taskId: "task-config",
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      throw new Error(`Unhandled fetch URL: ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+
+    const client = new A2AClient("https://agent.local");
+    const agent = new A2AAgent({
+      a2aClient: client,
+      initialMessages: [createMessage({ id: "user-1", role: "user", content: "configure" })],
+    });
+
+    await agent.runAgent({
+      forwardedProps: {
+        a2a: {
+          mode: "send",
+          engramUpdate: { scope: "task", update: { feature: true } },
+        },
+      },
+    });
+
+    const engramPayload = rpcBodies.find((body) => body.method === "message/send") as {
+      params?: { message?: { parts?: Array<{ data?: Record<string, unknown> }> } };
+    };
+    const metadataEngram = (engramPayload?.params as { metadata?: { engram?: unknown } } | undefined)
+      ?.metadata?.engram as { scope?: string; update?: Record<string, unknown> } | undefined;
+    expect(metadataEngram).toEqual(expect.objectContaining({ scope: "task", update: { feature: true } }));
+
+    const headers = new Headers(fetchMock.mock.calls.find((call) => `${call[0]}`.endsWith("/rpc"))?.[1]
+      ?.headers);
+    expect(headers.get("X-A2A-Extensions")).toContain(ENGRAM_EXTENSION_URI);
+  });
+
+  it("applies artifact append vs snapshot defaults and projects under canonical paths", async () => {
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/.well-known/agent.json")) {
+        return new Response(
+          JSON.stringify({
+            url: "https://agent.local/rpc",
+            capabilities: { streaming: true },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (url.endsWith("/rpc")) {
+        const body = init?.body ? JSON.parse(init.body as string) : {};
+        const rpcId = typeof body.id === "number" ? body.id : 1;
+        const method = typeof body.method === "string" ? body.method : "";
+
+        if (method === "message/send") {
+          return new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: body.id ?? 1,
+              result: {
+                kind: "message",
+                messageId: "hitl-send-ack",
+                role: "agent",
+                parts: [{ kind: "text", text: "ack" }],
+                contextId: body.params?.message?.contextId ?? "ctx-hitl",
+                taskId: "task-hitl",
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+
+        if (method === "tasks/get") {
+          return new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: body.id ?? 1,
+              result: {
+                kind: "task",
+                id: body.params?.id ?? "task-artifacts",
+                contextId: "ctx-artifacts",
+                status: { state: "working" },
+                history: [],
+                artifacts: [],
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+
+        if (
+          method === "tasks/resubscribe" ||
+          method === "message/stream" ||
+          new Headers(init?.headers).get("Accept")?.includes("text/event-stream")
+        ) {
+          const streamEvents = [
+            {
+              kind: "task" as const,
+              id: "task-artifacts",
+              contextId: "ctx-artifacts",
+              status: { state: "working" as const },
+              history: [],
+              artifacts: [],
+            },
+            {
+              kind: "artifact-update" as const,
+              contextId: "ctx-artifacts",
+              taskId: "task-artifacts",
+              append: true,
+              lastChunk: false,
+              artifact: {
+                artifactId: "artifact-append",
+                parts: [{ kind: "text" as const, text: "Hello" }],
+              },
+            },
+            {
+              kind: "artifact-update" as const,
+              contextId: "ctx-artifacts",
+              taskId: "task-artifacts",
+              append: false,
+              lastChunk: true,
+              artifact: {
+                artifactId: "artifact-append",
+                parts: [{ kind: "text" as const, text: "Reset" }],
+              },
+            },
+          ];
+
+          return createSseResponse(streamEvents, rpcId);
+        }
+
+        throw new Error(`Unhandled RPC call: ${init?.body}`);
+      }
+
+      throw new Error(`Unhandled fetch URL: ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+
+    const client = new A2AClient("https://agent.local");
+    const agent = new A2AAgent({
+      a2aClient: client,
+      initialMessages: [createMessage({ id: "user-1", role: "user", content: "artifacts" })],
+      initialState: { view: { tasks: {}, artifacts: {} } },
+    });
+
+    const observedEvents: BaseEvent[] = [];
+
+    await agent.runAgent(
+      {
+        forwardedProps: { a2a: { mode: "stream", taskId: "task-artifacts", contextId: "ctx-artifacts" } },
+      },
+      { onEvent: ({ event }) => observedEvents.push(event) },
+    );
+
+    expect(
+      (agent.state as { view?: { artifacts?: Record<string, unknown> } }).view?.artifacts?.[
+        "artifact-append"
+      ],
+    ).toBe("Reset");
+
+    const stateDeltas = observedEvents.filter((event) => event.type === EventType.STATE_DELTA);
+    expect(
+      stateDeltas.some((event) =>
+        (event as { delta?: Array<{ path?: string }> }).delta?.some(
+          (patch) => patch.path === "/view/artifacts/artifact-append",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("finishes with interrupt outcome and projects pending interrupts on HITL input-required status", async () => {
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/.well-known/agent.json")) {
+        return new Response(
+          JSON.stringify({ url: "https://agent.local/rpc", capabilities: { streaming: true } }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url.endsWith("/rpc")) {
+        const body = init?.body ? JSON.parse(init.body as string) : {};
+        const rpcId = typeof body.id === "number" ? body.id : 1;
+        const method = typeof body.method === "string" ? body.method : "";
+
+        if (method === "message/send") {
+          return new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: body.id ?? 1,
+              result: {
+                kind: "message",
+                messageId: "hitl-send-ack",
+                role: "agent",
+                parts: [{ kind: "text", text: "ack" }],
+                contextId: body.params?.message?.contextId ?? "ctx-hitl",
+                taskId: "task-hitl",
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+
+        if (method === "tasks/get") {
+          return new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: body.id ?? 1,
+              result: {
+                kind: "task",
+                id: body.params?.id ?? "task-hitl",
+                contextId: "ctx-hitl",
+                status: { state: "working" },
+                history: [],
+                artifacts: [],
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+
+        if (new Headers(init?.headers).get("Accept")?.includes("text/event-stream")) {
+          const streamEvents = [
+            {
+              kind: "status-update" as const,
+              contextId: "ctx-hitl",
+              taskId: "task-hitl",
+              final: false,
+              status: {
+                state: "input-required" as const,
+                message: {
+                  kind: "message" as const,
+                  messageId: "hitl-status",
+                  role: "agent" as const,
+                  parts: [
+                    { kind: "text" as const, text: "Need approval" },
+                    { kind: "data" as const, data: { type: "a2a.hitl.form", formId: "form-123" } },
+                  ],
+                },
+              },
+            },
+          ];
+
+          return createSseResponse(streamEvents, rpcId);
+        }
+
+        throw new Error(`Unhandled RPC call: ${init?.body}`);
+      }
+
+      throw new Error(`Unhandled fetch URL: ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+
+    const client = new A2AClient("https://agent.local");
+    const agent = new A2AAgent({
+      a2aClient: client,
+      initialMessages: [createMessage({ id: "user-1", role: "user", content: "Start HITL" })],
+      initialState: { view: { tasks: {}, artifacts: {}, pendingInterrupts: {} } },
+    });
+
+    const observed: BaseEvent[] = [];
+
+    await agent.runAgent({ forwardedProps: { a2a: { mode: "stream" } } }, { onEvent: ({ event }) => observed.push(event) });
+
+    const runFinished = observed.find((event) => event.type === EventType.RUN_FINISHED) as
+      | { result?: Record<string, unknown> }
+      | undefined;
+    expect(runFinished?.result).toEqual(
+      expect.objectContaining({ outcome: "interrupt", taskId: "task-hitl", contextId: "ctx-hitl" }),
+    );
+    expect(
+      (agent.state as { view?: { pendingInterrupts?: Record<string, unknown> } }).view?.pendingInterrupts,
+    ).not.toEqual({});
+  });
+
   it("streams legacy text-only agent output without emitting shared-state deltas", async () => {
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();

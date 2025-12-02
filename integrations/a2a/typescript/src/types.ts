@@ -101,6 +101,7 @@ export interface ConvertA2AEventOptions {
   threadId?: string;
   runId?: string;
   taskId?: string;
+  contextId?: string;
 }
 
 export interface A2AAgentRunResultSummary {

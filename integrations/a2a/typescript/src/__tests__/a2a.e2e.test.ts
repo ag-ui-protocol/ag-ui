@@ -4,6 +4,7 @@ import { A2AClient } from "@a2a-js/sdk/client";
 import type { AddressInfo } from "net";
 import type { BaseEvent, Message } from "@ag-ui/client";
 import { EventType } from "@ag-ui/client";
+import { ENGRAM_EXTENSION_URI } from "../utils";
 
 const createMessage = (message: Partial<Message>): Message => message as Message;
 
@@ -12,11 +13,14 @@ jest.setTimeout(30000);
 type TestServer = {
   baseUrl: string;
   close: () => Promise<void>;
+  getRpcCalls: () => Array<{ method: string; body: unknown; headers: http.IncomingHttpHeaders }>;
+  resetRpcCalls: () => void;
 };
 
 const startA2AServer = async (): Promise<TestServer> => {
   let server: http.Server;
   let baseUrl: string;
+  const rpcCalls: Array<{ method: string; body: unknown; headers: http.IncomingHttpHeaders }> = [];
 
   const handler = async (req: http.IncomingMessage, res: http.ServerResponse) => {
     const url = req.url ?? "";
@@ -42,8 +46,12 @@ const startA2AServer = async (): Promise<TestServer> => {
         const bodyString = Buffer.concat(chunks).toString("utf-8") || "{}";
         const body = JSON.parse(bodyString) as { id?: number; method?: string; params?: any };
         const rpcId = body.id ?? 1;
+        rpcCalls.push({ method: body.method ?? "", body, headers: req.headers });
 
         if (body.method === "message/send") {
+          const requestedTaskId = body.params?.message?.taskId ?? body.params?.metadata?.taskId ?? "task-e2e";
+          const requestedContextId =
+            body.params?.message?.contextId ?? body.params?.metadata?.contextId ?? "ctx-e2e";
           const { message } = body.params ?? {};
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(
@@ -55,8 +63,8 @@ const startA2AServer = async (): Promise<TestServer> => {
                 messageId: "e2e-send",
                 role: "agent",
                 parts: [{ kind: "text", text: `Echo: ${message?.parts?.[0]?.text ?? "ping"}` }],
-                contextId: message?.contextId ?? "ctx-e2e",
-                taskId: message?.taskId ?? "task-e2e",
+                contextId: requestedContextId,
+                taskId: requestedTaskId,
               },
             }),
           );
@@ -109,7 +117,60 @@ const startA2AServer = async (): Promise<TestServer> => {
             artifacts: [],
           });
 
-          if (body.method === "tasks/resubscribe") {
+          if (body.params?.taskId === "artifact-append") {
+            sendEvent({
+              kind: "artifact-update",
+              contextId: "ctx-e2e",
+              taskId: "artifact-append",
+              append: true,
+              lastChunk: false,
+              artifact: {
+                artifactId: "artifact-append",
+                parts: [{ kind: "text", text: "chunk-1" }],
+              },
+            });
+            sendEvent({
+              kind: "artifact-update",
+              contextId: "ctx-e2e",
+              taskId: "artifact-append",
+              append: false,
+              lastChunk: true,
+              artifact: {
+                artifactId: "artifact-append",
+                parts: [{ kind: "text", text: "final" }],
+              },
+            });
+            sendEvent({
+              kind: "status-update",
+              contextId: "ctx-e2e",
+              taskId: "artifact-append",
+              final: true,
+              status: { state: "succeeded" as const, message: undefined, timestamp: new Date().toISOString() },
+            });
+            res.end();
+            return;
+          } else if (body.params?.taskId === "task-hitl-e2e") {
+            sendEvent({
+              kind: "status-update",
+              contextId: "ctx-e2e",
+              taskId: "task-hitl-e2e",
+              final: false,
+              status: {
+                state: "input-required",
+                message: {
+                  kind: "message",
+                  messageId: "status-hitl",
+                  role: "agent",
+                  parts: [
+                    { kind: "text", text: "Need approval" },
+                    { kind: "data", data: { type: "a2a.hitl.form", formId: "form-123" } },
+                  ],
+                },
+              },
+            });
+            res.end();
+            return;
+          } else if (body.method === "tasks/resubscribe") {
             sendEvent({
               kind: "status-update",
               contextId: "ctx-e2e",
@@ -195,6 +256,10 @@ const startA2AServer = async (): Promise<TestServer> => {
           else resolve();
         }),
       ),
+    getRpcCalls: () => [...rpcCalls],
+    resetRpcCalls: () => {
+      rpcCalls.length = 0;
+    },
   };
 };
 
@@ -204,6 +269,11 @@ describe("A2A live e2e (local test server)", () => {
 
   beforeAll(async () => {
     server = await startA2AServer();
+  });
+
+  beforeEach(() => {
+    observedEvents.length = 0;
+    server?.resetRpcCalls();
   });
 
   afterAll(async () => {
@@ -318,5 +388,110 @@ describe("A2A live e2e (local test server)", () => {
 
     expect(combinedAssistantText).toContain("Snapshot");
     expect(combinedAssistantText).toContain("Resubscribe");
+  });
+
+  it("routes Engram config updates via send without leaking thread/run identifiers", async () => {
+    if (!server) {
+      throw new Error("Test server failed to start");
+    }
+
+    const client = new A2AClient(server.baseUrl);
+    const agent = new A2AAgent({
+      a2aClient: client,
+      initialMessages: [createMessage({ id: "user-1", role: "user", content: "update config" })],
+    });
+
+    await agent.runAgent({
+      forwardedProps: {
+        a2a: { mode: "send", engramUpdate: { scope: "task", update: { feature: true } } },
+      },
+      runId: "run-hidden",
+    });
+
+    const rpcCalls = server.getRpcCalls();
+    const sendCall = rpcCalls.find((call) => call.method === "message/send");
+    const headers = sendCall?.headers ?? {};
+    const metadata = (sendCall?.body as { params?: { metadata?: Record<string, unknown> } } | undefined)
+      ?.params?.metadata as Record<string, unknown> | undefined;
+
+    expect(headers["x-a2a-extensions"]).toContain(ENGRAM_EXTENSION_URI);
+    expect(metadata?.engram).toEqual(expect.objectContaining({ scope: "task", update: { feature: true } }));
+    expect(metadata).not.toHaveProperty("threadId");
+    expect(metadata).not.toHaveProperty("runId");
+  });
+
+  it("projects artifact append then snapshot into shared state under canonical paths", async () => {
+    if (!server) {
+      throw new Error("Test server failed to start");
+    }
+
+    const client = new A2AClient(server.baseUrl);
+    const agent = new A2AAgent({
+      a2aClient: client,
+      initialMessages: [createMessage({ id: "user-artifacts", role: "user", content: "stream artifacts" })],
+      initialState: { view: { tasks: {}, artifacts: {} } },
+    });
+
+    const events: BaseEvent[] = [];
+
+    await agent.runAgent(
+      {
+        forwardedProps: { a2a: { mode: "stream", taskId: "artifact-append", contextId: "ctx-e2e" } },
+      },
+      { onEvent: ({ event }) => events.push(event) },
+    );
+
+    const rpcCalls = server.getRpcCalls();
+    expect(
+      rpcCalls.some((call) => call.method === "message/stream" || call.method === "tasks/resubscribe"),
+    ).toBe(true);
+
+    const artifactPatches =
+      events
+        .filter((event) => event.type === EventType.STATE_DELTA)
+        .flatMap(
+          (event) =>
+            ((event as { delta?: Array<{ path?: string; value?: unknown }> }).delta ?? []).filter(
+              (patch) => patch.path === "/view/artifacts/artifact-append",
+            ),
+        ) ?? [];
+    expect(artifactPatches.some((patch) => patch.value === "final")).toBe(true);
+  });
+
+  it("emits interrupt outcome and pending interrupts on HITL input_required", async () => {
+    if (!server) {
+      throw new Error("Test server failed to start");
+    }
+
+    const client = new A2AClient(server.baseUrl);
+    const agent = new A2AAgent({
+      a2aClient: client,
+      initialMessages: [createMessage({ id: "user-hitl", role: "user", content: "hitl" })],
+      initialState: { view: { tasks: {}, artifacts: {}, pendingInterrupts: {} } },
+    });
+
+    const events: BaseEvent[] = [];
+
+    await agent.runAgent(
+      {
+        forwardedProps: { a2a: { mode: "stream", taskId: "task-hitl-e2e", contextId: "ctx-e2e" } },
+      },
+      { onEvent: ({ event }) => events.push(event) },
+    );
+
+    const rpcCalls = server.getRpcCalls();
+    expect(
+      rpcCalls.some((call) => call.method === "message/stream" || call.method === "tasks/resubscribe"),
+    ).toBe(true);
+
+    const runFinished = events.find((event) => event.type === EventType.RUN_FINISHED) as
+      | { result?: Record<string, unknown> }
+      | undefined;
+    expect(runFinished?.result).toEqual(
+      expect.objectContaining({ outcome: "interrupt", taskId: "task-hitl-e2e", contextId: "ctx-e2e" }),
+    );
+    expect(
+      (agent.state as { view?: { pendingInterrupts?: Record<string, unknown> } }).view?.pendingInterrupts,
+    ).not.toEqual({});
   });
 });

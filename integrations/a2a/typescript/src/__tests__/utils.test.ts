@@ -765,15 +765,22 @@ describe("convertA2AEventToAGUIEvents", () => {
       sharedStateTracker: tracker,
     });
 
-    const stateDelta = events.find((event) => event.type === EventType.STATE_DELTA) as
-      | StateDeltaEvent
-      | undefined;
+    const stateSnapshot = events.find(
+      (event) => event.type === EventType.STATE_SNAPSHOT,
+    ) as StateSnapshotEvent | undefined;
     const textChunks = events.filter((event) => event.type === EventType.TEXT_MESSAGE_CHUNK);
 
-    const targetPatch = stateDelta?.delta?.find(
-      (entry) => entry.path === "/view/tasks/task-history",
+    expect(
+      (stateSnapshot?.snapshot as { view?: { tasks?: Record<string, unknown> } }).view?.tasks?.[
+        "task-history"
+      ],
+    ).toEqual(
+      expect.objectContaining({
+        taskId: "task-history",
+        contextId: "ctx-audit",
+        status: expect.objectContaining({ state: "working" }),
+      }),
     );
-    expect(targetPatch?.path).toBe("/view/tasks/task-history");
     expect(
       textChunks.map((event) => (event as { delta?: unknown }).delta),
     ).toEqual(expect.arrayContaining(["First output", "Second output"]));

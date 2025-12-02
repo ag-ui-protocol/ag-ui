@@ -559,6 +559,32 @@ const isA2AArtifactUpdate = (
   event: A2AStreamEvent,
 ): event is import("@a2a-js/sdk").TaskArtifactUpdateEvent => event.kind === "artifact-update";
 
+const getEventTaskId = (event: A2AStreamEvent): string | undefined => {
+  if (isA2ATask(event)) {
+    return event.id;
+  }
+
+  if (isA2AStatusUpdate(event) || isA2AArtifactUpdate(event)) {
+    return event.taskId;
+  }
+
+  if (isA2AMessage(event)) {
+    return event.taskId;
+  }
+
+  return undefined;
+};
+
+const shouldIgnoreEventForTask = (event: A2AStreamEvent, options: ConvertA2AEventOptions): boolean => {
+  const targetTaskId = options.taskId;
+  if (!targetTaskId) {
+    return false;
+  }
+
+  const eventTaskId = getEventTaskId(event);
+  return Boolean(eventTaskId && eventTaskId !== targetTaskId);
+};
+
 type JsonPatchOperation = {
   op: "add" | "replace" | "remove";
   path: string;
@@ -1179,6 +1205,7 @@ const projectTask = (
   const tracker = options.sharedStateTracker;
   const stateDeltas: Array<StateDeltaEvent | null | undefined> = [];
   const includeContainers = tracker?.emittedSnapshot === true;
+  const shouldEmitDelta = tracker?.emittedSnapshot === true;
 
   if (tracker) {
     const taskProjection = {
@@ -1187,12 +1214,19 @@ const projectTask = (
       status: event.status,
     };
 
-    stateDeltas.push(
-      applySharedStateUpdate(tracker, `/view/tasks/${event.id}`, taskProjection, {
+    const projectionDelta = applySharedStateUpdate(
+      tracker,
+      `/view/tasks/${event.id}`,
+      taskProjection,
+      {
         rawEvent: event,
         includeContainers,
-      }),
+      },
     );
+
+    if (shouldEmitDelta) {
+      stateDeltas.push(projectionDelta);
+    }
   }
 
   for (const message of event.history ?? []) {
@@ -1215,8 +1249,12 @@ const projectTask = (
     );
   }
 
-  if (tracker && stateDeltas.some(Boolean)) {
-    events.push(...collectStateEvents(tracker, event, ...stateDeltas));
+  if (tracker) {
+    if (stateDeltas.some(Boolean)) {
+      events.push(...collectStateEvents(tracker, event, ...stateDeltas));
+    } else {
+      events.push(...collectStateEvents(tracker, event));
+    }
   }
 
   if (events.length === 0) {
@@ -1234,6 +1272,10 @@ export function convertA2AEventToAGUIEvents(
   event: A2AStreamEvent,
   options: ConvertA2AEventOptions,
 ): BaseEvent[] {
+  if (shouldIgnoreEventForTask(event, options)) {
+    return [];
+  }
+
   if (isA2AMessage(event)) {
     return convertMessageToEvents(event, options);
   }
