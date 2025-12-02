@@ -34,8 +34,8 @@ Align the TypeScript A2A bridge with the new ADR set so AG-UI can run both short
 - [x] System/developer messages are gated by default; forwarding requires explicit opt-in and remaps to A2A’s `user`/`agent` roles with clear extension/metadata tagging.
 - [x] Full AG-UI → A2A forwarding preserves history/context/config when enabled, not just the latest user message; system/developer/config cues are available when explicitly opted in.
 - [x] HITL flow: when A2A emits `TaskState.input_required` with TextPart + `DataPart { type: "a2a.hitl.form" }`, mint `interruptId = "hitl-<taskId>-<n>"`, emit the final assistant message, and emit `RUN_FINISHED` with `outcome: "interrupt"` plus `{ taskId, contextId, interruptId, form }`; resume via a new run in the same `threadId` with `resume { interruptId, payload }` to send `a2a.hitl.formResponse` to the original `taskId`, then continue streaming to completion.
-- [x] Activity/State projection for HITL: emit `ACTIVITY_SNAPSHOT`/`ACTIVITY_DELTA` for pending interrupts with `messageId = interruptId` and stage/decision updates; emit `STATE_SNAPSHOT` + `STATE_DELTA` JSON Patch arrays that track the canonical task map at `/view/tasks/<taskId>` and pending interrupts under `/view/pendingInterrupts`, with legacy aggregate nodes under `/view/tasks/*` removed to avoid collisions.
-- [x] Tests must not drive source namespaces: test details must never leak into implementation—do not mirror test-only paths (e.g., legacy `/view/tasks/*` aggregates); tests should reflect intentional source behavior.
+- [x] Activity/State projection for HITL: emit `ACTIVITY_SNAPSHOT`/`ACTIVITY_DELTA` for pending interrupts with `messageId = interruptId` and stage/decision updates; emit `STATE_SNAPSHOT` + `STATE_DELTA` JSON Patch arrays that track the canonical task map at `/view/tasks/<taskId>` and pending interrupts under `/view/pendingInterrupts`.
+- [x] Tests must not drive source namespaces: test details must never leak into implementation; tests should reflect intentional source behavior.
 
 ## Technical Requirements
 
