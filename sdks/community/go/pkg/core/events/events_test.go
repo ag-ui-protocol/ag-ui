@@ -1,6 +1,7 @@
 package events
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -323,6 +324,14 @@ func TestStateEvents(t *testing.T) {
 					},
 				},
 			},
+			{
+				ID:           "activity-1",
+				Role:         RoleActivity,
+				ActivityType: "PLAN",
+				ActivityContent: map[string]any{
+					"status": "draft",
+				},
+			},
 		}
 
 		event := NewMessagesSnapshotEvent(messages)
@@ -354,6 +363,78 @@ func TestStateEvents(t *testing.T) {
 			},
 		}
 		event.Messages = invalidMessages
+		assert.Error(t, event.Validate())
+
+		invalidMessages = []Message{
+			{
+				ID:   "activity-1",
+				Role: RoleActivity,
+				// Missing activityType
+				ActivityContent: map[string]any{
+					"status": "draft",
+				},
+			},
+		}
+		event.Messages = invalidMessages
+		assert.Error(t, event.Validate())
+
+		invalidMessages = []Message{
+			{
+				ID:           "activity-1",
+				Role:         RoleActivity,
+				ActivityType: "PLAN",
+				// Missing content
+			},
+		}
+		event.Messages = invalidMessages
+		assert.Error(t, event.Validate())
+	})
+}
+
+func TestActivityEvents(t *testing.T) {
+	t.Run("ActivitySnapshotEvent", func(t *testing.T) {
+		content := map[string]any{
+			"status": "draft",
+		}
+
+		event := NewActivitySnapshotEvent("activity-1", "PLAN", content)
+
+		assert.Equal(t, EventTypeActivitySnapshot, event.Type())
+		assert.Equal(t, "activity-1", event.MessageID)
+		assert.Equal(t, "PLAN", event.ActivityType)
+		assert.NotNil(t, event.Replace)
+		assert.True(t, *event.Replace)
+		assert.NoError(t, event.Validate())
+
+		event.MessageID = ""
+		assert.Error(t, event.Validate())
+
+		event.MessageID = "activity-1"
+		event.ActivityType = ""
+		assert.Error(t, event.Validate())
+
+		event.ActivityType = "PLAN"
+		event.Content = nil
+		assert.Error(t, event.Validate())
+	})
+
+	t.Run("ActivityDeltaEvent", func(t *testing.T) {
+		patch := []JSONPatchOperation{
+			{Op: "replace", Path: "/status", Value: "done"},
+		}
+
+		event := NewActivityDeltaEvent("activity-1", "PLAN", patch)
+
+		assert.Equal(t, EventTypeActivityDelta, event.Type())
+		assert.Equal(t, "activity-1", event.MessageID)
+		assert.Equal(t, "PLAN", event.ActivityType)
+		assert.Len(t, event.Patch, 1)
+		assert.NoError(t, event.Validate())
+
+		event.Patch = []JSONPatchOperation{}
+		assert.Error(t, event.Validate())
+
+		event.Patch = []JSONPatchOperation{{Op: "replace", Path: ""}}
 		assert.Error(t, event.Validate())
 	})
 }
@@ -389,6 +470,50 @@ func TestCustomEvents(t *testing.T) {
 		// Test validation error
 		event.Name = ""
 		assert.Error(t, event.Validate())
+	})
+}
+
+func TestMessageSerialization(t *testing.T) {
+	t.Run("MarshalAndUnmarshal_TextMessage", func(t *testing.T) {
+		msg := Message{
+			ID:      "msg-1",
+			Role:    "user",
+			Content: strPtr("hello"),
+		}
+
+		data, err := json.Marshal(msg)
+		require.NoError(t, err)
+
+		var decoded Message
+		require.NoError(t, json.Unmarshal(data, &decoded))
+
+		assert.Equal(t, "msg-1", decoded.ID)
+		assert.Equal(t, "user", decoded.Role)
+		require.NotNil(t, decoded.Content)
+		assert.Equal(t, "hello", *decoded.Content)
+		assert.Nil(t, decoded.ActivityContent)
+	})
+
+	t.Run("MarshalAndUnmarshal_ActivityMessage", func(t *testing.T) {
+		msg := Message{
+			ID:              "activity-1",
+			Role:            "activity",
+			ActivityType:    "PLAN",
+			ActivityContent: map[string]any{"status": "draft"},
+		}
+
+		data, err := json.Marshal(msg)
+		require.NoError(t, err)
+
+		var decoded Message
+		require.NoError(t, json.Unmarshal(data, &decoded))
+
+		assert.Equal(t, "activity-1", decoded.ID)
+		assert.Equal(t, "activity", decoded.Role)
+		assert.Equal(t, "PLAN", decoded.ActivityType)
+		require.Nil(t, decoded.Content)
+		require.NotNil(t, decoded.ActivityContent)
+		assert.Equal(t, "draft", decoded.ActivityContent["status"])
 	})
 }
 
@@ -477,8 +602,11 @@ func TestJSONSerialization(t *testing.T) {
 			NewRunStartedEvent("thread-1", "run-1"),
 			NewTextMessageStartEvent("msg-1", WithRole("user")),
 			NewTextMessageContentEvent("msg-1", "Hello"),
+			NewTextMessageChunkEvent(strPtr("msg-1"), strPtr("assistant"), strPtr("Chunk")),
 			NewToolCallStartEvent("tool-1", "get_weather", WithParentMessageID("msg-1")),
 			NewStateSnapshotEvent(map[string]any{"counter": 42}),
+			NewActivitySnapshotEvent("activity-1", "PLAN", map[string]any{"status": "draft"}),
+			NewActivityDeltaEvent("activity-1", "PLAN", []JSONPatchOperation{{Op: "replace", Path: "/status", Value: "done"}}),
 			NewCustomEvent("test-event", WithValue("test-value")),
 		}
 

@@ -15,6 +15,9 @@ var validJSONPatchOps = map[string]bool{
 	"test":    true,
 }
 
+// RoleActivity is the role for activity messages
+const RoleActivity = "activity"
+
 // StateSnapshotEvent contains a complete snapshot of the state
 type StateSnapshotEvent struct {
 	*BaseEvent
@@ -121,12 +124,96 @@ func (e *StateDeltaEvent) ToJSON() ([]byte, error) {
 
 // Message represents a message in the conversation
 type Message struct {
-	ID         string     `json:"id"`
-	Role       string     `json:"role"`
-	Content    *string    `json:"content,omitempty"`
-	Name       *string    `json:"name,omitempty"`
-	ToolCalls  []ToolCall `json:"toolCalls,omitempty"`
-	ToolCallID *string    `json:"toolCallId,omitempty"`
+	ID              string         `json:"id"`
+	Role            string         `json:"role"`
+	Content         *string        `json:"-"`
+	ActivityContent map[string]any `json:"-"`
+	Name            *string        `json:"name,omitempty"`
+	ToolCalls       []ToolCall     `json:"toolCalls,omitempty"`
+	ToolCallID      *string        `json:"toolCallId,omitempty"`
+	ActivityType    string         `json:"activityType,omitempty"`
+}
+
+// MarshalJSON ensures content is correctly serialized for text and activity messages.
+func (m Message) MarshalJSON() ([]byte, error) {
+	payload := map[string]any{
+		"id":   m.ID,
+		"role": m.Role,
+	}
+
+	if m.Name != nil {
+		payload["name"] = *m.Name
+	}
+	if len(m.ToolCalls) > 0 {
+		payload["toolCalls"] = m.ToolCalls
+	}
+	if m.ToolCallID != nil {
+		payload["toolCallId"] = *m.ToolCallID
+	}
+
+	if m.Role == RoleActivity {
+		if m.ActivityType != "" {
+			payload["activityType"] = m.ActivityType
+		}
+		if m.ActivityContent != nil {
+			payload["content"] = m.ActivityContent
+		}
+	} else if m.Content != nil {
+		payload["content"] = *m.Content
+	}
+
+	return json.Marshal(payload)
+}
+
+// UnmarshalJSON hydrates content into the appropriate field depending on role.
+func (m *Message) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		ID           string          `json:"id"`
+		Role         string          `json:"role"`
+		Name         *string         `json:"name,omitempty"`
+		Content      json.RawMessage `json:"content,omitempty"`
+		ToolCalls    []ToolCall      `json:"toolCalls,omitempty"`
+		ToolCallID   *string         `json:"toolCallId,omitempty"`
+		ActivityType string          `json:"activityType,omitempty"`
+	}
+
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	m.ID = raw.ID
+	m.Role = raw.Role
+	m.Name = raw.Name
+	m.ToolCalls = raw.ToolCalls
+	m.ToolCallID = raw.ToolCallID
+	m.ActivityType = raw.ActivityType
+
+	if raw.Role == RoleActivity {
+		if len(raw.Content) > 0 {
+			var content map[string]any
+			if err := json.Unmarshal(raw.Content, &content); err != nil {
+				return fmt.Errorf("failed to decode activity content: %w", err)
+			}
+			m.ActivityContent = content
+		} else {
+			m.ActivityContent = nil
+		}
+		m.Content = nil
+	} else {
+		if len(raw.Content) > 0 {
+			var text string
+			if err := json.Unmarshal(raw.Content, &text); err != nil {
+				return fmt.Errorf("failed to decode message content: %w", err)
+			}
+			m.Content = &text
+		} else {
+			m.Content = nil
+		}
+		m.ActivityContent = nil
+		m.ActivityType = ""
+	}
+
+	return nil
 }
 
 // ToolCall represents a tool call within a message
@@ -180,6 +267,22 @@ func validateMessage(msg Message) error {
 
 	if msg.Role == "" {
 		return fmt.Errorf("message role field is required")
+	}
+
+	if msg.Role == RoleActivity {
+		if msg.ActivityType == "" {
+			return fmt.Errorf("activityType field is required for activity messages")
+		}
+		if msg.ActivityContent == nil {
+			return fmt.Errorf("content field is required for activity messages")
+		}
+	} else {
+		if msg.ActivityContent != nil {
+			return fmt.Errorf("activity content is only valid for activity messages")
+		}
+		if msg.ActivityType != "" {
+			return fmt.Errorf("activityType is only valid for activity messages")
+		}
 	}
 
 	// Validate tool calls if present

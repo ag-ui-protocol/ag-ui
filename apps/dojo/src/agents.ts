@@ -75,6 +75,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/chat` }),
+        agentic_generative_ui: new ADKAgent({
+          url: `${envVars.adkMiddlewareUrl}/adk-agentic-generative-ui/`,
+        }),
         tool_based_generative_ui: new ADKAgent({
           url: `${envVars.adkMiddlewareUrl}/adk-tool-based-generative-ui`,
         }),
@@ -273,6 +276,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         }),
         backend_tool_rendering: new AgnoAgent({
           url: `${envVars.agnoUrl}/backend_tool_rendering/agui`,
+        }),
+        human_in_the_loop: new AgnoAgent({
+          url: `${envVars.agnoUrl}/human_in_the_loop/agui`,
         }),
       };
     },

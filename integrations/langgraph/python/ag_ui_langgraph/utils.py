@@ -1,6 +1,9 @@
 import json
 import re
 from enum import Enum
+
+from pydantic import TypeAdapter
+from pydantic_core import PydanticSerializationError
 from typing import List, Any, Dict, Union
 from dataclasses import is_dataclass, asdict
 from datetime import date, datetime
@@ -303,59 +306,87 @@ def json_safe_stringify(o):
         return o.isoformat()
     return str(o)                # last resort
 
-def is_json_primitive(value: Any) -> bool:
-    return isinstance(value, (str, int, float, bool)) or value is None
-
-def make_json_safe(value: Any) -> Any:
+def make_json_safe(value: Any, _seen: set[int] | None = None) -> Any:
     """
-    Recursively convert a value into a JSON-serializable structure.
+    Convert `value` into something that `json.dumps` can always handle.
 
-    - Handles Pydantic models via `model_dump`.
-    - Handles LangChain messages via `to_dict`.
-    - Recursively walks dicts, lists, and tuples.
-    - For arbitrary objects, falls back to `__dict__` if available, else `repr()`.
+    Rules (in order):
+    - primitives → as-is
+    - Enum → its .value (recursively made safe)
+    - dict → keys & values made safe
+    - list/tuple/set/frozenset → list of safe values
+    - dataclasses → asdict() then recurse
+    - Pydantic-style models → model_dump()/dict()/to_dict() then recurse
+    - objects with __dict__ → vars(obj) then recurse
+    - everything else → repr(obj)
+
+    Cycles are detected and replaced with the string "<recursive>".
     """
-    # Pydantic models
-    if hasattr(value, "model_dump"):
-        try:
-            return make_json_safe(value.model_dump(by_alias=True, exclude_none=True))
-        except Exception:
-            pass
+    if _seen is None:
+        _seen = set()
 
-    # LangChain-style objects
-    if hasattr(value, "to_dict"):
-        try:
-            return make_json_safe(value.to_dict())
-        except Exception:
-            pass
+    obj_id = id(value)
+    if obj_id in _seen:
+        return "<recursive>"
 
-    # Dict
-    if isinstance(value, dict):
-        return {key: make_json_safe(sub_value) for key, sub_value in value.items()}
-
-    # List / tuple
-    if isinstance(value, (list, tuple)):
-        return [make_json_safe(sub_value) for sub_value in value]
-
-    if isinstance(value, Enum):
-        enum_value = value.value
-        if is_json_primitive(enum_value):
-            return enum_value
-        return {
-            "__type__": type(value).__name__,
-            "name": value.name,
-            "value": make_json_safe(enum_value),
-        }
-
-    # Already JSON safe
-    if is_json_primitive(value):
+    # --- 1. Primitives -----------------------------------------------------
+    if isinstance(value, (str, int, float, bool)) or value is None:
         return value
 
-    # Arbitrary object: try __dict__ first, fallback to repr
-    if hasattr(value, "__dict__"):
+    # --- 2. Enum → use underlying value -----------------------------------
+    if isinstance(value, Enum):
+        return make_json_safe(value.value, _seen)
+
+    # --- 3. Dicts ----------------------------------------------------------
+    if isinstance(value, dict):
+        _seen.add(obj_id)
         return {
-            "__type__": type(value).__name__,
-            **make_json_safe(value.__dict__),
+            make_json_safe(k, _seen): make_json_safe(v, _seen)
+            for k, v in value.items()
         }
 
+    # --- 4. Iterable containers -------------------------------------------
+    if isinstance(value, (list, tuple, set, frozenset)):
+        _seen.add(obj_id)
+        return [make_json_safe(v, _seen) for v in value]
+
+    # --- 5. Dataclasses ----------------------------------------------------
+    if is_dataclass(value):
+        _seen.add(obj_id)
+        return make_json_safe(asdict(value), _seen)
+
+    # --- 6. Pydantic-like models (v2: model_dump) -------------------------
+    if hasattr(value, "model_dump") and callable(getattr(value, "model_dump")):
+        _seen.add(obj_id)
+        try:
+            return make_json_safe(value.model_dump(), _seen)
+        except Exception:
+            # fall through to other options
+            pass
+
+    # --- 7. Pydantic v1-style / other libs with .dict() -------------------
+    if hasattr(value, "dict") and callable(getattr(value, "dict")):
+        _seen.add(obj_id)
+        try:
+            return make_json_safe(value.dict(), _seen)
+        except Exception:
+            pass
+
+    # --- 8. Generic "to_dict" pattern -------------------------------------
+    if hasattr(value, "to_dict") and callable(getattr(value, "to_dict")):
+        _seen.add(obj_id)
+        try:
+            return make_json_safe(value.to_dict(), _seen)
+        except Exception:
+            pass
+
+    # --- 9. Generic Python objects with __dict__ --------------------------
+    if hasattr(value, "__dict__"):
+        _seen.add(obj_id)
+        try:
+            return make_json_safe(vars(value), _seen)
+        except Exception:
+            pass
+
+    # --- 10. Last resort ---------------------------------------------------
     return repr(value)

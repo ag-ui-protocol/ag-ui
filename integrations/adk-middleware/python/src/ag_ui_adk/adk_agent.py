@@ -1077,7 +1077,7 @@ class ADKAgent:
                     self._session_manager.mark_messages_processed(app_name, input.thread_id, message_ids)
 
             # Convert user messages first (if any)
-            user_message = await self._convert_latest_message(input, unseen_messages if message_batch is not None else None)
+            user_message = await self._convert_latest_message(input, unseen_messages) if message_batch else None
 
             # if there is a tool response submission by the user, add FunctionResponse to session first
             if active_tool_results and user_message:

@@ -130,6 +130,20 @@ func (ed *EventDecoder) DecodeEvent(eventName string, data []byte) (Event, error
 		}
 		return &evt, nil
 
+	case EventTypeActivitySnapshot:
+		var evt ActivitySnapshotEvent
+		if err := json.Unmarshal(data, &evt); err != nil {
+			return nil, fmt.Errorf("failed to decode ACTIVITY_SNAPSHOT: %w", err)
+		}
+		return &evt, nil
+
+	case EventTypeActivityDelta:
+		var evt ActivityDeltaEvent
+		if err := json.Unmarshal(data, &evt); err != nil {
+			return nil, fmt.Errorf("failed to decode ACTIVITY_DELTA: %w", err)
+		}
+		return &evt, nil
+
 	case EventTypeStepStarted:
 		var evt StepStartedEvent
 		if err := json.Unmarshal(data, &evt); err != nil {

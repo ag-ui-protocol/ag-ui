@@ -22,7 +22,13 @@ function parseAgentsFile(): Array<{ id: string; agentKeys: string[] }> {
     const returnMatch = block.match(
       /agents:\s*async\s*\(\)\s*=>\s*{\s*return\s*{/,
     );
-    if (!returnMatch) continue;
+
+    // If no return match, still add the config with empty keys if it has a mapper
+    // This handles dynamic agent discovery like Mastra
+    if (!returnMatch) {
+      agentConfigs.push({ id, agentKeys: [] });
+      continue;
+    }
 
     const startIndex = returnMatch.index! + returnMatch[0].length;
     const returnObjectContent = extractBalancedBraces(block, startIndex);
@@ -208,7 +214,7 @@ const agentFilesMapper: Record<
       path.join(
         __dirname,
         integrationsFolderPath,
-        `/mastra/typescript/examples/src/mastra/agents/weather-agent.ts`,
+        `/mastra/typescript/examples/src/mastra/agents/agentic-chat.ts`,
       ),
     ],
     backend_tool_rendering: [
@@ -218,24 +224,29 @@ const agentFilesMapper: Record<
         `/mastra/typescript/examples/src/mastra/agents/backend-tool-rendering.ts`,
       ),
     ],
+    human_in_the_loop: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/mastra/typescript/examples/src/mastra/agents/human-in-the-loop.ts`,
+      ),
+    ],
     tool_based_generative_ui: [
       path.join(
         __dirname,
         integrationsFolderPath,
-        `/mastra/example/src/mastra/agents/haiku-agent.ts`,
+        `/mastra/typescript/examples/src/mastra/agents/tool-based-generative-ui.ts`,
       ),
     ],
   }),
 
-  "mastra-agent-local": (agentKeys: string[]) => {
-    return agentKeys.reduce(
-      (acc, agentId) => ({
-        ...acc,
-        [agentId]: [path.join(__dirname, "../src/mastra/index.ts")],
-      }),
-      {},
-    );
-  },
+  "mastra-agent-local": () => ({
+    agentic_chat: [path.join(__dirname, "../src/mastra/agents/agentic-chat.ts")],
+    human_in_the_loop: [path.join(__dirname, "../src/mastra/agents/human-in-the-loop.ts")],
+    backend_tool_rendering: [path.join(__dirname, "../src/mastra/agents/backend-tool-rendering.ts")],
+    shared_state: [path.join(__dirname, "../src/mastra/agents/shared-state.ts")],
+    tool_based_generative_ui: [path.join(__dirname, "../src/mastra/agents/tool-based-generative-ui.ts")],
+  }),
 
   "vercel-ai-sdk": () => ({
     agentic_chat: [
@@ -363,6 +374,21 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  "microsoft-agent-framework-python": (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/microsoft-agent-framework/python/examples/agents/dojo.py`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
   "microsoft-agent-framework-dotnet": (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({
@@ -403,8 +429,14 @@ async function runGenerateContent() {
       continue;
     }
 
+    // If agentsPerFeatures is empty but we have agentFilePaths, use the keys from agentFilePaths
+    // This handles cases like Mastra where agents are dynamically discovered
+    const featureIds = agentsPerFeatures.length > 0
+      ? agentsPerFeatures
+      : Object.keys(agentFilePaths);
+
     // Per feature, assign all the frontend files like page.tsx as well as all agent files
-    for (const featureId of agentsPerFeatures) {
+    for (const featureId of featureIds) {
       const agentFilePathsForFeature = agentFilePaths[featureId] ?? [];
       // @ts-expect-error -- redundant error about indexing of a new object.
       result[`${agentConfig.id}::${featureId}`] = [

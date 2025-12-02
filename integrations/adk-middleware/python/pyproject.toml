@@ -1,6 +1,6 @@
 [project]
 name = "ag_ui_adk"
-version = "0.3.2"
+version = "0.3.4"
 readme = "README.md"
 authors = [
     { name = "Mark Fogle", email = "mark@contextable.com" }
