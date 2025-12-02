@@ -1,0 +1,68 @@
+{
+  "name": "@ag-ui/cloudflare-agents",
+  "version": "0.0.1",
+  "description": "AG-UI integration for Cloudflare Agents - Run AI agents on Cloudflare Workers with Durable Objects",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "files": [
+    "dist/**",
+    "README.md"
+  ],
+  "keywords": [
+    "ag-ui",
+    "cloudflare",
+    "workers",
+    "durable-objects",
+    "agents",
+    "ai",
+    "edge"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist .turbo node_modules",
+    "typecheck": "tsc --noEmit",
+    "link:global": "pnpm link --global",
+    "unlink:global": "pnpm unlink --global"
+  },
+  "peerDependencies": {
+    "@ag-ui/core": ">=0.0.37",
+    "@ag-ui/client": ">=0.0.40",
+    "rxjs": "7.8.1",
+    "ai": "^5.0.0", 
+    "@cloudflare/workers-types": ">=4.0.0"
+  },
+  "devDependencies": {
+    "@ag-ui/core": "workspace:*",
+    "@ag-ui/client": "workspace:*",
+    "@cloudflare/workers-types": "^4.20251106.1",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.11.19",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.2",
+    "tsup": "^8.0.2",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "agents": "^0.2.23",
+    "nanoid": "^5.1.6",
+    "zod": "^3.25.76"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ag-ui-protocol/ag-ui",
+    "directory": "integrations/community/cloudflare-agents/typescript"
+  },
+  "author": {
+    "name": "Audrey Klammer",
+    "email": "contact@audreyklammer.com",
+    "url": "https://github.com/Klammertime"
+  },
+  "license": "MIT",
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}

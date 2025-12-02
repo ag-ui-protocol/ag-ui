@@ -1,0 +1,16 @@
+src
+tsconfig.json
+tsup.config.ts
+jest.config.js
+tests
+.turbo
+.wrangler
+*.log
+
+# Secrets - never include in npm package
+.env*
+.dev.vars*
+
+# Keep example files
+!.env.example
+!.dev.vars.example
