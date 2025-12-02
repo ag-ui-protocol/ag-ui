@@ -117,6 +117,11 @@ const ALL_TARGETS = {
     name: "Dojo",
     cwd: gitRoot,
   },
+  "dojo-dev": {
+    command: "pnpm install --no-frozen-lockfile && pnpm build --filter=demo-viewer^...",
+    name: "Dojo (dev)",
+    cwd: gitRoot,
+  },
   "microsoft-agent-framework-python": {
     command: "uv sync",
     name: "Microsoft Agent Framework (Python)",
@@ -147,6 +152,10 @@ async function main() {
   }
   if (excludeList && excludeList.length) {
     selectedKeys = selectedKeys.filter((k) => !excludeList.includes(k));
+  }
+
+  if (selectedKeys.includes("dojo") && selectedKeys.includes("dojo-dev")) {
+    selectedKeys= selectedKeys.filter(x => x != "dojo-dev");
   }
 
   // Build procs list, warning on unknown keys
