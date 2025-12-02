@@ -463,6 +463,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         backend_tool_rendering: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/backend-tool-rendering/` }),
         agentic_generative_ui: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/agentic-generative-ui/` }),
         shared_state: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/shared-state/` }),
+        human_in_the_loop: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/human-in-the-loop/`, debug: true }),
       };
     },
   },
