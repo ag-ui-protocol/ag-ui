@@ -52,6 +52,36 @@ const startA2AServer = async (): Promise<TestServer> => {
           const requestedTaskId = body.params?.message?.taskId ?? body.params?.metadata?.taskId ?? "task-e2e";
           const requestedContextId =
             body.params?.message?.contextId ?? body.params?.metadata?.contextId ?? "ctx-e2e";
+          const parts = (body.params?.message?.parts ?? []) as Array<
+            { kind?: string; data?: { type?: string; [key: string]: unknown } }
+          >;
+          const hasFormResponse = parts.some((part) => part.data?.type === "a2a.hitl.formResponse");
+          if (hasFormResponse) {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: rpcId,
+                result: {
+                  kind: "status-update" as const,
+                  contextId: requestedContextId,
+                  taskId: requestedTaskId,
+                  final: true,
+                  status: {
+                    state: "succeeded" as const,
+                    message: {
+                      kind: "message",
+                      messageId: "status-resumed",
+                      role: "agent",
+                      parts: [{ kind: "text", text: "Resumed and completed" }],
+                    },
+                    timestamp: new Date().toISOString(),
+                  },
+                },
+              }),
+            );
+            return;
+          }
           const { message } = body.params ?? {};
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(
@@ -493,5 +523,79 @@ describe("A2A live e2e (local test server)", () => {
     expect(
       (agent.state as { view?: { pendingInterrupts?: Record<string, unknown> } }).view?.pendingInterrupts,
     ).not.toEqual({});
+  });
+
+  it("resumes a HITL interrupt via formResponse and completes the task", async () => {
+    if (!server) {
+      throw new Error("Test server failed to start");
+    }
+
+    const client = new A2AClient(server.baseUrl);
+    const agent = new A2AAgent({
+      a2aClient: client,
+      initialMessages: [createMessage({ id: "user-hitl-1", role: "user", content: "start hitl" })],
+      initialState: { view: { tasks: {}, artifacts: {}, pendingInterrupts: {} } },
+    });
+
+    const interruptEvents: BaseEvent[] = [];
+    await agent.runAgent(
+      {
+        forwardedProps: { a2a: { mode: "stream", taskId: "task-hitl-e2e", contextId: "ctx-e2e" } },
+        runId: "run-hitl-1",
+      },
+      { onEvent: ({ event }) => interruptEvents.push(event) },
+    );
+
+    const runFinished = interruptEvents.find((event) => event.type === EventType.RUN_FINISHED) as
+      | { result?: Record<string, unknown> }
+      | undefined;
+    const interruptId = (runFinished?.result as { interruptId?: string } | undefined)?.interruptId;
+    expect(interruptId).toBeDefined();
+
+    server.resetRpcCalls();
+    const resumeEvents: BaseEvent[] = [];
+    await agent.runAgent(
+      {
+        forwardedProps: {
+          a2a: {
+            mode: "send",
+            taskId: "task-hitl-e2e",
+            contextId: "ctx-e2e",
+            resume: { interruptId: interruptId ?? "", payload: { approved: true } },
+          },
+        },
+        runId: "run-hitl-2",
+      },
+      { onEvent: ({ event }) => resumeEvents.push(event) },
+    );
+
+    const sendCall = server.getRpcCalls().find((call) => call.method === "message/send");
+    const messageParts =
+      ((sendCall?.body as { params?: { message?: { parts?: unknown[] } } } | undefined)?.params?.message
+        ?.parts as Array<{ data?: { type?: string; values?: Record<string, unknown> } }> | undefined) ?? [];
+    expect(
+      messageParts.some(
+        (part) =>
+          part.data?.type === "a2a.hitl.formResponse" &&
+          (part.data.values as Record<string, unknown> | undefined)?.approved === true,
+      ),
+    ).toBe(true);
+    expect(
+      ((sendCall?.body as { params?: { message?: { taskId?: string; contextId?: string } } } | undefined)?.params
+        ?.message?.taskId),
+    ).toBe("task-hitl-e2e");
+    expect(
+      ((sendCall?.body as { params?: { message?: { taskId?: string; contextId?: string } } } | undefined)?.params
+        ?.message?.contextId),
+    ).toBe("ctx-e2e");
+
+    const stateDeltas = resumeEvents.filter((event) => event.type === EventType.STATE_DELTA);
+    expect(
+      stateDeltas.some((event) =>
+        (event as { delta?: Array<{ path?: string; value?: unknown }> }).delta?.some(
+          (patch) => patch.path === "/view/tasks/task-hitl-e2e/status" && (patch.value as { state?: string })?.state === "succeeded",
+        ),
+      ),
+    ).toBe(true);
   });
 });

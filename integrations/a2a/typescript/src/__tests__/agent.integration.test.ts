@@ -188,17 +188,118 @@ describe("A2AAgent integration with real A2AClient", () => {
     ).toBe(true);
     expect(observedEvents.some((event) => event.type === EventType.STATE_DELTA)).toBe(true);
 
-    // Then Engram extension header is sent on streaming requests
+    // Then no Engram extension header is sent for conversational streaming
     const streamCall = fetchMock.mock.calls.find(([, init]) =>
       new Headers(init?.headers).get("Accept")?.includes("text/event-stream"),
     );
     const streamHeaders = new Headers(streamCall?.[1]?.headers);
-    expect(streamHeaders.get("X-A2A-Extensions")).toContain(ENGRAM_EXTENSION_URI);
+    expect(streamHeaders.get("X-A2A-Extensions")).toBeNull();
     expect(streamHeaders.get("Accept")).toContain("text/event-stream");
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining(".well-known/agent.json"),
       expect.any(Object),
     );
+  });
+
+  it("streams a new task when taskId is omitted and stays on the conversational lane by default", async () => {
+    const rpcBodies: Array<Record<string, unknown>> = [];
+    const headerLog: Headers[] = [];
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/.well-known/agent.json")) {
+        return new Response(
+          JSON.stringify({
+            url: "https://agent.local/rpc",
+            capabilities: { streaming: true },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url.endsWith("/rpc")) {
+        const headers = new Headers(init?.headers);
+        headerLog.push(headers);
+        const body = init?.body ? JSON.parse(init.body as string) : {};
+        rpcBodies.push(body);
+        const rpcId = typeof body.id === "number" ? body.id : 1;
+
+        if (headers.get("Accept")?.includes("text/event-stream")) {
+          const streamEvents = [
+            {
+              kind: "task" as const,
+              id: "task-new-stream",
+              contextId: "ctx-new-stream",
+              status: { state: "working" as const },
+              history: [],
+              artifacts: [],
+            },
+            {
+              kind: "message" as const,
+              messageId: "stream-new",
+              role: "agent" as const,
+              parts: [{ kind: "text" as const, text: "Hello new stream" }],
+              contextId: "ctx-new-stream",
+              taskId: "task-new-stream",
+            },
+            {
+              kind: "status-update" as const,
+              contextId: "ctx-new-stream",
+              taskId: "task-new-stream",
+              final: true,
+              status: {
+                state: "succeeded" as const,
+                timestamp: "now",
+              },
+            },
+          ];
+          return createSseResponse(streamEvents, rpcId);
+        }
+
+        throw new Error(`Unhandled RPC call: ${init?.body}`);
+      }
+
+      throw new Error(`Unhandled fetch URL: ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+
+    const client = new A2AClient("https://agent.local");
+    const agent = new A2AAgent({
+      a2aClient: client,
+      initialMessages: [createMessage({ id: "user-1", role: "user", content: "start new" })],
+      initialState: { view: { tasks: {}, artifacts: {} } },
+    });
+
+    const events: BaseEvent[] = [];
+
+    await agent.runAgent(
+      { forwardedProps: { a2a: { mode: "stream" } } },
+      { onEvent: ({ event }) => events.push(event) },
+    );
+
+    const streamCall = rpcBodies.find((body) => body.method === "message/stream");
+    expect(streamCall).toBeDefined();
+    expect(
+      (agent.state as { view?: { tasks?: Record<string, unknown> } }).view?.tasks?.["task-new-stream"],
+    ).toEqual(
+      expect.objectContaining({
+        status: expect.objectContaining({ state: "succeeded" }),
+      }),
+    );
+    expect(
+      events.some(
+        (event) =>
+          (event.type === EventType.TEXT_MESSAGE_CHUNK || event.type === EventType.TEXT_MESSAGE_CONTENT) &&
+          (event as { delta?: unknown }).delta === "Hello new stream",
+      ),
+    ).toBe(true);
+
+    const streamHeaders = headerLog.find((headers) => headers.get("Accept")?.includes("text/event-stream"));
+    expect(streamHeaders).toBeDefined();
+    expect(streamHeaders?.get("X-A2A-Extensions")).toBeNull();
   });
 
   it("uses real JSON-RPC send to deliver control runs without leaking AG-UI IDs", async () => {
@@ -291,8 +392,114 @@ describe("A2AAgent integration with real A2AClient", () => {
     expect(Array.isArray(history) ? history.length : 0).toBeGreaterThan(1);
 
     const rpcHeaders = new Headers(fetchMock.mock.calls[1]?.[1]?.headers);
-    expect(rpcHeaders.get("X-A2A-Extensions")).toContain(ENGRAM_EXTENSION_URI);
+    expect(rpcHeaders.get("X-A2A-Extensions")).toBeNull();
     expect(rpcHeaders.get("Content-Type")).toBe("application/json");
+  });
+
+  it("resubscribes to an existing task via snapshot + resubscribe without reopening the run", async () => {
+    const rpcBodies: Array<Record<string, unknown>> = [];
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/.well-known/agent.json")) {
+        return new Response(
+          JSON.stringify({
+            url: "https://agent.local/rpc",
+            capabilities: { streaming: true },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (url.endsWith("/rpc")) {
+        const body = init?.body ? JSON.parse(init.body as string) : {};
+        rpcBodies.push(body);
+        const rpcId = typeof body.id === "number" ? body.id : 1;
+        const method = typeof body.method === "string" ? body.method : "";
+
+        if (method === "tasks/get") {
+          return new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: rpcId,
+              result: {
+                kind: "task",
+                id: body.params?.id ?? "task-resubscribe",
+                contextId: "ctx-resubscribe",
+                status: { state: "working" },
+                history: [
+                  {
+                    kind: "message",
+                    messageId: "snapshot-1",
+                    role: "agent",
+                    parts: [{ kind: "text", text: "Snapshot hello" }],
+                  },
+                ],
+                artifacts: [],
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+
+        if (method === "tasks/resubscribe" || new Headers(init?.headers).get("Accept")?.includes("text/event-stream")) {
+          const streamEvents = [
+            {
+              kind: "status-update" as const,
+              contextId: "ctx-resubscribe",
+              taskId: "task-resubscribe",
+              final: false,
+              status: {
+                state: "working" as const,
+                message: {
+                  kind: "message" as const,
+                  messageId: "status-1",
+                  role: "agent" as const,
+                  parts: [{ kind: "text" as const, text: "Resubscribe streaming" }],
+                },
+                timestamp: "later",
+              },
+            },
+          ];
+
+          return createSseResponse(streamEvents, rpcId);
+        }
+
+        throw new Error(`Unhandled RPC call: ${init?.body}`);
+      }
+
+      throw new Error(`Unhandled fetch URL: ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+
+    const client = new A2AClient("https://agent.local");
+    const agent = new A2AAgent({
+      a2aClient: client,
+      initialMessages: [],
+      initialState: { view: { tasks: {}, artifacts: {} } },
+    });
+
+    const events: BaseEvent[] = [];
+
+    const result = await agent.runAgent(
+      {
+        forwardedProps: {
+          a2a: { mode: "stream", taskId: "task-resubscribe", subscribeOnly: true, historyLength: 3 },
+        },
+      },
+      { onEvent: ({ event }) => events.push(event) },
+    );
+
+    expect(rpcBodies.some((body) => body.method === "tasks/get")).toBe(true);
+    expect(rpcBodies.some((body) => body.method === "tasks/resubscribe")).toBe(true);
+    expect(rpcBodies.some((body) => body.method === "message/send" || body.method === "message/stream")).toBe(false);
+
+    const combinedText = result.newMessages.map((message) => String(message.content)).join(" ");
+    expect(combinedText).toContain("Snapshot hello");
+    expect(combinedText).toContain("Resubscribe streaming");
+    expect(
+      (agent.state as { view?: { tasks?: Record<string, unknown> } }).view?.tasks?.["task-resubscribe"],
+    ).toEqual(expect.objectContaining({ status: expect.objectContaining({ state: "working" }) }));
   });
 
   it("creates a new task on send mode without taskId and keeps AG-UI IDs out of metadata", async () => {
@@ -665,6 +872,17 @@ describe("A2AAgent integration with real A2AClient", () => {
     expect(
       (agent.state as { view?: { pendingInterrupts?: Record<string, unknown> } }).view?.pendingInterrupts,
     ).not.toEqual({});
+    const activitySnapshot = observed.find(
+      (event) => event.type === EventType.ACTIVITY_SNAPSHOT,
+    ) as { messageId?: string; activityType?: string; content?: { stage?: string; taskId?: string } };
+    expect(activitySnapshot?.activityType).toBe("HITL_FORM");
+    expect(activitySnapshot?.content?.stage).toBe("awaiting_input");
+    expect(activitySnapshot?.content?.taskId).toBe("task-hitl");
+    const pendingPatch = observed
+      .filter((event) => event.type === EventType.STATE_DELTA)
+      .flatMap((event) => (event as { delta?: Array<{ path?: string }> }).delta ?? [])
+      .find((patch) => patch.path?.includes("/view/pendingInterrupts/"));
+    expect(pendingPatch).toBeDefined();
   });
 
   it("streams legacy text-only agent output without emitting shared-state deltas", async () => {

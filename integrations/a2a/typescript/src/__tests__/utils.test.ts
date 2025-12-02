@@ -93,6 +93,17 @@ describe("convertAGUIMessagesToA2A", () => {
     ).toBe(false);
   });
 
+  it("skips developer messages by default while keeping user history intact", () => {
+    const converted = convertAGUIMessagesToA2A([
+      createMessage({ id: "dev-1", role: "developer", content: "internal hint" }),
+      createMessage({ id: "user-1", role: "user", content: "visible input" }),
+    ]);
+
+    const historyIds = converted.history.map((entry) => entry.messageId);
+    expect(historyIds).toEqual(expect.arrayContaining(["user-1"]));
+    expect(historyIds).not.toEqual(expect.arrayContaining(["dev-1"]));
+  });
+
   it("optionally forwards system and developer messages when enabled", () => {
     const converted = convertAGUIMessagesToA2A(
       [
@@ -197,6 +208,15 @@ describe("convertAGUIMessagesToA2A", () => {
       expect.arrayContaining(["sys-1", "dev-1", "user-1", "assistant-1", "user-2"]),
     );
     expect(converted.latestUserMessage?.messageId).toBe("user-2");
+    expect(converted.targetMessage?.extensions ?? []).toHaveLength(0);
+  });
+
+  it("keeps the conversational lane when Engram updates are absent", () => {
+    const converted = convertAGUIMessagesToA2A([
+      createMessage({ id: "user-1", role: "user", content: "hello" }),
+    ]);
+
+    expect(converted.metadata?.engram).toBeUndefined();
     expect(converted.targetMessage?.extensions ?? []).toHaveLength(0);
   });
 
@@ -628,6 +648,90 @@ describe("convertA2AEventToAGUIEvents", () => {
     expect(runFinished?.result?.contextId).toBe("ctx-hitl");
     expect(pendingInterrupts?.[activitySnapshot?.messageId ?? ""]).toEqual(
       expect.objectContaining({ taskId: "task-hitl", formId: "form-123" }),
+    );
+  });
+
+  it("generates monotonic interruptIds and includes form payloads in RUN_FINISHED results", () => {
+    const tracker = createSharedStateTracker();
+    const options = {
+      messageIdMap: new Map<string, string>(),
+      sharedStateTracker: tracker,
+      threadId: "thread-hitl",
+      runId: "run-hitl",
+    };
+
+    const firstInterrupt = {
+      kind: "status-update" as const,
+      contextId: "ctx-hitl",
+      final: false,
+      status: {
+        state: "input-required" as const,
+        message: {
+          kind: "message" as const,
+          messageId: "status-hitl-1",
+          role: "agent" as const,
+          parts: [
+            { kind: "text" as const, text: "Need approval" },
+            { kind: "data" as const, data: { type: "a2a.hitl.form", formId: "form-1", fields: [] } },
+          ],
+        },
+      },
+      taskId: "task-hitl",
+    };
+
+    const firstEvents = convertA2AEventToAGUIEvents(firstInterrupt, options);
+    const firstRunFinished = firstEvents.find(
+      (event) => event.type === EventType.RUN_FINISHED,
+    ) as { result?: Record<string, unknown> };
+
+    expect(firstRunFinished?.result).toEqual(
+      expect.objectContaining({
+        outcome: "interrupt",
+        taskId: "task-hitl",
+        contextId: "ctx-hitl",
+        interruptId: "hitl-task-hitl-1",
+        form: expect.objectContaining({ formId: "form-1" }),
+      }),
+    );
+
+    const formResponse = {
+      kind: "message" as const,
+      messageId: "resume-msg",
+      role: "user" as const,
+      contextId: "ctx-hitl",
+      taskId: "task-hitl",
+      parts: [{ kind: "data" as const, data: { type: "a2a.hitl.formResponse", values: { choice: "ok" } } }],
+    };
+    convertA2AEventToAGUIEvents(formResponse, {
+      messageIdMap: new Map(),
+      sharedStateTracker: tracker,
+    });
+
+    const secondInterrupt = {
+      ...firstInterrupt,
+      status: {
+        ...firstInterrupt.status,
+        message: {
+          ...(firstInterrupt.status?.message as { [key: string]: unknown }),
+          messageId: "status-hitl-2",
+          parts: [
+            { kind: "text" as const, text: "Need another approval" },
+            { kind: "data" as const, data: { type: "a2a.hitl.form", formId: "form-2", fields: [] } },
+          ],
+        },
+      },
+    };
+
+    const secondEvents = convertA2AEventToAGUIEvents(secondInterrupt, options);
+    const secondRunFinished = secondEvents.find(
+      (event) => event.type === EventType.RUN_FINISHED,
+    ) as { result?: Record<string, unknown> };
+
+    expect(secondRunFinished?.result).toEqual(
+      expect.objectContaining({
+        interruptId: "hitl-task-hitl-2",
+        form: expect.objectContaining({ formId: "form-2" }),
+      }),
     );
   });
 

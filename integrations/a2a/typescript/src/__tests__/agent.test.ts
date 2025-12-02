@@ -392,7 +392,7 @@ describe("A2AAgent", () => {
     const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers | undefined;
 
     expect(headers?.get("X-Existing")).toBe("true");
-    expect(headers?.get("X-A2A-Extensions")).toBe(ENGRAM_EXTENSION_URI);
+    expect(headers?.get("X-A2A-Extensions")).toBe("custom-ext");
   });
 
   it("stops streaming and emits interrupt run finish on HITL input-required status", async () => {

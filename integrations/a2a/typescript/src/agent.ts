@@ -493,8 +493,40 @@ export class A2AAgent extends AbstractAgent {
   }
 
   private initializeExtension(client: A2AClient) {
-    const addExtensionHeader = (headers: Headers) => {
-      headers.set("X-A2A-Extensions", ENGRAM_EXTENSION_URI);
+    const shouldIncludeEngram = (init?: RequestInit): boolean => {
+      if (!init?.body || typeof init.body !== "string") {
+        return false;
+      }
+
+      try {
+        const parsed = JSON.parse(init.body as string) as {
+          params?: { metadata?: { engram?: unknown }; message?: { extensions?: string[] } };
+        };
+        const params = parsed.params ?? {};
+        if (params.metadata && "engram" in params.metadata) {
+          return true;
+        }
+        const extensions = params.message?.extensions ?? [];
+        return Array.isArray(extensions) && extensions.includes(ENGRAM_EXTENSION_URI);
+      } catch {
+        return false;
+      }
+    };
+
+    const addExtensionHeader = (headers: Headers, init?: RequestInit) => {
+      if (!shouldIncludeEngram(init)) {
+        return;
+      }
+
+      const existing = headers.get("X-A2A-Extensions");
+      const values = new Set<string>();
+      if (existing) {
+        for (const value of existing.split(",").map((entry) => entry.trim()).filter(Boolean)) {
+          values.add(value);
+        }
+      }
+      values.add(ENGRAM_EXTENSION_URI);
+      headers.set("X-A2A-Extensions", Array.from(values).join(","));
     };
 
     const patchFetch = () => {
@@ -505,7 +537,7 @@ export class A2AAgent extends AbstractAgent {
 
       const extensionFetch: typeof fetch = async (input, init) => {
         const headers = new Headers(init?.headers);
-        addExtensionHeader(headers);
+        addExtensionHeader(headers, init);
         const nextInit: RequestInit = {
           ...init,
           headers,
