@@ -6,8 +6,6 @@ import { ServerStarterAgent } from "@ag-ui/server-starter";
 import { ServerStarterAllFeaturesAgent } from "@ag-ui/server-starter-all-features";
 import { MastraClient } from "@mastra/client-js";
 import { MastraAgent } from "@ag-ui/mastra";
-import { VercelAISDKAgent } from "@ag-ui/vercel-ai-sdk";
-import { openai } from "@ai-sdk/openai";
 import { LangGraphAgent, LangGraphHttpAgent } from "@ag-ui/langgraph";
 import { AgnoAgent } from "@ag-ui/agno";
 import { LlamaIndexAgent } from "@ag-ui/llamaindex";
@@ -130,13 +128,14 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
 
       return MastraAgent.getRemoteAgents({
         mastraClient,
+        resourceId: "mastra-agent-remote",
       });
     },
   },
   {
     id: "mastra-agent-local",
     agents: async () => {
-      return MastraAgent.getLocalAgents({ mastra });
+      return MastraAgent.getLocalAgents({ mastra, resourceId: "mastra-agent-local" });
     },
   },
   // Disabled until we can support Vercel AI SDK v5
