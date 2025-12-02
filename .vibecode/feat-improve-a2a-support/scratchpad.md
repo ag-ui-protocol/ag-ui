@@ -1,11 +1,11 @@
 # Troubleshooting: A2A ADR alignment gaps
 
-Branch: feat/improve-a2a-support | Updated: 2025-12-01 19:05:00 UTC
+Branch: feat/improve-a2a-support | Updated: 2025-12-02 00:42:32 UTC
 
 ## Current Focus
 
-Working on: Implementing ADR 0012 HITL interrupt/resume in the A2A bridge, including Activity/State emissions and resume wiring, while keeping prior ADR gaps visible.
-Approach: Design/plan bridge changes (input_required detection → interrupt/run-finished, Activity/State projections, resume via formResponse), then stage tests and lint/build once code changes land.
+Working on: Aligning ADR 0012/PRD to keep `/view/tasks/<taskId>` as the canonical task map, relocate aggregates, and plan remediation items (conversion gaps, projection gaps, metadata layering, Engram lane).
+Approach: Update ADR/PRD text to emphasize `/view/tasks/<taskId>` canonical path; note aggregate removal; enumerate remediation items (aggregate removal, full message/context forwarding, artifact/status projection, context/task mapping hygiene, Engram wiring); plan follow-up code/test cleanup.
 
 ## Evidence Collected
 
@@ -27,6 +27,19 @@ Approach: Design/plan bridge changes (input_required detection → interrupt/run
 2025-11-29 21:46:56 UTC Attempt 2: Planned implementation approach—introduce run options (`mode`, `taskId`, metadata gating), Engram extension (`urn:agui:engram:v1`), contextId mapping per thread (bridge-owned UUID), metadata forwarding of full history/context, and shared-state projection for status/artifact (default path `/view/artifacts/<artifactId>`, append-aware JSON Patch).
 2025-11-29 22:03:48 UTC Attempt 3: Implemented run options + Engram handling + shared-state projection; added new conversion/state tests; builds succeeded via `pnpm build --filter @ag-ui/a2a...`; `pnpm --filter @ag-ui/a2a test` passing; `pnpm lint` still fails due to missing eslint dependency in workspace.
 2025-12-01 18:47:00 UTC Attempt 4: Added ADR 0012 for HITL interrupts + Activity/State projection; updated PRD with HITL success criteria and activity/state requirements.
+2025-12-02 00:21:07 UTC Attempt 5: Preparing to finalize ADR 0012 and PRD HITL sections with refined Activity/State/interrupt details (doc-only update).
+2025-12-02 00:32:50 UTC Attempt 6: Adjusting ADR/PRD to keep `/view/tasks/<taskId>` as canonical task map and move aggregates elsewhere.
+2025-12-02 00:36:18 UTC Attempt 7: Added cleanup plan to drop `/view/tasks/task-status` and `/view/tasks/task-audit` by relocating aggregates and updating bridge/tests accordingly.
+2025-12-02 00:39:21 UTC Attempt 8: Captured remediation list (aggregate relocation, forward full context/config/history, artifact/status projection, metadata layering, Engram lane wiring) for follow-up implementation.
+
+## TODO (doc + implementation follow-up)
+
+- [ ] Remove legacy aggregate paths under `/view/tasks/*` (task-status/task-audit) and reserve `/view/tasks/<taskId>` as the canonical map; update bridge projections and tests accordingly.
+- [ ] Implement full AG-UI → A2A forwarding: include system/developer/config cues and full history/context when explicitly enabled; avoid latest-user-only payloads.
+- [ ] Implement A2A → AG-UI artifact/status projection per ADR 0010/0011: shared-state mapping (snapshots/appends), activity events, artifact metadata paths.
+- [ ] Fix metadata layering: stop reusing thread/run IDs as context/task IDs; ensure internal mappings keep UI provenance out of A2A payloads.
+- [ ] Wire Engram/config lane: support Engram URN, route config updates via Engram messages, remove legacy extension header.
+- [ ] Keep tests and source decoupled: do not mirror test-only paths (e.g., legacy `/view/tasks/*` aggregates) in implementation; update tests to reflect intentional source behavior.
 
 ## Discovered Patterns
 

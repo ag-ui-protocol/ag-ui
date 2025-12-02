@@ -17,54 +17,11 @@ Proposed
 
 ## Decision
 
-1) **A2A agent HITL contract**  
-   - On HITL, set `TaskState.input_required` and return a status message whose parts include:  
-     - `TextPart` with user-facing explanation.  
-     - `DataPart` `{ type: "a2a.hitl.form", formId, title, description?, fields[], metadata? }` (form schema carried in `data`).  
-   - When a follow-up A2A message arrives for the same `taskId` with `DataPart { type: "a2a.hitl.formResponse", formId, values, metadata? }`, validate, then resume task → `working` → `succeeded`/`failed`.
-
-2) **AG-UI bridge: interrupt + resume backbone (variant a)**  
-   - For each run: map `{ threadId, runId } -> { taskId }` (re-use task if provided, otherwise create). Forward AG-UI messages to A2A as TextParts/DataParts. Stream outputs as we do today.  
-   - When A2A status is `input_required`:  
-     - Stop further streaming for this run.  
-     - Emit final `MESSAGE_CREATED` (assistant) with the explanatory text.  
-     - Emit `RUN_FINISHED { outcome: "interrupt", interrupt: { taskId, contextId, form } }` using the form payload.  
-   - Store optional bookkeeping (e.g., `tasksByRun[runId] = { a2aTaskId, interruptId, status: "input-required" }`) inside shared state if helpful for resume routing.
-   - On resume: frontend issues a new run in same `threadId` with `resume { interruptId, payload }`; bridge sends A2A formResponse DataPart to the same `taskId`, then continues streaming to completion or failure.
-
-3) **State model + deltas (variant b)**  
-   - Represent HITL state in shared state with explicit maps (example):  
-     ```json
-     {
-       "tasksById": {
-         "<task-id>": {
-           "status": "working" | "input-required" | "completed" | "failed",
-           "lastRunId": "<run-id>",
-           "lastInterruptId": "hitl-<task-id>-1",
-           "summary": "<short description>"
-         }
-       },
-       "pendingInterrupts": [
-         {
-           "interruptId": "hitl-<task-id>-1",
-           "taskId": "<task-id>",
-           "formId": "<form-id>",
-           "reason": "input_required"
-         }
-       ]
-     }
-     ```
-   - Emit a `STATE_SNAPSHOT` once per session/init; emit `STATE_DELTA` JSON Patch arrays as tasks and interrupts change. Use `/view/tasksById/...` and `/view/pendingInterrupts` (plural maps/arrays) to stay consistent with ADR 0010.
-
-4) **Activity timeline (variant b)**  
-   - On `input_required`, emit `ACTIVITY_SNAPSHOT` with `activityType: "HITL_FORM"` (or similar) and `content` including `stage: "awaiting_input"`, `taskId`, `form`. Use `messageId` stable per interrupt (`hitl-<task-id>-<n>`).  
-   - When the user responds and the task resumes, emit `ACTIVITY_DELTA` patches updating `stage` (`completed`), `decision` (`approved` | `rejected` | `provided`), and any summarized form values.  
-   - Keep Activity events additive to `STATE_DELTA` (timeline + state both available).
-
-5) **Replay/audit guarantees**  
-   - All HITL prompts/responses are A2A messages (ADR 0004); AG-UI Activity/State events are projections for UX.  
-   - Do not encode AG-UI IDs (thread/run) into A2A metadata; keep mapping internal (ADR 0007).  
-   - Continue to stream normal text/tool output; interruption just terminates the run with outcome `interrupt` and defers completion to a resumed run.
+- **A2A HITL expression**: On pause, the agent sets `TaskState.input_required` and emits a status message containing a `TextPart` (user-facing explanation) plus a `DataPart { type: "a2a.hitl.form", formId, title, description?, fields[], metadata? }`. Resumption arrives as a follow-up message on the same `taskId` with `DataPart { type: "a2a.hitl.formResponse", formId, values, metadata? }`, which the agent validates before moving to `working` and then `succeeded`/`failed`.
+- **AG-UI bridge behavior**: Maintain `{ threadId, runId } -> taskId` mapping. When `input_required` appears, stop streaming for the run, emit the final assistant `MESSAGE_CREATED` with the explanatory text, then emit `RUN_FINISHED` with `outcome: "interrupt"` and payload `{ taskId, contextId, interruptId, form }` where `interruptId = "hitl-<taskId>-<n>"`. To resume, the frontend opens a new run in the same `threadId` with `resume { interruptId, payload }`; the bridge sends `a2a.hitl.formResponse` to the original `taskId` and continues normal streaming.
+- **Activity timeline**: On interrupt, emit `ACTIVITY_SNAPSHOT` with `activityType: "HITL_FORM"`, `messageId = interruptId`, and `content` carrying `stage: "awaiting_input"`, `taskId`, and the form schema. On resume or completion, emit `ACTIVITY_DELTA` JSON Patch updates for `stage` (`working`/`completed`), `decision` (`provided`/`approved`/`rejected`), and optional summarized form values.
+- **Shared state model**: Maintain `/view/tasks/<taskId>` as the canonical task map (with `status`, `lastRunId`, `lastInterruptId`, summary fields). Track pending interrupts under `/view/pendingInterrupts` as array/map entries `{ interruptId, taskId, formId, reason }`. Emit one `STATE_SNAPSHOT` on init and `STATE_DELTA` JSON Patch arrays as tasks and interrupts change (additions, updates, removals). Refactor existing aggregate nodes under `/view/tasks/*` (for example, task-status/audit) to non-conflicting paths so `/view/tasks/<taskId>` stays a clean map.
+- **Replay and layering**: HITL prompts/responses stay in the A2A message timeline for audit; Activity/State emissions are AG-UI projections only. Keep AG-UI identifiers out of A2A payloads and continue streaming normal text/tool output until `input_required` ends the run with `outcome: "interrupt"`; the resumed run carries the remainder of the task.
 
 ## Consequences
 
