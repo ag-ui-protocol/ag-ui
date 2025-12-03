@@ -1,13 +1,16 @@
-import type { Message } from "@ag-ui/client";
+import type { BaseEvent, Message } from "@ag-ui/client";
+import { EventType } from "@ag-ui/client";
 import { A2AAgent } from "../agent";
 import type { MessageSendParams } from "@a2a-js/sdk";
+import type { A2AClient } from "@a2a-js/sdk/client";
+import { ENGRAM_EXTENSION_URI } from "../utils";
 
 const createMessage = (message: Partial<Message>): Message => message as Message;
 
 type SendMessageResponseSuccess = {
   id: string | number | null;
   jsonrpc: "2.0";
-  result: any;
+  result: unknown;
 };
 
 type SendMessageResponseError = {
@@ -16,30 +19,58 @@ type SendMessageResponseError = {
   error: { code: number; message: string };
 };
 
+type FakeA2AClientBehaviour = {
+  stream?: (params: MessageSendParams) => AsyncGenerator<unknown, void, unknown>;
+  send?: (params: MessageSendParams) => Promise<SendMessageResponseSuccess | SendMessageResponseError>;
+  card?: () => Promise<unknown>;
+  getTask?: (params: { id: string; historyLength?: number }) => Promise<SendMessageResponseSuccess | SendMessageResponseError>;
+  resubscribeTask?: (params: { id: string }) => AsyncGenerator<unknown, void, unknown>;
+};
+
+type FakeA2AClientResponse = SendMessageResponseSuccess | SendMessageResponseError;
+
 class FakeA2AClient {
-  constructor(
-    readonly behaviour: {
-      stream?: () => AsyncGenerator<any, void, unknown>;
-      send?: () => Promise<SendMessageResponseSuccess | SendMessageResponseError>;
-      card?: () => Promise<any>;
-    } = {},
-  ) {}
+  public readonly sendCalls: MessageSendParams[] = [];
+  public readonly streamCalls: MessageSendParams[] = [];
+  public readonly getTaskCalls: Array<{ id: string; historyLength?: number }> = [];
+  public readonly resubscribeCalls: Array<{ id: string }> = [];
+
+  constructor(readonly behaviour: FakeA2AClientBehaviour = {}) {}
 
   sendMessageStream(params: MessageSendParams) {
+    this.streamCalls.push(params);
     if (!this.behaviour.stream) {
       throw new Error("Streaming not configured");
     }
-    return this.behaviour.stream();
+    return this.behaviour.stream(params);
   }
 
   async sendMessage(params: MessageSendParams) {
+    this.sendCalls.push(params);
     if (!this.behaviour.send) {
       throw new Error("sendMessage not configured");
     }
-    return this.behaviour.send();
+    return this.behaviour.send(params);
   }
 
-  isErrorResponse(response: SendMessageResponseSuccess | SendMessageResponseError): response is SendMessageResponseError {
+  async getTask(params: { id: string; historyLength?: number }) {
+    this.getTaskCalls.push(params);
+    if (!this.behaviour.getTask) {
+      throw new Error("getTask not configured");
+    }
+
+    return this.behaviour.getTask(params);
+  }
+
+  resubscribeTask(params: { id: string }) {
+    this.resubscribeCalls.push(params);
+    if (!this.behaviour.resubscribeTask) {
+      throw new Error("resubscribeTask not configured");
+    }
+    return this.behaviour.resubscribeTask(params);
+  }
+
+  isErrorResponse(response: FakeA2AClientResponse): response is SendMessageResponseError {
     return "error" in response && Boolean(response.error);
   }
 
@@ -69,7 +100,7 @@ describe("A2AAgent", () => {
     });
 
     const agent = new A2AAgent({
-      a2aClient: fakeClient as any,
+      a2aClient: fakeClient as unknown as A2AClient,
       initialMessages: [
         createMessage({
           id: "user-1",
@@ -108,7 +139,7 @@ describe("A2AAgent", () => {
     });
 
     const agent = new A2AAgent({
-      a2aClient: fakeClient as any,
+      a2aClient: fakeClient as unknown as A2AClient,
       initialMessages: [
         createMessage({ id: "user-1", role: "user", content: "Ping" }),
       ],
@@ -132,12 +163,290 @@ describe("A2AAgent", () => {
     });
 
     const agent = new A2AAgent({
-      a2aClient: fakeClient as any,
+      a2aClient: fakeClient as unknown as A2AClient,
       initialMessages: [
         createMessage({ id: "user-1", role: "user", content: "Trouble" }),
       ],
     });
 
     await expect(agent.runAgent()).rejects.toThrow("Agent failure");
+  });
+
+  it("uses blocking send for control runs and keeps AG-UI identifiers out of A2A metadata", async () => {
+    const fakeClient = new FakeA2AClient({
+      send: async (params) => ({
+        id: null,
+        jsonrpc: "2.0",
+        result: {
+          kind: "message",
+          messageId: "resp-control",
+          role: "agent",
+          parts: [{ kind: "text", text: "Control ack" }],
+        },
+      }),
+    });
+
+    const agent = new A2AAgent({
+      a2aClient: fakeClient as unknown as A2AClient,
+      threadId: "thread-internal",
+      initialMessages: [
+        createMessage({ id: "user-1", role: "user", content: "Start a task" }),
+        createMessage({ id: "assistant-1", role: "assistant", content: "Working" }),
+      ],
+    });
+
+    await agent.runAgent({
+      runId: "run-hidden",
+      forwardedProps: {
+        a2a: { mode: "send", taskId: "task-789", historyLength: 5 },
+      },
+    });
+
+    expect(fakeClient.streamCalls).toHaveLength(0);
+    expect(fakeClient.sendCalls).toHaveLength(1);
+
+    const params = fakeClient.sendCalls[0];
+    const metadata = params.metadata as Record<string, unknown>;
+
+    expect(params.message?.contextId).toBe("task-789");
+    expect(params.message?.taskId).toBe("task-789");
+    expect(metadata).toEqual(
+      expect.objectContaining({
+        mode: "send",
+        taskId: "task-789",
+        contextId: "task-789",
+      }),
+    );
+    expect(metadata).not.toHaveProperty("threadId");
+    expect(metadata).not.toHaveProperty("runId");
+  });
+
+  it("forwards context and config metadata without exposing thread or run identifiers", async () => {
+    const fakeClient = new FakeA2AClient({
+      send: async (params) => ({
+        id: null,
+        jsonrpc: "2.0",
+        result: {
+          kind: "message",
+          messageId: "resp-metadata",
+          role: "agent",
+          parts: [{ kind: "text", text: "Control ack" }],
+          contextId: params.message?.contextId,
+          taskId: params.message?.taskId,
+        },
+      }),
+    });
+
+    const agent = new A2AAgent({
+      a2aClient: fakeClient as unknown as A2AClient,
+      threadId: "thread-forwarding",
+      initialMessages: [
+        createMessage({ id: "sys-1", role: "system", content: "guardrails" }),
+        createMessage({ id: "dev-1", role: "developer", content: "dev hints" }),
+        createMessage({ id: "user-1", role: "user", content: "start task" }),
+      ],
+    });
+
+    await agent.runAgent({
+      context: [{ description: "region", value: "us-west" }],
+      forwardedProps: {
+        a2a: {
+          mode: "send",
+          includeSystemMessages: true,
+          includeDeveloperMessages: true,
+          engramUpdate: { scope: "task", update: { feature: true } },
+        },
+      },
+    });
+
+    const params = fakeClient.sendCalls[0];
+    expect(params.message?.contextId).not.toBe("thread-forwarding");
+    expect(params.metadata?.history).toBeUndefined();
+    expect(params.message?.metadata?.history).toBeUndefined();
+    expect(params.message?.metadata?.context).toEqual([{ description: "region", value: "us-west" }]);
+    expect(params.message?.metadata?.engram).toEqual({ scope: "task", update: { feature: true } });
+    expect(params.metadata).not.toHaveProperty("threadId");
+    expect(params.metadata).not.toHaveProperty("runId");
+  });
+
+  it("resubscribes to existing tasks using snapshots instead of reopening runs", async () => {
+    const fakeClient = new FakeA2AClient({
+      getTask: async (params) => ({
+        id: null,
+        jsonrpc: "2.0",
+        result: {
+          kind: "task",
+          id: params.id,
+          contextId: "ctx-resume",
+          status: { state: "working" },
+          history: [
+            {
+              kind: "message",
+              messageId: "history-1",
+              role: "agent",
+              parts: [{ kind: "text", text: "Snapshot output" }],
+            },
+          ],
+          artifacts: [],
+        },
+      }),
+      resubscribeTask: async function* () {
+        yield {
+          kind: "status-update",
+          taskId: "task-resume",
+          contextId: "ctx-resume",
+          final: false,
+          status: {
+            state: "working",
+            message: {
+              kind: "message",
+              messageId: "status-1",
+              role: "agent",
+              parts: [{ kind: "text", text: "Still running" }],
+            },
+            timestamp: "now",
+          },
+        };
+      },
+      send: async () => {
+        throw new Error("sendMessage should not be used when resubscribing");
+      },
+    });
+
+    const agent = new A2AAgent({
+      a2aClient: fakeClient as unknown as A2AClient,
+      initialMessages: [],
+    });
+
+    const result = await agent.runAgent({
+      forwardedProps: {
+        a2a: { mode: "stream", taskId: "task-resume", historyLength: 2 },
+      },
+    });
+
+    expect(fakeClient.sendCalls).toHaveLength(0);
+    expect(fakeClient.getTaskCalls).toEqual([
+      expect.objectContaining({ id: "task-resume", historyLength: 2 }),
+    ]);
+    expect(fakeClient.resubscribeCalls).toEqual([expect.objectContaining({ id: "task-resume" })]);
+
+    const combinedText = result.newMessages.map((message) => String(message.content)).join(" ");
+    expect(combinedText).toContain("Snapshot output");
+    expect(combinedText).toContain("Still running");
+  });
+
+  it("advertises the Engram extension header on outbound A2A requests", async () => {
+    const originalFetch = global.fetch;
+    const fetchMock = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    })) as jest.MockedFunction<typeof fetch>;
+
+    global.fetch = fetchMock;
+
+    const fakeClient = new FakeA2AClient({
+      send: async () => {
+        await fetch("https://example.invalid/a2a", {
+          headers: new Headers({
+            "X-Existing": "true",
+            "X-A2A-Extensions": "custom-ext",
+          }),
+        });
+        return {
+          id: null,
+          jsonrpc: "2.0",
+          result: {
+            kind: "message",
+            messageId: "resp-headers",
+            role: "agent",
+            parts: [{ kind: "text", text: "ok" }],
+          },
+        };
+      },
+    });
+
+    const agent = new A2AAgent({
+      a2aClient: fakeClient as unknown as A2AClient,
+      initialMessages: [createMessage({ id: "user-1", role: "user", content: "ping" })],
+    });
+
+    try {
+      await agent.runAgent({
+        forwardedProps: {
+          a2a: { mode: "send" },
+        },
+      });
+    } finally {
+      global.fetch = originalFetch;
+    }
+
+    expect(fetchMock).toHaveBeenCalled();
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers | undefined;
+
+    expect(headers?.get("X-Existing")).toBe("true");
+    expect(headers?.get("X-A2A-Extensions")).toBe("custom-ext");
+  });
+
+  it("stops streaming and emits interrupt run finish on input-required status", async () => {
+    const fakeClient = new FakeA2AClient({
+      stream: async function* () {
+        yield {
+          kind: "status-update",
+          taskId: "task-input",
+          contextId: "ctx-input",
+          final: false,
+          status: {
+            state: "input-required",
+            message: {
+              kind: "message",
+              messageId: "status-input",
+              role: "agent",
+              parts: [
+                { kind: "text", text: "Need approval" },
+                { kind: "data", data: { type: "a2a.input.request", requestId: "request-abc" } },
+              ],
+            },
+          },
+        };
+        yield {
+          kind: "message",
+          messageId: "post-interrupt",
+          role: "agent",
+          parts: [{ kind: "text", text: "should not appear" }],
+        };
+      },
+    });
+
+    const agent = new A2AAgent({
+      a2aClient: fakeClient as unknown as A2AClient,
+      initialMessages: [createMessage({ id: "user-1", role: "user", content: "Start" })],
+    });
+
+    const observed: BaseEvent[] = [];
+
+    await agent.runAgent(
+      {
+        forwardedProps: { a2a: { mode: "stream", taskId: "task-input", subscribeOnly: false } },
+      },
+      { onEvent: ({ event }) => observed.push(event) },
+    );
+
+    const runFinished = observed.find((event) => event.type === EventType.RUN_FINISHED) as
+      | { result?: Record<string, unknown> }
+      | undefined;
+    const deltas = observed
+      .filter(
+        (event) =>
+          event.type === EventType.TEXT_MESSAGE_CHUNK ||
+          event.type === EventType.TEXT_MESSAGE_CONTENT,
+      )
+      .map((event) => (event as { delta?: string }).delta);
+
+    expect(runFinished?.result).toEqual(
+      expect.objectContaining({ outcome: "interrupt", taskId: "task-input" }),
+    );
+    expect(deltas).toContain("Need approval");
+    expect(deltas).not.toContain("should not appear");
   });
 });
