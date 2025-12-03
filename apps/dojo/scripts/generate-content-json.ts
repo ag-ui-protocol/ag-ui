@@ -374,6 +374,21 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  "aws-strands": (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/aws-strands/python/examples/server/api/${agentId}.py`,
+          )
+        ],
+      }),
+      {},
+    );
+  },
   "microsoft-agent-framework-python": (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({
@@ -425,6 +440,8 @@ async function runGenerateContent() {
     const agentFilePaths = agentFilesMapper[agentConfig.id]?.(
       agentConfig.agentKeys,
     );
+
+    console.log(agentConfig.id, agentFilePaths);
     if (!agentFilePaths) {
       continue;
     }
