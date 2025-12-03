@@ -8,7 +8,7 @@ packages = [{ include = "server" }]
 
 [tool.poetry.dependencies]
 python = "<3.14,>=3.12"
-ag-ui-protocol = "^0.1.5"
+ag-ui-protocol = "^0.1.10"
 fastapi = "^0.115.12"
 uvicorn = "^0.34.3"
 strands-agents = {extras = ["gemini"], version = "^1.15.0"}
