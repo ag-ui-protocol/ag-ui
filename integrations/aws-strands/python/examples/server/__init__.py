@@ -28,6 +28,7 @@ from .api import (
     agentic_chat_app,
     agentic_generative_ui_app,
     backend_tool_rendering_app,
+    human_in_the_loop_app,
     shared_state_app,
 )
 
@@ -48,6 +49,7 @@ app.mount('/agentic-chat', agentic_chat_app, 'Agentic Chat')
 app.mount('/backend-tool-rendering', backend_tool_rendering_app, 'Backend Tool Rendering')
 app.mount('/agentic-generative-ui', agentic_generative_ui_app, 'Agentic Generative UI')
 app.mount('/shared-state', shared_state_app, 'Shared State')
+app.mount('/human-in-the-loop', human_in_the_loop_app, 'Human in the Loop')
 
 @app.get("/")
 def root():
@@ -70,4 +72,3 @@ if __name__ == "__main__":
     main()
 
 __all__ = ["main", "app"]
-

@@ -210,6 +210,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
       "backend_tool_rendering",
       "agentic_generative_ui",
       "shared_state",
+      "human_in_the_loop",
     ],
   },
 ];

@@ -42,9 +42,9 @@ model = GeminiModel(
 @tool
 def change_background(background: str):
     """
-    Change the background color of the chat. Can be anything that the CSS background 
+    Change the background color of the chat. Can be anything that the CSS background
     attribute accepts. Regular colors, linear or radial gradients etc.
-    
+
     Args:
         background: The background color or gradient. Prefer gradients. Only use when asked.
     """
@@ -54,7 +54,11 @@ def change_background(background: str):
 strands_agent = Agent(
     model=model,
     tools=[change_background],  # Register so LLM knows about it
-    system_prompt="You are a helpful assistant.",
+    system_prompt="""
+    You are a helpful assistant.
+    When the user greets you, always greet them back. Your greeting should always start with "Hello".
+    Your greeting should also always ask (exact wording) "how can I assist you?"
+    """,
 )
 
 agui_agent = StrandsAgent(
@@ -64,4 +68,3 @@ agui_agent = StrandsAgent(
 )
 
 app = create_strands_app(agui_agent, "/")
-

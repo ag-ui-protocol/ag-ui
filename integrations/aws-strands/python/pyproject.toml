@@ -1,12 +1,12 @@
 [project]
 name = "ag_ui_strands"
-version = "0.1.0"
+version = "0.1.0b12"
 authors = [
     { name = "AG-UI Contributors" }
 ]
 requires-python = ">=3.12, <3.14"
 dependencies = [
-    "ag-ui-protocol>=0.1.5",
+    "ag-ui-protocol>=0.1.10",
     "fastapi>=0.115.12",
     "strands-agents>=1.15.0",
 ]
@@ -20,4 +20,3 @@ packages = ["src/ag_ui_strands"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
-
