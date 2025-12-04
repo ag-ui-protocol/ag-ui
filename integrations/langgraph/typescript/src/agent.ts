@@ -190,7 +190,8 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   async prepareRegenerateStream(input: RegenerateInput, streamMode: StreamMode | StreamMode[]) {
-    const { threadId, messageCheckpoint } = input;
+    const { messageCheckpoint } = input;
+    const threadId = input.threadId ?? randomUUID();
 
     const timeTravelCheckpoint = await this.getCheckpointByMessage(
       messageCheckpoint!.id!,
