@@ -39,23 +39,23 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new PydanticAIAgent({
-          url: `${envVars.pydanticAIUrl}/agentic_chat/`,
+          url: `${envVars.pydanticAIUrl}/agentic_chat`,
         }),
         agentic_generative_ui: new PydanticAIAgent({
-          url: `${envVars.pydanticAIUrl}/agentic_generative_ui/`,
+          url: `${envVars.pydanticAIUrl}/agentic_generative_ui`,
         }),
         human_in_the_loop: new PydanticAIAgent({
-          url: `${envVars.pydanticAIUrl}/human_in_the_loop/`,
+          url: `${envVars.pydanticAIUrl}/human_in_the_loop`,
         }),
         // Disabled until we can figure out why production builds break
         // predictive_state_updates: new PydanticAIAgent({
-        //   url: `${envVars.pydanticAIUrl}/predictive_state_updates/`,
+        //   url: `${envVars.pydanticAIUrl}/predictive_state_updates`,
         // }),
         shared_state: new PydanticAIAgent({
-          url: `${envVars.pydanticAIUrl}/shared_state/`,
+          url: `${envVars.pydanticAIUrl}/shared_state`,
         }),
         tool_based_generative_ui: new PydanticAIAgent({
-          url: `${envVars.pydanticAIUrl}/tool_based_generative_ui/`,
+          url: `${envVars.pydanticAIUrl}/tool_based_generative_ui`,
         }),
         backend_tool_rendering: new PydanticAIAgent({
           url: `${envVars.pydanticAIUrl}/backend_tool_rendering`,
@@ -77,7 +77,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
       return {
         agentic_chat: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/chat` }),
         agentic_generative_ui: new ADKAgent({
-          url: `${envVars.adkMiddlewareUrl}/adk-agentic-generative-ui/`,
+          url: `${envVars.adkMiddlewareUrl}/adk-agentic-generative-ui`,
         }),
         tool_based_generative_ui: new ADKAgent({
           url: `${envVars.adkMiddlewareUrl}/adk-tool-based-generative-ui`,
@@ -493,7 +493,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         backend_tool_rendering: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/backend-tool-rendering/` }),
         agentic_generative_ui: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/agentic-generative-ui/` }),
         shared_state: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/shared-state/` }),
-        human_in_the_loop: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/human-in-the-loop/`, debug: true }),
+        human_in_the_loop: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/human-in-the-loop`, debug: true }),
       };
     },
   },
