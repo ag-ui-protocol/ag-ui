@@ -1,75 +1,111 @@
-# Troubleshooting: A2A ADR alignment gaps
+# A2A PR-Draft Blocking Issues (focused list)
 
-Branch: feat/improve-a2a-support | Updated: 2025-12-02 18:45:00 UTC
+Branch: feat/improve-a2a-support | Updated: 2025-12-03 23:22:56 UTC
 
 ## Current Focus
+- Make the A2A bridge stateless per run (snapshot-seeded projection; deterministic interruptIds) and ensure threadId late-binds to the server contextId once per A2AAgent instance (caller creates a new agent to start a new context).
+- Work in order: finalize stateless tracker + deterministic interruptIds, then implement explicit deferred-threadId mode (enabled by A2AAgent internally) and adjust subscriber/tests.
 
-Working on: Verified e2e fixes (artifact append→snapshot projection and HITL interrupt outcome/pending interrupts) and readying handoff.
-Approach: Routed taskId/contextId through resubscribe calls, ensured initial task projections emit snapshot-only, delayed artifact patches until final snapshots, and re-ran targeted e2e/tests plus lint/build.
+## Evidence Collected (since last update)
+- Added unit test coverage to enforce contextId binding via `resolveThreadIdOnce` and to ensure deferred-threadId agents start with an empty threadId until the server binds it.
+- Fixed `bindContextId` in A2A agent to use an arrow function so `this.resolveThreadIdOnce` is callable at runtime.
+- Updated `AbstractAgent.prepareRunAgentInput` to avoid pre-generating threadId when `deferThreadId` is true.
+- Full `pnpm build` now passes; `pnpm lint` still fails globally because `eslint` was not found on PATH.
+- E2E harness fixed: test executor now always uses the shared event bus manager so artifact/status/interrupt events flow; @ag-ui/a2a test suite and lint for the package both pass.
 
 ## Evidence Collected
-
-- A2A bridge now supports run/task mapping, subscribeOnly reconnect, Engram lane, full history/context forwarding, artifact/status projection, HITL interrupts/resume, and metadata hygiene; covered by unit/int/e2e tests.
-- Workspace build passes (`pnpm build`). Lint still blocked by missing eslint in @ag-ui/core but intentionally deferred per user direction.
-- Tests pass for @ag-ui/a2a (`pnpm --filter @ag-ui/a2a test`).
-- Integration gaps addressed: added integration tests for send new task (no thread/run leakage), Engram config opt-in, artifact append vs snapshot defaults, and HITL input-required stream.
-- New e2e scenarios added: Engram send, artifact append→snapshot projection, and HITL input_required interrupt outcome/pending interrupts (all passing).
+- Stateless tracker is in code: every run builds a fresh sharedStateTracker, seeds with `getTask` snapshot before stream/resubscribe, and uses deterministic `interruptId` (`input-${taskId}-${requestId||statusMessageId}`). Pending interrupts/state rebuilt per run.
+- Late-binding exists: A2AAgent buffers events until a server `contextId` arrives, then sets `threadId/contextId`, emits RUN_STARTED, and flushes. Outbound first stream omits contextId when not provided. Tests cover this path.
+- AbstractAgent contract is “threadId is per-instance”: once bound (caller-provided or first server contextId), the same threadId is reused for subsequent runs of that agent instance; callers must instantiate a new agent to start a new context. The current A2AAgent behavior (keep bound contextId across runs on the same instance) aligns with this.
+- E2E harness bug: `createAgentExecutor` uses `bus.publish(...)` instead of the provided `eventBus`, so artifact/interrupt/status events aren’t emitted; matches failing e2e notes.
+- Current bridge (post-interim fix) still starts with AG-UI-provided threadId; when no contextId is provided it omits one, then binds to the first server contextId and keeps it for the life of the agent instance (aligned with AbstractAgent per-instance threadId contract). Explicit “defer threadId” flag not yet added.
+- Shared-state tracker is per-run; prior pendingInterrupts/interrupt counters reset on reconnect/resume, so deterministic interruptIds are needed to reconcile responses.
+- Deterministic interruptId derivation from requestId/status messageId and snapshot-first projection ordering are implemented; getTask is called before streaming/resubscribe.
+- A2A protocol requires server-generated `contextId`/`taskId`; the target refactor is to make threadId == server contextId (no cache) for A2A, while keeping AG-UI API unchanged.
 
 ## Assumptions
+- A2A task snapshot + stream is the sole source of truth; bridge should be per-run stateless.
+- Interrupt request payloads include stable identifiers (requestId or status messageId) to derive deterministic interruptIds.
 
-- New design will require explicit RunOptions (`mode`, `taskId`) and Engram-aware message handling in the bridge.
+## Stateless bridge plan (targets issue #2)
+- Always call `getTask` before streaming/reconnect to seed projection; then `resubscribeTask`/`sendMessageStream` for deltas.
+- Scope tracker to the run only; discard after stream ends—no cross-run persistence.
+- Deterministic interruptIds from server data: `input-${taskId}-${requestId || statusMessageId}`; drop counters.
+- Rebuild pendingInterrupts from snapshot/status; clear on `a2a.input.response` or non–input-required status during the same stream.
+- Artifacts/status rely on snapshot + live deltas; no stored state required.
 
-## Attempts Log
+## Tests needed (validate stateless tracker & gaps)
+- Reconnect with existing taskId: first event is STATE_SNAPSHOT from `getTask`; no prior-run data; pending interrupt reconstructed when status=input-required.
+- Resume flow: new run sends `a2a.input.response`; pendingInterrupt removed with fresh tracker; interruptId matches snapshot-derived value.
+- Artifact append→snapshot across reconnect: snapshot carries final value; stream append/deltas apply cleanly without duplicates using fresh tracker.
+- Legacy text-only stream: when tracker is omitted, no STATE_DELTA events emitted.
+- Client subscriber suite: snapshot-before-deltas on reconnect; RUN_FINISHED interrupt outcome still emitted.
 
-2025-11-29 20:35:12 UTC Attempt 1: Reviewed ADRs 0001-0011 and current A2A TS integration (agent/utils/tests) → Collected discrepancies above.
-2025-11-29 21:46:56 UTC Attempt 2: Planned implementation approach—introduce run options (`mode`, `taskId`, metadata gating), Engram extension (`urn:agui:engram:v1`), contextId mapping per thread (bridge-owned UUID), metadata forwarding of full history/context, and shared-state projection for status/artifact (default path `/view/artifacts/<artifactId>`, append-aware JSON Patch).
-2025-11-29 22:03:48 UTC Attempt 3: Implemented run options + Engram handling + shared-state projection; added new conversion/state tests; builds succeeded via `pnpm build --filter @ag-ui/a2a...`; `pnpm --filter @ag-ui/a2a test` passing; `pnpm lint` still fails due to missing eslint dependency in workspace.
-2025-12-01 18:47:00 UTC Attempt 4: Added ADR 0012 for HITL interrupts + Activity/State projection; updated PRD with HITL success criteria and activity/state requirements.
-2025-12-02 00:21:07 UTC Attempt 5: Preparing to finalize ADR 0012 and PRD HITL sections with refined Activity/State/interrupt details (doc-only update).
-2025-12-02 00:32:50 UTC Attempt 6: Adjusting ADR/PRD to keep `/view/tasks/<taskId>` as canonical task map and remove stray aggregates.
-2025-12-02 00:36:18 UTC Attempt 7: Added cleanup plan to drop `/view/tasks/task-status` and `/view/tasks/task-audit` by deleting aggregates and updating bridge/tests accordingly.
-2025-12-02 00:39:21 UTC Attempt 8: Captured remediation list (aggregate removal, forward full context/config/history, artifact/status projection, metadata layering, Engram lane wiring) for follow-up implementation.
-2025-12-02 02:05:00 UTC Attempt 9: Implemented HITL interrupt handling and Activity/State projections per ADR 0012—input-required status now emits activity snapshots/deltas, pending interrupts under `/view/pendingInterrupts`, interrupt run-finish payloads, and monotonic `interruptId` generation; added resume payload conversion for formResponse; enforced shared-state snapshots/deltas with safe container creation; updated tests (HITL flows, state projections, resume) now passing via `pnpm --filter @ag-ui/a2a test`; `pnpm build` passes; `pnpm lint` still fails workspace-wide due to missing `eslint` binary in @ag-ui/core.
-2025-12-02 01:48:22 UTC Attempt 10: Implementing remaining PRD/ADR TODOs (forward full history/config/system/dev when opted in, Engram lane/config URN routing, metadata layering hygiene, test decoupling from noncanonical paths).
-2025-12-02 03:35:11 UTC Attempt 11: Completed aggregate removal + `taskAggregates` projection, message metadata forwarding (history/context/Engram), Engram header sanitization, and test updates; `pnpm --filter @ag-ui/a2a test` + `pnpm build` pass; `pnpm lint` still fails (eslint missing in @ag-ui/core).
-2025-12-02 15:10:00 UTC Attempt 12: Marked ADRs/PRD Accepted; verified A2A tests (`pnpm --filter @ag-ui/a2a test`) and workspace build passing; lint intentionally deferred per user direction (missing eslint in @ag-ui/core).
-2025-12-02 16:20:00 UTC Attempt 13: Audited PRD/ADR happy-path coverage vs existing integration/e2e; identified missing scenarios (Engram config lane opt-in/default-off, send mode new task, artifact append vs snapshot defaults/paths, canonical state patch paths, HITL interrupt + resume end-to-end, opt-in system/developer/config/history forwarding, reconnect without reopening runs).
-2025-12-02 17:05:00 UTC Attempt 14: Added integration tests for new-task send, Engram opt-in, artifact defaults, and HITL stream; added e2e scenarios for Engram send (pass), artifact append→snapshot projection (fail), and HITL interrupt outcome/pending interrupts (fail). `pnpm --filter @ag-ui/a2a test -- agent.integration.test.ts` passes; `pnpm --filter @ag-ui/a2a test -- a2a.e2e.test.ts` failing on the two new e2e cases.
-2025-12-02 18:10:00 UTC Attempt 15: Investigating failing e2e cases; plan to rerun targeted tests, inspect projections/logs, and adjust bridge projection/interrupt handling to satisfy artifact final snapshot and RUN_FINISHED interrupt expectations.
-2025-12-02 18:45:00 UTC Attempt 16: Fixed e2e gaps by passing taskId/contextId through resubscribe calls, emitting snapshot-only for initial task projections, and deferring artifact shared-state patches until final snapshots; `pnpm --filter @ag-ui/a2a test -- a2a.e2e.test.ts` now passing. `pnpm lint` still fails in @ag-ui/core (missing eslint); `pnpm build` succeeds.
-2025-12-02 18:55:00 UTC Attempt 17: Removed artifact patch deferral so append chunks also update shared state in real time (append adds, final snapshot replaces); will rerun e2e to confirm behavior remains green.
-2025-12-02 19:05:00 UTC Attempt 18: Updated e2e assertion to scan all state deltas for the final artifact patch (since append chunks now emit earlier deltas); streaming state updates preserved. Re-running tests to confirm.
-2025-12-02 19:20:00 UTC Attempt 19: Adjusted utils snapshot test to assert task snapshot contents (instead of expecting a delta) per current projection semantics; will rerun @ag-ui/a2a tests to ensure green.
+## Tests needed (late-bound threadId/contextId)
+1) First run, no contextId: initial send omits contextId; first snapshot/status yields contextId; RUN_STARTED emitted after binding; events carry threadId == contextId; outbound messages after binding include contextId.
+2) Caller-provided contextId: RUN_STARTED not delayed; threadId equals provided contextId; outbound includes it; no late-binding path taken.
+3) Resubscribe/stream with existing contextId: resubscribe RPC includes contextId; events use threadId == contextId; no UUIDs generated.
+4) Error before contextId arrives: RUN_ERROR still emitted with either caller threadId or a provisional ID; no binding call.
+5) Non-A2A agent regression: deferred threadId disabled, original timing/behavior unchanged.
+6) Subscriber ordering: deferred agents still deliver RUN_STARTED before downstream events; no double RUN_STARTED; non-deferred unaffected.
 
-## TODO (doc + implementation follow-up)
+## Next steps
+- Add @ag-ui/client subscriber tests for reconnect/snapshot-first, interrupt outcome, artifact projection. ✅
+- Execute and document checklist commands (pnpm --filter @ag-ui/a2a test ✅, pnpm --filter @ag-ui/client test ✅, pnpm build ✅).
+- Implement explicit deferred-threadId mode: add `deferThreadId` opt-in to AbstractAgent; A2AAgent enables it in super() so the constructor doesn’t pre-generate threadId. Bind once to server contextId, then reuse per instance (no multi-context cache). Remove any local UUID generation for contextId.
+- Implementation handoff:
+  - Touch points: see “Proposed refactor” section for base-class and A2A agent changes.
+  - Caller contract: threadId equals server contextId after first binding; callers keep using that threadId for this agent instance; create a new instance for a new context.***
 
-- [x] Reserve `/view/tasks/<taskId>` as the canonical map; update bridge projections and tests accordingly.
-- [x] Implement full AG-UI → A2A forwarding: include system/developer/config cues and full history/context when explicitly enabled; avoid latest-user-only payloads.
-- [x] Implement A2A → AG-UI artifact/status projection per ADR 0010/0011: shared-state mapping (snapshots/appends), activity events, artifact metadata paths (now emits snapshots/deltas, pending interrupts, interrupt run-finish payloads).
-- [x] Implement ADR 0012 HITL flow: handle `input-required` interrupts, emit activity/state events, pending interrupt tracking, interrupt `RUN_FINISHED` payloads, and resume via `a2a.hitl.formResponse`.
-- [x] Wire Engram/config lane: support Engram URN, route config updates via Engram messages, remove legacy extension header.
-- [x] Keep tests and source decoupled: test details must not leak into implementation—do not mirror test-only paths; update tests to reflect intentional source behavior.
-- [x] Add integration/e2e coverage for PRD/ADR happy paths: Engram config lane opt-in/default-off, send-mode new task completion, artifact append vs snapshot defaults and projection paths, canonical state patch paths, HITL interrupt + resume end-to-end, opt-in forwarding of system/developer/config/history, reconnect/subscribeOnly without reopening runs.
-- [x] Fix e2e failures by aligning implementation with expectations: artifact append→snapshot should project `/view/artifacts/artifact-append` to "final"; HITL input-required stream should emit `RUN_FINISHED` outcome interrupt with pendingInterrupts populated.
+## Attempts Log (relevant)
+- 2025-12-03 00:10 UTC: Identified four gaps (contextId ordering, tracker lifecycle, missing client tests, unchecked checklist).
+- 2025-12-03 00:25 UTC: Drafted stateless bridge plan and validation test list.
+- 2025-12-03 01:07 UTC: Began implementation pass—reading A2A agent/utils and @ag-ui/client subscribers to plan stateless tracker + contextId ordering changes and tests.
+- 2025-12-03 01:26 UTC: Implemented snapshot-seeded stateless tracker (deterministic interruptIds, getTask before streaming/resubscribe), reordered contextId resolution, and added A2A + client subscriber tests; ready to run suites/build.
+- 2025-12-03 01:33 UTC: Ran @ag-ui/a2a tests, @ag-ui/client tests, and full pnpm build; lint skipped per instruction; build warnings only from existing Next.js hooks deps.
+- 2025-12-03 21:05 UTC: Implemented interim contextId protocol fixes (omit generation; cache server-provided via onContextId; outbound metadata omits contextId unless provided). Tests pass; this will be replaced by late-bound threadId == server contextId (no cache) per refactor plan.
+- 2025-12-03 23:41 UTC: Starting deferred-threadId binding + e2e event bus fix; tasks: add deferThreadId to AbstractAgent/A2AAgent, bind threadId once to server contextId, remove local context UUIDs, and correct test harness to publish via event bus before rerunning @ag-ui/a2a tests/build.
+- 2025-12-03 23:45 UTC: Ran `pnpm --filter @ag-ui/a2a test` → failing with `resolveThreadIdOnce is not a function` (A2AAgent using stale @ag-ui/client build); need to rebuild client so runtime includes new helper, then rerun tests.
 
-## Discovered Patterns
+## Proposed refactor: threadId == server contextId for A2A, no bridge cache
+- Goal: keep A2A stateless and server-owned IDs while avoiding A2A concepts in the public AG-UI API.
+- Chosen approach: late-bind threadId to the first server contextId for A2A agents; no bridge cache; non-A2A agents unchanged.
+- Code touch points:
+  - `sdks/typescript/packages/client/src/agent/agent.ts`
+    - Make threadId optional for agents that opt out (e.g., constructor flag `deferThreadId?: boolean`).
+    - Add one-time `resolveThreadIdOnce(id: string)` that sets the instance threadId if not yet set.
+    - Adjust RUN_STARTED emission: for deferred agents, allow RUN_STARTED to be emitted after threadId is resolved (still before downstream events). Non-deferred agents keep current timing.
+  - `integrations/a2a/typescript/src/agent.ts`
+    - When no caller contextId, omit contextId in the first A2A send.
+    - Capture contextId from the first snapshot/status/message; call `resolveThreadIdOnce` with that value, then emit RUN_STARTED and subsequent events with the bound threadId == contextId.
+    - Ensure all outbound A2A messages after binding include that contextId.
+  - `integrations/a2a/typescript/src/utils.ts`
+    - Ensure contextId from events is surfaced via `onContextId`; binding happens in the agent.
+- Event semantics:
+  - For deferred A2A agents, RUN_STARTED is delayed until contextId is received; after that, event order remains RUN_STARTED → snapshot/deltas/messages.
+  - Non-A2A agents: no change.
+  - Caller contract:
+  - ThreadId and contextId are the same for A2A agents after the first binding; callers just keep using threadId. No extra contextId parameter is required in the public API.
+- Tests to add/update:
+  1) A2A unit: first run with no contextId emits RUN_STARTED after snapshot; threadId equals server contextId; outbound messages post-binding include contextId.
+  2) A2A integration: resubscribe uses server contextId, no local UUID; RUN_STARTED timing validated.
+  3) Subscriber tests: RUN_STARTED ordering for deferred agents; ensure no double emission.
+  4) Error-before-contextId: verify RUN_ERROR still emitted with a temporary threadId or caller-supplied one.
+  5) Non-A2A regression: existing behavior unchanged when `deferThreadId` is false/default.
+- Rollout guardrails:
+  - Keep default behavior for all agents; enable defer mode only in A2AAgent constructor.
+  - Document the new optional behavior in ADR 0013 and a short README note for A2A.
 
-- Shared-state projection (tasks/artifacts/pending interrupts) plus Engram lane gives consistent UI surface; need to keep default artifact base path stable (`/view/artifacts`) and avoid leaking thread/run IDs into A2A metadata.
+## Discovered Patterns (relevant)
+- Other integrations (LangGraph, Mastra) stay stateless: they rehydrate from backend state each run and emit STATE_SNAPSHOTs; projection is per-connection only.
 
-## Blockers/Questions
+---
 
-- None; lint intentionally deferred (missing eslint in @ag-ui/core) per user.
+## Progress Update (2025-12-03, later)
+- Added client subscriber coverage for deferred RUN_STARTED ordering.
+- Swapped e2e A2A tests to use the in-process @a2a-js/sdk server (DefaultRequestHandler, InMemoryTaskStore, DefaultExecutionEventBusManager, A2AExpressApp) instead of a hand-rolled stub.
+- Current e2e status: tests failing; issues include missing event bus setup for artifact/interrupt tasks (see `bus.publish` typo in executor), lack of emitted artifact deltas/pending interrupts, and contextId binding mismatches when the server generates new IDs. Resubscribe paths warn about missing event bus; artifact/interrupt assertions fail due to no events.
+- Next actions: fix test-side AgentExecutor to always publish via an event bus (createOrGetByTaskId) for all taskIds, emit artifacts/status/interrupt events so projections exist, and align assertions with server-generated contextIds. Re-run `pnpm --filter @ag-ui/a2a test` and build. Document any remaining source-behavior gaps if tests stay failing.
 
-## Resolution (when solved)
-
-### Root Cause
-
-Initial bridge was single-shot, text-only, reused UI identifiers, lacked config lane, artifact/status projection, and HITL handling—divergent from ADR 0001–0012.
-
-### Solution
-
-Implemented run/task mapping with reconnect, Engram/config lane, full history/context forwarding, artifact/status/shared-state projection, HITL interrupts/resume flows, metadata hygiene, and updated tests; build passes, lint deferred by choice.
-
-### Learnings
-
-Snapshot/delta projection plus metadata gating keeps UI/audit surfaces aligned while avoiding provenance leaks; Engram routing and HITL handling need explicit tests to prevent regressions.
+## Decision (2025-12-04)
+- Do not widen `RunErrorEvent` schema to include `threadId`/`runId`. RUN_ERROR will remain message-only; A2A keeps emitting RUN_STARTED (with bound/provisional threadId) plus RUN_ERROR without thread/run fields. Changing this would require a cross-package schema update; we chose to defer.
