@@ -26,8 +26,15 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "clean": "rm -rf dist .turbo node_modules",
+    "lint": "eslint \"src/**/*.{ts,tsx}\"",
+    "lint:fix": "eslint \"src/**/*.{ts,tsx}\" --fix",
+    "format": "prettier --write \"src/**/*.{ts,tsx,md,mdx,json}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,md,mdx,json}\"",
     "typecheck": "tsc --noEmit",
+    "check-types": "tsc --noEmit",
     "test": "jest",
+    "test:watch": "jest --watch",
+    "test:ci": "jest --ci",
     "link:global": "pnpm link --global",
     "unlink:global": "pnpm unlink --global"
   },
@@ -36,17 +43,21 @@
     "rxjs": "7.8.1"
   },
   "peerDependencies": {
-    "@ag-ui/core": ">=0.0.40",
-    "@ag-ui/client": ">=0.0.40"
+    "@ag-ui/client": ">=0.0.40",
+    "@ag-ui/core": ">=0.0.40"
   },
   "devDependencies": {
-    "@ag-ui/core": "workspace:*",
     "@ag-ui/client": "workspace:*",
+    "@ag-ui/core": "workspace:*",
+    "@eslint/js": "^9.39.1",
     "@types/jest": "^29.5.14",
     "@types/node": "^20.11.19",
+    "eslint": "^9.37.0",
+    "globals": "^16.5.0",
     "jest": "^29.7.0",
     "ts-jest": "^29.1.2",
     "tsup": "^8.0.2",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "typescript-eslint": "^8.48.1"
   }
 }
