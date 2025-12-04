@@ -1,6 +1,6 @@
 import { A2AAgent } from "../agent";
 import { A2AClient } from "@a2a-js/sdk/client";
-import type { BaseEvent, Message } from "@ag-ui/client";
+import type { BaseEvent, Message, StateSnapshotEvent } from "@ag-ui/client";
 import { EventType } from "@ag-ui/client";
 import { ENGRAM_EXTENSION_URI } from "../utils";
 
@@ -376,14 +376,14 @@ describe("A2AAgent integration with real A2AClient", () => {
       params?: { metadata?: Record<string, unknown>; message?: { contextId?: string; taskId?: string } };
     };
     expect(rpcPayload?.params?.message?.taskId).toBe("task-control");
-    expect(rpcPayload?.params?.message?.contextId).toBe("task-control");
+    expect(rpcPayload?.params?.message?.contextId).toBeUndefined();
     expect(rpcPayload?.params?.metadata).toEqual(
       expect.objectContaining({
         mode: "send",
         taskId: "task-control",
-        contextId: "task-control",
       }),
     );
+    expect(rpcPayload?.params?.metadata).not.toHaveProperty("contextId");
     expect(rpcPayload?.params?.metadata).not.toHaveProperty("threadId");
     expect(rpcPayload?.params?.metadata).not.toHaveProperty("runId");
 
@@ -493,12 +493,118 @@ describe("A2AAgent integration with real A2AClient", () => {
     expect(rpcBodies.some((body) => body.method === "tasks/resubscribe")).toBe(true);
     expect(rpcBodies.some((body) => body.method === "message/send" || body.method === "message/stream")).toBe(false);
 
+    const resubscribeBody = rpcBodies.find((body) => body.method === "tasks/resubscribe") as
+      | { params?: { contextId?: string } }
+      | undefined;
+    expect(resubscribeBody?.params?.contextId).toBe("ctx-resubscribe");
+
     const combinedText = result.newMessages.map((message) => String(message.content)).join(" ");
     expect(combinedText).toContain("Snapshot hello");
     expect(combinedText).toContain("Resubscribe streaming");
     expect(
       (agent.state as { view?: { tasks?: Record<string, unknown> } }).view?.tasks?.["task-resubscribe"],
     ).toEqual(expect.objectContaining({ status: expect.objectContaining({ state: "working" }) }));
+  });
+
+  it("emits snapshots before deltas when resubscribing to input-required tasks", async () => {
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.endsWith("/.well-known/agent.json")) {
+        return new Response(
+          JSON.stringify({
+            url: "https://agent.local/rpc",
+            capabilities: { streaming: true },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (url.endsWith("/rpc")) {
+        const body = init?.body ? JSON.parse(init.body as string) : {};
+        const rpcId = typeof body.id === "number" ? body.id : 1;
+        const method = typeof body.method === "string" ? body.method : "";
+
+        if (method === "tasks/get") {
+          return new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: rpcId,
+              result: {
+                kind: "task",
+                id: body.params?.id ?? "task-input-snapshot",
+                contextId: "ctx-snapshot",
+                status: {
+                  state: "input-required" as const,
+                  message: {
+                    kind: "message" as const,
+                    messageId: "status-snap",
+                    role: "agent" as const,
+                    parts: [
+                      { kind: "text" as const, text: "Need input" },
+                      { kind: "data" as const, data: { type: "a2a.input.request", requestId: "request-snap" } },
+                    ],
+                  },
+                },
+                history: [],
+                artifacts: [],
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+
+        if (method === "tasks/resubscribe" || new Headers(init?.headers).get("Accept")?.includes("text/event-stream")) {
+          return createSseResponse([], rpcId);
+        }
+
+        throw new Error(`Unhandled RPC call: ${init?.body}`);
+      }
+
+      throw new Error(`Unhandled fetch URL: ${url}`);
+    });
+
+    global.fetch = fetchMock as typeof fetch;
+
+    const client = new A2AClient("https://agent.local");
+    const agent = new A2AAgent({
+      a2aClient: client,
+      initialMessages: [],
+      initialState: { view: { tasks: {}, artifacts: {}, pendingInterrupts: {} } },
+    });
+
+    const events: BaseEvent[] = [];
+
+    await agent.runAgent(
+      {
+        forwardedProps: {
+          a2a: { mode: "stream", taskId: "task-input-snapshot", subscribeOnly: true },
+        },
+      },
+      { onEvent: ({ event }) => events.push(event) },
+    );
+
+    const a2aEvents = events.filter((event) => event.type !== EventType.RUN_STARTED);
+    expect(a2aEvents[0]?.type).toBe(EventType.STATE_SNAPSHOT);
+
+    const snapshot = a2aEvents[0] as StateSnapshotEvent;
+    const pending = (snapshot.snapshot as { view?: { pendingInterrupts?: Record<string, unknown> } }).view
+      ?.pendingInterrupts;
+    expect(pending).toHaveProperty("input-task-input-snapshot-request-snap");
+
+    const activitySnapshot = a2aEvents.find(
+      (event) => event.type === EventType.ACTIVITY_SNAPSHOT,
+    ) as { messageId?: string } | undefined;
+    expect(activitySnapshot?.messageId).toBe("input-task-input-snapshot-request-snap");
+
+    const runFinished = a2aEvents.find((event) => event.type === EventType.RUN_FINISHED) as
+      | { result?: Record<string, unknown> }
+      | undefined;
+    expect(runFinished?.result).toEqual(
+      expect.objectContaining({
+        outcome: "interrupt",
+        interruptId: "input-task-input-snapshot-request-snap",
+      }),
+    );
   });
 
   it("creates a new task on send mode without taskId and keeps AG-UI IDs out of metadata", async () => {

@@ -1,5 +1,6 @@
 import { EventType } from "@ag-ui/client";
 import type { Message, StateDeltaEvent, StateSnapshotEvent, TextMessageChunkEvent } from "@ag-ui/client";
+import type { TaskStatusUpdateEvent } from "@a2a-js/sdk";
 import {
   convertAGUIMessagesToA2A,
   convertA2AEventToAGUIEvents,
@@ -220,7 +221,7 @@ describe("convertAGUIMessagesToA2A", () => {
       {
         contextId: "ctx-input",
         taskId: "task-input",
-        resume: { interruptId: "input-task-input-1", payload: { field: "value" } },
+        resume: { interruptId: "input-task-input-request-1", payload: { field: "value" } },
       },
     );
 
@@ -232,7 +233,7 @@ describe("convertAGUIMessagesToA2A", () => {
 
     expect(formResponse).toEqual(
       expect.objectContaining({
-        interruptId: "input-task-input-1",
+        interruptId: "input-task-input-request-1",
         values: { field: "value" },
       }),
     );
@@ -645,7 +646,7 @@ describe("convertA2AEventToAGUIEvents", () => {
     );
   });
 
-  it("generates monotonic interruptIds and includes request payloads in RUN_FINISHED results", () => {
+  it("derives deterministic interruptIds from request identifiers and includes request payloads in RUN_FINISHED results", () => {
     const tracker = createSharedStateTracker();
     const options = {
       messageIdMap: new Map<string, string>(),
@@ -683,7 +684,7 @@ describe("convertA2AEventToAGUIEvents", () => {
         outcome: "interrupt",
         taskId: "task-input",
         contextId: "ctx-input",
-        interruptId: "input-task-input-1",
+        interruptId: "input-task-input-request-1",
         request: expect.objectContaining({ requestId: "request-1" }),
       }),
     );
@@ -723,7 +724,7 @@ describe("convertA2AEventToAGUIEvents", () => {
 
     expect(secondRunFinished?.result).toEqual(
       expect.objectContaining({
-        interruptId: "input-task-input-2",
+        interruptId: "input-task-input-request-2",
         request: expect.objectContaining({ requestId: "request-2" }),
       }),
     );
@@ -787,6 +788,99 @@ describe("convertA2AEventToAGUIEvents", () => {
     expect((tracker.state as { view?: { pendingInterrupts?: Record<string, unknown> } }).view?.pendingInterrupts).toEqual(
       {},
     );
+  });
+
+  it("rehydrates pending interrupts from task snapshots and clears them when responses arrive", () => {
+    const tracker = createSharedStateTracker();
+    const messageIdMap = new Map<string, string>();
+    const snapshot = {
+      kind: "task" as const,
+      id: "task-snapshot",
+      contextId: "ctx-snapshot",
+      status: {
+        state: "input-required" as const,
+        message: {
+          kind: "message" as const,
+          messageId: "status-snapshot",
+          role: "agent" as const,
+          parts: [
+            { kind: "text" as const, text: "Provide form" },
+            { kind: "data" as const, data: { type: "a2a.input.request", requestId: "request-snap" } },
+          ],
+        },
+      },
+      history: [],
+      artifacts: [],
+    };
+
+    const snapshotEvents = convertA2AEventToAGUIEvents(snapshot, {
+      messageIdMap,
+      sharedStateTracker: tracker,
+      threadId: "thread-snapshot",
+      runId: "run-snapshot",
+    });
+
+    expect(snapshotEvents[0]?.type).toBe(EventType.STATE_SNAPSHOT);
+    const pendingEntries = (tracker.state as { view?: { pendingInterrupts?: Record<string, unknown> } }).view
+      ?.pendingInterrupts;
+    const interruptId = Object.keys(pendingEntries ?? {})[0];
+
+    expect(interruptId).toBe("input-task-snapshot-request-snap");
+    expect(pendingEntries?.[interruptId]).toEqual(
+      expect.objectContaining({ taskId: "task-snapshot", requestId: "request-snap" }),
+    );
+
+    const responseEvents = convertA2AEventToAGUIEvents(
+      {
+        kind: "message" as const,
+        messageId: "response-1",
+        role: "user" as const,
+        contextId: "ctx-snapshot",
+        taskId: "task-snapshot",
+        parts: [{ kind: "data" as const, data: { type: "a2a.input.response", values: { approval: true } } }],
+      },
+      {
+        messageIdMap: new Map<string, string>(),
+        sharedStateTracker: tracker,
+      },
+    );
+
+    const activityDelta = responseEvents.find(
+      (event) => event.type === EventType.ACTIVITY_DELTA,
+    ) as { messageId?: string } | undefined;
+
+    expect(activityDelta?.messageId).toBe(interruptId);
+    expect(
+      (tracker.state as { view?: { pendingInterrupts?: Record<string, unknown> } }).view?.pendingInterrupts,
+    ).toEqual({});
+  });
+
+  it("does not emit state events when sharedStateTracker is omitted", () => {
+    const statusEvent = {
+      kind: "status-update" as const,
+      contextId: "ctx-plain",
+      final: false,
+      status: {
+        state: "working" as const,
+        message: {
+          kind: "message" as const,
+          messageId: "status-plain",
+          role: "agent" as const,
+          parts: [{ kind: "text" as const, text: "Plain status" }],
+        },
+      },
+      taskId: "task-plain",
+    };
+
+    const events = convertA2AEventToAGUIEvents(statusEvent, {
+      messageIdMap: new Map(),
+    });
+
+    expect(
+      events.some(
+        (event) => event.type === EventType.STATE_DELTA || event.type === EventType.STATE_SNAPSHOT,
+      ),
+    ).toBe(false);
   });
 
   it("projects surface operations into activity events and de-duplicates snapshots", () => {
@@ -884,6 +978,61 @@ describe("convertA2AEventToAGUIEvents", () => {
     ).toEqual(expect.arrayContaining(["First output", "Second output"]));
   });
 
+  it("hydrates artifacts from snapshots and applies append updates without duplication", () => {
+    const tracker = createSharedStateTracker();
+    const snapshot = {
+      kind: "task" as const,
+      id: "artifact-task",
+      contextId: "ctx-artifacts",
+      status: { state: "working" as const },
+      history: [],
+      artifacts: [
+        {
+          artifactId: "artifact-1",
+          parts: [{ kind: "text" as const, text: "Hello" }],
+        },
+      ],
+    };
+
+    const snapshotEvents = convertA2AEventToAGUIEvents(snapshot, {
+      messageIdMap: new Map(),
+      sharedStateTracker: tracker,
+      artifactBasePath: DEFAULT_ARTIFACT_BASE_PATH,
+    });
+
+    expect(snapshotEvents[0]?.type).toBe(EventType.STATE_SNAPSHOT);
+
+    const appendEvents = convertA2AEventToAGUIEvents(
+      {
+        kind: "artifact-update" as const,
+        contextId: "ctx-artifacts",
+        taskId: "artifact-task",
+        append: true,
+        lastChunk: true,
+        artifact: {
+          artifactId: "artifact-1",
+          parts: [{ kind: "text" as const, text: " world" }],
+        },
+      },
+      {
+        messageIdMap: new Map(),
+        sharedStateTracker: tracker,
+        artifactBasePath: DEFAULT_ARTIFACT_BASE_PATH,
+      },
+    );
+
+    const deltas = appendEvents.filter((event) => event.type === EventType.STATE_DELTA) as StateDeltaEvent[];
+    expect(
+      deltas.some((delta) =>
+        delta.delta?.some((entry) => `${entry.path}`.includes("/view/artifacts/artifact-1")),
+      ),
+    ).toBe(true);
+    const artifacts = (tracker.state as { view?: { artifacts?: Record<string, unknown> } }).view?.artifacts as
+      | Record<string, string>
+      | undefined;
+    expect(artifacts?.["artifact-1"]).toBe("Hello world");
+  });
+
   it("maps task status updates to raw events", () => {
     const statusEvent = {
       kind: "status-update" as const,
@@ -893,12 +1042,9 @@ describe("convertA2AEventToAGUIEvents", () => {
       taskId: "task-1",
     };
 
-    const events = convertA2AEventToAGUIEvents(
-      statusEvent as unknown as import("@a2a-js/sdk").TaskStatusUpdateEvent,
-      {
-        messageIdMap: new Map(),
-      },
-    );
+    const events = convertA2AEventToAGUIEvents(statusEvent as unknown as TaskStatusUpdateEvent, {
+      messageIdMap: new Map(),
+    });
 
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe(EventType.RAW);

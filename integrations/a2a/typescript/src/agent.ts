@@ -1,15 +1,14 @@
-import {
-  AbstractAgent,
+import { AbstractAgent, EventType, randomUUID } from "@ag-ui/client";
+import type {
   AgentConfig,
   BaseEvent,
-  EventType,
   RunAgentInput,
   RunErrorEvent,
   RunFinishedEvent,
   RunStartedEvent,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
-import { A2AClient } from "@a2a-js/sdk/client";
+import type { A2AClient } from "@a2a-js/sdk/client";
 import type {
   MessageSendConfiguration,
   MessageSendParams,
@@ -30,7 +29,6 @@ import type {
   A2ARunOptions,
   ConvertA2AEventOptions,
 } from "./types";
-import { randomUUID } from "@ag-ui/client";
 
 export interface A2AAgentConfig extends AgentConfig {
   a2aClient: A2AClient;
@@ -53,13 +51,13 @@ type ResolvedA2ARunOptions = Required<
     | "subscribeOnly"
   >
 > &
-  A2ARunOptions & { contextId: string };
+  A2ARunOptions & { contextId?: string };
 
 export class A2AAgent extends AbstractAgent {
   private readonly a2aClient: A2AClient;
   private readonly messageIdMap = new Map<string, string>();
   private readonly defaultRunOptions: Partial<A2ARunOptions>;
-  private readonly contextIds = new Map<string, string>();
+  private hasBoundContextId = false;
 
   constructor(config: A2AAgentConfig) {
     const { a2aClient, runOptions, ...rest } = config;
@@ -67,7 +65,7 @@ export class A2AAgent extends AbstractAgent {
       throw new Error("A2AAgent requires a configured A2AClient instance.");
     }
 
-    super(rest);
+    super({ ...rest, deferThreadId: true });
 
     this.a2aClient = a2aClient;
     this.defaultRunOptions = runOptions ?? {};
@@ -85,41 +83,79 @@ export class A2AAgent extends AbstractAgent {
   public override run(input: RunAgentInput): Observable<BaseEvent> {
     return new Observable<BaseEvent>((subscriber) => {
       const run = async () => {
-        const typedInput = input as A2ARunInput;
-        const runStarted: RunStartedEvent = {
-          type: EventType.RUN_STARTED,
-          threadId: input.threadId,
-          runId: input.runId,
-        };
-        subscriber.next(runStarted);
+      const typedInput = input as A2ARunInput;
+      let emitRunStarted: () => void = () => {};
+      let flushPendingEvents: () => void = () => {};
+      let boundContextId: string | undefined;
+      let contextBound = false;
+      let runStartedEmitted = false;
+      let runFinishedFromEvents = false;
+      const pendingEvents: BaseEvent[] = [];
 
-        try {
-          const runOptions = this.resolveRunOptions(typedInput);
+      const normalizeId = (value?: string | null): string | undefined => {
+        const trimmed = value?.toString().trim();
+        return trimmed && trimmed.length > 0 ? trimmed : undefined;
+      };
+      const resolveThreadIdForRun = (): string =>
+        normalizeId(boundContextId) ??
+        normalizeId(this.threadId) ??
+        normalizeId(input.threadId) ??
+        input.runId;
+
+      try {
+          let runOptions = this.resolveRunOptions(typedInput);
           const converted = this.prepareConversation(typedInput, runOptions);
+          const hasOutgoingMessage = Boolean(converted.targetMessage ?? converted.latestUserMessage);
+          const subscribeOnly =
+            runOptions.mode !== "send" &&
+            (runOptions.subscribeOnly || (!hasOutgoingMessage && Boolean(runOptions.taskId)));
+          runOptions = { ...runOptions, subscribeOnly };
           const targetMessage =
             converted.targetMessage ??
             converted.latestUserMessage ??
             converted.history[converted.history.length - 1];
 
-          if (!targetMessage && !runOptions.subscribeOnly) {
-            const runFinished: RunFinishedEvent = {
-              type: EventType.RUN_FINISHED,
-              threadId: input.threadId,
-              runId: input.runId,
-            } as unknown as RunFinishedEvent;
-            subscriber.next(runFinished);
-            subscriber.complete();
-            return;
-          }
-
-          const sendParams = targetMessage
-            ? await this.createSendParams(converted, typedInput, runOptions)
-            : undefined;
-
           this.messageIdMap.clear();
           const aggregatedText = new Map<string, string>();
           const surfaceTracker = this.createSurfaceTracker();
           const sharedStateTracker = createSharedStateTracker();
+          const rawEvents: A2AStreamEvent[] = [];
+
+        const normalizedContextId = runOptions.contextId?.trim();
+        boundContextId =
+          normalizedContextId && normalizedContextId.length > 0 ? normalizedContextId : undefined;
+        contextBound = Boolean(boundContextId);
+        runStartedEmitted = false;
+        runFinishedFromEvents = false;
+
+        if (contextBound && boundContextId) {
+          const resolved = this.resolveThreadIdOnce(boundContextId);
+          boundContextId = resolved;
+          contextBound = Boolean(resolved);
+          this.hasBoundContextId = contextBound;
+        }
+
+          const bindContextId = (contextId?: string) => {
+            const normalized = contextId?.trim();
+            if (!normalized || contextBound) {
+              if (contextBound && !runStartedEmitted) {
+                emitRunStarted();
+                flushPendingEvents();
+              }
+              return;
+            }
+
+            const resolved = this.resolveThreadIdOnce(normalized);
+            boundContextId = resolved || normalized;
+            contextBound = true;
+            convertOptions.contextId = boundContextId;
+            convertOptions.threadId = boundContextId;
+            this.hasBoundContextId = true;
+
+            emitRunStarted();
+            flushPendingEvents();
+          };
+
           const convertOptions: ConvertA2AEventOptions = {
             role: "assistant",
             messageIdMap: this.messageIdMap,
@@ -131,11 +167,100 @@ export class A2AAgent extends AbstractAgent {
             surfaceTracker,
             sharedStateTracker,
             artifactBasePath: runOptions.artifactBasePath,
-            threadId: input.threadId,
+            threadId: resolveThreadIdForRun(),
             runId: input.runId,
             taskId: runOptions.taskId ?? converted.taskId,
-            contextId: runOptions.contextId,
+            contextId: normalizeId(boundContextId) ?? normalizeId(this.threadId) ?? undefined,
+            onContextId: bindContextId,
           };
+
+          emitRunStarted = () => {
+            if (runStartedEmitted) {
+              return;
+            }
+            const threadIdForRun = resolveThreadIdForRun();
+            const runStarted: RunStartedEvent = {
+              type: EventType.RUN_STARTED,
+              threadId: threadIdForRun,
+              runId: input.runId,
+            };
+            subscriber.next(runStarted);
+            runStartedEmitted = true;
+          };
+
+          const recordRunFinished = (events: BaseEvent[]) => {
+            if (events.some((event) => event.type === EventType.RUN_FINISHED)) {
+              runFinishedFromEvents = true;
+            }
+          };
+
+          flushPendingEvents = () => {
+            if (pendingEvents.length === 0) {
+              return;
+            }
+            emitRunStarted();
+            for (const event of pendingEvents) {
+              subscriber.next(event);
+            }
+            recordRunFinished(pendingEvents);
+            pendingEvents.length = 0;
+          };
+
+          const dispatchEvents = (events: BaseEvent[]): boolean => {
+            if (events.length === 0) {
+              return false;
+            }
+
+            const sawRunFinished = events.some((event) => event.type === EventType.RUN_FINISHED);
+
+            if (!runStartedEmitted && !contextBound) {
+              pendingEvents.push(...events);
+              if (sawRunFinished) {
+                runFinishedFromEvents = true;
+              }
+              return sawRunFinished;
+            }
+
+            emitRunStarted();
+
+            for (const event of events) {
+              subscriber.next(event);
+            }
+
+            if (sawRunFinished) {
+              runFinishedFromEvents = true;
+            }
+
+            return sawRunFinished;
+          };
+
+          const processRawEvent = (event: A2AStreamEvent): boolean => {
+            rawEvents.push(event);
+            bindContextId(this.extractContextId(event));
+            const events = convertA2AEventToAGUIEvents(event, convertOptions);
+            return dispatchEvents(events);
+          };
+          if (!targetMessage && !runOptions.subscribeOnly) {
+            emitRunStarted();
+            const runFinished: RunFinishedEvent = {
+              type: EventType.RUN_FINISHED,
+              threadId: boundContextId ?? this.threadId ?? input.threadId ?? input.runId,
+              runId: input.runId,
+            } as unknown as RunFinishedEvent;
+            dispatchEvents([runFinished]);
+            subscriber.complete();
+            return;
+          }
+
+          if (contextBound) {
+            emitRunStarted();
+          }
+
+          const targetMessagePayload = targetMessage;
+
+          const sendParams = targetMessagePayload
+            ? await this.createSendParams(converted, typedInput, runOptions)
+            : undefined;
 
           let summary: A2AAgentRunResultSummary | undefined;
 
@@ -146,14 +271,16 @@ export class A2AAgent extends AbstractAgent {
               }
               summary = await this.blockingMessage(
                 sendParams as MessageSendParams,
-                subscriber,
                 convertOptions,
+                processRawEvent,
+                rawEvents,
               );
             } else if (runOptions.taskId && runOptions.subscribeOnly) {
               summary = await this.resubscribeToTask(
                 runOptions.taskId,
-                subscriber,
                 convertOptions,
+                processRawEvent,
+                rawEvents,
                 runOptions.historyLength,
               );
             } else {
@@ -162,33 +289,39 @@ export class A2AAgent extends AbstractAgent {
               }
               summary = await this.streamMessage(
                 sendParams as MessageSendParams,
-                subscriber,
                 convertOptions,
+                processRawEvent,
+                rawEvents,
               );
             }
-          } catch (error) {
-            if (runOptions.mode === "stream" && !runOptions.subscribeOnly) {
-              summary = await this.fallbackToBlocking(
-                sendParams as MessageSendParams,
-                subscriber,
-                error as Error,
-                convertOptions,
-              );
-            } else {
-              throw error;
+            } catch (error) {
+              if (runOptions.mode === "stream" && !runOptions.subscribeOnly) {
+                summary = await this.fallbackToBlocking(
+                  sendParams as MessageSendParams,
+                  convertOptions,
+                  processRawEvent,
+                  rawEvents,
+                );
+              } else {
+                throw error;
+              }
             }
-          }
 
-          if (!summary?.finishedEarly) {
+          flushPendingEvents();
+
+          if (!runFinishedFromEvents && !summary?.finishedEarly) {
             const runFinished: RunFinishedEvent = {
               type: EventType.RUN_FINISHED,
-              threadId: input.threadId,
+              threadId: boundContextId ?? this.threadId ?? input.threadId ?? input.runId,
               runId: input.runId,
             };
-            subscriber.next(runFinished);
+            dispatchEvents([runFinished]);
           }
+
           subscriber.complete();
         } catch (error) {
+          emitRunStarted();
+          flushPendingEvents();
           const runError: RunErrorEvent = {
             type: EventType.RUN_ERROR,
             message: (error as Error).message ?? "Unknown A2A error",
@@ -204,23 +337,17 @@ export class A2AAgent extends AbstractAgent {
     });
   }
 
-  private resolveContextId(threadId: string, requested?: string, taskId?: string): string {
-    if (requested) {
-      return requested;
+  private resolveContextId(requested?: string): string | undefined {
+    const trimmed = requested?.trim();
+    if (trimmed) {
+      return trimmed;
     }
 
-    if (taskId) {
-      return taskId;
+    if (this.hasBoundContextId && this.threadId) {
+      return this.threadId;
     }
 
-    const existing = this.contextIds.get(threadId);
-    if (existing) {
-      return existing;
-    }
-
-    const generated = randomUUID();
-    this.contextIds.set(threadId, generated);
-    return generated;
+    return undefined;
   }
 
   private resolveRunOptions(input: A2ARunInput): ResolvedA2ARunOptions {
@@ -233,11 +360,8 @@ export class A2AAgent extends AbstractAgent {
     const includeSystemMessages = merged.includeSystemMessages ?? false;
     const includeDeveloperMessages = merged.includeDeveloperMessages ?? false;
     const artifactBasePath = merged.artifactBasePath ?? DEFAULT_ARTIFACT_BASE_PATH;
-    const subscribeOnly =
-      mode === "send"
-        ? false
-        : merged.subscribeOnly ?? Boolean(merged.taskId && mode === "stream");
-    const contextId = this.resolveContextId(input.threadId, merged.contextId, merged.taskId);
+    const subscribeOnly = mode === "send" ? false : merged.subscribeOnly ?? false;
+    const contextId = this.resolveContextId(merged.contextId);
 
     return {
       ...merged,
@@ -250,6 +374,17 @@ export class A2AAgent extends AbstractAgent {
       subscribeOnly,
       contextId,
     };
+  }
+
+  private extractContextId(event: A2AStreamEvent): string | undefined {
+    if (event && typeof event === "object" && "contextId" in event) {
+      const contextId = (event as { contextId?: unknown }).contextId;
+      if (typeof contextId === "string" && contextId.trim().length > 0) {
+        return contextId;
+      }
+    }
+
+    return undefined;
   }
 
   private prepareConversation(
@@ -281,11 +416,14 @@ export class A2AAgent extends AbstractAgent {
       throw new Error("No A2A message payload to send.");
     }
 
+    const resolvedContextId = baseMessage.contextId ?? converted.contextId ?? options.contextId;
+    const resolvedTaskId = baseMessage.taskId ?? options.taskId;
+
     const message: A2AMessage = {
       ...baseMessage,
       messageId: baseMessage.messageId ?? randomUUID(),
-      contextId: baseMessage.contextId ?? converted.contextId ?? options.contextId,
-      taskId: baseMessage.taskId ?? options.taskId,
+      ...(resolvedContextId ? { contextId: resolvedContextId } : {}),
+      ...(resolvedTaskId ? { taskId: resolvedTaskId } : {}),
     };
 
     const messageMetadata: Record<string, unknown> = { ...(message.metadata ?? {}) };
@@ -322,7 +460,9 @@ export class A2AAgent extends AbstractAgent {
       metadata.taskId = options.taskId;
     }
 
-    metadata.contextId = options.contextId;
+    if (options.contextId) {
+      metadata.contextId = options.contextId;
+    }
 
     return {
       message,
@@ -331,24 +471,62 @@ export class A2AAgent extends AbstractAgent {
     };
   }
 
-  private async streamMessage(
-    params: MessageSendParams,
-    subscriber: { next: (event: BaseEvent) => void },
-    convertOptions: ConvertA2AEventOptions,
-  ): Promise<A2AAgentRunResultSummary> {
-    const rawEvents: A2AStreamEvent[] = [];
+  private async emitTaskSnapshot(
+    taskParams: { id: string; historyLength?: number; contextId?: string },
+    processEvent: (event: A2AStreamEvent) => boolean,
+  ): Promise<{ finishedEarly: boolean }> {
+    const taskResponse = await this.a2aClient.getTask(taskParams as { id: string; historyLength?: number });
+
+    if (this.a2aClient.isErrorResponse(taskResponse)) {
+      const message = taskResponse.error?.message ?? "Failed to fetch A2A task snapshot";
+      throw new Error(message);
+    }
+
     let finishedEarly = false;
 
+    if (taskResponse.result) {
+      finishedEarly = processEvent(taskResponse.result as unknown as A2AStreamEvent);
+    }
+
+    return { finishedEarly };
+  }
+
+  private async streamMessage(
+    params: MessageSendParams,
+    convertOptions: ConvertA2AEventOptions,
+    processEvent: (event: A2AStreamEvent) => boolean,
+    rawEvents: A2AStreamEvent[],
+  ): Promise<A2AAgentRunResultSummary> {
+    let finishedEarly = false;
+
+    const taskIdForSnapshot = params.message?.taskId ?? convertOptions.taskId;
+    if (taskIdForSnapshot) {
+      const { finishedEarly: snapshotFinished } = await this.emitTaskSnapshot(
+        {
+          id: taskIdForSnapshot,
+          ...(params.configuration?.historyLength ? { historyLength: params.configuration.historyLength } : {}),
+          ...(convertOptions.contextId ? { contextId: convertOptions.contextId } : {}),
+        },
+        processEvent,
+      );
+
+      finishedEarly = snapshotFinished;
+    }
+
+    if (finishedEarly) {
+      return {
+        messages: [],
+        rawEvents,
+        finishedEarly,
+      };
+    }
+
     const stream = this.a2aClient.sendMessageStream(params);
+    if (!isAsyncIterable(stream)) {
+      throw new Error("A2A streaming unsupported");
+    }
     for await (const chunk of stream) {
-      rawEvents.push(chunk as A2AStreamEvent);
-      const events = convertA2AEventToAGUIEvents(chunk as A2AStreamEvent, convertOptions);
-      for (const event of events) {
-        subscriber.next(event);
-        if (event.type === EventType.RUN_FINISHED) {
-          finishedEarly = true;
-        }
-      }
+      finishedEarly = processEvent(chunk as A2AStreamEvent) || finishedEarly;
 
       if (finishedEarly) {
         break;
@@ -364,9 +542,9 @@ export class A2AAgent extends AbstractAgent {
 
   private async fallbackToBlocking(
     params: MessageSendParams,
-    subscriber: { next: (event: BaseEvent) => void },
-    _error: Error,
     convertOptions: ConvertA2AEventOptions,
+    processEvent: (event: A2AStreamEvent) => boolean,
+    rawEvents: A2AStreamEvent[],
   ): Promise<A2AAgentRunResultSummary> {
     const configuration: MessageSendConfiguration = {
       ...params.configuration,
@@ -381,15 +559,17 @@ export class A2AAgent extends AbstractAgent {
         ...params,
         configuration,
       },
-      subscriber,
       convertOptions,
+      processEvent,
+      rawEvents,
     );
   }
 
   private async blockingMessage(
     params: MessageSendParams,
-    subscriber: { next: (event: BaseEvent) => void },
-    convertOptions: ConvertA2AEventOptions,
+    _convertOptions: ConvertA2AEventOptions,
+    processEvent: (event: A2AStreamEvent) => boolean,
+    rawEvents: A2AStreamEvent[],
   ): Promise<A2AAgentRunResultSummary> {
     const response = await this.a2aClient.sendMessage(params);
 
@@ -400,20 +580,8 @@ export class A2AAgent extends AbstractAgent {
       throw new Error(errorMessage);
     }
 
-    const rawEvents: A2AStreamEvent[] = [];
-
     const result = response.result as A2AStreamEvent;
-    rawEvents.push(result);
-
-    const events = convertA2AEventToAGUIEvents(result, convertOptions);
-
-    let finishedEarly = false;
-    for (const event of events) {
-      subscriber.next(event);
-      if (event.type === EventType.RUN_FINISHED) {
-        finishedEarly = true;
-      }
-    }
+    const finishedEarly = processEvent(result);
 
     return {
       messages: [],
@@ -424,57 +592,38 @@ export class A2AAgent extends AbstractAgent {
 
   private async resubscribeToTask(
     taskId: string,
-    subscriber: { next: (event: BaseEvent) => void },
     convertOptions: ConvertA2AEventOptions,
+    processEvent: (event: A2AStreamEvent) => boolean,
+    rawEvents: A2AStreamEvent[],
     historyLength?: number,
   ): Promise<A2AAgentRunResultSummary> {
-    const rawEvents: A2AStreamEvent[] = [];
     let finishedEarly = false;
-    const taskParams = {
+    let taskParams = {
       id: taskId,
       taskId,
       ...(historyLength ? { historyLength } : {}),
       ...(convertOptions.contextId ? { contextId: convertOptions.contextId } : {}),
     };
-    const taskResponse = await this.a2aClient.getTask(taskParams as { id: string; historyLength?: number });
+    const { finishedEarly: snapshotFinished } = await this.emitTaskSnapshot(
+      taskParams,
+      processEvent,
+    );
 
-    if (this.a2aClient.isErrorResponse(taskResponse)) {
-      const message = taskResponse.error?.message ?? "Failed to fetch A2A task snapshot";
-      throw new Error(message);
+    if (snapshotFinished) {
+      return {
+        messages: [],
+        rawEvents,
+        finishedEarly: true,
+      };
     }
 
-    if (taskResponse.result) {
-      rawEvents.push(taskResponse.result as unknown as A2AStreamEvent);
-      const snapshotEvents = convertA2AEventToAGUIEvents(
-        taskResponse.result as unknown as A2AStreamEvent,
-        convertOptions,
-      );
-      for (const event of snapshotEvents) {
-        subscriber.next(event);
-        if (event.type === EventType.RUN_FINISHED) {
-          finishedEarly = true;
-        }
-      }
-
-      if (finishedEarly) {
-        return {
-          messages: [],
-          rawEvents,
-          finishedEarly,
-        };
-      }
+    if (convertOptions.contextId) {
+      taskParams = { ...taskParams, contextId: convertOptions.contextId };
     }
 
     const stream = this.a2aClient.resubscribeTask(taskParams as { id: string });
     for await (const chunk of stream) {
-      rawEvents.push(chunk as A2AStreamEvent);
-      const events = convertA2AEventToAGUIEvents(chunk as A2AStreamEvent, convertOptions);
-      for (const event of events) {
-        subscriber.next(event);
-        if (event.type === EventType.RUN_FINISHED) {
-          finishedEarly = true;
-        }
-      }
+      finishedEarly = processEvent(chunk as A2AStreamEvent) || finishedEarly;
 
       if (finishedEarly) {
         break;
@@ -566,11 +715,22 @@ export class A2AAgent extends AbstractAgent {
 
       return function wrapped(this: unknown, ...args: TArgs) {
         const restore = patchFetch();
-        const iterator = original.apply(this, args);
+        let iterator: AsyncIterable<T> | Promise<unknown>;
+        try {
+          iterator = original.apply(this, args) as AsyncIterable<T> | Promise<unknown>;
+        } catch (error) {
+          restore();
+          throw error;
+        }
 
         const wrappedIterator = (async function* () {
           try {
-            for await (const value of iterator) {
+            if (!isAsyncIterable(iterator)) {
+              await Promise.resolve(iterator);
+              throw new Error("A2A streaming unsupported");
+            }
+
+            for await (const value of iterator as AsyncIterable<T>) {
               yield value;
             }
           } finally {
@@ -610,4 +770,8 @@ export class A2AAgent extends AbstractAgent {
       },
     };
   }
+}
+
+function isAsyncIterable<T>(value: unknown): value is AsyncIterable<T> {
+  return Boolean(value) && typeof (value as AsyncIterable<T>)[Symbol.asyncIterator] === "function";
 }

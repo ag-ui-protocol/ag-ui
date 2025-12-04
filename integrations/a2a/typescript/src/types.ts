@@ -59,7 +59,6 @@ export interface SurfaceTracker {
 export interface SharedStateTracker {
   state: Record<string, unknown>;
   emittedSnapshot?: boolean;
-  interruptCounters?: Map<string, number>;
 }
 
 export type A2AStreamEvent =
@@ -95,6 +94,7 @@ export interface ConvertA2AEventOptions {
   onTextDelta?: (payload: { messageId: string; delta: string }) => void;
   source?: string;
   getCurrentText?: (messageId: string) => string | undefined;
+  onContextId?: (contextId: string) => void;
   surfaceTracker?: SurfaceTracker;
   sharedStateTracker?: SharedStateTracker;
   artifactBasePath?: string;

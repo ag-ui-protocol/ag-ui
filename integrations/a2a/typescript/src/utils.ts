@@ -24,6 +24,7 @@ import type {
   ConvertA2AEventOptions,
   SharedStateTracker,
 } from "./types";
+import type { Artifact, Task, TaskArtifactUpdateEvent, TaskStatusUpdateEvent } from "@a2a-js/sdk";
 
 const ROLE_MAP: Record<string, "user" | "agent" | undefined> = {
   user: "user",
@@ -106,7 +107,7 @@ const extractSurfaceOperation = (
 const safeJsonParse = (value: string): unknown => {
   try {
     return JSON.parse(value);
-  } catch (error) {
+  } catch {
     return value;
   }
 };
@@ -179,23 +180,6 @@ const messageContentToParts = (message: Message): A2APart[] => {
   }
 
   return parts;
-};
-
-const messageContentToText = (message: Message): string => {
-  const { content } = message as { content?: Message["content"] };
-  if (typeof content === "string") {
-    return content;
-  }
-  if (Array.isArray(content)) {
-    return content
-      .filter((part): part is Extract<InputContent, { type: "text" }> => isTextContent(part))
-      .map((part) => part.text)
-      .join("\n");
-  }
-  if (content && typeof content === "object") {
-    return JSON.stringify(content);
-  }
-  return "";
 };
 
 export const ENGRAM_EXTENSION_URI = "urn:agui:engram:v1";
@@ -459,12 +443,58 @@ const findPendingInterruptForTask = (
   return null;
 };
 
-const nextInterruptId = (tracker: SharedStateTracker, taskId: string): string => {
-  const counters = tracker.interruptCounters ?? new Map<string, number>();
-  tracker.interruptCounters = counters;
-  const nextValue = (counters.get(taskId) ?? 0) + 1;
-  counters.set(taskId, nextValue);
-  return `input-${taskId}-${nextValue}`;
+const findPendingInterruptById = (
+  tracker: SharedStateTracker,
+  interruptId?: string,
+): { interruptId: string; entry: { [key: string]: unknown } } | null => {
+  if (!interruptId) {
+    return null;
+  }
+
+  const pendingEntries = getPendingInterruptEntries(tracker);
+  const entry = pendingEntries[interruptId];
+
+  if (entry && typeof entry === "object") {
+    return { interruptId, entry };
+  }
+
+  return null;
+};
+
+const findPendingInterruptByRequestId = (
+  tracker: SharedStateTracker,
+  taskId?: string,
+  requestId?: string,
+): { interruptId: string; entry: { [key: string]: unknown } } | null => {
+  if (!requestId) {
+    return null;
+  }
+
+  const pendingEntries = getPendingInterruptEntries(tracker);
+
+  for (const [interruptId, entry] of Object.entries(pendingEntries)) {
+    if (
+      entry &&
+      typeof entry === "object" &&
+      (entry as { taskId?: string }).taskId === taskId &&
+      (entry as { requestId?: string }).requestId === requestId
+    ) {
+      return { interruptId, entry };
+    }
+  }
+
+  return null;
+};
+
+const deriveInterruptId = (
+  taskId: string | undefined,
+  requestId?: string,
+  statusMessageId?: string,
+): string => {
+  const sourceId = (requestId ?? statusMessageId ?? "pending").toString();
+  const normalizedSource = sourceId.trim().length > 0 ? sourceId.trim() : "pending";
+  const normalizedTask = (taskId ?? "task").toString().trim() || "task";
+  return `input-${normalizedTask}-${normalizedSource}`;
 };
 
 const resolveDecisionFromState = (state?: string): string | undefined => {
@@ -547,15 +577,15 @@ const extractInputRequestData = (
 
 const isA2AMessage = (event: A2AStreamEvent): event is A2AMessage => event.kind === "message";
 
-const isA2ATask = (event: A2AStreamEvent): event is import("@a2a-js/sdk").Task => event.kind === "task";
+const isA2ATask = (event: A2AStreamEvent): event is Task => event.kind === "task";
 
 const isA2AStatusUpdate = (
   event: A2AStreamEvent,
-): event is import("@a2a-js/sdk").TaskStatusUpdateEvent => event.kind === "status-update";
+): event is TaskStatusUpdateEvent => event.kind === "status-update";
 
 const isA2AArtifactUpdate = (
   event: A2AStreamEvent,
-): event is import("@a2a-js/sdk").TaskArtifactUpdateEvent => event.kind === "artifact-update";
+): event is TaskArtifactUpdateEvent => event.kind === "artifact-update";
 
 const getEventTaskId = (event: A2AStreamEvent): string | undefined => {
   if (isA2ATask(event)) {
@@ -600,6 +630,12 @@ const normalizeJsonPointer = (path: string): string => {
     .map((segment) => encodeJsonPointerSegment(segment));
 
   return `/${segments.join("/")}`;
+};
+
+const captureContextId = (contextId: unknown, options: ConvertA2AEventOptions) => {
+  if (typeof contextId === "string" && contextId.trim().length > 0) {
+    options.onContextId?.(contextId);
+  }
 };
 
 const applySharedStateUpdate = (
@@ -712,10 +748,7 @@ const applySharedStateUpdate = (
   };
 };
 
-const resolveArtifactPath = (
-  artifact: import("@a2a-js/sdk").Artifact,
-  artifactBasePath?: string,
-): string => {
+const resolveArtifactPath = (artifact: Artifact, artifactBasePath?: string): string => {
   const metadata = (artifact.metadata ?? {}) as Record<string, unknown>;
   const metadataPath =
     typeof metadata.path === "string" ? (metadata.path as string) : undefined;
@@ -763,6 +796,8 @@ function convertMessageToEvents(
   options: ConvertA2AEventOptions,
   aliasKey?: string,
 ): BaseEvent[] {
+  captureContextId(message.contextId, options);
+
   const role = options.role ?? "assistant";
   const events: BaseEvent[] = [];
 
@@ -857,18 +892,38 @@ function convertMessageToEvents(
           continue;
         }
 
-    if (payloadType === "a2a.input.response" && options.sharedStateTracker) {
-      const tracker = options.sharedStateTracker;
-      const pending = findPendingInterruptForTask(tracker, message.taskId);
+        if (payloadType === "a2a.input.response" && options.sharedStateTracker) {
+          const tracker = options.sharedStateTracker;
+          const responseInterruptId =
+            typeof (payloadRecord as { interruptId?: unknown }).interruptId === "string"
+              ? (payloadRecord as { interruptId: string }).interruptId
+              : undefined;
+          const responseRequestId =
+            typeof (payloadRecord as { requestId?: unknown }).requestId === "string"
+              ? (payloadRecord as { requestId: string }).requestId
+              : undefined;
+
+          const pending =
+            findPendingInterruptById(tracker, responseInterruptId) ??
+            findPendingInterruptByRequestId(tracker, message.taskId, responseRequestId) ??
+            findPendingInterruptForTask(tracker, message.taskId);
+
+          const interruptId =
+            pending?.interruptId ??
+            deriveInterruptId(
+              message.taskId,
+              responseRequestId,
+              message.messageId,
+            );
 
           if (pending) {
             events.push({
-          type: EventType.ACTIVITY_DELTA,
-          messageId: pending.interruptId,
-          activityType: "INPUT_REQUIRED",
-          patch: [
-            { op: "replace", path: "/stage", value: "working" },
-            { op: "replace", path: "/decision", value: "provided" },
+              type: EventType.ACTIVITY_DELTA,
+              messageId: interruptId,
+              activityType: "INPUT_REQUIRED",
+              patch: [
+                { op: "replace", path: "/stage", value: "working" },
+                { op: "replace", path: "/decision", value: "provided" },
                 {
                   op: "add",
                   path: "/response",
@@ -879,7 +934,7 @@ function convertMessageToEvents(
 
             const removeEvent = removeSharedStatePath(
               tracker,
-              `/view/pendingInterrupts/${pending.interruptId}`,
+              `/view/pendingInterrupts/${interruptId}`,
               { rawEvent: message },
             );
 
@@ -945,9 +1000,11 @@ function convertMessageToEvents(
 }
 
 const projectStatusUpdate = (
-  event: import("@a2a-js/sdk").TaskStatusUpdateEvent,
+  event: TaskStatusUpdateEvent,
   options: ConvertA2AEventOptions,
 ): BaseEvent[] => {
+  captureContextId(event.contextId, options);
+
   const events: BaseEvent[] = [];
   const statusMessage = event.status?.message;
   const statusState = event.status?.state;
@@ -1017,29 +1074,48 @@ const projectStatusUpdate = (
     }
 
     const formData = statusState === "input-required" ? extractInputRequestData(statusMessage as A2AMessage) : null;
-    const existingPending = findPendingInterruptForTask(tracker, event.taskId);
+    const interruptId =
+      statusState === "input-required"
+        ? deriveInterruptId(
+            event.taskId,
+            formData?.requestId,
+            statusMessage?.kind === "message" ? statusMessage.messageId : undefined,
+          )
+        : undefined;
+    const existingPending =
+      findPendingInterruptById(tracker, interruptId) ??
+      findPendingInterruptByRequestId(tracker, event.taskId, formData?.requestId) ??
+      findPendingInterruptForTask(tracker, event.taskId);
 
-    if (statusState === "input-required" && formData) {
-      const interruptId =
-        existingPending?.interruptId ?? nextInterruptId(tracker, event.taskId ?? "task");
+    if (statusState === "input-required") {
+      const resolvedInterruptId =
+        interruptId ??
+        existingPending?.interruptId ??
+        deriveInterruptId(
+          event.taskId,
+          formData?.requestId,
+          statusMessage?.kind === "message" ? statusMessage.messageId : undefined,
+        );
+      const reason = formData?.reason ?? statusText;
 
       stateDeltas.push(
         applySharedStateUpdate(
           tracker,
           `/view/tasks/${event.taskId}/lastInterruptId`,
-          interruptId,
+          resolvedInterruptId,
           { rawEvent: event, includeContainers },
         ),
       );
       stateDeltas.push(
         applySharedStateUpdate(
           tracker,
-          `/view/pendingInterrupts/${interruptId}`,
+          `/view/pendingInterrupts/${resolvedInterruptId}`,
           {
-            interruptId,
+            interruptId: resolvedInterruptId,
             taskId: event.taskId,
-            requestId: formData.requestId,
-            reason: formData.reason,
+            requestId: formData?.requestId,
+            request: formData?.request,
+            reason,
             contextId: event.contextId,
           },
           { rawEvent: event, includeContainers },
@@ -1048,14 +1124,14 @@ const projectStatusUpdate = (
 
       events.push({
         type: EventType.ACTIVITY_SNAPSHOT,
-        messageId: interruptId,
+        messageId: resolvedInterruptId,
         activityType: "INPUT_REQUIRED",
         content: {
           stage: "awaiting_input",
           taskId: event.taskId,
           contextId: event.contextId,
-          request: formData.request,
-          reason: formData.reason,
+          request: formData?.request,
+          reason,
         },
         replace: false,
       } as BaseEvent);
@@ -1069,8 +1145,8 @@ const projectStatusUpdate = (
             outcome: "interrupt",
             taskId: event.taskId,
             contextId: event.contextId,
-            interruptId,
-            request: formData.request,
+            interruptId: resolvedInterruptId,
+            request: formData?.request,
           },
           rawEvent: event,
         } as BaseEvent;
@@ -1081,9 +1157,9 @@ const projectStatusUpdate = (
 
       if (stage || decision) {
         events.push({
-        type: EventType.ACTIVITY_DELTA,
-        messageId: existingPending.interruptId,
-        activityType: "INPUT_REQUIRED",
+          type: EventType.ACTIVITY_DELTA,
+          messageId: existingPending.interruptId,
+          activityType: "INPUT_REQUIRED",
           patch: [
             ...(stage ? [{ op: "replace", path: "/stage", value: stage }] : []),
             ...(decision ? [{ op: "replace", path: "/decision", value: decision }] : []),
@@ -1121,16 +1197,18 @@ const projectStatusUpdate = (
 };
 
 const projectArtifactUpdate = (
-  event: import("@a2a-js/sdk").TaskArtifactUpdateEvent,
+  event: TaskArtifactUpdateEvent,
   options: ConvertA2AEventOptions,
 ): BaseEvent[] => {
-  const events: BaseEvent[] = [];
+  captureContextId(event.contextId, options);
+
   const artifactPath = resolveArtifactPath(event.artifact, options.artifactBasePath);
   const append = event.append ?? false;
   const aliasKey = `artifact:${event.artifact.artifactId}`;
   const tracker = options.sharedStateTracker;
   const stateDeltas: Array<StateDeltaEvent | null | undefined> = [];
   const includeContainers = tracker?.emittedSnapshot === true;
+  const textEvents: BaseEvent[] = [];
 
   for (const part of event.artifact.parts ?? []) {
     if (part.kind === "text") {
@@ -1143,7 +1221,7 @@ const projectArtifactUpdate = (
         taskId: event.taskId,
       };
 
-      events.push(...convertMessageToEvents(message, options, aliasKey));
+      textEvents.push(...convertMessageToEvents(message, options, aliasKey));
 
       if (tracker) {
         stateDeltas.push(
@@ -1180,9 +1258,13 @@ const projectArtifactUpdate = (
     }
   }
 
+  const events: BaseEvent[] = [];
+
   if (tracker && stateDeltas.some(Boolean)) {
     events.push(...collectStateEvents(tracker, event, ...stateDeltas));
   }
+
+  events.push(...textEvents);
 
   if (events.length === 0) {
     events.push({
@@ -1196,14 +1278,28 @@ const projectArtifactUpdate = (
 };
 
 const projectTask = (
-  event: import("@a2a-js/sdk").Task,
+  event: Task,
   options: ConvertA2AEventOptions,
 ): BaseEvent[] => {
+  captureContextId(event.contextId, options);
+
   const events: BaseEvent[] = [];
   const tracker = options.sharedStateTracker;
   const stateDeltas: Array<StateDeltaEvent | null | undefined> = [];
   const includeContainers = tracker?.emittedSnapshot === true;
   const shouldEmitDelta = tracker?.emittedSnapshot === true;
+  const statusMessage = event.status?.message;
+  const statusState = event.status?.state;
+  const statusText =
+    statusMessage && statusMessage.kind === "message"
+      ? (statusMessage.parts ?? [])
+          .filter((part): part is A2ATextPart => part.kind === "text")
+          .map((part) => part.text ?? "")
+          .filter(Boolean)
+          .join("\n")
+          .trim()
+      : undefined;
+  let runFinishedEvent: BaseEvent | undefined;
 
   if (tracker) {
     const taskProjection = {
@@ -1224,6 +1320,82 @@ const projectTask = (
 
     if (shouldEmitDelta) {
       stateDeltas.push(projectionDelta);
+    }
+
+    if (options.runId) {
+      const lastRunDelta = applySharedStateUpdate(
+        tracker,
+        `/view/tasks/${event.id}/lastRunId`,
+        options.runId,
+        { rawEvent: event, includeContainers },
+      );
+
+      if (shouldEmitDelta) {
+        stateDeltas.push(lastRunDelta);
+      }
+    }
+
+    if (statusState === "input-required") {
+      const formData = extractInputRequestData(statusMessage as A2AMessage);
+      const interruptId = deriveInterruptId(
+        event.id,
+        formData?.requestId,
+        statusMessage?.kind === "message" ? statusMessage.messageId : undefined,
+      );
+
+      const lastInterruptDelta = applySharedStateUpdate(
+        tracker,
+        `/view/tasks/${event.id}/lastInterruptId`,
+        interruptId,
+        { rawEvent: event, includeContainers },
+      );
+      const pendingDelta = applySharedStateUpdate(
+        tracker,
+        `/view/pendingInterrupts/${interruptId}`,
+        {
+          interruptId,
+          taskId: event.id,
+          requestId: formData?.requestId,
+          request: formData?.request,
+          reason: formData?.reason ?? statusText,
+          contextId: event.contextId,
+        },
+        { rawEvent: event, includeContainers },
+      );
+
+      if (shouldEmitDelta) {
+        stateDeltas.push(lastInterruptDelta, pendingDelta);
+      }
+
+      events.push({
+        type: EventType.ACTIVITY_SNAPSHOT,
+        messageId: interruptId,
+        activityType: "INPUT_REQUIRED",
+        content: {
+          stage: "awaiting_input",
+          taskId: event.id,
+          contextId: event.contextId,
+          request: formData?.request,
+          reason: formData?.reason ?? statusText,
+        },
+        replace: false,
+      } as BaseEvent);
+
+      if (options.threadId && options.runId) {
+        runFinishedEvent = {
+          type: EventType.RUN_FINISHED,
+          threadId: options.threadId,
+          runId: options.runId,
+          result: {
+            outcome: "interrupt",
+            taskId: event.id,
+            contextId: event.contextId,
+            interruptId,
+            request: formData?.request,
+          },
+          rawEvent: event,
+        } as BaseEvent;
+      }
     }
   }
 
@@ -1247,23 +1419,27 @@ const projectTask = (
     );
   }
 
-  if (tracker) {
-    if (stateDeltas.some(Boolean)) {
-      events.push(...collectStateEvents(tracker, event, ...stateDeltas));
-    } else {
-      events.push(...collectStateEvents(tracker, event));
-    }
-  }
+  const stateEvents = tracker
+    ? stateDeltas.some(Boolean)
+      ? collectStateEvents(tracker, event, ...stateDeltas)
+      : collectStateEvents(tracker, event)
+    : [];
 
-  if (events.length === 0) {
-    events.push({
+  const finalEvents = [
+    ...stateEvents,
+    ...events,
+    ...(runFinishedEvent ? [runFinishedEvent] : []),
+  ];
+
+  if (finalEvents.length === 0) {
+    finalEvents.push({
       type: EventType.RAW,
       event,
       source: options.source ?? "a2a",
     } as RawEvent);
   }
 
-  return events;
+  return finalEvents;
 };
 
 export function convertA2AEventToAGUIEvents(
@@ -1308,7 +1484,6 @@ export const createSharedStateTracker = (
   return {
     state: clone,
     emittedSnapshot: false,
-    interruptCounters: new Map<string, number>(),
   };
 };
 

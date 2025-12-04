@@ -3,7 +3,6 @@ import { EventType } from "@ag-ui/client";
 import { A2AAgent } from "../agent";
 import type { MessageSendParams } from "@a2a-js/sdk";
 import type { A2AClient } from "@a2a-js/sdk/client";
-import { ENGRAM_EXTENSION_URI } from "../utils";
 
 const createMessage = (message: Partial<Message>): Message => message as Message;
 
@@ -23,8 +22,8 @@ type FakeA2AClientBehaviour = {
   stream?: (params: MessageSendParams) => AsyncGenerator<unknown, void, unknown>;
   send?: (params: MessageSendParams) => Promise<SendMessageResponseSuccess | SendMessageResponseError>;
   card?: () => Promise<unknown>;
-  getTask?: (params: { id: string; historyLength?: number }) => Promise<SendMessageResponseSuccess | SendMessageResponseError>;
-  resubscribeTask?: (params: { id: string }) => AsyncGenerator<unknown, void, unknown>;
+  getTask?: (params: { id: string; historyLength?: number; contextId?: string }) => Promise<SendMessageResponseSuccess | SendMessageResponseError>;
+  resubscribeTask?: (params: { id: string; contextId?: string }) => AsyncGenerator<unknown, void, unknown>;
 };
 
 type FakeA2AClientResponse = SendMessageResponseSuccess | SendMessageResponseError;
@@ -32,8 +31,8 @@ type FakeA2AClientResponse = SendMessageResponseSuccess | SendMessageResponseErr
 class FakeA2AClient {
   public readonly sendCalls: MessageSendParams[] = [];
   public readonly streamCalls: MessageSendParams[] = [];
-  public readonly getTaskCalls: Array<{ id: string; historyLength?: number }> = [];
-  public readonly resubscribeCalls: Array<{ id: string }> = [];
+  public readonly getTaskCalls: Array<{ id: string; historyLength?: number; contextId?: string }> = [];
+  public readonly resubscribeCalls: Array<{ id: string; contextId?: string }> = [];
 
   constructor(readonly behaviour: FakeA2AClientBehaviour = {}) {}
 
@@ -53,7 +52,7 @@ class FakeA2AClient {
     return this.behaviour.send(params);
   }
 
-  async getTask(params: { id: string; historyLength?: number }) {
+  async getTask(params: { id: string; historyLength?: number; contextId?: string }) {
     this.getTaskCalls.push(params);
     if (!this.behaviour.getTask) {
       throw new Error("getTask not configured");
@@ -62,7 +61,7 @@ class FakeA2AClient {
     return this.behaviour.getTask(params);
   }
 
-  resubscribeTask(params: { id: string }) {
+  resubscribeTask(params: { id: string; contextId?: string }) {
     this.resubscribeCalls.push(params);
     if (!this.behaviour.resubscribeTask) {
       throw new Error("resubscribeTask not configured");
@@ -123,7 +122,7 @@ describe("A2AAgent", () => {
 
   it("falls back to blocking when streaming fails", async () => {
     const fakeClient = new FakeA2AClient({
-      stream: async function* () {
+      stream: async () => {
         throw new Error("Streaming unsupported");
       },
       send: async () => ({
@@ -152,7 +151,7 @@ describe("A2AAgent", () => {
 
   it("throws when the A2A service reports an error", async () => {
     const fakeClient = new FakeA2AClient({
-      stream: async function* () {
+      stream: async () => {
         throw new Error("Streaming unsupported");
       },
       send: async () => ({
@@ -174,7 +173,7 @@ describe("A2AAgent", () => {
 
   it("uses blocking send for control runs and keeps AG-UI identifiers out of A2A metadata", async () => {
     const fakeClient = new FakeA2AClient({
-      send: async (params) => ({
+      send: async () => ({
         id: null,
         jsonrpc: "2.0",
         result: {
@@ -208,15 +207,15 @@ describe("A2AAgent", () => {
     const params = fakeClient.sendCalls[0];
     const metadata = params.metadata as Record<string, unknown>;
 
-    expect(params.message?.contextId).toBe("task-789");
+    expect(params.message?.contextId).toBeUndefined();
     expect(params.message?.taskId).toBe("task-789");
     expect(metadata).toEqual(
       expect.objectContaining({
         mode: "send",
         taskId: "task-789",
-        contextId: "task-789",
       }),
     );
+    expect(metadata).not.toHaveProperty("contextId");
     expect(metadata).not.toHaveProperty("threadId");
     expect(metadata).not.toHaveProperty("runId");
   });
@@ -260,13 +259,208 @@ describe("A2AAgent", () => {
     });
 
     const params = fakeClient.sendCalls[0];
-    expect(params.message?.contextId).not.toBe("thread-forwarding");
+    expect(params.message?.contextId).toBeUndefined();
     expect(params.metadata?.history).toBeUndefined();
     expect(params.message?.metadata?.history).toBeUndefined();
     expect(params.message?.metadata?.context).toEqual([{ description: "region", value: "us-west" }]);
     expect(params.message?.metadata?.engram).toEqual({ scope: "task", update: { feature: true } });
+    expect(params.metadata).not.toHaveProperty("contextId");
     expect(params.metadata).not.toHaveProperty("threadId");
     expect(params.metadata).not.toHaveProperty("runId");
+  });
+
+  it("late-binds threadId to the server contextId and forwards it on subsequent sends", async () => {
+    const fakeClient = new FakeA2AClient({
+      stream: async function* () {
+        yield {
+          kind: "message",
+          messageId: "resp-context",
+          role: "agent",
+          parts: [{ kind: "text", text: "ack" }],
+          contextId: "ctx-server",
+          taskId: "task-server",
+        };
+        yield {
+          kind: "status-update",
+          taskId: "task-server",
+          contextId: "ctx-server",
+          final: true,
+          status: { state: "succeeded" },
+        };
+      },
+      send: async (params) => ({
+        id: null,
+        jsonrpc: "2.0",
+        result: {
+          kind: "message",
+          messageId: "resp-followup",
+          role: "agent",
+          parts: [{ kind: "text", text: "follow up" }],
+          contextId: params.message?.contextId,
+          taskId: params.message?.taskId,
+        },
+      }),
+    });
+
+    const agent = new A2AAgent({
+      a2aClient: fakeClient as unknown as A2AClient,
+      threadId: "thread-context-order",
+      initialMessages: [createMessage({ id: "user-1", role: "user", content: "hi" })],
+    });
+
+    const events: BaseEvent[] = [];
+
+    await agent.runAgent(
+      {
+        forwardedProps: {
+          a2a: { mode: "stream" },
+        },
+      },
+      { onEvent: ({ event }) => events.push(event) },
+    );
+
+    const runStarted = events.find((event) => event.type === EventType.RUN_STARTED) as
+      | { threadId?: string }
+      | undefined;
+    expect(events[0]?.type).toBe(EventType.RUN_STARTED);
+    expect(runStarted?.threadId).toBe("ctx-server");
+    expect(fakeClient.streamCalls[0]?.message?.contextId).toBeUndefined();
+
+    await agent.runAgent({
+      forwardedProps: {
+        a2a: { mode: "send" },
+      },
+    });
+
+    const secondSend = fakeClient.sendCalls[0];
+    const metadata = secondSend?.metadata as Record<string, unknown> | undefined;
+    expect(secondSend?.message?.contextId).toBe("ctx-server");
+    expect(metadata?.contextId).toBe("ctx-server");
+  });
+
+  it("emits RUN_STARTED immediately when caller supplies a contextId and forwards it on outbound streams", async () => {
+    const fakeClient = new FakeA2AClient({
+      stream: async function* () {
+        yield {
+          kind: "status-update",
+          taskId: "task-provided",
+          contextId: "ctx-provided",
+          final: true,
+          status: { state: "succeeded" },
+        };
+      },
+    });
+
+    const agent = new A2AAgent({
+      a2aClient: fakeClient as unknown as A2AClient,
+      initialMessages: [createMessage({ id: "user-prov", role: "user", content: "go" })],
+    });
+
+    const events: BaseEvent[] = [];
+    await agent.runAgent(
+      {
+        forwardedProps: { a2a: { mode: "stream", contextId: "ctx-provided" } },
+      },
+      { onEvent: ({ event }) => events.push(event) },
+    );
+
+    const runStarted = events[0] as { type?: EventType; threadId?: string };
+    expect(runStarted.type).toBe(EventType.RUN_STARTED);
+    expect(runStarted.threadId).toBe("ctx-provided");
+    expect(fakeClient.streamCalls[0]?.message?.contextId).toBe("ctx-provided");
+    expect(fakeClient.streamCalls[0]?.metadata?.contextId).toBe("ctx-provided");
+  });
+
+  it("binds the server contextId using resolveThreadIdOnce when none is provided", async () => {
+    const fakeClient = new FakeA2AClient({
+      stream: async function* () {
+        yield {
+          kind: "message",
+          messageId: "resp-context",
+          role: "agent",
+          parts: [{ kind: "text", text: "hi" }],
+          contextId: "ctx-bind",
+          taskId: "task-bind",
+        };
+        yield {
+          kind: "status-update",
+          taskId: "task-bind",
+          contextId: "ctx-bind",
+          final: true,
+          status: { state: "succeeded" },
+        };
+      },
+    });
+
+    const agent = new A2AAgent({
+      a2aClient: fakeClient as unknown as A2AClient,
+      initialMessages: [createMessage({ id: "user-ctx", role: "user", content: "bind" })],
+    });
+
+    const resolveSpy = jest.spyOn(agent as unknown as { resolveThreadIdOnce: (id: string) => string }, "resolveThreadIdOnce");
+    const events: BaseEvent[] = [];
+
+    await agent.runAgent(
+      {
+        forwardedProps: { a2a: { mode: "stream" } },
+      },
+      {
+        onEvent: ({ event }) => events.push(event),
+      },
+    );
+
+    const runStarted = events.find((event) => event.type === EventType.RUN_STARTED) as { threadId?: string } | undefined;
+    const runFinished = events.find((event) => event.type === EventType.RUN_FINISHED) as { threadId?: string } | undefined;
+
+    expect(resolveSpy).toHaveBeenCalledWith("ctx-bind");
+    expect(runStarted?.threadId).toBe("ctx-bind");
+    expect(runFinished?.threadId).toBe("ctx-bind");
+    expect(agent.threadId).toBe("ctx-bind");
+
+    resolveSpy.mockRestore();
+  });
+
+  it("emits RUN_ERROR with a provisional threadId when an error occurs before contextId binding", async () => {
+    const fakeClient = new FakeA2AClient({
+      send: async () => ({
+        id: null,
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Agent failure" },
+      }),
+      stream: async () => {
+        throw new Error("stream failure");
+      },
+    });
+
+    const agent = new A2AAgent({
+      a2aClient: fakeClient as unknown as A2AClient,
+      initialMessages: [createMessage({ id: "user-err", role: "user", content: "fail fast" })],
+    });
+
+    const resolveSpy = jest.spyOn(agent as unknown as { resolveThreadIdOnce: (id: string) => string }, "resolveThreadIdOnce");
+    const events: BaseEvent[] = [];
+
+    try {
+      await agent.runAgent(
+        {
+          runId: "run-error",
+          forwardedProps: { a2a: { mode: "send" } },
+        },
+        { onEvent: ({ event }) => events.push(event) },
+      );
+    } catch {
+      // Expected: propagate error after emitting RUN_ERROR
+    }
+
+    const runStarted = events.find((event) => event.type === EventType.RUN_STARTED) as { threadId?: string } | undefined;
+    const eventTypes = events.map((event) => event.type);
+
+    expect(runStarted?.threadId).toBe("run-error");
+    expect(eventTypes[0]).toBe(EventType.RUN_STARTED);
+    expect(eventTypes.filter((type) => type === EventType.RUN_STARTED)).toHaveLength(1);
+    expect(agent.threadId).toBe("");
+    expect(resolveSpy).not.toHaveBeenCalled();
+    resolveSpy.mockRestore();
   });
 
   it("resubscribes to existing tasks using snapshots instead of reopening runs", async () => {
@@ -337,7 +531,7 @@ describe("A2AAgent", () => {
 
   it("advertises the Engram extension header on outbound A2A requests", async () => {
     const originalFetch = global.fetch;
-    const fetchMock = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => ({
+    const fetchMock = jest.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({}),
@@ -416,6 +610,18 @@ describe("A2AAgent", () => {
           parts: [{ kind: "text", text: "should not appear" }],
         };
       },
+      getTask: async (params) => ({
+        id: null,
+        jsonrpc: "2.0",
+        result: {
+          kind: "task",
+          id: params.id,
+          contextId: "ctx-input",
+          status: { state: "working" },
+          history: [],
+          artifacts: [],
+        },
+      }),
     });
 
     const agent = new A2AAgent({
