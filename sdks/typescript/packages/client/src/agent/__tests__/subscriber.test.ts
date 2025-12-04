@@ -9,6 +9,7 @@ import {
   TextMessageContentEvent,
   TextMessageEndEvent,
   StateSnapshotEvent,
+  StateDeltaEvent,
   RunStartedEvent,
   RunFinishedEvent,
   ToolCallStartEvent,
@@ -1193,6 +1194,65 @@ describe("AgentSubscriber", () => {
     });
   });
 
+  describe("Deferred RUN_STARTED ordering", () => {
+    class DeferredRunStartedAgent extends AbstractAgent {
+      run(input: RunAgentInput): Observable<BaseEvent> {
+        return new Observable<BaseEvent>((subscriber) => {
+          setTimeout(() => {
+            subscriber.next({
+              type: EventType.RUN_STARTED,
+              threadId: input.threadId,
+              runId: input.runId,
+            } as RunStartedEvent);
+
+            subscriber.next({
+              type: EventType.STATE_SNAPSHOT,
+              snapshot: { status: "ready" },
+            } as StateSnapshotEvent);
+
+            subscriber.next({
+              type: EventType.TEXT_MESSAGE_CONTENT,
+              messageId: "msg-deferred",
+              delta: "hello after binding",
+            } as TextMessageContentEvent);
+
+            subscriber.next({
+              type: EventType.RUN_FINISHED,
+              threadId: input.threadId,
+              runId: input.runId,
+            } as RunFinishedEvent);
+            subscriber.complete();
+          }, 0);
+        });
+      }
+    }
+
+    it("delivers RUN_STARTED before downstream events and only once", async () => {
+      const deferredAgent = new DeferredRunStartedAgent({ threadId: "deferred-thread" });
+      const eventOrder: EventType[] = [];
+      const subscriber: AgentSubscriber = {
+        onEvent: ({ event }) => eventOrder.push(event.type),
+        onRunStartedEvent: jest.fn(),
+        onRunFinishedEvent: jest.fn(),
+      };
+
+      deferredAgent.subscribe(subscriber);
+
+      await deferredAgent.runAgent({});
+
+      expect(subscriber.onRunStartedEvent).toHaveBeenCalledTimes(1);
+      expect(subscriber.onRunFinishedEvent).toHaveBeenCalledTimes(1);
+      expect(eventOrder[0]).toBe(EventType.RUN_STARTED);
+      expect(eventOrder.filter((type) => type === EventType.RUN_STARTED)).toHaveLength(1);
+      expect(eventOrder).toEqual([
+        EventType.RUN_STARTED,
+        EventType.STATE_SNAPSHOT,
+        EventType.TEXT_MESSAGE_CONTENT,
+        EventType.RUN_FINISHED,
+      ]);
+    });
+  });
+
   describe("Realistic Event Sequences", () => {
     test("should handle a realistic conversation with mixed events", async () => {
       const realisticAgent = new TestAgent();
@@ -1345,6 +1405,60 @@ describe("AgentSubscriber", () => {
 
       expect(trackingSubscriber.onTextMessageStartEvent).toHaveBeenCalledTimes(2);
       expect(trackingSubscriber.onToolCallStartEvent).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("A2A snapshot ordering", () => {
+    it("delivers state snapshots before deltas and still emits interrupt run results", async () => {
+      const runStartedEvent: RunStartedEvent = {
+        type: EventType.RUN_STARTED,
+        threadId: "test-thread",
+        runId: "run-a2a-snapshot",
+      };
+
+      const stateSnapshot: StateSnapshotEvent = {
+        type: EventType.STATE_SNAPSHOT,
+        snapshot: {
+          view: {
+            pendingInterrupts: {
+              "input-task-ordered-request": { interruptId: "input-task-ordered-request", taskId: "task-ordered" },
+            },
+          },
+        },
+      };
+
+      const stateDelta: StateDeltaEvent = {
+        type: EventType.STATE_DELTA,
+        delta: [{ op: "remove", path: "/view/pendingInterrupts/input-task-ordered-request" }],
+      };
+
+      const runFinishedEvent: RunFinishedEvent = {
+        type: EventType.RUN_FINISHED,
+        threadId: "test-thread",
+        runId: "run-a2a-snapshot",
+        result: { outcome: "interrupt", interruptId: "input-task-ordered-request", taskId: "task-ordered" },
+      };
+
+      agent.setEventsToEmit([runStartedEvent, stateSnapshot, stateDelta, runFinishedEvent]);
+
+      await agent.runAgent({}, mockSubscriber);
+
+      const orderedTypes = (mockSubscriber.onEvent as jest.Mock).mock.calls.map(
+        ([params]: [{ event: BaseEvent }]) => params.event.type,
+      );
+
+      expect(orderedTypes.slice(0, 4)).toEqual([
+        EventType.RUN_STARTED,
+        EventType.STATE_SNAPSHOT,
+        EventType.STATE_DELTA,
+        EventType.RUN_FINISHED,
+      ]);
+      expect(mockSubscriber.onRunFinishedEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: runFinishedEvent,
+          result: runFinishedEvent.result,
+        }),
+      );
     });
   });
 

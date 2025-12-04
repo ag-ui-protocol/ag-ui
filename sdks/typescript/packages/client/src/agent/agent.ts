@@ -38,6 +38,8 @@ export abstract class AbstractAgent {
   public debug: boolean = false;
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
+  protected deferThreadId: boolean;
+  protected threadIdResolved: boolean = false;
   private middlewares: Middleware[] = [];
   // Emits to immediately detach from the active run (stop processing its stream)
   private activeRunDetach$?: Subject<void>;
@@ -51,13 +53,17 @@ export abstract class AbstractAgent {
     agentId,
     description,
     threadId,
+    deferThreadId,
     initialMessages,
     initialState,
     debug,
   }: AgentConfig = {}) {
     this.agentId = agentId;
     this.description = description ?? "";
-    this.threadId = threadId ?? uuidv4();
+    this.deferThreadId = deferThreadId ?? false;
+    const resolvedThreadId = threadId ?? (this.deferThreadId ? "" : uuidv4());
+    this.threadId = resolvedThreadId;
+    this.threadIdResolved = !this.deferThreadId && Boolean(resolvedThreadId);
     this.messages = structuredClone_(initialMessages ?? []);
     this.state = structuredClone_(initialState ?? {});
     this.debug = debug ?? false;
@@ -74,6 +80,15 @@ export abstract class AbstractAgent {
         this.subscribers = this.subscribers.filter((s) => s !== subscriber);
       },
     };
+  }
+
+  public resolveThreadIdOnce(threadId: string): string {
+    const normalized = threadId?.trim?.() ?? threadId;
+    if (!this.threadIdResolved && normalized) {
+      this.threadId = normalized;
+      this.threadIdResolved = true;
+    }
+    return this.threadId ?? normalized ?? "";
   }
 
   abstract run(input: RunAgentInput): Observable<BaseEvent>;
@@ -287,10 +302,20 @@ export abstract class AbstractAgent {
   protected prepareRunAgentInput(parameters?: RunAgentParameters): RunAgentInput {
     const clonedMessages = structuredClone_(this.messages) as Message[];
     const messagesWithoutActivity = clonedMessages.filter((message) => message.role !== "activity");
+    const runId = parameters?.runId || uuidv4();
+    const shouldDefer = this.deferThreadId && !this.threadIdResolved;
+    const resolvedThreadId = shouldDefer ? "" : this.threadId || uuidv4();
+
+    if (!this.threadIdResolved || !this.threadId) {
+      if (!shouldDefer) {
+        this.threadId = resolvedThreadId;
+        this.threadIdResolved = true;
+      }
+    }
 
     return {
-      threadId: this.threadId,
-      runId: parameters?.runId || uuidv4(),
+      threadId: resolvedThreadId,
+      runId,
       tools: structuredClone_(parameters?.tools ?? []),
       context: structuredClone_(parameters?.context ?? []),
       forwardedProps: structuredClone_(parameters?.forwardedProps ?? {}),
@@ -433,6 +458,8 @@ export abstract class AbstractAgent {
     cloned.messages = structuredClone_(this.messages);
     cloned.state = structuredClone_(this.state);
     cloned.debug = this.debug;
+    cloned.deferThreadId = this.deferThreadId;
+    cloned.threadIdResolved = this.threadIdResolved;
     cloned.isRunning = this.isRunning;
     cloned.subscribers = [...this.subscribers];
     cloned.middlewares = [...this.middlewares];
@@ -585,7 +612,7 @@ export abstract class AbstractAgent {
     return runObservable.pipe(
       transformChunks(this.debug),
       verifyEvents(this.debug),
-      convertToLegacyEvents(this.threadId, input.runId, this.agentId),
+      convertToLegacyEvents(this.threadId ?? "", input.runId, this.agentId),
       (events$: Observable<LegacyRuntimeProtocolEvent>) => {
         return events$.pipe(
           map((event) => {

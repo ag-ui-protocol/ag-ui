@@ -4,6 +4,7 @@ export interface AgentConfig {
   agentId?: string;
   description?: string;
   threadId?: string;
+  deferThreadId?: boolean;
   initialMessages?: Message[];
   initialState?: State;
   debug?: boolean;
