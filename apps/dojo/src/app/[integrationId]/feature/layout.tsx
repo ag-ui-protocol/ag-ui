@@ -1,6 +1,10 @@
 import { headers } from "next/headers";
+import { notFound } from "next/navigation";
 import { Feature } from "@/types/integration";
 import FeatureLayoutClient from "./layout-client";
+
+// Force dynamic rendering to ensure proper 404 handling
+export const dynamic = "force-dynamic";
 
 interface Props {
   params: Promise<{
@@ -12,15 +16,19 @@ interface Props {
 export default async function FeatureLayout({ children, params }: Props) {
   const { integrationId } = await params;
 
-  // Get pathname from header (set by middleware)
+  // Get headers set by middleware
   const headersList = await headers();
   const pathname = headersList.get("x-pathname") || "";
+  const notFoundType = headersList.get("x-not-found");
+
+  // If middleware flagged this as not found, trigger 404
+  if (notFoundType) {
+    notFound();
+  }
 
   // Extract featureId from pathname: /[integrationId]/feature/[featureId]
   const pathParts = pathname.split("/");
   const featureId = pathParts[pathParts.length - 1] as Feature;
-
-  // Note: 404 checks are handled by middleware which returns proper HTTP 404 status
 
   return (
     <FeatureLayoutClient integrationId={integrationId} featureId={featureId}>
