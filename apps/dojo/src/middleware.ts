@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { isFeatureAvailable, isIntegrationValid } from "./integration-features";
+import { menuIntegrations } from "./menu";
+
+function isIntegrationValid(integrationId: string): boolean {
+  return menuIntegrations.some((i) => i.id === integrationId);
+}
+
+function isFeatureAvailable(integrationId: string, featureId: string): boolean {
+  const integration = menuIntegrations.find((i) => i.id === integrationId);
+  return integration?.features.includes(featureId as typeof integration.features[number]) ?? false;
+}
 
 export function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
