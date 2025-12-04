@@ -52,7 +52,10 @@ export const parseSSEStream = (source$: Observable<HttpEvent>): Observable<any> 
   /**
    * Helper function to process an SSE event.
    * Extracts and joins data lines, then parses the result as JSON.
-   * Follows the SSE spec by only processing 'data:' prefixed lines.
+   * 
+   * Follows the SSE spec by processing lines starting with 'data:',
+   * ignoring a single space if it is present after the colon.
+   * 
    * @param eventText The raw event text to process
    */
   function processSSEEvent(eventText: string) {
@@ -60,9 +63,9 @@ export const parseSSEStream = (source$: Observable<HttpEvent>): Observable<any> 
     const dataLines: string[] = [];
 
     for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        // Extract data content (remove 'data: ' prefix)
-        dataLines.push(line.slice(6));
+      if (line.startsWith("data:")) {
+        // Remove 'data:' prefix, and optionally a single space afterwards
+        dataLines.push(line.slice(5).replace(/^ /, ""));
       }
     }
 
