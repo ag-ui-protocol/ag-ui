@@ -1,4 +1,4 @@
-import { MenuIntegrationConfig, Feature } from "./types/integration";
+import { MenuIntegrationConfig, Feature, IntegrationFeatures } from "./types/integration";
 
 /**
  * Integration configuration - SINGLE SOURCE OF TRUTH
@@ -7,10 +7,10 @@ import { MenuIntegrationConfig, Feature } from "./types/integration";
  * Used by:
  * - UI menu components
  * - middleware.ts (for route validation)
- * - agents.ts references these IDs for consistency
+ * - agents.ts validates agent keys against these features
  */
 
-export const menuIntegrations: MenuIntegrationConfig[] = [
+export const menuIntegrations = [
   {
     id: "langgraph",
     name: "LangGraph (Python)",
@@ -223,7 +223,16 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
       "human_in_the_loop",
     ],
   },
-];
+] as const satisfies readonly MenuIntegrationConfig[];
+
+/** Type representing all valid integration IDs */
+export type IntegrationId = (typeof menuIntegrations)[number]["id"];
+
+/** Type to get features for a specific integration ID */
+export type FeaturesFor<Id extends IntegrationId> = IntegrationFeatures<
+  typeof menuIntegrations,
+  Id
+>;
 
 // Helper functions for route validation
 export function isIntegrationValid(integrationId: string): boolean {
@@ -232,7 +241,7 @@ export function isIntegrationValid(integrationId: string): boolean {
 
 export function isFeatureAvailable(integrationId: string, featureId: string): boolean {
   const integration = menuIntegrations.find((i) => i.id === integrationId);
-  return integration?.features.includes(featureId as Feature) ?? false;
+  return (integration?.features as readonly string[])?.includes(featureId) ?? false;
 }
 
 export function getIntegration(integrationId: string): MenuIntegrationConfig | undefined {
