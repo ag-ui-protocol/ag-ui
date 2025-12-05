@@ -86,22 +86,24 @@ export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] 
   return result;
 }
 
-export interface GetRemoteAgentsOptions {
+export interface GetRemoteAgentsOptions<K extends string = string> {
   mastraClient: MastraClient;
   resourceId?: string;
+  /** Expected agent keys - used for type inference only */
+  keys?: readonly K[];
 }
 
-export async function getRemoteAgents({
+export async function getRemoteAgents<K extends string = string>({
   mastraClient,
   resourceId,
-}: GetRemoteAgentsOptions): Promise<Record<string, AbstractAgent>> {
+}: GetRemoteAgentsOptions<K>): Promise<Record<K, AbstractAgent>> {
   const agents = await mastraClient.getAgents();
 
   return Object.entries(agents).reduce(
     (acc, [agentId]) => {
       const agent = mastraClient.getAgent(agentId);
 
-      acc[agentId] = new MastraAgent({
+      acc[agentId as K] = new MastraAgent({
         agentId,
         agent,
         resourceId,
@@ -109,26 +111,28 @@ export async function getRemoteAgents({
 
       return acc;
     },
-    {} as Record<string, AbstractAgent>,
+    {} as Record<K, AbstractAgent>,
   );
 }
 
-export interface GetLocalAgentsOptions {
+export interface GetLocalAgentsOptions<K extends string = string> {
   mastra: Mastra;
   resourceId?: string;
   runtimeContext?: RuntimeContext;
+  /** Expected agent keys - used for type inference only */
+  keys?: readonly K[];
 }
 
-export function getLocalAgents({
+export function getLocalAgents<K extends string = string>({
   mastra,
   resourceId,
   runtimeContext,
-}: GetLocalAgentsOptions): Record<string, AbstractAgent> {
+}: GetLocalAgentsOptions<K>): Record<K, AbstractAgent> {
   const agents = mastra.getAgents() || {};
 
   const agentAGUI = Object.entries(agents).reduce(
     (acc, [agentId, agent]) => {
-      acc[agentId] = new MastraAgent({
+      acc[agentId as K] = new MastraAgent({
         agentId,
         agent,
         resourceId,
@@ -136,7 +140,7 @@ export function getLocalAgents({
       });
       return acc;
     },
-    {} as Record<string, AbstractAgent>,
+    {} as Record<K, AbstractAgent>,
   );
 
   return agentAGUI;
