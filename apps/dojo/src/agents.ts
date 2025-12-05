@@ -30,22 +30,28 @@ const envVars = getEnvVars();
 /**
  * Helper to map feature keys to agent instances using a builder function.
  * Reduces repetition when all agents follow the same pattern with different paths.
+ * 
+ * NOTE: TypeScript can validate MISSING features but not EXTRA features due to
+ * structural typing limitations. Extra features won't break at runtime (they just
+ * won't be accessible), but they won't trigger type errors either.
  */
-function mapAgents<T extends Record<string, string>>(
+function mapAgents<F extends string>(
   builder: (path: string) => AbstractAgent,
-  mapping: T
-): { [K in keyof T]: AbstractAgent } {
+  mapping: Record<F, string>
+): Record<F, AbstractAgent> {
   return Object.fromEntries(
-    Object.entries(mapping).map(([key, path]) => [key, builder(path)])
-  ) as { [K in keyof T]: AbstractAgent };
+    (Object.entries(mapping) as [F, string][]).map(([key, path]) => [key, builder(path)])
+  ) as Record<F, AbstractAgent>;
 }
 
 /**
  * Agent integrations map - keys are integration IDs from menu.ts
- * TypeScript validates that agent keys match features defined for each integration
+ * TypeScript enforces:
+ * - All integration IDs from menu.ts must have an entry
+ * - All features for each integration must be present in the returned object
  */
 type AgentsMap = {
-  [K in IntegrationId]?: () => Promise<Partial<Record<FeaturesFor<K>, AbstractAgent>>>;
+  [K in IntegrationId]: () => Promise<Record<FeaturesFor<K>, AbstractAgent>>;
 };
 
 export const agentsIntegrations = {
