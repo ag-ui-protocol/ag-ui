@@ -97,6 +97,8 @@ export const agentsIntegrations = {
       (path) => new ServerStarterAllFeaturesAgent({ url: `${envVars.serverStarterAllFeaturesUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
+        // TODO: Add agent for agentic_chat_reasoning
+        agentic_chat_reasoning: "agentic_chat_reasoning",
         backend_tool_rendering: "backend_tool_rendering",
         human_in_the_loop: "human_in_the_loop",
         agentic_generative_ui: "agentic_generative_ui",
@@ -166,7 +168,8 @@ export const agentsIntegrations = {
       (graphId) => new LangGraphAgent({ deploymentUrl: envVars.langgraphTypescriptUrl, graphId }),
       {
         agentic_chat: "agentic_chat",
-        // agentic_chat_reasoning: "agentic_chat_reasoning",
+        // TODO: Add agent for backend_tool_rendering
+        backend_tool_rendering: "backend_tool_rendering",
         agentic_generative_ui: "agentic_generative_ui",
         human_in_the_loop: "human_in_the_loop",
         predictive_state_updates: "predictive_state_updates",
@@ -216,6 +219,8 @@ export const agentsIntegrations = {
       (path) => new CrewAIAgent({ url: `${envVars.crewAiUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
+        // TODO: Add agent for backend_tool_rendering
+        backend_tool_rendering: "backend_tool_rendering",
         human_in_the_loop: "human_in_the_loop",
         tool_based_generative_ui: "tool_based_generative_ui",
         agentic_generative_ui: "agentic_generative_ui",
