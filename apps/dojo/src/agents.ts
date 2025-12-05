@@ -179,6 +179,25 @@ export const agentsIntegrations = {
       }
     ),
 
+  langchain: async () => 
+    mapAgents(
+      new LangChainAgent({
+        chainFn: async ({ messages, tools, threadId }) => {
+          // @ts-ignore
+          const { ChatOpenAI } = await import("@langchain/openai");
+          const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
+          const model = chatOpenAI.bindTools(tools, {
+            strict: true,
+          });
+          return model.stream(messages, { tools, metadata: { conversation_id: threadId } });
+        },
+      }),
+      {
+        agentic_chat: "",
+        tool_based_generative_ui: "",
+      }
+    ),
+
   agno: async () =>
     mapAgents(
       (path) => new AgnoAgent({ url: `${envVars.agnoUrl}/${path}/agui` }),
