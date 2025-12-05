@@ -6,6 +6,7 @@ import {
   MCPClientConfig,
   ProxiedMCPRequest,
   MCPAppsActivityType,
+  getServerId,
 } from "../src/index";
 import {
   MockAgent,
@@ -67,10 +68,14 @@ vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
   StreamableHTTPClientTransport: vi.fn().mockImplementation(() => ({ type: "http" })),
 }));
 
-// Mock crypto.randomUUID
-vi.mock("crypto", () => ({
-  randomUUID: vi.fn(() => `mock-uuid-${Math.random().toString(36).substr(2, 9)}`),
-}));
+// Mock crypto.randomUUID but keep createHash real
+vi.mock("crypto", async () => {
+  const actual = await vi.importActual<typeof import("crypto")>("crypto");
+  return {
+    ...actual,
+    randomUUID: vi.fn(() => `mock-uuid-${Math.random().toString(36).substr(2, 9)}`),
+  };
+});
 
 describe("MCPAppsMiddleware", () => {
   beforeEach(() => {
@@ -1159,13 +1164,14 @@ describe("MCPAppsMiddleware", () => {
   // 11. Proxied MCP Request Mode Tests
   // =============================================================================
   describe("Proxied MCP Request Mode", () => {
+    const httpServerConfig: MCPClientConfig = { type: "http", url: "http://localhost:3000" };
+
     it("detects proxied request in forwardedProps", async () => {
-      const middleware = new MCPAppsMiddleware();
+      const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
       const agent = new MockAgent([createRunStartedEvent(), createRunFinishedEvent()]);
 
       const proxiedRequest: ProxiedMCPRequest = {
-        serverUrl: "http://localhost:3000",
-        serverType: "http",
+        serverId: getServerId(httpServerConfig),
         method: "ping",
       };
 
@@ -1183,12 +1189,11 @@ describe("MCPAppsMiddleware", () => {
     it("emits RUN_STARTED event", async () => {
       mockPing.mockResolvedValue({});
 
-      const middleware = new MCPAppsMiddleware();
+      const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
       const agent = new MockAgent([]);
 
       const proxiedRequest: ProxiedMCPRequest = {
-        serverUrl: "http://localhost:3000",
-        serverType: "http",
+        serverId: getServerId(httpServerConfig),
         method: "ping",
       };
 
@@ -1207,12 +1212,11 @@ describe("MCPAppsMiddleware", () => {
       const pingResult = { timestamp: Date.now() };
       mockPing.mockResolvedValue(pingResult);
 
-      const middleware = new MCPAppsMiddleware();
+      const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
       const agent = new MockAgent([]);
 
       const proxiedRequest: ProxiedMCPRequest = {
-        serverUrl: "http://localhost:3000",
-        serverType: "http",
+        serverId: getServerId(httpServerConfig),
         method: "ping",
       };
 
@@ -1230,12 +1234,11 @@ describe("MCPAppsMiddleware", () => {
     it("emits RUN_FINISHED with error on failure", async () => {
       mockConnect.mockRejectedValue(new Error("Connection refused"));
 
-      const middleware = new MCPAppsMiddleware();
+      const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
       const agent = new MockAgent([]);
 
       const proxiedRequest: ProxiedMCPRequest = {
-        serverUrl: "http://localhost:3000",
-        serverType: "http",
+        serverId: getServerId(httpServerConfig),
         method: "ping",
       };
 
@@ -1249,6 +1252,25 @@ describe("MCPAppsMiddleware", () => {
       expect((finishedEvent as any).result.error).toContain("Connection refused");
     });
 
+    it("emits error for unknown serverId", async () => {
+      const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
+      const agent = new MockAgent([]);
+
+      const proxiedRequest: ProxiedMCPRequest = {
+        serverId: "unknown-server-id",
+        method: "ping",
+      };
+
+      const input = createRunAgentInput({
+        forwardedProps: { __proxiedMCPRequest: proxiedRequest },
+      });
+
+      const events = await collectEvents(middleware.run(input, agent));
+
+      const finishedEvent = events.find((e) => e.type === EventType.RUN_FINISHED);
+      expect((finishedEvent as any).result.error).toContain("Unknown server ID");
+    });
+
     it("bypasses normal agent flow", async () => {
       mockPing.mockResolvedValue({});
 
@@ -1258,8 +1280,7 @@ describe("MCPAppsMiddleware", () => {
       const agent = new MockAgent([createRunStartedEvent(), createRunFinishedEvent()]);
 
       const proxiedRequest: ProxiedMCPRequest = {
-        serverUrl: "http://localhost:3000",
-        serverType: "http",
+        serverId: getServerId({ type: "http", url: "http://localhost:3001" }),
         method: "ping",
       };
 
@@ -1271,6 +1292,66 @@ describe("MCPAppsMiddleware", () => {
 
       // Agent's run should not have been called
       expect(agent.runCalls).toHaveLength(0);
+    });
+  });
+
+  // =============================================================================
+  // 12. Server ID Tests
+  // =============================================================================
+  describe("Server ID", () => {
+    it("generates consistent serverId for same config", () => {
+      const config: MCPClientConfig = { type: "http", url: "http://localhost:3000" };
+      const id1 = getServerId(config);
+      const id2 = getServerId(config);
+      expect(id1).toBe(id2);
+    });
+
+    it("generates different serverIds for different URLs", () => {
+      const config1: MCPClientConfig = { type: "http", url: "http://localhost:3000" };
+      const config2: MCPClientConfig = { type: "http", url: "http://localhost:3001" };
+      expect(getServerId(config1)).not.toBe(getServerId(config2));
+    });
+
+    it("generates different serverIds for different types", () => {
+      const config1: MCPClientConfig = { type: "http", url: "http://localhost:3000" };
+      const config2: MCPClientConfig = { type: "sse", url: "http://localhost:3000" };
+      expect(getServerId(config1)).not.toBe(getServerId(config2));
+    });
+
+    it("generates different serverIds for SSE configs with different headers", () => {
+      const config1: MCPClientConfig = { type: "sse", url: "http://localhost:3000", headers: { Authorization: "token1" } };
+      const config2: MCPClientConfig = { type: "sse", url: "http://localhost:3000", headers: { Authorization: "token2" } };
+      expect(getServerId(config1)).not.toBe(getServerId(config2));
+    });
+
+    it("includes serverId in ACTIVITY_SNAPSHOT content", async () => {
+      const httpServerConfig: MCPClientConfig = { type: "http", url: "http://localhost:3000" };
+      const uiTool = createMCPToolWithUI("ui-tool", "ui://server/tool");
+      mockListTools.mockResolvedValue({ tools: [uiTool] });
+      mockCallTool.mockResolvedValue(
+        createMCPToolCallResult([{ type: "text", text: "Result" }])
+      );
+      mockReadResource.mockResolvedValue(
+        createMCPResourceResult("ui://server/tool", "text/html+mcp", "<html></html>")
+      );
+
+      const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
+
+      const assistantMsg = createAssistantMessageWithToolCalls([
+        { name: "ui-tool", args: {}, id: "tc-1" },
+      ]);
+
+      const agent = new MockAgent([createRunStartedEvent(), createRunFinishedEvent()]);
+      const input = createRunAgentInput({ messages: [assistantMsg] });
+
+      const events = await collectEvents(middleware.run(input, agent));
+
+      const activityEvent = events.find((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+      expect(activityEvent).toBeDefined();
+      expect((activityEvent as any).content.serverId).toBe(getServerId(httpServerConfig));
+      // Should NOT have serverUrl or serverType
+      expect((activityEvent as any).content.serverUrl).toBeUndefined();
+      expect((activityEvent as any).content.serverType).toBeUndefined();
     });
   });
 });
