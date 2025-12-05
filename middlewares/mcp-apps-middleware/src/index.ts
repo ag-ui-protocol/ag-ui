@@ -16,7 +16,7 @@ import { Observable, from, switchMap } from "rxjs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 
 /**
  * Activity type for MCP Apps events
@@ -27,10 +27,8 @@ export const MCPAppsActivityType = "mcp-apps";
  * Proxied MCP request structure from the frontend iframe
  */
 export interface ProxiedMCPRequest {
-  /** The MCP server URL to connect to */
-  serverUrl: string;
-  /** The MCP server transport type */
-  serverType: "http" | "sse";
+  /** Server identifier (MD5 hash of config) */
+  serverId: string;
   /** The JSON-RPC method to call */
   method: string;
   /** The JSON-RPC params */
@@ -74,6 +72,19 @@ export interface MCPClientConfigSSE {
  * MCP Client configuration
  */
 export type MCPClientConfig = MCPClientConfigHTTP | MCPClientConfigSSE;
+
+/**
+ * Generate a stable server ID from config using MD5 hash.
+ * This allows the frontend to reference servers without knowing their URLs.
+ */
+export function getServerId(config: MCPClientConfig): string {
+  const serialized = JSON.stringify({
+    type: config.type,
+    url: config.url,
+    headers: config.type === "sse" ? (config as MCPClientConfigSSE).headers : undefined,
+  });
+  return createHash("md5").update(serialized).digest("hex");
+}
 
 /**
  * Configuration for MCPAppsMiddleware
@@ -132,10 +143,17 @@ export class MCPAppsMiddleware extends Middleware {
   private config: MCPAppsMiddlewareConfig;
   /** Map of tool name -> server config for UI tools */
   private uiToolsMap: Map<string, MCPClientConfig> = new Map();
+  /** Map of serverId -> server config for proxied requests */
+  private serverConfigMap: Map<string, MCPClientConfig> = new Map();
 
   constructor(config: MCPAppsMiddlewareConfig = {}) {
     super();
     this.config = config;
+    // Build server config map for proxied requests
+    for (const serverConfig of config.mcpServers || []) {
+      const serverId = getServerId(serverConfig);
+      this.serverConfigMap.set(serverId, serverConfig);
+    }
   }
 
   run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
@@ -187,6 +205,9 @@ export class MCPAppsMiddleware extends Middleware {
     request: ProxiedMCPRequest
   ): Observable<BaseEvent> {
     return new Observable<BaseEvent>((subscriber) => {
+      // Look up server config by ID
+      const serverConfig = this.serverConfigMap.get(request.serverId);
+
       // Emit RunStarted
       const runStartedEvent: RunStartedEvent = {
         type: EventType.RUN_STARTED,
@@ -195,8 +216,21 @@ export class MCPAppsMiddleware extends Middleware {
       };
       subscriber.next(runStartedEvent);
 
+      // Handle unknown server ID
+      if (!serverConfig) {
+        const runFinishedEvent: RunFinishedEvent = {
+          type: EventType.RUN_FINISHED,
+          runId,
+          threadId: runId,
+          result: { error: `Unknown server ID: ${request.serverId}` },
+        };
+        subscriber.next(runFinishedEvent);
+        subscriber.complete();
+        return;
+      }
+
       // Execute the MCP request
-      this.executeMCPRequest(request)
+      this.executeMCPRequest(serverConfig, request.method, request.params)
         .then((result) => {
           // Emit RunFinished with the MCP result
           const runFinishedEvent: RunFinishedEvent = {
@@ -226,14 +260,16 @@ export class MCPAppsMiddleware extends Middleware {
    * Execute a generic MCP request (tools/call, resources/read, etc.)
    */
   private async executeMCPRequest(
-    request: ProxiedMCPRequest
+    serverConfig: MCPClientConfig,
+    method: string,
+    params?: Record<string, unknown>
   ): Promise<unknown> {
     let transport;
 
-    if (request.serverType === "sse") {
-      transport = new SSEClientTransport(new URL(request.serverUrl));
+    if (serverConfig.type === "sse") {
+      transport = new SSEClientTransport(new URL(serverConfig.url));
     } else {
-      transport = new StreamableHTTPClientTransport(new URL(request.serverUrl));
+      transport = new StreamableHTTPClientTransport(new URL(serverConfig.url));
     }
 
     const client = new Client(
@@ -254,25 +290,25 @@ export class MCPAppsMiddleware extends Middleware {
 
       // Per SEP-1865: Forward any method that doesn't start with "ui/"
       // Methods starting with "ui/" are handled by the host, not the MCP server
-      switch (request.method) {
+      switch (method) {
         case "tools/call":
           return await client.callTool(
-            request.params as { name: string; arguments?: Record<string, unknown> }
+            params as { name: string; arguments?: Record<string, unknown> }
           );
         case "resources/read":
-          return await client.readResource(request.params as { uri: string });
+          return await client.readResource(params as { uri: string });
         case "notifications/message":
           // notifications/message is a one-way notification (no response expected)
           await client.notification({
             method: "notifications/message",
-            params: request.params,
+            params,
           });
           return { success: true };
         case "ping":
           return await client.ping();
         default:
           throw new Error(
-            `MCP method not allowed for UI proxy: ${request.method}`
+            `MCP method not allowed for UI proxy: ${method}`
           );
       }
     } finally {
@@ -360,7 +396,7 @@ export class MCPAppsMiddleware extends Middleware {
                   };
                   subscriber.next(resultEvent);
 
-                  // Emit activity snapshot with full MCP result, resource, and server info
+                  // Emit activity snapshot with full MCP result, resource, and server ID
                   const activityEvent: ActivitySnapshotEvent = {
                     type: EventType.ACTIVITY_SNAPSHOT,
                     messageId: randomUUID(),
@@ -368,8 +404,7 @@ export class MCPAppsMiddleware extends Middleware {
                     content: {
                       result: mcpResult,
                       resource,
-                      serverUrl: toolInfo.serverConfig.url,
-                      serverType: toolInfo.serverConfig.type,
+                      serverId: getServerId(toolInfo.serverConfig),
                       toolInput: args,
                     },
                     replace: true,
