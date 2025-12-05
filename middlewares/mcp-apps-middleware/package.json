@@ -2,9 +2,6 @@
   "name": "@ag-ui/mcp-apps-middleware",
   "author": "Markus Ecker",
   "version": "0.0.1",
-  "publishConfig": {
-    "access": "public"
-  },
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
