@@ -188,7 +188,6 @@ export const agentsIntegrations = {
         // TODO: @ranst91 - can you add param types here?
         // @ts-expect-error - TODO: add types
         chainFn: async ({ messages, tools, threadId }) => {
-          // @ts-ignore
           const { ChatOpenAI } = await import("@langchain/openai");
           const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
           const model = chatOpenAI.bindTools(tools, {
