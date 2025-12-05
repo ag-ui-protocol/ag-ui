@@ -1,7 +1,7 @@
 # ADR 0005: Config/Control via Engram Extension
 
 **Status**  
-Accepted
+Superseded by ADR 0014 & ADR 0020
 
 **Date**  
 2025-11-29
@@ -12,16 +12,9 @@ We need a structured way to mutate agent/task configuration via A2A without over
 
 ## Decision
 
-- Use a custom A2A extension (for example, `urn:our-platform:engram:v1`) for config/control updates.
-- Messages with the Engram extension carry structured deltas (for example, JSON Patch ops) indicating scope (`task`, `context`, or `agent`).
-- Agents apply these messages directly to internal config/state and may emit derived system/context cues to the LLM if needed.
-- Advertise the extension in AgentCard capabilities; use it for other agents and for AG-UI bridge emissions when config-relevant shared state changes.
-- Do not repurpose Secure Passport; Passport remains caller context, while the Engram extension mutates callee configuration.
-- Agents surface **config views** back to AG-UI via Task Artifacts (for example, JSON snapshots of current config); Engram is input-only for config mutation.
-- Engram is optional: when callers do not use the extension, inputs stay on the conversational lane and the bridge applies default projection semantics; Engram simply provides the explicit config lane.
+- Superseded: ADR 0014 redefines Engram as the domain-state extension with canonical RPC surface and task-based streaming; ADR 0020 sets the versioned extension URI and activation model.
+- Previous guidance (URN-style Engram, message-only config lane) is retained here for historical context but is not normative after 2025-12-05.
 
 ## Consequences
 
-- Clear, auditable path for config changes across UI and agents.
-- Separation of identity/context (Passport) from imperative config updates.
-- Enables multi-agent config adjustments with the same contract.
+- Historical only; see ADR 0014–0020 for the current Engram design and extension URI.

@@ -1,127 +1,149 @@
-# Product Requirements Document: A2A Integration Alignment with ADRs
+# Product Requirements Document: Engram Client Integration in A2AAgent (ADR‑0014–0020)
 
-Created: 2025-11-29T20:45:00Z
-Status: Accepted
+Created: 2025-12-05T00:00:00Z  
+Status: Approved  
 Branch: feat/improve-a2a-support
 
 ## Overview
 
-Align the TypeScript A2A bridge with the new ADR set so AG-UI can run both short-lived and long-lived A2A tasks, project artifacts/status into shared state, and support the Engram config lane while preserving the current text-only path for legacy agents.
+Implement Engram v0.1 on the client side within A2AAgent and ag-ui, aligning with ADRs 0014–0020, with the primary goal of keeping AG-UI shared state in sync with A2A state. The work is limited to client behavior, headers, RPC calling surfaces, subscription handling, and tests that exercise a reference in-memory Engram server. No persistent or server-side storage changes will be made. Any prior Engram client behavior must be superseded by the ADR-aligned spec without breaking existing non-Engram features or currently passing tests.
 
 ## Business Requirements
 
 ### Objectives
 
-- Provide reliable interoperability between AG-UI runs and A2A tasks, including streaming, injections, and reconnections.
-- Preserve existing text-message behavior for agents that only emit message events.
-- Enable richer agents to project artifacts/status into shared state and accept config changes via Engram without breaking legacy callers.
+- Provide A2AAgent clients with a complete Engram v0.1 interaction surface (RPC + subscriptions) per ADR 0014–0020.
+- Ensure AG-UI shared state remains synchronized with A2A state via Engram events (snapshots/deltas) when enabled, while preserving current behavior for non-Engram flows.
+- Ensure Engram usage is explicitly activated via the extension URI while preserving current behavior for non-Engram flows.
+- Enable developers to test Engram client flows against a lightweight in-memory A2A server Engram implementation.
 
 ### User Stories
 
-- As an operator, I can run long-lived A2A tasks in AG-UI and inject mid-flight updates without losing the task timeline.
-- As an agent integrator, my existing text-only A2A agent continues to function without changes.
-- As a platform engineer, I can send config updates through Engram messages and see resulting state views via artifacts/status updates.
+- As a client developer, I can call Engram RPCs via A2AAgent with proper request/response typing and CAS error handling.
+- As a UI integrator, I can enable Engram per-request using the extension URI header and see Engram subscription updates in task streams.
+- As a maintainer, I can run the test suite and confirm no regressions to existing (non-Engram) behavior while the Engram client follows the latest ADR spec.
 
 ## Success Criteria
 
-- [x] Run invocation supports `mode: "send" | "stream"` and optional `taskId`, with long-lived subscriptions for streaming and short-lived control runs for injections/reconnects per ADR 0002/0003.
-- [x] AG-UI → A2A conversion forwards all relevant messages (user, assistant, system/developer when needed) and preserves context/config inputs instead of dropping them; latest user message is not the sole payload.
-- [x] Engram extension is supported (opt-in): messages carrying the Engram URN are routed to the config lane; absence of Engram uses conversational defaults with unchanged text rendering.
-- [x] A2A outputs (messages, status, artifacts) map to AG-UI events: message parts still emit text/tool events as today; artifacts/status updates project into shared state or activity events per ADR 0009/0010/0011.
-- [x] Metadata layering prevents leaking AG-UI-only identifiers (threadId/runId) into external A2A payloads; context/task identifiers are used consistently for A2A addressing.
-- [x] Legacy compatibility: when an agent emits only `kind: "message"` text parts, AG-UI behavior matches current output (assistant text/tool events only).
-- [x] Reconnect/resubscribe uses A2A task snapshot APIs (for example, `task/get`) to recover current task state, then resumes streaming without reopening closed runs.
-- [x] System/developer messages are gated by default; forwarding requires explicit opt-in and remaps to A2A’s `user`/`agent` roles with clear extension/metadata tagging.
-- [x] Full AG-UI → A2A forwarding preserves history/context/config when enabled, not just the latest user message; system/developer/config cues are available when explicitly opted in.
-- [x] Input-required flow: when A2A emits `TaskState.input_required` with TextPart + `DataPart { type: "a2a.input.request" }`, mint `interruptId = "input-<taskId>-<n>"`, emit the final assistant message, and emit `RUN_FINISHED` with `outcome: "interrupt"` plus `{ taskId, contextId, interruptId, request }`; resume via a new run in the same `threadId` with `resume { interruptId, payload }` to send `a2a.input.response` to the original `taskId`, then continue streaming to completion.
-- [x] Activity/State projection for input-required: emit `ACTIVITY_SNAPSHOT`/`ACTIVITY_DELTA` for pending interrupts with `messageId = interruptId` and stage/decision updates; emit `STATE_SNAPSHOT` + `STATE_DELTA` JSON Patch arrays that track the canonical task map at `/view/tasks/<taskId>` and pending interrupts under `/view/pendingInterrupts`.
-- [x] Tests must not drive source namespaces: test details must never leak into implementation; tests should reflect intentional source behavior.
+- [ ] A2AAgent exposes Engram RPC helpers (`get`, `list`, `set`, `patch`, `delete`, `subscribe`) that map to ADR‑0016/0017 semantics, including JSON Patch deltas and `expectedVersion` CAS.
+- [ ] Engram remains **optional** for A2AAgent: activation is controlled by an explicit flag when instantiating A2AAgent (default off), with per-call opt-in/override; non-Engram flows behave identically to today.
+- [ ] Engram activation uses the canonical extension URI `https://github.com/EmberAGI/a2a-engram/tree/v0.1` via `X-A2A-Extensions` on Engram-dependent requests; responses surface activation echo or errors.
+- [ ] Subscriptions return a `taskId` and stream EngramEvents (`snapshot`/`delta`/`delete`) over Task artifacts; the client reattaches via `tasks/resubscribe` or starts a new `engram/subscribe` with `fromSequence` as needed. Events flow through the existing A2AAgent event stream (no new subscription interface added).
+- [ ] Message-embedded Engram ops remain optional; if unsupported by the server, the client degrades gracefully without affecting non-Engram flows.
+- [ ] All existing passing tests remain green; only prior Engram-specific behavior is superseded. No regressions in other A2AAgent features.
+- [ ] New tests cover Engram RPCs and subscriptions using a memory-backed test server; they validate activation (ctor flag + per-call), CAS conflicts, JSON Patch application client-side expectations, subscription resume semantics, and ag-ui `STATE_SNAPSHOT` / `STATE_DELTA` handling to keep AG-UI shared state in sync with A2A when Engram is enabled (reuse existing AG-UI client snapshot/delta test patterns; add cases only if gaps remain).
 
 ## Technical Requirements
 
 ### Functional Requirements
 
-- Implement RunOptions with mode and taskId; map `stream` to long-lived subscription runs and `send` to short-lived sends or injections.
-- Support reconnect/resubscribe flows using task snapshots/status/messages rather than reopening closed runs.
-- Convert AG-UI message history into A2A messages without dropping system/developer/config cues when relevant; avoid latest-only payloading.
-- Add Engram extension handling: recognize Engram URN, route to config lane, and emit structured config deltas; keep conversational lane unchanged when Engram is absent.
-- Retire legacy `https://a2ui.org/ext/a2a-ui/v0.1` header; Engram becomes the single extension for config/control across AG-UI and other callers.
-- Convert A2A status and artifact events into AG-UI events/shared state projections, including streaming semantics (`append`, `lastChunk`).
-- Implement artifact/status projection into shared state and activity streams beyond text, covering ADR 0010/0011 (artifacts, status, snapshots, deltas).
-- Maintain existing text-message chunk/tool-call mapping for A2A `kind: "message"` parts.
-- Ensure surface/activity updates use stable identifiers and avoid duplicating snapshots/deltas.
-- Define default JSON artifact projection path when explicit metadata is absent (set to `/view/artifacts/<artifactId>` with snapshot vs append governed by `append`/`lastChunk`).
-- Input-required interrupt/resume: on `input_required`, stop streaming for the run, emit the final assistant message, and emit `RUN_FINISHED` with `outcome: "interrupt"` and payload `{ taskId, contextId, interruptId, request }`; on resume, open a new run in the same thread, send `DataPart { type: "a2a.input.response" }` to the original `taskId`, and continue normal streaming without reviving the prior run.
-- Activity events: emit `ACTIVITY_SNAPSHOT` (activityType e.g., `INPUT_REQUIRED`) with `messageId = interruptId` and request content; emit `ACTIVITY_DELTA` patches to update `stage`/`decision` after resume/completion, optionally summarizing provided values.
-- State events: emit initial `STATE_SNAPSHOT` and subsequent `STATE_DELTA` JSON Patch arrays maintaining the canonical task map at `/view/tasks/<taskId>` plus `/view/pendingInterrupts`; remove existing aggregate nodes (for example, task-status/audit) so `/view/tasks/<taskId>` stays a pure map.
+- Implement client-side Engram key/record types per ADR‑0015, including `labels`/`tags` as opaque metadata.
+- RPC helpers:
+  - `engram/get` & `engram/list` with key prefix and `updatedAfter` filters plus pagination tokens.
+  - `engram/set` full upsert with optional `expectedVersion`.
+  - `engram/patch` applying JSON Patch to `record.value`, CAS via `expectedVersion`.
+  - `engram/delete` with optional CAS, returning prior version metadata.
+- Subscription helper:
+  - `engram/subscribe` accepts filter, `includeSnapshot`, optional `fromSequence`, optional `contextId`; returns `taskId`.
+  - Stream parsing of EngramEvents from Task artifacts; enforce sequence monotonicity client-side and expose consumer callbacks.
+  - Resume via `tasks/resubscribe`; fallback to new subscribe with `fromSequence` if needed.
+- Activation:
+  - Constructor-level Engram enable flag (default off) controls whether Engram helpers add the extension URI; allow per-call override.
+  - Surface clear error when server lacks Engram support or activation header is missing.
+- Compatibility:
+  - Preserve existing A2AAgent behaviors and signatures; any changes limited to Engram-specific paths or additive options.
 
 ### Non-Functional Requirements
 
-- Preserve performance of current text-only flows; added projection logic must not materially degrade latency for streaming.
-- Maintain strict TypeScript typings; avoid `any`.
-- Compatible with current A2A SDK expectations for context/task identifiers and extension headers.
+- Performance: client processing of subscription streams should avoid blocking UI threads; support backpressure-friendly consumption (e.g., async iterator or event callbacks).
+- Reliability: retries/resubscribe flows must not duplicate events out of order; document at-least-once expectations with `sequence` handling.
+- Observability: add debug logging/metrics hooks for Engram RPC calls, CAS conflicts, subscription reconnects, and activation failures (honoring existing log level controls).
+- Testability: memory-backed server fixtures for Engram RPCs and subscriptions; deterministic sequences for resume testing.
 
 ## Integration Points
 
-- AG-UI client run/event model (`@ag-ui/client`) for emitting RunStarted/RunFinished, text/tool/activity/shared-state events.
-- A2A SDK client (`@a2a-js/sdk`) for `message.send`, `message.stream`, task resubscribe, and extension handling.
-- AG-UI shared state projection mechanisms for artifacts/status/activity events.
+- A2AAgent core request pipeline: header insertion for `X-A2A-Extensions`, error handling, and response echo propagation.
+- Task streaming client: artifact parsing to extract EngramEvents; reuse existing task subscribe/resubscribe plumbing and the current A2AAgent event stream surface (no new subscription API).
+- Type definitions shared with ag-ui UI components for displaying Engram data and statuses, including compatibility with `STATE_SNAPSHOT` and `STATE_DELTA` flows.
+- Test harness: integration tests using in-memory A2A server Engram stub; vitest setup aligning with project testing strategy.
 
 ## Constraints & Considerations
 
 ### Technical Constraints
 
-- Must work with existing A2A SDK capabilities; custom extensions require explicit URNs.
-- No dotenv usage; env loading via Node native flags.
-- pnpm-only tooling; TypeScript ES2022/NodeNext.
+- No server/storage implementation changes; only client logic and tests using a memory store fixture.
+- JSON Patch is mandatory for deltas; alternative delta formats are out of scope.
+- Must maintain current non-Engram behavior and passing tests; only prior Engram client behaviors may change to align with ADRs.
 
 ### Business Constraints
 
-- Backwards-compatible experience for message-only agents is required; richer behavior is additive.
+- Internal project: minimize regressions to existing flows; release should be low-risk for current users of A2AAgent.
 
 ### Risks
 
-- Misaligned identifiers (threadId vs contextId/taskId) could leak UI provenance or break reconnections.
-- Engram URN semantics need agreement; lack of consensus could stall config-lane adoption.
-- Artifact projection might introduce unexpected UI changes if defaults aren’t clearly scoped to implicit vs explicit agents.
-- Input-required UX depends on consistent Activity/State emissions; gaps could leave UI without pending-approval context.
+- Missing activation header could yield silent mismatches if not validated; need explicit client checks.
+- Sequence handling errors could cause duplicate or skipped events on resume.
+- Optional message-embedded ops could fragment behavior if partially implemented; ensure clear enable/disable path (currently deferred).
+- Incorrect handling of `STATE_SNAPSHOT` / `STATE_DELTA` mapping to Engram events could cause UI state divergence when Engram is enabled.
 
-### ADR Structure (reference)
+## Architectural Decisions (require documentation/approval before rationales.md entry)
 
-- ADRs live in `.vibecode/feat-improve-a2a-support/adr/` with index at `adl.md`; current set is 0001–0012 (interface surfaces, run/task mapping, run modes, canonical input, config lane, AG-UI state projection, metadata layering, LLM vs config lanes, audit/replay, artifacts→shared state, implicit vs explicit semantics, input-required interrupts + Activity/State).
+### Decision 1: Default Engram Activation Behavior
 
-## Architectural Decisions
+- **What**: Constructor-level flag controls Engram activation (default off); per-call override allowed.
+- **Why**: Prevents unintended activation while giving a single opt-in point for Engram use cases.
+- **Alternatives**: Auto-on for Engram methods; per-call flags only; global toggle default on.
+- **Trade-offs**: Constructor flag is explicit and ergonomic; avoids surprises to non-Engram callers.
+- **Requires documentation in rationales.md**: Yes.
 
-### Decision 1: A2A Context/Task Identifier Strategy (requires approval)
+### Decision 2: Subscription Resume Strategy
 
-- **What**: Define how AG-UI threadId/runId map (or do not map) to A2A contextId/taskId across send/stream, injections, and reconnects.
-- **Why**: Avoid leaking UI identifiers while ensuring stable addressing and replay per ADR 0002/0007.
-- **Alternatives**: (a) Derive contextId from taskId and never use threadId externally; (b) allow threadId passthrough when taskId absent; (c) generate bridge-owned contextId per task.
-- **Trade-offs**: Stability vs provenance leakage; simplicity vs multi-task-per-thread support.
-- **Requires documentation in ADR**: Yes.
+- **What**: Client policy for resume—attempt `tasks/resubscribe` first, then new `engram/subscribe` with `fromSequence`, surfaced through the existing RxJS Observable event stream (no new subscription API).
+- **Why**: Ensures predictable recovery without event loss or duplication.
+- **Alternatives**: Always new subscribe with `fromSequence`; configurable strategy.
+- **Trade-offs**: Reuse preserves task continuity; new subscribe simplifies but may lose artifacts if retention is short.
+- **Requires documentation in rationales.md**: Yes.
 
-### Decision 2: Engram URN and Handling (requires approval)
+### Decision 3: Message-Embedded Engram Ops Support
 
-- **What**: Choose the Engram extension URN and routing rules for config lane vs conversational lane, including capability advertisement.
-- **Why**: ADR 0005/0008 require explicit config mutation path; current code has only a legacy, undefined extension header.
-- **Alternatives**: (a) Introduce new URN per ADR; (b) repurpose existing header; (c) dual advertise but only act on new URN.
-- **Trade-offs**: Clarity vs compatibility; risk of unused legacy header vs migration effort.
-- **Requires documentation in ADR**: Yes.
-
-### Decision 3: Artifact/Status Projection Defaults (requires approval)
-
-- **What**: Define default projection paths/behaviors for text and JSON artifacts/status when explicit metadata is absent.
-- **Why**: ADR 0010/0011 call for safe defaults while supporting richer metadata-driven projections.
-- **Alternatives**: (a) Minimal projection (message-only); (b) generic `/view/artifacts/<id>`; (c) configurable mapping by agent card metadata.
-- **Trade-offs**: Safety vs usefulness; predictability vs richness.
-- **Requires documentation in ADR**: Yes.
+- **What**: Defer implementation of optional message-embedded Engram operations; keep RPC-only for v0.1 client.
+- **Why**: Reduce surface area and test burden while spec marks them non-normative.
+- **Alternatives**: Implement behind feature flag; implement unconditionally.
+- **Trade-offs**: Deferral limits flexibility but reduces immediate complexity.
+- **Requires documentation in rationales.md**: Yes (noting deferral).
 
 ## Out of Scope
 
-- Changes to non-TypeScript A2A integrations.
-- UI/UX redesign of AG-UI views; focus is bridge semantics and event projection.
-- Recording new mocks or external API changes.
+- Any persistent Engram storage or server-side changes; production data durability is not addressed here.
+- Migration of existing task artifacts into Engram records.
+- UI design/UX polish beyond necessary controls for activation and subscription visibility.
+- Non-JSON Patch delta formats or alternative versioning schemes.
 
 ## Open Questions
 
-None currently.
+1. Minimal memory-store test fixture: define concrete shape to cover CAS conflicts, subscription resume, and `STATE_SNAPSHOT` / `STATE_DELTA` flows (to be proposed).
+
+### Proposed Minimal Memory-Store Fixture (for tests)
+
+- In-memory map keyed by `key: string` with fields `{ value: any, version: number, labels?: Record<string,string>, tags?: string[], createdAt, updatedAt }`.
+- `set`: full replace; increments version; honors `expectedVersion` for CAS.
+- `patch`: applies JSON Patch to `value`; increments version; honors `expectedVersion`.
+- `delete`: removes entry; optional `expectedVersion`; returns prior version metadata.
+- `list/get`: support exact key(s), `keyPrefix`, `updatedAfter`, and pagination token (opaque cursor over sorted keys).
+- Subscriptions: per-subscription monotonic `sequence`; emit `snapshot` on subscribe when requested, `delta`/`delete` on mutations.
+- Replay/resume: retain a small ring buffer of recent events/artifacts to cover `tasks/resubscribe`; on buffer miss, new `engram/subscribe` with `fromSequence` replays from the in-memory log (log size configurable per test).
+- UI bridge: helper to emit ag-ui `STATE_SNAPSHOT` and `STATE_DELTA` derived from EngramEvents for assertions.
+
+## Optional Sections
+
+### Backwards Compatibility
+
+- No breaking changes to existing non-Engram client behavior or passing tests. Changes that supersede prior Engram client behavior are allowed only to align with ADRs 0014–0020; other surfaces must remain compatible.
+
+### Reference Patterns
+
+- Follow existing A2A extension handling (e.g., Secure Passport/AP2) for header activation and capability advertisement in AgentCards.
+
+### Security Analysis
+
+- Reuse existing A2A authentication/authorization; ensure Engram activation does not bypass existing permission checks. Validate that Engram requests fail clearly when unauthorized or when the server lacks extension support.
