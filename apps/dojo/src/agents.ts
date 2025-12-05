@@ -182,6 +182,8 @@ export const agentsIntegrations = {
   langchain: async () => 
     mapAgents(
       new LangChainAgent({
+        // TODO: @ranst91 - can you add types here?
+        // @ts-expect-error - TODO: add types
         chainFn: async ({ messages, tools, threadId }) => {
           // @ts-ignore
           const { ChatOpenAI } = await import("@langchain/openai");
