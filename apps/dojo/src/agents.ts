@@ -31,27 +31,40 @@ const envVars = getEnvVars();
  * Helper to map feature keys to agent instances using a builder function.
  * Reduces repetition when all agents follow the same pattern with different paths.
  * 
- * NOTE: TypeScript can validate MISSING features but not EXTRA features due to
- * structural typing limitations. Extra features won't break at runtime (they just
- * won't be accessible), but they won't trigger type errors either.
+ * Uses `const` type parameter to preserve exact literal keys from the mapping,
+ * which enables strict type checking via `satisfies AgentsMap`.
  */
-function mapAgents<F extends string>(
+function mapAgents<const T extends Record<string, string>>(
   builder: (path: string) => AbstractAgent,
-  mapping: Record<F, string>
-): Record<F, AbstractAgent> {
+  mapping: T
+): { [K in keyof T]: AbstractAgent } {
   return Object.fromEntries(
-    (Object.entries(mapping) as [F, string][]).map(([key, path]) => [key, builder(path)])
-  ) as Record<F, AbstractAgent>;
+    Object.entries(mapping).map(([key, path]) => [key, builder(path)])
+  ) as { [K in keyof T]: AbstractAgent };
 }
+
+/**
+ * Checks if Actual has exactly the keys in Expected (no more, no less)
+ */
+type ExactRecord<Actual, Expected extends Record<string, unknown>> =
+  [keyof Actual] extends [keyof Expected]
+    ? [keyof Expected] extends [keyof Actual]
+      ? Actual
+      : never
+    : never;
 
 /**
  * Agent integrations map - keys are integration IDs from menu.ts
  * TypeScript enforces:
  * - All integration IDs from menu.ts must have an entry
- * - All features for each integration must be present in the returned object
+ * - All features for each integration must be present (no missing)
+ * - No extra features allowed (exact match via ExactRecord)
  */
 type AgentsMap = {
-  [K in IntegrationId]: () => Promise<Record<FeaturesFor<K>, AbstractAgent>>;
+  [K in IntegrationId]: () => Promise<ExactRecord<
+    Record<FeaturesFor<K>, AbstractAgent>,
+    Record<FeaturesFor<K>, AbstractAgent>
+  >>;
 };
 
 export const agentsIntegrations = {
