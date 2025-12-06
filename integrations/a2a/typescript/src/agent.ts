@@ -1192,14 +1192,16 @@ export class A2AAgent extends AbstractAgent {
     this.engramRuntimeExtensionUri = extensionUri;
     this.forceEngramHeader = true;
 
-    const subscribe = async () => {
-      if (!options.filter) {
+    const subscribe = async (): Promise<BaseEvent[]> => {
+      if (!options.filter && !taskId) {
         throw new Error("Engram filter is required to start a subscription when taskId is not provided.");
       }
 
+      const initialEvents: BaseEvent[] = [];
+
       const result = await this.engramSubscribe(
         {
-          filter: options.filter,
+          filter: options.filter ?? { keyPrefix: "" },
           includeSnapshot,
           fromSequence: lastSequence,
           contextId: options.contextId,
@@ -1210,10 +1212,64 @@ export class A2AAgent extends AbstractAgent {
       taskId = result.taskId;
       convertOptions.taskId = result.taskId;
       includeSnapshot = false;
+
+      // Hydrate from task snapshot artifacts (engram-snapshot) so resubscribe can stay stock.
+      const taskResponse = await this.a2aClient.getTask({
+        id: taskId,
+        ...(options.contextId ? { contextId: options.contextId } : {}),
+      } as { id: string });
+
+      if (!this.a2aClient.isErrorResponse(taskResponse) && taskResponse.result) {
+        const task = taskResponse.result as {
+          id?: string;
+          contextId?: string;
+          artifacts?: Array<{ artifactId?: string; parts?: Array<{ kind?: string; data?: unknown }> }>;
+        };
+
+        for (const artifact of task.artifacts ?? []) {
+          const artifactEvent = {
+            kind: "artifact-update" as const,
+            taskId: task.id ?? taskId,
+            contextId: task.contextId ?? options.contextId,
+            append: false,
+            lastChunk: true,
+            artifact,
+          };
+
+          const engEvents = this.extractEngramEvents(artifactEvent as A2AStreamEvent);
+          const floorSequence = Number(lastSequence ?? options.fromSequence ?? 0);
+          const filteredEngEvents = engEvents.filter(
+            (event) => Number(event.sequence ?? 0) > floorSequence,
+          );
+
+          if (filteredEngEvents.length) {
+            lastSequence = filteredEngEvents[filteredEngEvents.length - 1]?.sequence ?? lastSequence;
+            const events = convertA2AEventToAGUIEvents(artifactEvent as A2AStreamEvent, convertOptions);
+            initialEvents.push(
+              ...events.filter((event) =>
+                filteredEngEvents.some(
+                  (engramEvent) =>
+                    (event as { rawEvent?: { sequence?: string } }).rawEvent?.sequence === engramEvent.sequence,
+                ),
+              ),
+            );
+          }
+        }
+      }
+
+      return initialEvents;
     };
 
-    if (!taskId) {
-      await subscribe();
+    if (!taskId || options.fromSequence !== undefined) {
+      const initialEvents = await subscribe();
+      initialEvents.sort((a, b) => {
+        const seqA = (a as { rawEvent?: { sequence?: string } }).rawEvent?.sequence ?? "";
+        const seqB = (b as { rawEvent?: { sequence?: string } }).rawEvent?.sequence ?? "";
+        return seqA.localeCompare(seqB, undefined, { numeric: true });
+      });
+      for (const event of initialEvents) {
+        yield event;
+      }
     } else {
       convertOptions.taskId = taskId;
     }
@@ -1227,11 +1283,23 @@ export class A2AAgent extends AbstractAgent {
 
           for await (const chunk of stream) {
             const engEvents = this.extractEngramEvents(chunk as A2AStreamEvent);
-            if (engEvents.length) {
-              lastSequence = engEvents[engEvents.length - 1]?.sequence ?? lastSequence;
+            const floorSequence = Number(lastSequence ?? options.fromSequence ?? 0);
+            const filteredEngEvents = engEvents.filter(
+              (event) => Number(event.sequence ?? 0) > floorSequence,
+            );
+
+            if (filteredEngEvents.length) {
+              lastSequence = filteredEngEvents[filteredEngEvents.length - 1]?.sequence ?? lastSequence;
             }
 
-            const events = convertA2AEventToAGUIEvents(chunk as A2AStreamEvent, convertOptions);
+            const events = convertA2AEventToAGUIEvents(chunk as A2AStreamEvent, convertOptions).filter(
+              (event) =>
+                filteredEngEvents.length === 0 ||
+                filteredEngEvents.some(
+                  (engramEvent) =>
+                    (event as { rawEvent?: { sequence?: string } }).rawEvent?.sequence === engramEvent.sequence,
+                ),
+            );
             for (const event of events) {
               yield event;
             }
@@ -1242,7 +1310,10 @@ export class A2AAgent extends AbstractAgent {
             throw error;
           }
 
-          await subscribe();
+          const initialEvents = await subscribe();
+          for (const event of initialEvents) {
+            yield event;
+          }
         }
       }
     } finally {

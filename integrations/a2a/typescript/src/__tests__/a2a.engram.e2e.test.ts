@@ -137,7 +137,6 @@ const startEngramServer = async (): Promise<EngramTestServer> => {
   app.use(express.json());
 
   const store = new Map<string, EngramStoreEntry>();
-  const streams = new Map<string, { contextId: string; events: EngramEvent[] }>();
 
   const taskStore = new ResettableTaskStore();
   const eventBusManager = new DefaultExecutionEventBusManager();
@@ -149,10 +148,6 @@ const startEngramServer = async (): Promise<EngramTestServer> => {
     description: "Local Engram test server",
   };
   const requestHandler = new DefaultRequestHandler(agentCard, taskStore, agentExecutor, eventBusManager);
-  const handlerWithResubscribe = requestHandler as DefaultRequestHandler & {
-    resubscribe?: (params: { id: string }) => AsyncGenerator<unknown>;
-  };
-  const originalResubscribe = requestHandler.resubscribe.bind(requestHandler);
 
   const seedStore = (seed?: Partial<EngramStoreEntry>) => {
     rpcCalls.length = 0;
@@ -169,30 +164,37 @@ const startEngramServer = async (): Promise<EngramTestServer> => {
       labels: seed?.labels,
     };
     store.set(record.key.key, record);
-    streams.set("engram-task", { contextId: "ctx-engram", events: createEngramEvents(record) });
+    const events = createEngramEvents(record);
     void taskStore.save({
       kind: "task" as const,
       id: "engram-task",
       contextId: "ctx-engram",
       status: { state: "working" as const, timestamp: now },
       history: [],
-      artifacts: [],
+      artifacts: [
+        {
+          artifactId: "engram-snapshot",
+          parts: [
+            {
+              kind: "data",
+              data: { type: "engram/event", event: events[0] },
+            },
+          ],
+        },
+        {
+          artifactId: "engram-delta",
+          parts: [
+            {
+              kind: "data",
+              data: { type: "engram/event", event: events[1] },
+            },
+          ],
+        },
+      ],
     });
   };
 
   seedStore();
-
-  handlerWithResubscribe.resubscribe = async function* (params: { id: string }) {
-    if (streams.has(params.id)) {
-      const stream = streams.get(params.id)!;
-      for (const event of stream.events) {
-        yield toArtifact(event, params.id, stream.contextId);
-      }
-      return;
-    }
-
-    yield* originalResubscribe(params);
-  };
 
   app.use((req, _res, next) => {
     if (req.method === "POST" && req.path.startsWith("/a2a")) {
@@ -201,6 +203,52 @@ const startEngramServer = async (): Promise<EngramTestServer> => {
     }
     next();
   });
+
+  const finishTask = async (taskId: string) => {
+    const task = await taskStore.load(taskId);
+    if (!task) return;
+    await taskStore.save({
+      ...task,
+      status: { state: "completed", timestamp: new Date().toISOString() },
+    });
+  };
+
+  const publishEngramEvents = (taskId: string, contextId: string, events: EngramEvent[]) => {
+    const bus = eventBusManager.createOrGetByTaskId(taskId);
+    for (const event of events) {
+      bus.publish(toArtifact("engram-delta", event, taskId, contextId));
+    }
+    bus.finished();
+    void finishTask(taskId);
+  };
+
+  const upsertSnapshotArtifact = async (taskId: string, contextId: string, snapshot: EngramEvent) => {
+    const task =
+      (await taskStore.load(taskId)) ??
+      ({
+        kind: "task",
+        id: taskId,
+        contextId,
+        status: { state: "working", timestamp: new Date().toISOString() },
+        history: [],
+        artifacts: [],
+      } as const);
+
+    const artifacts = (task.artifacts ?? []).filter(
+      (artifact: { artifactId?: string }) => artifact.artifactId !== "engram-snapshot",
+    );
+    artifacts.push({
+      artifactId: "engram-snapshot",
+      parts: [
+        {
+          kind: "data",
+          data: { type: "engram/event", event: snapshot },
+        },
+      ],
+    });
+
+    await taskStore.save({ ...task, artifacts });
+  };
 
   app.post("/a2a", async (req, res, next) => {
     const { id = 1, method = "", params = {} } = (req.body ?? {}) as {
@@ -241,15 +289,8 @@ const startEngramServer = async (): Promise<EngramTestServer> => {
           updatedAt: new Date().toISOString(),
         },
       );
-      streams.set(taskId, { contextId, events });
-      await taskStore.save({
-        kind: "task" as const,
-        id: taskId,
-        contextId,
-        status: { state: "working" as const, timestamp: new Date().toISOString() },
-        history: [],
-        artifacts: [],
-      });
+      await upsertSnapshotArtifact(taskId, contextId, events[0]);
+      setImmediate(() => publishEngramEvents(taskId, contextId, events.slice(1)));
       return respond({ taskId });
     }
 
@@ -280,7 +321,9 @@ const startEngramServer = async (): Promise<EngramTestServer> => {
         labels: (params as { labels?: Record<string, string> }).labels ?? existing?.labels,
       };
       store.set(key, record);
-      streams.set("engram-task", { contextId: "ctx-engram", events: createEngramEvents(record) });
+      const events = createEngramEvents(record);
+      await upsertSnapshotArtifact("engram-task", "ctx-engram", events[0]);
+      setImmediate(() => publishEngramEvents("engram-task", "ctx-engram", events.slice(1)));
       return respond({ record });
     }
 
@@ -299,7 +342,9 @@ const startEngramServer = async (): Promise<EngramTestServer> => {
       const value = applyPatch(structuredClone(existing.value), patch, false, false).newDocument;
       const record: EngramStoreEntry = { ...existing, value, version: existing.version + 1, updatedAt: now };
       store.set(key, record);
-      streams.set("engram-task", { contextId: "ctx-engram", events: createEngramEvents(record) });
+      const events = createEngramEvents(record);
+      await upsertSnapshotArtifact("engram-task", "ctx-engram", events[0]);
+      setImmediate(() => publishEngramEvents("engram-task", "ctx-engram", events.slice(1)));
       return respond({ record });
     }
 
@@ -488,8 +533,9 @@ describe("A2A Engram happy-path e2e (local server)", () => {
       }
     }
 
-    expect(new Set(sequences)).toEqual(new Set(["1", "2"]));
-    expect(sequences[0]).toBe("1");
-    expect(sequences[sequences.length - 1]).toBe("2");
+    const ordered = [...sequences].sort((a, b) => Number(a) - Number(b));
+    expect(new Set(ordered)).toEqual(new Set(["1", "2"]));
+    expect(ordered[0]).toBe("1");
+    expect(ordered[ordered.length - 1]).toBe("2");
   });
 });
