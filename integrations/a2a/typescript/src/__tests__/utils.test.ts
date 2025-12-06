@@ -126,6 +126,7 @@ describe("convertAGUIMessagesToA2A", () => {
       [createMessage({ id: "user-1", role: "user", content: "configure" })],
       {
         engramUpdate: { scope: "task", update: { path: "/config", value: "x" } },
+        engramEnabled: true,
       },
     );
 
@@ -153,6 +154,7 @@ describe("convertAGUIMessagesToA2A", () => {
         engramUpdate,
         contextId: "ctx-engram",
         taskId: "task-engram",
+        engramEnabled: true,
       },
     );
 
@@ -519,6 +521,65 @@ describe("convertA2AEventToAGUIEvents", () => {
     expect(
       (tracker.state as { view?: { config?: unknown } }).view?.config,
     ).toEqual({ feature: "enabled" });
+  });
+
+  it("projects artifacts without metadata to the default base path and renders their text implicitly", () => {
+    const tracker = createSharedStateTracker();
+    const messageIdMap = new Map<string, string>();
+
+    const events = convertA2AEventToAGUIEvents(
+      {
+        kind: "task" as const,
+        id: "task-implicit",
+        contextId: "ctx-implicit",
+        status: { state: "working" as const },
+        history: [],
+        artifacts: [
+          {
+            artifactId: "artifact-text",
+            parts: [{ kind: "text" as const, text: "Implicit hello" }],
+          },
+          {
+            artifactId: "artifact-json",
+            parts: [{ kind: "data" as const, data: { foo: "bar" } }],
+          },
+        ],
+      },
+      { messageIdMap, sharedStateTracker: tracker },
+    );
+
+    const snapshot = events.find(
+      (event) => event.type === EventType.STATE_SNAPSHOT,
+    ) as StateSnapshotEvent | undefined;
+    expect(snapshot?.snapshot).toMatchObject({
+      view: {
+        tasks: {
+          "task-implicit": expect.objectContaining({ taskId: "task-implicit" }),
+        },
+      },
+    });
+
+    const stateDelta = events.find(
+      (event) =>
+        event.type === EventType.STATE_DELTA &&
+        (event as StateDeltaEvent).delta?.some((entry) =>
+          `${entry.path}`.includes("/view/artifacts/artifact-json"),
+        ),
+    ) as StateDeltaEvent | undefined;
+    expect(stateDelta).toBeDefined();
+
+    expect((tracker.state as { view?: { artifacts?: Record<string, unknown> } }).view?.artifacts).toEqual(
+      expect.objectContaining({
+        "artifact-text": "Implicit hello",
+        "artifact-json": { foo: "bar" },
+      }),
+    );
+
+    const textChunk = events.find(
+      (event) => event.type === EventType.TEXT_MESSAGE_CHUNK,
+    ) as TextMessageChunkEvent | undefined;
+    expect(textChunk?.delta).toBe("Implicit hello");
+    expect(messageIdMap.get("artifact-text")).toBe(textChunk?.messageId);
   });
 
   it("projects status updates into shared state when a tracker is present", () => {

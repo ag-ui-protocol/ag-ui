@@ -6,6 +6,7 @@ import type {
   RunErrorEvent,
   RunFinishedEvent,
   RunStartedEvent,
+  StateSnapshotEvent,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
 import type { A2AClient } from "@a2a-js/sdk/client";
@@ -13,6 +14,7 @@ import type {
   MessageSendConfiguration,
   MessageSendParams,
   Message as A2AMessage,
+  JSONRPCResponse,
 } from "@a2a-js/sdk";
 import {
   convertAGUIMessagesToA2A,
@@ -28,15 +30,44 @@ import type {
   SurfaceTracker,
   A2ARunOptions,
   ConvertA2AEventOptions,
+  EngramConfig,
+  EngramGetParams,
+  EngramGetResult,
+  EngramListParams,
+  EngramListResult,
+  EngramSetParams,
+  EngramSetResult,
+  EngramPatchParams,
+  EngramPatchResult,
+  EngramDeleteParams,
+  EngramDeleteResult,
+  EngramSubscribeParams,
+  EngramSubscribeResult,
+  EngramSubscriptionOptions,
+  EngramEvent,
+  EngramRequestOptions,
+  EngramRecord,
+  EngramKey,
 } from "./types";
 
 export interface A2AAgentConfig extends AgentConfig {
   a2aClient: A2AClient;
   runOptions?: Partial<A2ARunOptions>;
+  engram?: EngramConfig;
 }
 
+type EngramRunMode = "hydrate_stream" | "hydrate_once" | "sync";
+
+type EngramForwardedProps = {
+  engram?: {
+    mode?: EngramRunMode;
+    filter?: { keyPrefix?: string; key?: EngramKey };
+    [key: string]: unknown;
+  };
+};
+
 type A2ARunInput = Omit<RunAgentInput, "forwardedProps"> & {
-  forwardedProps?: { a2a?: A2ARunOptions } & Record<string, unknown>;
+  forwardedProps?: { a2a?: A2ARunOptions } & EngramForwardedProps & Record<string, unknown>;
 };
 
 type ResolvedA2ARunOptions = Required<
@@ -51,16 +82,22 @@ type ResolvedA2ARunOptions = Required<
     | "subscribeOnly"
   >
 > &
-  A2ARunOptions & { contextId?: string };
+  A2ARunOptions & { contextId?: string; engramEnabled: boolean; engramExtensionUri: string };
 
 export class A2AAgent extends AbstractAgent {
   private readonly a2aClient: A2AClient;
   private readonly messageIdMap = new Map<string, string>();
   private readonly defaultRunOptions: Partial<A2ARunOptions>;
+  private readonly defaultEngramEnabled: boolean;
+  private readonly defaultEngramExtensionUri: string;
+  private engramRuntimeEnabled = false;
+  private engramRuntimeExtensionUri: string;
+  private forceEngramHeader = false;
+  private engramSupportChecked = false;
   private hasBoundContextId = false;
 
   constructor(config: A2AAgentConfig) {
-    const { a2aClient, runOptions, ...rest } = config;
+    const { a2aClient, runOptions, engram, ...rest } = config;
     if (!a2aClient) {
       throw new Error("A2AAgent requires a configured A2AClient instance.");
     }
@@ -69,6 +106,10 @@ export class A2AAgent extends AbstractAgent {
 
     this.a2aClient = a2aClient;
     this.defaultRunOptions = runOptions ?? {};
+    this.defaultEngramEnabled = engram?.enabled ?? false;
+    this.defaultEngramExtensionUri = engram?.extensionUri ?? ENGRAM_EXTENSION_URI;
+    this.engramRuntimeEnabled = this.defaultEngramEnabled;
+    this.engramRuntimeExtensionUri = this.defaultEngramExtensionUri;
     this.initializeExtension(this.a2aClient);
   }
 
@@ -77,6 +118,10 @@ export class A2AAgent extends AbstractAgent {
       a2aClient: this.a2aClient,
       debug: this.debug,
       runOptions: this.defaultRunOptions,
+      engram: {
+        enabled: this.defaultEngramEnabled,
+        extensionUri: this.defaultEngramExtensionUri,
+      },
     });
   }
 
@@ -103,23 +148,46 @@ export class A2AAgent extends AbstractAgent {
         input.runId;
 
       try {
-          let runOptions = this.resolveRunOptions(typedInput);
-          const converted = this.prepareConversation(typedInput, runOptions);
-          const hasOutgoingMessage = Boolean(converted.targetMessage ?? converted.latestUserMessage);
-          const subscribeOnly =
-            runOptions.mode !== "send" &&
-            (runOptions.subscribeOnly || (!hasOutgoingMessage && Boolean(runOptions.taskId)));
-          runOptions = { ...runOptions, subscribeOnly };
-          const targetMessage =
-            converted.targetMessage ??
-            converted.latestUserMessage ??
-            converted.history[converted.history.length - 1];
+        const forwardedEngram = (typedInput.forwardedProps as EngramForwardedProps | undefined)?.engram;
+        if (forwardedEngram) {
+          if (!forwardedEngram.mode) {
+            throw new Error("Engram run requested without a mode. Provide forwardedProps.engram.mode.");
+          }
+          await this.withEngramContext(
+            this.defaultEngramEnabled,
+            this.defaultEngramExtensionUri,
+            async () => {
+              await this.ensureEngramSupport(this.defaultEngramExtensionUri);
+              await this.handleEngramRun(forwardedEngram, typedInput, subscriber, resolveThreadIdForRun());
+            },
+            { forceHeader: true },
+          );
+          return;
+        }
 
-          this.messageIdMap.clear();
-          const aggregatedText = new Map<string, string>();
-          const surfaceTracker = this.createSurfaceTracker();
-          const sharedStateTracker = createSharedStateTracker();
-          const rawEvents: A2AStreamEvent[] = [];
+        let runOptions = this.resolveRunOptions(typedInput);
+        await this.withEngramContext(
+          runOptions.engramEnabled,
+          runOptions.engramExtensionUri,
+          async () => {
+            await this.ensureEngramSupportIfEnabled(runOptions);
+
+            const converted = this.prepareConversation(typedInput, runOptions);
+            const hasOutgoingMessage = Boolean(converted.targetMessage ?? converted.latestUserMessage);
+            const subscribeOnly =
+              runOptions.mode !== "send" &&
+              (runOptions.subscribeOnly || (!hasOutgoingMessage && Boolean(runOptions.taskId)));
+            runOptions = { ...runOptions, subscribeOnly };
+            const targetMessage =
+              converted.targetMessage ??
+              converted.latestUserMessage ??
+              converted.history[converted.history.length - 1];
+
+            this.messageIdMap.clear();
+            const aggregatedText = new Map<string, string>();
+            const surfaceTracker = this.createSurfaceTracker();
+            const sharedStateTracker = createSharedStateTracker();
+            const rawEvents: A2AStreamEvent[] = [];
 
         const normalizedContextId = runOptions.contextId?.trim();
         boundContextId =
@@ -318,8 +386,10 @@ export class A2AAgent extends AbstractAgent {
             dispatchEvents([runFinished]);
           }
 
-          subscriber.complete();
-        } catch (error) {
+            subscriber.complete();
+          },
+        );
+      } catch (error) {
           emitRunStarted();
           flushPendingEvents();
           const runError: RunErrorEvent = {
@@ -350,6 +420,357 @@ export class A2AAgent extends AbstractAgent {
     return undefined;
   }
 
+  private projectEngramRecords(
+    records: EngramRecord[],
+    convertOptions: ConvertA2AEventOptions,
+  ): BaseEvent[] {
+    if (records.length === 0) {
+      return [];
+    }
+
+    const artifactUpdate = {
+      kind: "artifact-update",
+      contextId: convertOptions.contextId,
+      taskId: convertOptions.taskId,
+      append: false,
+      lastChunk: true,
+      artifact: {
+        artifactId: "engram-snapshot",
+        parts: records.map((record, index) => ({
+          kind: "data" as const,
+          data: {
+            type: "engram/event",
+            event: {
+              kind: "snapshot" as const,
+              key: record.key,
+              record,
+              version: record.version,
+              sequence: record.version ? String(record.version) : String(index + 1),
+              updatedAt: record.updatedAt,
+            },
+          },
+        })),
+      },
+    } as unknown as A2AStreamEvent;
+
+    return convertA2AEventToAGUIEvents(artifactUpdate, convertOptions);
+  }
+
+  private async applyEngramSyncState(
+    state: unknown,
+    filter?: EngramSubscribeParams["filter"],
+    contextId?: string,
+  ): Promise<void> {
+    const view = (state as { view?: { engram?: Record<string, unknown> } })?.view ?? {};
+    const engramState = (view as { engram?: Record<string, unknown> }).engram ?? {};
+
+    const matchesFilter = (key: string): boolean => {
+      if (!filter) {
+        return true;
+      }
+
+      const prefix = filter.keyPrefix;
+      if (prefix && !key.startsWith(prefix)) {
+        return false;
+      }
+
+      if (filter.key && filter.key.key && filter.key.key !== key) {
+        return false;
+      }
+
+      return true;
+    };
+
+    for (const [key, rawValue] of Object.entries(engramState)) {
+      if (!matchesFilter(key)) {
+        continue;
+      }
+
+      if (rawValue === null) {
+        await this.engramDelete({ key: { key }, contextId });
+        continue;
+      }
+
+      const record = (rawValue ?? {}) as Partial<EngramRecord> & { value?: unknown };
+      const params: EngramSetParams = {
+        key: { key },
+        value: record.value ?? rawValue,
+        ...(typeof record.version === "number" ? { expectedVersion: record.version } : {}),
+        ...(Array.isArray(record.tags) ? { tags: record.tags } : {}),
+        ...(record.labels && typeof record.labels === "object" ? { labels: record.labels } : {}),
+        ...(contextId ? { contextId } : {}),
+      };
+
+      await this.engramSet(params);
+    }
+  }
+
+  private emitEmptySnapshotIfNeeded(
+    tracker: ReturnType<typeof createSharedStateTracker>,
+    subscriber: { next: (event: BaseEvent) => void },
+    runId?: string,
+    threadId?: string,
+  ) {
+    if (tracker.emittedSnapshot) {
+      return;
+    }
+
+    const snapshot: StateSnapshotEvent = {
+      type: EventType.STATE_SNAPSHOT,
+      snapshot: tracker.state,
+      ...(threadId ? { threadId } : {}),
+      ...(runId ? { runId } : {}),
+    };
+    tracker.emittedSnapshot = true;
+    subscriber.next(snapshot);
+  }
+
+  private async handleEngramRun(
+    forwardedEngram: NonNullable<EngramForwardedProps["engram"]>,
+    input: A2ARunInput,
+    subscriber: { next: (event: BaseEvent) => void; complete: () => void },
+    fallbackThreadId: string,
+  ): Promise<void> {
+    const mode = forwardedEngram.mode as EngramRunMode | undefined;
+    if (!mode) {
+      throw new Error("Engram run requested without a mode. Provide forwardedProps.engram.mode.");
+    }
+
+    if (!this.defaultEngramEnabled) {
+      throw new Error("Engram is disabled for this agent. Enable Engram at construction to use Engram modes.");
+    }
+
+    if ((input.messages?.length ?? 0) > 0) {
+      throw new Error("Engram runs do not accept messages. Use an empty message array with engram.mode.");
+    }
+
+    const contextId = this.resolveContextId(input.threadId ?? this.threadId) ?? fallbackThreadId;
+    const tracker = createSharedStateTracker(input.state as Record<string, unknown> | undefined);
+    const convertOptions: ConvertA2AEventOptions = {
+      role: "assistant",
+      messageIdMap: new Map<string, string>(),
+      sharedStateTracker: tracker,
+      artifactBasePath: DEFAULT_ARTIFACT_BASE_PATH,
+      contextId,
+      taskId: input.forwardedProps?.a2a?.taskId,
+      threadId: contextId,
+      runId: input.runId,
+      source: "a2a",
+    };
+
+    const runStarted: RunStartedEvent = {
+      type: EventType.RUN_STARTED,
+      threadId: contextId,
+      runId: input.runId,
+    };
+    subscriber.next(runStarted);
+
+    const finish = () => {
+      const runFinished: RunFinishedEvent = {
+        type: EventType.RUN_FINISHED,
+        threadId: contextId,
+        runId: input.runId,
+      };
+      subscriber.next(runFinished);
+      subscriber.complete();
+    };
+
+    if (mode === "hydrate_stream") {
+      const filter = forwardedEngram.filter ?? { keyPrefix: "" };
+      let emitted = false;
+      for await (const event of this.streamEngram({
+        filter,
+        includeSnapshot: true,
+        initialState: tracker.state,
+        sharedStateTracker: tracker,
+        contextId,
+        engram: true,
+      })) {
+        emitted = true;
+        subscriber.next(event);
+      }
+
+      if (!emitted) {
+        this.emitEmptySnapshotIfNeeded(tracker, subscriber, input.runId, contextId);
+      }
+
+      finish();
+      return;
+    }
+
+    if (mode === "hydrate_once") {
+      const listResult = await this.engramList(
+        { filter: forwardedEngram.filter, contextId },
+        { extensionUri: this.defaultEngramExtensionUri, engram: true },
+      );
+
+      if (!listResult.records?.length) {
+        this.emitEmptySnapshotIfNeeded(tracker, subscriber, input.runId, contextId);
+      } else {
+        const events = this.projectEngramRecords(listResult.records, convertOptions);
+        for (const event of events) {
+          subscriber.next(event);
+        }
+      }
+
+      finish();
+      return;
+    }
+
+    if (mode === "sync") {
+      await this.applyEngramSyncState(input.state, forwardedEngram.filter, contextId);
+
+      const listResult = await this.engramList(
+        { filter: forwardedEngram.filter, contextId },
+        { extensionUri: this.defaultEngramExtensionUri, engram: true },
+      );
+
+      if (!listResult.records?.length) {
+        this.emitEmptySnapshotIfNeeded(tracker, subscriber, input.runId, contextId);
+      } else {
+        const events = this.projectEngramRecords(listResult.records, convertOptions);
+        for (const event of events) {
+          subscriber.next(event);
+        }
+      }
+
+      finish();
+      return;
+    }
+
+    throw new Error(`Unknown Engram mode: ${mode}`);
+  }
+
+  private async ensureEngramSupportIfEnabled(options: ResolvedA2ARunOptions): Promise<void> {
+    if (!options.engramEnabled) {
+      return;
+    }
+
+    await this.ensureEngramSupport(options.engramExtensionUri);
+  }
+
+  private async ensureEngramSupport(extensionUri: string): Promise<void> {
+    if (this.engramSupportChecked && extensionUri === this.defaultEngramExtensionUri) {
+      return;
+    }
+
+    const card = await this.a2aClient.getAgentCard();
+    const extensions = (card as { capabilities?: { extensions?: unknown } }).capabilities?.extensions ?? [];
+    const supported = Array.isArray(extensions)
+      ? extensions.some((extension) =>
+          typeof extension === "string"
+            ? extension === extensionUri
+            : typeof extension === "object" && extension !== null && (extension as { uri?: string }).uri === extensionUri,
+        )
+      : false;
+
+    if (!supported) {
+      throw new Error(`Engram extension ${extensionUri} not advertised by agent card.`);
+    }
+
+    if (extensionUri === this.defaultEngramExtensionUri) {
+      this.engramSupportChecked = true;
+    }
+  }
+
+  private async withEngramContext<T>(
+    enabled: boolean,
+    extensionUri: string,
+    operation: () => Promise<T>,
+    options: { forceHeader?: boolean } = {},
+  ): Promise<T> {
+    const previousEnabled = this.engramRuntimeEnabled;
+    const previousUri = this.engramRuntimeExtensionUri;
+    const previousForce = this.forceEngramHeader;
+
+    this.engramRuntimeEnabled = enabled;
+    this.engramRuntimeExtensionUri = extensionUri;
+    this.forceEngramHeader = options.forceHeader ?? false;
+
+    try {
+      return await operation();
+    } finally {
+      this.engramRuntimeEnabled = previousEnabled;
+      this.engramRuntimeExtensionUri = previousUri;
+      this.forceEngramHeader = previousForce;
+    }
+  }
+
+  private shouldIncludeEngramHeader(init?: RequestInit, force?: boolean): boolean {
+    const forceHeader = force ?? this.forceEngramHeader;
+    if (!this.engramRuntimeEnabled && !forceHeader) {
+      return false;
+    }
+
+    if (forceHeader) {
+      return true;
+    }
+
+    if (!init?.body || typeof init.body !== "string") {
+      return false;
+    }
+
+    try {
+      const parsed = JSON.parse(init.body as string) as {
+        method?: string;
+        params?: { metadata?: { engram?: unknown }; message?: { extensions?: string[] } };
+      };
+
+      if (typeof parsed.method === "string" && parsed.method.startsWith("engram/")) {
+        return true;
+      }
+
+      const params = parsed.params ?? {};
+      if (params.metadata && "engram" in params.metadata) {
+        return true;
+      }
+
+      const extensions = params.message?.extensions ?? [];
+      return Array.isArray(extensions) && extensions.includes(this.engramRuntimeExtensionUri);
+    } catch {
+      return false;
+    }
+  }
+
+  private addEngramHeader(headers: Headers, init?: RequestInit, force?: boolean) {
+    if (!this.shouldIncludeEngramHeader(init, force)) {
+      return;
+    }
+
+    const existing = headers.get("X-A2A-Extensions");
+    const values = new Set<string>();
+    if (existing) {
+      for (const value of existing.split(",").map((entry) => entry.trim()).filter(Boolean)) {
+        values.add(value);
+      }
+    }
+    values.add(this.engramRuntimeExtensionUri);
+    headers.set("X-A2A-Extensions", Array.from(values).join(","));
+  }
+
+  private patchFetch(force?: boolean) {
+    const originalFetch = globalThis.fetch;
+    if (!originalFetch) {
+      return () => {};
+    }
+
+    const extensionFetch: typeof fetch = async (input, init) => {
+      const headers = new Headers(init?.headers);
+      this.addEngramHeader(headers, init, force);
+      const nextInit: RequestInit = {
+        ...init,
+        headers,
+      };
+      return originalFetch(input, nextInit);
+    };
+
+    globalThis.fetch = extensionFetch;
+
+    return () => {
+      globalThis.fetch = originalFetch;
+    };
+  }
+
   private resolveRunOptions(input: A2ARunInput): ResolvedA2ARunOptions {
     const forwardedOptions = (input.forwardedProps?.a2a ?? {}) as A2ARunOptions;
     const merged: A2ARunOptions = { ...this.defaultRunOptions, ...forwardedOptions };
@@ -362,6 +783,8 @@ export class A2AAgent extends AbstractAgent {
     const artifactBasePath = merged.artifactBasePath ?? DEFAULT_ARTIFACT_BASE_PATH;
     const subscribeOnly = mode === "send" ? false : merged.subscribeOnly ?? false;
     const contextId = this.resolveContextId(merged.contextId);
+    const engramEnabled = this.defaultEngramEnabled;
+    const engramExtensionUri = this.defaultEngramExtensionUri;
 
     return {
       ...merged,
@@ -373,6 +796,8 @@ export class A2AAgent extends AbstractAgent {
       artifactBasePath,
       subscribeOnly,
       contextId,
+      engramEnabled,
+      engramExtensionUri,
     };
   }
 
@@ -398,8 +823,9 @@ export class A2AAgent extends AbstractAgent {
       includeSystemMessages: options.includeSystemMessages,
       includeDeveloperMessages: options.includeDeveloperMessages,
       engramUpdate: options.engramUpdate,
+      engramEnabled: options.engramEnabled,
       context: input.context,
-      engramExtensionUri: ENGRAM_EXTENSION_URI,
+      engramExtensionUri: options.engramExtensionUri,
       resume: options.resume,
     });
   }
@@ -637,68 +1063,198 @@ export class A2AAgent extends AbstractAgent {
     };
   }
 
-  private initializeExtension(client: A2AClient) {
-    const shouldIncludeEngram = (init?: RequestInit): boolean => {
-      if (!init?.body || typeof init.body !== "string") {
-        return false;
-      }
+  private extractEngramEvents(event: A2AStreamEvent): EngramEvent[] {
+    if ((event as { kind?: string }).kind !== "artifact-update") {
+      return [];
+    }
 
+    const artifactEvent = event as unknown as {
+      artifact?: { parts?: Array<{ kind?: string; data?: unknown }> };
+    };
+
+    const parts = artifactEvent.artifact?.parts ?? [];
+    const engramEvents: EngramEvent[] = [];
+
+    for (const part of parts) {
+      if (part && (part as { kind?: string }).kind === "data") {
+        const payload = (part as { data?: unknown }).data;
+        if (payload && typeof payload === "object") {
+          const candidate = payload as { type?: unknown; event?: unknown };
+          if (candidate.type === "engram/event" && candidate.event && typeof candidate.event === "object") {
+            engramEvents.push(candidate.event as EngramEvent);
+          }
+        }
+      }
+    }
+
+    return engramEvents;
+  }
+
+  private async engramRpc<T>(
+    method: string,
+    params: unknown,
+    _options?: EngramRequestOptions,
+  ): Promise<T> {
+    const extensionUri = this.defaultEngramExtensionUri;
+    const enabled = this.defaultEngramEnabled;
+    void _options;
+
+    if (!enabled) {
+      throw new Error("Engram is disabled for this agent. Enable Engram to call Engram RPC methods.");
+    }
+
+    await this.ensureEngramSupport(extensionUri);
+
+    const clientWithRpc = this.a2aClient as unknown as {
+      _postRpcRequest: (method: string, params: unknown) => Promise<unknown>;
+    };
+
+    return this.withEngramContext(enabled, extensionUri, async () => {
+      const restore = this.patchFetch();
       try {
-        const parsed = JSON.parse(init.body as string) as {
-          params?: { metadata?: { engram?: unknown }; message?: { extensions?: string[] } };
-        };
-        const params = parsed.params ?? {};
-        if (params.metadata && "engram" in params.metadata) {
-          return true;
+        const response = await clientWithRpc._postRpcRequest(method, params);
+
+        if (this.a2aClient.isErrorResponse(response as JSONRPCResponse)) {
+          const message = (response as { error?: { message?: string } }).error?.message ?? `Engram RPC ${method} failed`;
+          throw new Error(message);
         }
-        const extensions = params.message?.extensions ?? [];
-        return Array.isArray(extensions) && extensions.includes(ENGRAM_EXTENSION_URI);
-      } catch {
-        return false;
+
+        return (response as { result?: T }).result as T;
+      } finally {
+        restore();
       }
+    });
+  }
+
+  public async engramGet(params: EngramGetParams, options?: EngramRequestOptions): Promise<EngramGetResult> {
+    return this.engramRpc<EngramGetResult>("engram/get", params, options);
+  }
+
+  public async engramList(params: EngramListParams, options?: EngramRequestOptions): Promise<EngramListResult> {
+    return this.engramRpc<EngramListResult>("engram/list", params, options);
+  }
+
+  public async engramSet(params: EngramSetParams, options?: EngramRequestOptions): Promise<EngramSetResult> {
+    return this.engramRpc<EngramSetResult>("engram/set", params, options);
+  }
+
+  public async engramPatch(
+    params: EngramPatchParams,
+    options?: EngramRequestOptions,
+  ): Promise<EngramPatchResult> {
+    return this.engramRpc<EngramPatchResult>("engram/patch", params, options);
+  }
+
+  public async engramDelete(
+    params: EngramDeleteParams,
+    options?: EngramRequestOptions,
+  ): Promise<EngramDeleteResult> {
+    return this.engramRpc<EngramDeleteResult>("engram/delete", params, options);
+  }
+
+  public async engramSubscribe(
+    params: EngramSubscribeParams,
+    options?: EngramRequestOptions,
+  ): Promise<EngramSubscribeResult> {
+    return this.engramRpc<EngramSubscribeResult>("engram/subscribe", params, options);
+  }
+
+  public async *streamEngram(options: EngramSubscriptionOptions): AsyncGenerator<BaseEvent> {
+    const engramEnabled = this.defaultEngramEnabled;
+    const extensionUri = this.defaultEngramExtensionUri;
+
+    if (!engramEnabled) {
+      throw new Error("Engram is disabled for this agent. Enable Engram to stream Engram events.");
+    }
+
+    await this.ensureEngramSupport(extensionUri);
+
+    const messageIdMap = new Map<string, string>();
+    const tracker = options.sharedStateTracker ?? createSharedStateTracker(options.initialState);
+    const convertOptions: ConvertA2AEventOptions = {
+      role: "assistant",
+      messageIdMap,
+      sharedStateTracker: tracker,
+      artifactBasePath: options.artifactBasePath ?? DEFAULT_ARTIFACT_BASE_PATH,
+      contextId: options.contextId,
+      source: "a2a",
     };
 
-    const addExtensionHeader = (headers: Headers, init?: RequestInit) => {
-      if (!shouldIncludeEngram(init)) {
-        return;
+    let taskId = options.taskId;
+    let lastSequence = options.fromSequence;
+    let includeSnapshot = options.includeSnapshot ?? true;
+
+    const previousEnabled = this.engramRuntimeEnabled;
+    const previousUri = this.engramRuntimeExtensionUri;
+    const previousForce = this.forceEngramHeader;
+
+    this.engramRuntimeEnabled = engramEnabled;
+    this.engramRuntimeExtensionUri = extensionUri;
+    this.forceEngramHeader = true;
+
+    const subscribe = async () => {
+      if (!options.filter) {
+        throw new Error("Engram filter is required to start a subscription when taskId is not provided.");
       }
 
-      const existing = headers.get("X-A2A-Extensions");
-      const values = new Set<string>();
-      if (existing) {
-        for (const value of existing.split(",").map((entry) => entry.trim()).filter(Boolean)) {
-          values.add(value);
+      const result = await this.engramSubscribe(
+        {
+          filter: options.filter,
+          includeSnapshot,
+          fromSequence: lastSequence,
+          contextId: options.contextId,
+        },
+        { engram: engramEnabled, extensionUri },
+      );
+
+      taskId = result.taskId;
+      convertOptions.taskId = result.taskId;
+      includeSnapshot = false;
+    };
+
+    if (!taskId) {
+      await subscribe();
+    } else {
+      convertOptions.taskId = taskId;
+    }
+
+    try {
+      while (taskId) {
+        try {
+          const stream = this.a2aClient.resubscribeTask(
+            { id: taskId!, ...(options.contextId ? { contextId: options.contextId } : {}) } as { id: string },
+          );
+
+          for await (const chunk of stream) {
+            const engEvents = this.extractEngramEvents(chunk as A2AStreamEvent);
+            if (engEvents.length) {
+              lastSequence = engEvents[engEvents.length - 1]?.sequence ?? lastSequence;
+            }
+
+            const events = convertA2AEventToAGUIEvents(chunk as A2AStreamEvent, convertOptions);
+            for (const event of events) {
+              yield event;
+            }
+          }
+          break;
+        } catch (error) {
+          if (!options.filter) {
+            throw error;
+          }
+
+          await subscribe();
         }
       }
-      values.add(ENGRAM_EXTENSION_URI);
-      headers.set("X-A2A-Extensions", Array.from(values).join(","));
-    };
+    } finally {
+      this.engramRuntimeEnabled = previousEnabled;
+      this.engramRuntimeExtensionUri = previousUri;
+      this.forceEngramHeader = previousForce;
+    }
+  }
 
-    const patchFetch = () => {
-      const originalFetch = globalThis.fetch;
-      if (!originalFetch) {
-        return () => {};
-      }
-
-      const extensionFetch: typeof fetch = async (input, init) => {
-        const headers = new Headers(init?.headers);
-        addExtensionHeader(headers, init);
-        const nextInit: RequestInit = {
-          ...init,
-          headers,
-        };
-        return originalFetch(input, nextInit);
-      };
-
-      globalThis.fetch = extensionFetch;
-
-      return () => {
-        globalThis.fetch = originalFetch;
-      };
-    };
-
+  private initializeExtension(client: A2AClient) {
     const wrapPromise = async <T>(operation: () => Promise<T>): Promise<T> => {
-      const restore = patchFetch();
+      const restore = this.patchFetch();
       try {
         return await operation();
       } finally {
@@ -713,11 +1269,11 @@ export class A2AAgent extends AbstractAgent {
         return undefined;
       }
 
-      return function wrapped(this: unknown, ...args: TArgs) {
-        const restore = patchFetch();
+      return (...args: TArgs) => {
+        const restore = this.patchFetch();
         let iterator: AsyncIterable<T> | Promise<unknown>;
         try {
-          iterator = original.apply(this, args) as AsyncIterable<T> | Promise<unknown>;
+          iterator = original(...args) as AsyncIterable<T> | Promise<unknown>;
         } catch (error) {
           restore();
           throw error;

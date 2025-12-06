@@ -322,7 +322,7 @@ const startA2AServer = async (): Promise<TestServer> => {
   const agentExecutor = createAgentExecutor(taskStore, eventBusManager);
   const agentCard: ConstructorParameters<typeof DefaultRequestHandler>[0] = {
     url: "/a2a",
-    capabilities: { streaming: true },
+    capabilities: { streaming: true, extensions: [ENGRAM_EXTENSION_URI] },
     name: "local-e2e-agent",
     description: "Local A2A test server",
   };
@@ -661,12 +661,13 @@ describe("A2A live e2e (local test server)", () => {
     const client = new A2AClient(server.baseUrl);
     const agent = new A2AAgent({
       a2aClient: client,
+      engram: { enabled: true },
       initialMessages: [createMessage({ id: "user-1", role: "user", content: "update config" })],
     });
 
     await agent.runAgent({
       forwardedProps: {
-        a2a: { mode: "send", engramUpdate: { scope: "task", update: { feature: true } } },
+        a2a: { mode: "send", engramUpdate: { scope: "task", update: { feature: true } }, engram: true },
       },
       runId: "run-hidden",
     });

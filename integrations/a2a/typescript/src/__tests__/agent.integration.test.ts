@@ -44,7 +44,7 @@ describe("A2AAgent integration with real A2AClient", () => {
         return new Response(
           JSON.stringify({
             url: "https://agent.local/rpc",
-            capabilities: { streaming: true },
+            capabilities: { streaming: true, extensions: [ENGRAM_EXTENSION_URI] },
           }),
           {
             status: 200,
@@ -210,7 +210,7 @@ describe("A2AAgent integration with real A2AClient", () => {
         return new Response(
           JSON.stringify({
             url: "https://agent.local/rpc",
-            capabilities: { streaming: true },
+            capabilities: { streaming: true, extensions: [ENGRAM_EXTENSION_URI] },
           }),
           {
             status: 200,
@@ -310,7 +310,7 @@ describe("A2AAgent integration with real A2AClient", () => {
         return new Response(
           JSON.stringify({
             url: "https://agent.local/rpc",
-            capabilities: { streaming: true },
+            capabilities: { streaming: true, extensions: [ENGRAM_EXTENSION_URI] },
           }),
           {
             status: 200,
@@ -403,7 +403,7 @@ describe("A2AAgent integration with real A2AClient", () => {
         return new Response(
           JSON.stringify({
             url: "https://agent.local/rpc",
-            capabilities: { streaming: true },
+            capabilities: { streaming: true, extensions: [ENGRAM_EXTENSION_URI] },
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
@@ -513,7 +513,7 @@ describe("A2AAgent integration with real A2AClient", () => {
         return new Response(
           JSON.stringify({
             url: "https://agent.local/rpc",
-            capabilities: { streaming: true },
+            capabilities: { streaming: true, extensions: [ENGRAM_EXTENSION_URI] },
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
@@ -613,7 +613,7 @@ describe("A2AAgent integration with real A2AClient", () => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.endsWith("/.well-known/agent.json")) {
         return new Response(
-          JSON.stringify({ url: "https://agent.local/rpc", capabilities: { streaming: true } }),
+          JSON.stringify({ url: "https://agent.local/rpc", capabilities: { streaming: true, extensions: [ENGRAM_EXTENSION_URI] } }),
           {
             status: 200,
             headers: { "Content-Type": "application/json" },
@@ -676,10 +676,16 @@ describe("A2AAgent integration with real A2AClient", () => {
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.endsWith("/.well-known/agent.json")) {
-        return new Response(JSON.stringify({ url: "https://agent.local/rpc" }), {
+        return new Response(
+          JSON.stringify({
+            url: "https://agent.local/rpc",
+            capabilities: { extensions: [ENGRAM_EXTENSION_URI] },
+          }),
+          {
           status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+            headers: { "Content-Type": "application/json" },
+          },
+        );
       }
 
       if (url.endsWith("/rpc")) {
@@ -711,6 +717,7 @@ describe("A2AAgent integration with real A2AClient", () => {
     const client = new A2AClient("https://agent.local");
     const agent = new A2AAgent({
       a2aClient: client,
+      engram: { enabled: true },
       initialMessages: [createMessage({ id: "user-1", role: "user", content: "configure" })],
     });
 
@@ -719,6 +726,7 @@ describe("A2AAgent integration with real A2AClient", () => {
         a2a: {
           mode: "send",
           engramUpdate: { scope: "task", update: { feature: true } },
+          engram: true,
         },
       },
     });
@@ -742,7 +750,7 @@ describe("A2AAgent integration with real A2AClient", () => {
         return new Response(
           JSON.stringify({
             url: "https://agent.local/rpc",
-            capabilities: { streaming: true },
+            capabilities: { streaming: true, extensions: [ENGRAM_EXTENSION_URI] },
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
@@ -875,7 +883,7 @@ describe("A2AAgent integration with real A2AClient", () => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.endsWith("/.well-known/agent.json")) {
         return new Response(
-          JSON.stringify({ url: "https://agent.local/rpc", capabilities: { streaming: true } }),
+          JSON.stringify({ url: "https://agent.local/rpc", capabilities: { streaming: true, extensions: [ENGRAM_EXTENSION_URI] } }),
           {
             status: 200,
             headers: { "Content-Type": "application/json" },
@@ -997,7 +1005,7 @@ describe("A2AAgent integration with real A2AClient", () => {
         return new Response(
           JSON.stringify({
             url: "https://agent.local/rpc",
-            capabilities: { streaming: true },
+            capabilities: { streaming: true, extensions: [ENGRAM_EXTENSION_URI] },
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         );

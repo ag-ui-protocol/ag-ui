@@ -3,6 +3,7 @@ import { EventType } from "@ag-ui/client";
 import { A2AAgent } from "../agent";
 import type { MessageSendParams } from "@a2a-js/sdk";
 import type { A2AClient } from "@a2a-js/sdk/client";
+import { ENGRAM_EXTENSION_URI } from "../utils";
 
 const createMessage = (message: Partial<Message>): Message => message as Message;
 
@@ -80,7 +81,13 @@ class FakeA2AClient {
     return {
       name: "Test Agent",
       description: "",
-      capabilities: {},
+      capabilities: {
+        extensions: [
+          {
+            uri: ENGRAM_EXTENSION_URI,
+          },
+        ],
+      },
     };
   }
 }
@@ -239,6 +246,7 @@ describe("A2AAgent", () => {
     const agent = new A2AAgent({
       a2aClient: fakeClient as unknown as A2AClient,
       threadId: "thread-forwarding",
+      engram: { enabled: true },
       initialMessages: [
         createMessage({ id: "sys-1", role: "system", content: "guardrails" }),
         createMessage({ id: "dev-1", role: "developer", content: "dev hints" }),
@@ -254,6 +262,7 @@ describe("A2AAgent", () => {
           includeSystemMessages: true,
           includeDeveloperMessages: true,
           engramUpdate: { scope: "task", update: { feature: true } },
+          engram: true,
         },
       },
     });

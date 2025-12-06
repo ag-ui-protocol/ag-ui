@@ -12,6 +12,7 @@ import type {
   StateSnapshotEvent,
 } from "@ag-ui/client";
 import { EventType, randomUUID } from "@ag-ui/client";
+import { applyPatch } from "fast-json-patch";
 import type {
   A2AMessage,
   A2APart,
@@ -23,6 +24,10 @@ import type {
   ConvertedA2AMessages,
   ConvertA2AEventOptions,
   SharedStateTracker,
+  EngramEvent,
+  EngramRecord,
+  EngramKey,
+  JsonPatchOperation,
 } from "./types";
 import type { Artifact, Task, TaskArtifactUpdateEvent, TaskStatusUpdateEvent } from "@a2a-js/sdk";
 
@@ -99,6 +104,19 @@ const extractSurfaceOperation = (
         return { surfaceId, operation: record };
       }
     }
+  }
+
+  return null;
+};
+
+const extractEngramEvent = (payload: unknown): EngramEvent | null => {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const record = payload as { type?: unknown; event?: unknown };
+  if (record.type === "engram/event" && record.event && typeof record.event === "object") {
+    return record.event as EngramEvent;
   }
 
   return null;
@@ -182,7 +200,7 @@ const messageContentToParts = (message: Message): A2APart[] => {
   return parts;
 };
 
-export const ENGRAM_EXTENSION_URI = "urn:agui:engram:v1";
+export const ENGRAM_EXTENSION_URI = "https://github.com/EmberAGI/a2a-engram/tree/v0.1";
 export const DEFAULT_ARTIFACT_BASE_PATH = "/view/artifacts";
 
 export function convertAGUIMessagesToA2A(
@@ -196,7 +214,12 @@ export function convertAGUIMessagesToA2A(
   const contextId = options.contextId;
   const taskId = options.taskId;
   const engramExtensionUri = options.engramExtensionUri ?? ENGRAM_EXTENSION_URI;
+  const engramEnabled = options.engramEnabled ?? false;
   const resume = options.resume;
+
+  if (options.engramUpdate && !engramEnabled) {
+    throw new Error("Engram update requested but Engram is disabled. Enable Engram to send Engram operations.");
+  }
 
   for (const message of messages) {
     if (message.role === "activity") {
@@ -411,6 +434,105 @@ const removeSharedStatePath = (
   };
 };
 
+const projectEngramEvent = (
+  engramEvent: EngramEvent,
+  tracker?: SharedStateTracker,
+  options: { rawEvent?: unknown; includeContainers?: boolean } = {},
+): BaseEvent[] => {
+  if (!tracker) {
+    return [
+      {
+        type: EventType.RAW,
+        event: engramEvent,
+        source: "a2a",
+      } as RawEvent,
+    ];
+  }
+
+  const includeContainers = options.includeContainers ?? tracker.emittedSnapshot === true;
+  const engramPath = resolveEngramPath(engramEvent.key);
+  const currentRecord = getValueAtPath(tracker.state, engramPath) as (EngramRecord & {
+    sequence?: string;
+  }) | undefined;
+  const stateEvents: Array<StateDeltaEvent | StateSnapshotEvent | null | undefined> = [];
+
+  if (engramEvent.kind === "delete") {
+    const removed = removeSharedStatePath(tracker, engramPath, { rawEvent: engramEvent });
+    if (!removed) {
+      return [];
+    }
+    return collectStateEvents(tracker, engramEvent, removed);
+  }
+
+  const baseRecord: EngramRecord & { sequence?: string } = {
+    key: engramEvent.key,
+    createdAt: engramEvent.record?.createdAt ?? currentRecord?.createdAt ?? engramEvent.updatedAt,
+    updatedAt: engramEvent.record?.updatedAt ?? currentRecord?.updatedAt ?? engramEvent.updatedAt,
+    value: engramEvent.record?.value ?? currentRecord?.value ?? {},
+    version: engramEvent.record?.version ?? currentRecord?.version ?? engramEvent.version,
+    tags: engramEvent.record?.tags ?? currentRecord?.tags,
+    sequence: currentRecord?.sequence,
+  };
+
+  if (engramEvent.kind === "snapshot") {
+    const nextRecord: EngramRecord & { sequence?: string } = {
+      ...baseRecord,
+      ...(engramEvent.record ?? {}),
+      version: engramEvent.version,
+      updatedAt: engramEvent.updatedAt,
+      sequence: engramEvent.sequence,
+    };
+
+    stateEvents.push(
+      applySharedStateUpdate(tracker, engramPath, nextRecord, {
+        rawEvent: engramEvent,
+        includeContainers,
+      }),
+    );
+
+    return collectStateEvents(tracker, engramEvent, ...stateEvents);
+  }
+
+  let patchedValue: unknown = baseRecord.value;
+  if (engramEvent.patch?.length) {
+    try {
+      patchedValue = applyPatch(
+        cloneValue(baseRecord.value),
+        engramEvent.patch as JsonPatchOperation[],
+        false,
+        false,
+      ).newDocument;
+    } catch (error) {
+      return [
+        {
+          type: EventType.RUN_ERROR,
+          message:
+            (error as Error)?.message ??
+            "Failed to apply Engram delta patch; terminating Engram stream.",
+          rawEvent: engramEvent,
+        } as BaseEvent,
+      ];
+    }
+  }
+
+  const nextRecord: EngramRecord & { sequence?: string } = {
+    ...baseRecord,
+    value: patchedValue,
+    version: engramEvent.version,
+    updatedAt: engramEvent.updatedAt,
+    sequence: engramEvent.sequence,
+  };
+
+  stateEvents.push(
+    applySharedStateUpdate(tracker, engramPath, nextRecord, {
+      rawEvent: engramEvent,
+      includeContainers,
+    }),
+  );
+
+  return collectStateEvents(tracker, engramEvent, ...stateEvents);
+};
+
 const getPendingInterruptEntries = (
   tracker: SharedStateTracker,
 ): Record<string, { taskId?: string; [key: string]: unknown }> => {
@@ -613,12 +735,6 @@ const shouldIgnoreEventForTask = (event: A2AStreamEvent, options: ConvertA2AEven
   return Boolean(eventTaskId && eventTaskId !== targetTaskId);
 };
 
-type JsonPatchOperation = {
-  op: "add" | "replace" | "remove";
-  path: string;
-  value?: unknown;
-};
-
 const encodeJsonPointerSegment = (segment: string): string =>
   segment.replace(/~/g, "~0").replace(/\//g, "~1");
 
@@ -631,6 +747,24 @@ const normalizeJsonPointer = (path: string): string => {
 
   return `/${segments.join("/")}`;
 };
+
+const getValueAtPath = (state: Record<string, unknown>, path: string): unknown => {
+  const segments = (path.startsWith("/") ? path.slice(1) : path).split("/").filter(Boolean);
+
+  let cursor: unknown = state;
+
+  for (const segment of segments) {
+    if (!cursor || typeof cursor !== "object" || Array.isArray(cursor)) {
+      return undefined;
+    }
+
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+
+  return cursor;
+};
+
+const resolveEngramPath = (key: EngramKey): string => `/view/engram/${encodeJsonPointerSegment(key.key)}`;
 
 const captureContextId = (contextId: unknown, options: ConvertA2AEventOptions) => {
   if (typeof contextId === "string" && contextId.trim().length > 0) {
@@ -1208,6 +1342,7 @@ const projectArtifactUpdate = (
   const tracker = options.sharedStateTracker;
   const stateDeltas: Array<StateDeltaEvent | null | undefined> = [];
   const includeContainers = tracker?.emittedSnapshot === true;
+  const events: BaseEvent[] = [];
   const textEvents: BaseEvent[] = [];
 
   for (const part of event.artifact.parts ?? []) {
@@ -1236,15 +1371,23 @@ const projectArtifactUpdate = (
       continue;
     }
 
-    if (part.kind === "data" && tracker) {
-      stateDeltas.push(
-        applySharedStateUpdate(tracker, artifactPath, (part as A2ADataPart).data, {
-          append,
-          rawEvent: event,
-          includeContainers,
-        }),
-      );
-      continue;
+    if (part.kind === "data") {
+      const engramEvent = extractEngramEvent((part as A2ADataPart).data);
+      if (engramEvent) {
+        events.push(...projectEngramEvent(engramEvent, tracker, { rawEvent: event, includeContainers }));
+        continue;
+      }
+
+      if (tracker) {
+        stateDeltas.push(
+          applySharedStateUpdate(tracker, artifactPath, (part as A2ADataPart).data, {
+            append,
+            rawEvent: event,
+            includeContainers,
+          }),
+        );
+        continue;
+      }
     }
 
     if (part.kind === "file" && tracker) {
@@ -1257,8 +1400,6 @@ const projectArtifactUpdate = (
       );
     }
   }
-
-  const events: BaseEvent[] = [];
 
   if (tracker && stateDeltas.some(Boolean)) {
     events.push(...collectStateEvents(tracker, event, ...stateDeltas));

@@ -337,6 +337,9 @@ importers:
       '@a2a-js/sdk':
         specifier: ^0.2.2
         version: 0.2.5
+      fast-json-patch:
+        specifier: ^3.1.1
+        version: 3.1.1
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
