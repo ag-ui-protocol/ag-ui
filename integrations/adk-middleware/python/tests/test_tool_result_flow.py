@@ -755,3 +755,265 @@ class TestToolResultFlow:
             assert len(events) == 2
             assert isinstance(events[0], RunStartedEvent)
             assert isinstance(events[1], RunFinishedEvent)
+
+
+class TestConfirmChangesFiltering:
+    """Test cases for filtering synthetic confirm_changes tool results."""
+
+    @pytest.fixture
+    def mock_adk_agent(self):
+        """Create a mock ADK agent."""
+        from google.adk.agents import LlmAgent
+        return LlmAgent(
+            name="test_agent",
+            model="gemini-2.0-flash",
+            instruction="Test agent for confirm_changes filtering"
+        )
+
+    @pytest.fixture
+    def ag_ui_adk(self, mock_adk_agent):
+        """Create ADK middleware with mocked dependencies."""
+        SessionManager.reset_instance()
+        agent = ADKAgent(
+            adk_agent=mock_adk_agent,
+            user_id="test_user",
+            execution_timeout_seconds=60,
+            tool_timeout_seconds=30
+        )
+        try:
+            yield agent
+        finally:
+            SessionManager.reset_instance()
+
+    @pytest.mark.asyncio
+    async def test_extract_tool_results_filters_confirm_changes(self, ag_ui_adk):
+        """Test that _extract_tool_results filters out confirm_changes tool results."""
+        # Create a message history with a confirm_changes tool call and result
+        input_data = RunAgentInput(
+            thread_id="thread_1",
+            run_id="run_1",
+            messages=[
+                UserMessage(id="1", role="user", content="Create a document"),
+                AssistantMessage(
+                    id="2",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="call_confirm",
+                            function=FunctionCall(name="confirm_changes", arguments="{}")
+                        )
+                    ]
+                ),
+                ToolMessage(id="3", role="tool", content='{"approved": true}', tool_call_id="call_confirm")
+            ],
+            tools=[],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        # Extract tool results - confirm_changes should be filtered out
+        tool_results = await ag_ui_adk._extract_tool_results(input_data, input_data.messages)
+
+        # Should return empty list because confirm_changes is filtered
+        assert len(tool_results) == 0
+
+    @pytest.mark.asyncio
+    async def test_extract_tool_results_keeps_regular_tools(self, ag_ui_adk):
+        """Test that _extract_tool_results keeps regular (non-confirm_changes) tool results."""
+        # Create a message history with a regular tool call and result
+        input_data = RunAgentInput(
+            thread_id="thread_1",
+            run_id="run_1",
+            messages=[
+                UserMessage(id="1", role="user", content="Search for something"),
+                AssistantMessage(
+                    id="2",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="call_search",
+                            function=FunctionCall(name="search_tool", arguments='{"query": "test"}')
+                        )
+                    ]
+                ),
+                ToolMessage(id="3", role="tool", content='{"results": ["item1"]}', tool_call_id="call_search")
+            ],
+            tools=[],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        # Extract tool results - regular tools should be kept
+        tool_results = await ag_ui_adk._extract_tool_results(input_data, input_data.messages)
+
+        # Should return the search_tool result
+        assert len(tool_results) == 1
+        assert tool_results[0]['tool_name'] == "search_tool"
+        assert tool_results[0]['message'].tool_call_id == "call_search"
+
+    @pytest.mark.asyncio
+    async def test_extract_tool_results_mixed_tools(self, ag_ui_adk):
+        """Test that _extract_tool_results filters confirm_changes but keeps other tools."""
+        # Create a message history with both confirm_changes and regular tool results
+        input_data = RunAgentInput(
+            thread_id="thread_1",
+            run_id="run_1",
+            messages=[
+                UserMessage(id="1", role="user", content="Search and confirm"),
+                AssistantMessage(
+                    id="2",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="call_search",
+                            function=FunctionCall(name="search_tool", arguments='{"query": "test"}')
+                        ),
+                        ToolCall(
+                            id="call_confirm",
+                            function=FunctionCall(name="confirm_changes", arguments="{}")
+                        )
+                    ]
+                ),
+                ToolMessage(id="3", role="tool", content='{"results": ["item1"]}', tool_call_id="call_search"),
+                ToolMessage(id="4", role="tool", content='{"approved": true}', tool_call_id="call_confirm")
+            ],
+            tools=[],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        # Extract tool results
+        tool_results = await ag_ui_adk._extract_tool_results(input_data, input_data.messages)
+
+        # Should return only the search_tool result
+        assert len(tool_results) == 1
+        assert tool_results[0]['tool_name'] == "search_tool"
+
+    @pytest.mark.asyncio
+    async def test_handle_tool_result_submission_only_confirm_changes(self, ag_ui_adk):
+        """Test _handle_tool_result_submission with only confirm_changes tool results.
+
+        When all tool results are synthetic (confirm_changes), the method should:
+        - Mark the tool messages as processed
+        - NOT emit an error
+        - Simply return without starting a new execution
+        """
+        input_data = RunAgentInput(
+            thread_id="thread_confirm_only",
+            run_id="run_1",
+            messages=[
+                UserMessage(id="1", role="user", content="Create document"),
+                AssistantMessage(
+                    id="2",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="call_confirm",
+                            function=FunctionCall(name="confirm_changes", arguments="{}")
+                        )
+                    ]
+                ),
+                ToolMessage(id="3", role="tool", content='{"approved": true}', tool_call_id="call_confirm")
+            ],
+            tools=[],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        # Mark user and assistant messages as processed
+        app_name = ag_ui_adk._get_app_name(input_data)
+        ag_ui_adk._session_manager.mark_messages_processed(app_name, input_data.thread_id, ["1", "2"])
+
+        events = []
+        async for event in ag_ui_adk._handle_tool_result_submission(
+            input_data,
+            tool_messages=[input_data.messages[2]],  # Just the tool message
+        ):
+            events.append(event)
+
+        # Should NOT emit any events (no error, no new execution)
+        assert len(events) == 0
+
+        # Confirm_changes tool message should be marked as processed
+        processed_ids = ag_ui_adk._session_manager.get_processed_message_ids(app_name, input_data.thread_id)
+        assert "3" in processed_ids
+
+    @pytest.mark.asyncio
+    async def test_handle_tool_result_submission_confirm_changes_with_trailing_messages(self, ag_ui_adk):
+        """Test _handle_tool_result_submission with confirm_changes and trailing user message.
+
+        When all tool results are synthetic but there's a follow-up user message,
+        it should start a new execution for that user message.
+        """
+        input_data = RunAgentInput(
+            thread_id="thread_confirm_trailing",
+            run_id="run_1",
+            messages=[
+                UserMessage(id="1", role="user", content="Create document"),
+                AssistantMessage(
+                    id="2",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="call_confirm",
+                            function=FunctionCall(name="confirm_changes", arguments="{}")
+                        )
+                    ]
+                ),
+                ToolMessage(id="3", role="tool", content='{"approved": true}', tool_call_id="call_confirm"),
+                UserMessage(id="4", role="user", content="Now add a title")  # Trailing message
+            ],
+            tools=[],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        # Mark initial messages as processed
+        app_name = ag_ui_adk._get_app_name(input_data)
+        ag_ui_adk._session_manager.mark_messages_processed(app_name, input_data.thread_id, ["1", "2"])
+
+        # Mock _start_new_execution to track calls
+        start_calls = []
+
+        async def mock_start_new_execution(input_data, *, tool_results=None, message_batch=None):
+            start_calls.append({"tool_results": tool_results, "message_batch": message_batch})
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=input_data.thread_id,
+                run_id=input_data.run_id
+            )
+            yield RunFinishedEvent(
+                type=EventType.RUN_FINISHED,
+                thread_id=input_data.thread_id,
+                run_id=input_data.run_id
+            )
+
+        with patch.object(ag_ui_adk, '_start_new_execution', side_effect=mock_start_new_execution):
+            events = []
+            async for event in ag_ui_adk._handle_tool_result_submission(
+                input_data,
+                tool_messages=[input_data.messages[2]],  # confirm_changes tool message
+                trailing_messages=[input_data.messages[3]],  # Trailing user message
+            ):
+                events.append(event)
+
+        # Should have started a new execution for the trailing message
+        assert len(events) == 2
+        assert events[0].type == EventType.RUN_STARTED
+        assert events[1].type == EventType.RUN_FINISHED
+
+        # Should have called _start_new_execution with the trailing message, no tool results
+        assert len(start_calls) == 1
+        assert start_calls[0]["tool_results"] is None
+        assert len(start_calls[0]["message_batch"]) == 1
+        assert start_calls[0]["message_batch"][0].id == "4"

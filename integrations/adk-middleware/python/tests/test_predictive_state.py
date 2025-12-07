@@ -603,3 +603,227 @@ class TestDeferredConfirmChangesEvents:
         # Should NOT have deferred events for update_config
         update_config_events = translator.get_and_clear_deferred_confirm_events()
         assert len(update_config_events) == 0
+
+
+class TestPredictiveStateToolCallResultSuppression:
+    """Tests for suppressing TOOL_CALL_RESULT events for predictive state tools.
+
+    When a tool has predictive state configuration, the frontend handles state
+    updates via the PredictState mechanism. We must suppress TOOL_CALL_RESULT
+    events for these tools to avoid "No function call event found" errors.
+    """
+
+    @pytest.fixture
+    def translator_with_predict_state(self):
+        """Create translator with predictive state config."""
+        return EventTranslator(
+            predict_state=[
+                PredictStateMapping(
+                    state_key="document",
+                    tool="write_document",
+                    tool_argument="document",
+                )
+            ]
+        )
+
+    @pytest.fixture
+    def translator_without_predict_state(self):
+        """Create translator without predictive state config."""
+        return EventTranslator()
+
+    @pytest.mark.asyncio
+    async def test_predictive_state_tool_call_ids_tracked(
+        self, translator_with_predict_state
+    ):
+        """Test that tool call IDs for predictive state tools are tracked."""
+        # Create mock function call for a predictive state tool
+        func_call = MagicMock()
+        func_call.name = "write_document"
+        func_call.id = "call_123"
+        func_call.args = {"document": "Hello world"}
+
+        # Process the function call
+        events = []
+        async for event in translator_with_predict_state._translate_function_calls([func_call]):
+            events.append(event)
+
+        # The tool call ID should be tracked in _predictive_state_tool_call_ids
+        assert "call_123" in translator_with_predict_state._predictive_state_tool_call_ids
+
+    @pytest.mark.asyncio
+    async def test_non_predictive_state_tool_call_ids_not_tracked(
+        self, translator_with_predict_state
+    ):
+        """Test that tool call IDs for non-predictive state tools are NOT tracked."""
+        # Create mock function call for a non-predictive state tool
+        func_call = MagicMock()
+        func_call.name = "search_tool"  # Not in predict_state config
+        func_call.id = "call_456"
+        func_call.args = {"query": "test"}
+
+        # Process the function call
+        events = []
+        async for event in translator_with_predict_state._translate_function_calls([func_call]):
+            events.append(event)
+
+        # The tool call ID should NOT be tracked
+        assert "call_456" not in translator_with_predict_state._predictive_state_tool_call_ids
+
+    @pytest.mark.asyncio
+    async def test_tool_call_result_suppressed_for_predictive_state_tools(
+        self, translator_with_predict_state
+    ):
+        """Test that TOOL_CALL_RESULT events are suppressed for predictive state tools."""
+        from ag_ui.core import ToolCallResultEvent
+
+        # First, process a predictive state tool call to track the ID
+        func_call = MagicMock()
+        func_call.name = "write_document"
+        func_call.id = "call_789"
+        func_call.args = {"document": "Hello world"}
+
+        async for _ in translator_with_predict_state._translate_function_calls([func_call]):
+            pass
+
+        # Verify the tool call ID is tracked
+        assert "call_789" in translator_with_predict_state._predictive_state_tool_call_ids
+
+        # Now simulate a function response for this tool
+        func_response = MagicMock()
+        func_response.id = "call_789"
+        func_response.name = "write_document"
+        func_response.response = {"success": True}
+
+        # Process the function response
+        result_events = []
+        async for event in translator_with_predict_state._translate_function_response([func_response]):
+            result_events.append(event)
+
+        # Should NOT emit any TOOL_CALL_RESULT events
+        assert len(result_events) == 0
+
+    @pytest.mark.asyncio
+    async def test_tool_call_result_not_suppressed_for_regular_tools(
+        self, translator_with_predict_state
+    ):
+        """Test that TOOL_CALL_RESULT events are NOT suppressed for regular tools."""
+        from ag_ui.core import ToolCallResultEvent
+
+        # First, process a regular (non-predictive state) tool call
+        func_call = MagicMock()
+        func_call.name = "search_tool"  # Not in predict_state config
+        func_call.id = "call_regular"
+        func_call.args = {"query": "test"}
+
+        async for _ in translator_with_predict_state._translate_function_calls([func_call]):
+            pass
+
+        # Verify the tool call ID is NOT tracked (it's not a predictive state tool)
+        assert "call_regular" not in translator_with_predict_state._predictive_state_tool_call_ids
+
+        # Now simulate a function response for this regular tool
+        func_response = MagicMock()
+        func_response.id = "call_regular"
+        func_response.name = "search_tool"
+        func_response.response = {"results": ["item1"]}
+
+        # Process the function response
+        result_events = []
+        async for event in translator_with_predict_state._translate_function_response([func_response]):
+            result_events.append(event)
+
+        # Should emit TOOL_CALL_RESULT event for regular tools
+        assert len(result_events) == 1
+        assert isinstance(result_events[0], ToolCallResultEvent)
+        assert result_events[0].tool_call_id == "call_regular"
+
+    @pytest.mark.asyncio
+    async def test_reset_clears_predictive_state_tool_call_ids(
+        self, translator_with_predict_state
+    ):
+        """Test that reset() clears the _predictive_state_tool_call_ids set."""
+        # Process a predictive state tool call
+        func_call = MagicMock()
+        func_call.name = "write_document"
+        func_call.id = "call_to_clear"
+        func_call.args = {"document": "Hello"}
+
+        async for _ in translator_with_predict_state._translate_function_calls([func_call]):
+            pass
+
+        # Verify it's tracked
+        assert "call_to_clear" in translator_with_predict_state._predictive_state_tool_call_ids
+
+        # Reset the translator
+        translator_with_predict_state.reset()
+
+        # The tracking set should be cleared
+        assert len(translator_with_predict_state._predictive_state_tool_call_ids) == 0
+        assert "call_to_clear" not in translator_with_predict_state._predictive_state_tool_call_ids
+
+    @pytest.mark.asyncio
+    async def test_reset_allows_tool_call_result_after_reset(
+        self, translator_with_predict_state
+    ):
+        """Test that after reset, new tool call IDs are not in the suppression set."""
+        from ag_ui.core import ToolCallResultEvent
+
+        # Process a predictive state tool call
+        func_call = MagicMock()
+        func_call.name = "write_document"
+        func_call.id = "call_before_reset"
+        func_call.args = {"document": "Hello"}
+
+        async for _ in translator_with_predict_state._translate_function_calls([func_call]):
+            pass
+
+        # Reset the translator
+        translator_with_predict_state.reset()
+
+        # Simulate a response for the original tool call ID
+        # After reset, this ID should no longer be tracked for suppression
+        func_response = MagicMock()
+        func_response.id = "call_before_reset"
+        func_response.name = "write_document"
+        func_response.response = {"success": True}
+
+        result_events = []
+        async for event in translator_with_predict_state._translate_function_response([func_response]):
+            result_events.append(event)
+
+        # After reset, the ID is no longer tracked, so TOOL_CALL_RESULT should be emitted
+        # (Note: This assumes the response arrives after reset, which is a test scenario)
+        assert len(result_events) == 1
+        assert isinstance(result_events[0], ToolCallResultEvent)
+
+    @pytest.mark.asyncio
+    async def test_no_config_means_no_suppression(
+        self, translator_without_predict_state
+    ):
+        """Test that without predict_state config, no tool results are suppressed."""
+        from ag_ui.core import ToolCallResultEvent
+
+        # Process any function call (without predict_state config)
+        func_call = MagicMock()
+        func_call.name = "any_tool"
+        func_call.id = "call_any"
+        func_call.args = {"data": "value"}
+
+        async for _ in translator_without_predict_state._translate_function_calls([func_call]):
+            pass
+
+        # The tracking set should remain empty
+        assert len(translator_without_predict_state._predictive_state_tool_call_ids) == 0
+
+        # Function response should be emitted
+        func_response = MagicMock()
+        func_response.id = "call_any"
+        func_response.name = "any_tool"
+        func_response.response = {"result": "success"}
+
+        result_events = []
+        async for event in translator_without_predict_state._translate_function_response([func_response]):
+            result_events.append(event)
+
+        assert len(result_events) == 1
+        assert isinstance(result_events[0], ToolCallResultEvent)

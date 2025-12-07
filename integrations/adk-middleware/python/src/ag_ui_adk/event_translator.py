@@ -161,6 +161,11 @@ class EventTranslator:
         self._emitted_predict_state_for_tools: set[str] = set()  # Track which tools have had PredictState emitted
         self._emitted_confirm_for_tools: set[str] = set()  # Track which tools have had confirm_changes emitted
 
+        # Track tool call IDs that are associated with predictive state tools
+        # We suppress TOOL_CALL_RESULT events for these since the frontend handles
+        # state updates via the predictive state mechanism
+        self._predictive_state_tool_call_ids: set[str] = set()
+
         # Deferred confirm_changes events - these must be emitted LAST, right before RUN_FINISHED
         # to ensure the frontend shows the confirmation dialog with buttons enabled
         self._deferred_confirm_events: List[BaseEvent] = []
@@ -515,16 +520,21 @@ class EventTranslator:
 
             # Check if this tool has predictive state configuration
             # Emit PredictState CustomEvent BEFORE the tool call events
-            if tool_name in self._predict_state_by_tool and tool_name not in self._emitted_predict_state_for_tools:
-                mappings = self._predict_state_by_tool[tool_name]
-                predict_state_payload = [mapping.to_payload() for mapping in mappings]
-                logger.debug(f"Emitting PredictState CustomEvent for tool '{tool_name}': {predict_state_payload}")
-                yield CustomEvent(
-                    type=EventType.CUSTOM,
-                    name="PredictState",
-                    value=predict_state_payload,
-                )
-                self._emitted_predict_state_for_tools.add(tool_name)
+            if tool_name in self._predict_state_by_tool:
+                # Track this tool call ID so we can suppress its TOOL_CALL_RESULT event
+                # The frontend handles state updates via the predictive state mechanism
+                self._predictive_state_tool_call_ids.add(tool_call_id)
+
+                if tool_name not in self._emitted_predict_state_for_tools:
+                    mappings = self._predict_state_by_tool[tool_name]
+                    predict_state_payload = [mapping.to_payload() for mapping in mappings]
+                    logger.debug(f"Emitting PredictState CustomEvent for tool '{tool_name}': {predict_state_payload}")
+                    yield CustomEvent(
+                        type=EventType.CUSTOM,
+                        name="PredictState",
+                        value=predict_state_payload,
+                    )
+                    self._emitted_predict_state_for_tools.add(tool_name)
 
             # Emit TOOL_CALL_START
             yield ToolCallStartEvent(
@@ -599,29 +609,37 @@ class EventTranslator:
         function_response: list[types.FunctionResponse],
     ) -> AsyncGenerator[BaseEvent, None]:
         """Translate function calls from ADK event to AG-UI tool call events.
-        
+
         Args:
             adk_event: The ADK event containing function calls
             function_response: List of function response from the event
-            
+
         Yields:
-            Tool result events (only for tool_call_ids not in long_running_tool_ids)
+            Tool result events (only for tool_call_ids not in long_running_tool_ids
+            and not associated with predictive state tools)
         """
-        
+
         for func_response in function_response:
-            
+
             tool_call_id = getattr(func_response, 'id', str(uuid.uuid4()))
-            # Only emit ToolCallResultEvent for tool_call_ids which are not long_running_tool
-            # this is because long running tools are handle by the frontend
-            if tool_call_id not in self.long_running_tool_ids:
-                yield ToolCallResultEvent(
-                    message_id=str(uuid.uuid4()),
-                    type=EventType.TOOL_CALL_RESULT,
-                    tool_call_id=tool_call_id,
-                    content=_serialize_tool_response(func_response.response)
-                )
-            else:
+            # Skip TOOL_CALL_RESULT for long-running tools (handled by frontend)
+            if tool_call_id in self.long_running_tool_ids:
                 logger.debug(f"Skipping ToolCallResultEvent for long-running tool: {tool_call_id}")
+                continue
+
+            # Skip TOOL_CALL_RESULT for predictive state tools
+            # The frontend handles state updates via the predictive state mechanism,
+            # and emitting a result event causes "No function call event found" errors
+            if tool_call_id in self._predictive_state_tool_call_ids:
+                logger.debug(f"Skipping ToolCallResultEvent for predictive state tool: {tool_call_id}")
+                continue
+
+            yield ToolCallResultEvent(
+                message_id=str(uuid.uuid4()),
+                type=EventType.TOOL_CALL_RESULT,
+                tool_call_id=tool_call_id,
+                content=_serialize_tool_response(func_response.response)
+            )
   
     def _create_state_delta_event(
         self,
@@ -710,6 +728,7 @@ class EventTranslator:
         self.long_running_tool_ids.clear()
         self._emitted_predict_state_for_tools.clear()
         self._emitted_confirm_for_tools.clear()
+        self._predictive_state_tool_call_ids.clear()
         self._deferred_confirm_events.clear()
         logger.debug("Reset EventTranslator state (including streaming state)")
         

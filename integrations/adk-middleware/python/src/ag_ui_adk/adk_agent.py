@@ -671,12 +671,57 @@ class ADKAgent:
             AG-UI events from continued execution
         """
         thread_id = input.thread_id
+        app_name = self._get_app_name(input)
 
         # Extract tool results that are sent by the frontend
+        # Note: _extract_tool_results filters out 'confirm_changes' synthetic tool results
         candidate_messages = tool_messages if tool_messages is not None else await self._get_unseen_messages(input)
         tool_results = await self._extract_tool_results(input, candidate_messages)
 
-        # if the tool results are not sent by the fronted then call the tool function
+        # Check if there were actual tool messages that were filtered out
+        # (i.e., synthetic confirm_changes tool results)
+        actual_tool_messages = [
+            msg for msg in candidate_messages
+            if hasattr(msg, 'role') and msg.role == "tool"
+        ]
+
+        # If all tool results were filtered out (e.g., only confirm_changes messages),
+        # we still need to mark those messages as processed and continue with trailing messages
+        if not tool_results and actual_tool_messages:
+            # Mark the tool messages as processed (they were confirm_changes results)
+            tool_message_ids = self._collect_message_ids(actual_tool_messages)
+            if tool_message_ids:
+                self._session_manager.mark_messages_processed(app_name, thread_id, tool_message_ids)
+                logger.debug(
+                    "Marked %d synthetic tool result messages as processed for thread %s",
+                    len(tool_message_ids),
+                    thread_id,
+                )
+
+            # If we have trailing messages (e.g., a follow-up user request after confirming changes),
+            # process them as a new execution
+            if trailing_messages:
+                logger.debug(
+                    "All tool results were synthetic (confirm_changes); processing %d trailing messages",
+                    len(trailing_messages),
+                )
+                async for event in self._start_new_execution(
+                    input,
+                    tool_results=None,
+                    message_batch=trailing_messages,
+                ):
+                    yield event
+                return
+
+            # No tool results and no trailing messages - nothing to do
+            # This is not an error; the user just approved/rejected changes without sending a follow-up
+            logger.debug(
+                "All tool results were synthetic (confirm_changes) with no trailing messages for thread %s",
+                thread_id,
+            )
+            return
+
+        # If there were no actual tool messages at all, this is an error
         if not tool_results:
             logger.error(f"Tool result submission without tool results for thread {thread_id}")
             yield RunErrorEvent(
@@ -710,7 +755,7 @@ class ADKAgent:
                 message_batch=message_batch,
             ):
                 yield event
-                
+
         except Exception as e:
             logger.error(f"Error handling tool results: {e}", exc_info=True)
             yield RunErrorEvent(
@@ -728,6 +773,13 @@ class ADKAgent:
 
         Only extracts tool messages provided in candidate_messages. When no
         candidates are supplied, all messages are considered.
+
+        IMPORTANT: This method filters out 'confirm_changes' tool results.
+        'confirm_changes' is a synthetic tool call emitted by the middleware
+        to trigger the frontend's confirmation UI dialog. ADK never actually
+        called this tool, so we must NOT send its result back to ADK - doing
+        so would cause "No function call event found for function responses ids"
+        errors because ADK's session has no matching FunctionCall.
 
         Args:
             input: The run input
@@ -749,6 +801,17 @@ class ADKAgent:
         for message in messages_to_check:
             if hasattr(message, 'role') and message.role == "tool":
                 tool_name = tool_call_map.get(getattr(message, 'tool_call_id', None), "unknown")
+
+                # Skip 'confirm_changes' tool results - this is a synthetic tool call
+                # emitted by the middleware to trigger the frontend confirmation dialog.
+                # ADK never called this tool, so we must not send its result to ADK.
+                if tool_name == "confirm_changes":
+                    logger.debug(
+                        "Skipping confirm_changes tool result (synthetic tool): tool_call_id=%s",
+                        getattr(message, 'tool_call_id', None),
+                    )
+                    continue
+
                 logger.debug(
                     "Extracted ToolMessage: role=%s, tool_call_id=%s, content='%s'",
                     getattr(message, 'role', None),
