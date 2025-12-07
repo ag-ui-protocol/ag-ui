@@ -1,0 +1,13 @@
+.turbo
+.DS_Store
+.env
+.idea
+.vscode
+node_modules
+coverage
+__tests__
+src
+tsup.config.ts
+tsconfig.json
+examples
+*.log

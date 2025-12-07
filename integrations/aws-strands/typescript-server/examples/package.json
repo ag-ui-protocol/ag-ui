@@ -1,0 +1,17 @@
+{
+  "name": "@ag-ui/strands-server-example",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "tsx src/proverbs-agent.ts"
+  },
+  "dependencies": {
+    "@ag-ui/strands-server": "file:../",
+    "@strands-agents/sdk": "^0.1.2",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.3.3"
+  }
+}

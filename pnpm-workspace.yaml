@@ -3,5 +3,7 @@ packages:
   - "middlewares/*"
   - "sdks/typescript/packages/*"
   - "integrations/*/typescript"
+  - "integrations/*/typescript-frontend" # TODO: I know this is very ugly, how to deal with multiple typescript packages ? 
+  - "integrations/*/typescript-server"
   - "integrations/community/*/typescript"
   - "integrations/mastra/typescript/examples"
