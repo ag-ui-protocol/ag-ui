@@ -91,7 +91,9 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
         shared_state: new ADKAgent({
           url: `${envVars.adkMiddlewareUrl}/adk-shared-state-agent`,
         }),
-        // predictive_state_updates: new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/adk-predictive-state-agent` }),
+        predictive_state_updates: new ADKAgent({
+          url: `${envVars.adkMiddlewareUrl}/adk-predictive-state-agent`,
+        }),
       };
     },
   },

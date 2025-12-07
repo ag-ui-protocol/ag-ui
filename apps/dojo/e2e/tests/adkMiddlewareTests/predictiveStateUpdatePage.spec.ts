@@ -6,7 +6,7 @@ import {
 import { PredictiveStateUpdatesPage } from "../../pages/adkMiddlewarePages/PredictiveStateUpdatesPage";
 
 test.describe("Predictive State Updates Feature", () => {
-  test.skip("[ADK Middleware] should interact with agent and approve asked changes", async ({
+  test("[ADK Middleware] should interact with agent and approve asked changes", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
@@ -43,7 +43,7 @@ test.describe("Predictive State Updates Feature", () => {
     });
   });
 
-  test.skip("[ADK Middleware] should interact with agent and reject asked changes", async ({
+  test("[ADK Middleware] should interact with agent and reject asked changes", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
