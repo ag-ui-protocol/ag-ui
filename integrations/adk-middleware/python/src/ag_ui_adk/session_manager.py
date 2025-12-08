@@ -196,10 +196,12 @@ class SessionManager:
                 # This depends on ADK's behavior - may need to explicitly clear
             
             # Create event with state changes
+            # Use "user" as author since state updates come from the frontend
+            # Note: Using "system" causes ADK runner warnings in _find_agent_to_run
             actions = EventActions(state_delta=state_delta)
             event = Event(
                 invocation_id=f"state_update_{int(time.time())}",
-                author="system",
+                author="user",
                 actions=actions,
                 timestamp=time.time()
             )

@@ -1,28 +1,38 @@
-"""Predictive State Updates feature."""
+"""Predictive State Updates feature.
+
+This example demonstrates how to use predictive state updates with the ADK middleware.
+Predictive state updates allow the UI to show state changes in real-time as tool
+arguments are being streamed, providing a smooth document editing experience.
+
+Key concepts:
+1. PredictStateMapping: Configuration that tells the UI which tool arguments map to state keys
+2. When a tool is called that matches the mapping, a PredictState CustomEvent is emitted
+3. The UI uses this metadata to update state as tool arguments stream in
+4. The middleware emits a write_document tool call after write_document_local completes,
+   which triggers the frontend's write_document action to show a confirmation dialog
+   (controlled by emit_confirm_tool=True, which is the default)
+
+Note: We use write_document_local as the backend tool name to avoid conflicting with
+the frontend's write_document action that handles the confirmation UI.
+"""
 
 from __future__ import annotations
 
 from dotenv import load_dotenv
 load_dotenv()
 
-import json
-import uuid
-from typing import Dict, List, Any, Optional
+from typing import Dict, Optional
 from fastapi import FastAPI
-from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, PredictStateMapping
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
-from google.adk.sessions import InMemorySessionService, Session
-from google.adk.runners import Runner
-from google.adk.events import Event, EventActions
-from google.adk.tools import FunctionTool, ToolContext
-from google.genai.types import Content, Part, FunctionDeclaration
+from google.adk.tools import ToolContext
 from google.adk.models import LlmResponse, LlmRequest
 from google.genai import types
 
 
-def write_document(
+def write_document_local(
     tool_context: ToolContext,
     document: str
 ) -> Dict[str, str]:
@@ -81,7 +91,7 @@ def before_model_modifier(
         # Modify the system instruction to include current document state
         original_instruction = llm_request.config.system_instruction or types.Content(role="system", parts=[])
         prefix = f"""You are a helpful assistant for writing documents.
-        To write the document, you MUST use the write_document tool.
+        To write the document, you MUST use the write_document_local tool.
         You MUST write the full document, even when changing only a few words.
         When you wrote the document, DO NOT repeat it as a message.
         Just briefly summarize the changes you made. 2 sentences max.
@@ -109,13 +119,13 @@ predictive_state_updates_agent = LlmAgent(
     model="gemini-2.5-pro",
     instruction="""
     You are a helpful assistant for writing documents.
-    To write the document, you MUST use the write_document tool.
+    To write the document, you MUST use the write_document_local tool.
     You MUST write the full document, even when changing only a few words.
     When you wrote the document, DO NOT repeat it as a message.
     Just briefly summarize the changes you made. 2 sentences max.
 
     IMPORTANT RULES:
-    1. Always use the write_document tool for any document writing or editing requests
+    1. Always use the write_document_local tool for any document writing or editing requests
     2. Write complete documents, not fragments
     3. Use markdown formatting for better readability
     4. Keep stories SHORT and engaging
@@ -129,18 +139,29 @@ predictive_state_updates_agent = LlmAgent(
 
     Always provide complete, well-formatted documents that users can read and use.
     """,
-    tools=[write_document],
+    tools=[write_document_local],
     before_agent_callback=on_before_agent,
-    before_model_callback=before_model_modifier
+    before_model_callback=before_model_modifier,
 )
 
-# Create ADK middleware agent instance
+# Create ADK middleware agent instance with predictive state configuration
+# The PredictStateMapping tells the UI to update the "document" state key
+# with the value from the "document" argument of the "write_document_local" tool.
+# After write_document_local completes, the middleware emits a write_document tool call
+# which triggers the frontend's confirmation dialog (via emit_confirm_tool=True).
 adk_predictive_state_agent = ADKAgent(
     adk_agent=predictive_state_updates_agent,
     app_name="demo_app",
     user_id="demo_user",
     session_timeout_seconds=3600,
-    use_in_memory_services=True
+    use_in_memory_services=True,
+    predict_state=[
+        PredictStateMapping(
+            state_key="document",
+            tool="write_document_local",
+            tool_argument="document",
+        )
+    ],
 )
 
 # Create FastAPI app

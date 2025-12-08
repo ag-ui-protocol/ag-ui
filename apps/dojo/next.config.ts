@@ -27,7 +27,7 @@ const nextConfig: NextConfig = {
 
     return config;
   },
-  serverExternalPackages: ["@mastra/libsql"],
+  serverExternalPackages: ["@mastra/libsql", "@copilotkit/runtime"],
 };
 
 // Merge MDX config with Next.js config
