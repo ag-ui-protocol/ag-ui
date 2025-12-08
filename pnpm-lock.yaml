@@ -81,7 +81,7 @@ importers:
       '@ag-ui/agno':
         specifier: workspace:*
         version: link:../../integrations/agno/typescript
-      '@ag-ui/aws-strands-integration':
+      '@ag-ui/aws-strands':
         specifier: workspace:*
         version: link:../../integrations/aws-strands/typescript
       '@ag-ui/client':

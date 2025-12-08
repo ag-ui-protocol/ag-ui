@@ -28,7 +28,7 @@
     "@ag-ui/server-starter-all-features": "workspace:*",
     "@ag-ui/spring-ai": "workspace:*",
     "@ag-ui/vercel-ai-sdk": "workspace:*",
-    "@ag-ui/aws-strands-integration": "workspace:*",
+    "@ag-ui/aws-strands": "workspace:*",
     "@ai-sdk/openai": "^2.0.42",
     "@copilotkit/react-core": "1.10.6",
     "@copilotkit/react-ui": "1.10.6",

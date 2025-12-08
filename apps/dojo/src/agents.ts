@@ -19,7 +19,7 @@ import { ADKAgent } from "@ag-ui/adk";
 import { SpringAiAgent } from "@ag-ui/spring-ai";
 import { HttpAgent } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
-import { AWSStrandsAgent } from "@ag-ui/aws-strands-integration";
+import { AWSStrandsAgent } from "@ag-ui/aws-strands";
 import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
