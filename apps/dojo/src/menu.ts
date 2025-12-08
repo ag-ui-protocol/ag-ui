@@ -1,4 +1,4 @@
-import { MenuIntegrationConfig, Feature, IntegrationFeatures } from "./types/integration";
+import type { IntegrationFeatures, MenuIntegrationConfig } from "./types/integration";
 
 /**
  * Integration configuration - SINGLE SOURCE OF TRUTH

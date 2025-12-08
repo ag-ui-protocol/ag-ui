@@ -1,14 +1,14 @@
 import "server-only";
 
-import { AbstractAgent } from "@ag-ui/client";
-import { FeaturesFor, IntegrationId } from "./menu";
+import type { AbstractAgent } from "@ag-ui/client";
+import type { FeaturesFor, IntegrationId } from "./menu";
 import { MiddlewareStarterAgent } from "@ag-ui/middleware-starter";
 import { ServerStarterAgent } from "@ag-ui/server-starter";
 import { ServerStarterAllFeaturesAgent } from "@ag-ui/server-starter-all-features";
 import { MastraClient } from "@mastra/client-js";
 import { MastraAgent } from "@ag-ui/mastra";
-import { VercelAISDKAgent } from "@ag-ui/vercel-ai-sdk";
-import { openai } from "@ai-sdk/openai";
+// import { VercelAISDKAgent } from "@ag-ui/vercel-ai-sdk";
+// import { openai } from "@ai-sdk/openai";
 import { LangGraphAgent, LangGraphHttpAgent } from "@ag-ui/langgraph";
 import { AgnoAgent } from "@ag-ui/agno";
 import { LlamaIndexAgent } from "@ag-ui/llamaindex";
@@ -20,7 +20,7 @@ import { ADKAgent } from "@ag-ui/adk";
 import { SpringAiAgent } from "@ag-ui/spring-ai";
 import { HttpAgent } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
-import { AWSStrandsAgent } from "@ag-ui/aws-strands-integration";
+import { AWSStrandsAgent } from "@ag-ui/aws-strands";
 import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";

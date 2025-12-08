@@ -1,5 +1,5 @@
 {
-  "name": "@ag-ui/aws-strands-integration",
+  "name": "@ag-ui/aws-strands",
   "author": "AG-UI Contributors",
   "version": "0.0.1",
   "main": "./dist/index.js",
