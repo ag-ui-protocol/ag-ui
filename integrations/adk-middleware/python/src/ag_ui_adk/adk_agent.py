@@ -2,7 +2,7 @@
 
 """Main ADKAgent implementation for bridging AG-UI Protocol with Google ADK."""
 
-from typing import Optional, Dict, Callable, Any, AsyncGenerator, List
+from typing import Optional, Dict, Callable, Any, AsyncGenerator, List, Iterable
 import time
 import json
 import asyncio
@@ -29,6 +29,7 @@ from .event_translator import EventTranslator
 from .session_manager import SessionManager
 from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
+from .config import PredictStateMapping
 
 import logging
 logger = logging.getLogger(__name__)
@@ -44,36 +45,39 @@ class ADKAgent:
         self,
         # ADK Agent instance
         adk_agent: BaseAgent,
-        
+
         # App identification
         app_name: Optional[str] = None,
         session_timeout_seconds: Optional[int] = 1200,
         app_name_extractor: Optional[Callable[[RunAgentInput], str]] = None,
-        
+
         # User identification
         user_id: Optional[str] = None,
         user_id_extractor: Optional[Callable[[RunAgentInput], str]] = None,
-        
+
         # ADK Services
         session_service: Optional[BaseSessionService] = None,
         artifact_service: Optional[BaseArtifactService] = None,
         memory_service: Optional[BaseMemoryService] = None,
         credential_service: Optional[BaseCredentialService] = None,
-        
+
         # Configuration
         run_config_factory: Optional[Callable[[RunAgentInput], ADKRunConfig]] = None,
         use_in_memory_services: bool = True,
-        
+
         # Tool configuration
         execution_timeout_seconds: int = 600,  # 10 minutes
         tool_timeout_seconds: int = 300,  # 5 minutes
         max_concurrent_executions: int = 10,
-        
+
         # Session cleanup configuration
-        cleanup_interval_seconds: int = 300  # 5 minutes default
+        cleanup_interval_seconds: int = 300,  # 5 minutes default
+
+        # Predictive state configuration
+        predict_state: Optional[Iterable[PredictStateMapping]] = None,
     ):
         """Initialize the ADKAgent.
-        
+
         Args:
             adk_agent: The ADK agent instance to use
             app_name: Static application name for all requests
@@ -89,6 +93,12 @@ class ADKAgent:
             execution_timeout_seconds: Timeout for entire execution
             tool_timeout_seconds: Timeout for individual tool calls
             max_concurrent_executions: Maximum concurrent background executions
+            cleanup_interval_seconds: Interval for session cleanup
+            predict_state: Configuration for predictive state updates. When provided,
+                the agent will emit PredictState CustomEvents for matching tool calls,
+                enabling the UI to show state changes in real-time as tool arguments
+                are streamed. Use PredictStateMapping to define which tool arguments
+                map to which state keys.
         """
         if app_name and app_name_extractor:
             raise ValueError("Cannot specify both 'app_name' and 'app_name_extractor'")
@@ -141,9 +151,12 @@ class ADKAgent:
         # Session lookup cache for efficient session ID to metadata mapping
         # Maps session_id -> {"app_name": str, "user_id": str}
         self._session_lookup_cache: Dict[str, Dict[str, str]] = {}
-        
+
+        # Predictive state configuration for real-time state updates
+        self._predict_state = predict_state
+
         # Event translator will be created per-session for thread safety
-        
+
         # Cleanup is managed by the session manager
         # Will start when first async operation runs
 
@@ -658,12 +671,57 @@ class ADKAgent:
             AG-UI events from continued execution
         """
         thread_id = input.thread_id
+        app_name = self._get_app_name(input)
 
         # Extract tool results that are sent by the frontend
+        # Note: _extract_tool_results filters out 'confirm_changes' synthetic tool results
         candidate_messages = tool_messages if tool_messages is not None else await self._get_unseen_messages(input)
         tool_results = await self._extract_tool_results(input, candidate_messages)
 
-        # if the tool results are not sent by the fronted then call the tool function
+        # Check if there were actual tool messages that were filtered out
+        # (i.e., synthetic confirm_changes tool results)
+        actual_tool_messages = [
+            msg for msg in candidate_messages
+            if hasattr(msg, 'role') and msg.role == "tool"
+        ]
+
+        # If all tool results were filtered out (e.g., only confirm_changes messages),
+        # we still need to mark those messages as processed and continue with trailing messages
+        if not tool_results and actual_tool_messages:
+            # Mark the tool messages as processed (they were confirm_changes results)
+            tool_message_ids = self._collect_message_ids(actual_tool_messages)
+            if tool_message_ids:
+                self._session_manager.mark_messages_processed(app_name, thread_id, tool_message_ids)
+                logger.debug(
+                    "Marked %d synthetic tool result messages as processed for thread %s",
+                    len(tool_message_ids),
+                    thread_id,
+                )
+
+            # If we have trailing messages (e.g., a follow-up user request after confirming changes),
+            # process them as a new execution
+            if trailing_messages:
+                logger.debug(
+                    "All tool results were synthetic (confirm_changes); processing %d trailing messages",
+                    len(trailing_messages),
+                )
+                async for event in self._start_new_execution(
+                    input,
+                    tool_results=None,
+                    message_batch=trailing_messages,
+                ):
+                    yield event
+                return
+
+            # No tool results and no trailing messages - nothing to do
+            # This is not an error; the user just approved/rejected changes without sending a follow-up
+            logger.debug(
+                "All tool results were synthetic (confirm_changes) with no trailing messages for thread %s",
+                thread_id,
+            )
+            return
+
+        # If there were no actual tool messages at all, this is an error
         if not tool_results:
             logger.error(f"Tool result submission without tool results for thread {thread_id}")
             yield RunErrorEvent(
@@ -697,7 +755,7 @@ class ADKAgent:
                 message_batch=message_batch,
             ):
                 yield event
-                
+
         except Exception as e:
             logger.error(f"Error handling tool results: {e}", exc_info=True)
             yield RunErrorEvent(
@@ -715,6 +773,13 @@ class ADKAgent:
 
         Only extracts tool messages provided in candidate_messages. When no
         candidates are supplied, all messages are considered.
+
+        IMPORTANT: This method filters out 'confirm_changes' tool results.
+        'confirm_changes' is a synthetic tool call emitted by the middleware
+        to trigger the frontend's confirmation UI dialog. ADK never actually
+        called this tool, so we must NOT send its result back to ADK - doing
+        so would cause "No function call event found for function responses ids"
+        errors because ADK's session has no matching FunctionCall.
 
         Args:
             input: The run input
@@ -736,6 +801,17 @@ class ADKAgent:
         for message in messages_to_check:
             if hasattr(message, 'role') and message.role == "tool":
                 tool_name = tool_call_map.get(getattr(message, 'tool_call_id', None), "unknown")
+
+                # Skip 'confirm_changes' tool results - this is a synthetic tool call
+                # emitted by the middleware to trigger the frontend confirmation dialog.
+                # ADK never called this tool, so we must not send its result to ADK.
+                if tool_name == "confirm_changes":
+                    logger.debug(
+                        "Skipping confirm_changes tool result (synthetic tool): tool_call_id=%s",
+                        getattr(message, 'tool_call_id', None),
+                    )
+                    continue
+
                 logger.debug(
                     "Extracted ToolMessage: role=%s, tool_call_id=%s, content='%s'",
                     getattr(message, 'role', None),
@@ -1243,8 +1319,8 @@ class ADKAgent:
                     user_message = await self._convert_latest_message(input, input.messages)
                 new_message = user_message
 
-            # Create event translator
-            event_translator = EventTranslator()
+            # Create event translator with predictive state configuration
+            event_translator = EventTranslator(predict_state=self._predict_state)
 
             try:
                 session = await self._session_manager.get_or_create_session(
@@ -1349,8 +1425,16 @@ class ADKAgent:
             # moving states snapshot events after the text event clousure to avoid this error https://github.com/Contextable/ag-ui/issues/28
             final_state = await self._session_manager.get_session_state(input.thread_id,app_name,user_id)
             if final_state:
-                ag_ui_event =  event_translator._create_state_snapshot_event(final_state)                    
+                ag_ui_event =  event_translator._create_state_snapshot_event(final_state)
                 await event_queue.put(ag_ui_event)
+
+            # Emit any deferred confirm_changes events LAST, right before completion
+            # This ensures the frontend sees confirm_changes as the last tool call event,
+            # keeping the confirmation dialog in "executing" status with buttons enabled
+            for deferred_event in event_translator.get_and_clear_deferred_confirm_events():
+                logger.debug(f"Emitting deferred confirm_changes event: {type(deferred_event).__name__}")
+                await event_queue.put(deferred_event)
+
             # Signal completion - ADK execution is done
             logger.debug(f"Background task sending completion signal for thread {input.thread_id}")
             await event_queue.put(None)

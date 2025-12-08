@@ -24,7 +24,7 @@ from .api import (
     human_in_the_loop_app,
     shared_state_app,
     backend_tool_rendering_app,
-    # predictive_state_updates_app,
+    predictive_state_updates_app,
 )
 
 app = FastAPI(title='ADK Middleware Demo')
@@ -36,7 +36,7 @@ app.include_router(tool_based_generative_ui_app.router, prefix='/adk-tool-based-
 app.include_router(human_in_the_loop_app.router, prefix='/adk-human-in-loop-agent', tags=['Human in the Loop'])
 app.include_router(shared_state_app.router, prefix='/adk-shared-state-agent', tags=['Shared State'])
 app.include_router(backend_tool_rendering_app.router, prefix='/backend_tool_rendering', tags=['Backend Tool Rendering'])
-# app.include_router(predictive_state_updates_app.router, prefix='/adk-predictive-state-agent', tags=['Predictive State Updates'])
+app.include_router(predictive_state_updates_app.router, prefix='/adk-predictive-state-agent', tags=['Predictive State Updates'])
 
 
 @app.get("/")
@@ -50,7 +50,7 @@ async def root():
             "human_in_the_loop": "/adk-human-in-loop-agent",
             "shared_state": "/adk-shared-state-agent",
             "backend_tool_rendering": "/backend_tool_rendering",
-            # "predictive_state_updates": "/adk-predictive-state-agent",
+            "predictive_state_updates": "/adk-predictive-state-agent",
             "docs": "/docs"
         }
     }
@@ -90,7 +90,7 @@ def main():
     print(f"  • Tool Based Generative UI: http://localhost:{port}/adk-tool-based-generative-ui")
     print(f"  • Human in the Loop: http://localhost:{port}/adk-human-in-loop-agent")
     print(f"  • Shared State: http://localhost:{port}/adk-shared-state-agent")
-    # print(f"  • Predictive State Updates: http://localhost:{port}/adk-predictive-state-agent")
+    print(f"  • Predictive State Updates: http://localhost:{port}/adk-predictive-state-agent")
     print(f"  • API docs: http://localhost:{port}/docs")
     uvicorn.run(app, host="0.0.0.0", port=port)
 

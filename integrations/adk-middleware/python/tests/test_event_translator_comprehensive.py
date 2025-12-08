@@ -391,10 +391,15 @@ class TestEventTranslatorComprehensive:
         async for event in translator.translate(mock_adk_event_with_content, "thread_1", "run_1"):
             events.append(event)
 
-        assert len(events) == 3  # START, CONTENT, END for first final payload
+        assert len(events) == 3  # START, CONTENT, END
         assert isinstance(events[0], TextMessageStartEvent)
         assert isinstance(events[1], TextMessageContentEvent)
         assert isinstance(events[2], TextMessageEndEvent)
+
+        # Final response without streaming should capture the last streamed text for de-dupe
+        assert translator._current_stream_text == ""
+        assert translator._last_streamed_text == "Test content"
+        assert translator._last_streamed_run_id == "run_1"
 
     @pytest.mark.asyncio
     async def test_translate_text_content_final_response_from_agent_callback(self, translator, mock_adk_event_with_content):
@@ -409,10 +414,10 @@ class TestEventTranslatorComprehensive:
         async for event in translator.translate(mock_adk_event_with_content, "thread_1", "run_1"):
             events.append(event)
 
-        assert len(events) == 3  # START, CONTENT , END
+        assert len(events) == 3  # START, CONTENT, END
         assert isinstance(events[0], TextMessageStartEvent)
         assert isinstance(events[1], TextMessageContentEvent)
-        assert events[1].delta == mock_adk_event_with_content.content.parts[0].text
+        assert events[1].delta == "Test content"
         assert isinstance(events[2], TextMessageEndEvent)
 
     @pytest.mark.asyncio
@@ -475,6 +480,54 @@ class TestEventTranslatorComprehensive:
             events.append(event)
 
         assert events == []  # duplicate suppressed
+
+    @pytest.mark.asyncio
+    async def test_translate_text_content_final_response_closes_stream_without_consolidated_text(self, translator):
+        """Final response with consolidated text should only close the open stream."""
+
+        # Stream some content first
+        stream_event = MagicMock(spec=ADKEvent)
+        stream_event.id = "event-1"
+        stream_event.author = "model"
+        stream_event.content = MagicMock()
+        stream_part = MagicMock()
+        stream_part.text = "Streaming chunk"
+        stream_event.content.parts = [stream_part]
+        stream_event.partial = False
+        stream_event.turn_complete = False
+        stream_event.is_final_response = False
+        stream_event.usage_metadata = {"tokens": 1}
+
+        async for _ in translator.translate(stream_event, "thread_1", "run_1"):
+            pass
+
+        streaming_message_id = translator._streaming_message_id
+
+        # Now receive a final response that includes the consolidated text
+        final_event = MagicMock(spec=ADKEvent)
+        final_event.id = "event-2"
+        final_event.author = "model"
+        final_event.content = MagicMock()
+        final_part = MagicMock()
+        final_part.text = "Streaming chunk"
+        final_event.content.parts = [final_part]
+        final_event.partial = False
+        final_event.turn_complete = True
+        final_event.is_final_response = True
+        final_event.usage_metadata = {"tokens": 2}
+
+        events = []
+        async for event in translator.translate(final_event, "thread_1", "run_1"):
+            events.append(event)
+
+        # Only the END event should be emitted to close the active stream
+        assert events == [
+            TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=streaming_message_id)
+        ]
+        assert translator._is_streaming is False
+        assert translator._current_stream_text == ""
+        assert translator._last_streamed_text == "Streaming chunk"
+        assert translator._last_streamed_run_id == "run_1"
 
     @pytest.mark.asyncio
     async def test_translate_text_content_final_response_after_stream_new_content(self, translator):
