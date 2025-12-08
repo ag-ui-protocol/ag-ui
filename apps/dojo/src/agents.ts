@@ -88,7 +88,7 @@ export const agentsIntegrations = {
         human_in_the_loop: "adk-human-in-loop-agent",
         backend_tool_rendering: "backend_tool_rendering",
         shared_state: "adk-shared-state-agent",
-        // predictive_state_updates: "adk-predictive-state-agent",
+        predictive_state_updates: "adk-predictive-state-agent",
       }
     ),
 
