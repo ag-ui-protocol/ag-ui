@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "npm run generate-content-json && next dev --webpack",
-    "build": "next build",
-    "start": "npm run generate-content-json && next start --webpack",
+    "build": "next build --webpack",
+    "start": "npm run generate-content-json && next start",
     "lint": "eslint .",
     "mastra:dev": "mastra dev",
     "generate-content-json": "npx tsx scripts/generate-content-json.ts",
