@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { AbstractAgent } from "@ag-ui/client";
-import type { FeaturesFor, IntegrationId } from "./menu";
+import { FeaturesFor, IntegrationId } from "./menu";
 import { MiddlewareStarterAgent } from "@ag-ui/middleware-starter";
 import { ServerStarterAgent } from "@ag-ui/server-starter";
 import { ServerStarterAllFeaturesAgent } from "@ag-ui/server-starter-all-features";
@@ -98,7 +98,6 @@ export const agentsIntegrations = {
       {
         agentic_chat: "agentic_chat",
         // TODO: Add agent for agentic_chat_reasoning
-        // agentic_chat_reasoning: "agentic_chat_reasoning",
         backend_tool_rendering: "backend_tool_rendering",
         human_in_the_loop: "human_in_the_loop",
         agentic_generative_ui: "agentic_generative_ui",
@@ -172,7 +171,6 @@ export const agentsIntegrations = {
       {
         agentic_chat: "agentic_chat",
         // TODO: Add agent for backend_tool_rendering
-        // backend_tool_rendering: "backend_tool_rendering",
         agentic_generative_ui: "agentic_generative_ui",
         human_in_the_loop: "human_in_the_loop",
         predictive_state_updates: "predictive_state_updates",

@@ -45,7 +45,7 @@ export const menuIntegrations = [
     name: "LangGraph (Typescript)",
     features: [
       "agentic_chat",
-      "backend_tool_rendering",
+      // "backend_tool_rendering",
       "human_in_the_loop",
       "agentic_generative_ui",
       "predictive_state_updates",
@@ -172,7 +172,7 @@ export const menuIntegrations = [
     name: "CrewAI",
     features: [
       "agentic_chat",
-      "backend_tool_rendering",
+      // "backend_tool_rendering",
       "human_in_the_loop",
       "agentic_generative_ui",
       "predictive_state_updates",
@@ -208,7 +208,7 @@ export const menuIntegrations = [
       "agentic_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
-      "agentic_chat_reasoning",
+      // "agentic_chat_reasoning",
       "agentic_generative_ui",
       "predictive_state_updates",
       "shared_state",
