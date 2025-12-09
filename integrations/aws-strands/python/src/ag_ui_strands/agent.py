@@ -79,10 +79,14 @@ class StrandsAgent:
         # Each thread (user session) maintains its own conversation state
         thread_id = input_data.thread_id or "default"
         if thread_id not in self._agents_by_thread:
+            session_manager = None
+            if self.config.session_manager_provider:
+                session_manager = self.config.session_manager_provider(input_data)
             self._agents_by_thread[thread_id] = StrandsAgentCore(
                 model=self._model,
                 system_prompt=self._system_prompt,
                 tools=self._tools,
+                session_manager=session_manager,
                 **self._agent_kwargs,
             )
         strands_agent = self._agents_by_thread[thread_id]
