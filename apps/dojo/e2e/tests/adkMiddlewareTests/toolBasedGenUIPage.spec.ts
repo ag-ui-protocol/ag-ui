@@ -1,6 +1,9 @@
 import { test, expect } from "@playwright/test";
 import { ToolBaseGenUIPage } from "../../featurePages/ToolBaseGenUIPage";
 
+// Skip all tests in this file when CLOUD_AGENTS is set
+test.skip(!!process.env.CLOUD_AGENTS, 'Skipping ADK Middleware tests when CLOUD_AGENTS is set');
+
 const pageURL = "/adk-middleware/feature/tool_based_generative_ui";
 
 test.describe("Tool Based Generative UI Feature", () => {

@@ -1,6 +1,9 @@
 import { test, expect } from "@playwright/test";
 import { ToolBaseGenUIPage } from "../../featurePages/ToolBaseGenUIPage";
 
+// Skip all tests in this file when CLOUD_AGENTS is set
+test.skip(!!process.env.CLOUD_AGENTS, 'Skipping Server Starter all features tests when CLOUD_AGENTS is set');
+
 const pageURL =
   "/server-starter-all-features/feature/tool_based_generative_ui";
 
