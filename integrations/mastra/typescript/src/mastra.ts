@@ -13,7 +13,7 @@ import type {
 } from "@ag-ui/client";
 import { AbstractAgent, EventType } from "@ag-ui/client";
 import type { StorageThreadType } from "@mastra/core";
-import { Agent as LocalMastraAgent } from "@mastra/core/agent";
+import { AgentExecutionOptions, Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RuntimeContext } from "@mastra/core/runtime-context";
 import { randomUUID } from "@ag-ui/client";
 import { Observable } from "rxjs";
@@ -35,6 +35,7 @@ export interface MastraAgentConfig extends AgentConfig {
   agent: LocalMastraAgent | RemoteMastraAgent;
   resourceId?: string;
   runtimeContext?: RuntimeContext;
+  agentExecutionOptions?: AgentExecutionOptions;
 }
 
 interface MastraAgentStreamOptions {
@@ -54,13 +55,15 @@ export class MastraAgent extends AbstractAgent {
   agent: LocalMastraAgent | RemoteMastraAgent;
   resourceId?: string;
   runtimeContext?: RuntimeContext;
+  agentExecutionOptions?: AgentExecutionOptions;
 
   constructor(private config: MastraAgentConfig) {
-    const { agent, resourceId, runtimeContext, ...rest } = config;
+    const { agent, resourceId, runtimeContext, agentExecutionOptions, ...rest } = config;
     super(rest);
     this.agent = agent;
     this.resourceId = resourceId;
     this.runtimeContext = runtimeContext ?? new RuntimeContext();
+    this.agentExecutionOptions = agentExecutionOptions ?? {};
   }
 
   public clone() {
@@ -282,6 +285,7 @@ export class MastraAgent extends AbstractAgent {
           runId,
           clientTools,
           runtimeContext,
+          ...this.agentExecutionOptions,
         });
 
         // For local agents, the response should already be a stream
@@ -337,6 +341,7 @@ export class MastraAgent extends AbstractAgent {
           runId,
           messages: convertedMessages,
           clientTools,
+          ...this.agentExecutionOptions,
         });
 
         // Remote agents should have a processDataStream method
