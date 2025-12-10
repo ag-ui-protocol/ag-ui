@@ -11,7 +11,7 @@ const dryRun = args.includes("--dry-run");
 
 if (showHelp) {
   console.log(`
-Usage: node run-dojo-everything.js [options]
+Usage: node run-dojo.js [options]
 
 Options:
   --dry-run       Show what would be started without actually running
@@ -30,7 +30,7 @@ const gitRoot = execSync("git rev-parse --show-toplevel", { encoding: "utf-8" })
 const dojo = {
   command: "pnpm run start",
   name: "Dojo",
-  cwd: path.join(gitRoot, "typescript-sdk/apps/dojo"),
+  cwd: path.join(gitRoot, "apps/dojo"),
   env: {
     PORT: 9000,
     NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL: process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL,
