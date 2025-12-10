@@ -1,0 +1,64 @@
+name: unit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdks/typescript/**"
+      - "typescript-sdk/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - "turbo.json"
+      - ".github/workflows/unit-typescript-sdk.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "sdks/typescript/**"
+      - "typescript-sdk/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - "turbo.json"
+      - ".github/workflows/unit-typescript-sdk.yml"
+
+jobs:
+  typescript:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "25.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test Build
+        run: pnpm run build
+
+      - name: Run tests
+        run: pnpm run test

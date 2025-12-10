@@ -1,0 +1,32 @@
+{
+  "name": "example",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"no tests to run\" && exit 0",
+    "dev": "mastra dev",
+    "build": "mastra build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "type": "module",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^2.0.23",
+    "@mastra/client-js": "^0.15.2",
+    "@mastra/core": "^0.20.2",
+    "@mastra/libsql": "^0.15.1",
+    "@mastra/loggers": "^0.10.15",
+    "@mastra/memory": "^0.15.6",
+    "zod": "^3.25.48"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.29",
+    "mastra": "^0.15.1",
+    "typescript": "^5.8.3"
+  }
+}

@@ -21,7 +21,6 @@
                 "group": "Quickstart",
                 "pages": [
                   "quickstart/applications",
-                  "quickstart/clients",
                   {
                     "group": "Build integrations",
                     "pages": [
@@ -29,7 +28,8 @@
                       "quickstart/server",
                       "quickstart/middleware"
                     ]
-                  }
+                  },
+                  "quickstart/clients"
                 ]
               }
             ]
@@ -40,9 +40,22 @@
               "concepts/architecture",
               "concepts/events",
               "concepts/agents",
+              "concepts/middleware",
               "concepts/messages",
               "concepts/state",
+              "concepts/serialization",
               "concepts/tools"
+            ]
+          },
+          {
+            "group": "Draft Proposals",
+            "pages": [
+              "drafts/overview",
+              "drafts/reasoning",
+              "drafts/multimodal-messages",
+              "drafts/interrupts",
+              "drafts/generative-ui",
+              "drafts/meta-events"
             ]
           },
           {
@@ -72,7 +85,9 @@
                   "sdk/js/client/overview",
                   "sdk/js/client/abstract-agent",
                   "sdk/js/client/http-agent",
-                  "sdk/js/client/subscriber"
+                  "sdk/js/client/middleware",
+                  "sdk/js/client/subscriber",
+                  "sdk/js/client/compaction"
                 ]
               },
               "sdk/js/encoder",

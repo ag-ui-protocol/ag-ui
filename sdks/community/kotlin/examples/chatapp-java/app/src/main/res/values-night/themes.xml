@@ -1,0 +1,20 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Dark theme with edge-to-edge support -->
+    <style name="Base.Theme.AguiChatappJava" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Disable action bar to use custom toolbar -->
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        
+        <!-- Enable edge-to-edge display for dark mode -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
+        <item name="android:enforceStatusBarContrast" tools:targetApi="29">false</item>
+        <item name="android:enforceNavigationBarContrast" tools:targetApi="29">false</item>
+        
+        <!-- Dark theme colors will be automatically applied by Material 3 DayNight theme -->
+    </style>
+
+    <style name="Theme.AguiChatappJava" parent="Base.Theme.AguiChatappJava" />
+</resources>
