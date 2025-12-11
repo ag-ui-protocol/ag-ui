@@ -180,22 +180,22 @@ export const agentsIntegrations = {
       }
     ),
 
-  langchain: async () => {
-    const agent = new LangChainAgent({
-      chainFn: async ({ messages, tools, threadId }) => {
-        const { ChatOpenAI } = await import("@langchain/openai");
-        const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
-        const model = chatOpenAI.bindTools(tools, {
-          strict: true,
-        });
-        return model.stream(messages, { tools, metadata: { conversation_id: threadId } });
-      },
-    });
-    return {
-      agentic_chat: agent,
-      tool_based_generative_ui: agent,
-    };
-  },
+  // langchain: async () => {
+  //   const agent = new LangChainAgent({
+  //     chainFn: async ({ messages, tools, threadId }) => {
+  //       const { ChatOpenAI } = await import("@langchain/openai");
+  //       const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
+  //       const model = chatOpenAI.bindTools(tools, {
+  //         strict: true,
+  //       });
+  //       return model.stream(messages, { tools, metadata: { conversation_id: threadId } });
+  //     },
+  //   });
+  //   return {
+  //     agentic_chat: agent,
+  //     tool_based_generative_ui: agent,
+  //   };
+  // },
 
   agno: async () =>
     mapAgents(
