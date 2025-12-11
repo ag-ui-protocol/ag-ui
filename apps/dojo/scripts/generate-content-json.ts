@@ -1,75 +1,47 @@
 import fs from "fs";
 import path from "path";
 
-// Function to parse agents.ts file and extract agent keys without executing
-function parseAgentsFile(): Array<{ id: string; agentKeys: string[] }> {
-  const agentsFilePath = path.join(__dirname, "../src/agents.ts");
-  const agentsContent = fs.readFileSync(agentsFilePath, "utf8");
+// Import menu.ts to get integration configurations
+// menu.ts is the single source of truth for integration IDs and features
+function getAgentConfigsFromMenu(): Array<{ id: string; agentKeys: string[] }> {
+  const menuFilePath = path.join(__dirname, "../src/menu.ts");
+  const menuContent = fs.readFileSync(menuFilePath, "utf8");
 
   const agentConfigs: Array<{ id: string; agentKeys: string[] }> = [];
 
-  // Split the content to process each agent configuration individually
-  const agentBlocks = agentsContent.split(/(?=\s*{\s*id:\s*["'])/);
+  // Find the menuIntegrations array
+  const menuMatch = menuContent.match(/export const menuIntegrations\s*=\s*\[([\s\S]*?)\]\s*as const/);
 
-  for (const block of agentBlocks) {
-    // Extract the ID
-    const idMatch = block.match(/id:\s*["']([^"']+)["']/);
-    if (!idMatch) continue;
+  if (!menuMatch) {
+    console.error("Could not find menuIntegrations export in menu.ts");
+    return agentConfigs;
+  }
 
-    const id = idMatch[1];
+  const menuArrayContent = menuMatch[1];
 
-    // Find the return object by looking for the pattern and then manually parsing balanced braces
-    const returnMatch = block.match(
-      /agents:\s*async\s*\(\)\s*=>\s*{\s*return\s*{/,
-    );
+  // Match each integration object: { id: "...", name: "...", features: [...] }
+  const integrationRegex = /{\s*id:\s*["']([^"']+)["'],[\s\S]*?features:\s*\[([\s\S]*?)\]/g;
 
-    // If no return match, still add the config with empty keys if it has a mapper
-    // This handles dynamic agent discovery like Mastra
-    if (!returnMatch) {
-      agentConfigs.push({ id, agentKeys: [] });
-      continue;
+  let match;
+  while ((match = integrationRegex.exec(menuArrayContent)) !== null) {
+    const id = match[1];
+    const featuresContent = match[2];
+
+    // Extract feature names from the features array
+    const featureMatches = featuresContent.matchAll(/["']([^"']+)["']/g);
+    const features: string[] = [];
+
+    for (const featureMatch of featureMatches) {
+      features.push(featureMatch[1]);
     }
 
-    const startIndex = returnMatch.index! + returnMatch[0].length;
-    const returnObjectContent = extractBalancedBraces(block, startIndex);
-
-    // Extract keys from the return object - only capture keys that are followed by a colon and then 'new'
-    // This ensures we only get the top-level keys like "agentic_chat: new ..." not nested keys like "url: ..."
-    const keyRegex = /^\s*(\w+):\s*new\s+\w+/gm;
-    const keys: string[] = [];
-    let keyMatch;
-    while ((keyMatch = keyRegex.exec(returnObjectContent)) !== null) {
-      keys.push(keyMatch[1]);
-    }
-
-    agentConfigs.push({ id, agentKeys: keys });
+    agentConfigs.push({ id, agentKeys: features });
   }
 
   return agentConfigs;
 }
 
-// Helper function to extract content between balanced braces
-function extractBalancedBraces(text: string, startIndex: number): string {
-  let braceCount = 0;
-  let i = startIndex;
-
-  while (i < text.length) {
-    if (text[i] === "{") {
-      braceCount++;
-    } else if (text[i] === "}") {
-      if (braceCount === 0) {
-        // Found the closing brace for the return object
-        return text.substring(startIndex, i);
-      }
-      braceCount--;
-    }
-    i++;
-  }
-
-  return "";
-}
-
-const agentConfigs = parseAgentsFile();
+const agentConfigs = getAgentConfigsFromMenu();
 
 const featureFiles = ["page.tsx", "style.css", "README.mdx"];
 
