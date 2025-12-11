@@ -16,12 +16,12 @@ interface Props {
 export default async function FeatureLayout({ children, params }: Props) {
   const { integrationId } = await params;
 
-  // Get headers set by middleware
+  // Get headers set by proxy
   const headersList = await headers();
   const pathname = headersList.get("x-pathname") || "";
   const notFoundType = headersList.get("x-not-found");
 
-  // If middleware flagged this as not found, trigger 404
+  // If proxy flagged this as not found, trigger 404
   if (notFoundType) {
     notFound();
   }

@@ -6,7 +6,7 @@ import type { IntegrationFeatures, MenuIntegrationConfig } from "./types/integra
  * This file defines all integrations and their available features.
  * Used by:
  * - UI menu components
- * - middleware.ts (for route validation)
+ * - proxy.ts (for route validation)
  * - agents.ts validates agent keys against these features
  */
 
