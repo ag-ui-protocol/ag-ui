@@ -180,25 +180,23 @@ export const agentsIntegrations = {
       }
     ),
 
-  langchain: async () => 
-    mapAgents(
-      new LangChainAgent({
-        // TODO: @ranst91 - can you add param types here?
-        // @ts-expect-error - TODO: add types
-        chainFn: async ({ messages, tools, threadId }) => {
-          const { ChatOpenAI } = await import("@langchain/openai");
-          const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
-          const model = chatOpenAI.bindTools(tools, {
-            strict: true,
-          });
-          return model.stream(messages, { tools, metadata: { conversation_id: threadId } });
-        },
-      }),
-      {
-        agentic_chat: "",
-        tool_based_generative_ui: "",
-      }
-    ),
+  langchain: async () => {
+    const agent = new LangChainAgent({
+      // TODO: @ranst91 - can you add param types here?
+      chainFn: async ({ messages, tools, threadId }) => {
+        const { ChatOpenAI } = await import("@langchain/openai");
+        const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
+        const model = chatOpenAI.bindTools(tools, {
+          strict: true,
+        });
+        return model.stream(messages, { tools, metadata: { conversation_id: threadId } });
+      },
+    });
+    return {
+      agentic_chat: agent,
+      tool_based_generative_ui: agent,
+    };
+  },
 
   agno: async () =>
     mapAgents(
