@@ -182,7 +182,6 @@ export const agentsIntegrations = {
 
   langchain: async () => {
     const agent = new LangChainAgent({
-      // TODO: @ranst91 - can you add param types here?
       chainFn: async ({ messages, tools, threadId }) => {
         const { ChatOpenAI } = await import("@langchain/openai");
         const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
