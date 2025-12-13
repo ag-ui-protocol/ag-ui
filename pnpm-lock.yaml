@@ -86,16 +86,16 @@ importers:
         version: link:../../integrations/aws-strands/typescript
       '@ag-ui/client':
         specifier: workspace:*
-        version: link:../../sdks/typescript/packages/client
+        version: 0.0.42
       '@ag-ui/core':
         specifier: workspace:*
-        version: link:../../sdks/typescript/packages/core
+        version: 0.0.42
       '@ag-ui/crewai':
         specifier: workspace:*
         version: link:../../integrations/crew-ai/typescript
       '@ag-ui/encoder':
         specifier: workspace:*
-        version: link:../../sdks/typescript/packages/encoder
+        version: 0.0.42
       '@ag-ui/langchain':
         specifier: workspace:*
         version: link:../../integrations/langchain/typescript
@@ -113,7 +113,7 @@ importers:
         version: link:../../middlewares/middleware-starter
       '@ag-ui/proto':
         specifier: workspace:*
-        version: link:../../sdks/typescript/packages/proto
+        version: 0.0.42
       '@ag-ui/pydantic-ai':
         specifier: workspace:*
         version: link:../../integrations/pydantic-ai/typescript
@@ -140,7 +140,7 @@ importers:
         version: 1.10.6(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       '@copilotkit/runtime':
         specifier: 1.10.6
-        version: 1.10.6(44227b17b650ba9fb9a71e0cbf321c68)
+        version: 1.10.6(4bffb88f03d40adb9612d4e951387812)
       '@copilotkit/runtime-client-gql':
         specifier: 1.10.6
         version: 1.10.6(graphql@16.11.0)(react@19.2.1)
@@ -152,7 +152,7 @@ importers:
         version: 0.0.19-alpha.0
       '@copilotkitnext/react':
         specifier: 0.0.19-alpha.0
-        version: 0.0.19-alpha.0(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
+        version: 0.0.19-alpha.0(@types/mdast@4.0.4)(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(micromark-util-types@2.0.2)(micromark@4.0.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       '@copilotkitnext/runtime':
         specifier: 0.0.19-alpha.0
         version: 0.0.19-alpha.0(openai@4.104.0(ws@8.18.3)(zod@3.25.76))
@@ -219,9 +219,6 @@ importers:
       '@tiptap/starter-kit':
         specifier: ^2.11.5
         version: 2.26.3
-      '@types/react-syntax-highlighter':
-        specifier: ^15.5.13
-        version: 15.5.13
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -267,15 +264,12 @@ importers:
       react-dom:
         specifier: ^19.2.1
         version: 19.2.1(react@19.2.1)
-      react-markdown:
-        specifier: ^10.1.0
-        version: 10.1.0(@types/react@19.2.2)(react@19.2.1)
-      react-syntax-highlighter:
-        specifier: ^15.6.1
-        version: 15.6.6(react@19.2.1)
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
+      streamdown:
+        specifier: ^1.6.10
+        version: 1.6.10(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2)(react@19.2.1)
       tailwind-merge:
         specifier: ^3.3.0
         version: 3.3.1
@@ -1084,6 +1078,9 @@ packages:
 
   '@ag-ui/client@0.0.40-alpha.10':
     resolution: {integrity: sha512-b1hcS1+nMzsNSSt4E3tryFD4Bd9DQqcqYg0R1CeD9dx4bbDg2cF0sjtUBDpbAQ6N3l4438VranGE9Sj+UozUBg==}
+
+  '@ag-ui/client@0.0.42':
+    resolution: {integrity: sha512-zAbP+sZJImR5bUpR2ni7RtuuNZMuesaxviynyIgzKlr1k2VCM49mFpbDUKU4TH4Cneu+Xe7OEnO8qCOCIzBAww==}
 
   '@ag-ui/core@0.0.35':
     resolution: {integrity: sha512-YAqrln3S3fdo+Hs5FFQPODXiBttyilv/E3xSSHCuxqC0Y/Fp3+VqyDx97BorO3NVp2VKZ9cG2nsO3cbmcTwkQw==}
@@ -5165,9 +5162,6 @@ packages:
     peerDependencies:
       '@types/react': ^19.2.0
 
-  '@types/react-syntax-highlighter@15.5.13':
-    resolution: {integrity: sha512-uLGJ87j6Sz8UaBAooU0T6lWJ0dBmjZgN1PZTrj05TNql2/XpC6+4HhMT5syIdFUUt+FASfCeLLv4kBygNU+8qA==}
-
   '@types/react@19.2.2':
     resolution: {integrity: sha512-6mDvHUFSjyT2B2yeNx2nUgMxh9LtOWvkhIU3uePn2I2oyNymUAX1NIsdgviM4CH+JSrp2D2hsMvJOkxY+0wNRA==}
 
@@ -6915,6 +6909,10 @@ packages:
     resolution: {integrity: sha512-DyFP3BM/3YHTQOCUL/w0OZHR0lpKeGrxotcHWcqNEdnltqFwXVfhEBQ94eIo34AfQpo0rGki4cyIiftY06h2Fg==}
     engines: {node: 6.* || 8.* || >= 10.*}
 
+  get-east-asian-width@1.4.0:
+    resolution: {integrity: sha512-QZjmEOC+IT1uk6Rx0sX22V6uHWVwbdbxf1faPqJ1QhLdGgsRGCZoyaQBm/piRdJy/D2um6hM1UP7ZEeQ4EkP+Q==}
+    engines: {node: '>=18'}
+
   get-intrinsic@1.3.0:
     resolution: {integrity: sha512-9fSjSaos/fRIVIp+xSJlE6lfwhES7LNtKaCBIamHsjr2na1BiABJPo0mOjjz8GJDURarmCPGqaiVg5mfjb98CQ==}
     engines: {node: '>= 0.4'}
@@ -7122,6 +7120,10 @@ packages:
 
   hast-util-whitespace@3.0.0:
     resolution: {integrity: sha512-88JUN06ipLwsnv+dVn+OIYOvAuvBMy/Qoi6O7mQHxdPXpjy+Cd6xRkWwux7DKO+4sYILtLBRIKgsdpS2gQc7qw==}
+
+  hast@1.0.0:
+    resolution: {integrity: sha512-vFUqlRV5C+xqP76Wwq2SrM0kipnmpxJm7OfvVXpB35Fp+Fn4MV+ozr+JZr5qFvyR1q/U+Foim2x+3P+x9S1PLA==}
+    deprecated: Renamed to rehype
 
   hastscript@6.0.0:
     resolution: {integrity: sha512-nDM6bvd7lIqDUiYEiu5Sl/+6ReP0BMk/2f4U/Rooccxkj0P5nm+acM5PrGJ/t5I8qPGiqZSE6hVAwZEdZIvP4w==}
@@ -8251,6 +8253,35 @@ packages:
   micromark-core-commonmark@2.0.3:
     resolution: {integrity: sha512-RDBrHEMSxVFLg6xvnXmb1Ayr2WzLAWjeSATAoxwKYJV94TeNavgoIdA0a9ytzDSVzBy2YKFK+emCPOEibLeCrg==}
 
+  micromark-extension-cjk-friendly-gfm-strikethrough@1.2.3:
+    resolution: {integrity: sha512-gSPnxgHDDqXYOBvQRq6lerrq9mjDhdtKn+7XETuXjxWcL62yZEfUdA28Ml1I2vDIPfAOIKLa0h2XDSGkInGHFQ==}
+    engines: {node: '>=16'}
+    peerDependencies:
+      micromark: ^4.0.0
+      micromark-util-types: ^2.0.0
+    peerDependenciesMeta:
+      micromark-util-types:
+        optional: true
+
+  micromark-extension-cjk-friendly-util@2.1.1:
+    resolution: {integrity: sha512-egs6+12JU2yutskHY55FyR48ZiEcFOJFyk9rsiyIhcJ6IvWB6ABBqVrBw8IobqJTDZ/wdSr9eoXDPb5S2nW1bg==}
+    engines: {node: '>=16'}
+    peerDependencies:
+      micromark-util-types: '*'
+    peerDependenciesMeta:
+      micromark-util-types:
+        optional: true
+
+  micromark-extension-cjk-friendly@1.2.3:
+    resolution: {integrity: sha512-gRzVLUdjXBLX6zNPSnHGDoo+ZTp5zy+MZm0g3sv+3chPXY7l9gW+DnrcHcZh/jiPR6MjPKO4AEJNp4Aw6V9z5Q==}
+    engines: {node: '>=16'}
+    peerDependencies:
+      micromark: ^4.0.0
+      micromark-util-types: ^2.0.0
+    peerDependenciesMeta:
+      micromark-util-types:
+        optional: true
+
   micromark-extension-gfm-autolink-literal@2.1.0:
     resolution: {integrity: sha512-oOg7knzhicgQ3t4QCjCWgTmfNhvQbDDnJeVu9v81r7NltNCVmhPy1fJRX27pISafdjL+SVc4d3l48Gb6pbRypw==}
 
@@ -8536,6 +8567,7 @@ packages:
   next@16.0.7:
     resolution: {integrity: sha512-3mBRJyPxT4LOxAJI6IsXeFtKfiJUbjCLgvXO02fV8Wy/lIhPvP94Fe7dGhUgHXcQy4sSuYwQNcOLhIfOm0rL0A==}
     engines: {node: '>=20.9.0'}
+    deprecated: This version has a security vulnerability. Please upgrade to a patched version. See https://nextjs.org/blog/security-update-2025-12-11 for more details.
     hasBin: true
     peerDependencies:
       '@opentelemetry/api': ^1.1.0
@@ -9297,8 +9329,8 @@ packages:
     resolution: {integrity: sha512-dYqgNSZbDwkaJ2ceRd9ojCGjBq+mOm9LmtXnAnEGyHhN/5R7iDW2TRw3h+o/jCFxus3P2LfWIIiwowAjANm7IA==}
     engines: {node: '>= 0.4'}
 
-  rehype-harden@1.1.5:
-    resolution: {integrity: sha512-JrtBj5BVd/5vf3H3/blyJatXJbzQfRT9pJBmjafbTaPouQCAKxHwRyCc7dle9BXQKxv4z1OzZylz/tNamoiG3A==}
+  rehype-harden@1.1.7:
+    resolution: {integrity: sha512-j5DY0YSK2YavvNGV+qBHma15J9m0WZmRe8posT5AtKDS6TNWtMVTo6RiqF8SidfcASYz8f3k2J/1RWmq5zTXUw==}
 
   rehype-katex@7.0.1:
     resolution: {integrity: sha512-OiM2wrZ/wuhKkigASodFoo8wimG3H12LWQaH8qSPVJn9apWKFSH3YOCtbKpBorTVw/eI7cuT21XBbvwEswbIOA==}
@@ -9308,6 +9340,26 @@ packages:
 
   rehype-recma@1.0.0:
     resolution: {integrity: sha512-lqA4rGUf1JmacCNWWZx0Wv1dHqMwxzsDWYMTowuplHF3xH0N/MmrZ/G3BDZnzAkRmxDadujCjaKM2hqYdCBOGw==}
+
+  remark-cjk-friendly-gfm-strikethrough@1.2.3:
+    resolution: {integrity: sha512-bXfMZtsaomK6ysNN/UGRIcasQAYkC10NtPmP0oOHOV8YOhA2TXmwRXCku4qOzjIFxAPfish5+XS0eIug2PzNZA==}
+    engines: {node: '>=16'}
+    peerDependencies:
+      '@types/mdast': ^4.0.0
+      unified: ^11.0.0
+    peerDependenciesMeta:
+      '@types/mdast':
+        optional: true
+
+  remark-cjk-friendly@1.2.3:
+    resolution: {integrity: sha512-UvAgxwlNk+l9Oqgl/9MWK2eWRS7zgBW/nXX9AthV7nd/3lNejF138E7Xbmk9Zs4WjTJGs721r7fAEc7tNFoH7g==}
+    engines: {node: '>=16'}
+    peerDependencies:
+      '@types/mdast': ^4.0.0
+      unified: ^11.0.0
+    peerDependenciesMeta:
+      '@types/mdast':
+        optional: true
 
   remark-gfm@4.0.1:
     resolution: {integrity: sha512-1quofZ2RQ9EWdeN34S79+KExV1764+wCUGop5CPL1WGdD0ocPpu91lzPGbwWMECpEpd42kJGQwzRfyov9j4yNg==}
@@ -9332,6 +9384,9 @@ packages:
 
   remark-stringify@11.0.0:
     resolution: {integrity: sha512-1OSmLd3awB/t8qdoEOMazZkNsfVTeY4fTsgzcQFdXNq8ToTN4ZGwrMnlda4K6smTFKD+GRV6O48i6Z4iKgPPpw==}
+
+  remend@1.0.1:
+    resolution: {integrity: sha512-152puVH0qMoRJQFnaMG+rVDdf01Jq/CaED+MBuXExurJgdbkLp0c3TIe4R12o28Klx8uyGsjvFNG05aFG69G9w==}
 
   require-directory@2.1.1:
     resolution: {integrity: sha512-fGxEI7+wsG9xrvdjsrlmL22OMTTiHRwAMroiEeMgq8gzoLC/PQr7RsRDSTLUg/bZAZtF+TVIkHc6/4RIKrui+Q==}
@@ -9641,8 +9696,8 @@ packages:
     resolution: {integrity: sha512-eLoXW/DHyl62zxY4SCaIgnRhuMr6ri4juEYARS8E6sCEqzKpOiE521Ucofdx+KnDZl5xmvGYaaKCk5FEOxJCoQ==}
     engines: {node: '>= 0.4'}
 
-  streamdown@1.4.0:
-    resolution: {integrity: sha512-ylhDSQ4HpK5/nAH9v7OgIIdGJxlJB2HoYrYkJNGrO8lMpnWuKUcrz/A8xAMwA6eILA27469vIavcOTjmxctrKg==}
+  streamdown@1.6.10:
+    resolution: {integrity: sha512-B4Y3Z/qiXl1Dc+LzAB5c52Cd1QGRiFjaDwP+ERoj1JtCykdRDM8X6HwQnn3YkpkSk0x3R7S/6LrGe1nQiElHQQ==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
 
@@ -10506,6 +10561,19 @@ snapshots:
       '@ag-ui/encoder': 0.0.40-alpha.10
       '@ag-ui/proto': 0.0.40-alpha.10
       '@types/uuid': 10.0.0
+      fast-json-patch: 3.1.1
+      rxjs: 7.8.1
+      untruncate-json: 0.0.1
+      uuid: 11.1.0
+      zod: 3.25.76
+
+  '@ag-ui/client@0.0.42':
+    dependencies:
+      '@ag-ui/core': 0.0.42
+      '@ag-ui/encoder': 0.0.42
+      '@ag-ui/proto': 0.0.42
+      '@types/uuid': 10.0.0
+      compare-versions: 6.1.1
       fast-json-patch: 3.1.1
       rxjs: 7.8.1
       untruncate-json: 0.0.1
@@ -11851,13 +11919,13 @@ snapshots:
       - ws
       - youtubei.js
 
-  '@copilotkit/runtime@1.10.6(44227b17b650ba9fb9a71e0cbf321c68)':
+  '@copilotkit/runtime@1.10.6(4bffb88f03d40adb9612d4e951387812)':
     dependencies:
-      '@ag-ui/client': link:sdks/typescript/packages/client
-      '@ag-ui/core': link:sdks/typescript/packages/core
-      '@ag-ui/encoder': link:sdks/typescript/packages/encoder
+      '@ag-ui/client': 0.0.42
+      '@ag-ui/core': 0.0.42
+      '@ag-ui/encoder': 0.0.42
       '@ag-ui/langgraph': link:integrations/langgraph/typescript
-      '@ag-ui/proto': link:sdks/typescript/packages/proto
+      '@ag-ui/proto': 0.0.42
       '@anthropic-ai/sdk': 0.57.0
       '@copilotkit/shared': 1.10.6
       '@graphql-yoga/plugin-defer-stream': 3.16.0(graphql-yoga@5.16.0(graphql@16.11.0))(graphql@16.11.0)
@@ -12066,7 +12134,7 @@ snapshots:
       zod: 3.25.76
       zod-to-json-schema: 3.24.6(zod@3.25.76)
 
-  '@copilotkitnext/react@0.0.19-alpha.0(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)':
+  '@copilotkitnext/react@0.0.19-alpha.0(@types/mdast@4.0.4)(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(micromark-util-types@2.0.2)(micromark@4.0.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)':
     dependencies:
       '@ag-ui/client': 0.0.40-alpha.10
       '@ag-ui/core': 0.0.40-alpha.10
@@ -12083,15 +12151,18 @@ snapshots:
       lucide-react: 0.525.0(react@19.2.1)
       react: 19.2.1
       react-dom: 19.2.1(react@19.2.1)
-      streamdown: 1.4.0(@types/react@19.2.2)(react@19.2.1)
+      streamdown: 1.6.10(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2)(react@19.2.1)
       tailwind-merge: 3.3.1
       ts-deepmerge: 7.0.3
       tw-animate-css: 1.4.0
       use-stick-to-bottom: 1.1.1(react@19.2.1)
       zod: 3.25.76
     transitivePeerDependencies:
+      - '@types/mdast'
       - '@types/react'
       - '@types/react-dom'
+      - micromark
+      - micromark-util-types
       - supports-color
 
   '@copilotkitnext/runtime@0.0.19-alpha.0(openai@4.104.0(ws@8.18.3)(zod@3.25.76))':
@@ -15943,10 +16014,6 @@ snapshots:
     dependencies:
       '@types/react': 19.2.2
 
-  '@types/react-syntax-highlighter@15.5.13':
-    dependencies:
-      '@types/react': 19.2.2
-
   '@types/react@19.2.2':
     dependencies:
       csstype: 3.1.3
@@ -17984,6 +18051,8 @@ snapshots:
 
   get-caller-file@2.0.5: {}
 
+  get-east-asian-width@1.4.0: {}
+
   get-intrinsic@1.3.0:
     dependencies:
       call-bind-apply-helpers: 1.0.2
@@ -18326,6 +18395,8 @@ snapshots:
   hast-util-whitespace@3.0.0:
     dependencies:
       '@types/hast': 3.0.4
+
+  hast@1.0.0: {}
 
   hastscript@6.0.0:
     dependencies:
@@ -19803,6 +19874,38 @@ snapshots:
       micromark-util-symbol: 2.0.1
       micromark-util-types: 2.0.2
 
+  micromark-extension-cjk-friendly-gfm-strikethrough@1.2.3(micromark-util-types@2.0.2)(micromark@4.0.2):
+    dependencies:
+      devlop: 1.1.0
+      get-east-asian-width: 1.4.0
+      micromark: 4.0.2
+      micromark-extension-cjk-friendly-util: 2.1.1(micromark-util-types@2.0.2)
+      micromark-util-character: 2.1.1
+      micromark-util-chunked: 2.0.1
+      micromark-util-resolve-all: 2.0.1
+      micromark-util-symbol: 2.0.1
+    optionalDependencies:
+      micromark-util-types: 2.0.2
+
+  micromark-extension-cjk-friendly-util@2.1.1(micromark-util-types@2.0.2):
+    dependencies:
+      get-east-asian-width: 1.4.0
+      micromark-util-character: 2.1.1
+      micromark-util-symbol: 2.0.1
+    optionalDependencies:
+      micromark-util-types: 2.0.2
+
+  micromark-extension-cjk-friendly@1.2.3(micromark-util-types@2.0.2)(micromark@4.0.2):
+    dependencies:
+      devlop: 1.1.0
+      micromark: 4.0.2
+      micromark-extension-cjk-friendly-util: 2.1.1(micromark-util-types@2.0.2)
+      micromark-util-chunked: 2.0.1
+      micromark-util-resolve-all: 2.0.1
+      micromark-util-symbol: 2.0.1
+    optionalDependencies:
+      micromark-util-types: 2.0.2
+
   micromark-extension-gfm-autolink-literal@2.1.0:
     dependencies:
       micromark-util-character: 2.1.1
@@ -21162,7 +21265,9 @@ snapshots:
       gopd: 1.2.0
       set-function-name: 2.0.2
 
-  rehype-harden@1.1.5: {}
+  rehype-harden@1.1.7:
+    dependencies:
+      unist-util-visit: 5.0.0
 
   rehype-katex@7.0.1:
     dependencies:
@@ -21187,6 +21292,26 @@ snapshots:
       hast-util-to-estree: 3.1.3
     transitivePeerDependencies:
       - supports-color
+
+  remark-cjk-friendly-gfm-strikethrough@1.2.3(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2)(unified@11.0.5):
+    dependencies:
+      micromark-extension-cjk-friendly-gfm-strikethrough: 1.2.3(micromark-util-types@2.0.2)(micromark@4.0.2)
+      unified: 11.0.5
+    optionalDependencies:
+      '@types/mdast': 4.0.4
+    transitivePeerDependencies:
+      - micromark
+      - micromark-util-types
+
+  remark-cjk-friendly@1.2.3(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2)(unified@11.0.5):
+    dependencies:
+      micromark-extension-cjk-friendly: 1.2.3(micromark-util-types@2.0.2)(micromark@4.0.2)
+      unified: 11.0.5
+    optionalDependencies:
+      '@types/mdast': 4.0.4
+    transitivePeerDependencies:
+      - micromark
+      - micromark-util-types
 
   remark-gfm@4.0.1:
     dependencies:
@@ -21252,6 +21377,8 @@ snapshots:
       '@types/mdast': 4.0.4
       mdast-util-to-markdown: 2.1.2
       unified: 11.0.5
+
+  remend@1.0.1: {}
 
   require-directory@2.1.1: {}
 
@@ -21667,24 +21794,35 @@ snapshots:
       es-errors: 1.3.0
       internal-slot: 1.1.0
 
-  streamdown@1.4.0(@types/react@19.2.2)(react@19.2.1):
+  streamdown@1.6.10(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2)(react@19.2.1):
     dependencies:
       clsx: 2.1.1
+      hast: 1.0.0
+      hast-util-to-jsx-runtime: 2.3.6
+      html-url-attributes: 3.0.1
       katex: 0.16.25
       lucide-react: 0.542.0(react@19.2.1)
       marked: 16.4.1
       mermaid: 11.12.1
       react: 19.2.1
-      react-markdown: 10.1.0(@types/react@19.2.2)(react@19.2.1)
-      rehype-harden: 1.1.5
+      rehype-harden: 1.1.7
       rehype-katex: 7.0.1
       rehype-raw: 7.0.0
+      remark-cjk-friendly: 1.2.3(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2)(unified@11.0.5)
+      remark-cjk-friendly-gfm-strikethrough: 1.2.3(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2)(unified@11.0.5)
       remark-gfm: 4.0.1
       remark-math: 6.0.0
+      remark-parse: 11.0.0
+      remark-rehype: 11.1.2
+      remend: 1.0.1
       shiki: 3.14.0
       tailwind-merge: 3.3.1
+      unified: 11.0.5
+      unist-util-visit: 5.0.0
     transitivePeerDependencies:
-      - '@types/react'
+      - '@types/mdast'
+      - micromark
+      - micromark-util-types
       - supports-color
 
   string-length@4.0.2:
