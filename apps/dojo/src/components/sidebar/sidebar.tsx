@@ -62,7 +62,7 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
   // Filter demos based on current integration's features
   const filteredDemos = currentIntegration
     ? featureConfig.filter((demo) =>
-        currentIntegration.features.includes(demo.id as unknown as Feature),
+        (currentIntegration.features as Feature[]).includes(demo.id as Feature),
       )
     : []; // Show no demos if no integration is selected
 
