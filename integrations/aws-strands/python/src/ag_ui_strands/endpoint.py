@@ -38,3 +38,16 @@ def add_strands_fastapi_endpoint(
             event_generator(),
             media_type=encoder.get_content_type()
         )
+
+def add_ping(app: FastAPI, path: str) -> None:
+    """Add a ping endpoint to FastAPI app.
+    
+    Args:
+        app: FastAPI application instance
+        path: Path for the ping endpoint (default: "/ping")
+    """
+    
+    @app.get(path)
+    async def ping():
+        """Ping endpoint."""
+        return {"status": "healthy"}
