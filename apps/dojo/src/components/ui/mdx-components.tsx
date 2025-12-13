@@ -1,6 +1,5 @@
 import React, { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
-import { MarkdownComponents } from "./markdown-components";
 import { Streamdown } from "streamdown";
 
 type Components = ComponentProps<typeof Streamdown>['components'];
@@ -30,7 +29,6 @@ type CustomMDXComponents = Components & {
 
 // Combine all components for MDX
 export const MDXComponents: CustomMDXComponents = {
-  ...MarkdownComponents,
   // Custom components for MDX
   Video: VideoPlayer,
   video: VideoPlayer,

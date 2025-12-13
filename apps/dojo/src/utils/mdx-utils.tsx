@@ -41,7 +41,7 @@ export const MDXRenderer: React.FC<{
   return (
       <div className="mdx-content">
         {/* Render the markdown content with proper formatting */}
-        <Streamdown components={MDXComponents}>{content}</Streamdown>
+        <Streamdown components={MDXComponents} mode="static">{content}</Streamdown>
 
         {/* Insert processed video elements if any */}
         {processedVideos && (
