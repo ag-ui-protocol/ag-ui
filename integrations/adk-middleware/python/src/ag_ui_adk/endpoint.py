@@ -2,6 +2,8 @@
 
 """FastAPI endpoint for ADK middleware."""
 
+from typing import List, Optional
+
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from ag_ui.core import RunAgentInput
@@ -12,19 +14,58 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def add_adk_fastapi_endpoint(app: FastAPI, agent: ADKAgent, path: str = "/"):
+def _header_to_key(header_name: str) -> str:
+    """Convert header name to state key.
+
+    Strips 'x-' prefix and converts hyphens to underscores.
+    Example: 'x-user-id' -> 'user_id', 'x-tenant-id' -> 'tenant_id'
+    """
+    key = header_name.lower()
+    if key.startswith("x-"):
+        key = key[2:]
+    return key.replace("-", "_")
+
+
+def add_adk_fastapi_endpoint(
+    app: FastAPI,
+    agent: ADKAgent,
+    path: str = "/",
+    extract_headers: Optional[List[str]] = None,
+):
     """Add ADK middleware endpoint to FastAPI app.
-    
+
     Args:
         app: FastAPI application instance
         agent: Configured ADKAgent instance
         path: API endpoint path
+        extract_headers: Optional list of HTTP header names to extract into state.
+            Example: ["x-user-id", "x-tenant-id"]
+            Headers are stored in state.headers with the 'x-' prefix stripped and
+            hyphens converted to underscores (e.g., x-user-id -> user_id).
+            Client-provided state.headers values take precedence over extracted headers.
     """
-    
+
     @app.post(path)
     async def adk_endpoint(input_data: RunAgentInput, request: Request):
         """ADK middleware endpoint."""
-        
+
+        # Extract headers into state.headers if list provided
+        if extract_headers:
+            headers_dict = {}
+            for header_name in extract_headers:
+                value = request.headers.get(header_name)
+                if value is not None:
+                    state_key = _header_to_key(header_name)
+                    headers_dict[state_key] = value
+
+            if headers_dict:
+                existing_state = input_data.state if isinstance(input_data.state, dict) else {}
+                existing_headers = existing_state.get("headers", {}) if isinstance(existing_state.get("headers"), dict) else {}
+                # Client headers take precedence over extracted headers
+                merged_headers = {**headers_dict, **existing_headers}
+                merged_state = {**existing_state, "headers": merged_headers}
+                input_data = input_data.model_copy(update={"state": merged_state})
+
         # Get the accept header from the request
         accept_header = request.headers.get("accept")
         agent_id = path.lstrip('/')
@@ -81,16 +122,25 @@ def add_adk_fastapi_endpoint(app: FastAPI, agent: ADKAgent, path: str = "/"):
         return StreamingResponse(event_generator(), media_type=encoder.get_content_type())
 
 
-def create_adk_app(agent: ADKAgent, path: str = "/") -> FastAPI:
+def create_adk_app(
+    agent: ADKAgent,
+    path: str = "/",
+    extract_headers: Optional[List[str]] = None,
+) -> FastAPI:
     """Create a FastAPI app with ADK middleware endpoint.
-    
+
     Args:
-        agent: Configured ADKAgent instance  
+        agent: Configured ADKAgent instance
         path: API endpoint path
-        
+        extract_headers: Optional list of HTTP header names to extract into state.
+            Example: ["x-user-id", "x-tenant-id"]
+            Headers are stored in state.headers with the 'x-' prefix stripped and
+            hyphens converted to underscores (e.g., x-user-id -> user_id).
+            Client-provided state.headers values take precedence over extracted headers.
+
     Returns:
         FastAPI application instance
     """
     app = FastAPI(title="ADK Middleware for AG-UI Protocol")
-    add_adk_fastapi_endpoint(app, agent, path)
+    add_adk_fastapi_endpoint(app, agent, path, extract_headers=extract_headers)
     return app
