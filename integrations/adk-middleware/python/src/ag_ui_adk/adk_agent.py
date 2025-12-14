@@ -12,7 +12,8 @@ from datetime import datetime
 from ag_ui.core import (
     RunAgentInput, BaseEvent, EventType,
     RunStartedEvent, RunFinishedEvent, RunErrorEvent,
-    ToolCallEndEvent, SystemMessage,ToolCallResultEvent
+    ToolCallEndEvent, SystemMessage, ToolCallResultEvent,
+    MessagesSnapshotEvent
 )
 
 from google.adk import Runner
@@ -25,7 +26,7 @@ from google.adk.auth.credential_service.base_credential_service import BaseCrede
 from google.adk.auth.credential_service.in_memory_credential_service import InMemoryCredentialService
 from google.genai import types
 
-from .event_translator import EventTranslator
+from .event_translator import EventTranslator, adk_events_to_messages
 from .session_manager import SessionManager
 from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
@@ -75,6 +76,9 @@ class ADKAgent:
 
         # Predictive state configuration
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
+
+        # Message snapshot configuration
+        emit_messages_snapshot: bool = False,
     ):
         """Initialize the ADKAgent.
 
@@ -99,6 +103,12 @@ class ADKAgent:
                 enabling the UI to show state changes in real-time as tool arguments
                 are streamed. Use PredictStateMapping to define which tool arguments
                 map to which state keys.
+            emit_messages_snapshot: Whether to emit a MessagesSnapshotEvent at the end
+                of each run containing the full conversation history. Defaults to False
+                to preserve existing behavior. Set to True for clients that need the
+                full message history (e.g., for client-side persistence or AG-UI
+                protocol compliance). Note: Clients using CopilotKit can use the
+                /agents/state endpoint instead for on-demand history retrieval.
         """
         if app_name and app_name_extractor:
             raise ValueError("Cannot specify both 'app_name' and 'app_name_extractor'")
@@ -154,6 +164,9 @@ class ADKAgent:
 
         # Predictive state configuration for real-time state updates
         self._predict_state = predict_state
+
+        # Message snapshot configuration
+        self._emit_messages_snapshot = emit_messages_snapshot
 
         # Event translator will be created per-session for thread safety
 
@@ -1446,6 +1459,27 @@ class ADKAgent:
             if final_state:
                 ag_ui_event =  event_translator._create_state_snapshot_event(final_state)
                 await event_queue.put(ag_ui_event)
+
+            # Emit MESSAGES_SNAPSHOT if configured
+            if self._emit_messages_snapshot:
+                try:
+                    # Get the existing session (should exist since we're at end of run)
+                    session = await self._session_manager.get_or_create_session(
+                        session_id=input.thread_id,
+                        app_name=app_name,
+                        user_id=user_id
+                    )
+                    if session and hasattr(session, 'events') and session.events:
+                        messages = adk_events_to_messages(session.events)
+                        if messages:
+                            messages_snapshot_event = MessagesSnapshotEvent(
+                                type=EventType.MESSAGES_SNAPSHOT,
+                                messages=messages
+                            )
+                            await event_queue.put(messages_snapshot_event)
+                            logger.debug(f"Emitted MESSAGES_SNAPSHOT with {len(messages)} messages for thread {input.thread_id}")
+                except Exception as snapshot_error:
+                    logger.warning(f"Failed to emit MESSAGES_SNAPSHOT for thread {input.thread_id}: {snapshot_error}")
 
             # Emit any deferred confirm_changes events LAST, right before completion
             # This ensures the frontend sees confirm_changes as the last tool call event,

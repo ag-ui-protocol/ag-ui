@@ -14,7 +14,8 @@ from ag_ui.core import (
     TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent,
     ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent,
     ToolCallResultEvent, StateSnapshotEvent, StateDeltaEvent,
-    CustomEvent
+    CustomEvent, Message, UserMessage, AssistantMessage, ToolMessage,
+    ToolCall, FunctionCall
 )
 import json
 from google.adk.events import Event as ADKEvent
@@ -753,4 +754,111 @@ class EventTranslator:
         self._predictive_state_tool_call_ids.clear()
         self._deferred_confirm_events.clear()
         logger.debug("Reset EventTranslator state (including streaming state)")
+
+
+def _translate_function_calls_to_tool_calls(function_calls: List[Any]) -> List[ToolCall]:
+    """Convert ADK function calls to AG-UI ToolCall format.
+
+    Args:
+        function_calls: List of ADK function call objects
+
+    Returns:
+        List of AG-UI ToolCall objects
+    """
+    tool_calls = []
+    for fc in function_calls:
+        tool_call = ToolCall(
+            id=fc.id if hasattr(fc, 'id') and fc.id else str(uuid.uuid4()),
+            type="function",
+            function=FunctionCall(
+                name=fc.name,
+                arguments=json.dumps(fc.args) if hasattr(fc, 'args') and fc.args else "{}"
+            )
+        )
+        tool_calls.append(tool_call)
+    return tool_calls
+
+
+def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
+    """Convert ADK session events to AG-UI Message list.
+
+    This function extracts complete messages from ADK events, filtering out
+    partial/streaming events and converting to the appropriate AG-UI message types.
+
+    Args:
+        events: List of ADK events from a session (session.events)
+
+    Returns:
+        List of AG-UI Message objects representing the conversation history
+    """
+    messages: List[Message] = []
+
+    for event in events:
+        # Skip events without content
+        if not hasattr(event, 'content') or event.content is None:
+            continue
+
+        # Skip partial/streaming events - we only want complete messages
+        if hasattr(event, 'partial') and event.partial:
+            continue
+
+        content = event.content
+
+        # Skip events without parts
+        if not hasattr(content, 'parts') or not content.parts:
+            continue
+
+        # Extract text content from parts
+        text_content = ""
+        for part in content.parts:
+            if hasattr(part, 'text') and part.text:
+                text_content += part.text
+
+        # Get function calls and responses
+        function_calls = event.get_function_calls() if hasattr(event, 'get_function_calls') else []
+        function_responses = event.get_function_responses() if hasattr(event, 'get_function_responses') else []
+
+        # Determine the author/role
+        author = getattr(event, 'author', None)
+        event_id = getattr(event, 'id', None) or str(uuid.uuid4())
+
+        # Handle function responses as ToolMessages
+        if function_responses:
+            for fr in function_responses:
+                tool_message = ToolMessage(
+                    id=str(uuid.uuid4()),
+                    role="tool",
+                    content=_serialize_tool_response(fr.response) if hasattr(fr, 'response') else "",
+                    tool_call_id=fr.id if hasattr(fr, 'id') and fr.id else str(uuid.uuid4())
+                )
+                messages.append(tool_message)
+            continue
+
+        # Skip events with no meaningful content
+        if not text_content and not function_calls:
+            continue
+
+        # Handle user messages
+        if author == "user":
+            user_message = UserMessage(
+                id=event_id,
+                role="user",
+                content=text_content
+            )
+            messages.append(user_message)
+
+        # Handle assistant/model messages
+        elif author == "model" or author is None:
+            # Convert function calls to tool calls if present
+            tool_calls = _translate_function_calls_to_tool_calls(function_calls) if function_calls else None
+
+            assistant_message = AssistantMessage(
+                id=event_id,
+                role="assistant",
+                content=text_content if text_content else None,
+                tool_calls=tool_calls
+            )
+            messages.append(assistant_message)
+
+    return messages
         
