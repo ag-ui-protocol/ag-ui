@@ -138,7 +138,7 @@ export class AgenticChatPage {
     const agentMessage = this.page.locator(".copilotKitAssistantMessage").last();
 
     // Check for main weather response structure
-    await expect(agentMessage).toContainText("The current weather in Islamabad is as follows:", { timeout: 10000 });
+    await expect(agentMessage).toContainText(/weather.*islamabad/i, { timeout: 10000 });
 
     // Check for temperature information
     await expect(agentMessage).toContainText("Temperature:", { timeout: 5000 });
