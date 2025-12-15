@@ -133,20 +133,20 @@ importers:
         specifier: ^2.0.42
         version: 2.0.52(zod@3.25.76)
       '@copilotkit/react-core':
-        specifier: 1.50.0-beta.14
-        version: 1.50.0-beta.14(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(zod@3.25.76)
+        specifier: 1.50.0
+        version: 1.50.0(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(zod@3.25.76)
       '@copilotkit/react-ui':
-        specifier: 1.50.0-beta.14
-        version: 1.50.0-beta.14(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(zod@3.25.76)
+        specifier: 1.50.0
+        version: 1.50.0(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(zod@3.25.76)
       '@copilotkit/runtime':
-        specifier: 1.50.0-beta.14
-        version: 1.50.0-beta.14(44d143b043c7a525c7076cd6f3b9abdc)
+        specifier: 1.50.0
+        version: 1.50.0(0774148d9514ccd8da381a83704ce565)
       '@copilotkit/runtime-client-gql':
-        specifier: 1.50.0-beta.14
-        version: 1.50.0-beta.14(graphql@16.11.0)(react@19.2.1)
+        specifier: 1.50.0
+        version: 1.50.0(graphql@16.11.0)(react@19.2.1)
       '@copilotkit/shared':
-        specifier: 1.50.0-beta.14
-        version: 1.50.0-beta.14
+        specifier: 1.50.0
+        version: 1.50.0
       '@copilotkitnext/agent':
         specifier: 0.0.28
         version: 0.0.28
@@ -1678,20 +1678,20 @@ packages:
   '@clack/prompts@0.11.0':
     resolution: {integrity: sha512-pMN5FcrEw9hUkZA4f+zLlzivQSeQf5dRGJjSUbvVYDLvpKCdQx5OaknvKzgbtXOizhP+SJJJjqEbOe55uKKfAw==}
 
-  '@copilotkit/react-core@1.50.0-beta.14':
-    resolution: {integrity: sha512-kkAX/6LhlyOylRusXoUVuQLhMGoWvvA+hakhMbCdAUkFxse4kzo7y4urLuOdS19FE6ukwkccINXY3DtaM3ob4w==}
+  '@copilotkit/react-core@1.50.0':
+    resolution: {integrity: sha512-JfUEvmgXgPz7wIQq9EFXWGDMtYLIVKSNqPdJROEomZXLhREDlxpg+jr5KHvoOPUlSnVLzuPObRKSdeJTwVOGsQ==}
     peerDependencies:
       react: ^18 || ^19 || ^19.0.0-rc
       react-dom: ^18 || ^19 || ^19.0.0-rc
       zod: '>=3.0.0'
 
-  '@copilotkit/react-ui@1.50.0-beta.14':
-    resolution: {integrity: sha512-evLGIZbs3TQpK5GAIKx+wPehzGuKa04hWeAOrEhQ6b9AG33UGX8As1Xo844xF8WIAE/Yq2jxkvyt+7jQB1zs9g==}
+  '@copilotkit/react-ui@1.50.0':
+    resolution: {integrity: sha512-BB4d5yrf3n3P0stCI7DLLo22EhesNz4ELuSKFT39P+GEjKMVcpZu+mR6NgkbIkrmU6cFxxsrJKv20p7T+EBnoA==}
     peerDependencies:
       react: ^18 || ^19 || ^19.0.0-rc
 
-  '@copilotkit/runtime-client-gql@1.50.0-beta.14':
-    resolution: {integrity: sha512-AqKq376IYUgZnY9F7l1sRpaawEB8W7UqrF5aYupBsXhDJohVqoiiFBMPDVw/ZGPsFPt6Ys/tfmmfAgM8zi2pGg==}
+  '@copilotkit/runtime-client-gql@1.50.0':
+    resolution: {integrity: sha512-qgXGd18UXsERsUWUZ8gJkI0iR5GRNbZWCBs1DElik7E3TMTtZ1nkBnt3xOUBtea5dIuAtvjaiFrctTHUanfL3w==}
     peerDependencies:
       react: ^18 || ^19 || ^19.0.0-rc
 
@@ -1704,26 +1704,20 @@ packages:
       '@ag-ui/langgraph': '>=0.0.18'
       '@ag-ui/proto': '>=0.0.39'
 
-  '@copilotkit/runtime@1.50.0-beta.14':
-    resolution: {integrity: sha512-auQPflDnNw8rOP3tzAuqA88hlpyAmcQHnMKqF3SPffPcJU83ySnsPT9PXHgScdry9B2l0F+6OeX5Wevo1sSTKg==}
+  '@copilotkit/runtime@1.50.0':
+    resolution: {integrity: sha512-0eFMPH+x2rs9IutDQuiNto7y7jxVeaa0Om205D/CEceKzG3h6rPTCMso7+ZMx0MEqMdth5ec9b/SZomXLHk0sw==}
     peerDependencies:
-      '@ag-ui/client': ^0.0.42
-      '@ag-ui/core': '>=0.0.42'
-      '@ag-ui/encoder': '>=0.0.42'
-      '@ag-ui/langgraph': '>=0.0.20'
-      '@ag-ui/proto': '>=0.0.42'
       '@anthropic-ai/sdk': ^0.57.0
-      '@langchain/aws': ^0.1.9
-      '@langchain/community': ^0.3.58
-      '@langchain/google-gauth': ^0.1.0
-      '@langchain/langgraph-sdk': ^0.0.70
-      '@langchain/openai': ^0.4.2
+      '@langchain/aws': '>=0.1.9'
+      '@langchain/community': '>=0.3.58'
+      '@langchain/core': '>=0.3.66'
+      '@langchain/google-gauth': '>=0.1.0'
+      '@langchain/langgraph-sdk': '>=0.1.2'
+      '@langchain/openai': '>=0.4.2'
       groq-sdk: '>=0.3.0 <1.0.0'
-      langchain: ^0.3.3
+      langchain: '>=0.3.3'
       openai: ^4.85.1
     peerDependenciesMeta:
-      '@ag-ui/langgraph':
-        optional: true
       '@anthropic-ai/sdk':
         optional: true
       '@langchain/aws':
@@ -1746,23 +1740,23 @@ packages:
   '@copilotkit/shared@1.10.6':
     resolution: {integrity: sha512-56Rltf4fDBqCpl1ZXARypt5NdE4LTg3tGPPLurZpgPmm31Lv5EAHpfjC7I55vt9A0mXWlTCHtCrpiaAlTyzGJw==}
 
-  '@copilotkit/shared@1.50.0-beta.14':
-    resolution: {integrity: sha512-seLD1Qnb0mIGEDuru9xZHY+CvWCh51+vrnEGoJfmySUEN0stMwSdRYHykWEuubVImUU6J68bDaGp/ImCai/xfQ==}
+  '@copilotkit/shared@1.50.0':
+    resolution: {integrity: sha512-N7cBAXRqIwIN05dMDJBDoPF6WY9VEOLiIm9aoUTu3begtMpdjY895uhrGyphHB4hg9UdDrvGAR1cYyLGHnfpVA==}
 
   '@copilotkitnext/agent@0.0.28':
     resolution: {integrity: sha512-bJ9srgdtcQmN38JQj+nh2sK2WZn6tcGdxU4d8KC+AziPVIwLf168Ccw0YxnQVwMdnNqOD3qcoH0lLeJz+KCAaQ==}
     engines: {node: '>=18'}
 
-  '@copilotkitnext/agent@0.0.30':
-    resolution: {integrity: sha512-0QHoJOqrV8n+1yPd0HTnHax0ZgDw9I3/Mg5Lvzh0Ngfyam0I5xQNj0deB09V2QJWabwnwtwAeiMl82m6Wuvxdg==}
+  '@copilotkitnext/agent@0.0.31':
+    resolution: {integrity: sha512-9EijIWxTPMnDwZKoktOgRQ+b00eVJA+Ph2d296RuKZlwwvq6feOZctaz3Gt26wknX1ySQC7cMy/7H1eDiMRjSw==}
     engines: {node: '>=18'}
 
   '@copilotkitnext/core@0.0.28':
     resolution: {integrity: sha512-JOCmdfEbqxTxJbFwV8pH1A32/CVIHAqJ9tGJww7sC32f5dAlssCu9+m8ZeOpQ/CBLrf2/mDr8oMaGZpsJKN8lQ==}
     engines: {node: '>=18'}
 
-  '@copilotkitnext/core@0.0.30':
-    resolution: {integrity: sha512-WzRTNbSLQoRzpaFAbqH3l5jiAzZou7/12dYkIWZLQI9sz3jmfLsVDLtmNjirSYC1HyMwcKSw+GckzUBBQR6oxQ==}
+  '@copilotkitnext/core@0.0.31':
+    resolution: {integrity: sha512-nlXZ9bDR4rMSJcLiNk2W83JcRRwDOQCON1G0tP2dhs/TtpQTbuTvQj8Lm29M8ibulfhiFU3EBNKPNnkbANJANQ==}
     engines: {node: '>=18'}
 
   '@copilotkitnext/react@0.0.28':
@@ -1772,8 +1766,8 @@ packages:
       react: '>=16.8.0'
       react-dom: '>=16.8.0'
 
-  '@copilotkitnext/react@0.0.30':
-    resolution: {integrity: sha512-gOvnfny7XkDgdjoOBlp5bAT+dBkInED7uwSUsW6SHMV+PIletGcX4AxG+l1/TcykNeD94qgA8GfmW3PVZ3kwjw==}
+  '@copilotkitnext/react@0.0.31':
+    resolution: {integrity: sha512-w3eD3Xvv6qh3rKIEcQY74MMAFgAecP1piaF+a03mv5/7NbJk5Imv0moAXloL4ugsPToqf845oseG/qNgR2SAGQ==}
     engines: {node: '>=18'}
     peerDependencies:
       react: '>=16.8.0'
@@ -1785,8 +1779,8 @@ packages:
     peerDependencies:
       openai: ^5.9.0
 
-  '@copilotkitnext/runtime@0.0.30':
-    resolution: {integrity: sha512-Svj/N7XgewcX0Je69mWNvjziSKMX2M4I93unNCiDvkIJ3RTRjPO3Qnx7/neA0xv18AJ23kGX7C7y/b4m6Ktz6w==}
+  '@copilotkitnext/runtime@0.0.31':
+    resolution: {integrity: sha512-LzmujyZWDmaI2llrQhoKFfaZLqxlnV5JLRvxN0I3onm/zHkog3/vtv+sTOLVkcz/Cj9f/0zjITtJ4rwOwmx4MQ==}
     engines: {node: '>=18'}
     peerDependencies:
       openai: ^5.9.0
@@ -1795,16 +1789,16 @@ packages:
     resolution: {integrity: sha512-ThAhdlaahjqWFINy8YHQhcIJyoM+lihroWcZJOgo/5eKwU31FAKY/c63qFLxlnmNwET9vXcfKbb64nE3wW9EdQ==}
     engines: {node: '>=18'}
 
-  '@copilotkitnext/shared@0.0.30':
-    resolution: {integrity: sha512-QrR96aGcGNliTOP89pQ/NdHqND99S/AkV5Rc/sw2t9UujebZ+m7TgSEcTvBs2KhiHsWAlawXkIqRl9D9KLMwcQ==}
+  '@copilotkitnext/shared@0.0.31':
+    resolution: {integrity: sha512-YjrTV6hGnmD9IGau0bCjw5KwqvBuGU//kQOUeKyEEK2/C6PaZclpNiTwiFV9yPDRuS3p3CEQMwj/dc5enZ5pag==}
     engines: {node: '>=18'}
 
   '@copilotkitnext/web-inspector@0.0.28':
     resolution: {integrity: sha512-+5EEdaLwgPxWd7ntin4sz2IC9MhhB2CvqIqfC48X2w6WBZH4948P4z4QU1dBuDqTu3UyGFUGdfLJTY3EwkVIhw==}
     engines: {node: '>=18'}
 
-  '@copilotkitnext/web-inspector@0.0.30':
-    resolution: {integrity: sha512-kHSOhgML+SC1KQgbWdIN3HLR6GL4bS3hj3/7lX2PiDarqqGVUEn6W2S6Dx9I0TYGgtlMuelQ6noWLbW94b+/yg==}
+  '@copilotkitnext/web-inspector@0.0.31':
+    resolution: {integrity: sha512-C3+eM0jGVGrGXA4nJMtW6FhKiV7XQWtuZkWB1xlfYpbYcHCi//7T8qAY0v+XkxMrSawoEc4BZw+pNsoC9PHimQ==}
     engines: {node: '>=18'}
 
   '@emnapi/core@1.5.0':
@@ -10645,6 +10639,22 @@ snapshots:
       '@ag-ui/core': 0.0.42
       '@ag-ui/proto': 0.0.42
 
+  '@ag-ui/langgraph@0.0.20(@ag-ui/client@0.0.42)(@ag-ui/core@0.0.42)(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76))(react-dom@19.2.1(react@19.2.1))(react@19.2.1)':
+    dependencies:
+      '@ag-ui/client': 0.0.42
+      '@ag-ui/core': 0.0.42
+      '@langchain/core': 0.3.79(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76))
+      '@langchain/langgraph-sdk': 0.1.10(@langchain/core@0.3.79(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76)))(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
+      partial-json: 0.1.7
+      rxjs: 7.8.1
+    transitivePeerDependencies:
+      - '@opentelemetry/api'
+      - '@opentelemetry/exporter-trace-otlp-proto'
+      - '@opentelemetry/sdk-trace-base'
+      - openai
+      - react
+      - react-dom
+
   '@ag-ui/langgraph@0.0.20(@ag-ui/client@sdks+typescript+packages+client)(@ag-ui/core@sdks+typescript+packages+core)(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76))(react-dom@19.2.1(react@19.2.1))(react@19.2.1)':
     dependencies:
       '@ag-ui/client': link:sdks/typescript/packages/client
@@ -11728,12 +11738,13 @@ snapshots:
       picocolors: 1.1.1
       sisteransi: 1.0.5
 
-  '@copilotkit/react-core@1.50.0-beta.14(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(zod@3.25.76)':
+  '@copilotkit/react-core@1.50.0(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(zod@3.25.76)':
     dependencies:
-      '@copilotkit/runtime-client-gql': 1.50.0-beta.14(graphql@16.11.0)(react@19.2.1)
-      '@copilotkit/shared': 1.50.0-beta.14
-      '@copilotkitnext/core': 0.0.30
-      '@copilotkitnext/react': 0.0.30(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
+      '@ag-ui/client': 0.0.42
+      '@copilotkit/runtime-client-gql': 1.50.0(graphql@16.11.0)(react@19.2.1)
+      '@copilotkit/shared': 1.50.0
+      '@copilotkitnext/core': 0.0.31
+      '@copilotkitnext/react': 0.0.31(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       '@scarf/scarf': 1.4.0
       react: 19.2.1
       react-dom: 19.2.1(react@19.2.1)
@@ -11747,11 +11758,11 @@ snapshots:
       - graphql
       - supports-color
 
-  '@copilotkit/react-ui@1.50.0-beta.14(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(zod@3.25.76)':
+  '@copilotkit/react-ui@1.50.0(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(zod@3.25.76)':
     dependencies:
-      '@copilotkit/react-core': 1.50.0-beta.14(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(zod@3.25.76)
-      '@copilotkit/runtime-client-gql': 1.50.0-beta.14(graphql@16.11.0)(react@19.2.1)
-      '@copilotkit/shared': 1.50.0-beta.14
+      '@copilotkit/react-core': 1.50.0(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(graphql@16.11.0)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(zod@3.25.76)
+      '@copilotkit/runtime-client-gql': 1.50.0(graphql@16.11.0)(react@19.2.1)
+      '@copilotkit/shared': 1.50.0
       '@headlessui/react': 2.2.9(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       react: 19.2.1
       react-markdown: 10.1.0(@types/react@19.2.2)(react@19.2.1)
@@ -11768,9 +11779,9 @@ snapshots:
       - supports-color
       - zod
 
-  '@copilotkit/runtime-client-gql@1.50.0-beta.14(graphql@16.11.0)(react@19.2.1)':
+  '@copilotkit/runtime-client-gql@1.50.0(graphql@16.11.0)(react@19.2.1)':
     dependencies:
-      '@copilotkit/shared': 1.50.0-beta.14
+      '@copilotkit/shared': 1.50.0
       '@urql/core': 5.2.0(graphql@16.11.0)
       react: 19.2.1
       untruncate-json: 0.0.1
@@ -11961,15 +11972,14 @@ snapshots:
       - ws
       - youtubei.js
 
-  '@copilotkit/runtime@1.50.0-beta.14(44d143b043c7a525c7076cd6f3b9abdc)':
+  '@copilotkit/runtime@1.50.0(0774148d9514ccd8da381a83704ce565)':
     dependencies:
-      '@ag-ui/client': link:sdks/typescript/packages/client
-      '@ag-ui/core': link:sdks/typescript/packages/core
-      '@ag-ui/encoder': link:sdks/typescript/packages/encoder
-      '@ag-ui/proto': link:sdks/typescript/packages/proto
-      '@copilotkit/shared': 1.50.0-beta.14
-      '@copilotkitnext/agent': 0.0.30
-      '@copilotkitnext/runtime': 0.0.30(openai@4.104.0(ws@8.18.3)(zod@3.25.76))
+      '@ag-ui/client': 0.0.42
+      '@ag-ui/core': 0.0.42
+      '@ag-ui/langgraph': 0.0.20(@ag-ui/client@0.0.42)(@ag-ui/core@0.0.42)(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76))(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
+      '@copilotkit/shared': 1.50.0
+      '@copilotkitnext/agent': 0.0.31
+      '@copilotkitnext/runtime': 0.0.31(openai@4.104.0(ws@8.18.3)(zod@3.25.76))
       '@graphql-yoga/plugin-defer-stream': 3.16.0(graphql-yoga@5.16.0(graphql@16.11.0))(graphql@16.11.0)
       '@hono/node-server': 1.19.7(hono@4.10.3)
       '@langchain/core': 0.3.79(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76))
@@ -11988,11 +11998,10 @@ snapshots:
       type-graphql: 2.0.0-rc.1(class-validator@0.14.2)(graphql-scalars@1.24.2(graphql@16.11.0))(graphql@16.11.0)
       zod: 3.25.76
     optionalDependencies:
-      '@ag-ui/langgraph': link:integrations/langgraph/typescript
       '@anthropic-ai/sdk': 0.57.0
       '@langchain/aws': 0.1.15(@langchain/core@0.3.79(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76)))
       '@langchain/google-gauth': 0.1.8(@langchain/core@0.3.79(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76)))(zod@3.25.76)
-      '@langchain/langgraph-sdk': 0.0.70(@langchain/core@0.3.79(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76)))(react@19.2.1)
+      '@langchain/langgraph-sdk': 0.1.10(@langchain/core@0.3.79(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76)))(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       '@langchain/openai': 1.0.0(@langchain/core@0.3.79(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76)))(ws@8.18.3)
       groq-sdk: 0.5.0
       langchain: 0.3.36(@langchain/aws@0.1.15(@langchain/core@0.3.79(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76))))(@langchain/core@0.3.79(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76)))(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(axios@1.12.2)(handlebars@4.7.8)(openai@4.104.0(ws@8.18.3)(zod@3.25.76))(ws@8.18.3)
@@ -12002,6 +12011,8 @@ snapshots:
       - '@opentelemetry/exporter-trace-otlp-proto'
       - '@opentelemetry/sdk-trace-base'
       - encoding
+      - react
+      - react-dom
       - supports-color
 
   '@copilotkit/shared@1.10.6':
@@ -12016,7 +12027,7 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  '@copilotkit/shared@1.50.0-beta.14':
+  '@copilotkit/shared@1.50.0':
     dependencies:
       '@ag-ui/core': 0.0.42
       '@segment/analytics-node': 2.3.0
@@ -12041,7 +12052,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@copilotkitnext/agent@0.0.30':
+  '@copilotkitnext/agent@0.0.31':
     dependencies:
       '@ag-ui/client': 0.0.42
       '@ai-sdk/anthropic': 2.0.23(zod@3.25.76)
@@ -12063,10 +12074,10 @@ snapshots:
       zod: 3.25.76
       zod-to-json-schema: 3.24.6(zod@3.25.76)
 
-  '@copilotkitnext/core@0.0.30':
+  '@copilotkitnext/core@0.0.31':
     dependencies:
       '@ag-ui/client': 0.0.42
-      '@copilotkitnext/shared': 0.0.30
+      '@copilotkitnext/shared': 0.0.31
       rxjs: 7.8.1
       zod: 3.25.76
       zod-to-json-schema: 3.24.6(zod@3.25.76)
@@ -12099,13 +12110,13 @@ snapshots:
       - '@types/react-dom'
       - supports-color
 
-  '@copilotkitnext/react@0.0.30(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)':
+  '@copilotkitnext/react@0.0.31(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)':
     dependencies:
       '@ag-ui/client': 0.0.42
       '@ag-ui/core': 0.0.42
-      '@copilotkitnext/core': 0.0.30
-      '@copilotkitnext/shared': 0.0.30
-      '@copilotkitnext/web-inspector': 0.0.30
+      '@copilotkitnext/core': 0.0.31
+      '@copilotkitnext/shared': 0.0.31
+      '@copilotkitnext/web-inspector': 0.0.31
       '@lit-labs/react': 2.1.3(@types/react@19.2.2)
       '@radix-ui/react-dropdown-menu': 2.1.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       '@radix-ui/react-slot': 1.2.3(@types/react@19.2.2)(react@19.2.1)
@@ -12141,12 +12152,12 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@copilotkitnext/runtime@0.0.30(openai@4.104.0(ws@8.18.3)(zod@3.25.76))':
+  '@copilotkitnext/runtime@0.0.31(openai@4.104.0(ws@8.18.3)(zod@3.25.76))':
     dependencies:
       '@ag-ui/client': 0.0.42
       '@ag-ui/core': 0.0.42
       '@ag-ui/encoder': 0.0.42
-      '@copilotkitnext/shared': 0.0.30
+      '@copilotkitnext/shared': 0.0.31
       cors: 2.8.5
       express: 4.21.2
       hono: 4.10.3
@@ -12161,7 +12172,7 @@ snapshots:
       partial-json: 0.1.7
       uuid: 11.1.0
 
-  '@copilotkitnext/shared@0.0.30':
+  '@copilotkitnext/shared@0.0.31':
     dependencies:
       '@ag-ui/client': 0.0.42
       partial-json: 0.1.7
@@ -12174,10 +12185,10 @@ snapshots:
       lit: 3.3.1
       lucide: 0.525.0
 
-  '@copilotkitnext/web-inspector@0.0.30':
+  '@copilotkitnext/web-inspector@0.0.31':
     dependencies:
       '@ag-ui/client': 0.0.42
-      '@copilotkitnext/core': 0.0.30
+      '@copilotkitnext/core': 0.0.31
       lit: 3.3.1
       lucide: 0.525.0
       marked: 12.0.2
@@ -13137,17 +13148,6 @@ snapshots:
     optionalDependencies:
       '@langchain/core': 0.3.78(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76))
       react: 19.2.1
-
-  '@langchain/langgraph-sdk@0.0.70(@langchain/core@0.3.79(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76)))(react@19.2.1)':
-    dependencies:
-      '@types/json-schema': 7.0.15
-      p-queue: 6.6.2
-      p-retry: 4.6.2
-      uuid: 9.0.1
-    optionalDependencies:
-      '@langchain/core': 0.3.79(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76))
-      react: 19.2.1
-    optional: true
 
   '@langchain/langgraph-sdk@0.1.10(@langchain/core@0.3.78(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@6.10.0(ws@8.18.3)(zod@3.25.76)))(react-dom@19.2.1(react@19.2.1))(react@19.2.1)':
     dependencies:
@@ -18526,7 +18526,7 @@ snapshots:
       isstream: 0.1.2
       jsonwebtoken: 9.0.2
       mime-types: 2.1.35
-      retry-axios: 2.6.0(axios@1.12.2(debug@4.4.3))
+      retry-axios: 2.6.0(axios@1.12.2)
       tough-cookie: 4.1.4
     transitivePeerDependencies:
       - supports-color
@@ -20588,7 +20588,7 @@ snapshots:
 
   ora@6.3.1:
     dependencies:
-      chalk: 5.2.0
+      chalk: 5.6.2
       cli-cursor: 4.0.0
       cli-spinners: 2.9.2
       is-interactive: 2.0.0
@@ -21420,7 +21420,7 @@ snapshots:
       onetime: 5.1.2
       signal-exit: 3.0.7
 
-  retry-axios@2.6.0(axios@1.12.2(debug@4.4.3)):
+  retry-axios@2.6.0(axios@1.12.2):
     dependencies:
       axios: 1.12.2(debug@4.4.3)
 
