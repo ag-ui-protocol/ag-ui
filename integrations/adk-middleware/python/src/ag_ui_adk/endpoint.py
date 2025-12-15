@@ -167,17 +167,23 @@ def add_adk_fastapi_endpoint(
         thread_id = request_data.threadId
 
         try:
-            # Get app_name and user_id from agent configuration
-            # These are needed to look up the session
-            app_name = agent._static_app_name or agent._adk_agent.name
-            user_id = agent._static_user_id or "default_user"
+            # Get session metadata from existing session
+            # This works correctly whether static values or extractors were used
+            metadata = agent._get_session_metadata(thread_id)
 
-            # Try to get the session
-            session = await agent._session_manager.get_or_create_session(
-                session_id=thread_id,
-                app_name=app_name,
-                user_id=user_id
-            )
+            if metadata:
+                app_name = metadata["app_name"]
+                user_id = metadata["user_id"]
+
+                # Get the session (don't create - just retrieve)
+                session = await agent._session_manager._session_service.get_session(
+                    session_id=thread_id,
+                    app_name=app_name,
+                    user_id=user_id
+                )
+            else:
+                # Session doesn't exist - return not found
+                session = None
 
             thread_exists = session is not None
 

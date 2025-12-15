@@ -409,7 +409,16 @@ class TestAgentsStateEndpoint:
             create_mock_adk_event(author="model", text="Hi!"),
         ]
 
-        mock_agent._session_manager.get_or_create_session = AsyncMock(return_value=mock_session)
+        # Mock _get_session_metadata to return session metadata
+        mock_agent._get_session_metadata = MagicMock(return_value={
+            "app_name": "test_app",
+            "user_id": "test_user"
+        })
+
+        # Mock _session_service.get_session to return the session
+        mock_session_service = MagicMock()
+        mock_session_service.get_session = AsyncMock(return_value=mock_session)
+        mock_agent._session_manager._session_service = mock_session_service
         mock_agent._session_manager.get_session_state = AsyncMock(return_value={"key": "value"})
 
         app = FastAPI()
@@ -435,8 +444,8 @@ class TestAgentsStateEndpoint:
 
     def test_agents_state_handles_missing_session(self, mock_agent):
         """Should return threadExists=false for missing session."""
-        mock_agent._session_manager.get_or_create_session = AsyncMock(return_value=None)
-        mock_agent._session_manager.get_session_state = AsyncMock(return_value=None)
+        # Mock _get_session_metadata to return None (session doesn't exist)
+        mock_agent._get_session_metadata = MagicMock(return_value=None)
 
         app = FastAPI()
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
@@ -449,15 +458,24 @@ class TestAgentsStateEndpoint:
 
             assert response.status_code == 200
             data = response.json()
-            # Note: get_or_create_session creates a session, so this may return True
-            # The important thing is that it doesn't error
+            assert data["threadExists"] is False
+            assert data["threadId"] == "nonexistent-thread"
 
     def test_agents_state_handles_empty_events(self, mock_agent):
         """Should return empty messages list for session with no events."""
         mock_session = MagicMock()
         mock_session.events = []
 
-        mock_agent._session_manager.get_or_create_session = AsyncMock(return_value=mock_session)
+        # Mock _get_session_metadata to return session metadata
+        mock_agent._get_session_metadata = MagicMock(return_value={
+            "app_name": "test_app",
+            "user_id": "test_user"
+        })
+
+        # Mock _session_service.get_session to return the session
+        mock_session_service = MagicMock()
+        mock_session_service.get_session = AsyncMock(return_value=mock_session)
+        mock_agent._session_manager._session_service = mock_session_service
         mock_agent._session_manager.get_session_state = AsyncMock(return_value={})
 
         app = FastAPI()
@@ -499,7 +517,16 @@ class TestAgentsStateEndpoint:
         mock_session = MagicMock()
         mock_session.events = []
 
-        mock_agent._session_manager.get_or_create_session = AsyncMock(return_value=mock_session)
+        # Mock _get_session_metadata to return session metadata
+        mock_agent._get_session_metadata = MagicMock(return_value={
+            "app_name": "test_app",
+            "user_id": "test_user"
+        })
+
+        # Mock _session_service.get_session to return the session
+        mock_session_service = MagicMock()
+        mock_session_service.get_session = AsyncMock(return_value=mock_session)
+        mock_agent._session_manager._session_service = mock_session_service
         mock_agent._session_manager.get_session_state = AsyncMock(return_value={})
 
         app = FastAPI()
@@ -544,11 +571,18 @@ class TestMessageHistoryIntegration:
         app = FastAPI()
         add_adk_fastapi_endpoint(app, real_agent, path="/")
 
+        # First, create a session via session manager
+        await real_agent._session_manager.get_or_create_session(
+            session_id="integration-test-thread",
+            app_name="integration_test",
+            user_id="test_user"
+        )
+
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
         ) as client:
-            # First request - creates session
+            # Now /agents/state should find the existing session
             response = await client.post(
                 "/agents/state",
                 json={"threadId": "integration-test-thread"}
@@ -557,7 +591,6 @@ class TestMessageHistoryIntegration:
             assert response.status_code == 200
             data = response.json()
             assert data["threadId"] == "integration-test-thread"
-            # Session is created by get_or_create_session
             assert data["threadExists"] is True
 
     @pytest.mark.asyncio
@@ -678,8 +711,19 @@ class TestLiveServerIntegration:
         with UvicornServer(app) as server:
             yield server
 
-    def test_live_server_agents_state_endpoint(self, live_server):
+    def test_live_server_agents_state_endpoint(self, live_server, live_agent):
         """Test /agents/state endpoint on a live server."""
+        import asyncio
+
+        # First create a session
+        async def create_session():
+            await live_agent._session_manager.get_or_create_session(
+                session_id="live-test-thread-1",
+                app_name="live_test_app",
+                user_id="live_test_user"
+            )
+        asyncio.get_event_loop().run_until_complete(create_session())
+
         response = httpx.post(
             f"{live_server.base_url}/agents/state",
             json={"threadId": "live-test-thread-1"},
@@ -731,11 +775,21 @@ class TestLiveServerIntegration:
         data = response.json()
         assert data["threadId"] == "live-optional-fields-thread"
 
-    def test_live_server_session_persistence(self, live_server):
+    def test_live_server_session_persistence(self, live_server, live_agent):
         """Test that session state persists across requests."""
+        import asyncio
         thread_id = f"live-persist-test-{uuid.uuid4()}"
 
-        # First request - creates session
+        # First create a session
+        async def create_session():
+            await live_agent._session_manager.get_or_create_session(
+                session_id=thread_id,
+                app_name="live_test_app",
+                user_id="live_test_user"
+            )
+        asyncio.get_event_loop().run_until_complete(create_session())
+
+        # First request - session should exist
         response1 = httpx.post(
             f"{live_server.base_url}/agents/state",
             json={"threadId": thread_id},
@@ -756,9 +810,20 @@ class TestLiveServerIntegration:
         assert data2["threadExists"] is True
         assert data2["threadId"] == thread_id
 
-    def test_live_server_multiple_threads(self, live_server):
+    def test_live_server_multiple_threads(self, live_server, live_agent):
         """Test handling multiple different thread IDs."""
+        import asyncio
         threads = [f"live-multi-thread-{i}-{uuid.uuid4()}" for i in range(3)]
+
+        # First create all sessions
+        async def create_sessions():
+            for thread_id in threads:
+                await live_agent._session_manager.get_or_create_session(
+                    session_id=thread_id,
+                    app_name="live_test_app",
+                    user_id="live_test_user"
+                )
+        asyncio.get_event_loop().run_until_complete(create_sessions())
 
         responses = []
         for thread_id in threads:
