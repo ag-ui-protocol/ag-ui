@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ag-ui-crewai"
-version = "0.1.4"
+version = "0.1.5"
 description = "Implementation of the AG-UI protocol for CrewAI"
 authors = ["Markus Ecker <markus.ecker@gmail.com>"]
 readme = "README.md"
@@ -11,7 +11,7 @@ exclude = [
 
 [tool.poetry.dependencies]
 python = "<3.14,>=3.10"
-ag-ui-protocol = "==0.1.5"
+ag-ui-protocol = ">=0.1.10"
 fastapi = "^0.115.12"
 uvicorn = "^0.34.3"
 crewai = "^0.130.0"
