@@ -1,0 +1,8 @@
+agent:
+  model:
+    name: gemini-2.5-flash
+
+logging:
+  level:
+    root: INFO
+    com.google: DEBUG

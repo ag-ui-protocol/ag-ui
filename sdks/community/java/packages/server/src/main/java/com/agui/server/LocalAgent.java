@@ -27,7 +27,7 @@ import java.util.function.Function;
  *
  * @author Pascal Wilbrink
  */
-public abstract class LocalAgent implements Agent {
+public abstract class LocalAgent extends ServerAgent {
 
     /**
      * Unique identifier for this agent instance.
@@ -59,6 +59,7 @@ public abstract class LocalAgent implements Agent {
      * @param state initial state for the agent
      * @param systemMessageProvider function to dynamically generate system messages (can be null)
      * @param systemMessage static system message content (can be null if systemMessageProvider is provided)
+     * @param messages
      * @throws AGUIException if both systemMessage and systemMessageProvider are null
      */
     public LocalAgent(
@@ -68,6 +69,7 @@ public abstract class LocalAgent implements Agent {
         final String systemMessage,
         final List<BaseMessage> messages
     ) throws AGUIException {
+        super();
         this.agentId = agentId;
 
         this.state = state;
@@ -146,46 +148,6 @@ public abstract class LocalAgent implements Agent {
      * @param subscriber the event subscriber to notify of execution events
      */
     protected abstract void run(RunAgentInput input, AgentSubscriber subscriber);
-
-    /**
-     * Emits an event to the subscriber and routes it to the appropriate specific event handler
-     * based on the event type.
-     *
-     * This method handles the polymorphic dispatch of events to their corresponding
-     * handler methods on the subscriber.
-     *
-     * @param event the event to emit
-     * @param subscriber the subscriber to notify of the event
-     */
-    protected void emitEvent(final BaseEvent event, final AgentSubscriber subscriber) {
-        subscriber.onEvent(event);
-
-        switch (event.getType()) {
-            case RAW -> subscriber.onRawEvent((RawEvent) event);
-            case CUSTOM -> subscriber.onCustomEvent((CustomEvent) event);
-            case RUN_STARTED -> subscriber.onRunStartedEvent((RunStartedEvent) event);
-            case RUN_ERROR -> subscriber.onRunErrorEvent((RunErrorEvent) event);
-            case RUN_FINISHED -> subscriber.onRunFinishedEvent((RunFinishedEvent) event);
-            case STEP_STARTED -> subscriber.onStepStartedEvent((StepStartedEvent) event);
-            case STEP_FINISHED -> subscriber.onStepFinishedEvent((StepFinishedEvent) event);
-            case TEXT_MESSAGE_START -> subscriber.onTextMessageStartEvent((TextMessageStartEvent) event);
-            case TEXT_MESSAGE_CHUNK -> {
-                var chunkEvent = (TextMessageChunkEvent)event;
-                var textMessageContentEvent = new TextMessageContentEvent();
-                textMessageContentEvent.setDelta(chunkEvent.getDelta());
-                textMessageContentEvent.setMessageId(chunkEvent.getMessageId());
-                textMessageContentEvent.setTimestamp(chunkEvent.getTimestamp());
-                textMessageContentEvent.setRawEvent(chunkEvent.getRawEvent());
-                subscriber.onTextMessageContentEvent(textMessageContentEvent);
-            }
-            case TEXT_MESSAGE_CONTENT -> subscriber.onTextMessageContentEvent((TextMessageContentEvent) event);
-            case TEXT_MESSAGE_END -> subscriber.onTextMessageEndEvent((TextMessageEndEvent) event);
-            case TOOL_CALL_START -> subscriber.onToolCallStartEvent((ToolCallStartEvent) event);
-            case TOOL_CALL_ARGS -> subscriber.onToolCallArgsEvent((ToolCallArgsEvent) event);
-            case TOOL_CALL_RESULT -> subscriber.onToolCallResultEvent((ToolCallResultEvent) event);
-            case TOOL_CALL_END -> subscriber.onToolCallEndEvent((ToolCallEndEvent) event);
-        }
-    }
 
     /**
      * Creates a system message that includes the agent's system prompt, current state,

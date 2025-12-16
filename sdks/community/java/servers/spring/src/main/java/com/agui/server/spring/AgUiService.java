@@ -118,7 +118,7 @@ public class AgUiService {
      * @return an SseEmitter configured for streaming agent events as JSON to web clients
      * @throws RuntimeException if JSON serialization fails during event streaming
      */
-    public SseEmitter runAgent(final LocalAgent agent, final AgUiParameters agUiParameters) {
+    public SseEmitter runAgent(final Agent agent, final AgUiParameters agUiParameters) {
         var parameters = RunAgentParameters.builder()
             .threadId(agUiParameters.getThreadId())
             .runId(agUiParameters.getRunId())
