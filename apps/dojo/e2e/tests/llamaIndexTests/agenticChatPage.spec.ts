@@ -85,7 +85,7 @@ test("[LlamaIndex] Agentic Chat retains memory of user messages during a convers
     await chat.sendMessage("Hey there");
     await chat.assertUserMessageVisible("Hey there");
     await waitForAIResponse(page);
-    await chat.assertAgentReplyVisible(/how can I assist you/i);
+    await chat.assertAgentReplyVisible([/assist you/i, /help you/i]);
 
     const favFruit = "Mango";
     await chat.sendMessage(`My favorite fruit is ${favFruit}`);

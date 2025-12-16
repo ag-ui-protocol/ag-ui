@@ -172,6 +172,37 @@ async def main():
 asyncio.run(main())
 ```
 
+### Passing Initial State
+
+Pass frontend state to initialize the ADK session before the agent runs:
+
+```python
+input = RunAgentInput(
+    thread_id="session_001",
+    run_id="run_001",
+    state={
+        "selected_document": "doc-456",
+        "user_preferences": {"language": "en", "theme": "dark"},
+        "context": {"project_id": "proj-123"}
+    },
+    messages=[
+        UserMessage(id="1", role="user", content="Summarize the selected document")
+    ],
+    context=[],
+    tools=[],
+    forwarded_props={}
+)
+
+# The agent can now access state.selected_document, state.user_preferences, etc.
+async for event in agent.run(input):
+    print(f"Event: {event.type}")
+```
+
+The `state` field:
+- Initializes ADK session state on first request for a `thread_id`
+- Syncs/merges with existing state on subsequent requests
+- Is accessible to ADK agent tools via `context.session.state`
+
 ### Multi-Agent Setup
 
 ```python
@@ -212,6 +243,88 @@ The middleware translates between AG-UI and ADK event formats:
 |-------------|-----------|-------------|
 | TEXT_MESSAGE_* | Event with content.parts[].text | Text messages |
 | RUN_STARTED/FINISHED | Runner lifecycle | Execution flow |
+
+## Message History Features
+
+### MESSAGES_SNAPSHOT Emission
+
+You can configure the middleware to emit a `MESSAGES_SNAPSHOT` event at the end of each run, containing the full conversation history:
+
+```python
+agent = ADKAgent(
+    adk_agent=my_agent,
+    app_name="my_app",
+    user_id="user123",
+    emit_messages_snapshot=True  # Emit full message history at run end
+)
+```
+
+When enabled, the middleware will:
+1. Extract all events from the ADK session at the end of each run
+2. Convert them to AG-UI message format
+3. Emit a `MESSAGES_SNAPSHOT` event with the complete conversation history
+
+This is useful for clients that need to persist conversation history or for AG-UI protocol compliance.
+
+### Converting ADK Events to Messages
+
+The `adk_events_to_messages()` function is available for direct use if you need to convert ADK session events to AG-UI messages:
+
+```python
+from ag_ui_adk import adk_events_to_messages
+
+# Get events from an ADK session
+session = await session_service.get_session(session_id, app_name, user_id)
+messages = adk_events_to_messages(session.events)
+
+# messages is a list of AG-UI Message objects (UserMessage, AssistantMessage, ToolMessage)
+```
+
+### Experimental: /agents/state Endpoint
+
+**WARNING: This endpoint is experimental and subject to change in future versions.**
+
+When using `add_adk_fastapi_endpoint()`, an additional `POST /agents/state` endpoint is automatically added. This endpoint allows front-end frameworks to retrieve thread state and message history on-demand, without initiating a new agent run.
+
+**Request:**
+```json
+{
+  "threadId": "thread_123",
+  "name": "optional_agent_name",
+  "properties": {}
+}
+```
+
+**Response:**
+```json
+{
+  "threadId": "thread_123",
+  "threadExists": true,
+  "state": "{\"key\": \"value\"}",
+  "messages": "[{\"id\": \"1\", \"role\": \"user\", \"content\": \"Hello\"}]"
+}
+```
+
+Note: The `state` and `messages` fields are JSON-stringified for compatibility with front-end frameworks that expect this format.
+
+**Example usage:**
+```python
+import httpx
+
+async def get_thread_history(thread_id: str):
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "http://localhost:8000/agents/state",
+            json={"threadId": thread_id}
+        )
+        data = response.json()
+        if data["threadExists"]:
+            import json
+            messages = json.loads(data["messages"])
+            state = json.loads(data["state"])
+            return messages, state
+        return [], {}
+```
 
 ## Additional Resources
 

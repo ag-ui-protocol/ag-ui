@@ -5,6 +5,8 @@ import "./style.css";
 import {
   CopilotKit,
   useFrontendTool,
+  useHumanInTheLoop,
+  useCopilotReadable,
 } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 import { cloudAgents } from "@/cloudAgents";
@@ -41,6 +43,10 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
 const Chat = () => {
   const [background, setBackground] = useState<string>("--copilot-kit-background-color");
 
+  useCopilotReadable({
+    description: 'Name of the user',
+    value: 'Bob'
+  })
   useFrontendTool({
     name: "change_background",
     description:

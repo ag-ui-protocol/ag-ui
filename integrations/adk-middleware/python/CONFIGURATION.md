@@ -85,6 +85,26 @@ agent = ADKAgent(
 )
 ```
 
+### Using Extracted Headers
+
+When combined with `extract_headers` (see [Header Extraction](#header-extraction)), extractors can use HTTP headers for identification:
+
+```python
+from fastapi import FastAPI
+from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+
+agent = ADKAgent(
+    adk_agent=my_agent,
+    user_id_extractor=lambda input: input.state.get("headers", {}).get("user_id", "anonymous"),
+)
+
+app = FastAPI()
+add_adk_fastapi_endpoint(
+    app, agent, "/chat",
+    extract_headers=["x-user-id"]  # x-user-id header becomes state.headers.user_id
+)
+```
+
 ## Session Management
 
 Sessions are managed automatically by the singleton `SessionManager`. Configuration options include:
@@ -109,6 +129,21 @@ agent = ADKAgent(
 3. **Timeout**: Session marked for cleanup after timeout period
 4. **Cleanup**: Expired sessions removed during cleanup intervals
 5. **Memory**: If memory service configured, expired sessions saved before deletion
+
+### State and Session Mapping
+
+#### Thread ID → Session ID
+
+The `threadId` from `RunAgentInput` maps directly to the ADK `session_id`. Each unique `threadId` corresponds to a unique ADK session, maintaining conversation continuity across multiple runs.
+
+#### Initial State
+
+The `state` field in `RunAgentInput` initializes and synchronizes session state:
+
+- **New Session**: `state` becomes the initial ADK session state
+- **Existing Session**: `state` is merged with existing session state on each request
+
+This enables passing frontend context (user preferences, selected items, UI state) to the backend agent before execution begins.
 
 ## Service Configuration
 
@@ -315,6 +350,56 @@ add_adk_fastapi_endpoint(
 # Multiple agents on different endpoints
 add_adk_fastapi_endpoint(app, general_agent, path="/agents/general")
 add_adk_fastapi_endpoint(app, technical_agent, path="/agents/technical")
+```
+
+### Header Extraction
+
+Extract HTTP headers into `state.headers` for use by extractors and agents:
+
+```python
+add_adk_fastapi_endpoint(
+    app, agent, "/chat",
+    extract_headers=["x-user-id", "x-tenant-id"]
+)
+```
+
+**Transformation rules:**
+- `x-` prefix is stripped: `x-user-id` → `user_id`
+- Hyphens converted to underscores: `x-tenant-id` → `tenant_id`
+- Missing headers are silently skipped
+- Client-provided `state.headers` values take precedence
+
+**Example with user_id extractor:**
+
+```python
+from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+
+agent = ADKAgent(
+    adk_agent=my_agent,
+    user_id_extractor=lambda input: input.state.get("headers", {}).get("user_id", "anonymous"),
+)
+
+add_adk_fastapi_endpoint(
+    app, agent, "/chat",
+    extract_headers=["x-user-id", "x-tenant-id"]
+)
+```
+
+Client request:
+```
+POST /chat
+x-user-id: user123
+x-tenant-id: tenant456
+
+{"state": {"foo": "bar"}, ...}
+```
+
+Agent receives:
+```python
+input.state = {
+    "headers": {"user_id": "user123", "tenant_id": "tenant456"},
+    "foo": "bar"
+}
 ```
 
 ## Logging Configuration
