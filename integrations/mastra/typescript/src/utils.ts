@@ -86,17 +86,15 @@ export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] 
   return result;
 }
 
-export interface GetRemoteAgentsOptions<K extends string = string> {
+export interface GetRemoteAgentsOptions {
   mastraClient: MastraClient;
   resourceId?: string;
-  /** Expected agent keys - used for type inference only */
-  keys?: readonly K[];
 }
 
 export async function getRemoteAgents<K extends string = string>({
   mastraClient,
   resourceId,
-}: GetRemoteAgentsOptions<K>): Promise<Record<K, AbstractAgent>> {
+}: GetRemoteAgentsOptions): Promise<Record<K, AbstractAgent>> {
   const agents = await mastraClient.getAgents();
 
   return Object.entries(agents).reduce(
@@ -115,19 +113,17 @@ export async function getRemoteAgents<K extends string = string>({
   );
 }
 
-export interface GetLocalAgentsOptions<K extends string = string> {
+export interface GetLocalAgentsOptions {
   mastra: Mastra;
   resourceId?: string;
   runtimeContext?: RuntimeContext;
-  /** Expected agent keys - used for type inference only */
-  keys?: readonly K[];
 }
 
 export function getLocalAgents<K extends string = string>({
   mastra,
   resourceId,
   runtimeContext,
-}: GetLocalAgentsOptions<K>): Record<K, AbstractAgent> {
+}: GetLocalAgentsOptions): Record<K, AbstractAgent> {
   const agents = mastra.getAgents() || {};
 
   const agentAGUI = Object.entries(agents).reduce(

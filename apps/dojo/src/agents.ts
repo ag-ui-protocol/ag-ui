@@ -112,16 +112,18 @@ export const agentsIntegrations = {
       baseUrl: envVars.mastraUrl,
     });
 
-    return MastraAgent.getRemoteAgents({
+    return MastraAgent.getRemoteAgents<
+      "agentic_chat" | "backend_tool_rendering" | "human_in_the_loop" | "tool_based_generative_ui"
+    >({
       mastraClient,
-      keys: ["agentic_chat", "backend_tool_rendering", "human_in_the_loop", "tool_based_generative_ui"],
     });
   },
 
   "mastra-agent-local": async () =>
-    MastraAgent.getLocalAgents({
+    MastraAgent.getLocalAgents<
+      "agentic_chat" | "backend_tool_rendering" | "human_in_the_loop" | "shared_state" | "tool_based_generative_ui"
+    >({
       mastra,
-      keys: ["agentic_chat", "backend_tool_rendering", "human_in_the_loop", "shared_state", "tool_based_generative_ui"],
     }),
 
   // Disabled until we can support Vercel AI SDK v5
