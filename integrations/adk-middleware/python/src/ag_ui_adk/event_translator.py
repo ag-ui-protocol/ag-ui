@@ -14,7 +14,8 @@ from ag_ui.core import (
     TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent,
     ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent,
     ToolCallResultEvent, StateSnapshotEvent, StateDeltaEvent,
-    CustomEvent
+    CustomEvent, Message, UserMessage, AssistantMessage, ToolMessage,
+    ToolCall, FunctionCall
 )
 import json
 from google.adk.events import Event as ADKEvent
@@ -361,11 +362,18 @@ class EventTranslator:
 
             # Case 2: No stream is active.
             # Check for duplicates from a *previous* stream in this *same run*.
-            is_duplicate = (
-                self._last_streamed_run_id == run_id and
-                self._last_streamed_text is not None and
-                combined_text == self._last_streamed_text
-            )
+            # We use two checks:
+            # 1. Exact match - handles normal delta streaming where accumulated
+            #    text equals the final consolidated message
+            # 2. Suffix match - handles LLMs that send accumulated text in each
+            #    chunk (not deltas), where _last_streamed_text will be concatenated
+            #    chunks ending with the final text (GitHub #400)
+            is_duplicate = False
+            if self._last_streamed_run_id == run_id and self._last_streamed_text is not None:
+                if combined_text == self._last_streamed_text:
+                    is_duplicate = True
+                elif self._last_streamed_text.endswith(combined_text):
+                    is_duplicate = True
 
             if is_duplicate:
                 logger.info(
@@ -404,6 +412,9 @@ class EventTranslator:
             or (has_finish_reason and self._is_streaming)
         )
 
+        # Track if we were already streaming before this event (for consolidated message detection)
+        was_already_streaming = self._is_streaming
+
         # Handle streaming logic (if not is_final_response)
         if not self._is_streaming:
             # Start of new message - emit START event
@@ -417,16 +428,28 @@ class EventTranslator:
                 role="assistant"
             )
             yield start_event
-        
-        # Always emit content (unless empty)
+
+        # Emit content with consolidated message detection (GitHub #742)
+        # When streaming, ADK sends incremental deltas with partial=True, then a final
+        # consolidated message with partial=False containing all the text. If we were
+        # already streaming and receive a consolidated message (partial=False), we skip
+        # it to avoid duplicating already-streamed content.
+        # Note: We check was_already_streaming (not _is_streaming) to allow the first
+        # event of a non-streaming response (partial=False) to emit content normally.
         if combined_text:
-            self._current_stream_text += combined_text
-            content_event = TextMessageContentEvent(
-                type=EventType.TEXT_MESSAGE_CONTENT,
-                message_id=self._streaming_message_id,
-                delta=combined_text
-            )
-            yield content_event
+            # Skip consolidated messages during active streaming
+            if was_already_streaming and not is_partial:
+                logger.info(
+                    "⏭️ Skipping consolidated text (partial=False during active stream)"
+                )
+            else:
+                self._current_stream_text += combined_text
+                content_event = TextMessageContentEvent(
+                    type=EventType.TEXT_MESSAGE_CONTENT,
+                    message_id=self._streaming_message_id,
+                    delta=combined_text
+                )
+                yield content_event
         
         # If turn is complete and not partial, emit END event
         if should_send_end:
@@ -731,4 +754,111 @@ class EventTranslator:
         self._predictive_state_tool_call_ids.clear()
         self._deferred_confirm_events.clear()
         logger.debug("Reset EventTranslator state (including streaming state)")
+
+
+def _translate_function_calls_to_tool_calls(function_calls: List[Any]) -> List[ToolCall]:
+    """Convert ADK function calls to AG-UI ToolCall format.
+
+    Args:
+        function_calls: List of ADK function call objects
+
+    Returns:
+        List of AG-UI ToolCall objects
+    """
+    tool_calls = []
+    for fc in function_calls:
+        tool_call = ToolCall(
+            id=fc.id if hasattr(fc, 'id') and fc.id else str(uuid.uuid4()),
+            type="function",
+            function=FunctionCall(
+                name=fc.name,
+                arguments=json.dumps(fc.args) if hasattr(fc, 'args') and fc.args else "{}"
+            )
+        )
+        tool_calls.append(tool_call)
+    return tool_calls
+
+
+def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
+    """Convert ADK session events to AG-UI Message list.
+
+    This function extracts complete messages from ADK events, filtering out
+    partial/streaming events and converting to the appropriate AG-UI message types.
+
+    Args:
+        events: List of ADK events from a session (session.events)
+
+    Returns:
+        List of AG-UI Message objects representing the conversation history
+    """
+    messages: List[Message] = []
+
+    for event in events:
+        # Skip events without content
+        if not hasattr(event, 'content') or event.content is None:
+            continue
+
+        # Skip partial/streaming events - we only want complete messages
+        if hasattr(event, 'partial') and event.partial:
+            continue
+
+        content = event.content
+
+        # Skip events without parts
+        if not hasattr(content, 'parts') or not content.parts:
+            continue
+
+        # Extract text content from parts
+        text_content = ""
+        for part in content.parts:
+            if hasattr(part, 'text') and part.text:
+                text_content += part.text
+
+        # Get function calls and responses
+        function_calls = event.get_function_calls() if hasattr(event, 'get_function_calls') else []
+        function_responses = event.get_function_responses() if hasattr(event, 'get_function_responses') else []
+
+        # Determine the author/role
+        author = getattr(event, 'author', None)
+        event_id = getattr(event, 'id', None) or str(uuid.uuid4())
+
+        # Handle function responses as ToolMessages
+        if function_responses:
+            for fr in function_responses:
+                tool_message = ToolMessage(
+                    id=str(uuid.uuid4()),
+                    role="tool",
+                    content=_serialize_tool_response(fr.response) if hasattr(fr, 'response') else "",
+                    tool_call_id=fr.id if hasattr(fr, 'id') and fr.id else str(uuid.uuid4())
+                )
+                messages.append(tool_message)
+            continue
+
+        # Skip events with no meaningful content
+        if not text_content and not function_calls:
+            continue
+
+        # Handle user messages
+        if author == "user":
+            user_message = UserMessage(
+                id=event_id,
+                role="user",
+                content=text_content
+            )
+            messages.append(user_message)
+
+        # Handle assistant/model messages
+        elif author == "model" or author is None:
+            # Convert function calls to tool calls if present
+            tool_calls = _translate_function_calls_to_tool_calls(function_calls) if function_calls else None
+
+            assistant_message = AssistantMessage(
+                id=event_id,
+                role="assistant",
+                content=text_content if text_content else None,
+                tool_calls=tool_calls
+            )
+            messages.append(assistant_message)
+
+    return messages
         

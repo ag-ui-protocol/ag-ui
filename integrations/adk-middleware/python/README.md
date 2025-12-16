@@ -155,7 +155,10 @@ agent = ADKAgent(
 
 # 3. Create FastAPI app
 app = FastAPI()
-add_adk_fastapi_endpoint(app, agent, path="/chat")
+add_adk_fastapi_endpoint(
+    app, agent, path="/chat",
+    extract_headers=["x-user-id", "x-tenant-id"]  # Extract HTTP headers into state.headers
+)
 
 # Run with: uvicorn your_module:app --host 0.0.0.0 --port 8000
 ```

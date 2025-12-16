@@ -17,6 +17,7 @@
             "group": "Get Started",
             "pages": [
               "introduction",
+              "agentic-protocols",
               {
                 "group": "Quickstart",
                 "pages": [
@@ -44,7 +45,8 @@
               "concepts/messages",
               "concepts/state",
               "concepts/serialization",
-              "concepts/tools"
+              "concepts/tools",
+              "concepts/generative-ui-specs"
             ]
           },
           {

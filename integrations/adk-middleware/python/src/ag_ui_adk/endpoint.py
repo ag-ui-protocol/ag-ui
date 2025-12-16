@@ -2,29 +2,96 @@
 
 """FastAPI endpoint for ADK middleware."""
 
+from typing import List, Optional, Any
+import json
+
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
+from pydantic import BaseModel
 from ag_ui.core import RunAgentInput
 from ag_ui.encoder import EventEncoder
 from .adk_agent import ADKAgent
+from .event_translator import adk_events_to_messages
 
 import logging
 logger = logging.getLogger(__name__)
 
 
-def add_adk_fastapi_endpoint(app: FastAPI, agent: ADKAgent, path: str = "/"):
+class AgentStateRequest(BaseModel):
+    """Request body for /agents/state endpoint.
+
+    EXPERIMENTAL: This endpoint is subject to change in future versions.
+    """
+    threadId: str
+    name: Optional[str] = None
+    properties: Optional[Any] = None
+
+
+class AgentStateResponse(BaseModel):
+    """Response body for /agents/state endpoint."""
+    threadId: str
+    threadExists: bool
+    state: str  # JSON stringified
+    messages: str  # JSON stringified
+
+
+def _header_to_key(header_name: str) -> str:
+    """Convert header name to state key.
+
+    Strips 'x-' prefix and converts hyphens to underscores.
+    Example: 'x-user-id' -> 'user_id', 'x-tenant-id' -> 'tenant_id'
+    """
+    key = header_name.lower()
+    if key.startswith("x-"):
+        key = key[2:]
+    return key.replace("-", "_")
+
+
+def add_adk_fastapi_endpoint(
+    app: FastAPI,
+    agent: ADKAgent,
+    path: str = "/",
+    extract_headers: Optional[List[str]] = None,
+):
     """Add ADK middleware endpoint to FastAPI app.
-    
+
     Args:
         app: FastAPI application instance
         agent: Configured ADKAgent instance
         path: API endpoint path
+        extract_headers: Optional list of HTTP header names to extract into state.
+            Example: ["x-user-id", "x-tenant-id"]
+            Headers are stored in state.headers with the 'x-' prefix stripped and
+            hyphens converted to underscores (e.g., x-user-id -> user_id).
+            Client-provided state.headers values take precedence over extracted headers.
+
+    Note:
+        This function also adds an experimental POST /agents/state endpoint for
+        consumption by front-end frameworks that need to retrieve thread state and
+        message history. This endpoint is subject to change in future versions.
     """
-    
+
     @app.post(path)
     async def adk_endpoint(input_data: RunAgentInput, request: Request):
         """ADK middleware endpoint."""
-        
+
+        # Extract headers into state.headers if list provided
+        if extract_headers:
+            headers_dict = {}
+            for header_name in extract_headers:
+                value = request.headers.get(header_name)
+                if value is not None:
+                    state_key = _header_to_key(header_name)
+                    headers_dict[state_key] = value
+
+            if headers_dict:
+                existing_state = input_data.state if isinstance(input_data.state, dict) else {}
+                existing_headers = existing_state.get("headers", {}) if isinstance(existing_state.get("headers"), dict) else {}
+                # Client headers take precedence over extracted headers
+                merged_headers = {**headers_dict, **existing_headers}
+                merged_state = {**existing_state, "headers": merged_headers}
+                input_data = input_data.model_copy(update={"state": merged_state})
+
         # Get the accept header from the request
         accept_header = request.headers.get("accept")
         agent_id = path.lstrip('/')
@@ -80,17 +147,103 @@ def add_adk_fastapi_endpoint(app: FastAPI, agent: ADKAgent, path: str = "/"):
         
         return StreamingResponse(event_generator(), media_type=encoder.get_content_type())
 
+    @app.post("/agents/state")
+    async def agents_state_endpoint(request_data: AgentStateRequest):
+        """EXPERIMENTAL: Retrieve thread state and message history.
 
-def create_adk_app(agent: ADKAgent, path: str = "/") -> FastAPI:
+        This endpoint allows front-end frameworks to retrieve the current state
+        and message history for a thread without initiating a new agent run.
+
+        WARNING: This is an experimental endpoint and is subject to change in
+        future versions. It is provided to support front-end frameworks that
+        require on-demand access to thread state.
+
+        Args:
+            request_data: Request containing threadId and optional name/properties
+
+        Returns:
+            JSON response with threadId, threadExists, state, and messages
+        """
+        thread_id = request_data.threadId
+
+        try:
+            # Get session metadata from existing session
+            # This works correctly whether static values or extractors were used
+            metadata = agent._get_session_metadata(thread_id)
+
+            if metadata:
+                app_name = metadata["app_name"]
+                user_id = metadata["user_id"]
+
+                # Get the session (don't create - just retrieve)
+                session = await agent._session_manager._session_service.get_session(
+                    session_id=thread_id,
+                    app_name=app_name,
+                    user_id=user_id
+                )
+            else:
+                # Session doesn't exist - return not found
+                session = None
+
+            thread_exists = session is not None
+
+            # Get state
+            state = {}
+            if thread_exists:
+                state = await agent._session_manager.get_session_state(
+                    session_id=thread_id,
+                    app_name=app_name,
+                    user_id=user_id
+                ) or {}
+
+            # Get messages from session events
+            messages = []
+            if thread_exists and hasattr(session, 'events') and session.events:
+                messages = adk_events_to_messages(session.events)
+
+            # Convert messages to dict format for JSON serialization
+            messages_dict = [msg.model_dump(by_alias=True) for msg in messages]
+
+            return JSONResponse(content={
+                "threadId": thread_id,
+                "threadExists": thread_exists,
+                "state": json.dumps(state),
+                "messages": json.dumps(messages_dict)
+            })
+
+        except Exception as e:
+            logger.error(f"Error in /agents/state endpoint: {e}", exc_info=True)
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "threadId": thread_id,
+                    "threadExists": False,
+                    "state": "{}",
+                    "messages": "[]",
+                    "error": str(e)
+                }
+            )
+
+
+def create_adk_app(
+    agent: ADKAgent,
+    path: str = "/",
+    extract_headers: Optional[List[str]] = None,
+) -> FastAPI:
     """Create a FastAPI app with ADK middleware endpoint.
-    
+
     Args:
-        agent: Configured ADKAgent instance  
+        agent: Configured ADKAgent instance
         path: API endpoint path
-        
+        extract_headers: Optional list of HTTP header names to extract into state.
+            Example: ["x-user-id", "x-tenant-id"]
+            Headers are stored in state.headers with the 'x-' prefix stripped and
+            hyphens converted to underscores (e.g., x-user-id -> user_id).
+            Client-provided state.headers values take precedence over extracted headers.
+
     Returns:
         FastAPI application instance
     """
     app = FastAPI(title="ADK Middleware for AG-UI Protocol")
-    add_adk_fastapi_endpoint(app, agent, path)
+    add_adk_fastapi_endpoint(app, agent, path, extract_headers=extract_headers)
     return app
