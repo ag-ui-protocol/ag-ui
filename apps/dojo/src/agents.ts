@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { AbstractAgent } from "@ag-ui/client";
-import { FeaturesFor, IntegrationId } from "./menu";
+import type { FeaturesFor, IntegrationId } from "./menu";
 import { MiddlewareStarterAgent } from "@ag-ui/middleware-starter";
 import { ServerStarterAgent } from "@ag-ui/server-starter";
 import { ServerStarterAllFeaturesAgent } from "@ag-ui/server-starter-all-features";
@@ -45,13 +45,23 @@ function mapAgents<const T extends Record<string, string>>(
 }
 
 /**
- * Agent integrations map - keys are integration IDs from menu.ts
- * TypeScript enforces:
- * - All integration IDs from menu.ts must have an entry
- * - All features for each integration must be present in the returned object
+ * Base type requiring all menu integrations with their specific features.
  */
-type AgentsMap = {
+type MenuAgentsMap = {
   [K in IntegrationId]: () => Promise<{ [P in FeaturesFor<K>]: AbstractAgent }>;
+};
+
+/**
+ * Agent integrations map that requires all menu integrations but allows extras.
+ * 
+ * TypeScript enforces:
+ * - All integration IDs from menu.ts must have an entry with correct features
+ * - Additional unlisted integrations ARE allowed (for testing before public release)
+ * 
+ * The index signature allows extra keys without excess property checking errors.
+ */
+type AgentsMap = MenuAgentsMap & {
+  [key: string]: () => Promise<Record<string, AbstractAgent>>;
 };
 
 export const agentsIntegrations = {
@@ -182,22 +192,23 @@ export const agentsIntegrations = {
       }
     ),
 
-  // langchain: async () => {
-  //   const agent = new LangChainAgent({
-  //     chainFn: async ({ messages, tools, threadId }) => {
-  //       const { ChatOpenAI } = await import("@langchain/openai");
-  //       const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
-  //       const model = chatOpenAI.bindTools(tools, {
-  //         strict: true,
-  //       });
-  //       return model.stream(messages, { tools, metadata: { conversation_id: threadId } });
-  //     },
-  //   });
-  //   return {
-  //     agentic_chat: agent,
-  //     tool_based_generative_ui: agent,
-  //   };
-  // },
+  // TODO: @ranst91 Enable `langchain` integration in apps/dojo/src/menu.ts once ready
+  langchain: async () => {
+    const agent = new LangChainAgent({
+      chainFn: async ({ messages, tools, threadId }) => {
+        const { ChatOpenAI } = await import("@langchain/openai");
+        const chatOpenAI = new ChatOpenAI({ model: "gpt-4o" });
+        const model = chatOpenAI.bindTools(tools, {
+          strict: true,
+        });
+        return model.stream(messages, { tools, metadata: { conversation_id: threadId } });
+      },
+    });
+    return {
+      agentic_chat: agent,
+      tool_based_generative_ui: agent,
+    };
+  },
 
   agno: async () =>
     mapAgents(
@@ -334,3 +345,9 @@ export const agentsIntegrations = {
     human_in_the_loop: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/human-in-the-loop`, debug: true }),
   }),
 } satisfies AgentsMap;
+
+/**
+ * Type representing all agent integration IDs (includes both menu integrations and unlisted ones).
+ * Use this type when you need to reference any valid agent integration, not just menu-listed ones.
+ */
+export type AgentIntegrationId = keyof typeof agentsIntegrations;
