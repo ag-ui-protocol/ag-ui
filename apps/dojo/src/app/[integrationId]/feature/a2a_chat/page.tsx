@@ -23,7 +23,6 @@ function Page({ params }: PageProps) {
   const addNotification = useCallback(
     (tabId: string) => {
       // Only add notification if the tab is not currently active
-      console.log("addNotification", tabId, activeTabRef.current);
       if (tabId !== activeTabRef.current) {
         setTabNotifications((prev) => ({
           ...prev,

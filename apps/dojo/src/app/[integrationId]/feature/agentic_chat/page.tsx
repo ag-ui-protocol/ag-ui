@@ -32,6 +32,9 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
       runtimeUrl={runtimeUrl}
       showDevConsole={false}
       publicApiKey={publicApiKey}
+      headers={{
+        "x-copilotkit-runtime-client-gql-version": "1.50.0"
+      }}
       // agent lock to the relevant agent
       agent="agentic_chat"
     >

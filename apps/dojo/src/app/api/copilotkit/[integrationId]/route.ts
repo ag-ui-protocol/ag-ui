@@ -16,6 +16,10 @@ export async function POST(request: NextRequest) {
   }
 
   const agents = await integration.agents();
+
+  console.log("integrationId", integrationId);
+  console.log("agents", agents);
+
   const runtime = new CopilotRuntime({
     // @ts-ignore for now
     agents,
