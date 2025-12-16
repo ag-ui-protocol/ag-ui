@@ -133,6 +133,7 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
       visibleMessages.length > 0 &&
       (!isLoading || (visibleMessages[visibleMessages.length - 1] as any).name === "pickTable")
     ) {
+      console.log("onNotification");
       onNotification?.();
     }
   }, [isLoading, JSON.stringify(visibleMessages)]);
