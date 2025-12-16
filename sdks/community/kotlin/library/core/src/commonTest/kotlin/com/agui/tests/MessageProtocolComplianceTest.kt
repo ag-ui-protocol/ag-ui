@@ -595,4 +595,119 @@ class MessageProtocolComplianceTest {
             assertNull(decoded.name)
         }
     }
+
+    // ============== New Protocol Sync Tests ==============
+
+    @Test
+    fun testActivityMessageProtocolCompliance() {
+        val activityContent = buildJsonObject {
+            put("operations", buildJsonArray { })
+        }
+
+        val message = ActivityMessage(
+            id = "activity_123",
+            activityType = "a2ui-surface",
+            activityContent = activityContent
+        )
+
+        val jsonString = json.encodeToString<Message>(message)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        // AG-UI protocol compliance checks
+        assertEquals("activity_123", jsonObj["id"]?.jsonPrimitive?.content)
+        assertEquals("activity", jsonObj["role"]?.jsonPrimitive?.content)
+        assertEquals("a2ui-surface", jsonObj["activityType"]?.jsonPrimitive?.content)
+        assertNotNull(jsonObj["activityContent"])
+
+        // Activity messages should not have "type" field (uses "role")
+        assertFalse(jsonObj.containsKey("type"))
+
+        val decoded = json.decodeFromString<Message>(jsonString)
+        assertTrue(decoded is ActivityMessage)
+        val decodedActivity = decoded as ActivityMessage
+        assertEquals("activity_123", decodedActivity.id)
+        assertEquals("a2ui-surface", decodedActivity.activityType)
+        assertEquals(Role.ACTIVITY, decodedActivity.messageRole)
+    }
+
+    @Test
+    fun testMultimodalUserMessage() {
+        val parts = listOf(
+            TextInputContent(text = "What's in this image?"),
+            BinaryInputContent(
+                mimeType = "image/png",
+                url = "https://example.com/image.png"
+            )
+        )
+
+        val message = UserMessage.multimodal(
+            id = "multimodal_123",
+            parts = parts
+        )
+
+        assertTrue(message.isMultimodal)
+        assertEquals("", message.content) // Content is empty for multimodal
+        assertNotNull(message.contentParts)
+        assertEquals(2, message.contentParts?.size)
+
+        val jsonString = json.encodeToString<Message>(message)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        // Content should be an array for multimodal
+        val contentElement = jsonObj["content"]
+        assertTrue(contentElement is JsonArray)
+        val contentArray = contentElement.jsonArray
+        assertEquals(2, contentArray.size)
+
+        // Verify first part is text
+        val firstPart = contentArray[0].jsonObject
+        assertEquals("text", firstPart["type"]?.jsonPrimitive?.content)
+        assertEquals("What's in this image?", firstPart["text"]?.jsonPrimitive?.content)
+
+        // Verify second part is binary
+        val secondPart = contentArray[1].jsonObject
+        assertEquals("binary", secondPart["type"]?.jsonPrimitive?.content)
+        assertEquals("image/png", secondPart["mimeType"]?.jsonPrimitive?.content)
+
+        // Deserialize and verify
+        val decoded = json.decodeFromString<Message>(jsonString)
+        assertTrue(decoded is UserMessage)
+        val decodedUser = decoded as UserMessage
+        assertTrue(decodedUser.isMultimodal)
+        assertEquals(2, decodedUser.contentParts?.size)
+    }
+
+    @Test
+    fun testToolMessageWithError() {
+        val message = ToolMessage(
+            id = "tool_error_123",
+            content = "Error occurred",
+            toolCallId = "call_abc",
+            error = "Connection timeout"
+        )
+
+        val jsonString = json.encodeToString<Message>(message)
+        val jsonObj = json.parseToJsonElement(jsonString).jsonObject
+
+        assertEquals("tool_error_123", jsonObj["id"]?.jsonPrimitive?.content)
+        assertEquals("tool", jsonObj["role"]?.jsonPrimitive?.content)
+        assertEquals("Connection timeout", jsonObj["error"]?.jsonPrimitive?.content)
+
+        val decoded = json.decodeFromString<Message>(jsonString)
+        assertTrue(decoded is ToolMessage)
+        val decodedTool = decoded as ToolMessage
+        assertEquals("Connection timeout", decodedTool.error)
+    }
+
+    @Test
+    fun testRoleActivityEnum() {
+        assertEquals("activity", Role.ACTIVITY.name.lowercase())
+
+        val activityMessage = ActivityMessage(
+            id = "test",
+            activityType = "test-type",
+            activityContent = buildJsonObject { }
+        )
+        assertEquals(Role.ACTIVITY, activityMessage.messageRole)
+    }
 }
