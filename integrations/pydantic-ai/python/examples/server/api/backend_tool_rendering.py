@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from textwrap import dedent
 from zoneinfo import ZoneInfo
 
 import httpx
 from pydantic_ai import Agent
+
+logger = logging.getLogger(__name__)
 
 agent = Agent(
     "openai:gpt-4o-mini",
@@ -106,9 +109,14 @@ async def get_weather(location: str) -> dict[str, str | float]:
             f"wind_speed_10m,wind_gusts_10m,weather_code"
         )
         weather_response = await client.get(weather_url)
+        logger.info(f"Weather API response status: {weather_response.status_code}")
+        logger.debug(f"Weather API response: {weather_response.text}")
+        
         weather_data = weather_response.json()
+        logger.info(f"Weather data for {name}: {weather_data}")
 
         current = weather_data["current"]
+        logger.debug(f"Current weather data: {current}")
 
         return {
             "temperature": current["temperature_2m"],
