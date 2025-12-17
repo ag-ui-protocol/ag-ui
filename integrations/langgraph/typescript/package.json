@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/langgraph",
-  "version": "0.0.20",
+  "version": "0.0.21",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
