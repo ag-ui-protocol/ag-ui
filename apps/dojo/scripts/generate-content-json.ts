@@ -1,46 +1,12 @@
 import fs from "fs";
 import path from "path";
+import { menuIntegrations } from "../src/menu";
 
-// Import menu.ts to get integration configurations
-// menu.ts is the single source of truth for integration IDs and features
-function getAgentConfigsFromMenu(): Array<{ id: string; agentKeys: string[] }> {
-  const menuFilePath = path.join(__dirname, "../src/menu.ts");
-  const menuContent = fs.readFileSync(menuFilePath, "utf8");
-
-  const agentConfigs: Array<{ id: string; agentKeys: string[] }> = [];
-
-  // Find the menuIntegrations array
-  const menuMatch = menuContent.match(/export const menuIntegrations\s*=\s*\[([\s\S]*?)\]\s*as const/);
-
-  if (!menuMatch) {
-    console.error("Could not find menuIntegrations export in menu.ts");
-    return agentConfigs;
-  }
-
-  const menuArrayContent = menuMatch[1];
-
-  // Match each integration object: { id: "...", name: "...", features: [...] }
-  const integrationRegex = /{\s*id:\s*["']([^"']+)["'],[\s\S]*?features:\s*\[([\s\S]*?)\]/g;
-
-  for (const match of menuArrayContent.matchAll(integrationRegex)) {
-    const id = match[1];
-    const featuresContent = match[2];
-
-    // Extract feature names from the features array
-    const featureMatches = featuresContent.matchAll(/["']([^"']+)["']/g);
-    const features: string[] = [];
-
-    for (const featureMatch of featureMatches) {
-      features.push(featureMatch[1]);
-    }
-
-    agentConfigs.push({ id, agentKeys: features });
-  }
-
-  return agentConfigs;
-}
-
-const agentConfigs = getAgentConfigsFromMenu();
+// Map menuIntegrations to the format needed for content generation
+const agentConfigs = menuIntegrations.map((integration) => ({
+  id: integration.id,
+  agentKeys: [...integration.features],
+}));
 
 const featureFiles = ["page.tsx", "style.css", "README.mdx"];
 
