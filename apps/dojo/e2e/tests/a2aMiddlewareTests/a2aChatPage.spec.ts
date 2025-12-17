@@ -12,7 +12,7 @@ test.describe("A2A Chat Feature", () => {
   }) => {
     await retryOnAIFailure(async () => {
       await page.goto(
-        "/a2a-middleware/feature/a2a_chat"
+        "/a2a/feature/a2a_chat"
       );
 
       const chat = new A2AChatPage(page);

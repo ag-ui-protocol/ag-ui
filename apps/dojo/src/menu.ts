@@ -1,6 +1,16 @@
-import { MenuIntegrationConfig } from "./types/integration";
+import type { IntegrationFeatures, MenuIntegrationConfig } from "./types/integration";
 
-export const menuIntegrations: MenuIntegrationConfig[] = [
+/**
+ * Integration configuration - SINGLE SOURCE OF TRUTH
+ *
+ * This file defines all integrations and their available features.
+ * Used by:
+ * - UI menu components
+ * - proxy.ts (for route validation)
+ * - agents.ts validates agent keys against these features
+ */
+
+export const menuIntegrations = [
   {
     id: "langgraph",
     name: "LangGraph (Python)",
@@ -35,7 +45,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
     name: "LangGraph (Typescript)",
     features: [
       "agentic_chat",
-      "backend_tool_rendering",
+      // "backend_tool_rendering",
       "human_in_the_loop",
       "agentic_generative_ui",
       "predictive_state_updates",
@@ -44,14 +54,14 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
       "subgraphs",
     ],
   },
-  {
-    id: "langchain",
-    name: "LangChain",
-    features: [
-      "agentic_chat",
-      "tool_based_generative_ui",
-    ],
-  },
+  // {
+  //   id: "langchain",
+  //   name: "LangChain",
+  //   features: [
+  //     "agentic_chat",
+  //     "tool_based_generative_ui",
+  //   ],
+  // },
   {
     id: "mastra",
     name: "Mastra",
@@ -162,7 +172,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
     name: "CrewAI",
     features: [
       "agentic_chat",
-      "backend_tool_rendering",
+      // "backend_tool_rendering",
       "human_in_the_loop",
       "agentic_generative_ui",
       "predictive_state_updates",
@@ -198,7 +208,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
       "agentic_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
-      "agentic_chat_reasoning",
+      // "agentic_chat_reasoning",
       "agentic_generative_ui",
       "predictive_state_updates",
       "shared_state",
@@ -221,4 +231,27 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
       "human_in_the_loop",
     ],
   },
-];
+] as const satisfies readonly MenuIntegrationConfig[];
+
+/** Type representing all valid integration IDs */
+export type IntegrationId = (typeof menuIntegrations)[number]["id"];
+
+/** Type to get features for a specific integration ID */
+export type FeaturesFor<Id extends IntegrationId> = IntegrationFeatures<
+  typeof menuIntegrations,
+  Id
+>;
+
+// Helper functions for route validation
+export function isIntegrationValid(integrationId: string): boolean {
+  return menuIntegrations.some((i) => i.id === integrationId);
+}
+
+export function isFeatureAvailable(integrationId: string, featureId: string): boolean {
+  const integration = menuIntegrations.find((i) => i.id === integrationId);
+  return (integration?.features as readonly string[])?.includes(featureId) ?? false;
+}
+
+export function getIntegration(integrationId: string): MenuIntegrationConfig | undefined {
+  return menuIntegrations.find((i) => i.id === integrationId);
+}

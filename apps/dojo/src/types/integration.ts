@@ -1,5 +1,3 @@
-import { AbstractAgent } from "@ag-ui/client";
-
 export type Feature =
   | "agentic_chat"
   | "agentic_generative_ui"
@@ -19,7 +17,10 @@ export interface MenuIntegrationConfig {
   features: Feature[];
 }
 
-export interface AgentIntegrationConfig {
-  id: string;
-  agents: () => Promise<Partial<Record<Feature, AbstractAgent>>>;
-}
+/**
+ * Helper type to extract features for a specific integration from menu config
+ */
+export type IntegrationFeatures<
+  T extends readonly MenuIntegrationConfig[],
+  Id extends string
+> = Extract<T[number], { id: Id }>["features"][number];

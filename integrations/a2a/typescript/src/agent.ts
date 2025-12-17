@@ -14,6 +14,7 @@ import type {
   MessageSendConfiguration,
   MessageSendParams,
   Message as A2AMessage,
+  Part as A2APart,
 } from "@a2a-js/sdk";
 import { convertAGUIMessagesToA2A, convertA2AEventToAGUIEvents } from "./utils";
 import type {
@@ -28,7 +29,8 @@ export interface A2AAgentConfig extends AgentConfig {
   a2aClient: A2AClient;
 }
 
-const EXTENSION_URI = "https://a2ui.org/ext/a2a-ui/v0.1";
+const EXTENSION_URI = "https://a2ui.org/a2a-extension/a2ui/v0.8";
+const A2A_UI_MIME_TYPE = "application/json+a2ui";
 
 export class A2AAgent extends AbstractAgent {
   private readonly a2aClient: A2AClient;
@@ -50,7 +52,7 @@ export class A2AAgent extends AbstractAgent {
     return new A2AAgent({ a2aClient: this.a2aClient, debug: this.debug });
   }
 
-  public override run(input: RunAgentInput): Observable<BaseEvent> {
+  run(input: RunAgentInput): Observable<BaseEvent> {
     return new Observable<BaseEvent>((subscriber) => {
       const run = async () => {
         const runStarted: RunStartedEvent = {
@@ -124,9 +126,13 @@ export class A2AAgent extends AbstractAgent {
   }
 
   private prepareConversation(input: RunAgentInput): ConvertedA2AMessages {
-    return convertAGUIMessagesToA2A(input.messages ?? [], {
+    const converted = convertAGUIMessagesToA2A(input.messages ?? [], {
       contextId: input.threadId,
     });
+
+    this.attachForwardedAction(converted, input.forwardedProps);
+
+    return converted;
   }
 
   private async createSendParams(
@@ -356,5 +362,50 @@ export class A2AAgent extends AbstractAgent {
         seenSurfaceIds.add(surfaceId);
       },
     };
+  }
+
+  private attachForwardedAction(
+    converted: ConvertedA2AMessages,
+    forwardedProps: unknown,
+  ) {
+    if (
+      !forwardedProps ||
+      typeof forwardedProps !== "object" ||
+      !converted.latestUserMessage
+    ) {
+      return;
+    }
+
+    const { a2uiAction } = forwardedProps as {
+      a2uiAction?: unknown;
+    };
+
+    if (
+      !a2uiAction ||
+      typeof a2uiAction !== "object" ||
+      !("userAction" in a2uiAction)
+    ) {
+      return;
+    }
+
+    const target = converted.latestUserMessage;
+    const existingParts = Array.isArray(target.parts) ? [...target.parts] : [];
+
+    const actionPart = {
+      kind: "data",
+      data: a2uiAction as Record<string, unknown>,
+      mimeType: A2A_UI_MIME_TYPE,
+    } as A2APart;
+
+    existingParts.push(actionPart);
+    target.parts = existingParts;
+
+    const historyIndex = converted.history.findIndex(
+      (message) => message.messageId === target.messageId,
+    );
+
+    if (historyIndex >= 0) {
+      converted.history[historyIndex] = target;
+    }
   }
 }

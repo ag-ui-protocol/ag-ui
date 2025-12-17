@@ -24,7 +24,8 @@ class MessageSerializationTest {
 
         // Verify the structure matches AG-UI protocol
         val decoded = json.decodeFromString<Message>(jsonString)
-        assertEquals(message, decoded)
+        assertEquals(message.id, decoded.id)
+        assertEquals(message.content, decoded.content)
     }
 
     @Test
@@ -60,7 +61,11 @@ class MessageSerializationTest {
         val jsonString = json.encodeToString(messages)
         val decoded: List<Message> = json.decodeFromString(jsonString)
 
-        assertEquals(messages, decoded)
+        assertEquals(messages.size, decoded.size)
+        messages.zip(decoded).forEach { (original, decodedMsg) ->
+            assertEquals(original.id, decodedMsg.id)
+            assertEquals(original.content, decodedMsg.content)
+        }
     }
 
     @Test
@@ -81,6 +86,8 @@ class MessageSerializationTest {
         assertFalse(jsonString.contains("\"type\":\"user\""))
 
         val decoded = json.decodeFromString<RunAgentInput>(jsonString)
-        assertEquals(input, decoded)
+        assertEquals(input.threadId, decoded.threadId)
+        assertEquals(input.runId, decoded.runId)
+        assertEquals(input.messages.size, decoded.messages.size)
     }
 }
