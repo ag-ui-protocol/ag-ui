@@ -91,17 +91,17 @@ export interface GetRemoteAgentsOptions {
   resourceId?: string;
 }
 
-export async function getRemoteAgents<K extends string = string>({
+export async function getRemoteAgents({
   mastraClient,
   resourceId,
-}: GetRemoteAgentsOptions): Promise<Record<K, AbstractAgent>> {
+}: GetRemoteAgentsOptions): Promise<Record<string, AbstractAgent>> {
   const agents = await mastraClient.getAgents();
 
   return Object.entries(agents).reduce(
     (acc, [agentId]) => {
       const agent = mastraClient.getAgent(agentId);
 
-      acc[agentId as K] = new MastraAgent({
+      acc[agentId] = new MastraAgent({
         agentId,
         agent,
         resourceId,
@@ -109,7 +109,7 @@ export async function getRemoteAgents<K extends string = string>({
 
       return acc;
     },
-    {} as Record<K, AbstractAgent>,
+    {} as Record<string, AbstractAgent>,
   );
 }
 
@@ -119,16 +119,16 @@ export interface GetLocalAgentsOptions {
   runtimeContext?: RuntimeContext;
 }
 
-export function getLocalAgents<K extends string = string>({
+export function getLocalAgents({
   mastra,
   resourceId,
   runtimeContext,
-}: GetLocalAgentsOptions): Record<K, AbstractAgent> {
+}: GetLocalAgentsOptions): Record<string, AbstractAgent> {
   const agents = mastra.getAgents() || {};
 
   const agentAGUI = Object.entries(agents).reduce(
     (acc, [agentId, agent]) => {
-      acc[agentId as K] = new MastraAgent({
+      acc[agentId] = new MastraAgent({
         agentId,
         agent,
         resourceId,
@@ -136,7 +136,7 @@ export function getLocalAgents<K extends string = string>({
       });
       return acc;
     },
-    {} as Record<K, AbstractAgent>,
+    {} as Record<string, AbstractAgent>,
   );
 
   return agentAGUI;

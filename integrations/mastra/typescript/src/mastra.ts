@@ -381,16 +381,16 @@ export class MastraAgent extends AbstractAgent {
     }
   }
 
-  static async getRemoteAgents<K extends string = string>(
+  static async getRemoteAgents(
     options: GetRemoteAgentsOptions,
-  ): Promise<Record<K, AbstractAgent>> {
-    return getRemoteAgents<K>(options);
+  ): Promise<Record<string, AbstractAgent>> {
+    return getRemoteAgents(options);
   }
 
-  static getLocalAgents<K extends string = string>(
+  static getLocalAgents(
     options: GetLocalAgentsOptions,
-  ): Record<K, AbstractAgent> {
-    return getLocalAgents<K>(options);
+  ): Record<string, AbstractAgent> {
+    return getLocalAgents(options);
   }
 
   static getLocalAgent(options: GetLocalAgentOptions) {
