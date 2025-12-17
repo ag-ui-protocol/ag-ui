@@ -22,8 +22,7 @@ function getAgentConfigsFromMenu(): Array<{ id: string; agentKeys: string[] }> {
   // Match each integration object: { id: "...", name: "...", features: [...] }
   const integrationRegex = /{\s*id:\s*["']([^"']+)["'],[\s\S]*?features:\s*\[([\s\S]*?)\]/g;
 
-  let match;
-  while ((match = integrationRegex.exec(menuArrayContent)) !== null) {
+  for (const match of menuArrayContent.matchAll(integrationRegex)) {
     const id = match[1];
     const featuresContent = match[2];
 
