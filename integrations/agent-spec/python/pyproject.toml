@@ -8,6 +8,7 @@ requires-python = ">=3.10,<3.14.0"
 dependencies = [
   "fastapi>=0.115.0",
   "ag-ui-protocol>=0.1.10",
+  "pyagentspec",
 ]
 authors = [{ name = "Agent Spec team" }]
 
@@ -22,8 +23,8 @@ packages = ["ag_ui_agentspec"]
 allow-direct-references = true
 
 [tool.uv.sources]
-wayflowcore = { path = "../../../../wayflow/wayflowcore", editable = true }
-pyagentspec = { path = "../../../../agent-spec/pyagentspec", editable = true }
+wayflowcore = { git = "https://github.com/oracle/wayflow.git ", rev = "main", subdirectory = "wayflowcore" }
+pyagentspec = { git = "https://github.com/oracle/agent-spec.git ", rev = "main", subdirectory = "pyagentspec" }
 
 [project.optional-dependencies]
 langgraph = ["pyagentspec[langgraph]"]
