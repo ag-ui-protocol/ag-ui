@@ -1,0 +1,10 @@
+node_modules
+.next
+.turbo
+.vscode
+.env
+.env.*
+!.env.example
+.git
+apps/dojo/.next
+apps/dojo/node_modules
