@@ -76,7 +76,7 @@ export const agentsIntegrations = {
         agentic_chat: "agentic_chat",
         agentic_generative_ui: "agentic_generative_ui",
         human_in_the_loop: "human_in_the_loop",
-        // Disabled until we can figure out why production builds break
+        // TODO: Re-enable this once production builds no longer break
         // predictive_state_updates: "predictive_state_updates",
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
