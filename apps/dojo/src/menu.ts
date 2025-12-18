@@ -115,7 +115,7 @@ export const menuIntegrations = [
       "agentic_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
-      "predictive_state_updates",
+      // "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
     ],
