@@ -1,4 +1,4 @@
-import type { IntegrationFeatures, MenuIntegrationConfig } from "./types/integration";
+import type { IntegrationFeature, MenuIntegrationConfig } from "./types/integration";
 
 /**
  * Integration configuration - SINGLE SOURCE OF TRUTH
@@ -258,7 +258,7 @@ export const menuIntegrations = [
 export type IntegrationId = (typeof menuIntegrations)[number]["id"];
 
 /** Type to get features for a specific integration ID */
-export type FeaturesFor<Id extends IntegrationId> = IntegrationFeatures<
+export type FeatureFor<Id extends IntegrationId> = IntegrationFeature<
   typeof menuIntegrations,
   Id
 >;

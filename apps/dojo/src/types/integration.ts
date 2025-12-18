@@ -20,7 +20,7 @@ export interface MenuIntegrationConfig {
 /**
  * Helper type to extract features for a specific integration from menu config
  */
-export type IntegrationFeatures<
+export type IntegrationFeature<
   T extends readonly MenuIntegrationConfig[],
   Id extends string
 > = Extract<T[number], { id: Id }>["features"][number];

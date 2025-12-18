@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { AbstractAgent } from "@ag-ui/client";
-import type { FeaturesFor, IntegrationId } from "./menu";
+import type { FeatureFor, IntegrationId } from "./menu";
 import { MiddlewareStarterAgent } from "@ag-ui/middleware-starter";
 import { ServerStarterAgent } from "@ag-ui/server-starter";
 import { ServerStarterAllFeaturesAgent } from "@ag-ui/server-starter-all-features";
@@ -48,7 +48,7 @@ function mapAgents<const T extends Record<string, string>>(
  * Base type requiring all menu integrations with their specific features.
  */
 type MenuAgentsMap = {
-  [K in IntegrationId]: () => Promise<{ [P in FeaturesFor<K>]: AbstractAgent }>;
+  [K in IntegrationId]: () => Promise<{ [P in FeatureFor<K>]: AbstractAgent }>;
 };
 
 /**
