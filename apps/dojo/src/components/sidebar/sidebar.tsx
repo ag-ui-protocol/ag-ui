@@ -21,7 +21,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "../ui/button";
 import { menuIntegrations } from "@/menu";
-import { Feature } from "@/types/integration";
+import type { Feature } from "@/types/integration";
 import { useURLParams } from "@/contexts/url-params-context";
 import { View } from "@/types/interface";
 import { getTitleForCurrentDomain } from "@/utils/domain-config";

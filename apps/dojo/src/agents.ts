@@ -1,7 +1,8 @@
 import "server-only";
 
 import type { AbstractAgent } from "@ag-ui/client";
-import type { FeatureFor, IntegrationId } from "./menu";
+import type { FeatureFor, IntegrationId } from "./types/integration";
+import type { Mutable } from "./types/utils";
 import { MiddlewareStarterAgent } from "@ag-ui/middleware-starter";
 import { ServerStarterAgent } from "@ag-ui/server-starter";
 import { ServerStarterAllFeaturesAgent } from "@ag-ui/server-starter-all-features";
@@ -26,13 +27,6 @@ import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
 
 const envVars = getEnvVars();
-
-/**
- * Removes `readonly` modifier from types without changing literal types.
- * - `readonly ["foo"]` → `["foo"]` (preserves literal)
- * - `readonly { a: 1 }` → `{ a: 1 }` (preserves literal)
- */
-type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
 /**
  * Helper to map feature keys to agent instances using a builder function.

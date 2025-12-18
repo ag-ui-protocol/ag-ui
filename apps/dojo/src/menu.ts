@@ -1,4 +1,5 @@
-import type { IntegrationFeature, MenuIntegrationConfig } from "./types/integration";
+import type { MenuIntegrationConfig } from "./types/integration";
+export * from "./types/integration";
 
 /**
  * Integration configuration - SINGLE SOURCE OF TRUTH
@@ -253,26 +254,3 @@ export const menuIntegrations = [
     ],
   },
 ] as const satisfies readonly MenuIntegrationConfig[];
-
-/** Type representing all valid integration IDs */
-export type IntegrationId = (typeof menuIntegrations)[number]["id"];
-
-/** Type to get features for a specific integration ID */
-export type FeatureFor<Id extends IntegrationId> = IntegrationFeature<
-  typeof menuIntegrations,
-  Id
->;
-
-// Helper functions for route validation
-export function isIntegrationValid(integrationId: string): boolean {
-  return menuIntegrations.some((i) => i.id === integrationId);
-}
-
-export function isFeatureAvailable(integrationId: string, featureId: string): boolean {
-  const integration = menuIntegrations.find((i) => i.id === integrationId);
-  return (integration?.features as readonly string[])?.includes(featureId) ?? false;
-}
-
-export function getIntegration(integrationId: string): MenuIntegrationConfig | undefined {
-  return menuIntegrations.find((i) => i.id === integrationId);
-}
