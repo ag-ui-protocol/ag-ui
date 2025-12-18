@@ -1,5 +1,6 @@
 import asyncio
 from typing import Any, Dict
+import traceback
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
@@ -17,6 +18,8 @@ def prepare_langgraph_agent_inputs(input_data: RunAgentInput) -> Dict[str, Any]:
     for m in messages[-2:]:
         m_dict = m.model_dump()
         if m_dict["role"] in {"tool", "user"}:
+            if m_dict["role"] == "user" and "name" in m_dict:
+                del m_dict["name"]
             messages_to_return.append(m_dict)
     return {"messages": messages_to_return}
 
@@ -32,6 +35,9 @@ async def run_langgraph_agent(agent: CompiledStateGraph, input_data: RunAgentInp
         try:
             for _ in agent.stream(inputs, stream_mode="messages", config=config):
                 pass
+        except Exception as e:
+            print(traceback.format_exc())
+            raise RuntimeError("LangGraph agent crashed (see printed traceback above):" + repr(e))
         finally:
             EVENT_QUEUE.reset(token)
 

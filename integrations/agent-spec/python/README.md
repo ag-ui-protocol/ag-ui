@@ -1,5 +1,5 @@
 Open Agent Spec <> AG‑UI (Python)
-============================
+=================================
 
 Agent runner that emits AG‑UI events and a small FastAPI/uvicorn server to stream them to Dojo via SSE.
 
@@ -11,8 +11,16 @@ Supported agent runtimes and Dojo features
 - Wayflow (Oracle's reference agent framework)  (chat, frontend tools, backend tools)
 - LangGraph (chat, frontend tools, backend tools, tool call streaming)
 
-Install
-- Base library plus optional extras so you can choose runtimes. Routers are lazy‑loaded; if you don't install a runtime, its routes will not work.
+## Install
+
+Base library plus optional extras so you can choose runtimes. Routers are lazy-loaded; if you don't install a runtime, its routes will not work.
+
+Before installation, please clone the following GitHub repositories:
+- [AG-UI](https://github.com/ag-ui-protocol/ag-ui) and `cd ag-ui/integrations/agent-spec/python`
+- [Agent Spec](https://github.com/oracle/agent-spec)
+- [WayFlow](https://github.com/oracle/wayflow)
+- Please put these 3 repos in the same directory.
+
 
 ```bash
 # Wayflow only

@@ -9,7 +9,7 @@ from fastapi import FastAPI
 
 from server.api import router
 
-app = FastAPI(title="Agent-Spec × AG-UI Examples")
+app = FastAPI(title="Agent-Spec x AG-UI Examples")
 app.include_router(router)
 
 

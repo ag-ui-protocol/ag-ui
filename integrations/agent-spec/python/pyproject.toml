@@ -27,7 +27,7 @@ pyagentspec = { path = "../../../../agent-spec/pyagentspec", editable = true }
 
 [project.optional-dependencies]
 langgraph = ["pyagentspec[langgraph]"]
-wayflow = ["wayflowcore", "sqlalchemy"]
+wayflow = ["wayflowcore"]
 
 [tool.uv]
 package = true

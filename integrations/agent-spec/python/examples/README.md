@@ -1,4 +1,5 @@
 # Open Agent Spec AG-UI Examples
+================================
 
 This directory contains example usage of the AG-UI integration for Open Agent Spec (Agent Spec). It provides a FastAPI application that demonstrates how to use the Agent Spec agent with the AG-UI protocol.
 
@@ -13,7 +14,9 @@ The examples include implementations for each of the AG-UI dojo features:
 
 ## Setup
 
-1. Install dependencies (choose runtimes via extras):
+1. Please see the README in the parent folder for instructions on which GitHub repos to clone.
+
+2. Install dependencies (choose runtimes via extras):
    ```bash
    # Both runtimes
    uv sync --extra langgraph --extra wayflow
@@ -22,7 +25,7 @@ The examples include implementations for each of the AG-UI dojo features:
    # uv sync --extra wayflow
    ```
 
-2. Run the development server:
+3. Run the development server:
    ```bash
    uv run dev
    ```
