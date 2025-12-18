@@ -115,6 +115,7 @@ export const menuIntegrations = [
       "agentic_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
+      // TODO: @contextablemark Re-enable predictive state updates once it is working
       // "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
