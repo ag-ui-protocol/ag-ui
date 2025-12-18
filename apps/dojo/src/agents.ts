@@ -1,8 +1,8 @@
 import "server-only";
 
 import type { AbstractAgent } from "@ag-ui/client";
-import type { FeatureFor, IntegrationId } from "./types/integration";
-import type { Mutable } from "./types/utils";
+import type { AgentsMap } from "./types/agents";
+import { mapAgents } from "./utils/agents";
 import { MiddlewareStarterAgent } from "@ag-ui/middleware-starter";
 import { ServerStarterAgent } from "@ag-ui/server-starter";
 import { ServerStarterAllFeaturesAgent } from "@ag-ui/server-starter-all-features";
@@ -27,47 +27,6 @@ import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
 
 const envVars = getEnvVars();
-
-/**
- * Helper to map feature keys to agent instances using a builder function.
- * Reduces repetition when all agents follow the same pattern with different parameters.
- * 
- * The builder function receives the value type from the mapping (`Mutable<T[keyof T]>`).
- * This allows flexible parameter types - strings, objects, arrays, or any consistent shape.
- * 
- * Uses `const` type parameter to preserve exact literal keys from the mapping.
- * The `Mutable` type removes `readonly` from values (added by `const T`) for ergonomics.
- * The return type `{ -readonly [K in keyof T]: AbstractAgent }` removes the readonly
- * modifier added by `const T` to match the expected AgentsMap type.
- */
-function mapAgents<const T extends Record<string, unknown>>(
-  builder: (params: Mutable<T[keyof T]>) => AbstractAgent,
-  mapping: T
-): { -readonly [K in keyof T]: AbstractAgent } {
-  return Object.fromEntries(
-    Object.entries(mapping).map(([key, params]) => [key, builder(params as Mutable<T[keyof T]>)])
-  ) as { -readonly [K in keyof T]: AbstractAgent };
-}
-
-/**
- * Base type requiring all menu integrations with their specific features.
- */
-type MenuAgentsMap = {
-  [K in IntegrationId]: () => Promise<{ [P in FeatureFor<K>]: AbstractAgent }>;
-};
-
-/**
- * Agent integrations map that requires all menu integrations but allows extras.
- * 
- * TypeScript enforces:
- * - All integration IDs from menu.ts must have an entry with correct features
- * - Additional unlisted integrations ARE allowed (for testing before public release)
- * 
- * The index signature allows extra keys without excess property checking errors.
- */
-type AgentsMap = MenuAgentsMap & {
-  [key: string]: () => Promise<Record<string, AbstractAgent>>;
-};
 
 export const agentsIntegrations = {
   "middleware-starter": async () => ({
@@ -374,9 +333,3 @@ export const agentsIntegrations = {
     human_in_the_loop: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/human-in-the-loop`, debug: true }),
   }),
 } satisfies AgentsMap;
-
-/**
- * Type representing all agent integration IDs (includes both menu integrations and unlisted ones).
- * Use this type when you need to reference any valid agent integration, not just menu-listed ones.
- */
-export type AgentIntegrationId = keyof typeof agentsIntegrations;
