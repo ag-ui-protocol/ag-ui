@@ -9,6 +9,7 @@ type envVars = {
   springAiUrl: string;
   llamaIndexUrl: string;
   crewAiUrl: string;
+  agentSpecUrl: string;
   pydanticAIUrl: string;
   adkMiddlewareUrl: string;
   agentFrameworkPythonUrl: string;
@@ -41,6 +42,7 @@ export default function getEnvVars(): envVars {
     agnoUrl: process.env.AGNO_URL || 'http://localhost:9001',
     llamaIndexUrl: process.env.LLAMA_INDEX_URL || 'http://localhost:9000',
     crewAiUrl: process.env.CREW_AI_URL || 'http://localhost:9002',
+    agentSpecUrl: process.env.AGENT_SPEC_URL || 'http://localhost:9003',
     pydanticAIUrl: process.env.PYDANTIC_AI_URL || 'http://localhost:9000',
     adkMiddlewareUrl: process.env.ADK_MIDDLEWARE_URL || 'http://localhost:8000',
     agentFrameworkPythonUrl: process.env.AGENT_FRAMEWORK_PYTHON_URL || 'http://localhost:8888',

@@ -12,6 +12,26 @@ import type { IntegrationFeatures, MenuIntegrationConfig } from "./types/integra
 
 export const menuIntegrations = [
   {
+    id: "agent-spec-langgraph",
+    name: "Open Agent Spec (LangGraph)",
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "human_in_the_loop",
+      "tool_based_generative_ui",
+    ],
+  },
+  {
+    id: "agent-spec-wayflow",
+    name: "Open Agent Spec (Wayflow)",
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "human_in_the_loop",
+      "tool_based_generative_ui",
+    ],
+  },
+  {
     id: "langgraph",
     name: "LangGraph (Python)",
     features: [

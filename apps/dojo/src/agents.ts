@@ -257,6 +257,32 @@ export const agentsIntegrations = {
       }
     ),
 
+  "agent-spec-langgraph": async () =>
+    mapAgents(
+      (path) => new HttpAgent({
+        url: `${envVars.agentSpecUrl}/langgraph/${path}`,
+      }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        human_in_the_loop: "human_in_the_loop",
+        tool_based_generative_ui: "tool_based_generative_ui",
+      }
+    ),
+
+  "agent-spec-wayflow": async () =>
+    mapAgents(
+      (path) => new HttpAgent({
+        url: `${envVars.agentSpecUrl}/wayflow/${path}`,
+      }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        tool_based_generative_ui: "tool_based_generative_ui",
+        human_in_the_loop: "human_in_the_loop",
+      }
+    ),
+
   "microsoft-agent-framework-python": async () =>
     mapAgents(
       (path) => new HttpAgent({ url: `${envVars.agentFrameworkPythonUrl}/${path}` }),
