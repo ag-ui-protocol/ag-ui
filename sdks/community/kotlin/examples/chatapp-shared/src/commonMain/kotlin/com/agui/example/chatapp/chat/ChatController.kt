@@ -7,6 +7,9 @@ import com.agui.client.agent.AgentStateMutation
 import com.agui.client.agent.AgentSubscriber
 import com.agui.client.agent.AgentSubscriberParams
 import com.agui.client.agent.AgentSubscription
+import com.agui.core.types.ActivityDeltaEvent
+import com.agui.core.types.ActivityMessage
+import com.agui.core.types.ActivitySnapshotEvent
 import com.agui.core.types.AssistantMessage
 import com.agui.core.types.BaseEvent
 import com.agui.core.types.DeveloperMessage
@@ -27,6 +30,15 @@ import com.agui.core.types.ToolCallEndEvent
 import com.agui.core.types.ToolCallStartEvent
 import com.agui.core.types.ToolMessage
 import com.agui.core.types.UserMessage
+import com.agui.a2ui.data.DataModel
+import com.agui.a2ui.model.DataChangeEvent
+import com.agui.a2ui.model.UiDefinition
+import com.agui.a2ui.model.UiEvent
+import com.agui.a2ui.model.UserActionEvent
+import com.agui.a2ui.state.SurfaceStateManager
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import com.agui.example.chatapp.data.auth.AuthManager
 import com.agui.example.chatapp.data.model.AgentConfig
 import com.agui.example.chatapp.data.repository.AgentRepository
@@ -83,6 +95,7 @@ class ChatController(
     private val streamingMessageIds = mutableSetOf<String>()
     private val supplementalMessages = linkedMapOf<String, DisplayMessage>()
     private val ephemeralMessages = mutableMapOf<EphemeralType, DisplayMessage>()
+    private val surfaceStateManager = SurfaceStateManager()
     private data class StoredMessage(var message: Message, val displayId: String)
 
     private val messageStore = mutableListOf<StoredMessage>()
@@ -169,12 +182,14 @@ class ChatController(
         messageStore.clear()
         messageIdCounts.clear()
         pendingUserMessages.clear()
+        surfaceStateManager.clear()
 
         _state.update {
             it.copy(
                 isConnected = false,
                 messages = emptyList(),
-                background = BackgroundStyle.Default
+                background = BackgroundStyle.Default,
+                a2uiSurfaces = emptyMap()
             )
         }
     }
@@ -195,17 +210,75 @@ class ChatController(
         startConversation(trimmed)
     }
 
+    /**
+     * Send an A2UI user action event back to the agent.
+     * This is called when users interact with A2UI surfaces (button clicks, form submissions, etc.).
+     *
+     * The A2UI ClientEvent format is:
+     * ```json
+     * {
+     *   "name": "action_name",
+     *   "surfaceId": "default",
+     *   "sourceComponentId": "component-id:item1",
+     *   "timestamp": "2025-12-17T02:00:23.936Z",
+     *   "context": { ... }
+     * }
+     * ```
+     */
+    fun sendA2UiAction(event: UiEvent) {
+        if (currentAgent == null || controllerClosed.value) return
+
+        // Build forwardedProps with A2UI ClientEvent at root
+        // Format: { "a2uiAction": { "userAction": { name, surfaceId, sourceComponentId, timestamp, context } } }
+        val forwardedProps = buildJsonObject {
+            put("a2uiAction", buildJsonObject {
+                put("userAction", buildJsonObject {
+                    when (event) {
+                        is UserActionEvent -> {
+                            put("name", event.name)
+                            put("surfaceId", event.surfaceId)
+                            put("sourceComponentId", event.sourceComponentId)
+                            put("timestamp", event.timestamp)
+                            event.context?.let { put("context", it) }
+                        }
+                        is DataChangeEvent -> {
+                            put("surfaceId", event.surfaceId)
+                            put("path", event.path)
+                            put("value", event.value)
+                        }
+                    }
+                })
+            })
+        }
+
+        // Send as an action message with forwardedProps
+        startConversationWithForwardedProps("[A2UI Action]", forwardedProps)
+    }
+
     private fun startConversation(content: String) {
+        startConversationWithForwardedProps(content, null)
+    }
+
+    private fun startConversationWithForwardedProps(content: String, forwardedProps: JsonElement?) {
         currentJob?.cancel()
 
         currentJob = scope.launch {
             _state.update { it.copy(isLoading = true) }
 
             try {
-                currentAgent?.sendMessage(
-                    message = content,
-                    threadId = currentThreadId ?: "default"
-                )?.collect { event ->
+                val eventFlow = if (forwardedProps != null) {
+                    currentAgent?.sendMessageWithForwardedProps(
+                        message = content,
+                        threadId = currentThreadId ?: "default",
+                        forwardedProps = forwardedProps
+                    )
+                } else {
+                    currentAgent?.sendMessage(
+                        message = content,
+                        threadId = currentThreadId ?: "default"
+                    )
+                }
+                eventFlow?.collect { event ->
                     logger.d { "Received event: ${event::class.simpleName}" }
                 }
             } catch (e: Exception) {
@@ -303,6 +376,9 @@ class ChatController(
             isStreaming = streamingMessageIds.contains(id)
         )
         is ToolMessage -> null
+        // ActivityMessage doesn't produce a DisplayMessage - A2UI surfaces are
+        // rendered separately from ChatState.a2uiSurfaces
+        is ActivityMessage -> null
     }
 
     private fun formatAssistantContent(message: AssistantMessage): String =
@@ -469,6 +545,18 @@ class ChatController(
             }
             is RunFinishedEvent -> clearAllEphemeralMessages()
             is StateDeltaEvent, is StateSnapshotEvent -> Unit
+            is ActivitySnapshotEvent -> {
+                if (event.activityType == "a2ui-surface") {
+                    surfaceStateManager.processSnapshot(event.messageId, event.content)
+                    updateA2UiSurfaces()
+                }
+            }
+            is ActivityDeltaEvent -> {
+                if (event.activityType == "a2ui-surface") {
+                    surfaceStateManager.processDelta(event.messageId, event.patch)
+                    updateA2UiSurfaces()
+                }
+            }
             else -> Unit
         }
         if (needsRefresh) {
@@ -495,6 +583,19 @@ class ChatController(
             it.copy(messages = supplemental + conversation + pending + ephemerals)
         }
     }
+
+    private fun updateA2UiSurfaces() {
+        val surfaces = surfaceStateManager.getSurfaces()
+        val dataModels = surfaces.keys.mapNotNull { surfaceId ->
+            surfaceStateManager.getDataModel(surfaceId)?.let { surfaceId to it }
+        }.toMap()
+        _state.update { it.copy(a2uiSurfaces = surfaces, a2uiDataModels = dataModels) }
+    }
+
+    /**
+     * Returns the data model for a specific A2UI surface.
+     */
+    fun getA2UiDataModel(surfaceId: String) = surfaceStateManager.getDataModel(surfaceId)
 
     private inner class ControllerAgentSubscriber : AgentSubscriber {
         override suspend fun onRunInitialized(params: AgentSubscriberParams): AgentStateMutation? {
@@ -536,7 +637,9 @@ data class ChatState(
     val isLoading: Boolean = false,
     val isConnected: Boolean = false,
     val error: String? = null,
-    val background: BackgroundStyle = BackgroundStyle.Default
+    val background: BackgroundStyle = BackgroundStyle.Default,
+    val a2uiSurfaces: Map<String, UiDefinition> = emptyMap(),
+    val a2uiDataModels: Map<String, DataModel> = emptyMap()
 )
 
 /** Classic chat roles shown in the UI layers. */
@@ -557,5 +660,6 @@ data class DisplayMessage(
     val timestamp: Long = Clock.System.now().toEpochMilliseconds(),
     val isStreaming: Boolean = false,
     val ephemeralGroupId: String? = null,
-    val ephemeralType: EphemeralType? = null
+    val ephemeralType: EphemeralType? = null,
+    val surfaceId: String? = null
 )

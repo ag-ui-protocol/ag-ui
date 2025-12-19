@@ -26,15 +26,16 @@ class AGUIError(message: String) : Exception(message)
  * @throws AGUIError when events violate the AG-UI protocol state machine
  */
 fun Flow<BaseEvent>.verifyEvents(debug: Boolean = false): Flow<BaseEvent> {
-    // State tracking
-    var activeMessageId: String? = null
-    var activeToolCallId: String? = null
+    // State tracking - using Maps to support concurrent messages/tool calls like TypeScript SDK
+    val activeMessages = mutableMapOf<String, Boolean>()
+    val activeToolCalls = mutableMapOf<String, Boolean>()
     var runFinished = false
     var runError = false
     var firstEventReceived = false
     val activeSteps = mutableMapOf<String, Boolean>()
     var activeThinkingStep = false
     var activeThinkingStepMessage = false
+    var runStarted = false
     
     return transform { event ->
         val eventType = event.eventType
@@ -50,145 +51,97 @@ fun Flow<BaseEvent>.verifyEvents(debug: Boolean = false): Flow<BaseEvent> {
             )
         }
         
-        // Check if run has already finished
-        if (runFinished && eventType != EventType.RUN_ERROR) {
+        // Check if run has already finished (but allow RUN_STARTED for new run)
+        if (runFinished && eventType != EventType.RUN_ERROR && eventType != EventType.RUN_STARTED) {
             throw AGUIError(
-                "Cannot send event type '$eventType': The run has already finished with 'RUN_FINISHED'."
+                "Cannot send event type '$eventType': The run has already finished with 'RUN_FINISHED'. Start a new run with 'RUN_STARTED'."
             )
         }
-        
-        // Validate events inside text messages
-        if (activeMessageId != null) {
-            val allowedInMessage = setOf(
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_END,
-                EventType.RAW
-            )
-            
-            if (eventType !in allowedInMessage) {
-                throw AGUIError(
-                    "Cannot send event type '$eventType' after 'TEXT_MESSAGE_START': Send 'TEXT_MESSAGE_END' first."
-                )
-            }
-        }
-        
-        // Validate events inside thinking text messages
-        if (activeThinkingStepMessage) {
-            val allowedInThinkingMessage = setOf(
-                EventType.THINKING_TEXT_MESSAGE_CONTENT,
-                EventType.THINKING_TEXT_MESSAGE_END,
-                EventType.RAW
-            )
-            
-            if (eventType !in allowedInThinkingMessage) {
-                throw AGUIError(
-                    "Cannot send event type '$eventType' after 'THINKING_TEXT_MESSAGE_START': Send 'THINKING_TEXT_MESSAGE_END' first."
-                )
-            }
-        }
-        
-        // Validate events inside tool calls
-        if (activeToolCallId != null) {
-            val allowedInToolCall = setOf(
-                EventType.TOOL_CALL_ARGS,
-                EventType.TOOL_CALL_END,
-                EventType.RAW
-            )
-            
-            if (eventType !in allowedInToolCall) {
-                if (eventType == EventType.TOOL_CALL_START) {
-                    throw AGUIError(
-                        "Cannot send 'TOOL_CALL_START' event: A tool call is already in progress. Complete it with 'TOOL_CALL_END' first."
-                    )
-                }
-                throw AGUIError(
-                    "Cannot send event type '$eventType' after 'TOOL_CALL_START': Send 'TOOL_CALL_END' first."
-                )
-            }
-        }
-        
-        // First event validation
+
+        // First event validation and RUN_STARTED handling (matching TypeScript SDK)
         if (!firstEventReceived) {
             firstEventReceived = true
             if (eventType != EventType.RUN_STARTED && eventType != EventType.RUN_ERROR) {
                 throw AGUIError("First event must be 'RUN_STARTED'")
             }
         } else if (eventType == EventType.RUN_STARTED) {
-            throw AGUIError("Cannot send multiple 'RUN_STARTED' events")
+            // Allow RUN_STARTED after RUN_FINISHED (new run), but not during an active run
+            if (runStarted && !runFinished) {
+                throw AGUIError(
+                    "Cannot send 'RUN_STARTED' while a run is still active. The previous run must be finished with 'RUN_FINISHED' before starting a new run."
+                )
+            }
+            // Reset state for new run
+            if (runFinished) {
+                activeMessages.clear()
+                activeToolCalls.clear()
+                activeSteps.clear()
+                activeThinkingStep = false
+                activeThinkingStepMessage = false
+                runFinished = false
+                runError = false
+            }
+            runStarted = true
         }
         
-        // Event-specific validation
+        // Event-specific validation (matching TypeScript SDK - supports concurrent messages/tool calls)
         when (event) {
             is TextMessageStartEvent -> {
-                if (activeMessageId != null) {
+                val messageId = event.messageId
+                if (activeMessages.containsKey(messageId)) {
                     throw AGUIError(
-                        "Cannot send 'TEXT_MESSAGE_START' event: A text message is already in progress. Complete it with 'TEXT_MESSAGE_END' first."
+                        "Cannot send 'TEXT_MESSAGE_START' event: A text message with ID '$messageId' is already in progress. Complete it with 'TEXT_MESSAGE_END' first."
                     )
                 }
-                activeMessageId = event.messageId
+                activeMessages[messageId] = true
             }
-            
+
             is TextMessageContentEvent -> {
-                if (activeMessageId == null) {
+                val messageId = event.messageId
+                if (!activeMessages.containsKey(messageId)) {
                     throw AGUIError(
-                        "Cannot send 'TEXT_MESSAGE_CONTENT' event: No active text message found. Start a text message with 'TEXT_MESSAGE_START' first."
-                    )
-                }
-                if (event.messageId != activeMessageId) {
-                    throw AGUIError(
-                        "Cannot send 'TEXT_MESSAGE_CONTENT' event: Message ID mismatch. The ID '${event.messageId}' doesn't match the active message ID '$activeMessageId'."
+                        "Cannot send 'TEXT_MESSAGE_CONTENT' event: No active text message found with ID '$messageId'. Start a text message with 'TEXT_MESSAGE_START' first."
                     )
                 }
             }
-            
+
             is TextMessageEndEvent -> {
-                if (activeMessageId == null) {
+                val messageId = event.messageId
+                if (!activeMessages.containsKey(messageId)) {
                     throw AGUIError(
-                        "Cannot send 'TEXT_MESSAGE_END' event: No active text message found. A 'TEXT_MESSAGE_START' event must be sent first."
+                        "Cannot send 'TEXT_MESSAGE_END' event: No active text message found with ID '$messageId'. A 'TEXT_MESSAGE_START' event must be sent first."
                     )
                 }
-                if (event.messageId != activeMessageId) {
-                    throw AGUIError(
-                        "Cannot send 'TEXT_MESSAGE_END' event: Message ID mismatch. The ID '${event.messageId}' doesn't match the active message ID '$activeMessageId'."
-                    )
-                }
-                activeMessageId = null
+                activeMessages.remove(messageId)
             }
-            
+
             is ToolCallStartEvent -> {
-                if (activeToolCallId != null) {
+                val toolCallId = event.toolCallId
+                if (activeToolCalls.containsKey(toolCallId)) {
                     throw AGUIError(
-                        "Cannot send 'TOOL_CALL_START' event: A tool call is already in progress. Complete it with 'TOOL_CALL_END' first."
+                        "Cannot send 'TOOL_CALL_START' event: A tool call with ID '$toolCallId' is already in progress. Complete it with 'TOOL_CALL_END' first."
                     )
                 }
-                activeToolCallId = event.toolCallId
+                activeToolCalls[toolCallId] = true
             }
-            
+
             is ToolCallArgsEvent -> {
-                if (activeToolCallId == null) {
+                val toolCallId = event.toolCallId
+                if (!activeToolCalls.containsKey(toolCallId)) {
                     throw AGUIError(
-                        "Cannot send 'TOOL_CALL_ARGS' event: No active tool call found. Start a tool call with 'TOOL_CALL_START' first."
-                    )
-                }
-                if (event.toolCallId != activeToolCallId) {
-                    throw AGUIError(
-                        "Cannot send 'TOOL_CALL_ARGS' event: Tool call ID mismatch. The ID '${event.toolCallId}' doesn't match the active tool call ID '$activeToolCallId'."
+                        "Cannot send 'TOOL_CALL_ARGS' event: No active tool call found with ID '$toolCallId'. Start a tool call with 'TOOL_CALL_START' first."
                     )
                 }
             }
-            
+
             is ToolCallEndEvent -> {
-                if (activeToolCallId == null) {
+                val toolCallId = event.toolCallId
+                if (!activeToolCalls.containsKey(toolCallId)) {
                     throw AGUIError(
-                        "Cannot send 'TOOL_CALL_END' event: No active tool call found. A 'TOOL_CALL_START' event must be sent first."
+                        "Cannot send 'TOOL_CALL_END' event: No active tool call found with ID '$toolCallId'. A 'TOOL_CALL_START' event must be sent first."
                     )
                 }
-                if (event.toolCallId != activeToolCallId) {
-                    throw AGUIError(
-                        "Cannot send 'TOOL_CALL_END' event: Tool call ID mismatch. The ID '${event.toolCallId}' doesn't match the active tool call ID '$activeToolCallId'."
-                    )
-                }
-                activeToolCallId = null
+                activeToolCalls.remove(toolCallId)
             }
             
             is StepStartedEvent -> {
@@ -210,15 +163,34 @@ fun Flow<BaseEvent>.verifyEvents(debug: Boolean = false): Flow<BaseEvent> {
             }
             
             is RunFinishedEvent -> {
+                // Check that all steps are finished before run ends
                 if (activeSteps.isNotEmpty()) {
                     val unfinishedSteps = activeSteps.keys.joinToString(", ")
                     throw AGUIError(
                         "Cannot send 'RUN_FINISHED' while steps are still active: $unfinishedSteps"
                     )
                 }
+                // Check that all messages are finished before run ends
+                if (activeMessages.isNotEmpty()) {
+                    val unfinishedMessages = activeMessages.keys.joinToString(", ")
+                    throw AGUIError(
+                        "Cannot send 'RUN_FINISHED' while text messages are still active: $unfinishedMessages"
+                    )
+                }
+                // Check that all tool calls are finished before run ends
+                if (activeToolCalls.isNotEmpty()) {
+                    val unfinishedToolCalls = activeToolCalls.keys.joinToString(", ")
+                    throw AGUIError(
+                        "Cannot send 'RUN_FINISHED' while tool calls are still active: $unfinishedToolCalls"
+                    )
+                }
                 runFinished = true
             }
             
+            is RunStartedEvent -> {
+                runStarted = true
+            }
+
             is RunErrorEvent -> {
                 runError = true
             }

@@ -7,7 +7,15 @@ include(":desktopApp")
 include(":chatapp-shared")
 project(":chatapp-shared").projectDir = file("../chatapp-shared")
 
-// Library modules will be pulled from Maven instead of local build
+// Include local library for development (using local modules with new Activity types)
+includeBuild("../../library") {
+    dependencySubstitution {
+        substitute(module("com.agui:kotlin-core")).using(project(":kotlin-core"))
+        substitute(module("com.agui:kotlin-client")).using(project(":kotlin-client"))
+        substitute(module("com.agui:kotlin-tools")).using(project(":kotlin-tools"))
+        substitute(module("com.ag-ui.community:kotlin-a2ui")).using(project(":kotlin-a2ui"))
+    }
+}
 
 pluginManagement {
     repositories {
