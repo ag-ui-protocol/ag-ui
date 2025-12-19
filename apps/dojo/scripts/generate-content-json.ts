@@ -392,8 +392,7 @@ async function runGenerateContent() {
     // Per feature, assign all the frontend files like page.tsx as well as all agent files
     for (const featureId of featureIds) {
       const agentFilePathsForFeature = agentFilePaths[featureId] ?? [];
-      // @ts-expect-error -- redundant error about indexing of a new object.
-      result[`${agentConfig.id}::${featureId}`] = [
+      const allFiles = [
         // Get all frontend files for the feature
         ...(await getFeatureFrontendFiles(featureId)),
         // Get the agent (python/TS) file
@@ -401,6 +400,11 @@ async function runGenerateContent() {
           agentFilePathsForFeature.map(async (f) => await getFile(f)),
         )),
       ];
+      // Filter out empty objects (files that weren't found)
+      // @ts-expect-error -- redundant error about indexing of a new object.
+      result[`${agentConfig.id}::${featureId}`] = allFiles.filter(
+        (file) => Object.keys(file).length > 0
+      );
     }
   }
 
