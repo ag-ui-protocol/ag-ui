@@ -439,9 +439,66 @@ function validateAgentFilesMapper(): boolean {
   return true;
 }
 
+/**
+ * Validates that all feature folders have a README.mdx file.
+ * Returns true if valid, false otherwise.
+ */
+function validateFeatureReadmes(): boolean {
+  // Get all unique features across all integrations
+  const allFeatures = new Set<string>();
+  for (const integration of menuIntegrations) {
+    for (const feature of integration.features) {
+      allFeatures.add(feature);
+    }
+  }
+
+  const missingReadmes: Array<{ feature: string; integrations: string[] }> = [];
+
+  for (const feature of allFeatures) {
+    const readmePath = path.join(
+      __dirname,
+      `../src/app/[integrationId]/feature/${feature}/README.mdx`
+    );
+
+    if (!fs.existsSync(readmePath)) {
+      // Find which integrations use this feature
+      const integrationsUsingFeature = menuIntegrations
+        .filter((i) => i.features.includes(feature))
+        .map((i) => i.id);
+
+      missingReadmes.push({
+        feature,
+        integrations: integrationsUsingFeature,
+      });
+    }
+  }
+
+  if (missingReadmes.length > 0) {
+    console.error("❌ Missing README.mdx files for the following features:");
+    console.error("");
+    for (const { feature, integrations } of missingReadmes) {
+      console.error(`   - ${feature}`);
+      console.error(`     Used by: ${integrations.join(", ")}`);
+      console.error(`     Missing: apps/dojo/src/app/[integrationId]/feature/${feature}/README.mdx`);
+    }
+    console.error("");
+    console.error("Please create README.mdx files for these features.");
+    console.error("See apps/dojo/src/app/[integrationId]/feature/agentic_chat/README.mdx for an example.");
+    console.error("");
+    return false;
+  }
+
+  return true;
+}
+
 (async () => {
   // Validate that all menuIntegrations have agentFilesMapper entries
   if (!validateAgentFilesMapper()) {
+    process.exit(1);
+  }
+
+  // Validate that all features have README.mdx files
+  if (!validateFeatureReadmes()) {
     process.exit(1);
   }
 
