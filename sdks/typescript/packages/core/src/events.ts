@@ -38,11 +38,13 @@ export enum EventType {
   STEP_FINISHED = "STEP_FINISHED",
 }
 
-export const BaseEventSchema = z.object({
-  type: z.nativeEnum(EventType),
-  timestamp: z.number().optional(),
-  rawEvent: z.any().optional(),
-});
+export const BaseEventSchema = z
+  .object({
+    type: z.nativeEnum(EventType),
+    timestamp: z.number().optional(),
+    rawEvent: z.any().optional(),
+  })
+  .passthrough();
 
 export const TextMessageStartEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TEXT_MESSAGE_START),
@@ -229,6 +231,173 @@ export const EventSchemas = z.discriminatedUnion("type", [
 ]);
 
 export type BaseEvent = z.infer<typeof BaseEventSchema>;
+export type AgUiEvent = z.infer<typeof EventSchemas>;
+export type BaseEventFields = z.infer<typeof BaseEventSchema>;
+export type AGUIEventByType = {
+  [EventType.TEXT_MESSAGE_START]: TextMessageStartEvent;
+  [EventType.TEXT_MESSAGE_CONTENT]: TextMessageContentEvent;
+  [EventType.TEXT_MESSAGE_END]: TextMessageEndEvent;
+  [EventType.TEXT_MESSAGE_CHUNK]: TextMessageChunkEvent;
+  [EventType.THINKING_TEXT_MESSAGE_START]: ThinkingTextMessageStartEvent;
+  [EventType.THINKING_TEXT_MESSAGE_CONTENT]: ThinkingTextMessageContentEvent;
+  [EventType.THINKING_TEXT_MESSAGE_END]: ThinkingTextMessageEndEvent;
+  [EventType.TOOL_CALL_START]: ToolCallStartEvent;
+  [EventType.TOOL_CALL_ARGS]: ToolCallArgsEvent;
+  [EventType.TOOL_CALL_END]: ToolCallEndEvent;
+  [EventType.TOOL_CALL_CHUNK]: ToolCallChunkEvent;
+  [EventType.TOOL_CALL_RESULT]: ToolCallResultEvent;
+  [EventType.THINKING_START]: ThinkingStartEvent;
+  [EventType.THINKING_END]: ThinkingEndEvent;
+  [EventType.STATE_SNAPSHOT]: StateSnapshotEvent;
+  [EventType.STATE_DELTA]: StateDeltaEvent;
+  [EventType.MESSAGES_SNAPSHOT]: MessagesSnapshotEvent;
+  [EventType.ACTIVITY_SNAPSHOT]: ActivitySnapshotEvent;
+  [EventType.ACTIVITY_DELTA]: ActivityDeltaEvent;
+  [EventType.RAW]: RawEvent;
+  [EventType.CUSTOM]: CustomEvent;
+  [EventType.RUN_STARTED]: RunStartedEvent;
+  [EventType.RUN_FINISHED]: RunFinishedEvent;
+  [EventType.RUN_ERROR]: RunErrorEvent;
+  [EventType.STEP_STARTED]: StepStartedEvent;
+  [EventType.STEP_FINISHED]: StepFinishedEvent;
+};
+export type AGUIEventOf<T extends EventType> = AGUIEventByType[T];
+export type EventPayloadOf<T extends EventType> = Omit<AGUIEventOf<T>, keyof BaseEventFields>;
+
+export type BaseEventProps = {
+  timestamp?: number;
+  rawEvent?: unknown;
+};
+
+type Message = z.infer<typeof MessageSchema>;
+type AgentState = z.infer<typeof StateSchema>;
+type RunAgentInput = z.infer<typeof RunAgentInputSchema>;
+type TextMessageRole = z.infer<typeof TextMessageRoleSchema>;
+
+export type TextMessageStartEventProps = BaseEventProps & {
+  messageId: string;
+  role?: TextMessageRole;
+};
+
+export type TextMessageContentEventProps = BaseEventProps & {
+  messageId: string;
+  delta: string;
+};
+
+export type TextMessageEndEventProps = BaseEventProps & {
+  messageId: string;
+};
+
+export type TextMessageChunkEventProps = BaseEventProps & {
+  messageId?: string;
+  role?: TextMessageRole;
+  delta?: string;
+};
+
+export type ThinkingTextMessageStartEventProps = BaseEventProps;
+
+export type ThinkingTextMessageContentEventProps = BaseEventProps & {
+  delta: string;
+};
+
+export type ThinkingTextMessageEndEventProps = BaseEventProps;
+
+export type ToolCallStartEventProps = BaseEventProps & {
+  toolCallId: string;
+  toolCallName: string;
+  parentMessageId?: string;
+};
+
+export type ToolCallArgsEventProps = BaseEventProps & {
+  toolCallId: string;
+  delta: string;
+};
+
+export type ToolCallEndEventProps = BaseEventProps & {
+  toolCallId: string;
+};
+
+export type ToolCallChunkEventProps = BaseEventProps & {
+  toolCallId?: string;
+  toolCallName?: string;
+  parentMessageId?: string;
+  delta?: string;
+};
+
+export type ToolCallResultEventProps = BaseEventProps & {
+  messageId: string;
+  toolCallId: string;
+  content: string;
+  role?: "tool";
+};
+
+export type ThinkingStartEventProps = BaseEventProps & {
+  title?: string;
+};
+
+export type ThinkingEndEventProps = BaseEventProps;
+
+export type StateSnapshotEventProps = BaseEventProps & {
+  snapshot: AgentState;
+};
+
+export type StateDeltaEventProps = BaseEventProps & {
+  delta: unknown[];
+};
+
+export type MessagesSnapshotEventProps = BaseEventProps & {
+  messages: Message[];
+};
+
+export type ActivitySnapshotEventProps = BaseEventProps & {
+  messageId: string;
+  activityType: string;
+  content: Record<string, unknown>;
+  replace?: boolean;
+};
+
+export type ActivityDeltaEventProps = BaseEventProps & {
+  messageId: string;
+  activityType: string;
+  patch: unknown[];
+};
+
+export type RawEventProps = BaseEventProps & {
+  event: unknown;
+  source?: string;
+};
+
+export type CustomEventProps = BaseEventProps & {
+  name: string;
+  value: unknown;
+};
+
+export type RunStartedEventProps = BaseEventProps & {
+  threadId: string;
+  runId: string;
+  parentRunId?: string;
+  input?: RunAgentInput;
+};
+
+export type RunFinishedEventProps = BaseEventProps & {
+  threadId: string;
+  runId: string;
+  result?: unknown;
+};
+
+export type RunErrorEventProps = BaseEventProps & {
+  message: string;
+  code?: string;
+};
+
+export type StepStartedEventProps = BaseEventProps & {
+  stepName: string;
+};
+
+export type StepFinishedEventProps = BaseEventProps & {
+  stepName: string;
+};
+
 export type TextMessageStartEvent = z.infer<typeof TextMessageStartEventSchema>;
 export type TextMessageContentEvent = z.infer<typeof TextMessageContentEventSchema>;
 export type TextMessageEndEvent = z.infer<typeof TextMessageEndEventSchema>;
