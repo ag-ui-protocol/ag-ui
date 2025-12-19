@@ -11,6 +11,9 @@ export async function generateStaticParams() {
   }));
 }
 
+// Force dynamic rendering to avoid static generation issues
+export const dynamic = "force-dynamic";
+
 // Return 404 for any params not in generateStaticParams
 export const dynamicParams = false;
 
