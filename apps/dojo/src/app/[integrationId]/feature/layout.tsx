@@ -1,6 +1,6 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
-import { Feature } from "@/types/integration";
+import type { Feature } from "@/types/integration";
 import FeatureLayoutClient from "./layout-client";
 
 // Force dynamic rendering to ensure proper 404 handling

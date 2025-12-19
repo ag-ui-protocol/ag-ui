@@ -6,7 +6,7 @@ import Readme from "@/components/readme/readme";
 import CodeViewer from "@/components/code-viewer/code-viewer";
 import { useURLParams } from "@/contexts/url-params-context";
 import { cn } from "@/lib/utils";
-import { Feature } from "@/types/integration";
+import type { Feature } from "@/types/integration";
 
 type FileItem = {
   name: string;

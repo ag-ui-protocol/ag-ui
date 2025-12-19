@@ -1,4 +1,5 @@
-import type { IntegrationFeatures, MenuIntegrationConfig } from "./types/integration";
+import type { MenuIntegrationConfig } from "./types/integration";
+export * from "./types/integration";
 
 /**
  * Integration configuration - SINGLE SOURCE OF TRUTH
@@ -11,6 +12,26 @@ import type { IntegrationFeatures, MenuIntegrationConfig } from "./types/integra
  */
 
 export const menuIntegrations = [
+  {
+    id: "agent-spec-langgraph",
+    name: "Open Agent Spec (LangGraph)",
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "human_in_the_loop",
+      "tool_based_generative_ui",
+    ],
+  },
+  {
+    id: "agent-spec-wayflow",
+    name: "Open Agent Spec (Wayflow)",
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "human_in_the_loop",
+      "tool_based_generative_ui",
+    ],
+  },
   {
     id: "langgraph",
     name: "LangGraph (Python)",
@@ -115,7 +136,8 @@ export const menuIntegrations = [
       "agentic_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
-      "predictive_state_updates",
+      // TODO: @contextablemark Re-enable predictive state updates once it is working
+      // "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
     ],
@@ -231,27 +253,4 @@ export const menuIntegrations = [
       "human_in_the_loop",
     ],
   },
-] as const satisfies readonly MenuIntegrationConfig[];
-
-/** Type representing all valid integration IDs */
-export type IntegrationId = (typeof menuIntegrations)[number]["id"];
-
-/** Type to get features for a specific integration ID */
-export type FeaturesFor<Id extends IntegrationId> = IntegrationFeatures<
-  typeof menuIntegrations,
-  Id
->;
-
-// Helper functions for route validation
-export function isIntegrationValid(integrationId: string): boolean {
-  return menuIntegrations.some((i) => i.id === integrationId);
-}
-
-export function isFeatureAvailable(integrationId: string, featureId: string): boolean {
-  const integration = menuIntegrations.find((i) => i.id === integrationId);
-  return (integration?.features as readonly string[])?.includes(featureId) ?? false;
-}
-
-export function getIntegration(integrationId: string): MenuIntegrationConfig | undefined {
-  return menuIntegrations.find((i) => i.id === integrationId);
-}
+] as const satisfies MenuIntegrationConfig[];

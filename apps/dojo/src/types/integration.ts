@@ -1,3 +1,5 @@
+import type { menuIntegrations } from "../menu";
+
 export type Feature =
   | "agentic_chat"
   | "agentic_generative_ui"
@@ -20,7 +22,16 @@ export interface MenuIntegrationConfig {
 /**
  * Helper type to extract features for a specific integration from menu config
  */
-export type IntegrationFeatures<
+type IntegrationFeature<
   T extends readonly MenuIntegrationConfig[],
   Id extends string
 > = Extract<T[number], { id: Id }>["features"][number];
+
+/** Type representing all valid integration IDs */
+export type IntegrationId = (typeof menuIntegrations)[number]["id"];
+
+/** Type to get features for a specific integration ID */
+export type FeatureFor<Id extends IntegrationId> = IntegrationFeature<
+  typeof menuIntegrations,
+  Id
+>;

@@ -1,7 +1,8 @@
 import "server-only";
 
 import type { AbstractAgent } from "@ag-ui/client";
-import type { FeaturesFor, IntegrationId } from "./menu";
+import type { AgentsMap } from "./types/agents";
+import { mapAgents } from "./utils/agents";
 import { MiddlewareStarterAgent } from "@ag-ui/middleware-starter";
 import { ServerStarterAgent } from "@ag-ui/server-starter";
 import { ServerStarterAllFeaturesAgent } from "@ag-ui/server-starter-all-features";
@@ -27,43 +28,6 @@ import { LangChainAgent } from "@ag-ui/langchain";
 
 const envVars = getEnvVars();
 
-/**
- * Helper to map feature keys to agent instances using a builder function.
- * Reduces repetition when all agents follow the same pattern with different paths.
- * 
- * Uses `const` type parameter to preserve exact literal keys from the mapping.
- * The return type `{ -readonly [K in keyof T]: AbstractAgent }` removes the readonly
- * modifier added by `const T` to match the expected AgentsMap type.
- */
-function mapAgents<const T extends Record<string, string>>(
-  builder: (path: string) => AbstractAgent,
-  mapping: T
-): { -readonly [K in keyof T]: AbstractAgent } {
-  return Object.fromEntries(
-    Object.entries(mapping).map(([key, path]) => [key, builder(path)])
-  ) as { -readonly [K in keyof T]: AbstractAgent };
-}
-
-/**
- * Base type requiring all menu integrations with their specific features.
- */
-type MenuAgentsMap = {
-  [K in IntegrationId]: () => Promise<{ [P in FeaturesFor<K>]: AbstractAgent }>;
-};
-
-/**
- * Agent integrations map that requires all menu integrations but allows extras.
- * 
- * TypeScript enforces:
- * - All integration IDs from menu.ts must have an entry with correct features
- * - Additional unlisted integrations ARE allowed (for testing before public release)
- * 
- * The index signature allows extra keys without excess property checking errors.
- */
-type AgentsMap = MenuAgentsMap & {
-  [key: string]: () => Promise<Record<string, AbstractAgent>>;
-};
-
 export const agentsIntegrations = {
   "middleware-starter": async () => ({
     agentic_chat: new MiddlewareStarterAgent(),
@@ -76,7 +40,7 @@ export const agentsIntegrations = {
         agentic_chat: "agentic_chat",
         agentic_generative_ui: "agentic_generative_ui",
         human_in_the_loop: "human_in_the_loop",
-        // Disabled until we can figure out why production builds break
+        // TODO: Re-enable this once production builds no longer break
         // predictive_state_updates: "predictive_state_updates",
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
@@ -98,7 +62,8 @@ export const agentsIntegrations = {
         human_in_the_loop: "adk-human-in-loop-agent",
         backend_tool_rendering: "backend_tool_rendering",
         shared_state: "adk-shared-state-agent",
-        predictive_state_updates: "adk-predictive-state-agent",
+        // TODO: @contextablemark Re-enable predictive state updates once it is working
+        // predictive_state_updates: "adk-predictive-state-agent",
       }
     ),
 
@@ -257,6 +222,32 @@ export const agentsIntegrations = {
       }
     ),
 
+  "agent-spec-langgraph": async () =>
+    mapAgents(
+      (path) => new HttpAgent({
+        url: `${envVars.agentSpecUrl}/langgraph/${path}`,
+      }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        human_in_the_loop: "human_in_the_loop",
+        tool_based_generative_ui: "tool_based_generative_ui",
+      }
+    ),
+
+  "agent-spec-wayflow": async () =>
+    mapAgents(
+      (path) => new HttpAgent({
+        url: `${envVars.agentSpecUrl}/wayflow/${path}`,
+      }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        tool_based_generative_ui: "tool_based_generative_ui",
+        human_in_the_loop: "human_in_the_loop",
+      }
+    ),
+
   "microsoft-agent-framework-python": async () =>
     mapAgents(
       (path) => new HttpAgent({ url: `${envVars.agentFrameworkPythonUrl}/${path}` }),
@@ -342,9 +333,3 @@ export const agentsIntegrations = {
     human_in_the_loop: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/human-in-the-loop`, debug: true }),
   }),
 } satisfies AgentsMap;
-
-/**
- * Type representing all agent integration IDs (includes both menu integrations and unlisted ones).
- * Use this type when you need to reference any valid agent integration, not just menu-listed ones.
- */
-export type AgentIntegrationId = keyof typeof agentsIntegrations;

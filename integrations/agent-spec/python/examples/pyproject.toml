@@ -1,0 +1,35 @@
+[project]
+name = "agent-spec-examples"
+version = "0.1.0"
+description = "Example FastAPI server for Agent-Spec × AG-UI"
+readme = "README.md"
+requires-python = ">=3.10,<3.14.0"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn>=0.30.0",
+  "python-dotenv>=1.0.0",
+  "ag-ui-agent-spec",
+]
+
+[project.optional-dependencies]
+langgraph = ["ag-ui-agent-spec[langgraph]"]
+wayflow = ["ag-ui-agent-spec[wayflow]"]
+
+[project.scripts]
+dev = "server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["server"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.uv.sources]
+ag-ui-agent-spec = { path = "../", editable = true }
+
+[tool.uv]
+package = true

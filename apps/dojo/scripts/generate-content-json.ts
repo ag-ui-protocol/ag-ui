@@ -366,6 +366,39 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  "agent-spec-langgraph": (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/agent-spec/python/examples/server/api/${agentId}.py`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
+  "agent-spec-wayflow": (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/agent-spec/python/examples/server/api/${agentId}.py`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
+  // A2A integrations use runtime-configured agents without per-feature source files
+  "a2a-basic": () => ({}),
+  "a2a": () => ({}),
 };
 
 async function runGenerateContent() {
@@ -392,8 +425,7 @@ async function runGenerateContent() {
     // Per feature, assign all the frontend files like page.tsx as well as all agent files
     for (const featureId of featureIds) {
       const agentFilePathsForFeature = agentFilePaths[featureId] ?? [];
-      // @ts-expect-error -- redundant error about indexing of a new object.
-      result[`${agentConfig.id}::${featureId}`] = [
+      const allFiles = [
         // Get all frontend files for the feature
         ...(await getFeatureFrontendFiles(featureId)),
         // Get the agent (python/TS) file
@@ -401,13 +433,108 @@ async function runGenerateContent() {
           agentFilePathsForFeature.map(async (f) => await getFile(f)),
         )),
       ];
+      // Filter out empty objects (files that weren't found)
+      // @ts-expect-error -- redundant error about indexing of a new object.
+      result[`${agentConfig.id}::${featureId}`] = allFiles.filter(
+        (file) => Object.keys(file).length > 0
+      );
     }
   }
 
   return result;
 }
 
+/**
+ * Validates that all integration IDs in menuIntegrations have corresponding
+ * entries in agentFilesMapper. Returns true if valid, false otherwise.
+ */
+function validateAgentFilesMapper(): boolean {
+  const menuIntegrationIds = menuIntegrations.map((integration) => integration.id);
+  const mapperKeys = new Set(Object.keys(agentFilesMapper));
+
+  const missingEntries = menuIntegrationIds.filter((id) => !mapperKeys.has(id));
+
+  if (missingEntries.length > 0) {
+    console.error("❌ Missing agentFilesMapper entries for the following integration IDs:");
+    console.error("");
+    for (const id of missingEntries) {
+      console.error(`   - ${id}`);
+    }
+    console.error("");
+    console.error("Please add entries for these IDs in:");
+    console.error("   apps/dojo/scripts/generate-content-json.ts (agentFilesMapper object)");
+    console.error("");
+    console.error("Then run `(p)npm run generate-content-json` in the apps/dojo folder.");
+    console.error("");
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Validates that all feature folders have a README.mdx file.
+ * Returns true if valid, false otherwise.
+ */
+function validateFeatureReadmes(): boolean {
+  // Get all unique features across all integrations
+  const allFeatures = new Set<string>();
+  for (const integration of menuIntegrations) {
+    for (const feature of integration.features) {
+      allFeatures.add(feature);
+    }
+  }
+
+  const missingReadmes: Array<{ feature: string; integrations: string[] }> = [];
+
+  for (const feature of allFeatures) {
+    const readmePath = path.join(
+      __dirname,
+      `../src/app/[integrationId]/feature/${feature}/README.mdx`
+    );
+
+    if (!fs.existsSync(readmePath)) {
+      // Find which integrations use this feature
+      const integrationsUsingFeature = menuIntegrations
+        .filter((i) => (i.features as string[]).includes(feature))
+        .map((i) => i.id);
+
+      missingReadmes.push({
+        feature,
+        integrations: integrationsUsingFeature,
+      });
+    }
+  }
+
+  if (missingReadmes.length > 0) {
+    console.error("❌ Missing README.mdx files for the following features:");
+    console.error("");
+    for (const { feature, integrations } of missingReadmes) {
+      console.error(`   - ${feature}`);
+      console.error(`     Used by: ${integrations.join(", ")}`);
+      console.error(`     Missing: apps/dojo/src/app/[integrationId]/feature/${feature}/README.mdx`);
+    }
+    console.error("");
+    console.error("Please create README.mdx files for these features.");
+    console.error("See apps/dojo/src/app/[integrationId]/feature/agentic_chat/README.mdx for an example.");
+    console.error("");
+    return false;
+  }
+
+  return true;
+}
+
 (async () => {
+  // Validate that all menuIntegrations have agentFilesMapper entries
+  if (!validateAgentFilesMapper()) {
+    process.exit(1);
+  }
+
+  // Validate that all features have README.mdx files
+  if (!validateFeatureReadmes()) {
+    process.exit(1);
+  }
+
   const result = await runGenerateContent();
   fs.writeFileSync(
     path.join(__dirname, "../src/files.json"),
