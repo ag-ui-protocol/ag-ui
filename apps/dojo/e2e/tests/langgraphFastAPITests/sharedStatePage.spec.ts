@@ -34,6 +34,7 @@ test.describe("Shared State Feature", () => {
 
     // Add new ingredient via UI
     await sharedStateAgent.addIngredient.click();
+    await page.waitForTimeout(1000);
 
     // Fill in the new ingredient details
     const newIngredientCard = page.locator('.ingredient-card').last();
@@ -41,7 +42,7 @@ test.describe("Shared State Feature", () => {
     await newIngredientCard.locator('.ingredient-amount-input').fill('12');
 
     // Wait for UI to update
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(1000);
 
     // Ask chat for all ingredients
     await sharedStateAgent.sendMessage("Give me all the ingredients, also list them in your message");
