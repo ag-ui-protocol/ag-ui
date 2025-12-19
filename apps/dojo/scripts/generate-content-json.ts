@@ -407,7 +407,40 @@ async function runGenerateContent() {
   return result;
 }
 
+/**
+ * Validates that all integration IDs in menuIntegrations have corresponding
+ * entries in agentFilesMapper. Returns true if valid, false otherwise.
+ */
+function validateAgentFilesMapper(): boolean {
+  const menuIntegrationIds = menuIntegrations.map((integration) => integration.id);
+  const mapperKeys = new Set(Object.keys(agentFilesMapper));
+
+  const missingEntries = menuIntegrationIds.filter((id) => !mapperKeys.has(id));
+
+  if (missingEntries.length > 0) {
+    console.error("❌ Missing agentFilesMapper entries for the following integration IDs:");
+    console.error("");
+    for (const id of missingEntries) {
+      console.error(`   - ${id}`);
+    }
+    console.error("");
+    console.error("Please add entries for these IDs in:");
+    console.error("   apps/dojo/scripts/generate-content-json.ts (agentFilesMapper object)");
+    console.error("");
+    console.error("Then run `(p)npm run generate-content-json` in the apps/dojo folder.");
+    console.error("");
+    return false;
+  }
+
+  return true;
+}
+
 (async () => {
+  // Validate that all menuIntegrations have agentFilesMapper entries
+  if (!validateAgentFilesMapper()) {
+    process.exit(1);
+  }
+
   const result = await runGenerateContent();
   fs.writeFileSync(
     path.join(__dirname, "../src/files.json"),
