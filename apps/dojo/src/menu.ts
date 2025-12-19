@@ -253,4 +253,4 @@ export const menuIntegrations = [
       "human_in_the_loop",
     ],
   },
-] as const satisfies readonly MenuIntegrationConfig[];
+] as const satisfies MenuIntegrationConfig[];

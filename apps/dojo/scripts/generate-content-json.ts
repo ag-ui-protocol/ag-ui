@@ -496,7 +496,7 @@ function validateFeatureReadmes(): boolean {
     if (!fs.existsSync(readmePath)) {
       // Find which integrations use this feature
       const integrationsUsingFeature = menuIntegrations
-        .filter((i) => (i.features as readonly string[]).includes(feature))
+        .filter((i) => (i.features as string[]).includes(feature))
         .map((i) => i.id);
 
       missingReadmes.push({
