@@ -37,14 +37,11 @@ export class SharedStatePage {
   }
 
   async loader() {
-    const timeout = (ms) => new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("Timeout waiting for promptResponseLoader to become visible")), ms);
-    });
+    // Wait for loader to appear (message is being processed)
+    await this.promptResponseLoader.waitFor({ state: 'visible', timeout: 5000 });
 
-    await Promise.race([
-      this.promptResponseLoader.isVisible(),
-      timeout(5000) // 5 seconds timeout
-    ]);
+    // Wait for loader to disappear (response is complete)
+    await this.promptResponseLoader.waitFor({ state: 'hidden', timeout: 60000 });
   }
 
   async awaitIngredientCard(name: string) {
