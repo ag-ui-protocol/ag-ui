@@ -75,6 +75,51 @@ agent = ADKAgent(
 )
 ```
 
+### Using App for Full ADK Features
+
+For access to App-level features like resumability, context caching, and plugins,
+use the `from_app()` constructor:
+
+```python
+from google.adk.apps import App
+from google.adk.agents import Agent
+from google.adk.plugins.logging_plugin import LoggingPlugin
+from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+
+# Create ADK App with plugins and configs
+app = App(
+    name="my_assistant",
+    root_agent=Agent(
+        name="assistant",
+        model="gemini-2.5-flash",
+        instruction="You are a helpful assistant.",
+    ),
+    plugins=[LoggingPlugin()],
+    # resumability_config=ResumabilityConfig(is_resumable=True),  # Optional
+)
+
+# Create ADKAgent from App
+agent = ADKAgent.from_app(
+    app,
+    user_id="demo_user",
+    plugin_close_timeout=10.0,  # Optional, requires ADK 1.19+
+)
+
+# Use with FastAPI
+from fastapi import FastAPI
+fastapi_app = FastAPI()
+add_adk_fastapi_endpoint(fastapi_app, agent, path="/chat")
+```
+
+The `from_app()` constructor enables:
+- **Plugin support**: Use ADK plugins like `LoggingPlugin` for debugging and tracing
+- **Resumability**: Configure pause/resume workflows for long-running operations
+- **Context caching**: Optimize LLM calls with context caching configuration
+- **Events compaction**: Configure how events are compacted in the application
+
+Note: The `plugin_close_timeout` parameter requires ADK 1.19.0 or later. On older
+versions, the parameter is silently ignored.
+
 ### Automatic Session Memory
 
 When you provide a `memory_service`, the middleware automatically preserves expired sessions in ADK's memory service before deletion. This enables powerful conversation history and context retrieval features.

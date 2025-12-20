@@ -2,7 +2,10 @@
 
 """Main ADKAgent implementation for bridging AG-UI Protocol with Google ADK."""
 
-from typing import Optional, Dict, Callable, Any, AsyncGenerator, List, Iterable
+from typing import Optional, Dict, Callable, Any, AsyncGenerator, List, Iterable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from google.adk.apps import App
 import time
 import json
 import asyncio
@@ -168,10 +171,116 @@ class ADKAgent:
         # Message snapshot configuration
         self._emit_messages_snapshot = emit_messages_snapshot
 
+        # App-based configuration (set by from_app() classmethod)
+        self._app: Optional["App"] = None
+        self._plugin_close_timeout: float = 5.0
+
         # Event translator will be created per-session for thread safety
 
         # Cleanup is managed by the session manager
         # Will start when first async operation runs
+
+    @classmethod
+    def from_app(
+        cls,
+        app: "App",
+        # User identification (still needed - not in App)
+        user_id: Optional[str] = None,
+        user_id_extractor: Optional[Callable[[RunAgentInput], str]] = None,
+        # ADK Services (App does NOT contain these - still passed to Runner separately)
+        session_service: Optional[BaseSessionService] = None,
+        artifact_service: Optional[BaseArtifactService] = None,
+        memory_service: Optional[BaseMemoryService] = None,
+        credential_service: Optional[BaseCredentialService] = None,
+        # Configuration
+        run_config_factory: Optional[Callable[[RunAgentInput], ADKRunConfig]] = None,
+        use_in_memory_services: bool = True,
+        plugin_close_timeout: float = 5.0,
+        # Execution limits
+        execution_timeout_seconds: int = 600,
+        tool_timeout_seconds: int = 300,
+        max_concurrent_executions: int = 10,
+        # Session management
+        session_timeout_seconds: Optional[int] = 1200,
+        cleanup_interval_seconds: int = 300,
+        # AG-UI specific
+        predict_state: Optional[Iterable[PredictStateMapping]] = None,
+        emit_messages_snapshot: bool = False,
+    ) -> "ADKAgent":
+        """Create ADKAgent from an ADK App instance.
+
+        This is the recommended way to create an ADKAgent when you want access to
+        App-level features like resumability, context caching, and plugins.
+
+        The App object bundles together the root agent, plugins, and configuration
+        that would otherwise need to be passed separately. Using from_app() enables:
+        - Plugin support (logging, tracing, custom plugins)
+        - Resumability configuration for pause/resume workflows
+        - Context caching configuration for LLM optimization
+        - Events compaction configuration
+
+        Args:
+            app: The ADK App instance containing the root agent and configuration
+            user_id: Static user ID for all requests
+            user_id_extractor: Function to extract user ID dynamically from input
+            session_service: Session management service (defaults to InMemorySessionService)
+            artifact_service: File/artifact storage service
+            memory_service: Conversation memory and search service
+            credential_service: Authentication credential storage
+            run_config_factory: Function to create RunConfig per request
+            use_in_memory_services: Use in-memory implementations for unspecified services
+            plugin_close_timeout: Timeout for plugin close methods (requires ADK 1.19+)
+            execution_timeout_seconds: Timeout for entire execution
+            tool_timeout_seconds: Timeout for individual tool calls
+            max_concurrent_executions: Maximum concurrent background executions
+            session_timeout_seconds: Session timeout in seconds
+            cleanup_interval_seconds: Interval for session cleanup
+            predict_state: Configuration for predictive state updates
+            emit_messages_snapshot: Whether to emit MessagesSnapshotEvent at end of runs
+
+        Returns:
+            ADKAgent instance configured to use the App
+
+        Example:
+            from google.adk.apps import App
+            from google.adk.agents import Agent
+
+            app = App(
+                name="my_assistant",
+                root_agent=Agent(name="assistant", model="gemini-2.5-flash", ...),
+                plugins=[LoggingPlugin()],
+            )
+            agent = ADKAgent.from_app(app, user_id="demo_user")
+        """
+        # Import App at runtime to avoid circular imports
+        from google.adk.apps import App as AppClass
+
+        if not isinstance(app, AppClass):
+            raise TypeError(f"Expected App instance, got {type(app).__name__}")
+
+        instance = cls(
+            adk_agent=app.root_agent,
+            app_name=app.name,
+            user_id=user_id,
+            user_id_extractor=user_id_extractor,
+            session_service=session_service,
+            artifact_service=artifact_service,
+            memory_service=memory_service,
+            credential_service=credential_service,
+            run_config_factory=run_config_factory,
+            use_in_memory_services=use_in_memory_services,
+            execution_timeout_seconds=execution_timeout_seconds,
+            tool_timeout_seconds=tool_timeout_seconds,
+            max_concurrent_executions=max_concurrent_executions,
+            session_timeout_seconds=session_timeout_seconds,
+            cleanup_interval_seconds=cleanup_interval_seconds,
+            predict_state=predict_state,
+            emit_messages_snapshot=emit_messages_snapshot,
+        )
+        # Store App for per-request App creation with modified agents
+        instance._app = app
+        instance._plugin_close_timeout = plugin_close_timeout
+        return instance
 
     def _get_session_metadata(self, session_id: str) -> Optional[Dict[str, str]]:
         """Get session metadata (app_name, user_id) for a session ID efficiently.
@@ -363,16 +472,56 @@ class ADKAgent:
         )
     
     
+    def _runner_supports_plugin_close_timeout(self) -> bool:
+        """Check if the installed ADK version supports plugin_close_timeout.
+
+        The plugin_close_timeout parameter was added to Runner in ADK 1.19.0.
+        This method checks for its presence to maintain backward compatibility.
+
+        Returns:
+            True if Runner accepts plugin_close_timeout, False otherwise
+        """
+        sig = inspect.signature(Runner.__init__)
+        return 'plugin_close_timeout' in sig.parameters
+
     def _create_runner(self, adk_agent: BaseAgent, user_id: str, app_name: str) -> Runner:
-        """Create a new runner instance."""
-        return Runner(
-            app_name=app_name,
-            agent=adk_agent,
-            session_service=self._session_manager._session_service,
-            artifact_service=self._artifact_service,
-            memory_service=self._memory_service,
-            credential_service=self._credential_service
-        )
+        """Create a new runner instance.
+
+        If an App was provided via from_app(), creates a per-request App copy
+        with the modified agent to preserve App-level configurations (plugins,
+        resumability, context caching, etc.).
+
+        Args:
+            adk_agent: The (potentially modified) agent to run
+            user_id: User ID for the session
+            app_name: Application name for the session
+
+        Returns:
+            Configured Runner instance
+        """
+        # Build common kwargs for services
+        service_kwargs = {
+            'session_service': self._session_manager._session_service,
+            'artifact_service': self._artifact_service,
+            'memory_service': self._memory_service,
+            'credential_service': self._credential_service,
+        }
+
+        # Add plugin_close_timeout if supported by this ADK version
+        if self._runner_supports_plugin_close_timeout():
+            service_kwargs['plugin_close_timeout'] = self._plugin_close_timeout
+
+        if self._app is not None:
+            # Create per-request App copy with modified agent (preserves all App configs)
+            request_app = self._app.model_copy(update={'root_agent': adk_agent})
+            return Runner(app=request_app, **service_kwargs)
+        else:
+            # Old style: component-based (no plugins support - use from_app() for that)
+            return Runner(
+                app_name=app_name,
+                agent=adk_agent,
+                **service_kwargs,
+            )
     
     async def run(self, input: RunAgentInput) -> AsyncGenerator[BaseEvent, None]:
         """Run the ADK agent with client-side tool support.

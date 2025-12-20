@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **NEW**: `ADKAgent.from_app()` classmethod for creating agents from ADK App instances (#844)
+  - Enables access to App-level features: plugins, resumability, context caching, events compaction
+  - Creates per-request App copies with modified agents using `model_copy()` to preserve all configs
+  - Includes `plugin_close_timeout` parameter (requires ADK 1.19+, silently ignored on older versions)
+  - Runtime detection of ADK version capabilities for forward compatibility
+- **NEW**: Integration tests for `from_app()` functionality (`test_from_app_integration.py`)
+- **DOCUMENTATION**: Added "Using App for Full ADK Features" section to USAGE.md
+
 ## [0.4.0] - 2025-12-14
 
 ### Added
