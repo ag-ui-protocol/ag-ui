@@ -9,6 +9,3 @@ export * from "./compact";
 export * from "@ag-ui/core";
 export * from "./chunks";
 export * from "./middleware";
-
-export { Middleware, FilterToolCallsMiddleware } from "./middleware";
-export type { MiddlewareFunction } from "./middleware";
