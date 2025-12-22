@@ -31,7 +31,7 @@ interface SecureToolsProps {
  *
  * Try asking the agent to:
  * - "Change the background to blue" (will succeed)
- * - "Say hello to Alice" (will be blocked by middleware)
+ * - "Say hello" (will be blocked by middleware)
  */
 const SecureTools: React.FC<SecureToolsProps> = ({ params }) => {
   const { integrationId } = React.use(params);
@@ -86,18 +86,12 @@ const Chat = () => {
   // This tool exists in frontend but is NOT in the middleware's allowedTools list
   useFrontendTool({
     name: "say_hello",
-    description: "Say hello to someone by name. A friendly greeting tool.",
-    parameters: [
-      {
-        name: "name",
-        type: "string",
-        description: "The name of the person to greet.",
-      },
-    ],
-    handler: ({ name }) => {
+    description: "Say hello. A friendly greeting tool.",
+    parameters: [],
+    handler: () => {
       return {
         status: "success",
-        message: `Hello, ${name}! 👋`,
+        message: "Hello! 👋",
       };
     },
   });
@@ -156,12 +150,11 @@ const Chat = () => {
               },
               {
                 title: "Say hello",
-                message: "Say hello to Alice.",
+                message: "Say hello.",
               },
               {
                 title: "Try both",
-                message:
-                  "Change the background to blue and then say hello to Bob.",
+                message: "Change the background to blue and then say hello.",
               },
             ]}
           />
