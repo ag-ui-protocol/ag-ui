@@ -8,6 +8,7 @@ export {
   checkToolCallAllowed,
   createToolSpec,
   createToolSpecs,
+  SKIP_VALIDATION,
 } from "./secure-tools";
 export type {
   ToolSpec,
@@ -19,4 +20,5 @@ export type {
   IsToolAllowedCallback,
   OnDeviationCallback,
   SecureToolsConfig,
+  SkipValidation,
 } from "./secure-tools";

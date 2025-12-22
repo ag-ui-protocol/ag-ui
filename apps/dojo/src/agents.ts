@@ -19,7 +19,7 @@ import { mastra } from "./mastra";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 import { ADKAgent } from "@ag-ui/adk";
 import { SpringAiAgent } from "@ag-ui/spring-ai";
-import { HttpAgent, secureToolsMiddleware, type ToolSpec } from "@ag-ui/client";
+import { HttpAgent, secureToolsMiddleware, SKIP_VALIDATION, type ToolSpec } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
 import { AWSStrandsAgent } from "@ag-ui/aws-strands";
 import { A2AAgent } from "@ag-ui/a2a";
@@ -28,10 +28,14 @@ import { LangChainAgent } from "@ag-ui/langchain";
 import { LangGraphAgent as CpkLangGraphAgent } from "@copilotkit/runtime/langgraph";
 
 // Tool specifications for secure_tools demo
-// Only `name` is required. Omitting `description` and `parameters` means those fields
-// won't be validated - just the tool name needs to match.
+// All fields are required. Use SKIP_VALIDATION to skip validation for a field.
+// Use `undefined` if the actual tool should also have that field empty.
 const secureToolsAllowedTools: ToolSpec[] = [
-  { name: "change_background" },
+  {
+    name: "change_background",
+    description: SKIP_VALIDATION,  // Allow any description
+    parameters: SKIP_VALIDATION,   // Allow any parameters
+  },
   // Note: "say_hello" is intentionally NOT in this list to demonstrate blocking
 ];
 
