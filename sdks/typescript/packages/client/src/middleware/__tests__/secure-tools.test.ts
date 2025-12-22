@@ -5,6 +5,7 @@ import {
   createToolSpec,
   createToolSpecs,
   SKIP_VALIDATION,
+  DEFINED_IN_MIDDLEWARE,
   type ToolSpec,
   type ToolCallInfo,
   type AgentSecurityContext,
@@ -932,5 +933,174 @@ describe("Edge cases", () => {
 
     // Second run should succeed
     expect(collectedEvents.length).toBe(6);
+  });
+});
+
+describe("DEFINED_IN_MIDDLEWARE feature", () => {
+  it("should replace DEFINED_IN_MIDDLEWARE description with value from allowedTools", async () => {
+    const events = createToolCallEvents("tool-1", "getWeather", '{"city": "NYC"}');
+    const agent = new MockAgent(events);
+
+    const middleware = secureToolsMiddleware({
+      allowedTools: [weatherToolSpec],
+    });
+
+    // Tool with DEFINED_IN_MIDDLEWARE placeholder for description
+    const toolWithPlaceholder: Tool = {
+      name: "getWeather",
+      description: DEFINED_IN_MIDDLEWARE,
+      parameters: {
+        type: "object",
+        properties: { city: { type: "string" } },
+        required: ["city"],
+      },
+    };
+
+    const input = createInput([toolWithPlaceholder]);
+    const collectedEvents: BaseEvent[] = [];
+
+    await new Promise<void>((resolve) => {
+      middleware.run(input, agent).subscribe({
+        next: (event) => collectedEvents.push(event),
+        complete: () => resolve(),
+      });
+    });
+
+    // Tool should be allowed after transformation
+    expect(collectedEvents.length).toBe(6);
+  });
+
+  it("should replace DEFINED_IN_MIDDLEWARE parameters with value from allowedTools", async () => {
+    const events = createToolCallEvents("tool-1", "getWeather", '{"city": "NYC"}');
+    const agent = new MockAgent(events);
+
+    const middleware = secureToolsMiddleware({
+      allowedTools: [weatherToolSpec],
+    });
+
+    // Tool with DEFINED_IN_MIDDLEWARE placeholder for parameters
+    const toolWithPlaceholder: Tool = {
+      name: "getWeather",
+      description: "Get current weather for a city",
+      parameters: DEFINED_IN_MIDDLEWARE,
+    };
+
+    const input = createInput([toolWithPlaceholder]);
+    const collectedEvents: BaseEvent[] = [];
+
+    await new Promise<void>((resolve) => {
+      middleware.run(input, agent).subscribe({
+        next: (event) => collectedEvents.push(event),
+        complete: () => resolve(),
+      });
+    });
+
+    // Tool should be allowed after transformation
+    expect(collectedEvents.length).toBe(6);
+  });
+
+  it("should replace both DEFINED_IN_MIDDLEWARE fields when both are placeholders", async () => {
+    const events = createToolCallEvents("tool-1", "getWeather", '{"city": "NYC"}');
+    const agent = new MockAgent(events);
+
+    const middleware = secureToolsMiddleware({
+      allowedTools: [weatherToolSpec],
+    });
+
+    // Tool with DEFINED_IN_MIDDLEWARE for both description and parameters
+    const toolWithPlaceholders: Tool = {
+      name: "getWeather",
+      description: DEFINED_IN_MIDDLEWARE,
+      parameters: DEFINED_IN_MIDDLEWARE,
+    };
+
+    const input = createInput([toolWithPlaceholders]);
+    const collectedEvents: BaseEvent[] = [];
+
+    await new Promise<void>((resolve) => {
+      middleware.run(input, agent).subscribe({
+        next: (event) => collectedEvents.push(event),
+        complete: () => resolve(),
+      });
+    });
+
+    // Tool should be allowed after transformation
+    expect(collectedEvents.length).toBe(6);
+  });
+
+  it("should warn and passthrough when DEFINED_IN_MIDDLEWARE tool has no matching spec", async () => {
+    const events = createToolCallEvents("tool-1", "unknownTool", '{}');
+    const agent = new MockAgent(events);
+
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    const middleware = secureToolsMiddleware({
+      allowedTools: [weatherToolSpec],
+    });
+
+    // Tool with placeholder but no matching spec
+    const toolWithPlaceholder: Tool = {
+      name: "unknownTool",
+      description: DEFINED_IN_MIDDLEWARE,
+      parameters: {},
+    };
+
+    const input = createInput([toolWithPlaceholder]);
+    const collectedEvents: BaseEvent[] = [];
+
+    await new Promise<void>((resolve) => {
+      middleware.run(input, agent).subscribe({
+        next: (event) => collectedEvents.push(event),
+        complete: () => resolve(),
+      });
+    });
+
+    // Should have warned about missing spec
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("unknownTool"),
+      expect.anything()
+    );
+
+    warnSpy.mockRestore();
+  });
+
+  it("should warn when spec uses SKIP_VALIDATION but client uses DEFINED_IN_MIDDLEWARE", async () => {
+    const events = createToolCallEvents("tool-1", "flexibleTool", '{}');
+    const agent = new MockAgent(events);
+
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    const specWithSkipValidation: ToolSpec = {
+      name: "flexibleTool",
+      description: SKIP_VALIDATION,
+      parameters: SKIP_VALIDATION,
+    };
+
+    const middleware = secureToolsMiddleware({
+      allowedTools: [specWithSkipValidation],
+    });
+
+    // Tool uses DEFINED_IN_MIDDLEWARE but spec has SKIP_VALIDATION
+    const toolWithPlaceholder: Tool = {
+      name: "flexibleTool",
+      description: DEFINED_IN_MIDDLEWARE,
+      parameters: DEFINED_IN_MIDDLEWARE,
+    };
+
+    const input = createInput([toolWithPlaceholder]);
+
+    await new Promise<void>((resolve) => {
+      middleware.run(input, agent).subscribe({
+        next: () => {},
+        complete: () => resolve(),
+      });
+    });
+
+    // Should have warned about incompatible combination
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("SKIP_VALIDATION")
+    );
+
+    warnSpy.mockRestore();
   });
 });

@@ -27,13 +27,28 @@ import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
 
 // Tool specifications for secure_tools demo
-// All fields are required. Use SKIP_VALIDATION to skip validation for a field.
-// Use `undefined` if the actual tool should also have that field empty.
+// This is the SOURCE OF TRUTH for tool definitions.
+// Client-side tools using DEFINED_IN_MIDDLEWARE will receive these values.
+//
+// All fields are required:
+// - Concrete value: actual tool must match exactly (or will be injected if client uses DEFINED_IN_MIDDLEWARE)
+// - `undefined`: actual tool must have this field empty
+// - `SKIP_VALIDATION`: skip validation (but can't inject values for DEFINED_IN_MIDDLEWARE)
 const secureToolsAllowedTools: ToolSpec[] = [
   {
     name: "change_background",
-    description: SKIP_VALIDATION,  // Allow any description
-    parameters: SKIP_VALIDATION,   // Allow any parameters
+    // These values will be injected into client tools that use DEFINED_IN_MIDDLEWARE
+    description: "Change the background color of the chat. Can be anything that the CSS background attribute accepts.",
+    parameters: {
+      type: "object",
+      properties: {
+        background: {
+          type: "string",
+          description: "The background color or gradient.",
+        },
+      },
+      required: ["background"],
+    },
   },
   // Note: "say_hello" is intentionally NOT in this list to demonstrate blocking
 ];

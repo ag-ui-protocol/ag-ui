@@ -8,6 +8,7 @@ import {
 } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 import { useTheme } from "next-themes";
+import { DEFINED_IN_MIDDLEWARE } from "@ag-ui/client";
 
 interface SecureToolsProps {
   params: Promise<{
@@ -24,15 +25,17 @@ interface SecureToolsProps {
  * 1. Validates tool calls against full specifications (not just names)
  * 2. Blocks unauthorized or mismatched tool calls
  * 3. Logs deviations for audit purposes
+ * 4. Injects tool definitions via DEFINED_IN_MIDDLEWARE (reduces duplication)
  *
  * Configuration used in this demo (see agents.ts):
- * - allowedTools: Declarative allowlist with ToolSpec objects
+ * - allowedTools: Declarative allowlist with ToolSpec objects (source of truth)
  * - isToolAllowed: Custom callback for additional validation logic
  * - onDeviation: Custom handler that logs when tool calls are blocked
  *
- * In this demo:
- * - "change_background" is an ALLOWED tool (in the security allowlist)
- * - "say_hello" is NOT in the allowlist (will be blocked by middleware)
+ * Features demonstrated:
+ * - "change_background" uses DEFINED_IN_MIDDLEWARE for description
+ *   → The middleware injects the description from allowedTools
+ * - "say_hello" is NOT in the allowlist → blocked by middleware
  *
  * Try asking the agent to:
  * - "Change the background to blue" (will succeed)
@@ -71,10 +74,14 @@ const Chat = () => {
   const [deviations] = useState<DeviationLog[]>([]);
 
   // Allowed tool: change_background
+  // Using DEFINED_IN_MIDDLEWARE to get description from the server-side middleware config.
+  // This eliminates duplication - the middleware's allowedTools is the source of truth.
   useFrontendTool({
     name: "change_background",
-    description:
-      "Change the background color of the chat. Can be anything that the CSS background attribute accepts.",
+    // Description comes from middleware's allowedTools config (see agents.ts)
+    description: DEFINED_IN_MIDDLEWARE,
+    // Note: parameters still need to match what the handler expects
+    // The middleware will inject the full JSON Schema for validation
     parameters: [
       {
         name: "background",
@@ -121,11 +128,11 @@ const Chat = () => {
           <span className="text-lg">🔒</span>
           <span className="font-medium">SecureToolsMiddleware Active</span>
           <span className="text-xs opacity-75">
-            • Allowed: change_background • Not in allowlist: say_hello
+            • change_background: allowed (uses DEFINED_IN_MIDDLEWARE) • say_hello: not in allowlist
           </span>
         </div>
         <div className="text-xs opacity-60 ml-7">
-          ℹ️ Check server console for security logs when tools are blocked (isToolAllowed + onDeviation callbacks)
+          ℹ️ Check server console for security logs and tool definition injection
         </div>
       </div>
 

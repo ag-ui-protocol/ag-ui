@@ -27,6 +27,7 @@ import { concatMap, filter } from "rxjs/operators";
  *
  * @example
  * ```ts
+ * // In middleware configuration (server-side)
  * allowedTools: [
  *   {
  *     name: "my_tool",
@@ -42,6 +43,43 @@ export const SKIP_VALIDATION = Symbol.for("ag-ui.secure-tools.skip-validation");
  * Type for the SKIP_VALIDATION sentinel value.
  */
 export type SkipValidation = typeof SKIP_VALIDATION;
+
+/**
+ * Sentinel string value for client-side tool definitions.
+ *
+ * Use this in `useFrontendTool` to indicate that the field's value should
+ * come from the middleware's `allowedTools` configuration instead of being
+ * defined on the client.
+ *
+ * This eliminates duplication - define the description/parameters once in
+ * the middleware, and the client just provides the handler.
+ *
+ * @example
+ * ```tsx
+ * // Client-side (React component)
+ * useFrontendTool({
+ *   name: "change_background",
+ *   description: DEFINED_IN_MIDDLEWARE,  // Get from server middleware
+ *   parameters: DEFINED_IN_MIDDLEWARE,   // Get from server middleware
+ *   handler: (args) => setBackground(args.color),
+ * });
+ *
+ * // Server-side (middleware configuration)
+ * secureToolsMiddleware({
+ *   allowedTools: [{
+ *     name: "change_background",
+ *     description: "Change the background color",  // Source of truth
+ *     parameters: { type: "object", properties: { color: { type: "string" } } },
+ *   }]
+ * })
+ * ```
+ */
+export const DEFINED_IN_MIDDLEWARE = "__AG_UI_DEFINED_IN_MIDDLEWARE__";
+
+/**
+ * Type for the DEFINED_IN_MIDDLEWARE sentinel value.
+ */
+export type DefinedInMiddleware = typeof DEFINED_IN_MIDDLEWARE;
 
 // =============================================================================
 // TYPES - Core type definitions for the security middleware
@@ -350,6 +388,99 @@ function isEmptyObject(value: unknown): boolean {
 }
 
 /**
+ * Check if a value is the DEFINED_IN_MIDDLEWARE sentinel.
+ */
+function isDefinedInMiddleware(value: unknown): boolean {
+  return value === DEFINED_IN_MIDDLEWARE;
+}
+
+/**
+ * Transform a tool by replacing DEFINED_IN_MIDDLEWARE placeholders with values
+ * from the matching ToolSpec in allowedTools.
+ *
+ * Returns the original tool if no transformation is needed, or a new tool
+ * with the placeholders replaced.
+ */
+function transformTool(
+  tool: Tool,
+  allowedTools: ToolSpec[],
+  logger?: SecureToolsConfig["logger"],
+): Tool {
+  const hasPlaceholderDescription = isDefinedInMiddleware(tool.description);
+  const hasPlaceholderParameters = isDefinedInMiddleware(tool.parameters);
+
+  // If no placeholders, return the original tool
+  if (!hasPlaceholderDescription && !hasPlaceholderParameters) {
+    return tool;
+  }
+
+  // Find matching spec in allowedTools
+  const matchingSpec = findMatchingAllowedSpec(tool.name, allowedTools);
+
+  if (!matchingSpec) {
+    const log = logger ?? console;
+    log.warn(
+      `[SecureTools] Tool "${tool.name}" uses DEFINED_IN_MIDDLEWARE but no matching spec found in allowedTools. ` +
+      `The placeholder values will be passed through unchanged.`
+    );
+    return tool;
+  }
+
+  // Build the transformed tool
+  const transformedTool: Tool = { ...tool };
+
+  if (hasPlaceholderDescription) {
+    if (matchingSpec.description === SKIP_VALIDATION) {
+      // SKIP_VALIDATION in spec means "allow any" - can't provide a value
+      const log = logger ?? console;
+      log.warn(
+        `[SecureTools] Tool "${tool.name}" uses DEFINED_IN_MIDDLEWARE for description, ` +
+        `but the spec uses SKIP_VALIDATION. Cannot substitute a value. ` +
+        `Either provide a concrete description in the spec, or define it on the client.`
+      );
+    } else if (matchingSpec.description === undefined) {
+      // Spec says description should be empty
+      transformedTool.description = "";
+    } else {
+      // Use the concrete description from the spec
+      transformedTool.description = matchingSpec.description;
+    }
+  }
+
+  if (hasPlaceholderParameters) {
+    if (matchingSpec.parameters === SKIP_VALIDATION) {
+      // SKIP_VALIDATION in spec means "allow any" - can't provide a value
+      const log = logger ?? console;
+      log.warn(
+        `[SecureTools] Tool "${tool.name}" uses DEFINED_IN_MIDDLEWARE for parameters, ` +
+        `but the spec uses SKIP_VALIDATION. Cannot substitute a value. ` +
+        `Either provide concrete parameters in the spec, or define them on the client.`
+      );
+    } else if (matchingSpec.parameters === undefined) {
+      // Spec says parameters should be empty
+      transformedTool.parameters = {};
+    } else {
+      // Use the concrete parameters from the spec
+      transformedTool.parameters = matchingSpec.parameters;
+    }
+  }
+
+  return transformedTool;
+}
+
+/**
+ * Transform all tools in the input, replacing DEFINED_IN_MIDDLEWARE placeholders
+ * with values from allowedTools.
+ */
+function transformTools(
+  tools: Tool[],
+  allowedTools: ToolSpec[],
+  logger?: SecureToolsConfig["logger"],
+): Tool[] {
+  return tools.map((tool) => transformTool(tool, allowedTools, logger));
+}
+
+/**
  * Validate a tool call against the allowed specs and declared tools.
  *
  * Validation behavior for each field:
@@ -515,16 +646,27 @@ export class SecureToolsMiddleware extends Middleware {
     this.blockedToolCallIds.clear();
     this.toolCallArgsBuffer.clear();
 
-    // Build security context
+    const { allowedTools = [], logger } = this.config;
+
+    // Step 1: Transform tools - replace DEFINED_IN_MIDDLEWARE placeholders
+    // with values from allowedTools before the agent sees them
+    const transformedTools = transformTools(input.tools, allowedTools, logger);
+    const transformedInput: RunAgentInput = {
+      ...input,
+      tools: transformedTools,
+    };
+
+    // Build security context with transformed tools
     const context: AgentSecurityContext = {
-      input,
-      declaredTools: input.tools,
+      input: transformedInput,
+      declaredTools: transformedTools,
       threadId: input.threadId,
       runId: input.runId,
       metadata: this.config.metadata,
     };
 
-    return this.runNext(input, next).pipe(
+    // Step 2: Pass transformed input to agent, then validate response events
+    return this.runNext(transformedInput, next).pipe(
       // Process each event, validating tool calls and filtering blocked ones
       concatMap((event) => from(this.processEvent(event, context))),
       // Filter out null events (blocked tool calls)
