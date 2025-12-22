@@ -27,11 +27,11 @@ interface SecureToolsProps {
  *
  * In this demo:
  * - "change_background" is an ALLOWED tool (in the security allowlist)
- * - "dangerous_action" is a BLOCKED tool (not in the allowlist)
+ * - "say_hello" is NOT in the allowlist (will be blocked by middleware)
  *
  * Try asking the agent to:
  * - "Change the background to blue" (will succeed)
- * - "Execute the dangerous action" (will be blocked by middleware)
+ * - "Say hello to Alice" (will be blocked by middleware)
  */
 const SecureTools: React.FC<SecureToolsProps> = ({ params }) => {
   const { integrationId } = React.use(params);
@@ -83,24 +83,21 @@ const Chat = () => {
     },
   });
 
-  // This tool exists in frontend but should be BLOCKED by the middleware
-  // because it's not in the allowedTools list on the agent
+  // This tool exists in frontend but is NOT in the middleware's allowedTools list
   useFrontendTool({
-    name: "dangerous_action",
-    description: "A potentially dangerous action that should be blocked by security middleware.",
+    name: "say_hello",
+    description: "Say hello to someone by name. A friendly greeting tool.",
     parameters: [
       {
-        name: "action",
+        name: "name",
         type: "string",
-        description: "The action to perform.",
+        description: "The name of the person to greet.",
       },
     ],
-    handler: ({ action }) => {
-      // This should never execute if middleware is working correctly
-      console.warn("SECURITY: dangerous_action was called!", action);
+    handler: ({ name }) => {
       return {
-        status: "error",
-        message: "This action should have been blocked!",
+        status: "success",
+        message: `Hello, ${name}! 👋`,
       };
     },
   });
@@ -121,7 +118,7 @@ const Chat = () => {
         <span className="text-lg">🔒</span>
         <span className="font-medium">SecureToolsMiddleware Active</span>
         <span className="text-xs opacity-75">
-          • Allowed: change_background • Blocked: dangerous_action
+          • Allowed: change_background • Not in allowlist: say_hello
         </span>
       </div>
 
@@ -150,21 +147,21 @@ const Chat = () => {
             className="h-full rounded-2xl max-w-6xl mx-auto"
             labels={{
               initial:
-                "Hi! I'm a security-enabled agent. I can change the background (allowed), but dangerous actions are blocked by the SecureToolsMiddleware.",
+                "Hi! I'm an agent with two tools available: I can change the background color, and I can say hello to people.",
             }}
             suggestions={[
               {
-                title: "Allowed action",
+                title: "Change background",
                 message: "Change the background to a purple gradient.",
               },
               {
-                title: "Blocked action",
-                message: "Execute the dangerous action to test security.",
+                title: "Say hello",
+                message: "Say hello to Alice.",
               },
               {
-                title: "Test both",
+                title: "Try both",
                 message:
-                  "First change the background to blue, then try to execute the dangerous action.",
+                  "Change the background to blue and then say hello to Bob.",
               },
             ]}
           />
