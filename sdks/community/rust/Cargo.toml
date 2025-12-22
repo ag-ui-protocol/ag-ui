@@ -11,3 +11,4 @@ uuid = { version = "1.17.0", features = ["v4", "serde"] }
 [patch.crates-io]
 ag-ui-core = { path = "crates/ag-ui-core" }
 ag-ui-client = { path = "crates/ag-ui-client" }
+ag-ui-server = { path = "crates/ag-ui-server" }
