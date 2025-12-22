@@ -44,7 +44,7 @@ const secureToolsAllowedTools: ToolSpec[] = [
       required: ["background"],
     },
   },
-  // Note: "dangerous_action" is intentionally NOT in this list to demonstrate blocking
+  // Note: "say_hello" is intentionally NOT in this list to demonstrate blocking
 ];
 
 /**
