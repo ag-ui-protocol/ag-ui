@@ -20,6 +20,7 @@ export const menuIntegrations = [
       "backend_tool_rendering",
       "human_in_the_loop",
       "tool_based_generative_ui",
+      "secure_tools",
     ],
   },
   {
@@ -30,6 +31,7 @@ export const menuIntegrations = [
       "backend_tool_rendering",
       "human_in_the_loop",
       "tool_based_generative_ui",
+      "secure_tools",
     ],
   },
   {
@@ -44,6 +46,7 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
+      "secure_tools",
     ],
   },
   {
@@ -59,6 +62,7 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
+      "secure_tools",
     ],
   },
   {
@@ -73,6 +77,7 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
+      "secure_tools",
     ],
   },
   // {
@@ -113,6 +118,7 @@ export const menuIntegrations = [
       "tool_based_generative_ui",
       "human_in_the_loop",
       "agentic_generative_ui",
+      "secure_tools",
     ],
   },
   {
@@ -127,6 +133,7 @@ export const menuIntegrations = [
       // "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "secure_tools",
     ],
   },
   {
@@ -140,6 +147,7 @@ export const menuIntegrations = [
       // "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "secure_tools",
     ],
   },
   {
@@ -153,6 +161,7 @@ export const menuIntegrations = [
       "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "secure_tools",
     ],
   },
   {
@@ -166,6 +175,7 @@ export const menuIntegrations = [
       "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "secure_tools",
     ],
   },
   {
@@ -176,6 +186,7 @@ export const menuIntegrations = [
       "backend_tool_rendering",
       "human_in_the_loop",
       "tool_based_generative_ui",
+      "secure_tools",
     ],
   },
   {
@@ -187,6 +198,7 @@ export const menuIntegrations = [
       "human_in_the_loop",
       "agentic_generative_ui",
       "shared_state",
+      "secure_tools",
     ],
   },
   {
@@ -200,6 +212,7 @@ export const menuIntegrations = [
       "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "secure_tools",
     ],
   },
   {
@@ -235,6 +248,7 @@ export const menuIntegrations = [
       "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "secure_tools",
     ],
   },
   {
@@ -251,6 +265,7 @@ export const menuIntegrations = [
       "agentic_generative_ui",
       "shared_state",
       "human_in_the_loop",
+      "secure_tools",
     ],
   },
 ] as const satisfies MenuIntegrationConfig[];
