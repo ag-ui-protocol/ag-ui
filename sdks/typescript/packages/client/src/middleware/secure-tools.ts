@@ -15,29 +15,80 @@ import { from } from "rxjs";
 import { concatMap, filter } from "rxjs/operators";
 
 // =============================================================================
+// CONSTANTS
+// =============================================================================
+
+/**
+ * Sentinel value to explicitly skip validation for a field.
+ *
+ * Use this when you want to allow any value for a field without validation.
+ * This must be an explicit choice - omitting a field or using `undefined`
+ * means the actual tool must also have that field undefined/empty.
+ *
+ * @example
+ * ```ts
+ * allowedTools: [
+ *   {
+ *     name: "my_tool",
+ *     description: SKIP_VALIDATION,  // Allow any description
+ *     parameters: { ... },           // But validate parameters exactly
+ *   }
+ * ]
+ * ```
+ */
+export const SKIP_VALIDATION = Symbol.for("ag-ui.secure-tools.skip-validation");
+
+/**
+ * Type for the SKIP_VALIDATION sentinel value.
+ */
+export type SkipValidation = typeof SKIP_VALIDATION;
+
+// =============================================================================
 // TYPES - Core type definitions for the security middleware
 // =============================================================================
 
 /**
  * Tool specification for security validation.
  *
- * Only `name` is required. Optional fields control validation behavior:
- * - If `description` is omitted, description matching is skipped
- * - If `parameters` is omitted, parameter schema matching is skipped
+ * All fields are required to ensure explicit security configuration.
+ * Each field can be:
+ * - A concrete value → actual tool must match exactly
+ * - `undefined` → actual tool must also have this field undefined/empty
+ * - `SKIP_VALIDATION` → don't validate this field (explicit opt-out)
  *
- * This allows flexible security configurations:
- * - `{ name: "foo" }` - Allow by name only (least restrictive)
- * - `{ name: "foo", description: "..." }` - Validate name + description
- * - `{ name: "foo", parameters: {...} }` - Validate name + parameters
- * - `{ name: "foo", description: "...", parameters: {...} }` - Full validation (most secure)
+ * @example
+ * ```ts
+ * // Exact match on all fields
+ * { name: "foo", description: "Does X", parameters: { type: "object", ... } }
+ *
+ * // Match name exactly, description must be undefined, skip parameter validation
+ * { name: "foo", description: undefined, parameters: SKIP_VALIDATION }
+ *
+ * // Match name exactly, skip description validation, parameters must be undefined
+ * { name: "foo", description: SKIP_VALIDATION, parameters: undefined }
+ * ```
  */
 export interface ToolSpec {
-  /** Unique tool identifier - must match exactly (required) */
+  /**
+   * Unique tool identifier - must match exactly (required).
+   */
   name: string;
-  /** Tool description - if provided, validated for consistency */
-  description?: string;
-  /** JSON Schema for tool parameters - if provided, validated structurally */
-  parameters?: Record<string, unknown>;
+
+  /**
+   * Tool description validation.
+   * - `string` → actual tool's description must match exactly
+   * - `undefined` → actual tool's description must be undefined or empty string
+   * - `SKIP_VALIDATION` → don't validate description (any value allowed)
+   */
+  description: string | undefined | SkipValidation;
+
+  /**
+   * JSON Schema for tool parameters validation.
+   * - `Record<string, unknown>` → actual tool's parameters must match exactly
+   * - `undefined` → actual tool's parameters must be undefined or empty
+   * - `SKIP_VALIDATION` → don't validate parameters (any schema allowed)
+   */
+  parameters: Record<string, unknown> | undefined | SkipValidation;
 }
 
 /**
@@ -177,16 +228,11 @@ export interface SecureToolsConfig {
   onDeviation?: OnDeviationCallback;
 
   /**
-   * If true, requires exact description match between allowed tool spec
-   * and the tool declared in the agent input.
-   * Default: false (only name and parameters are validated)
-   */
-  strictDescriptionMatch?: boolean;
-
-  /**
    * If true, requires exact parameter schema match.
-   * If false, uses structural compatibility check.
+   * If false, uses structural compatibility check (actual must be at least as restrictive).
    * Default: true (exact match for maximum security)
+   *
+   * Note: This only applies when parameters is a concrete value (not `undefined` or `SKIP_VALIDATION`).
    */
   strictParameterMatch?: boolean;
 
@@ -275,19 +321,35 @@ function findDeclaredTool(
 }
 
 /**
+ * Check if a value is empty (undefined, null, or empty string).
+ */
+function isEmpty(value: unknown): boolean {
+  return value === undefined || value === null || value === "";
+}
+
+/**
+ * Check if an object is empty (undefined, null, or empty object).
+ */
+function isEmptyObject(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (typeof value !== "object") return false;
+  return Object.keys(value as Record<string, unknown>).length === 0;
+}
+
+/**
  * Validate a tool call against the allowed specs and declared tools.
  *
- * Validation behavior:
- * - `name` is always required and must match exactly
- * - `description` is only validated if provided in the spec (and strictDescriptionMatch is true)
- * - `parameters` is only validated if provided in the spec
+ * Validation behavior for each field:
+ * - Concrete value → actual tool must match exactly
+ * - `undefined` → actual tool must also have this field undefined/empty
+ * - `SKIP_VALIDATION` → don't validate this field (any value allowed)
  */
 function validateToolCall(
   toolCall: ToolCallInfo,
   config: SecureToolsConfig,
   context: AgentSecurityContext,
 ): ToolValidationResult {
-  const { allowedTools = [], strictDescriptionMatch = false, strictParameterMatch = true } = config;
+  const { allowedTools = [], strictParameterMatch = true } = config;
 
   // If no allowedTools configured, allow all (but this defeats the purpose)
   if (allowedTools.length === 0) {
@@ -315,35 +377,67 @@ function validateToolCall(
     };
   }
 
-  // Step 3: Validate description (only if spec has description AND strict mode is enabled)
-  if (
-    allowedSpec.description !== undefined &&
-    strictDescriptionMatch &&
-    declaredTool.description !== allowedSpec.description
-  ) {
-    return {
-      allowed: false,
-      reason: "SPEC_MISMATCH_DESCRIPTION",
-      message: `Tool "${toolCall.toolCallName}" description mismatch. Expected: "${allowedSpec.description}", Actual: "${declaredTool.description}"`,
-      expectedSpec: allowedSpec,
-      actualSpec: declaredTool,
-    };
+  // Step 3: Validate description
+  // - SKIP_VALIDATION → don't check
+  // - undefined → actual must be undefined/empty
+  // - string → actual must match exactly
+  if (allowedSpec.description !== SKIP_VALIDATION) {
+    if (allowedSpec.description === undefined) {
+      // Spec says description should be undefined/empty
+      if (!isEmpty(declaredTool.description)) {
+        return {
+          allowed: false,
+          reason: "SPEC_MISMATCH_DESCRIPTION",
+          message: `Tool "${toolCall.toolCallName}" has a description but spec requires it to be empty. Actual: "${declaredTool.description}"`,
+          expectedSpec: allowedSpec,
+          actualSpec: declaredTool,
+        };
+      }
+    } else {
+      // Spec has a concrete description - must match exactly
+      if (declaredTool.description !== allowedSpec.description) {
+        return {
+          allowed: false,
+          reason: "SPEC_MISMATCH_DESCRIPTION",
+          message: `Tool "${toolCall.toolCallName}" description mismatch. Expected: "${allowedSpec.description}", Actual: "${declaredTool.description}"`,
+          expectedSpec: allowedSpec,
+          actualSpec: declaredTool,
+        };
+      }
+    }
   }
 
-  // Step 4: Validate parameters schema (only if spec has parameters)
-  if (allowedSpec.parameters !== undefined) {
-    const parametersMatch = strictParameterMatch
-      ? deepEqual(allowedSpec.parameters, declaredTool.parameters)
-      : isSchemaCompatible(allowedSpec.parameters, declaredTool.parameters);
+  // Step 4: Validate parameters schema
+  // - SKIP_VALIDATION → don't check
+  // - undefined → actual must be undefined/empty
+  // - object → actual must match exactly (or be compatible in non-strict mode)
+  if (allowedSpec.parameters !== SKIP_VALIDATION) {
+    if (allowedSpec.parameters === undefined) {
+      // Spec says parameters should be undefined/empty
+      if (!isEmptyObject(declaredTool.parameters)) {
+        return {
+          allowed: false,
+          reason: "SPEC_MISMATCH_PARAMETERS",
+          message: `Tool "${toolCall.toolCallName}" has parameters but spec requires it to be empty`,
+          expectedSpec: allowedSpec,
+          actualSpec: declaredTool,
+        };
+      }
+    } else {
+      // Spec has concrete parameters - must match
+      const parametersMatch = strictParameterMatch
+        ? deepEqual(allowedSpec.parameters, declaredTool.parameters)
+        : isSchemaCompatible(allowedSpec.parameters, declaredTool.parameters);
 
-    if (!parametersMatch) {
-      return {
-        allowed: false,
-        reason: "SPEC_MISMATCH_PARAMETERS",
-        message: `Tool "${toolCall.toolCallName}" parameters schema does not match the allowed specification`,
-        expectedSpec: allowedSpec,
-        actualSpec: declaredTool,
-      };
+      if (!parametersMatch) {
+        return {
+          allowed: false,
+          reason: "SPEC_MISMATCH_PARAMETERS",
+          message: `Tool "${toolCall.toolCallName}" parameters schema does not match the allowed specification`,
+          expectedSpec: allowedSpec,
+          actualSpec: declaredTool,
+        };
+      }
     }
   }
 
@@ -640,37 +734,52 @@ export function checkToolCallAllowed(
  * Create a ToolSpec from an existing Tool definition.
  * Convenience function for migrating from simple tool definitions.
  *
+ * By default, creates a spec that requires exact matches for all fields.
+ * Use `SKIP_VALIDATION` for fields you want to skip.
+ *
  * @param tool - The tool definition to convert
- * @param options - Optional: which fields to include (default: all)
+ * @param options - Control validation behavior for each field
+ *
+ * @example
+ * ```ts
+ * // Exact match on all fields
+ * createToolSpec(myTool)
+ *
+ * // Skip description validation
+ * createToolSpec(myTool, { description: "skip" })
+ *
+ * // Skip all optional fields
+ * createToolSpec(myTool, { description: "skip", parameters: "skip" })
+ * ```
  */
 export function createToolSpec(
   tool: Tool,
-  options?: { includeDescription?: boolean; includeParameters?: boolean },
+  options?: {
+    description?: "exact" | "skip";
+    parameters?: "exact" | "skip";
+  },
 ): ToolSpec {
-  const { includeDescription = true, includeParameters = true } = options ?? {};
+  const { description = "exact", parameters = "exact" } = options ?? {};
 
-  const spec: ToolSpec = { name: tool.name };
-
-  if (includeDescription) {
-    spec.description = tool.description;
-  }
-
-  if (includeParameters) {
-    spec.parameters = tool.parameters as Record<string, unknown>;
-  }
-
-  return spec;
+  return {
+    name: tool.name,
+    description: description === "skip" ? SKIP_VALIDATION : tool.description,
+    parameters: parameters === "skip" ? SKIP_VALIDATION : (tool.parameters as Record<string, unknown>),
+  };
 }
 
 /**
  * Create multiple ToolSpecs from an array of Tools.
  *
  * @param tools - Array of tool definitions to convert
- * @param options - Optional: which fields to include (default: all)
+ * @param options - Control validation behavior for each field (applies to all tools)
  */
 export function createToolSpecs(
   tools: Tool[],
-  options?: { includeDescription?: boolean; includeParameters?: boolean },
+  options?: {
+    description?: "exact" | "skip";
+    parameters?: "exact" | "skip";
+  },
 ): ToolSpec[] {
   return tools.map((tool) => createToolSpec(tool, options));
 }

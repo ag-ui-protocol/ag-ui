@@ -4,6 +4,7 @@ import {
   checkToolCallAllowed,
   createToolSpec,
   createToolSpecs,
+  SKIP_VALIDATION,
   type ToolSpec,
   type ToolCallInfo,
   type AgentSecurityContext,
@@ -404,14 +405,23 @@ describe("SecureToolsMiddleware", () => {
       expect(deviations[0].reason).toBe("SPEC_MISMATCH_DESCRIPTION");
     });
 
-    it("should allow tools with different descriptions when strict mode is off", async () => {
+    it("should allow tools with different descriptions when SKIP_VALIDATION is used", async () => {
       const events = createToolCallEvents("tool-1", "getWeather", '{"city": "NYC"}');
       const agent = new MockAgent(events);
 
-      // Note: strictDescriptionMatch defaults to false
+      // Use SKIP_VALIDATION for description to allow any description
+      const specWithSkipDescription: ToolSpec = {
+        name: "getWeather",
+        description: SKIP_VALIDATION,
+        parameters: {
+          type: "object",
+          properties: { city: { type: "string" } },
+          required: ["city"],
+        },
+      };
+
       const middleware = secureToolsMiddleware({
-        allowedTools: [weatherToolSpec],
-        strictDescriptionMatch: false,
+        allowedTools: [specWithSkipDescription],
       });
 
       // Use tool with same name and params but different description
@@ -430,7 +440,7 @@ describe("SecureToolsMiddleware", () => {
         });
       });
 
-      // Should pass since strictDescriptionMatch is false
+      // Should pass since description is SKIP_VALIDATION
       expect(collectedEvents.length).toBe(6);
     });
   });
