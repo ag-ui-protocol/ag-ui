@@ -19,12 +19,51 @@ import { mastra } from "./mastra";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 import { ADKAgent } from "@ag-ui/adk";
 import { SpringAiAgent } from "@ag-ui/spring-ai";
-import { HttpAgent } from "@ag-ui/client";
+import { HttpAgent, secureToolsMiddleware, type ToolSpec } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
 import { AWSStrandsAgent } from "@ag-ui/aws-strands";
 import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
+
+// Tool specifications for secure_tools demo
+const secureToolsAllowedTools: ToolSpec[] = [
+  {
+    name: "change_background",
+    description:
+      "Change the background color of the chat. Can be anything that the CSS background attribute accepts. Regular colors, linear of radial gradients etc.",
+    parameters: {
+      type: "object",
+      properties: {
+        background: {
+          type: "string",
+          description: "The background. Prefer gradients. Only use when asked.",
+        },
+      },
+      required: ["background"],
+    },
+  },
+  // Note: "dangerous_action" is intentionally NOT in this list to demonstrate blocking
+];
+
+/**
+ * Helper to wrap an agent with SecureToolsMiddleware for the secure_tools demo.
+ * This demonstrates blocking unauthorized tool calls.
+ */
+function wrapWithSecureTools<T extends AbstractAgent>(agent: T): T {
+  agent.use(
+    secureToolsMiddleware({
+      allowedTools: secureToolsAllowedTools,
+      onDeviation: (deviation) => {
+        console.warn(
+          `[SecureTools Demo] Blocked tool call: ${deviation.toolCall.toolCallName}`,
+          { reason: deviation.reason, message: deviation.message }
+        );
+      },
+    })
+  );
+  return agent;
+}
 
 const envVars = getEnvVars();
 
@@ -33,8 +72,8 @@ export const agentsIntegrations = {
     agentic_chat: new MiddlewareStarterAgent(),
   }),
 
-  "pydantic-ai": async () =>
-    mapAgents(
+  "pydantic-ai": async () => ({
+    ...mapAgents(
       (path) => new PydanticAIAgent({ url: `${envVars.pydanticAIUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
@@ -47,13 +86,15 @@ export const agentsIntegrations = {
         backend_tool_rendering: "backend_tool_rendering",
       }
     ),
+    secure_tools: wrapWithSecureTools(new PydanticAIAgent({ url: `${envVars.pydanticAIUrl}/agentic_chat` })),
+  }),
 
   "server-starter": async () => ({
     agentic_chat: new ServerStarterAgent({ url: envVars.serverStarterUrl }),
   }),
 
-  "adk-middleware": async () =>
-    mapAgents(
+  "adk-middleware": async () => ({
+    ...mapAgents(
       (path) => new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/${path}` }),
       {
         agentic_chat: "chat",
@@ -66,9 +107,11 @@ export const agentsIntegrations = {
         // predictive_state_updates: "adk-predictive-state-agent",
       }
     ),
+    secure_tools: wrapWithSecureTools(new ADKAgent({ url: `${envVars.adkMiddlewareUrl}/chat` })),
+  }),
 
-  "server-starter-all-features": async () =>
-    mapAgents(
+  "server-starter-all-features": async () => ({
+    ...mapAgents(
       (path) => new ServerStarterAllFeaturesAgent({ url: `${envVars.serverStarterAllFeaturesUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
@@ -81,6 +124,10 @@ export const agentsIntegrations = {
         predictive_state_updates: "predictive_state_updates",
       }
     ),
+    secure_tools: wrapWithSecureTools(
+      new ServerStarterAllFeaturesAgent({ url: `${envVars.serverStarterAllFeaturesUrl}/agentic_chat` })
+    ),
+  }),
 
   mastra: async () => {
     const mastraClient = new MastraClient({
@@ -121,10 +168,13 @@ export const agentsIntegrations = {
     agentic_chat_reasoning: new LangGraphHttpAgent({
       url: `${envVars.langgraphPythonUrl}/agent/agentic_chat_reasoning`,
     }),
+    secure_tools: wrapWithSecureTools(
+      new LangGraphAgent({ deploymentUrl: envVars.langgraphPythonUrl, graphId: "agentic_chat" })
+    ),
   }),
 
-  "langgraph-fastapi": async () =>
-    mapAgents(
+  "langgraph-fastapi": async () => ({
+    ...mapAgents(
       (path) => new LangGraphHttpAgent({ url: `${envVars.langgraphFastApiUrl}/agent/${path}` }),
       {
         agentic_chat: "agentic_chat",
@@ -138,9 +188,13 @@ export const agentsIntegrations = {
         subgraphs: "subgraphs",
       }
     ),
+    secure_tools: wrapWithSecureTools(
+      new LangGraphHttpAgent({ url: `${envVars.langgraphFastApiUrl}/agent/agentic_chat` })
+    ),
+  }),
 
-  "langgraph-typescript": async () =>
-    mapAgents(
+  "langgraph-typescript": async () => ({
+    ...mapAgents(
       (graphId) => new LangGraphAgent({ deploymentUrl: envVars.langgraphTypescriptUrl, graphId }),
       {
         agentic_chat: "agentic_chat",
@@ -153,6 +207,10 @@ export const agentsIntegrations = {
         subgraphs: "subgraphs",
       }
     ),
+    secure_tools: wrapWithSecureTools(
+      new LangGraphAgent({ deploymentUrl: envVars.langgraphTypescriptUrl, graphId: "agentic_chat" })
+    ),
+  }),
 
   // TODO: @ranst91 Enable `langchain` integration in apps/dojo/src/menu.ts once ready
   langchain: async () => {
@@ -172,8 +230,8 @@ export const agentsIntegrations = {
     };
   },
 
-  agno: async () =>
-    mapAgents(
+  agno: async () => ({
+    ...mapAgents(
       (path) => new AgnoAgent({ url: `${envVars.agnoUrl}/${path}/agui` }),
       {
         agentic_chat: "agentic_chat",
@@ -182,9 +240,11 @@ export const agentsIntegrations = {
         human_in_the_loop: "human_in_the_loop",
       }
     ),
+    secure_tools: wrapWithSecureTools(new AgnoAgent({ url: `${envVars.agnoUrl}/agentic_chat/agui` })),
+  }),
 
-  "spring-ai": async () =>
-    mapAgents(
+  "spring-ai": async () => ({
+    ...mapAgents(
       (path) => new SpringAiAgent({ url: `${envVars.springAiUrl}/${path}/agui` }),
       {
         agentic_chat: "agentic_chat",
@@ -194,9 +254,11 @@ export const agentsIntegrations = {
         agentic_generative_ui: "agentic_generative_ui",
       }
     ),
+    secure_tools: wrapWithSecureTools(new SpringAiAgent({ url: `${envVars.springAiUrl}/agentic_chat/agui` })),
+  }),
 
-  "llama-index": async () =>
-    mapAgents(
+  "llama-index": async () => ({
+    ...mapAgents(
       (path) => new LlamaIndexAgent({ url: `${envVars.llamaIndexUrl}/${path}/run` }),
       {
         agentic_chat: "agentic_chat",
@@ -206,9 +268,11 @@ export const agentsIntegrations = {
         backend_tool_rendering: "backend_tool_rendering",
       }
     ),
+    secure_tools: wrapWithSecureTools(new LlamaIndexAgent({ url: `${envVars.llamaIndexUrl}/agentic_chat/run` })),
+  }),
 
-  crewai: async () =>
-    mapAgents(
+  crewai: async () => ({
+    ...mapAgents(
       (path) => new CrewAIAgent({ url: `${envVars.crewAiUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
@@ -221,9 +285,11 @@ export const agentsIntegrations = {
         predictive_state_updates: "predictive_state_updates",
       }
     ),
+    secure_tools: wrapWithSecureTools(new CrewAIAgent({ url: `${envVars.crewAiUrl}/agentic_chat` })),
+  }),
 
-  "agent-spec-langgraph": async () =>
-    mapAgents(
+  "agent-spec-langgraph": async () => ({
+    ...mapAgents(
       (path) => new HttpAgent({
         url: `${envVars.agentSpecUrl}/langgraph/${path}`,
       }),
@@ -234,9 +300,11 @@ export const agentsIntegrations = {
         tool_based_generative_ui: "tool_based_generative_ui",
       }
     ),
+    secure_tools: wrapWithSecureTools(new HttpAgent({ url: `${envVars.agentSpecUrl}/langgraph/agentic_chat` })),
+  }),
 
-  "agent-spec-wayflow": async () =>
-    mapAgents(
+  "agent-spec-wayflow": async () => ({
+    ...mapAgents(
       (path) => new HttpAgent({
         url: `${envVars.agentSpecUrl}/wayflow/${path}`,
       }),
@@ -247,9 +315,11 @@ export const agentsIntegrations = {
         human_in_the_loop: "human_in_the_loop",
       }
     ),
+    secure_tools: wrapWithSecureTools(new HttpAgent({ url: `${envVars.agentSpecUrl}/wayflow/agentic_chat` })),
+  }),
 
-  "microsoft-agent-framework-python": async () =>
-    mapAgents(
+  "microsoft-agent-framework-python": async () => ({
+    ...mapAgents(
       (path) => new HttpAgent({ url: `${envVars.agentFrameworkPythonUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
@@ -261,6 +331,8 @@ export const agentsIntegrations = {
         predictive_state_updates: "predictive_state_updates",
       }
     ),
+    secure_tools: wrapWithSecureTools(new HttpAgent({ url: `${envVars.agentFrameworkPythonUrl}/agentic_chat` })),
+  }),
 
   "a2a-basic": async () => {
     const a2aClient = new A2AClient(envVars.a2aUrl);
@@ -273,8 +345,8 @@ export const agentsIntegrations = {
     };
   },
 
-  "microsoft-agent-framework-dotnet": async () =>
-    mapAgents(
+  "microsoft-agent-framework-dotnet": async () => ({
+    ...mapAgents(
       (path) => new HttpAgent({ url: `${envVars.agentFrameworkDotnetUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
@@ -286,6 +358,8 @@ export const agentsIntegrations = {
         predictive_state_updates: "predictive_state_updates",
       }
     ),
+    secure_tools: wrapWithSecureTools(new HttpAgent({ url: `${envVars.agentFrameworkDotnetUrl}/agentic_chat` })),
+  }),
 
   a2a: async () => {
     // A2A agents: building management, finance, it agents
@@ -331,5 +405,6 @@ export const agentsIntegrations = {
       }
     ),
     human_in_the_loop: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/human-in-the-loop`, debug: true }),
+    secure_tools: wrapWithSecureTools(new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/agentic-chat/` })),
   }),
 } satisfies AgentsMap;

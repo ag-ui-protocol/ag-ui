@@ -1,0 +1,62 @@
+# 🔒 Secure Tools Middleware
+
+## What This Demo Shows
+
+This demo showcases the **SecureToolsMiddleware** - a security layer that
+validates and controls which tools an agent can execute:
+
+1. **Full Specification Validation**: Tools are validated against complete
+   specs (name + description + parameters), not just names
+2. **Tool Spoofing Prevention**: Blocks tools that don't match declared
+   specifications, preventing malicious tool injection
+3. **Deviation Logging**: Records and reports blocked tool attempts for
+   security auditing
+
+## Security Configuration
+
+The agent in this demo is configured with:
+
+```typescript
+agent.use(
+  secureToolsMiddleware({
+    allowedTools: [
+      {
+        name: "change_background",
+        description: "Change the background color...",
+        parameters: { /* schema */ },
+      },
+    ],
+    onDeviation: (deviation) => {
+      // Log to audit trail
+      console.warn("Tool blocked:", deviation);
+    },
+  })
+);
+```
+
+## How to Interact
+
+Try asking the agent to:
+
+- **"Change the background to blue"** → ✅ Allowed (tool is in allowlist)
+- **"Execute the dangerous action"** → ❌ Blocked (tool not in allowlist)
+
+## ✨ Security Features
+
+**What's happening technically:**
+
+- The `SecureToolsMiddleware` intercepts all tool call events
+- Each tool call is validated against the `allowedTools` specification
+- Tool calls that don't match are filtered from the event stream
+- The `onDeviation` callback is triggered for blocked calls
+- The agent never executes unauthorized tools
+
+**Enterprise Use Cases:**
+
+- **Per-tenant tool restrictions**: Different customers get different tool access
+- **Audit logging**: Track all blocked tool attempts for compliance
+- **Time-based access**: Restrict sensitive tools to business hours
+- **Rate limiting**: Combine with custom validation for rate limits
+
+This middleware can wrap ANY AG-UI agent, providing consistent security across
+all your agent implementations.
