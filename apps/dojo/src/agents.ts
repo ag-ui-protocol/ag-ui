@@ -27,22 +27,10 @@ import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
 
 // Tool specifications for secure_tools demo
+// Only `name` is required. Omitting `description` and `parameters` means those fields
+// won't be validated - just the tool name needs to match.
 const secureToolsAllowedTools: ToolSpec[] = [
-  {
-    name: "change_background",
-    description:
-      "Change the background color of the chat. Can be anything that the CSS background attribute accepts. Regular colors, linear of radial gradients etc.",
-    parameters: {
-      type: "object",
-      properties: {
-        background: {
-          type: "string",
-          description: "The background. Prefer gradients. Only use when asked.",
-        },
-      },
-      required: ["background"],
-    },
-  },
+  { name: "change_background" },
   // Note: "say_hello" is intentionally NOT in this list to demonstrate blocking
 ];
 

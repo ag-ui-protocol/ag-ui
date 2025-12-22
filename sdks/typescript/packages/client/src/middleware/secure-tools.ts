@@ -19,18 +19,25 @@ import { concatMap, filter } from "rxjs/operators";
 // =============================================================================
 
 /**
- * Full tool specification for security validation.
- * Unlike simple name-based filtering, this requires the complete tool definition
- * to prevent tool spoofing attacks where a malicious tool uses the same name
- * but different behavior.
+ * Tool specification for security validation.
+ *
+ * Only `name` is required. Optional fields control validation behavior:
+ * - If `description` is omitted, description matching is skipped
+ * - If `parameters` is omitted, parameter schema matching is skipped
+ *
+ * This allows flexible security configurations:
+ * - `{ name: "foo" }` - Allow by name only (least restrictive)
+ * - `{ name: "foo", description: "..." }` - Validate name + description
+ * - `{ name: "foo", parameters: {...} }` - Validate name + parameters
+ * - `{ name: "foo", description: "...", parameters: {...} }` - Full validation (most secure)
  */
 export interface ToolSpec {
-  /** Unique tool identifier - must match exactly */
+  /** Unique tool identifier - must match exactly (required) */
   name: string;
-  /** Tool description - validated for consistency if strictDescriptionMatch is enabled */
-  description: string;
-  /** JSON Schema for tool parameters - validated structurally for security */
-  parameters: Record<string, unknown>;
+  /** Tool description - if provided, validated for consistency */
+  description?: string;
+  /** JSON Schema for tool parameters - if provided, validated structurally */
+  parameters?: Record<string, unknown>;
 }
 
 /**
@@ -135,8 +142,12 @@ export type OnDeviationCallback = (
 export interface SecureToolsConfig {
   /**
    * List of allowed tool specifications.
-   * Each tool must have name, description, and parameters.
-   * Tool calls are validated against these specs - not just by name.
+   *
+   * Only `name` is required. Omit optional fields to skip validation:
+   * - `{ name: "foo" }` - Allow by name only (least restrictive)
+   * - `{ name: "foo", description: "..." }` - Validate name + description
+   * - `{ name: "foo", parameters: {...} }` - Validate name + parameters
+   * - `{ name: "foo", description: "...", parameters: {...} }` - Full spec validation
    */
   allowedTools?: ToolSpec[];
 
@@ -265,6 +276,11 @@ function findDeclaredTool(
 
 /**
  * Validate a tool call against the allowed specs and declared tools.
+ *
+ * Validation behavior:
+ * - `name` is always required and must match exactly
+ * - `description` is only validated if provided in the spec (and strictDescriptionMatch is true)
+ * - `parameters` is only validated if provided in the spec
  */
 function validateToolCall(
   toolCall: ToolCallInfo,
@@ -299,8 +315,12 @@ function validateToolCall(
     };
   }
 
-  // Step 3: Validate description (if strict mode)
-  if (strictDescriptionMatch && declaredTool.description !== allowedSpec.description) {
+  // Step 3: Validate description (only if spec has description AND strict mode is enabled)
+  if (
+    allowedSpec.description !== undefined &&
+    strictDescriptionMatch &&
+    declaredTool.description !== allowedSpec.description
+  ) {
     return {
       allowed: false,
       reason: "SPEC_MISMATCH_DESCRIPTION",
@@ -310,19 +330,21 @@ function validateToolCall(
     };
   }
 
-  // Step 4: Validate parameters schema
-  const parametersMatch = strictParameterMatch
-    ? deepEqual(allowedSpec.parameters, declaredTool.parameters)
-    : isSchemaCompatible(allowedSpec.parameters, declaredTool.parameters);
+  // Step 4: Validate parameters schema (only if spec has parameters)
+  if (allowedSpec.parameters !== undefined) {
+    const parametersMatch = strictParameterMatch
+      ? deepEqual(allowedSpec.parameters, declaredTool.parameters)
+      : isSchemaCompatible(allowedSpec.parameters, declaredTool.parameters);
 
-  if (!parametersMatch) {
-    return {
-      allowed: false,
-      reason: "SPEC_MISMATCH_PARAMETERS",
-      message: `Tool "${toolCall.toolCallName}" parameters schema does not match the allowed specification`,
-      expectedSpec: allowedSpec,
-      actualSpec: declaredTool,
-    };
+    if (!parametersMatch) {
+      return {
+        allowed: false,
+        reason: "SPEC_MISMATCH_PARAMETERS",
+        message: `Tool "${toolCall.toolCallName}" parameters schema does not match the allowed specification`,
+        expectedSpec: allowedSpec,
+        actualSpec: declaredTool,
+      };
+    }
   }
 
   return { allowed: true };
@@ -617,18 +639,38 @@ export function checkToolCallAllowed(
 /**
  * Create a ToolSpec from an existing Tool definition.
  * Convenience function for migrating from simple tool definitions.
+ *
+ * @param tool - The tool definition to convert
+ * @param options - Optional: which fields to include (default: all)
  */
-export function createToolSpec(tool: Tool): ToolSpec {
-  return {
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters as Record<string, unknown>,
-  };
+export function createToolSpec(
+  tool: Tool,
+  options?: { includeDescription?: boolean; includeParameters?: boolean },
+): ToolSpec {
+  const { includeDescription = true, includeParameters = true } = options ?? {};
+
+  const spec: ToolSpec = { name: tool.name };
+
+  if (includeDescription) {
+    spec.description = tool.description;
+  }
+
+  if (includeParameters) {
+    spec.parameters = tool.parameters as Record<string, unknown>;
+  }
+
+  return spec;
 }
 
 /**
  * Create multiple ToolSpecs from an array of Tools.
+ *
+ * @param tools - Array of tool definitions to convert
+ * @param options - Optional: which fields to include (default: all)
  */
-export function createToolSpecs(tools: Tool[]): ToolSpec[] {
-  return tools.map(createToolSpec);
+export function createToolSpecs(
+  tools: Tool[],
+  options?: { includeDescription?: boolean; includeParameters?: boolean },
+): ToolSpec[] {
+  return tools.map((tool) => createToolSpec(tool, options));
 }
