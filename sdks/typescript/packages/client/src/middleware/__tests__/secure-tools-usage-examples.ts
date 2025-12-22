@@ -313,16 +313,26 @@ export function auditLoggingExample() {
 // =============================================================================
 
 /**
- * For maximum security, enable strict matching which also validates
- * tool descriptions match exactly (prevents description-based attacks).
+ * For maximum security, provide concrete values for all fields in ToolSpec.
+ * This ensures exact matching of name, description, and parameters.
+ *
+ * ToolSpec validation behavior:
+ * - Concrete value → actual tool must match exactly
+ * - `undefined` → actual tool must have this field undefined/empty
+ * - `SKIP_VALIDATION` → don't validate this field (any value allowed)
+ *
+ * By providing concrete values (not SKIP_VALIDATION), you get maximum security.
  */
 export function strictModeExample() {
   const agent = new HttpAgent({ url: "https://api.example.com/agent" });
 
+  // All fields have concrete values - exact matching for maximum security
   const allowedTools: ToolSpec[] = [
     {
       name: "criticalOperation",
+      // Concrete description - must match exactly (prevents description spoofing)
       description: "Performs a critical operation that must not be spoofed",
+      // Concrete parameters - must match exactly (prevents parameter manipulation)
       parameters: {
         type: "object",
         properties: {
@@ -337,9 +347,8 @@ export function strictModeExample() {
   agent.use(
     secureToolsMiddleware({
       allowedTools,
-      // Require exact description match (default is false)
-      strictDescriptionMatch: true,
-      // Require exact parameter schema match (this is already the default)
+      // strictParameterMatch: true is the default
+      // When false, uses structural compatibility check instead of exact match
       strictParameterMatch: true,
     }),
   );
