@@ -25,13 +25,21 @@ interface SecureToolsProps {
  * 2. Blocks unauthorized or mismatched tool calls
  * 3. Logs deviations for audit purposes
  *
+ * Configuration used in this demo (see agents.ts):
+ * - allowedTools: Declarative allowlist with ToolSpec objects
+ * - isToolAllowed: Custom callback for additional validation logic
+ * - onDeviation: Custom handler that logs when tool calls are blocked
+ *
  * In this demo:
  * - "change_background" is an ALLOWED tool (in the security allowlist)
  * - "say_hello" is NOT in the allowlist (will be blocked by middleware)
  *
  * Try asking the agent to:
  * - "Change the background to blue" (will succeed)
- * - "Say hello" (will be blocked by middleware)
+ * - "Say hello" (will be blocked by middleware - check server console)
+ *
+ * Note: Deviations are logged server-side via console.warn. Check your
+ * terminal/server logs to see the security warnings when tools are blocked.
  */
 const SecureTools: React.FC<SecureToolsProps> = ({ params }) => {
   const { integrationId } = React.use(params);
@@ -103,17 +111,22 @@ const Chat = () => {
     >
       {/* Security Status Banner */}
       <div
-        className={`px-4 py-2 text-sm flex items-center gap-2 ${
+        className={`px-4 py-2 text-sm flex flex-col gap-1 ${
           theme === "dark"
             ? "bg-green-900/30 text-green-300 border-b border-green-500/30"
             : "bg-green-50 text-green-700 border-b border-green-200"
         }`}
       >
-        <span className="text-lg">🔒</span>
-        <span className="font-medium">SecureToolsMiddleware Active</span>
-        <span className="text-xs opacity-75">
-          • Allowed: change_background • Not in allowlist: say_hello
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-lg">🔒</span>
+          <span className="font-medium">SecureToolsMiddleware Active</span>
+          <span className="text-xs opacity-75">
+            • Allowed: change_background • Not in allowlist: say_hello
+          </span>
+        </div>
+        <div className="text-xs opacity-60 ml-7">
+          ℹ️ Check server console for security logs when tools are blocked (isToolAllowed + onDeviation callbacks)
+        </div>
       </div>
 
       {/* Deviation Log Panel */}

@@ -194,11 +194,24 @@ export interface SecureToolsConfig {
   /**
    * List of allowed tool specifications.
    *
-   * Only `name` is required. Omit optional fields to skip validation:
-   * - `{ name: "foo" }` - Allow by name only (least restrictive)
-   * - `{ name: "foo", description: "..." }` - Validate name + description
-   * - `{ name: "foo", parameters: {...} }` - Validate name + parameters
-   * - `{ name: "foo", description: "...", parameters: {...} }` - Full spec validation
+   * All fields are required for explicit security configuration:
+   * - `name`: Must match exactly (required)
+   * - `description`: Concrete value (match exactly), `undefined` (must be empty), or `SKIP_VALIDATION`
+   * - `parameters`: Concrete value (match exactly), `undefined` (must be empty), or `SKIP_VALIDATION`
+   *
+   * @example
+   * ```ts
+   * allowedTools: [
+   *   // Full validation - all fields must match exactly
+   *   { name: "foo", description: "Does X", parameters: { type: "object", ... } },
+   *
+   *   // Skip description/parameter validation (allow any values)
+   *   { name: "bar", description: SKIP_VALIDATION, parameters: SKIP_VALIDATION },
+   *
+   *   // Require tool to have NO description and NO parameters
+   *   { name: "baz", description: undefined, parameters: undefined },
+   * ]
+   * ```
    */
   allowedTools?: ToolSpec[];
 

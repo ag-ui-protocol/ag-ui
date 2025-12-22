@@ -42,16 +42,61 @@ const secureToolsAllowedTools: ToolSpec[] = [
 /**
  * Helper to wrap an agent with SecureToolsMiddleware for the secure_tools demo.
  * This demonstrates blocking unauthorized tool calls.
+ *
+ * Features demonstrated:
+ * - allowedTools: Declarative allowlist with full spec validation
+ * - isToolAllowed: Custom callback for additional validation logic
+ * - onDeviation: Custom handler when a tool call is blocked (defaults to console.warn)
  */
 function wrapWithSecureTools<T extends AbstractAgent>(agent: T): T {
   agent.use(
     secureToolsMiddleware({
       allowedTools: secureToolsAllowedTools,
-      onDeviation: (deviation) => {
-        console.warn(
-          `[SecureTools Demo] Blocked tool call: ${deviation.toolCall.toolCallName}`,
-          { reason: deviation.reason, message: deviation.message }
+
+      /**
+       * Custom validation callback - runs AFTER allowedTools check.
+       * Use for dynamic policies like per-user restrictions, rate limiting, etc.
+       *
+       * In this demo: we could add custom logic here, but we'll just log and allow
+       * any tool that passed the allowedTools check.
+       */
+      isToolAllowed: (toolCall, context) => {
+        // Example: Additional custom validation logic
+        // You could check per-user permissions, rate limits, time-based access, etc.
+        console.info(
+          `[SecureTools Demo] isToolAllowed called for: ${toolCall.toolCallName}`,
+          { threadId: context.threadId, runId: context.runId }
         );
+
+        // Return true to allow (after allowedTools already validated)
+        // Return false to block (would trigger onDeviation)
+        return true;
+      },
+
+      /**
+       * Deviation handler - called when a tool call is blocked.
+       * Default behavior: console.warn with structured logging.
+       * Override for custom audit logging, telemetry, alerts, etc.
+       *
+       * Note: This runs server-side. For browser alerts, you'd need to
+       * stream deviation events to the client via websocket or similar.
+       */
+      onDeviation: (deviation) => {
+        // Custom logging with more detail than the default
+        console.warn(
+          `\n🚨 [SecureTools] TOOL CALL BLOCKED 🚨`,
+          `\n   Tool: ${deviation.toolCall.toolCallName}`,
+          `\n   Reason: ${deviation.reason}`,
+          `\n   Message: ${deviation.message}`,
+          `\n   Thread: ${deviation.context.threadId}`,
+          `\n   Timestamp: ${new Date(deviation.timestamp).toISOString()}`
+        );
+
+        // In a real app, you might:
+        // - Send to audit log / SIEM system
+        // - Trigger admin alerts
+        // - Update security metrics/telemetry
+        // - Stream to client UI via websocket
       },
     })
   );

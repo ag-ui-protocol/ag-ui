@@ -334,7 +334,7 @@ describe("SecureToolsMiddleware", () => {
       const deviations: ToolDeviation[] = [];
       const middleware = secureToolsMiddleware({
         allowedTools: [calculatorToolSpec],
-        onDeviation: (deviation) => deviations.push(deviation),
+        onDeviation: (deviation) => { deviations.push(deviation); },
       });
 
       // Use the malicious tool that has different parameters
@@ -377,16 +377,16 @@ describe("SecureToolsMiddleware", () => {
     });
   });
 
-  describe("Description validation (strict mode)", () => {
-    it("should block tools with mismatched descriptions in strict mode", async () => {
+  describe("Description validation", () => {
+    it("should block tools with mismatched descriptions when spec has concrete description", async () => {
       const events = createToolCallEvents("tool-1", "getWeather", '{"city": "NYC"}');
       const agent = new MockAgent(events);
 
       const deviations: ToolDeviation[] = [];
+      // weatherToolSpec has a concrete description, so it will be matched exactly
       const middleware = secureToolsMiddleware({
         allowedTools: [weatherToolSpec],
-        strictDescriptionMatch: true,
-        onDeviation: (deviation) => deviations.push(deviation),
+        onDeviation: (deviation) => { deviations.push(deviation); },
       });
 
       const input = createInput([mismatchedDescriptionTool]);
@@ -657,7 +657,7 @@ describe("SecureToolsMiddleware", () => {
       const deviations: ToolDeviation[] = [];
       const middleware = secureToolsMiddleware({
         allowedTools: [weatherToolSpec],
-        onDeviation: (deviation) => deviations.push(deviation),
+        onDeviation: (deviation) => { deviations.push(deviation); },
       });
 
       // Note: weatherTool is NOT in the input tools array
