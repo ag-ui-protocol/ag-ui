@@ -74,29 +74,30 @@ const Chat = () => {
   const [deviations] = useState<DeviationLog[]>([]);
 
   // Allowed tool: change_background
-  // Using DEFINED_IN_MIDDLEWARE to get description from the server-side middleware config.
+  // Using DEFINED_IN_MIDDLEWARE to get description AND parameters from the server-side middleware.
   // This eliminates duplication - the middleware's allowedTools is the source of truth.
-  useFrontendTool({
-    name: "change_background",
-    // Description comes from middleware's allowedTools config (see agents.ts)
-    description: DEFINED_IN_MIDDLEWARE,
-    // Note: parameters still need to match what the handler expects
-    // The middleware will inject the full JSON Schema for validation
-    parameters: [
-      {
-        name: "background",
-        type: "string",
-        description: "The background color or gradient.",
+  //
+  // Note: We use type assertions because CopilotKit's types expect specific formats,
+  // but the middleware will replace these placeholders before the agent sees them.
+  // TODO: Update CopilotKit types to natively accept DEFINED_IN_MIDDLEWARE
+  useFrontendTool(
+    // Type assertion to bypass CopilotKit's strict parameter type checking
+    // The middleware will replace DEFINED_IN_MIDDLEWARE with actual values
+    {
+      name: "change_background",
+      // Description comes from middleware's allowedTools config (see agents.ts)
+      description: DEFINED_IN_MIDDLEWARE,
+      // Parameters also come from middleware
+      parameters: DEFINED_IN_MIDDLEWARE,
+      handler: ({ background }: { background: string }) => {
+        setBackground(background);
+        return {
+          status: "success",
+          message: `Background changed to ${background}`,
+        };
       },
-    ],
-    handler: ({ background }) => {
-      setBackground(background);
-      return {
-        status: "success",
-        message: `Background changed to ${background}`,
-      };
-    },
-  });
+    } as unknown as Parameters<typeof useFrontendTool>[0],
+  );
 
   // This tool exists in frontend but is NOT in the middleware's allowedTools list
   useFrontendTool({
