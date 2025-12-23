@@ -6,6 +6,14 @@ Ruby SDK for the **Agent-User Interaction (AG-UI) Protocol**.
 
 ## Installation
 
+Install bundle:
+
+```bash
+gem install bundler
+```
+
+Add the gem:
+
 ```bash
 bundle add ag-ui-protocol
 ```
@@ -50,13 +58,37 @@ message = AgUiProtocol::Core::Types::UserMessage.new(
 
 ## Packages
 
-- **`AgUiProtocol::Core`** – Types, events, and data models for AG-UI protocol
+- **`AgUiProtocol::Core::Types`** – Message types, tools, and data models
+- **`AgUiProtocol::Core::Events`** – Event types and event handling
 - **`AgUiProtocol::Encoder`** – Event encoding utilities for HTTP streaming
 
 ## Documentation
 
 - Concepts & architecture: [`docs/concepts`](https://docs.ag-ui.com/concepts/architecture)
-- Full API reference: [`docs/sdk/ruby`](../../../docs/sdk/ruby/core/overview.mdx)
+- Full API reference: [`docs/sdk/ruby`](../../../docs/sdk/ruby/overview.mdx)
+
+## Examples
+
+See the [`example/`](example/) directory for:
+
+- [Simple use case](example/simple-use/README.md)
+- [Minimal Rails example](example/rails/README.md)
+
+## Sync documentation
+
+To sync the documentation of YARD with the path `docs/sdk/ruby`, run the following command:
+
+```bash
+cd sdks/community/ruby
+rake doc
+```
+
+## Testing
+
+```bash
+cd sdks/community/ruby
+rake test
+```
 
 ## Contributing
 

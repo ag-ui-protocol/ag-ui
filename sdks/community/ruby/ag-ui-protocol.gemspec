@@ -24,10 +24,12 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency "shoulda-context", ">= 2.0"
   spec.add_development_dependency "rake"
   spec.add_development_dependency "sorbet", ">= 0.5.12392"
+  spec.add_development_dependency "yard", ">= 0.9"
+  spec.add_development_dependency "yard-markdown", ">= 0.3"
 
   spec.metadata["rubygems_mfa_required"] = "true"
   spec.metadata["source_code_uri"] = "https://github.com/ag-ui-protocol/ag-ui"
-  spec.metadata["documentation_uri"] = "https://github.com/ag-ui-protocol/ag-ui/blob/main/docs/sdk/ruby/overview.mdx"
+  spec.metadata["documentation_uri"] = "https://github.com/ag-ui-protocol/ag-ui/blob/main/sdks/community/ruby/README.md"
   spec.metadata["changelog_uri"] = "https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/community/ruby/CHANGELOG.md"
   spec.metadata["homepage_uri"] = "https://docs.ag-ui.com/introduction"
 end

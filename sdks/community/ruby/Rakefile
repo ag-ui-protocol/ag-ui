@@ -1,4 +1,5 @@
 require "rake/testtask"
+require "shellwords"
 
 Rake::TestTask.new(:test) do |t|
   t.libs << "test"
@@ -8,6 +9,19 @@ end
 
 task :typecheck do
   sh "bundle exec srb tc"
+end
+
+task :doc do
+  out_dir = File.expand_path("../../../docs/sdk/ruby", __dir__)
+  files = Dir["lib/**/*.rb"]
+  sh [
+    "bundle exec yardoc",
+    "--plugin markdown",
+    "--format markdown",
+    "--template-path ./templates",
+    "--output-dir #{out_dir.shellescape}",
+    files.map(&:shellescape).join(" ")
+  ].join(" ")
 end
 
 task default: :test
