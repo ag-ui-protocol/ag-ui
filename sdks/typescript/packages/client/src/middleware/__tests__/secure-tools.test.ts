@@ -5,7 +5,7 @@ import {
   createToolSpec,
   createToolSpecs,
   SKIP_VALIDATION,
-  DEFINED_IN_MIDDLEWARE,
+  DEFINED_IN_MIDDLEWARE_EXPERIMENTAL_EXPERIMENTAL,
   type ToolSpec,
   type ToolCallInfo,
   type AgentSecurityContext,
@@ -936,8 +936,8 @@ describe("Edge cases", () => {
   });
 });
 
-describe("DEFINED_IN_MIDDLEWARE feature", () => {
-  it("should replace DEFINED_IN_MIDDLEWARE description with value from allowedTools", async () => {
+describe("DEFINED_IN_MIDDLEWARE_EXPERIMENTAL feature", () => {
+  it("should replace DEFINED_IN_MIDDLEWARE_EXPERIMENTAL description with value from allowedTools", async () => {
     const events = createToolCallEvents("tool-1", "getWeather", '{"city": "NYC"}');
     const agent = new MockAgent(events);
 
@@ -945,10 +945,10 @@ describe("DEFINED_IN_MIDDLEWARE feature", () => {
       allowedTools: [weatherToolSpec],
     });
 
-    // Tool with DEFINED_IN_MIDDLEWARE placeholder for description
+    // Tool with DEFINED_IN_MIDDLEWARE_EXPERIMENTAL placeholder for description
     const toolWithPlaceholder: Tool = {
       name: "getWeather",
-      description: DEFINED_IN_MIDDLEWARE,
+      description: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,
       parameters: {
         type: "object",
         properties: { city: { type: "string" } },
@@ -970,7 +970,7 @@ describe("DEFINED_IN_MIDDLEWARE feature", () => {
     expect(collectedEvents.length).toBe(6);
   });
 
-  it("should replace DEFINED_IN_MIDDLEWARE parameters with value from allowedTools", async () => {
+  it("should replace DEFINED_IN_MIDDLEWARE_EXPERIMENTAL parameters with value from allowedTools", async () => {
     const events = createToolCallEvents("tool-1", "getWeather", '{"city": "NYC"}');
     const agent = new MockAgent(events);
 
@@ -978,11 +978,11 @@ describe("DEFINED_IN_MIDDLEWARE feature", () => {
       allowedTools: [weatherToolSpec],
     });
 
-    // Tool with DEFINED_IN_MIDDLEWARE placeholder for parameters
+    // Tool with DEFINED_IN_MIDDLEWARE_EXPERIMENTAL placeholder for parameters
     const toolWithPlaceholder: Tool = {
       name: "getWeather",
       description: "Get current weather for a city",
-      parameters: DEFINED_IN_MIDDLEWARE,
+      parameters: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,
     };
 
     const input = createInput([toolWithPlaceholder]);
@@ -999,7 +999,7 @@ describe("DEFINED_IN_MIDDLEWARE feature", () => {
     expect(collectedEvents.length).toBe(6);
   });
 
-  it("should replace both DEFINED_IN_MIDDLEWARE fields when both are placeholders", async () => {
+  it("should replace both DEFINED_IN_MIDDLEWARE_EXPERIMENTAL fields when both are placeholders", async () => {
     const events = createToolCallEvents("tool-1", "getWeather", '{"city": "NYC"}');
     const agent = new MockAgent(events);
 
@@ -1007,11 +1007,11 @@ describe("DEFINED_IN_MIDDLEWARE feature", () => {
       allowedTools: [weatherToolSpec],
     });
 
-    // Tool with DEFINED_IN_MIDDLEWARE for both description and parameters
+    // Tool with DEFINED_IN_MIDDLEWARE_EXPERIMENTAL for both description and parameters
     const toolWithPlaceholders: Tool = {
       name: "getWeather",
-      description: DEFINED_IN_MIDDLEWARE,
-      parameters: DEFINED_IN_MIDDLEWARE,
+      description: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,
+      parameters: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,
     };
 
     const input = createInput([toolWithPlaceholders]);
@@ -1028,7 +1028,7 @@ describe("DEFINED_IN_MIDDLEWARE feature", () => {
     expect(collectedEvents.length).toBe(6);
   });
 
-  it("should warn and passthrough when DEFINED_IN_MIDDLEWARE tool has no matching spec", async () => {
+  it("should warn and passthrough when DEFINED_IN_MIDDLEWARE_EXPERIMENTAL tool has no matching spec", async () => {
     const events = createToolCallEvents("tool-1", "unknownTool", '{}');
     const agent = new MockAgent(events);
 
@@ -1041,7 +1041,7 @@ describe("DEFINED_IN_MIDDLEWARE feature", () => {
     // Tool with placeholder but no matching spec
     const toolWithPlaceholder: Tool = {
       name: "unknownTool",
-      description: DEFINED_IN_MIDDLEWARE,
+      description: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,
       parameters: {},
     };
 
@@ -1064,7 +1064,7 @@ describe("DEFINED_IN_MIDDLEWARE feature", () => {
     warnSpy.mockRestore();
   });
 
-  it("should warn when spec uses SKIP_VALIDATION but client uses DEFINED_IN_MIDDLEWARE", async () => {
+  it("should warn when spec uses SKIP_VALIDATION but client uses DEFINED_IN_MIDDLEWARE_EXPERIMENTAL", async () => {
     const events = createToolCallEvents("tool-1", "flexibleTool", '{}');
     const agent = new MockAgent(events);
 
@@ -1080,11 +1080,11 @@ describe("DEFINED_IN_MIDDLEWARE feature", () => {
       allowedTools: [specWithSkipValidation],
     });
 
-    // Tool uses DEFINED_IN_MIDDLEWARE but spec has SKIP_VALIDATION
+    // Tool uses DEFINED_IN_MIDDLEWARE_EXPERIMENTAL but spec has SKIP_VALIDATION
     const toolWithPlaceholder: Tool = {
       name: "flexibleTool",
-      description: DEFINED_IN_MIDDLEWARE,
-      parameters: DEFINED_IN_MIDDLEWARE,
+      description: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,
+      parameters: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,
     };
 
     const input = createInput([toolWithPlaceholder]);

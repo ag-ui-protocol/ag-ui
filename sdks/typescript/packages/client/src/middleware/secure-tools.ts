@@ -45,7 +45,7 @@ export const SKIP_VALIDATION = Symbol.for("ag-ui.secure-tools.skip-validation");
 export type SkipValidation = typeof SKIP_VALIDATION;
 
 /**
- * Sentinel string value for client-side tool definitions.
+ * EXPERIMENTAL: Sentinel string value for client-side tool definitions.
  *
  * Use this in `useFrontendTool` to indicate that the field's value should
  * come from the middleware's `allowedTools` configuration instead of being
@@ -54,13 +54,15 @@ export type SkipValidation = typeof SKIP_VALIDATION;
  * This eliminates duplication - define the description/parameters once in
  * the middleware, and the client just provides the handler.
  *
+ * ⚠️ This API is experimental and may change before stabilization.
+ *
  * @example
  * ```tsx
  * // Client-side (React component)
  * useFrontendTool({
  *   name: "change_background",
- *   description: DEFINED_IN_MIDDLEWARE,  // Get from server middleware
- *   parameters: DEFINED_IN_MIDDLEWARE,   // Get from server middleware
+ *   description: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,  // Get from server middleware
+ *   parameters: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,   // Get from server middleware
  *   handler: (args) => setBackground(args.color),
  * });
  *
@@ -74,12 +76,13 @@ export type SkipValidation = typeof SKIP_VALIDATION;
  * })
  * ```
  */
-export const DEFINED_IN_MIDDLEWARE = "__AG_UI_DEFINED_IN_MIDDLEWARE__";
+export const DEFINED_IN_MIDDLEWARE_EXPERIMENTAL = "__AG_UI_DEFINED_IN_MIDDLEWARE__";
 
 /**
- * Type for the DEFINED_IN_MIDDLEWARE sentinel value.
+ * Type for the DEFINED_IN_MIDDLEWARE_EXPERIMENTAL sentinel value.
+ * @internal - Not exported; use `typeof DEFINED_IN_MIDDLEWARE_EXPERIMENTAL` if needed.
  */
-export type DefinedInMiddleware = typeof DEFINED_IN_MIDDLEWARE;
+type DefinedInMiddleware = typeof DEFINED_IN_MIDDLEWARE_EXPERIMENTAL;
 
 // =============================================================================
 // TYPES - Core type definitions for the security middleware
@@ -388,10 +391,10 @@ function isEmptyObject(value: unknown): boolean {
 }
 
 /**
- * Check if a value is the DEFINED_IN_MIDDLEWARE sentinel.
+ * Check if a value is the DEFINED_IN_MIDDLEWARE_EXPERIMENTAL sentinel.
  */
 function isDefinedInMiddleware(value: unknown): boolean {
-  return value === DEFINED_IN_MIDDLEWARE;
+  return value === DEFINED_IN_MIDDLEWARE_EXPERIMENTAL;
 }
 
 /**

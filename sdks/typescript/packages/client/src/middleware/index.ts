@@ -9,7 +9,7 @@ export {
   createToolSpec,
   createToolSpecs,
   SKIP_VALIDATION,
-  DEFINED_IN_MIDDLEWARE,
+  DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,
 } from "./secure-tools";
 export type {
   ToolSpec,
@@ -22,5 +22,5 @@ export type {
   OnDeviationCallback,
   SecureToolsConfig,
   SkipValidation,
-  DefinedInMiddleware,
+  // DefinedInMiddleware, // Not exported while experimental - use `typeof DEFINED_IN_MIDDLEWARE_EXPERIMENTAL` if needed
 } from "./secure-tools";

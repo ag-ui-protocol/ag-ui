@@ -8,7 +8,7 @@ import {
 } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 import { useTheme } from "next-themes";
-import { DEFINED_IN_MIDDLEWARE } from "@ag-ui/client";
+import { DEFINED_IN_MIDDLEWARE_EXPERIMENTAL } from "@ag-ui/client";
 
 interface SecureToolsProps {
   params: Promise<{
@@ -25,7 +25,7 @@ interface SecureToolsProps {
  * 1. Validates tool calls against full specifications (not just names)
  * 2. Blocks unauthorized or mismatched tool calls
  * 3. Logs deviations for audit purposes
- * 4. Injects tool definitions via DEFINED_IN_MIDDLEWARE (reduces duplication)
+ * 4. Injects tool definitions via DEFINED_IN_MIDDLEWARE_EXPERIMENTAL (reduces duplication)
  *
  * Configuration used in this demo (see agents.ts):
  * - allowedTools: Declarative allowlist with ToolSpec objects (source of truth)
@@ -33,7 +33,7 @@ interface SecureToolsProps {
  * - onDeviation: Custom handler that logs when tool calls are blocked
  *
  * Features demonstrated:
- * - "change_background" uses DEFINED_IN_MIDDLEWARE for description
+ * - "change_background" uses DEFINED_IN_MIDDLEWARE_EXPERIMENTAL for description
  *   → The middleware injects the description from allowedTools
  * - "say_hello" is NOT in the allowlist → blocked by middleware
  *
@@ -74,21 +74,21 @@ const Chat = () => {
   const [deviations] = useState<DeviationLog[]>([]);
 
   // Allowed tool: change_background
-  // Using DEFINED_IN_MIDDLEWARE to get description AND parameters from the server-side middleware.
+  // Using DEFINED_IN_MIDDLEWARE_EXPERIMENTAL to get description AND parameters from the server-side middleware.
   // This eliminates duplication - the middleware's allowedTools is the source of truth.
   //
   // Note: We use type assertions because CopilotKit's types expect specific formats,
   // but the middleware will replace these placeholders before the agent sees them.
-  // TODO: Update CopilotKit types to natively accept DEFINED_IN_MIDDLEWARE
+  // TODO: Update CopilotKit types to natively accept DEFINED_IN_MIDDLEWARE_EXPERIMENTAL
   useFrontendTool(
     // Type assertion to bypass CopilotKit's strict parameter type checking
-    // The middleware will replace DEFINED_IN_MIDDLEWARE with actual values
+    // The middleware will replace DEFINED_IN_MIDDLEWARE_EXPERIMENTAL with actual values
     {
       name: "change_background",
       // Description comes from middleware's allowedTools config (see agents.ts)
-      description: DEFINED_IN_MIDDLEWARE,
+      description: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,
       // Parameters also come from middleware
-      parameters: DEFINED_IN_MIDDLEWARE,
+      parameters: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,
       handler: ({ background }: { background: string }) => {
         setBackground(background);
         return {
@@ -129,7 +129,7 @@ const Chat = () => {
           <span className="text-lg">🔒</span>
           <span className="font-medium">SecureToolsMiddleware Active</span>
           <span className="text-xs opacity-75">
-            • change_background: allowed (uses DEFINED_IN_MIDDLEWARE) • say_hello: not in allowlist
+            • change_background: allowed (uses DEFINED_IN_MIDDLEWARE_EXPERIMENTAL) • say_hello: not in allowlist
           </span>
         </div>
         <div className="text-xs opacity-60 ml-7">

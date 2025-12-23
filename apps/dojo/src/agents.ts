@@ -28,16 +28,16 @@ import { LangChainAgent } from "@ag-ui/langchain";
 
 // Tool specifications for secure_tools demo
 // This is the SOURCE OF TRUTH for tool definitions.
-// Client-side tools using DEFINED_IN_MIDDLEWARE will receive these values.
+// Client-side tools using DEFINED_IN_MIDDLEWARE_EXPERIMENTAL will receive these values.
 //
 // All fields are required:
-// - Concrete value: actual tool must match exactly (or will be injected if client uses DEFINED_IN_MIDDLEWARE)
+// - Concrete value: actual tool must match exactly (or will be injected if client uses DEFINED_IN_MIDDLEWARE_EXPERIMENTAL)
 // - `undefined`: actual tool must have this field empty
-// - `SKIP_VALIDATION`: skip validation (but can't inject values for DEFINED_IN_MIDDLEWARE)
+// - `SKIP_VALIDATION`: skip validation (but can't inject values for DEFINED_IN_MIDDLEWARE_EXPERIMENTAL)
 const secureToolsAllowedTools: ToolSpec[] = [
   {
     name: "change_background",
-    // These values will be injected into client tools that use DEFINED_IN_MIDDLEWARE
+    // These values will be injected into client tools that use DEFINED_IN_MIDDLEWARE_EXPERIMENTAL
     description: "Change the background color of the chat. Can be anything that the CSS background attribute accepts.",
     parameters: {
       type: "object",
