@@ -5,7 +5,7 @@ import {
   createToolSpec,
   createToolSpecs,
   SKIP_VALIDATION,
-  DEFINED_IN_MIDDLEWARE_EXPERIMENTAL_EXPERIMENTAL,
+  DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,
   type ToolSpec,
   type ToolCallInfo,
   type AgentSecurityContext,
@@ -1114,9 +1114,10 @@ describe("DEFINED_IN_MIDDLEWARE_EXPERIMENTAL feature", () => {
 
     // Tool with marker object format for parameters
     // This is how CopilotKit's createToolSchema outputs DEFINED_IN_MIDDLEWARE_EXPERIMENTAL
+    // Note: description must match weatherToolSpec exactly since we're only using marker for parameters
     const toolWithMarkerObject: Tool = {
       name: "getWeather",
-      description: "Get the weather for a city",
+      description: "Get current weather for a city", // Must match weatherToolSpec
       parameters: { __definedInMiddleware: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL } as unknown as Record<string, unknown>,
     };
 
