@@ -1135,3 +1135,218 @@ describe("DEFINED_IN_MIDDLEWARE_EXPERIMENTAL feature", () => {
     expect(collectedEvents.length).toBe(6);
   });
 });
+
+// =============================================================================
+// createSecureToolHooks TESTS
+// =============================================================================
+
+import { createSecureToolHooks, type TypedToolSpec, type SecureToolHooks } from "@/middleware/secure-tools";
+
+// We'll use a mock Zod-like schema for testing
+// In real usage, you'd import z from "zod"
+const mockZodSchema = {
+  _output: {} as { city: string },
+  parse: (data: unknown) => data as { city: string },
+};
+
+describe("createSecureToolHooks", () => {
+  const toolSpecs = {
+    getWeather: {
+      name: "getWeather" as const,
+      description: "Get current weather for a city",
+      parameters: mockZodSchema,
+    },
+    calculator: {
+      name: "calculator" as const,
+      description: "Perform arithmetic operations",
+      parameters: {
+        _output: {} as { a: number; b: number; operation: string },
+        parse: (data: unknown) => data as { a: number; b: number; operation: string },
+      },
+    },
+  } as const;
+
+  let hooks: SecureToolHooks<typeof toolSpecs>;
+
+  beforeEach(() => {
+    hooks = createSecureToolHooks(toolSpecs);
+  });
+
+  describe("getToolSpec", () => {
+    it("should return the correct tool spec by name", () => {
+      const spec = hooks.getToolSpec("getWeather");
+      expect(spec.name).toBe("getWeather");
+      expect(spec.description).toBe("Get current weather for a city");
+      expect(spec.parameters).toBe(mockZodSchema);
+    });
+
+    it("should throw for non-existent tool name", () => {
+      // @ts-expect-error - testing invalid name
+      expect(() => hooks.getToolSpec("nonExistent")).toThrow(
+        /Tool "nonExistent" not found in toolSpecs/
+      );
+    });
+  });
+
+  describe("getMiddlewareConfig", () => {
+    it("should return allowedTools array with correct specs", () => {
+      const config = hooks.getMiddlewareConfig();
+      
+      expect(config.allowedTools).toHaveLength(2);
+      expect(config.allowedTools).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "getWeather",
+            description: "Get current weather for a city",
+          }),
+          expect.objectContaining({
+            name: "calculator",
+            description: "Perform arithmetic operations",
+          }),
+        ])
+      );
+    });
+
+    it("should use SKIP_VALIDATION for parameters in middleware config", () => {
+      const config = hooks.getMiddlewareConfig();
+      
+      // Parameters use SKIP_VALIDATION because Zod schemas can't be compared to JSON schemas
+      // Type safety is enforced by the Zod schema on the client side
+      const weatherSpec = config.allowedTools.find((t) => t.name === "getWeather");
+      expect(weatherSpec?.parameters).toBe(SKIP_VALIDATION);
+    });
+  });
+
+  describe("createFrontendToolConfig", () => {
+    it("should create a complete tool config with injected values", () => {
+      const handler = jest.fn();
+      
+      const config = hooks.createFrontendToolConfig("getWeather", {
+        handler,
+      });
+
+      expect(config.name).toBe("getWeather");
+      expect(config.description).toBe("Get current weather for a city");
+      expect(config.parameters).toBe(mockZodSchema);
+      expect(config.handler).toBe(handler);
+    });
+
+    it("should include optional render function", () => {
+      const handler = jest.fn();
+      const render = jest.fn();
+
+      const config = hooks.createFrontendToolConfig("getWeather", {
+        handler,
+        render,
+      });
+
+      expect(config.render).toBe(render);
+    });
+
+    it("should include optional agentId", () => {
+      const handler = jest.fn();
+
+      const config = hooks.createFrontendToolConfig("getWeather", {
+        handler,
+        agentId: "my-agent",
+      });
+
+      expect(config.agentId).toBe("my-agent");
+    });
+
+    it("should throw for non-existent tool name", () => {
+      const handler = jest.fn();
+
+      // @ts-expect-error - testing invalid name
+      expect(() => hooks.createFrontendToolConfig("nonExistent", { handler })).toThrow(
+        /Tool "nonExistent" not found in toolSpecs/
+      );
+    });
+  });
+
+  describe("toolSpecs property", () => {
+    it("should expose the original toolSpecs", () => {
+      expect(hooks.toolSpecs).toBe(toolSpecs);
+      expect(hooks.toolSpecs.getWeather.name).toBe("getWeather");
+    });
+  });
+
+  describe("integration with secureToolsMiddleware", () => {
+    it("should work with middleware using getMiddlewareConfig", async () => {
+      const events = createToolCallEvents("tool-1", "getWeather", '{"city": "NYC"}');
+      const agent = new MockAgent(events);
+
+      // Create tool with values from createFrontendToolConfig
+      const toolConfig = hooks.createFrontendToolConfig("getWeather", {
+        handler: async () => ({ temp: 72 }),
+      });
+
+      // The tool as it would appear after passing through CopilotKit
+      // CopilotKit converts Zod schemas to JSON schema, which is different from the
+      // original Zod schema. That's why getMiddlewareConfig uses SKIP_VALIDATION for params.
+      const tool: Tool = {
+        name: toolConfig.name,
+        description: toolConfig.description,
+        parameters: {
+          type: "object",
+          properties: { city: { type: "string" } },
+          required: ["city"],
+        },
+      };
+
+      // Use getMiddlewareConfig() for middleware setup
+      // Parameters use SKIP_VALIDATION because Zod can't be compared to JSON schema
+      const middleware = secureToolsMiddleware({
+        ...hooks.getMiddlewareConfig(),
+      });
+
+      const input = createInput([tool]);
+      const collectedEvents: BaseEvent[] = [];
+
+      await new Promise<void>((resolve) => {
+        middleware.run(input, agent).subscribe({
+          next: (event) => collectedEvents.push(event),
+          complete: () => resolve(),
+        });
+      });
+
+      // All events should pass through (tool is in allowedTools - name and description match)
+      expect(collectedEvents.length).toBe(6);
+    });
+
+    it("should block tools not in the shared specs", async () => {
+      const events = createToolCallEvents("tool-1", "unknownTool", '{}');
+      const agent = new MockAgent(events);
+
+      // Tool not in our shared specs
+      const unknownTool: Tool = {
+        name: "unknownTool",
+        description: "Some unknown tool",
+        parameters: {},
+      };
+
+      const deviations: ToolDeviation[] = [];
+      const middleware = secureToolsMiddleware({
+        ...hooks.getMiddlewareConfig(),
+        onDeviation: (deviation) => {
+          deviations.push(deviation);
+        },
+      });
+
+      const input = createInput([unknownTool]);
+      const collectedEvents: BaseEvent[] = [];
+
+      await new Promise<void>((resolve) => {
+        middleware.run(input, agent).subscribe({
+          next: (event) => collectedEvents.push(event),
+          complete: () => resolve(),
+        });
+      });
+
+      // Only RUN_STARTED and RUN_FINISHED should pass through
+      expect(collectedEvents.length).toBe(2);
+      expect(deviations.length).toBe(1);
+      expect(deviations[0].reason).toBe("NOT_IN_ALLOWLIST");
+    });
+  });
+});

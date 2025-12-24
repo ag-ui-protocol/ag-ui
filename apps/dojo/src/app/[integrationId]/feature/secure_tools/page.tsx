@@ -8,7 +8,7 @@ import {
 } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 import { useTheme } from "next-themes";
-import { DEFINED_IN_MIDDLEWARE_EXPERIMENTAL } from "@ag-ui/client";
+import { getV1xToolConfig, type SecureToolArgs } from "@/shared/secure-tools-specs";
 
 interface SecureToolsProps {
   params: Promise<{
@@ -25,24 +25,18 @@ interface SecureToolsProps {
  * 1. Validates tool calls against full specifications (not just names)
  * 2. Blocks unauthorized or mismatched tool calls
  * 3. Logs deviations for audit purposes
- * 4. Injects tool definitions via DEFINED_IN_MIDDLEWARE_EXPERIMENTAL (reduces duplication)
  *
- * Configuration used in this demo (see agents.ts):
- * - allowedTools: Declarative allowlist with ToolSpec objects (source of truth)
- * - isToolAllowed: Custom callback for additional validation logic
- * - onDeviation: Custom handler that logs when tool calls are blocked
+ * This demo uses shared tool specs from @/shared/secure-tools-specs.ts:
+ * - getMiddlewareConfig() provides specs for the server-side middleware
+ * - getV1xToolConfig() provides v1.x-compatible specs for client tools
  *
  * Features demonstrated:
- * - "change_background" uses DEFINED_IN_MIDDLEWARE_EXPERIMENTAL for description
- *   → The middleware injects the description from allowedTools
- * - "say_hello" is NOT in the allowlist → blocked by middleware
+ * - "change_background" is in the shared specs → allowed
+ * - "say_hello" is NOT in the specs → blocked by middleware
  *
  * Try asking the agent to:
  * - "Change the background to blue" (will succeed)
  * - "Say hello" (will be blocked by middleware - check server console)
- *
- * Note: Deviations are logged server-side via console.warn. Check your
- * terminal/server logs to see the security warnings when tools are blocked.
  */
 const SecureTools: React.FC<SecureToolsProps> = ({ params }) => {
   const { integrationId } = React.use(params);
@@ -69,37 +63,30 @@ interface DeviationLog {
 const Chat = () => {
   const { theme } = useTheme();
   const [background, setBackground] = useState<string>("var(--copilot-kit-background-color)");
-  // Deviation logging is handled server-side by the middleware's onDeviation callback
-  // This state could be used if we implement a websocket to stream deviations to the UI
   const [deviations] = useState<DeviationLog[]>([]);
 
-  // Allowed tool: change_background
-  // Using DEFINED_IN_MIDDLEWARE_EXPERIMENTAL to get description AND parameters from the server-side middleware.
-  // This eliminates duplication - the middleware's allowedTools is the source of truth.
-  //
-  // Note: We use type assertions because CopilotKit's types expect specific formats,
-  // but the middleware will replace these placeholders before the agent sees them.
-  // TODO: Update CopilotKit types to natively accept DEFINED_IN_MIDDLEWARE_EXPERIMENTAL
-  useFrontendTool(
-    // Type assertion to bypass CopilotKit's strict parameter type checking
-    // The middleware will replace DEFINED_IN_MIDDLEWARE_EXPERIMENTAL with actual values
-    {
-      name: "change_background",
-      // Description comes from middleware's allowedTools config (see agents.ts)
-      description: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,
-      // Parameters also come from middleware
-      parameters: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,
-      handler: ({ background }: { background: string }) => {
-        setBackground(background);
-        return {
-          status: "success",
-          message: `Background changed to ${background}`,
-        };
-      },
-    } as unknown as Parameters<typeof useFrontendTool>[0],
-  );
+  // Get tool config from shared specs (single source of truth)
+  const changeBackgroundConfig = getV1xToolConfig("change_background");
 
-  // This tool exists in frontend but is NOT in the middleware's allowedTools list
+  // Allowed tool: change_background
+  // Using getV1xToolConfig to get description and parameters from the shared specs.
+  // The middleware uses the same specs via getMiddlewareConfig().
+  useFrontendTool({
+    ...changeBackgroundConfig,
+    // v1.x useFrontendTool doesn't infer handler args from parameters,
+    // so we cast args to our known type for type safety
+    handler: (args) => {
+      const { background } = args as SecureToolArgs<"change_background">;
+      setBackground(background);
+      return {
+        status: "success",
+        message: `Background changed to ${background}`,
+      };
+    },
+  });
+
+  // This tool exists in frontend but is NOT in the shared specs
+  // The middleware will block any attempts to call it
   useFrontendTool({
     name: "say_hello",
     description: "Say hello. A friendly greeting tool.",
@@ -129,11 +116,11 @@ const Chat = () => {
           <span className="text-lg">🔒</span>
           <span className="font-medium">SecureToolsMiddleware Active</span>
           <span className="text-xs opacity-75">
-            • change_background: allowed (uses DEFINED_IN_MIDDLEWARE_EXPERIMENTAL) • say_hello: not in allowlist
+            • change_background: allowed (via shared specs) • say_hello: not in specs
           </span>
         </div>
         <div className="text-xs opacity-60 ml-7">
-          ℹ️ Check server console for security logs and tool definition injection
+          ℹ️ Check server console for security logs
         </div>
       </div>
 

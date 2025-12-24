@@ -961,3 +961,288 @@ export function createToolSpecs(
 ): ToolSpec[] {
   return tools.map((tool) => createToolSpec(tool, options));
 }
+
+// =============================================================================
+// SECURE TOOL HOOKS FACTORY
+// =============================================================================
+
+/**
+ * A tool specification with a typed Zod schema for parameters.
+ * Used with createSecureToolHooks for compile-time type safety.
+ */
+export interface TypedToolSpec<TParams = unknown> {
+  /** The unique name of the tool */
+  name: string;
+  /** Human-readable description of what the tool does */
+  description: string;
+  /** Zod schema for the tool's parameters - provides type inference */
+  parameters: TParams;
+}
+
+/**
+ * A map of tool names to their typed specifications.
+ */
+export type ToolSpecMap = Record<string, TypedToolSpec>;
+
+/**
+ * Infer the parameters type from a tool spec's parameters schema.
+ * Works with Zod schemas that have an `_output` type.
+ */
+export type InferToolParams<T> = T extends { _output: infer O } ? O : unknown;
+
+/**
+ * Configuration returned by createSecureToolHooks for use with secureToolsMiddleware.
+ */
+export interface SecureToolHooksMiddlewareConfig {
+  allowedTools: ToolSpec[];
+}
+
+/**
+ * Options for tools when using the secure hooks.
+ * Handler and render receive typed arguments based on the tool's schema.
+ */
+export interface SecureToolOptions<TParams> {
+  /**
+   * Handler function called when the tool is invoked.
+   * Receives typed arguments based on the tool's Zod schema.
+   */
+  handler: (args: TParams) => void | Promise<void>;
+
+  /**
+   * Optional render function for displaying tool execution in the UI.
+   * Receives typed arguments and status information.
+   */
+  render?: (props: {
+    args: Partial<TParams> | TParams;
+    status: "inProgress" | "executing" | "complete";
+    result?: string;
+  }) => unknown;
+
+  /**
+   * Optional agent ID to scope this tool to a specific agent.
+   */
+  agentId?: string;
+}
+
+/**
+ * Result of createSecureToolHooks containing typed utilities.
+ */
+export interface SecureToolHooks<T extends ToolSpecMap> {
+  /**
+   * The original tool specifications map.
+   * Useful for direct access to tool configs.
+   */
+  toolSpecs: T;
+
+  /**
+   * Get a specific tool's full specification by name.
+   * Returns the name, description, and parameters for the tool.
+   *
+   * @param toolName - The name of the tool to retrieve
+   * @returns The full tool specification
+   *
+   * @example
+   * ```ts
+   * const spec = getToolSpec("change_background");
+   * console.log(spec.description); // "Change the background color"
+   * ```
+   */
+  getToolSpec: <K extends keyof T & string>(toolName: K) => T[K];
+
+  /**
+   * Get configuration for secureToolsMiddleware.
+   * Converts the typed specs to the format expected by the middleware.
+   *
+   * @returns Configuration object to spread into secureToolsMiddleware options
+   *
+   * @example
+   * ```ts
+   * agent.use(secureToolsMiddleware({
+   *   ...getMiddlewareConfig(),
+   *   onDeviation: (d) => console.warn(d),
+   * }));
+   * ```
+   */
+  getMiddlewareConfig: () => SecureToolHooksMiddlewareConfig;
+
+  /**
+   * Create a frontend tool definition with injected spec values.
+   * Use this to get the full tool config for useFrontendTool or similar hooks.
+   *
+   * This is the primary way to use secure tools - it injects the description
+   * and parameters from the shared config, ensuring type safety and
+   * consistency between client and middleware.
+   *
+   * @param toolName - The name of the tool (must exist in toolSpecs)
+   * @param options - Handler, render, and other options for the tool
+   * @returns Full tool configuration ready for useFrontendTool
+   *
+   * @example
+   * ```ts
+   * // In a React component
+   * useFrontendTool(
+   *   createFrontendToolConfig("change_background", {
+   *     handler: (args) => {
+   *       // args.color is typed as string!
+   *       document.body.style.backgroundColor = args.color;
+   *     },
+   *   })
+   * );
+   * ```
+   */
+  createFrontendToolConfig: <K extends keyof T & string>(
+    toolName: K,
+    options: SecureToolOptions<InferToolParams<T[K]["parameters"]>>,
+  ) => {
+    name: K;
+    description: string;
+    parameters: T[K]["parameters"];
+    handler: (args: InferToolParams<T[K]["parameters"]>) => void | Promise<void>;
+    render?: (props: {
+      args: Partial<InferToolParams<T[K]["parameters"]>> | InferToolParams<T[K]["parameters"]>;
+      status: "inProgress" | "executing" | "complete";
+      result?: string;
+    }) => unknown;
+    agentId?: string;
+  };
+}
+
+/**
+ * Creates type-safe utilities for working with secure frontend tools.
+ *
+ * This factory function is the recommended way to use the secure tools middleware
+ * with frontend tools. It provides:
+ *
+ * 1. **Single source of truth**: Define tool specs once, use everywhere
+ * 2. **Compile-time type safety**: Full TypeScript inference for handlers and render
+ * 3. **Automatic integration**: Easy configuration for both client and middleware
+ *
+ * @param toolSpecs - A map of tool names to their specifications (with Zod schemas)
+ * @returns Utilities for creating secure frontend tools
+ *
+ * @example
+ * ```ts
+ * // 1. Define your tool specs (shared between client and server)
+ * import { z } from "zod";
+ *
+ * const toolSpecs = {
+ *   change_background: {
+ *     name: "change_background" as const,
+ *     description: "Change the background color of the page",
+ *     parameters: z.object({
+ *       color: z.string().describe("CSS color value"),
+ *     }),
+ *   },
+ *   get_weather: {
+ *     name: "get_weather" as const,
+ *     description: "Get current weather for a city",
+ *     parameters: z.object({
+ *       city: z.string(),
+ *     }),
+ *   },
+ * } as const;
+ *
+ * // 2. Create the secure tool hooks
+ * const {
+ *   createFrontendToolConfig,
+ *   getMiddlewareConfig,
+ * } = createSecureToolHooks(toolSpecs);
+ *
+ * // 3. Use in React components (client-side)
+ * function MyComponent() {
+ *   useFrontendTool(
+ *     createFrontendToolConfig("change_background", {
+ *       handler: (args) => {
+ *         // ✅ args.color is typed as string!
+ *         document.body.style.backgroundColor = args.color;
+ *       },
+ *       render: ({ args, status }) => (
+ *         <div>Changing to {args.color}...</div>
+ *       ),
+ *     })
+ *   );
+ *   return <div>...</div>;
+ * }
+ *
+ * // 4. Configure the middleware (server-side)
+ * agent.use(secureToolsMiddleware({
+ *   ...getMiddlewareConfig(),
+ *   onDeviation: (deviation) => {
+ *     console.warn("Blocked tool call:", deviation);
+ *   },
+ * }));
+ * ```
+ */
+export function createSecureToolHooks<T extends ToolSpecMap>(
+  toolSpecs: T,
+): SecureToolHooks<T> {
+  /**
+   * Get a specific tool's specification.
+   */
+  function getToolSpec<K extends keyof T & string>(toolName: K): T[K] {
+    const spec = toolSpecs[toolName];
+    if (!spec) {
+      const available = Object.keys(toolSpecs).join(", ");
+      throw new Error(
+        `Tool "${toolName}" not found in toolSpecs. Available tools: ${available}`,
+      );
+    }
+    return spec;
+  }
+
+  /**
+   * Get configuration for secureToolsMiddleware.
+   *
+   * Note: Parameters use SKIP_VALIDATION because the client-side Zod schema
+   * gets converted to JSON schema by CopilotKit, making exact comparison unreliable.
+   * The Zod schema still provides type safety in the client-side handlers.
+   */
+  function getMiddlewareConfig(): SecureToolHooksMiddlewareConfig {
+    const allowedTools: ToolSpec[] = Object.values(toolSpecs).map((spec) => ({
+      name: spec.name,
+      description: spec.description,
+      // Skip parameter validation - Zod schemas can't be compared to JSON schemas
+      // Type safety is still enforced by the Zod schema on the client side
+      parameters: SKIP_VALIDATION,
+    }));
+
+    return { allowedTools };
+  }
+
+  /**
+   * Create a frontend tool configuration with injected spec values.
+   */
+  function createFrontendToolConfig<K extends keyof T & string>(
+    toolName: K,
+    options: SecureToolOptions<InferToolParams<T[K]["parameters"]>>,
+  ): {
+    name: K;
+    description: string;
+    parameters: T[K]["parameters"];
+    handler: (args: InferToolParams<T[K]["parameters"]>) => void | Promise<void>;
+    render?: (props: {
+      args: Partial<InferToolParams<T[K]["parameters"]>> | InferToolParams<T[K]["parameters"]>;
+      status: "inProgress" | "executing" | "complete";
+      result?: string;
+    }) => unknown;
+    agentId?: string;
+  } {
+    const spec = getToolSpec(toolName);
+
+    return {
+      name: toolName,
+      description: spec.description,
+      parameters: spec.parameters,
+      handler: options.handler,
+      render: options.render,
+      agentId: options.agentId,
+    };
+  }
+
+  return {
+    toolSpecs,
+    getToolSpec,
+    getMiddlewareConfig,
+    createFrontendToolConfig,
+  };
+}

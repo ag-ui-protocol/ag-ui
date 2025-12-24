@@ -19,84 +19,54 @@ import { mastra } from "./mastra";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 import { ADKAgent } from "@ag-ui/adk";
 import { SpringAiAgent } from "@ag-ui/spring-ai";
-import { HttpAgent, secureToolsMiddleware, SKIP_VALIDATION, type ToolSpec } from "@ag-ui/client";
+import { HttpAgent, secureToolsMiddleware } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
 import { AWSStrandsAgent } from "@ag-ui/aws-strands";
 import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
+import { getMiddlewareConfig } from "@/shared/secure-tools-specs";
 
-// Tool specifications for secure_tools demo
-// This is the SOURCE OF TRUTH for tool definitions.
-// Client-side tools using DEFINED_IN_MIDDLEWARE_EXPERIMENTAL will receive these values.
-//
-// All fields are required:
-// - Concrete value: actual tool must match exactly (or will be injected if client uses DEFINED_IN_MIDDLEWARE_EXPERIMENTAL)
-// - `undefined`: actual tool must have this field empty
-// - `SKIP_VALIDATION`: skip validation (but can't inject values for DEFINED_IN_MIDDLEWARE_EXPERIMENTAL)
-const secureToolsAllowedTools: ToolSpec[] = [
-  {
-    name: "change_background",
-    // These values will be injected into client tools that use DEFINED_IN_MIDDLEWARE_EXPERIMENTAL
-    description: "Change the background color of the chat. Can be anything that the CSS background attribute accepts.",
-    parameters: {
-      type: "object",
-      properties: {
-        background: {
-          type: "string",
-          description: "The background color or gradient.",
-        },
-      },
-      required: ["background"],
-    },
-  },
-  // Note: "say_hello" is intentionally NOT in this list to demonstrate blocking
-];
+// Tool specifications are now defined in @/shared/secure-tools-specs.ts
+// This file imports getMiddlewareConfig() which provides the allowedTools
+// configuration from the same source used by the client-side hooks.
+// See that file for the actual tool definitions.
 
 /**
  * Helper to wrap an agent with SecureToolsMiddleware for the secure_tools demo.
  * This demonstrates blocking unauthorized tool calls.
  *
+ * Uses getMiddlewareConfig() from the shared tool specs, which ensures
+ * the same tool definitions are used for both client and server validation.
+ *
  * Features demonstrated:
- * - allowedTools: Declarative allowlist with full spec validation
+ * - allowedTools: From shared specs (single source of truth)
  * - isToolAllowed: Custom callback for additional validation logic
- * - onDeviation: Custom handler when a tool call is blocked (defaults to console.warn)
+ * - onDeviation: Custom handler when a tool call is blocked
  */
 function wrapWithSecureTools<T extends AbstractAgent>(agent: T): T {
   agent.use(
     secureToolsMiddleware({
-      allowedTools: secureToolsAllowedTools,
+      // Use the shared config - same specs as client-side hooks
+      ...getMiddlewareConfig(),
 
       /**
        * Custom validation callback - runs AFTER allowedTools check.
        * Use for dynamic policies like per-user restrictions, rate limiting, etc.
-       *
-       * In this demo: we could add custom logic here, but we'll just log and allow
-       * any tool that passed the allowedTools check.
        */
       isToolAllowed: (toolCall, context) => {
-        // Example: Additional custom validation logic
-        // You could check per-user permissions, rate limits, time-based access, etc.
         console.info(
           `[SecureTools Demo] isToolAllowed called for: ${toolCall.toolCallName}`,
           { threadId: context.threadId, runId: context.runId }
         );
-
-        // Return true to allow (after allowedTools already validated)
-        // Return false to block (would trigger onDeviation)
         return true;
       },
 
       /**
        * Deviation handler - called when a tool call is blocked.
        * Default behavior: console.warn with structured logging.
-       * Override for custom audit logging, telemetry, alerts, etc.
-       *
-       * Note: This runs server-side. For browser alerts, you'd need to
-       * stream deviation events to the client via websocket or similar.
        */
       onDeviation: (deviation) => {
-        // Custom logging with more detail than the default
         console.warn(
           `\n🚨 [SecureTools] TOOL CALL BLOCKED 🚨`,
           `\n   Tool: ${deviation.toolCall.toolCallName}`,
@@ -105,12 +75,6 @@ function wrapWithSecureTools<T extends AbstractAgent>(agent: T): T {
           `\n   Thread: ${deviation.context.threadId}`,
           `\n   Timestamp: ${new Date(deviation.timestamp).toISOString()}`
         );
-
-        // In a real app, you might:
-        // - Send to audit log / SIEM system
-        // - Trigger admin alerts
-        // - Update security metrics/telemetry
-        // - Stream to client UI via websocket
       },
     })
   );
