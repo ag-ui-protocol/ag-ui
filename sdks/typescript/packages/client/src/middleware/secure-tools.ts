@@ -392,9 +392,29 @@ function isEmptyObject(value: unknown): boolean {
 
 /**
  * Check if a value is the DEFINED_IN_MIDDLEWARE_EXPERIMENTAL sentinel.
+ *
+ * This handles two formats:
+ * 1. Direct string value: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL
+ * 2. Marker object: { __definedInMiddleware: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL }
+ *    (Used by CopilotKit's createToolSchema when parameters is the sentinel)
  */
 function isDefinedInMiddleware(value: unknown): boolean {
-  return value === DEFINED_IN_MIDDLEWARE_EXPERIMENTAL;
+  // Direct string value
+  if (value === DEFINED_IN_MIDDLEWARE_EXPERIMENTAL) {
+    return true;
+  }
+
+  // Marker object format (from CopilotKit's createToolSchema)
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "__definedInMiddleware" in value &&
+    (value as Record<string, unknown>).__definedInMiddleware === DEFINED_IN_MIDDLEWARE_EXPERIMENTAL
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 /**

@@ -1103,4 +1103,34 @@ describe("DEFINED_IN_MIDDLEWARE_EXPERIMENTAL feature", () => {
 
     warnSpy.mockRestore();
   });
+
+  it("should recognize marker object format for parameters (CopilotKit integration)", async () => {
+    const events = createToolCallEvents("tool-1", "getWeather", '{"city": "NYC"}');
+    const agent = new MockAgent(events);
+
+    const middleware = secureToolsMiddleware({
+      allowedTools: [weatherToolSpec],
+    });
+
+    // Tool with marker object format for parameters
+    // This is how CopilotKit's createToolSchema outputs DEFINED_IN_MIDDLEWARE_EXPERIMENTAL
+    const toolWithMarkerObject: Tool = {
+      name: "getWeather",
+      description: "Get the weather for a city",
+      parameters: { __definedInMiddleware: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL } as unknown as Record<string, unknown>,
+    };
+
+    const input = createInput([toolWithMarkerObject]);
+    const collectedEvents: BaseEvent[] = [];
+
+    await new Promise<void>((resolve) => {
+      middleware.run(input, agent).subscribe({
+        next: (event) => collectedEvents.push(event),
+        complete: () => resolve(),
+      });
+    });
+
+    // Tool should be allowed after transformation (parameters replaced from spec)
+    expect(collectedEvents.length).toBe(6);
+  });
 });
