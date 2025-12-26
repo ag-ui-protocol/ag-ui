@@ -384,8 +384,9 @@ class TestADKAgent:
         session_mgr = adk_agent._session_manager
 
         # Create a session through get_or_create_session
-        await session_mgr.get_or_create_session(
-            session_id="session1",
+        # Note: thread_id is used as the lookup key, backend may generate different session_id
+        session1, backend_id1 = await session_mgr.get_or_create_session(
+            thread_id="thread1",
             app_name="agent1",
             user_id="user1"
         )
@@ -393,8 +394,8 @@ class TestADKAgent:
         assert session_mgr.get_session_count() == 1
 
         # Add another session
-        await session_mgr.get_or_create_session(
-            session_id="session2",
+        session2, backend_id2 = await session_mgr.get_or_create_session(
+            thread_id="thread2",
             app_name="agent1",
             user_id="user1"
         )
@@ -1093,8 +1094,9 @@ class TestThreadIdSessionIdMapping:
             events = [event async for event in adk_agent.run(input_data)]
 
         # Verify update_session_state was called with the state
+        # Note: session_id is the backend-generated ID, which may differ from thread_id
         assert len(update_state_calls) == 1
-        assert update_state_calls[0]["session_id"] == "session_sync_test"
+        assert update_state_calls[0]["session_id"] is not None  # Backend generates session_id
         assert update_state_calls[0]["state"] == state_to_sync
 
     @pytest.mark.asyncio

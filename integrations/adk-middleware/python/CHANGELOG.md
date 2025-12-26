@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **NEW**: Integration tests for `from_app()` functionality (`test_from_app_integration.py`)
 - **DOCUMENTATION**: Added "Using App for Full ADK Features" section to USAGE.md
 
+### Fixed
+- **FIXED**: Thread ID to Session ID mapping for VertexAI session services (#870)
+  - AG-UI `thread_id` is now transparently mapped to ADK `session_id` (which may differ, e.g., VertexAI generates numeric IDs)
+  - Backend session IDs never leak to frontend AG-UI events - all events use the original `thread_id`
+  - Session state stores metadata (`_ag_ui_thread_id`, `_ag_ui_app_name`, `_ag_ui_user_id`) for recovery after middleware restarts
+  - `/agents/state` endpoint now accepts optional `appName` and `userId` parameters for explicit session lookup
+  - Processed message tracking now uses `thread_id` as key for consistency
+
 ## [0.4.0] - 2025-12-14
 
 ### Added
