@@ -130,6 +130,11 @@ AG-UI was born from CopilotKit's initial **partnership** with LangGraph and Crew
 | ---------- | ------- | ---------------- |
 | [Oracle Agent Spec](http://oracle.github.io/agent-spec/) | ✅ Supported | ➡️ [Docs](https://go.copilotkit.ai/copilotkit-oracle-docs) 🎮 [Demos](https://dojo.ag-ui.com/agent-spec-langgraph/feature/tool_based_generative_ui) |
 
+## Middleware
+| Framework | Status | AG-UI Resources |
+| ---------- | ------- | ---------------- |
+| [MCP Apps](https://blog.modelcontextprotocol.io/posts/2025-11-21-mcp-apps/) | ✅ Supported | ➡️ [Docs]() 🎮 [Demos]() |
+
 
 ## SDKs
 
