@@ -3,9 +3,19 @@
 
 import pytest
 import json
+import base64
 from unittest.mock import MagicMock, patch, PropertyMock
 
-from ag_ui.core import UserMessage, AssistantMessage, SystemMessage, ToolMessage, ToolCall, FunctionCall
+from ag_ui.core import (
+    UserMessage,
+    AssistantMessage,
+    SystemMessage,
+    ToolMessage,
+    ToolCall,
+    FunctionCall,
+    TextInputContent,
+    BinaryInputContent,
+)
 from google.adk.events import Event as ADKEvent
 from google.genai import types
 
@@ -39,6 +49,51 @@ class TestConvertAGUIMessagesToADK:
         assert event.content.role == "user"
         assert len(event.content.parts) == 1
         assert event.content.parts[0].text == "Hello, how are you?"
+
+    def test_convert_user_message_multimodal_inline_data(self):
+        """Test converting a multimodal UserMessage with inline base64 binary data."""
+        raw = b"fake-image-bytes"
+        b64 = base64.b64encode(raw).decode("ascii")
+        user_msg = UserMessage(
+            id="user_mm_1",
+            role="user",
+            content=[
+                TextInputContent(text="Here is an image."),
+                BinaryInputContent(mime_type="image/png", data=b64, filename="x.png"),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+
+        assert len(adk_events) == 1
+        event = adk_events[0]
+        assert event.content.role == "user"
+        assert len(event.content.parts) == 2
+        assert event.content.parts[0].text == "Here is an image."
+        assert event.content.parts[1].inline_data is not None
+        assert event.content.parts[1].inline_data.mime_type == "image/png"
+        assert event.content.parts[1].inline_data.data == raw
+
+    def test_convert_user_message_multimodal_file_data_url(self):
+        """Test converting a multimodal UserMessage with binary url."""
+        user_msg = UserMessage(
+            id="user_mm_2",
+            role="user",
+            content=[
+                TextInputContent(text="Please look at the image at this URL."),
+                BinaryInputContent(mime_type="image/jpeg", url="https://example.com/a.jpg"),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+
+        event = adk_events[0]
+        assert event.content.role == "user"
+        assert len(event.content.parts) == 2
+        assert event.content.parts[0].text == "Please look at the image at this URL."
+        assert event.content.parts[1].file_data is not None
+        assert event.content.parts[1].file_data.mime_type == "image/jpeg"
+        assert event.content.parts[1].file_data.file_uri == "https://example.com/a.jpg"
 
     def test_convert_system_message(self):
         """Test converting a SystemMessage to ADK event."""
