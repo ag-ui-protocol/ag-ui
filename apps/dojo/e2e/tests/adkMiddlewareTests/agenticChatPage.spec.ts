@@ -6,6 +6,8 @@ import {
 } from "../../test-isolation-helper";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
 
+// Skip all tests in this file when CLOUD_AGENTS is set
+test.skip(!!process.env.CLOUD_AGENTS, 'Skipping ADK Middleware tests when CLOUD_AGENTS is set');
 
 test.describe("Agentic Chat Feature", () => {
   test("[ADK Middleware] Agentic Chat sends and receives a message", async ({

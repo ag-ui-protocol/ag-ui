@@ -39,7 +39,7 @@ class AgentState(MessagesState):
     State of the agent.
     """
     steps: List[Dict[str, str]] = []
-    tools: List[Any]
+    tools: List[Any] = []
 
 async def start_node(state: Dict[str, Any], config: RunnableConfig): # pylint: disable=unused-argument
     """
@@ -49,6 +49,8 @@ async def start_node(state: Dict[str, Any], config: RunnableConfig): # pylint: d
     # Initialize steps list if not exists
     if "steps" not in state:
         state["steps"] = []
+    if "tools" not in state:
+        state["tools"] = []
 
     # Return command to route to chat_node
     return Command(
@@ -56,6 +58,7 @@ async def start_node(state: Dict[str, Any], config: RunnableConfig): # pylint: d
         update={
             "messages": state["messages"],
             "steps": state["steps"],
+            "tools": state["tools"]
         }
     )
 
@@ -88,7 +91,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     # Bind the tools to the model
     model_with_tools = model.bind_tools(
         [
-            *state["tools"],
+            *state.get("tools", []),
             plan_execution_steps
         ],
         # Disable parallel tool calls to avoid race conditions
