@@ -38,11 +38,13 @@ export enum EventType {
   STEP_FINISHED = "STEP_FINISHED",
 }
 
-export const BaseEventSchema = z.object({
-  type: z.nativeEnum(EventType),
-  timestamp: z.number().optional(),
-  rawEvent: z.any().optional(),
-});
+export const BaseEventSchema = z
+  .object({
+    type: z.nativeEnum(EventType),
+    timestamp: z.number().optional(),
+    rawEvent: z.any().optional(),
+  })
+  .passthrough();
 
 export const TextMessageStartEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TEXT_MESSAGE_START),
@@ -229,6 +231,39 @@ export const EventSchemas = z.discriminatedUnion("type", [
 ]);
 
 export type BaseEvent = z.infer<typeof BaseEventSchema>;
+export type AgUiEvent = z.infer<typeof EventSchemas>;
+export type BaseEventFields = z.infer<typeof BaseEventSchema>;
+export type AgUiEventByType = {
+  [EventType.TEXT_MESSAGE_START]: TextMessageStartEvent;
+  [EventType.TEXT_MESSAGE_CONTENT]: TextMessageContentEvent;
+  [EventType.TEXT_MESSAGE_END]: TextMessageEndEvent;
+  [EventType.TEXT_MESSAGE_CHUNK]: TextMessageChunkEvent;
+  [EventType.THINKING_TEXT_MESSAGE_START]: ThinkingTextMessageStartEvent;
+  [EventType.THINKING_TEXT_MESSAGE_CONTENT]: ThinkingTextMessageContentEvent;
+  [EventType.THINKING_TEXT_MESSAGE_END]: ThinkingTextMessageEndEvent;
+  [EventType.TOOL_CALL_START]: ToolCallStartEvent;
+  [EventType.TOOL_CALL_ARGS]: ToolCallArgsEvent;
+  [EventType.TOOL_CALL_END]: ToolCallEndEvent;
+  [EventType.TOOL_CALL_CHUNK]: ToolCallChunkEvent;
+  [EventType.TOOL_CALL_RESULT]: ToolCallResultEvent;
+  [EventType.THINKING_START]: ThinkingStartEvent;
+  [EventType.THINKING_END]: ThinkingEndEvent;
+  [EventType.STATE_SNAPSHOT]: StateSnapshotEvent;
+  [EventType.STATE_DELTA]: StateDeltaEvent;
+  [EventType.MESSAGES_SNAPSHOT]: MessagesSnapshotEvent;
+  [EventType.ACTIVITY_SNAPSHOT]: ActivitySnapshotEvent;
+  [EventType.ACTIVITY_DELTA]: ActivityDeltaEvent;
+  [EventType.RAW]: RawEvent;
+  [EventType.CUSTOM]: CustomEvent;
+  [EventType.RUN_STARTED]: RunStartedEvent;
+  [EventType.RUN_FINISHED]: RunFinishedEvent;
+  [EventType.RUN_ERROR]: RunErrorEvent;
+  [EventType.STEP_STARTED]: StepStartedEvent;
+  [EventType.STEP_FINISHED]: StepFinishedEvent;
+};
+export type AgUiEventOf<T extends EventType> = AgUiEventByType[T];
+export type EventPayloadOf<T extends EventType> = Omit<AgUiEventOf<T>, keyof BaseEventFields>;
+
 export type TextMessageStartEvent = z.infer<typeof TextMessageStartEventSchema>;
 export type TextMessageContentEvent = z.infer<typeof TextMessageContentEventSchema>;
 export type TextMessageEndEvent = z.infer<typeof TextMessageEndEventSchema>;

@@ -1,4 +1,4 @@
-import { BaseEvent, EventSchemas, EventType, Message } from "@ag-ui/core";
+import { BaseEvent, AgUiEvent, EventSchemas, EventType, Message } from "@ag-ui/core";
 import * as protoEvents from "./generated/events";
 import * as protoPatch from "./generated/patch";
 
@@ -10,12 +10,34 @@ function toCamelCase(str: string): string {
  * Encodes an event message to a protocol buffer binary format.
  */
 export function encode(event: BaseEvent): Uint8Array {
-  const oneofField = toCamelCase(event.type);
-  const { type, timestamp, rawEvent, ...rest } = event as any;
+  /**
+   * In previous versions of AG-UI, we didn't really validate the events
+   * against a schema. With stronger types for events and Zod schemas, we
+   * can now validate.
+   *
+   * However, I don't want to break compatibility with existing clients
+   * even if they are encoding invalid events. This surfaces a warning
+   * to them in those situations.
+   *
+   * @author mikeryandev
+   */
+  let validatedEvent: AgUiEvent | BaseEvent;
+  try {
+    validatedEvent = EventSchemas.parse(event) as AgUiEvent;
+  } catch (err) {
+    console.warn(
+      "[ag-ui][proto.encode] Malformed devent detected, falling back to unvalidated event",
+      err,
+      event,
+    );
+    validatedEvent = event;
+  }
+  const oneofField = toCamelCase(validatedEvent.type);
+  const { type, timestamp, rawEvent, ...rest } = validatedEvent as AgUiEvent as Record<string, any>;
 
   // since protobuf does not support optional arrays, we need to ensure that the toolCalls array is always present
-  if (type === EventType.MESSAGES_SNAPSHOT) {
-    rest.messages = rest.messages.map((message: Message) => {
+  if (type === EventType.MESSAGES_SNAPSHOT && Array.isArray(rest.messages)) {
+    rest.messages = (rest.messages as Message[]).map((message) => {
       const untypedMessage = message as any;
       if (untypedMessage.toolCalls === undefined) {
         return { ...message, toolCalls: [] };
@@ -25,8 +47,8 @@ export function encode(event: BaseEvent): Uint8Array {
   }
 
   // custom mapping for json patch operations
-  if (type === EventType.STATE_DELTA) {
-    rest.delta = rest.delta.map((operation: any) => ({
+  if (type === EventType.STATE_DELTA && Array.isArray(rest.delta)) {
+    rest.delta = (rest.delta as any[]).map((operation: any) => ({
       ...operation,
       op: protoPatch.JsonPatchOperationType[operation.op.toUpperCase()],
     }));
