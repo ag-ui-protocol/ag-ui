@@ -13,7 +13,13 @@ includeBuild("../../library") {
         substitute(module("com.agui:kotlin-core")).using(project(":kotlin-core"))
         substitute(module("com.agui:kotlin-client")).using(project(":kotlin-client"))
         substitute(module("com.agui:kotlin-tools")).using(project(":kotlin-tools"))
-        substitute(module("com.ag-ui.community:kotlin-a2ui")).using(project(":kotlin-a2ui"))
+    }
+}
+
+// Include a2ui-4k from local development
+includeBuild("/Users/mark/git/a2ui-4k") {
+    dependencySubstitution {
+        substitute(module("com.contextable:a2ui-4k")).using(project(":library"))
     }
 }
 
@@ -27,7 +33,7 @@ pluginManagement {
 
     plugins {
         val kotlinVersion = "2.2.20"
-        val composeVersion = "1.9.0-rc02"
+        val composeVersion = "1.9.1"
         val agpVersion = "8.10.1"
 
         kotlin("multiplatform") version kotlinVersion

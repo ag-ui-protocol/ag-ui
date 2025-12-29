@@ -9,11 +9,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.agui.a2ui.catalog.CoreCatalog
-import com.agui.a2ui.data.DataModel
-import com.agui.a2ui.model.UiDefinition
-import com.agui.a2ui.model.UiEvent
-import com.agui.a2ui.render.A2UiSurface
+import com.contextable.a2ui4k.catalog.CoreCatalog
+import com.contextable.a2ui4k.data.DataModel
+import com.contextable.a2ui4k.model.UiDefinition
+import com.contextable.a2ui4k.model.UiEvent
+import com.contextable.a2ui4k.render.A2UISurface
 import com.agui.example.chatapp.chat.DisplayMessage
 import com.agui.example.chatapp.chat.MessageRole
 import kotlinx.coroutines.launch
@@ -65,7 +65,7 @@ fun MessageList(
             item(key = "a2ui-$surfaceId") {
                 val dataModel = a2uiDataModels[surfaceId]
                 if (dataModel != null) {
-                    A2UiSurface(
+                    A2UISurface(
                         definition = definition,
                         dataModel = dataModel,
                         catalog = CoreCatalog,
@@ -76,7 +76,7 @@ fun MessageList(
                             .padding(horizontal = 16.dp, vertical = 8.dp)
                     )
                 } else {
-                    A2UiSurface(
+                    A2UISurface(
                         definition = definition,
                         catalog = CoreCatalog,
                         onEvent = onA2UiEvent,
