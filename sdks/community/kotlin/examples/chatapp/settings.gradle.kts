@@ -16,13 +16,6 @@ includeBuild("../../library") {
     }
 }
 
-// Include a2ui-4k from local development
-includeBuild("/Users/mark/git/a2ui-4k") {
-    dependencySubstitution {
-        substitute(module("com.contextable:a2ui-4k")).using(project(":library"))
-    }
-}
-
 pluginManagement {
     repositories {
         google()
@@ -33,7 +26,7 @@ pluginManagement {
 
     plugins {
         val kotlinVersion = "2.2.20"
-        val composeVersion = "1.9.1"
+        val composeVersion = "1.9.3"
         val agpVersion = "8.10.1"
 
         kotlin("multiplatform") version kotlinVersion
