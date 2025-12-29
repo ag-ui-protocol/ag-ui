@@ -214,7 +214,16 @@ class ChatController(
      * Send an A2UI user action event back to the agent.
      * This is called when users interact with A2UI surfaces (button clicks, form submissions, etc.).
      *
-     * The A2UI ClientEvent format is:
+     * ## Protocol Layers (A2UI → AG-UI → A2A)
+     *
+     * This implementation bridges three protocol layers:
+     *
+     * 1. **A2UI Spec** - Defines UI events with `name` field for action identification
+     * 2. **AG-UI** - Uses `forwardedProps` to pass A2UI events through the transport layer
+     * 3. **A2A (Agent-to-Agent)** - The `@ag-ui/a2a` integration converts `forwardedProps.a2uiAction`
+     *    into an A2A DataPart with `mimeType: "application/json+a2ui"`
+     *
+     * ## A2UI ClientEvent Format (per spec)
      * ```json
      * {
      *   "name": "action_name",
@@ -224,6 +233,18 @@ class ChatController(
      *   "context": { ... }
      * }
      * ```
+     *
+     * ## Known Deviations from A2UI Spec
+     *
+     * 1. **`forwardedProps`** - AG-UI specific mechanism, not part of A2UI or A2A specs.
+     *    The AG-UI A2A integration (`@ag-ui/a2a`) extracts `a2uiAction` from `forwardedProps`
+     *    and creates an A2A DataPart. See: `ag-ui/integrations/a2a/typescript/src/agent.ts`
+     *
+     * 2. **`actionName` vs `name`** - The A2UI spec uses `name`, but CopilotKit's
+     *    `@copilotkit/a2ui-renderer` transforms `action.name` to `actionName` when
+     *    calling its onAction callback. Some demo backends (e.g., `CopilotKit/with-a2a-a2ui`)
+     *    expect `actionName`. We send both for compatibility.
+     *    See: `@copilotkit/a2ui-renderer/dist/A2UIViewer.js` line 97-98
      */
     fun sendA2UiAction(event: UiEvent) {
         // Per A2UI protocol: DataChangeEvent only updates local state (already done by the widget).
@@ -232,13 +253,16 @@ class ChatController(
         if (currentAgent == null || controllerClosed.value) return
 
         // Build forwardedProps with A2UI ClientEvent at root
-        // Format: { "a2uiAction": { "userAction": { name, surfaceId, sourceComponentId, timestamp, context } } }
+        // NOTE: forwardedProps is AG-UI specific. The @ag-ui/a2a integration extracts
+        // a2uiAction and converts it to an A2A DataPart with mimeType "application/json+a2ui"
         val forwardedProps = buildJsonObject {
             put("a2uiAction", buildJsonObject {
                 put("userAction", buildJsonObject {
+                    // A2UI spec field
                     put("name", event.name)
-                    // WORKAROUND: Some demo apps (e.g., CopilotKit/with-a2a-a2ui) expect "actionName"
-                    // instead of the A2UI spec's "name". Send both for compatibility.
+                    // WORKAROUND: CopilotKit's a2ui-renderer transforms "name" to "actionName".
+                    // Some demo apps expect "actionName" instead of the spec's "name".
+                    // See: @copilotkit/a2ui-renderer/dist/A2UIViewer.js:97-98
                     put("actionName", event.name)
                     put("surfaceId", event.surfaceId)
                     put("sourceComponentId", event.sourceComponentId)
