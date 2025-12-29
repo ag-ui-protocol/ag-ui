@@ -281,6 +281,9 @@ class ChatController(
                 eventFlow?.collect { event ->
                     logger.d { "Received event: ${event::class.simpleName}" }
                 }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                // Cancellation is expected when starting a new request - don't show as error
+                logger.d { "Request cancelled" }
             } catch (e: Exception) {
                 logger.e(e) { "Error running agent" }
                 addSupplementalMessage(
@@ -369,7 +372,7 @@ class ChatController(
             content = formatAssistantContent(this),
             isStreaming = streamingMessageIds.contains(id)
         )
-        is UserMessage -> DisplayMessage(
+        is UserMessage -> if (content == "[A2UI Action]") null else DisplayMessage(
             id = id,
             role = MessageRole.USER,
             content = content,
