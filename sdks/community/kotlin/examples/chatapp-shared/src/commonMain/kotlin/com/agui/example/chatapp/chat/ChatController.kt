@@ -226,6 +226,9 @@ class ChatController(
      * ```
      */
     fun sendA2UiAction(event: UiEvent) {
+        // Per A2UI protocol: DataChangeEvent only updates local state (already done by the widget).
+        // Only UserActionEvent (e.g., button clicks) should be sent to the server.
+        if (event !is UserActionEvent) return
         if (currentAgent == null || controllerClosed.value) return
 
         // Build forwardedProps with A2UI ClientEvent at root
@@ -233,20 +236,11 @@ class ChatController(
         val forwardedProps = buildJsonObject {
             put("a2uiAction", buildJsonObject {
                 put("userAction", buildJsonObject {
-                    when (event) {
-                        is UserActionEvent -> {
-                            put("name", event.name)
-                            put("surfaceId", event.surfaceId)
-                            put("sourceComponentId", event.sourceComponentId)
-                            put("timestamp", event.timestamp)
-                            event.context?.let { put("context", it) }
-                        }
-                        is DataChangeEvent -> {
-                            put("surfaceId", event.surfaceId)
-                            put("path", event.path)
-                            put("value", event.value)
-                        }
-                    }
+                    put("name", event.name)
+                    put("surfaceId", event.surfaceId)
+                    put("sourceComponentId", event.sourceComponentId)
+                    put("timestamp", event.timestamp)
+                    event.context?.let { put("context", it) }
                 })
             })
         }
