@@ -237,6 +237,9 @@ class ChatController(
             put("a2uiAction", buildJsonObject {
                 put("userAction", buildJsonObject {
                     put("name", event.name)
+                    // WORKAROUND: Some demo apps (e.g., CopilotKit/with-a2a-a2ui) expect "actionName"
+                    // instead of the A2UI spec's "name". Send both for compatibility.
+                    put("actionName", event.name)
                     put("surfaceId", event.surfaceId)
                     put("sourceComponentId", event.sourceComponentId)
                     put("timestamp", event.timestamp)
