@@ -7,7 +7,7 @@ import os
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 
-from copilotkit import CopilotKitMiddleware
+from copilotkit import CopilotKitMiddleware, CopilotKitState
 
 # Conditionally use a checkpointer based on the environment
 # Check for multiple indicators that we're running in LangGraph dev/API mode
@@ -23,19 +23,15 @@ if is_fast_api:
         tools=[],  # Backend tools go here
         middleware=[CopilotKitMiddleware()],
         system_prompt="You are a helpful assistant.",
-        checkpointer=memory
+        checkpointer=memory,
+        state_schema=CopilotKitState
     )
 else:
     # When running in LangGraph API/dev, don't use a custom checkpointer
-    print('*************************')
-    print('*************************')
-    print('*************************')
-    print('*************************')
-    print('*************************')
-    print('*************************')
     graph = create_agent(
         model="openai:gpt-4o",
         tools=[],  # Backend tools go here
         middleware=[CopilotKitMiddleware()],
         system_prompt="You are a helpful assistant.",
+        state_schema=CopilotKitState
     )
