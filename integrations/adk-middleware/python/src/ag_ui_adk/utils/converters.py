@@ -4,6 +4,8 @@
 
 from typing import List, Dict, Any, Optional
 import json
+import base64
+import binascii
 import logging
 
 from ag_ui.core import (
@@ -14,6 +16,118 @@ from google.adk.events import Event as ADKEvent
 from google.genai import types
 
 logger = logging.getLogger(__name__)
+
+
+def convert_message_content_to_parts(content: Any) -> List[types.Part]:
+    """Convert AG-UI message content into google.genai types.Part list.
+
+    Supports:
+    - str -> [Part(text=...)]
+    - List[InputContent] -> text parts + binary parts (inline_data only; data/base64 only)
+    - List[dict] -> dict-shaped text/binary items (data/base64 only)
+    """
+    if content is None:
+        return []
+
+    if isinstance(content, str):
+        return [types.Part(text=content)] if content else []
+
+    if isinstance(content, list):
+        parts: List[types.Part] = []
+        for item in content:
+            # dict-shaped content (e.g., raw JSON payloads)
+            if isinstance(item, dict):
+                item_type = item.get("type")
+
+                if item_type == "text":
+                    text = item.get("text")
+                    if isinstance(text, str) and text:
+                        parts.append(types.Part(text=text))
+                    continue
+
+                if item_type == "binary":
+                    # data-only policy
+                    data = item.get("data")
+                    mime_type = item.get("mimeType") or item.get("mime_type")
+
+                    if item.get("url") or item.get("id"):
+                        logger.warning(
+                            "BinaryInputContent: only data is supported; ignoring url/id fields."
+                        )
+
+                    if not data:
+                        logger.warning(
+                            "BinaryInputContent: data-only supported; ignoring item without data."
+                        )
+                        continue
+                    if not mime_type:
+                        logger.warning("BinaryInputContent: missing mimeType; ignoring.")
+                        continue
+
+                    try:
+                        decoded = base64.b64decode(data, validate=False)
+                    except (binascii.Error, ValueError) as e:
+                        logger.warning("Failed to base64 decode BinaryInputContent.data: %s", e)
+                        continue
+
+                    parts.append(
+                        types.Part(
+                            inline_data=types.Blob(
+                                mime_type=mime_type,
+                                data=decoded,
+                            )
+                        )
+                    )
+                    continue
+
+                logger.debug("Ignoring unknown multimodal content dict item: %s", item_type)
+                continue
+
+            if isinstance(item, TextInputContent):
+                if item.text:
+                    parts.append(types.Part(text=item.text))
+                continue
+
+            if isinstance(item, BinaryInputContent):
+                mime_type = getattr(item, "mime_type", None)
+                data = getattr(item, "data", None)
+                url = getattr(item, "url", None)
+                binary_id = getattr(item, "id", None)
+
+                # data-only policy
+                if url or binary_id:
+                    logger.warning(
+                        "BinaryInputContent: only data is supported; ignoring url/id fields."
+                    )
+
+                if not data:
+                    logger.warning(
+                        "BinaryInputContent: data-only supported; ignoring item without data."
+                    )
+                    continue
+                if not mime_type:
+                    logger.warning("BinaryInputContent: missing mimeType; ignoring.")
+                    continue
+
+                try:
+                    decoded = base64.b64decode(data, validate=False)
+                    parts.append(
+                        types.Part(
+                            inline_data=types.Blob(
+                                mime_type=mime_type,
+                                data=decoded,
+                            )
+                        )
+                    )
+                except (binascii.Error, ValueError) as e:
+                    logger.warning("Failed to base64 decode BinaryInputContent.data: %s", e)
+                continue
+
+            logger.debug("Ignoring unknown multimodal content item: %s", type(item).__name__)
+
+        return parts
+
+    return [types.Part(text=str(content))]
 
 
 def convert_ag_ui_messages_to_adk(messages: List[Message]) -> List[ADKEvent]:
@@ -38,11 +152,11 @@ def convert_ag_ui_messages_to_adk(messages: List[Message]) -> List[ADKEvent]:
             
             # Convert content based on message type
             if isinstance(message, (UserMessage, SystemMessage)):
-                flattened_content = flatten_message_content(message.content)
-                if flattened_content:
+                parts = convert_message_content_to_parts(message.content)
+                if parts:
                     event.content = types.Content(
                         role=message.role,
-                        parts=[types.Part(text=flattened_content)]
+                        parts=parts
                     )
 
             elif isinstance(message, AssistantMessage):
@@ -50,7 +164,7 @@ def convert_ag_ui_messages_to_adk(messages: List[Message]) -> List[ADKEvent]:
 
                 # Add text content if present
                 if message.content:
-                    parts.append(types.Part(text=flatten_message_content(message.content)))
+                    parts.extend(convert_message_content_to_parts(message.content))
                 
                 # Add tool calls if present
                 if message.tool_calls:
