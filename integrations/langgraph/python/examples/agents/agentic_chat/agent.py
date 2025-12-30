@@ -6,17 +6,30 @@ import os
 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
-from langgraph.checkpoint.memory import MemorySaver
 
 from copilotkit import copilotkit_middleware
 
-checkpointer = MemorySaver()
+# Conditionally use a checkpointer based on the environment
+# Check for multiple indicators that we're running in LangGraph dev/API mode
+is_fast_api = os.environ.get("LANGGRAPH_FAST_API", "false").lower() == "true"
 
-# Create agent with Copilotkit middleware
-# Frontend tools are automatically handled via middleware
-graph = create_agent(
-    model="openai:gpt-4o",
-    tools=[],  # Backend tools go here
-    middleware=[copilotkit_middleware],
-    system_prompt="You are a helpful assistant.",
-)
+# Compile the graph
+if is_fast_api:
+    # For CopilotKit and other contexts, use MemorySaver
+    from langgraph.checkpoint.memory import MemorySaver
+    memory = MemorySaver()
+    graph = create_agent(
+        model="openai:gpt-4o",
+        tools=[],  # Backend tools go here
+        middleware=[copilotkit_middleware],
+        system_prompt="You are a helpful assistant.",
+        checkpointer=memory
+    )
+else:
+    # When running in LangGraph API/dev, don't use a custom checkpointer
+    graph = create_agent(
+        model="openai:gpt-4o",
+        tools=[],  # Backend tools go here
+        middleware=[copilotkit_middleware],
+        system_prompt="You are a helpful assistant.",
+    )
