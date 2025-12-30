@@ -23,7 +23,7 @@
     "unlink:global": "pnpm unlink --global"
   },
   "dependencies": {
-    "@langchain/core": "^0.3.66",
+    "@langchain/core": "^0.3.80",
     "@langchain/langgraph-sdk": "^0.1.2",
     "partial-json": "^0.1.7",
     "rxjs": "7.8.1"
