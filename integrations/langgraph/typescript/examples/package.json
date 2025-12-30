@@ -9,7 +9,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@langchain/core": "^0.3.66",
+    "@langchain/core": "^0.3.80",
     "@langchain/openai": "^0.6.3",
     "@langchain/langgraph": "^0.2.65",
     "dotenv": "^16.4.5",
