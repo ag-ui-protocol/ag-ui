@@ -11,7 +11,7 @@ name = "agents"
 version = "0.0.1"
 
 [tool.poetry.dependencies]
-copilotkit = "0.1.75a6"
+copilotkit = "0.1.75a8"
 python = ">=3.10,<3.13"
 uvicorn = "^0.34.0"
 dotenv = "^0.9.9"
