@@ -332,8 +332,18 @@ export class LangGraphAgent extends AbstractAgent {
         schemaKeys: this.activeRun!.schemaKeys,
       });
     }
+    // @ts-ignore
+    const { command, ...restProps } = forwardedProps
+    if (command?.resume && typeof command.resume === 'string') {
+      try {
+        command.resume = JSON.parse(command.resume);
+      } catch {
+        // Keep as string if not valid JSON
+      }
+    }
     const payload = {
-      ...forwardedProps,
+      ...restProps,
+      command,
       streamMode,
       input: payloadInput,
       config: payloadConfig,
