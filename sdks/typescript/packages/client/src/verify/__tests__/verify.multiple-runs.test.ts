@@ -19,6 +19,12 @@ import {
   StepFinishedEvent,
 } from "@ag-ui/core";
 
+const runFinished = (threadId: string, runId: string): RunFinishedEvent => ({
+  type: EventType.RUN_FINISHED,
+  threadId,
+  runId,
+});
+
 describe("verifyEvents multiple runs", () => {
   // Test: Basic multiple sequential runs
   it("should allow multiple sequential runs", async () => {
@@ -53,9 +59,7 @@ describe("verifyEvents multiple runs", () => {
       type: EventType.TEXT_MESSAGE_END,
       messageId: "msg-1",
     } as TextMessageEndEvent);
-    source$.next({
-      type: EventType.RUN_FINISHED,
-    } as RunFinishedEvent);
+    source$.next(runFinished("test-thread-1", "test-run-1"));
 
     // Second run
     source$.next({
@@ -76,9 +80,7 @@ describe("verifyEvents multiple runs", () => {
       type: EventType.TEXT_MESSAGE_END,
       messageId: "msg-2",
     } as TextMessageEndEvent);
-    source$.next({
-      type: EventType.RUN_FINISHED,
-    } as RunFinishedEvent);
+    source$.next(runFinished("test-thread-1", "test-run-2"));
 
     // Complete the source
     source$.complete();
@@ -124,9 +126,7 @@ describe("verifyEvents multiple runs", () => {
       type: EventType.TEXT_MESSAGE_END,
       messageId: "msg-1",
     } as TextMessageEndEvent);
-    source$.next({
-      type: EventType.RUN_FINISHED,
-    } as RunFinishedEvent);
+    source$.next(runFinished("test-thread-1", "test-run-1"));
 
     // Second run reusing message ID "msg-1" (should be allowed)
     source$.next({
@@ -142,9 +142,7 @@ describe("verifyEvents multiple runs", () => {
       type: EventType.TEXT_MESSAGE_END,
       messageId: "msg-1",
     } as TextMessageEndEvent);
-    source$.next({
-      type: EventType.RUN_FINISHED,
-    } as RunFinishedEvent);
+    source$.next(runFinished("test-thread-1", "test-run-2"));
 
     // Complete the source
     source$.complete();
@@ -190,9 +188,7 @@ describe("verifyEvents multiple runs", () => {
       type: EventType.TOOL_CALL_END,
       toolCallId: "tool-1",
     } as ToolCallEndEvent);
-    source$.next({
-      type: EventType.RUN_FINISHED,
-    } as RunFinishedEvent);
+    source$.next(runFinished("test-thread-1", "test-run-1"));
 
     // Second run with tool call (reusing toolCallId should be allowed)
     source$.next({
@@ -214,9 +210,7 @@ describe("verifyEvents multiple runs", () => {
       type: EventType.TOOL_CALL_END,
       toolCallId: "tool-1",
     } as ToolCallEndEvent);
-    source$.next({
-      type: EventType.RUN_FINISHED,
-    } as RunFinishedEvent);
+    source$.next(runFinished("test-thread-1", "test-run-2"));
 
     // Complete the source
     source$.complete();
@@ -256,9 +250,7 @@ describe("verifyEvents multiple runs", () => {
       type: EventType.STEP_FINISHED,
       stepName: "planning",
     } as StepFinishedEvent);
-    source$.next({
-      type: EventType.RUN_FINISHED,
-    } as RunFinishedEvent);
+    source$.next(runFinished("test-thread-1", "test-run-1"));
 
     // Second run reusing step name (should be allowed)
     source$.next({
@@ -274,9 +266,7 @@ describe("verifyEvents multiple runs", () => {
       type: EventType.STEP_FINISHED,
       stepName: "planning",
     } as StepFinishedEvent);
-    source$.next({
-      type: EventType.RUN_FINISHED,
-    } as RunFinishedEvent);
+    source$.next(runFinished("test-thread-1", "test-run-2"));
 
     // Complete the source
     source$.complete();
@@ -362,9 +352,7 @@ describe("verifyEvents multiple runs", () => {
         type: EventType.TEXT_MESSAGE_END,
         messageId: `msg-${i}`,
       } as TextMessageEndEvent);
-      source$.next({
-        type: EventType.RUN_FINISHED,
-      } as RunFinishedEvent);
+      source$.next(runFinished("test-thread-1", `test-run-${i}`));
     }
 
     // Complete the source
@@ -463,9 +451,7 @@ describe("verifyEvents multiple runs", () => {
       type: EventType.TOOL_CALL_END,
       toolCallId: "tool-1",
     } as ToolCallEndEvent);
-    source$.next({
-      type: EventType.RUN_FINISHED,
-    } as RunFinishedEvent);
+    source$.next(runFinished("test-thread-1", "test-run-2"));
 
     // Second run: step + message
     source$.next({
@@ -489,9 +475,7 @@ describe("verifyEvents multiple runs", () => {
       type: EventType.STEP_FINISHED,
       stepName: "analysis",
     } as StepFinishedEvent);
-    source$.next({
-      type: EventType.RUN_FINISHED,
-    } as RunFinishedEvent);
+    source$.next(runFinished("test-thread-1", "test-run-2"));
 
     // Complete the source
     source$.complete();
