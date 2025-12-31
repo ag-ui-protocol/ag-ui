@@ -330,6 +330,11 @@ class LangGraphAgent:
             await self.graph.aupdate_state(config, state, as_node=self.active_run.get("node_name"))
 
         if resume_input:
+            if isinstance(resume_input, str):
+                try:
+                    resume_input = json.loads(resume_input)
+                except json.JSONDecodeError:
+                    pass  # Keep as string if not valid JSON
             stream_input = Command(resume=resume_input)
         else:
             payload_input = get_stream_payload_input(
