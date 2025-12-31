@@ -46,7 +46,7 @@ class AgentState(MessagesState):
     State of the agent.
     """
     steps: List[dict] = []
-    tools: List[Any]
+    tools: List[Any] = []
 
 
 async def start_node(state: AgentState, config: RunnableConfig): # pylint: disable=unused-argument
@@ -56,12 +56,15 @@ async def start_node(state: AgentState, config: RunnableConfig): # pylint: disab
 
     if "steps" not in state:
         state["steps"] = []
+    if "tools" not in state:
+        state["tools"] = []
 
     return Command(
         goto="chat_node",
         update={
             "messages": state["messages"],
-            "steps": state["steps"]
+            "steps": state["steps"],
+            "tools": state["tools"]
         }
     )
 
@@ -96,7 +99,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     # Bind the tools to the model
     model_with_tools = model.bind_tools(
         [
-            *state["tools"],
+            *state.get("tools", []),
             generate_task_steps_generative_ui
         ],
         # Disable parallel tool calls to avoid race conditions

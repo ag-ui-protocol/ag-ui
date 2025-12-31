@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../../test-isolation-helper";
 import { SharedStatePage } from "../../featurePages/SharedStatePage";
 
 test.describe("Shared State Feature", () => {
@@ -32,11 +32,18 @@ test.describe("Shared State Feature", () => {
 
     await sharedStateAgent.openChat();
 
+    // Count existing ingredient cards before adding new one
+    const initialCardCount = await sharedStateAgent.ingredientCards.count();
+
     // Add new ingredient via UI
     await sharedStateAgent.addIngredient.click();
 
+    // Wait for new ingredient card to appear (count should increase)
+    await expect(sharedStateAgent.ingredientCards).toHaveCount(initialCardCount + 1);
+
     // Fill in the new ingredient details
     const newIngredientCard = page.locator('.ingredient-card').last();
+    await expect(newIngredientCard).toBeVisible();
     await newIngredientCard.locator('.ingredient-name-input').fill('Potatoes');
     await newIngredientCard.locator('.ingredient-amount-input').fill('12');
 
