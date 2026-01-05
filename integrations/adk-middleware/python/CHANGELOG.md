@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **NEW**: `ADKAgent.from_app()` classmethod for creating agents from ADK App instances (#844)
+  - Enables access to App-level features: plugins, resumability, context caching, events compaction
+  - Creates per-request App copies with modified agents using `model_copy()` to preserve all configs
+  - Includes `plugin_close_timeout` parameter (requires ADK 1.19+, silently ignored on older versions)
+  - Runtime detection of ADK version capabilities for forward compatibility
+- **NEW**: Integration tests for `from_app()` functionality (`test_from_app_integration.py`)
+- **DOCUMENTATION**: Added "Using App for Full ADK Features" section to USAGE.md
+
+### Fixed
+- **FIXED**: Thread ID to Session ID mapping for VertexAI session services (#870)
+  - AG-UI `thread_id` is now transparently mapped to ADK `session_id` (which may differ, e.g., VertexAI generates numeric IDs)
+  - Backend session IDs never leak to frontend AG-UI events - all events use the original `thread_id`
+  - Session state stores metadata (`_ag_ui_thread_id`, `_ag_ui_app_name`, `_ag_ui_user_id`) for recovery after middleware restarts
+  - `/agents/state` endpoint now accepts optional `appName` and `userId` parameters for explicit session lookup
+  - Processed message tracking now uses `thread_id` as key for consistency
+
+## [0.4.0] - 2025-12-14
+
+### Added
+- **NEW**: Message history retrieval via `adk_events_to_messages()` function to convert ADK session events to AG-UI messages (#640)
+- **NEW**: `emit_messages_snapshot` flag on ADKAgent for optional MESSAGES_SNAPSHOT emission at run end (default: false)
+- **NEW**: Experimental `/agents/state` POST endpoint for on-demand thread state and message history retrieval (#640)
+- **NEW**: HTTP header extraction support in FastAPI endpoint via `extract_headers` parameter (#740)
+- **NEW**: Predictive state updates support for ADK middleware
+- **NEW**: Agentic generative UI agent example (`agentic_generative_ui`)
+- **NEW**: Comprehensive live server integration tests using uvicorn
+
+### Fixed
+- **FIXED**: Client-side tool results now persist to ADK session database for proper history tracking
+- **FIXED**: Improved duplicate detection for Claude and accumulated text streams
+- **FIXED**: Historical tool results no longer re-processed on replay
+- **FIXED**: Skip consolidated text during streaming to prevent duplicates (issue #742)
+- **FIXED**: Route `skip_summarization` events through `translate()` for proper ToolCallResult emission (issue #765)
+- **FIXED**: Emit final text response after backend tool completion
+- **FIXED**: Filter synthetic `confirm_changes` tool results in ADK middleware
+- **FIXED**: Improved event handling and HITL tool processing
+- **FIXED**: Prevent duplicate tool calls when processing tool results
+- **FIXED**: Multi-turn conversation failure with None user_message (issue #769)
+- **FIXED**: Filter empty text events to prevent frontend crash
+
+### Enhanced
+- **TESTING**: Added multi-turn conversation tests (issue #769)
+- **TESTING**: Added comprehensive tests for message history features including live server tests
+- **DOCUMENTATION**: Document thread_id to session_id mapping and initial state handling
+
+## [0.3.6] - 2025-11-20
+
+### Fixed
+- Version bump for PyPI publishing
+
+## [0.3.5] - 2025-11-18
+
+### Fixed
+- Multi-turn conversation failure with None user_message (issue #769)
+
+## [0.3.4] - 2025-11-15
+
+### Fixed
+- Event handling and HITL tool processing improvements
+- Duplicate tool call prevention when processing tool results
+
+## [0.3.3] - 2025-11-14
+
+### Added
+- **Transcript tracking**: ADKAgent now replays unseen transcript messages sequentially and keeps per-session ledgers of processed message IDs so system/user/assistant content is never dropped when HITL tool results arrive out of order.
+- **Tool result validation**: Tool result batches are now checked against pending tool call IDs before being forwarded, and skipped batches are marked processed to prevent repeated replays.
+- **State snapshots**: EventTranslator surfaces ADK `state_snapshot` payloads as AG-UI `StateSnapshotEvent`s so clients receive full session dumps alongside deltas.
+
+### Changed
+- **Message conversion**: `flatten_message_content()` now flattens `TextInputContent`/`BinaryInputContent` payloads before building ADK `Content` objects, allowing complex UI messages to flow through unchanged.
+- **Protocol dependency**: Minimum `ag-ui-protocol` version was bumped to `0.1.10` to align with the new event surface area.
+- **Noise reduction**: Removed verbose diagnostic logging around event translation and stream handling while adding duplicate tool call detection to keep logs actionable.
+
+### Fixed
+- **Tool flows**: Guarding tool batches that have no matching pending tool calls eliminates spurious run errors and keeps processed message IDs consistent; regression tests cover combined tool-result/user-message submissions and state snapshot passthrough.
+
+---
+
+## Historical Releases (from previous repository)
+
+> **Note**: The releases below were versioned when this code resided in a separate repository.
+> Version numbers were reset when the code was integrated into the ag-ui-protocol monorepo.
+> These entries are preserved for historical reference.
+
+---
+
 ## [0.6.0] - 2025-08-07
 
 ### Changed

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/types"
 	"github.com/sirupsen/logrus"
 )
 
@@ -38,7 +39,7 @@ type Frame struct {
 
 type StreamOptions struct {
 	Context context.Context
-	Payload interface{}
+	Payload types.RunAgentInput
 	Headers map[string]string
 }
 

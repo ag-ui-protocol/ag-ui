@@ -1216,4 +1216,37 @@ class EventSerializationTest {
         assertEquals("test_tool", toolJsonObj["toolCallName"]?.jsonPrimitive?.content)
         assertEquals("args", toolJsonObj["delta"]?.jsonPrimitive?.content)
     }
+
+    @Test
+    fun testActivitySnapshotEventSerialization() {
+        val content = buildJsonObject {
+            put("operations", buildJsonArray { })
+        }
+        val event = ActivitySnapshotEvent(
+            messageId = "surface_123",
+            activityType = "a2ui-surface",
+            content = content,
+            replace = false
+        )
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ActivitySnapshotEvent)
+        assertEquals(EventType.ACTIVITY_SNAPSHOT, decoded.eventType)
+    }
+
+    @Test
+    fun testActivityDeltaEventSerialization() {
+        val patch = buildJsonArray {
+            add(buildJsonObject { put("op", "add"); put("path", "/operations/-") })
+        }
+        val event = ActivityDeltaEvent(
+            messageId = "surface_123",
+            activityType = "a2ui-surface",
+            patch = patch
+        )
+        val jsonString = json.encodeToString<BaseEvent>(event)
+        val decoded = json.decodeFromString<BaseEvent>(jsonString)
+        assertTrue(decoded is ActivityDeltaEvent)
+        assertEquals(EventType.ACTIVITY_DELTA, decoded.eventType)
+    }
 }

@@ -2,7 +2,10 @@
 
 """Main ADKAgent implementation for bridging AG-UI Protocol with Google ADK."""
 
-from typing import Optional, Dict, Callable, Any, AsyncGenerator, List, Iterable
+from typing import Optional, Dict, Callable, Any, AsyncGenerator, List, Iterable, TYPE_CHECKING, Tuple
+
+if TYPE_CHECKING:
+    from google.adk.apps import App
 import time
 import json
 import asyncio
@@ -12,7 +15,8 @@ from datetime import datetime
 from ag_ui.core import (
     RunAgentInput, BaseEvent, EventType,
     RunStartedEvent, RunFinishedEvent, RunErrorEvent,
-    ToolCallEndEvent, SystemMessage,ToolCallResultEvent
+    ToolCallEndEvent, SystemMessage, ToolCallResultEvent,
+    MessagesSnapshotEvent
 )
 
 from google.adk import Runner
@@ -25,7 +29,7 @@ from google.adk.auth.credential_service.base_credential_service import BaseCrede
 from google.adk.auth.credential_service.in_memory_credential_service import InMemoryCredentialService
 from google.genai import types
 
-from .event_translator import EventTranslator
+from .event_translator import EventTranslator, adk_events_to_messages
 from .session_manager import SessionManager
 from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
@@ -75,6 +79,9 @@ class ADKAgent:
 
         # Predictive state configuration
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
+
+        # Message snapshot configuration
+        emit_messages_snapshot: bool = False,
     ):
         """Initialize the ADKAgent.
 
@@ -99,6 +106,12 @@ class ADKAgent:
                 enabling the UI to show state changes in real-time as tool arguments
                 are streamed. Use PredictStateMapping to define which tool arguments
                 map to which state keys.
+            emit_messages_snapshot: Whether to emit a MessagesSnapshotEvent at the end
+                of each run containing the full conversation history. Defaults to False
+                to preserve existing behavior. Set to True for clients that need the
+                full message history (e.g., for client-side persistence or AG-UI
+                protocol compliance). Note: Clients using CopilotKit can use the
+                /agents/state endpoint instead for on-demand history retrieval.
         """
         if app_name and app_name_extractor:
             raise ValueError("Cannot specify both 'app_name' and 'app_name_extractor'")
@@ -148,46 +161,149 @@ class ADKAgent:
         self._max_concurrent = max_concurrent_executions
         self._execution_lock = asyncio.Lock()
 
-        # Session lookup cache for efficient session ID to metadata mapping
-        # Maps session_id -> {"app_name": str, "user_id": str}
-        self._session_lookup_cache: Dict[str, Dict[str, str]] = {}
+        # Session lookup cache for efficient thread_id to session metadata mapping
+        # Maps thread_id -> (session_id, app_name, user_id)
+        self._session_lookup_cache: Dict[str, Tuple[str, str, str]] = {}
 
         # Predictive state configuration for real-time state updates
         self._predict_state = predict_state
+
+        # Message snapshot configuration
+        self._emit_messages_snapshot = emit_messages_snapshot
+
+        # App-based configuration (set by from_app() classmethod)
+        self._app: Optional["App"] = None
+        self._plugin_close_timeout: float = 5.0
 
         # Event translator will be created per-session for thread safety
 
         # Cleanup is managed by the session manager
         # Will start when first async operation runs
 
-    def _get_session_metadata(self, session_id: str) -> Optional[Dict[str, str]]:
-        """Get session metadata (app_name, user_id) for a session ID efficiently.
+    @classmethod
+    def from_app(
+        cls,
+        app: "App",
+        # User identification (still needed - not in App)
+        user_id: Optional[str] = None,
+        user_id_extractor: Optional[Callable[[RunAgentInput], str]] = None,
+        # ADK Services (App does NOT contain these - still passed to Runner separately)
+        session_service: Optional[BaseSessionService] = None,
+        artifact_service: Optional[BaseArtifactService] = None,
+        memory_service: Optional[BaseMemoryService] = None,
+        credential_service: Optional[BaseCredentialService] = None,
+        # Configuration
+        run_config_factory: Optional[Callable[[RunAgentInput], ADKRunConfig]] = None,
+        use_in_memory_services: bool = True,
+        plugin_close_timeout: float = 5.0,
+        # Execution limits
+        execution_timeout_seconds: int = 600,
+        tool_timeout_seconds: int = 300,
+        max_concurrent_executions: int = 10,
+        # Session management
+        session_timeout_seconds: Optional[int] = 1200,
+        cleanup_interval_seconds: int = 300,
+        # AG-UI specific
+        predict_state: Optional[Iterable[PredictStateMapping]] = None,
+        emit_messages_snapshot: bool = False,
+    ) -> "ADKAgent":
+        """Create ADKAgent from an ADK App instance.
+
+        This is the recommended way to create an ADKAgent when you want access to
+        App-level features like resumability, context caching, and plugins.
+
+        The App object bundles together the root agent, plugins, and configuration
+        that would otherwise need to be passed separately. Using from_app() enables:
+        - Plugin support (logging, tracing, custom plugins)
+        - Resumability configuration for pause/resume workflows
+        - Context caching configuration for LLM optimization
+        - Events compaction configuration
 
         Args:
-            session_id: The session ID to lookup
+            app: The ADK App instance containing the root agent and configuration
+            user_id: Static user ID for all requests
+            user_id_extractor: Function to extract user ID dynamically from input
+            session_service: Session management service (defaults to InMemorySessionService)
+            artifact_service: File/artifact storage service
+            memory_service: Conversation memory and search service
+            credential_service: Authentication credential storage
+            run_config_factory: Function to create RunConfig per request
+            use_in_memory_services: Use in-memory implementations for unspecified services
+            plugin_close_timeout: Timeout for plugin close methods (requires ADK 1.19+)
+            execution_timeout_seconds: Timeout for entire execution
+            tool_timeout_seconds: Timeout for individual tool calls
+            max_concurrent_executions: Maximum concurrent background executions
+            session_timeout_seconds: Session timeout in seconds
+            cleanup_interval_seconds: Interval for session cleanup
+            predict_state: Configuration for predictive state updates
+            emit_messages_snapshot: Whether to emit MessagesSnapshotEvent at end of runs
 
         Returns:
-            Dictionary with app_name and user_id, or None if not found
+            ADKAgent instance configured to use the App
+
+        Example:
+            from google.adk.apps import App
+            from google.adk.agents import Agent
+
+            app = App(
+                name="my_assistant",
+                root_agent=Agent(name="assistant", model="gemini-2.5-flash", ...),
+                plugins=[LoggingPlugin()],
+            )
+            agent = ADKAgent.from_app(app, user_id="demo_user")
         """
-        # Try cache first for O(1) lookup
-        if session_id in self._session_lookup_cache:
-            return self._session_lookup_cache[session_id]
+        # Import App at runtime to avoid circular imports
+        from google.adk.apps import App as AppClass
 
-        # Fallback to linear search if not in cache (for existing sessions)
-        # This maintains backward compatibility
-        try:
-            for uid, keys in self._session_manager._user_sessions.items():
-                for key in keys:
-                    if key.endswith(f":{session_id}"):
-                        app_name = key.split(':', 1)[0]
-                        metadata = {"app_name": app_name, "user_id": uid}
-                        # Cache for future lookups
-                        self._session_lookup_cache[session_id] = metadata
-                        return metadata
-        except Exception as e:
-            logger.error(f"Error during session metadata lookup for {session_id}: {e}")
+        if not isinstance(app, AppClass):
+            raise TypeError(f"Expected App instance, got {type(app).__name__}")
 
-        return None
+        instance = cls(
+            adk_agent=app.root_agent,
+            app_name=app.name,
+            user_id=user_id,
+            user_id_extractor=user_id_extractor,
+            session_service=session_service,
+            artifact_service=artifact_service,
+            memory_service=memory_service,
+            credential_service=credential_service,
+            run_config_factory=run_config_factory,
+            use_in_memory_services=use_in_memory_services,
+            execution_timeout_seconds=execution_timeout_seconds,
+            tool_timeout_seconds=tool_timeout_seconds,
+            max_concurrent_executions=max_concurrent_executions,
+            session_timeout_seconds=session_timeout_seconds,
+            cleanup_interval_seconds=cleanup_interval_seconds,
+            predict_state=predict_state,
+            emit_messages_snapshot=emit_messages_snapshot,
+        )
+        # Store App for per-request App creation with modified agents
+        instance._app = app
+        instance._plugin_close_timeout = plugin_close_timeout
+        return instance
+
+    def _get_session_metadata(self, thread_id: str) -> Optional[Tuple[str, str, str]]:
+        """Get session metadata for a thread_id efficiently.
+
+        Args:
+            thread_id: The AG-UI thread_id to lookup
+
+        Returns:
+            Tuple of (session_id, app_name, user_id) or None if not found
+        """
+        return self._session_lookup_cache.get(thread_id)
+
+    def _get_backend_session_id(self, thread_id: str) -> Optional[str]:
+        """Get the backend session_id for a thread_id.
+
+        Args:
+            thread_id: The AG-UI thread_id to lookup
+
+        Returns:
+            The backend session_id or None if not found
+        """
+        metadata = self._session_lookup_cache.get(thread_id)
+        return metadata[0] if metadata else None
     
     def _get_app_name(self, input: RunAgentInput) -> str:
         """Resolve app name with clear precedence."""
@@ -221,16 +337,23 @@ class ADKAgent:
         # Use thread_id as default (assumes thread per user)
         return f"thread_user_{input.thread_id}"
     
-    async def _add_pending_tool_call_with_context(self, session_id: str, tool_call_id: str, app_name: str, user_id: str):
+    async def _add_pending_tool_call_with_context(self, thread_id: str, tool_call_id: str, app_name: str, user_id: str):
         """Add a tool call to the session's pending list for HITL tracking.
 
         Args:
-            session_id: The session ID (thread_id)
+            thread_id: The AG-UI thread_id
             tool_call_id: The tool call ID to track
             app_name: App name (for session lookup)
             user_id: User ID (for session lookup)
         """
-        logger.debug(f"Adding pending tool call {tool_call_id} for session {session_id}, app_name={app_name}, user_id={user_id}")
+        # Get the backend session_id from cache
+        metadata = self._get_session_metadata(thread_id)
+        if not metadata:
+            logger.warning(f"No session metadata for thread {thread_id}, cannot add pending tool call")
+            return
+
+        session_id, _, _ = metadata
+        logger.debug(f"Adding pending tool call {tool_call_id} for thread {thread_id} (session {session_id})")
         try:
             # Get current pending calls using SessionManager
             pending_calls = await self._session_manager.get_state_value(
@@ -255,26 +378,23 @@ class ADKAgent:
                 )
 
                 if success:
-                    logger.info(f"Added tool call {tool_call_id} to session {session_id} pending list")
+                    logger.info(f"Added tool call {tool_call_id} to thread {thread_id} pending list")
         except Exception as e:
-            logger.error(f"Failed to add pending tool call {tool_call_id} to session {session_id}: {e}")
+            logger.error(f"Failed to add pending tool call {tool_call_id} to thread {thread_id}: {e}")
 
-    async def _remove_pending_tool_call(self, session_id: str, tool_call_id: str):
+    async def _remove_pending_tool_call(self, thread_id: str, tool_call_id: str):
         """Remove a tool call from the session's pending list.
 
-        Uses efficient session lookup to find the session without needing explicit app_name/user_id.
-
         Args:
-            session_id: The session ID (thread_id)
+            thread_id: The AG-UI thread_id
             tool_call_id: The tool call ID to remove
         """
         try:
             # Use efficient session metadata lookup
-            metadata = self._get_session_metadata(session_id)
+            metadata = self._get_session_metadata(thread_id)
 
             if metadata:
-                app_name = metadata["app_name"]
-                user_id = metadata["user_id"]
+                session_id, app_name, user_id = metadata
 
                 # Get current pending calls using SessionManager
                 pending_calls = await self._session_manager.get_state_value(
@@ -299,20 +419,21 @@ class ADKAgent:
                     )
 
                     if success:
-                        logger.info(f"Removed tool call {tool_call_id} from session {session_id} pending list")
+                        logger.info(f"Removed tool call {tool_call_id} from thread {thread_id} pending list")
         except Exception as e:
-            logger.error(f"Failed to remove pending tool call {tool_call_id} from session {session_id}: {e}")
+            logger.error(f"Failed to remove pending tool call {tool_call_id} from thread {thread_id}: {e}")
     
-    async def _get_pending_tool_call_ids(self, session_id: str) -> Optional[List[str]]:
-        """Fetch the pending tool call identifiers tracked for a session."""
+    async def _get_pending_tool_call_ids(self, thread_id: str) -> Optional[List[str]]:
+        """Fetch the pending tool call identifiers tracked for a thread."""
         try:
-            metadata = self._get_session_metadata(session_id)
+            metadata = self._get_session_metadata(thread_id)
 
             if metadata:
+                session_id, app_name, user_id = metadata
                 pending_calls = await self._session_manager.get_state_value(
                     session_id=session_id,
-                    app_name=metadata["app_name"],
-                    user_id=metadata["user_id"],
+                    app_name=app_name,
+                    user_id=user_id,
                     key="pending_tool_calls",
                     default=[],
                 )
@@ -322,20 +443,20 @@ class ADKAgent:
 
                 return list(pending_calls)
         except Exception as e:
-            logger.error(f"Failed to fetch pending tool calls for session {session_id}: {e}")
+            logger.error(f"Failed to fetch pending tool calls for thread {thread_id}: {e}")
 
         return None
 
-    async def _has_pending_tool_calls(self, session_id: str) -> bool:
-        """Check if session has pending tool calls (HITL scenario).
+    async def _has_pending_tool_calls(self, thread_id: str) -> bool:
+        """Check if thread has pending tool calls (HITL scenario).
 
         Args:
-            session_id: The session ID (thread_id)
+            thread_id: The AG-UI thread_id
 
         Returns:
-            True if session has pending tool calls
+            True if thread has pending tool calls
         """
-        pending_calls = await self._get_pending_tool_call_ids(session_id)
+        pending_calls = await self._get_pending_tool_call_ids(thread_id)
         if pending_calls is None:
             return False
 
@@ -350,16 +471,56 @@ class ADKAgent:
         )
     
     
+    def _runner_supports_plugin_close_timeout(self) -> bool:
+        """Check if the installed ADK version supports plugin_close_timeout.
+
+        The plugin_close_timeout parameter was added to Runner in ADK 1.19.0.
+        This method checks for its presence to maintain backward compatibility.
+
+        Returns:
+            True if Runner accepts plugin_close_timeout, False otherwise
+        """
+        sig = inspect.signature(Runner.__init__)
+        return 'plugin_close_timeout' in sig.parameters
+
     def _create_runner(self, adk_agent: BaseAgent, user_id: str, app_name: str) -> Runner:
-        """Create a new runner instance."""
-        return Runner(
-            app_name=app_name,
-            agent=adk_agent,
-            session_service=self._session_manager._session_service,
-            artifact_service=self._artifact_service,
-            memory_service=self._memory_service,
-            credential_service=self._credential_service
-        )
+        """Create a new runner instance.
+
+        If an App was provided via from_app(), creates a per-request App copy
+        with the modified agent to preserve App-level configurations (plugins,
+        resumability, context caching, etc.).
+
+        Args:
+            adk_agent: The (potentially modified) agent to run
+            user_id: User ID for the session
+            app_name: Application name for the session
+
+        Returns:
+            Configured Runner instance
+        """
+        # Build common kwargs for services
+        service_kwargs = {
+            'session_service': self._session_manager._session_service,
+            'artifact_service': self._artifact_service,
+            'memory_service': self._memory_service,
+            'credential_service': self._credential_service,
+        }
+
+        # Add plugin_close_timeout if supported by this ADK version
+        if self._runner_supports_plugin_close_timeout():
+            service_kwargs['plugin_close_timeout'] = self._plugin_close_timeout
+
+        if self._app is not None:
+            # Create per-request App copy with modified agent (preserves all App configs)
+            request_app = self._app.model_copy(update={'root_agent': adk_agent})
+            return Runner(app=request_app, **service_kwargs)
+        else:
+            # Old style: component-based (no plugins support - use from_app() for that)
+            return Runner(
+                app_name=app_name,
+                agent=adk_agent,
+                **service_kwargs,
+            )
     
     async def run(self, input: RunAgentInput) -> AsyncGenerator[BaseEvent, None]:
         """Run the ADK agent with client-side tool support.
@@ -393,6 +554,8 @@ class ADKAgent:
 
         if has_pending_tools and has_tool_results_in_unseen:
             # HITL/Frontend tool scenario: skip to the tool results first
+            # Get backend session_id (should exist since we have pending tools)
+            backend_session_id = self._get_backend_session_id(input.thread_id)
             for i, msg in enumerate(unseen_messages):
                 if getattr(msg, "role", None) == "tool":
                     # Mark all messages before the tool result as processed (they're already in the ADK session)
@@ -556,27 +719,44 @@ class ADKAgent:
                 async for event in self._start_new_execution(input, message_batch=message_batch):
                     yield event
     
-    async def _ensure_session_exists(self, app_name: str, user_id: str, session_id: str, initial_state: dict):
-        """Ensure a session exists, creating it if necessary via session manager."""
+    async def _ensure_session_exists(self, app_name: str, user_id: str, thread_id: str, initial_state: dict) -> Tuple[Any, str]:
+        """Ensure a session exists, creating it if necessary via session manager.
+
+        Args:
+            app_name: Application name
+            user_id: User identifier
+            thread_id: The AG-UI thread_id (client-provided identifier)
+            initial_state: Initial state for new sessions
+
+        Returns:
+            Tuple of (session, backend_session_id)
+        """
+        # Check cache first
+        cached = self._session_lookup_cache.get(thread_id)
+        if cached:
+            session_id, cached_app_name, cached_user_id = cached
+            # Verify session still exists
+            session = await self._session_manager.get_session(session_id, cached_app_name, cached_user_id)
+            if session:
+                logger.debug(f"Session cache hit for thread {thread_id}: {session_id}")
+                return session, session_id
+
+        # Cache miss or stale - resolve via SessionManager
         try:
-            # Use session manager to get or create session
-            adk_session = await self._session_manager.get_or_create_session(
-                session_id=session_id,
-                app_name=app_name,  # Use app_name for session management
+            session, backend_session_id = await self._session_manager.get_or_create_session(
+                thread_id=thread_id,
+                app_name=app_name,
                 user_id=user_id,
                 initial_state=initial_state
             )
 
-            # Update session lookup cache for efficient session ID to metadata mapping
-            self._session_lookup_cache[session_id] = {
-                "app_name": app_name,
-                "user_id": user_id
-            }
+            # Cache the mapping as tuple: (session_id, app_name, user_id)
+            self._session_lookup_cache[thread_id] = (backend_session_id, app_name, user_id)
 
-            logger.debug(f"Session ready: {session_id} for user: {user_id}")
-            return adk_session
+            logger.debug(f"Session ready for thread {thread_id}: {backend_session_id}")
+            return session, backend_session_id
         except Exception as e:
-            logger.error(f"Failed to ensure session {session_id}: {e}")
+            logger.error(f"Failed to ensure session for thread {thread_id}: {e}")
             raise
 
     async def _convert_latest_message(
@@ -620,6 +800,11 @@ class ADKAgent:
         for message in input.messages:
             message_id = getattr(message, "id", None)
             if message_id and message_id in processed_ids:
+                continue
+            # For ToolMessages, also check if tool_call_id is processed (fixes #437 replay bug)
+            # Backend tool results mark their tool_call_id as processed when completed
+            tool_call_id = getattr(message, "tool_call_id", None)
+            if tool_call_id and tool_call_id in processed_ids:
                 continue
             unseen.append(message)
 
@@ -971,6 +1156,10 @@ class ADKAgent:
                 if isinstance(event, ToolCallResultEvent) and event.tool_call_id in tool_call_ids:
                     logger.info(f"Detected ToolCallResultEvent with id: {event.tool_call_id}")
                     tool_call_ids.remove(event.tool_call_id)
+                    # Mark tool_call_id as processed so replay will skip it (fixes #437 replay bug)
+                    self._session_manager.mark_messages_processed(
+                        self._get_app_name(input), execution.thread_id, [event.tool_call_id]
+                    )
 
                 logger.debug(f"Yielding event: {type(event).__name__}")
                 yield event
@@ -1173,14 +1362,14 @@ class ADKAgent:
             # Create RunConfig
             run_config = self._run_config_factory(input)
 
-            # Ensure session exists
-            await self._ensure_session_exists(
+            # Ensure session exists and get backend session_id
+            session, backend_session_id = await self._ensure_session_exists(
                 app_name, user_id, input.thread_id, input.state
             )
 
             # this will always update the backend states with the frontend states
             # Recipe Demo Example: if there is a state "salt" in the ingredients state and in frontend user remove this salt state using UI from the ingredients list then our backend should also update these state changes as well to sync both the states
-            await self._session_manager.update_session_state(input.thread_id,app_name,user_id,input.state)
+            await self._session_manager.update_session_state(backend_session_id, app_name, user_id, input.state)
 
             # Convert messages
             unseen_messages = message_batch if message_batch is not None else await self._get_unseen_messages(input)
@@ -1246,12 +1435,7 @@ class ADKAgent:
                     function_response_parts.append(updated_function_response_part)
 
                 # Add FunctionResponse as separate event to session
-                session = await self._session_manager.get_or_create_session(
-                    session_id=input.thread_id,
-                    app_name=app_name,
-                    user_id=user_id,
-                    initial_state=input.state
-                )
+                # (session was already obtained from _ensure_session_exists above)
 
                 from google.adk.sessions.session import Event
                 import time
@@ -1263,7 +1447,7 @@ class ADKAgent:
                     content=function_response_content
                 )
 
-                session.events.append(function_response_event)
+                await self._session_manager._session_service.append_event(session, function_response_event)
 
                 # Mark user messages from message_batch as processed
                 if message_batch:
@@ -1323,13 +1507,7 @@ class ADKAgent:
             event_translator = EventTranslator(predict_state=self._predict_state)
 
             try:
-                session = await self._session_manager.get_or_create_session(
-                    session_id=input.thread_id,
-                    app_name=app_name,
-                    user_id=user_id,
-                    initial_state=input.state
-                )
-
+                # Session was already obtained from _ensure_session_exists above
                 # Check session events (ADK stores conversation in events)
                 events = getattr(session, 'events', [])
 
@@ -1356,7 +1534,7 @@ class ADKAgent:
             is_long_running_tool = False
             run_kwargs = {
                 "user_id": user_id,
-                "session_id": input.thread_id,
+                "session_id": backend_session_id,  # Use backend session_id, not thread_id
                 "new_message": new_message,
                 "run_config": run_config
             }
@@ -1388,9 +1566,19 @@ class ADKAgent:
                     # Be conservative: if detection fails, do not block streaming path
                     has_lro_function_call = False
 
-                # Process as streaming if it's a chunk OR if it has content but no finish_reason,
+                # Check if event has function responses (e.g., backend tool results)
+                # This is needed for skip_summarization scenarios where there's no text
+                # content but we still need to emit ToolCallResultEvent (GitHub #765)
+                has_function_responses = (
+                    hasattr(adk_event, 'get_function_responses') and
+                    adk_event.get_function_responses()
+                )
+
+                # Process as streaming if it's a chunk OR if it has content OR has function responses,
                 # but only when there is no LRO function call present (LRO takes precedence)
-                if (not has_lro_function_call) and (is_streaming_chunk or (has_content and not getattr(adk_event, 'finish_reason', None))):
+                # Note: We don't exclude based on finish_reason - final responses with content
+                # (e.g., after backend tool completion) must still be translated.
+                if (not has_lro_function_call) and (is_streaming_chunk or has_content or has_function_responses):
                     # Regular translation path
                     async for ag_ui_event in event_translator.translate(
                         adk_event,
@@ -1423,10 +1611,27 @@ class ADKAgent:
             async for ag_ui_event in event_translator.force_close_streaming_message():
                 await event_queue.put(ag_ui_event)
             # moving states snapshot events after the text event clousure to avoid this error https://github.com/Contextable/ag-ui/issues/28
-            final_state = await self._session_manager.get_session_state(input.thread_id,app_name,user_id)
+            final_state = await self._session_manager.get_session_state(backend_session_id, app_name, user_id)
             if final_state:
                 ag_ui_event =  event_translator._create_state_snapshot_event(final_state)
                 await event_queue.put(ag_ui_event)
+
+            # Emit MESSAGES_SNAPSHOT if configured
+            if self._emit_messages_snapshot:
+                try:
+                    # Refresh session to get latest events
+                    session = await self._session_manager.get_session(backend_session_id, app_name, user_id)
+                    if session and hasattr(session, 'events') and session.events:
+                        messages = adk_events_to_messages(session.events)
+                        if messages:
+                            messages_snapshot_event = MessagesSnapshotEvent(
+                                type=EventType.MESSAGES_SNAPSHOT,
+                                messages=messages
+                            )
+                            await event_queue.put(messages_snapshot_event)
+                            logger.debug(f"Emitted MESSAGES_SNAPSHOT with {len(messages)} messages for thread {input.thread_id}")
+                except Exception as snapshot_error:
+                    logger.warning(f"Failed to emit MESSAGES_SNAPSHOT for thread {input.thread_id}: {snapshot_error}")
 
             # Emit any deferred confirm_changes events LAST, right before completion
             # This ensures the frontend sees confirm_changes as the last tool call event,

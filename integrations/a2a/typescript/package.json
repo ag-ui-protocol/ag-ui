@@ -1,8 +1,8 @@
 {
   "name": "@ag-ui/a2a",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.5",
-  "license": "Apache-2.0",
+  "version": "0.0.6",
+  "license": "MIT",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -36,8 +36,8 @@
     "rxjs": "7.8.1"
   },
   "peerDependencies": {
-    "@ag-ui/core": ">=0.0.40",
-    "@ag-ui/client": ">=0.0.40"
+    "@ag-ui/core": ">=0.0.42",
+    "@ag-ui/client": ">=0.0.42"
   },
   "devDependencies": {
     "@ag-ui/core": "workspace:*",

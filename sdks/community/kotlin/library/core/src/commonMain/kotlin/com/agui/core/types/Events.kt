@@ -10,7 +10,7 @@ import kotlinx.serialization.json.JsonElement
 
 /**
  * Enum defining all possible event types in the AG-UI protocol.
- * 24 event types as currently implemented.
+ * 26 event types as currently implemented.
  *
  * Events are grouped by category:
  * - Lifecycle Events (5): RUN_STARTED, RUN_FINISHED, RUN_ERROR, STEP_STARTED, STEP_FINISHED
@@ -20,8 +20,9 @@ import kotlinx.serialization.json.JsonElement
  * - Thinking Events (5): THINKING_START, THINKING_END, THINKING_TEXT_MESSAGE_START, THINKING_TEXT_MESSAGE_CONTENT, THINKING_TEXT_MESSAGE_END
  * - Special Events (2): RAW, CUSTOM
  * - Chunk Events (2): TEXT_MESSAGE_CHUNK, TOOL_CALL_CHUNK
+ * - Activity Events (2): ACTIVITY_SNAPSHOT, ACTIVITY_DELTA
  *
- * Total: 24 events
+ * Total: 26 events
  */
 
 @Serializable
@@ -86,7 +87,13 @@ enum class EventType {
     @SerialName("TEXT_MESSAGE_CHUNK")
     TEXT_MESSAGE_CHUNK,
     @SerialName("TOOL_CALL_CHUNK")
-    TOOL_CALL_CHUNK
+    TOOL_CALL_CHUNK,
+
+    // Activity Events
+    @SerialName("ACTIVITY_SNAPSHOT")
+    ACTIVITY_SNAPSHOT,
+    @SerialName("ACTIVITY_DELTA")
+    ACTIVITY_DELTA
 }
 
 /**
@@ -736,4 +743,62 @@ data class ToolCallChunkEvent(
 ) : BaseEvent() {
     @Transient
     override val eventType: EventType = EventType.TOOL_CALL_CHUNK
+}
+
+// ============== Activity Events (2) ==============
+
+/**
+ * Event containing a snapshot of an activity message.
+ *
+ * Activity events are used for streaming structured content that doesn't fit
+ * the standard text/tool paradigm, such as A2UI surfaces. The content field
+ * contains activity-type-specific data.
+ *
+ * @param messageId The identifier for this activity message
+ * @param activityType The type of activity (e.g., "a2ui-surface")
+ * @param content The activity-specific content
+ * @param replace Whether this snapshot should replace existing content (default: true)
+ * @param timestamp Optional timestamp when the snapshot was created
+ * @param rawEvent Optional raw JSON representation of the event
+ */
+@Serializable
+@SerialName("ACTIVITY_SNAPSHOT")
+data class ActivitySnapshotEvent(
+    val messageId: String,
+    val activityType: String,
+    val content: JsonElement,
+    val replace: Boolean = true,
+    override val timestamp: Long? = null,
+    override val rawEvent: JsonElement? = null
+) : BaseEvent() {
+    @Transient
+    override val eventType: EventType = EventType.ACTIVITY_SNAPSHOT
+}
+
+/**
+ * Event containing a JSON Patch delta for an activity message.
+ *
+ * This event provides incremental updates to activity content using
+ * RFC 6902 JSON Patch format. It allows efficient updates to structured
+ * activity content without sending the full content each time.
+ *
+ * @param messageId The identifier for the activity message to update
+ * @param activityType The type of activity (e.g., "a2ui-surface")
+ * @param patch JSON Patch operations array as defined in RFC 6902
+ * @param timestamp Optional timestamp when the delta was created
+ * @param rawEvent Optional raw JSON representation of the event
+ *
+ * @see <a href="https://tools.ietf.org/html/rfc6902">RFC 6902 - JSON Patch</a>
+ */
+@Serializable
+@SerialName("ACTIVITY_DELTA")
+data class ActivityDeltaEvent(
+    val messageId: String,
+    val activityType: String,
+    val patch: JsonArray,
+    override val timestamp: Long? = null,
+    override val rawEvent: JsonElement? = null
+) : BaseEvent() {
+    @Transient
+    override val eventType: EventType = EventType.ACTIVITY_DELTA
 }

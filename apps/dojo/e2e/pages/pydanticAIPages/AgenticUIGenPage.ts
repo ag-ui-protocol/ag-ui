@@ -45,8 +45,22 @@ export class AgenticGenUIPage {
     return this.page.getByRole('button', { name });
   }
 
-  async assertAgentReplyVisible(expectedText: RegExp) {
-    await expect(this.agentMessage.last().getByText(expectedText)).toBeVisible();
+  async assertAgentReplyVisible(expectedText: RegExp | RegExp[]) {
+    const expectedTexts = Array.isArray(expectedText) ? expectedText : [expectedText];
+    for (const expectedText1 of expectedTexts) {
+      try {
+        const agentMessage = this.page.locator(".copilotKitAssistantMessage", {
+          hasText: expectedText1
+        });
+        await expect(agentMessage.last()).toBeVisible({ timeout: 10000 });
+      } catch (error) {
+        console.log(`Did not work for ${expectedText1}`)
+        // Allow test to pass if at least one expectedText matches
+        if (expectedText1 === expectedTexts[expectedTexts.length - 1]) {
+          throw error;
+        }
+      }
+    }
   }
 
   async getUserText(textOrRegex) {

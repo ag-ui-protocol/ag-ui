@@ -65,6 +65,8 @@ import {
   resolveMessageContent,
   resolveReasoningContent,
 } from "@/utils";
+import { ToolMessage } from "@langchain/core/messages";
+import { ToolMessageFieldsWithToolCallId } from "@langchain/core/dist/messages/tool";
 
 export type ProcessedEvents =
   | TextMessageStartEvent
@@ -330,8 +332,18 @@ export class LangGraphAgent extends AbstractAgent {
         schemaKeys: this.activeRun!.schemaKeys,
       });
     }
+    // @ts-ignore
+    const { command, ...restProps } = forwardedProps
+    if (command?.resume && typeof command.resume === 'string') {
+      try {
+        command.resume = JSON.parse(command.resume);
+      } catch {
+        // Keep as string if not valid JSON
+      }
+    }
     const payload = {
-      ...forwardedProps,
+      ...restProps,
+      command,
       streamMode,
       input: payloadInput,
       config: payloadConfig,
@@ -820,7 +832,45 @@ export class LangGraphAgent extends AbstractAgent {
         });
         break;
       case LangGraphEventTypes.OnToolEnd:
-        const toolCallOutput = event.data?.output
+        let toolCallOutput = event.data?.output
+
+        // Command from within a tool. We need to grab result from the tool result message
+        if (toolCallOutput && !toolCallOutput.tool_call_id && toolCallOutput.update?.messages?.find((message: { type: string }) => message.type === 'tool')) {
+          toolCallOutput = toolCallOutput.update?.messages?.find((message: { type: string }) => message.type === 'tool')
+        }
+
+        if (toolCallOutput && toolCallOutput.update?.messages?.length) {
+          type MessageFields = ToolMessageFieldsWithToolCallId & { type: string }
+          toolCallOutput.update?.messages.filter((message: MessageFields) => message.type === 'tool').forEach((message: MessageFields) => {
+            if (!this.activeRun!.hasFunctionStreaming) {
+              this.dispatchEvent({
+                type: EventType.TOOL_CALL_START,
+                toolCallId: message.tool_call_id,
+                toolCallName: message.name ?? '',
+                parentMessageId: message.id,
+                rawEvent: event,
+              })
+              this.dispatchEvent({
+                type: EventType.TOOL_CALL_ARGS,
+                toolCallId: message.tool_call_id,
+                delta: JSON.stringify(event.data.input),
+                rawEvent: event,
+              });
+            }
+
+            this.dispatchEvent({
+              type: EventType.TOOL_CALL_RESULT,
+              toolCallId: message.tool_call_id,
+              content: typeof message?.content === 'string' ? message?.content : JSON.stringify(message?.content),
+              messageId: randomUUID(),
+              rawEvent: event,
+              role: "tool",
+            })
+          })
+
+          break;
+        }
+
         if (!this.activeRun!.hasFunctionStreaming) {
           this.dispatchEvent({
             type: EventType.TOOL_CALL_START,
@@ -847,6 +897,7 @@ export class LangGraphAgent extends AbstractAgent {
           content: toolCallOutput?.content,
           messageId: randomUUID(),
           role: "tool",
+          rawEvent: event,
         })
         break;
     }
