@@ -19,67 +19,16 @@ import { mastra } from "./mastra";
 import { PydanticAIAgent } from "@ag-ui/pydantic-ai";
 import { ADKAgent } from "@ag-ui/adk";
 import { SpringAiAgent } from "@ag-ui/spring-ai";
-import { HttpAgent, secureToolsMiddleware } from "@ag-ui/client";
+import { HttpAgent } from "@ag-ui/client";
 import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
 import { AWSStrandsAgent } from "@ag-ui/aws-strands";
 import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
-import { getMiddlewareConfig } from "@/shared/secure-tools-specs";
 
-// Tool specifications are now defined in @/shared/secure-tools-specs.ts
-// This file imports getMiddlewareConfig() which provides the allowedTools
-// configuration from the same source used by the client-side hooks.
-// See that file for the actual tool definitions.
-
-/**
- * Helper to wrap an agent with SecureToolsMiddleware for the secure_tools demo.
- * This demonstrates blocking unauthorized tool calls.
- *
- * Uses getMiddlewareConfig() from the shared tool specs, which ensures
- * the same tool definitions are used for both client and server validation.
- *
- * Features demonstrated:
- * - allowedTools: From shared specs (single source of truth)
- * - isToolAllowed: Custom callback for additional validation logic
- * - onDeviation: Custom handler when a tool call is blocked
- */
-function wrapWithSecureTools<T extends AbstractAgent>(agent: T): T {
-  agent.use(
-    secureToolsMiddleware({
-      // Use the shared config - same specs as client-side hooks
-      ...getMiddlewareConfig(),
-
-      /**
-       * Custom validation callback - runs AFTER allowedTools check.
-       * Use for dynamic policies like per-user restrictions, rate limiting, etc.
-       */
-      isToolAllowed: (toolCall, context) => {
-        console.info(
-          `[SecureTools Demo] isToolAllowed called for: ${toolCall.toolCallName}`,
-          { threadId: context.threadId, runId: context.runId }
-        );
-        return true;
-      },
-
-      /**
-       * Deviation handler - called when a tool call is blocked.
-       * Default behavior: console.warn with structured logging.
-       */
-      onDeviation: (deviation) => {
-        console.warn(
-          `\n🚨 [SecureTools] TOOL CALL BLOCKED 🚨`,
-          `\n   Tool: ${deviation.toolCall.toolCallName}`,
-          `\n   Reason: ${deviation.reason}`,
-          `\n   Message: ${deviation.message}`,
-          `\n   Thread: ${deviation.context.threadId}`,
-          `\n   Timestamp: ${new Date(deviation.timestamp).toISOString()}`
-        );
-      },
-    })
-  );
-  return agent;
-}
+// Import wrapWithSecureTools from the unified secure-tools config file
+// This file contains both the tool specs and the middleware helper
+import { wrapWithSecureTools } from "@/lib/secure-tools";
 
 const envVars = getEnvVars();
 

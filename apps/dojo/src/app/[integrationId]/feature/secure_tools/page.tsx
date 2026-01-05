@@ -8,7 +8,7 @@ import {
 } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 import { useTheme } from "next-themes";
-import { getV1xToolConfig, type SecureToolArgs } from "@/shared/secure-tools-specs";
+import { getV1xToolConfig, type SecureToolArgs } from "@/lib/secure-tools";
 
 interface SecureToolsProps {
   params: Promise<{
@@ -26,12 +26,11 @@ interface SecureToolsProps {
  * 2. Blocks unauthorized or mismatched tool calls
  * 3. Logs deviations for audit purposes
  *
- * This demo uses shared tool specs from @/shared/secure-tools-specs.ts:
- * - getMiddlewareConfig() provides specs for the server-side middleware
- * - getV1xToolConfig() provides v1.x-compatible specs for client tools
+ * All tool specs are defined in a single file: @/lib/secure-tools.ts
+ * Both client and server import from this file, ensuring consistency.
  *
  * Features demonstrated:
- * - "change_background" is in the shared specs → allowed
+ * - "change_background" is in the specs → allowed
  * - "say_hello" is NOT in the specs → blocked by middleware
  *
  * Try asking the agent to:
