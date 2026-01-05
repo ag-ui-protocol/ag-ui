@@ -297,7 +297,11 @@ function deepEqual(a: unknown, b: unknown): boolean {
 
 /**
  * Check if a JSON Schema is structurally compatible (non-strict mode).
- * The actual schema must be at least as restrictive as expected.
+ * The actual schema must contain at least all properties defined in expected.
+ *
+ * This allows the actual tool to have additional properties beyond what the
+ * spec requires, which is useful when you want to validate that certain
+ * properties exist without requiring an exact match.
  */
 function isSchemaCompatible(
   expected: Record<string, unknown>,
@@ -308,9 +312,62 @@ function isSchemaCompatible(
     return false;
   }
 
-  // For now, use deep equality. In the future, this could be enhanced
-  // to support schema compatibility checking (e.g., expected is subset of actual)
-  return deepEqual(expected, actual);
+  if (typeof actual !== "object") {
+    return false;
+  }
+
+  const actualObj = actual as Record<string, unknown>;
+
+  // Check that the base type matches
+  if (expected.type !== actualObj.type) {
+    return false;
+  }
+
+  // For object types, check that expected properties are present in actual
+  if (expected.type === "object") {
+    const expectedProps = expected.properties as Record<string, unknown> | undefined;
+    const actualProps = actualObj.properties as Record<string, unknown> | undefined;
+
+    if (expectedProps) {
+      if (!actualProps) {
+        return false;
+      }
+
+      // Every property in expected must exist in actual with matching type
+      for (const [key, expectedProp] of Object.entries(expectedProps)) {
+        const actualProp = actualProps[key];
+        if (!actualProp) {
+          return false; // Expected property missing
+        }
+
+        // Recursively check property compatibility
+        if (
+          typeof expectedProp === "object" &&
+          expectedProp !== null &&
+          !isSchemaCompatible(expectedProp as Record<string, unknown>, actualProp)
+        ) {
+          return false;
+        }
+      }
+    }
+
+    // Check required fields - all expected required must be in actual required
+    const expectedRequired = expected.required as string[] | undefined;
+    const actualRequired = actualObj.required as string[] | undefined;
+
+    if (expectedRequired && expectedRequired.length > 0) {
+      if (!actualRequired) {
+        return false;
+      }
+      for (const reqField of expectedRequired) {
+        if (!actualRequired.includes(reqField)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
 }
 
 /**
