@@ -27,6 +27,7 @@ import { concatMap, filter } from "rxjs/operators";
  *
  * @example
  * ```ts
+ * // In middleware configuration (server-side)
  * allowedTools: [
  *   {
  *     name: "my_tool",
@@ -42,6 +43,46 @@ export const SKIP_VALIDATION = Symbol.for("ag-ui.secure-tools.skip-validation");
  * Type for the SKIP_VALIDATION sentinel value.
  */
 export type SkipValidation = typeof SKIP_VALIDATION;
+
+/**
+ * EXPERIMENTAL: Sentinel string value for client-side tool definitions.
+ *
+ * Use this in `useFrontendTool` to indicate that the field's value should
+ * come from the middleware's `allowedTools` configuration instead of being
+ * defined on the client.
+ *
+ * This eliminates duplication - define the description/parameters once in
+ * the middleware, and the client just provides the handler.
+ *
+ * ⚠️ This API is experimental and may change before stabilization.
+ *
+ * @example
+ * ```tsx
+ * // Client-side (React component)
+ * useFrontendTool({
+ *   name: "change_background",
+ *   description: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,  // Get from server middleware
+ *   parameters: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,   // Get from server middleware
+ *   handler: (args) => setBackground(args.color),
+ * });
+ *
+ * // Server-side (middleware configuration)
+ * secureToolsMiddleware({
+ *   allowedTools: [{
+ *     name: "change_background",
+ *     description: "Change the background color",  // Source of truth
+ *     parameters: { type: "object", properties: { color: { type: "string" } } },
+ *   }]
+ * })
+ * ```
+ */
+export const DEFINED_IN_MIDDLEWARE_EXPERIMENTAL = "__AG_UI_DEFINED_IN_MIDDLEWARE__";
+
+/**
+ * Type for the DEFINED_IN_MIDDLEWARE_EXPERIMENTAL sentinel value.
+ * @internal - Not exported; use `typeof DEFINED_IN_MIDDLEWARE_EXPERIMENTAL` if needed.
+ */
+type DefinedInMiddleware = typeof DEFINED_IN_MIDDLEWARE_EXPERIMENTAL;
 
 // =============================================================================
 // TYPES - Core type definitions for the security middleware
@@ -350,6 +391,119 @@ function isEmptyObject(value: unknown): boolean {
 }
 
 /**
+ * Check if a value is the DEFINED_IN_MIDDLEWARE_EXPERIMENTAL sentinel.
+ *
+ * This handles two formats:
+ * 1. Direct string value: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL
+ * 2. Marker object: { __definedInMiddleware: DEFINED_IN_MIDDLEWARE_EXPERIMENTAL }
+ *    (Used by CopilotKit's createToolSchema when parameters is the sentinel)
+ */
+function isDefinedInMiddleware(value: unknown): boolean {
+  // Direct string value
+  if (value === DEFINED_IN_MIDDLEWARE_EXPERIMENTAL) {
+    return true;
+  }
+
+  // Marker object format (from CopilotKit's createToolSchema)
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "__definedInMiddleware" in value &&
+    (value as Record<string, unknown>).__definedInMiddleware === DEFINED_IN_MIDDLEWARE_EXPERIMENTAL
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Transform a tool by replacing DEFINED_IN_MIDDLEWARE placeholders with values
+ * from the matching ToolSpec in allowedTools.
+ *
+ * Returns the original tool if no transformation is needed, or a new tool
+ * with the placeholders replaced.
+ */
+function transformTool(
+  tool: Tool,
+  allowedTools: ToolSpec[],
+  logger?: SecureToolsConfig["logger"],
+): Tool {
+  const hasPlaceholderDescription = isDefinedInMiddleware(tool.description);
+  const hasPlaceholderParameters = isDefinedInMiddleware(tool.parameters);
+
+  // If no placeholders, return the original tool
+  if (!hasPlaceholderDescription && !hasPlaceholderParameters) {
+    return tool;
+  }
+
+  // Find matching spec in allowedTools
+  const matchingSpec = findMatchingAllowedSpec(tool.name, allowedTools);
+
+  if (!matchingSpec) {
+    const log = logger ?? console;
+    log.warn(
+      `[SecureTools] Tool "${tool.name}" uses DEFINED_IN_MIDDLEWARE but no matching spec found in allowedTools. ` +
+      `The placeholder values will be passed through unchanged.`
+    );
+    return tool;
+  }
+
+  // Build the transformed tool
+  const transformedTool: Tool = { ...tool };
+
+  if (hasPlaceholderDescription) {
+    if (matchingSpec.description === SKIP_VALIDATION) {
+      // SKIP_VALIDATION in spec means "allow any" - can't provide a value
+      const log = logger ?? console;
+      log.warn(
+        `[SecureTools] Tool "${tool.name}" uses DEFINED_IN_MIDDLEWARE for description, ` +
+        `but the spec uses SKIP_VALIDATION. Cannot substitute a value. ` +
+        `Either provide a concrete description in the spec, or define it on the client.`
+      );
+    } else if (matchingSpec.description === undefined) {
+      // Spec says description should be empty
+      transformedTool.description = "";
+    } else {
+      // Use the concrete description from the spec
+      transformedTool.description = matchingSpec.description;
+    }
+  }
+
+  if (hasPlaceholderParameters) {
+    if (matchingSpec.parameters === SKIP_VALIDATION) {
+      // SKIP_VALIDATION in spec means "allow any" - can't provide a value
+      const log = logger ?? console;
+      log.warn(
+        `[SecureTools] Tool "${tool.name}" uses DEFINED_IN_MIDDLEWARE for parameters, ` +
+        `but the spec uses SKIP_VALIDATION. Cannot substitute a value. ` +
+        `Either provide concrete parameters in the spec, or define them on the client.`
+      );
+    } else if (matchingSpec.parameters === undefined) {
+      // Spec says parameters should be empty
+      transformedTool.parameters = {};
+    } else {
+      // Use the concrete parameters from the spec
+      transformedTool.parameters = matchingSpec.parameters;
+    }
+  }
+
+  return transformedTool;
+}
+
+/**
+ * Transform all tools in the input, replacing DEFINED_IN_MIDDLEWARE placeholders
+ * with values from allowedTools.
+ */
+function transformTools(
+  tools: Tool[],
+  allowedTools: ToolSpec[],
+  logger?: SecureToolsConfig["logger"],
+): Tool[] {
+  return tools.map((tool) => transformTool(tool, allowedTools, logger));
+}
+
+/**
  * Validate a tool call against the allowed specs and declared tools.
  *
  * Validation behavior for each field:
@@ -515,16 +669,27 @@ export class SecureToolsMiddleware extends Middleware {
     this.blockedToolCallIds.clear();
     this.toolCallArgsBuffer.clear();
 
-    // Build security context
+    const { allowedTools = [], logger } = this.config;
+
+    // Step 1: Transform tools - replace DEFINED_IN_MIDDLEWARE placeholders
+    // with values from allowedTools before the agent sees them
+    const transformedTools = transformTools(input.tools, allowedTools, logger);
+    const transformedInput: RunAgentInput = {
+      ...input,
+      tools: transformedTools,
+    };
+
+    // Build security context with transformed tools
     const context: AgentSecurityContext = {
-      input,
-      declaredTools: input.tools,
+      input: transformedInput,
+      declaredTools: transformedTools,
       threadId: input.threadId,
       runId: input.runId,
       metadata: this.config.metadata,
     };
 
-    return this.runNext(input, next).pipe(
+    // Step 2: Pass transformed input to agent, then validate response events
+    return this.runNext(transformedInput, next).pipe(
       // Process each event, validating tool calls and filtering blocked ones
       concatMap((event) => from(this.processEvent(event, context))),
       // Filter out null events (blocked tool calls)
@@ -795,4 +960,289 @@ export function createToolSpecs(
   },
 ): ToolSpec[] {
   return tools.map((tool) => createToolSpec(tool, options));
+}
+
+// =============================================================================
+// SECURE TOOL HOOKS FACTORY
+// =============================================================================
+
+/**
+ * A tool specification with a typed Zod schema for parameters.
+ * Used with createSecureToolHooks for compile-time type safety.
+ */
+export interface TypedToolSpec<TParams = unknown> {
+  /** The unique name of the tool */
+  name: string;
+  /** Human-readable description of what the tool does */
+  description: string;
+  /** Zod schema for the tool's parameters - provides type inference */
+  parameters: TParams;
+}
+
+/**
+ * A map of tool names to their typed specifications.
+ */
+export type ToolSpecMap = Record<string, TypedToolSpec>;
+
+/**
+ * Infer the parameters type from a tool spec's parameters schema.
+ * Works with Zod schemas that have an `_output` type.
+ */
+export type InferToolParams<T> = T extends { _output: infer O } ? O : unknown;
+
+/**
+ * Configuration returned by createSecureToolHooks for use with secureToolsMiddleware.
+ */
+export interface SecureToolHooksMiddlewareConfig {
+  allowedTools: ToolSpec[];
+}
+
+/**
+ * Options for tools when using the secure hooks.
+ * Handler and render receive typed arguments based on the tool's schema.
+ */
+export interface SecureToolOptions<TParams> {
+  /**
+   * Handler function called when the tool is invoked.
+   * Receives typed arguments based on the tool's Zod schema.
+   */
+  handler: (args: TParams) => void | Promise<void>;
+
+  /**
+   * Optional render function for displaying tool execution in the UI.
+   * Receives typed arguments and status information.
+   */
+  render?: (props: {
+    args: Partial<TParams> | TParams;
+    status: "inProgress" | "executing" | "complete";
+    result?: string;
+  }) => unknown;
+
+  /**
+   * Optional agent ID to scope this tool to a specific agent.
+   */
+  agentId?: string;
+}
+
+/**
+ * Result of createSecureToolHooks containing typed utilities.
+ */
+export interface SecureToolHooks<T extends ToolSpecMap> {
+  /**
+   * The original tool specifications map.
+   * Useful for direct access to tool configs.
+   */
+  toolSpecs: T;
+
+  /**
+   * Get a specific tool's full specification by name.
+   * Returns the name, description, and parameters for the tool.
+   *
+   * @param toolName - The name of the tool to retrieve
+   * @returns The full tool specification
+   *
+   * @example
+   * ```ts
+   * const spec = getToolSpec("change_background");
+   * console.log(spec.description); // "Change the background color"
+   * ```
+   */
+  getToolSpec: <K extends keyof T & string>(toolName: K) => T[K];
+
+  /**
+   * Get configuration for secureToolsMiddleware.
+   * Converts the typed specs to the format expected by the middleware.
+   *
+   * @returns Configuration object to spread into secureToolsMiddleware options
+   *
+   * @example
+   * ```ts
+   * agent.use(secureToolsMiddleware({
+   *   ...getMiddlewareConfig(),
+   *   onDeviation: (d) => console.warn(d),
+   * }));
+   * ```
+   */
+  getMiddlewareConfig: () => SecureToolHooksMiddlewareConfig;
+
+  /**
+   * Create a frontend tool definition with injected spec values.
+   * Use this to get the full tool config for useFrontendTool or similar hooks.
+   *
+   * This is the primary way to use secure tools - it injects the description
+   * and parameters from the shared config, ensuring type safety and
+   * consistency between client and middleware.
+   *
+   * @param toolName - The name of the tool (must exist in toolSpecs)
+   * @param options - Handler, render, and other options for the tool
+   * @returns Full tool configuration ready for useFrontendTool
+   *
+   * @example
+   * ```ts
+   * // In a React component
+   * useFrontendTool(
+   *   createFrontendToolConfig("change_background", {
+   *     handler: (args) => {
+   *       // args.color is typed as string!
+   *       document.body.style.backgroundColor = args.color;
+   *     },
+   *   })
+   * );
+   * ```
+   */
+  createFrontendToolConfig: <K extends keyof T & string>(
+    toolName: K,
+    options: SecureToolOptions<InferToolParams<T[K]["parameters"]>>,
+  ) => {
+    name: K;
+    description: string;
+    parameters: T[K]["parameters"];
+    handler: (args: InferToolParams<T[K]["parameters"]>) => void | Promise<void>;
+    render?: (props: {
+      args: Partial<InferToolParams<T[K]["parameters"]>> | InferToolParams<T[K]["parameters"]>;
+      status: "inProgress" | "executing" | "complete";
+      result?: string;
+    }) => unknown;
+    agentId?: string;
+  };
+}
+
+/**
+ * Creates type-safe utilities for working with secure frontend tools.
+ *
+ * This factory function is the recommended way to use the secure tools middleware
+ * with frontend tools. It provides:
+ *
+ * 1. **Single source of truth**: Define tool specs once, use everywhere
+ * 2. **Compile-time type safety**: Full TypeScript inference for handlers and render
+ * 3. **Automatic integration**: Easy configuration for both client and middleware
+ *
+ * @param toolSpecs - A map of tool names to their specifications (with Zod schemas)
+ * @returns Utilities for creating secure frontend tools
+ *
+ * @example
+ * ```ts
+ * // 1. Define your tool specs (shared between client and server)
+ * import { z } from "zod";
+ *
+ * const toolSpecs = {
+ *   change_background: {
+ *     name: "change_background" as const,
+ *     description: "Change the background color of the page",
+ *     parameters: z.object({
+ *       color: z.string().describe("CSS color value"),
+ *     }),
+ *   },
+ *   get_weather: {
+ *     name: "get_weather" as const,
+ *     description: "Get current weather for a city",
+ *     parameters: z.object({
+ *       city: z.string(),
+ *     }),
+ *   },
+ * } as const;
+ *
+ * // 2. Create the secure tool hooks
+ * const {
+ *   createFrontendToolConfig,
+ *   getMiddlewareConfig,
+ * } = createSecureToolHooks(toolSpecs);
+ *
+ * // 3. Use in React components (client-side)
+ * function MyComponent() {
+ *   useFrontendTool(
+ *     createFrontendToolConfig("change_background", {
+ *       handler: (args) => {
+ *         // ✅ args.color is typed as string!
+ *         document.body.style.backgroundColor = args.color;
+ *       },
+ *       render: ({ args, status }) => (
+ *         <div>Changing to {args.color}...</div>
+ *       ),
+ *     })
+ *   );
+ *   return <div>...</div>;
+ * }
+ *
+ * // 4. Configure the middleware (server-side)
+ * agent.use(secureToolsMiddleware({
+ *   ...getMiddlewareConfig(),
+ *   onDeviation: (deviation) => {
+ *     console.warn("Blocked tool call:", deviation);
+ *   },
+ * }));
+ * ```
+ */
+export function createSecureToolHooks<T extends ToolSpecMap>(
+  toolSpecs: T,
+): SecureToolHooks<T> {
+  /**
+   * Get a specific tool's specification.
+   */
+  function getToolSpec<K extends keyof T & string>(toolName: K): T[K] {
+    const spec = toolSpecs[toolName];
+    if (!spec) {
+      const available = Object.keys(toolSpecs).join(", ");
+      throw new Error(
+        `Tool "${toolName}" not found in toolSpecs. Available tools: ${available}`,
+      );
+    }
+    return spec;
+  }
+
+  /**
+   * Get configuration for secureToolsMiddleware.
+   *
+   * Note: Parameters use SKIP_VALIDATION because the client-side Zod schema
+   * gets converted to JSON schema by CopilotKit, making exact comparison unreliable.
+   * The Zod schema still provides type safety in the client-side handlers.
+   */
+  function getMiddlewareConfig(): SecureToolHooksMiddlewareConfig {
+    const allowedTools: ToolSpec[] = Object.values(toolSpecs).map((spec) => ({
+      name: spec.name,
+      description: spec.description,
+      // Skip parameter validation - Zod schemas can't be compared to JSON schemas
+      // Type safety is still enforced by the Zod schema on the client side
+      parameters: SKIP_VALIDATION,
+    }));
+
+    return { allowedTools };
+  }
+
+  /**
+   * Create a frontend tool configuration with injected spec values.
+   */
+  function createFrontendToolConfig<K extends keyof T & string>(
+    toolName: K,
+    options: SecureToolOptions<InferToolParams<T[K]["parameters"]>>,
+  ): {
+    name: K;
+    description: string;
+    parameters: T[K]["parameters"];
+    handler: (args: InferToolParams<T[K]["parameters"]>) => void | Promise<void>;
+    render?: (props: {
+      args: Partial<InferToolParams<T[K]["parameters"]>> | InferToolParams<T[K]["parameters"]>;
+      status: "inProgress" | "executing" | "complete";
+      result?: string;
+    }) => unknown;
+    agentId?: string;
+  } {
+    const spec = getToolSpec(toolName);
+
+    return {
+      name: toolName,
+      description: spec.description,
+      parameters: spec.parameters,
+      handler: options.handler,
+      render: options.render,
+      agentId: options.agentId,
+    };
+  }
+
+  return {
+    toolSpecs,
+    getToolSpec,
+    getMiddlewareConfig,
+    createFrontendToolConfig,
+  };
 }

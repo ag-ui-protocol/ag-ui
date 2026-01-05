@@ -8,7 +8,9 @@ export {
   checkToolCallAllowed,
   createToolSpec,
   createToolSpecs,
+  createSecureToolHooks,
   SKIP_VALIDATION,
+  DEFINED_IN_MIDDLEWARE_EXPERIMENTAL,
 } from "./secure-tools";
 export type {
   ToolSpec,
@@ -21,4 +23,11 @@ export type {
   OnDeviationCallback,
   SecureToolsConfig,
   SkipValidation,
+  // DefinedInMiddleware, // Not exported while experimental - use `typeof DEFINED_IN_MIDDLEWARE_EXPERIMENTAL` if needed
+  TypedToolSpec,
+  ToolSpecMap,
+  InferToolParams,
+  SecureToolHooksMiddlewareConfig,
+  SecureToolOptions,
+  SecureToolHooks,
 } from "./secure-tools";
