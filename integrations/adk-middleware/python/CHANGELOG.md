@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **NEW**: Multimodal message support for user messages with inline base64-encoded binary data (#864)
+  - `convert_message_content_to_parts()` function converts AG-UI `TextInputContent` and `BinaryInputContent` to ADK `types.Part` objects
+  - Supports `image/png`, `image/jpeg`, and other MIME types via `inline_data` with base64-decoded bytes
+  - Gracefully ignores unsupported binary content (URL-only, id-only references) with warnings
+  - Invalid base64 data is logged and skipped without crashing
+- **NEW**: Integration tests for multimodal input handling (`test_from_app_with_valid_mime_type`, `test_from_app_with_unsupported_mime_type`)
+- **NEW**: Unit tests for multimodal content conversion in `test_utils_converters.py`
 - **NEW**: `ADKAgent.from_app()` classmethod for creating agents from ADK App instances (#844)
   - Enables access to App-level features: plugins, resumability, context caching, events compaction
   - Creates per-request App copies with modified agents using `model_copy()` to preserve all configs
@@ -15,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Runtime detection of ADK version capabilities for forward compatibility
 - **NEW**: Integration tests for `from_app()` functionality (`test_from_app_integration.py`)
 - **DOCUMENTATION**: Added "Using App for Full ADK Features" section to USAGE.md
+
+### Changed
+- **IMPROVED**: Message content conversion now uses `convert_message_content_to_parts()` for multimodal support in `_convert_latest_user_message()` and `convert_ag_ui_messages_to_adk()`
 
 ### Fixed
 - **FIXED**: Thread ID to Session ID mapping for VertexAI session services (#870)
