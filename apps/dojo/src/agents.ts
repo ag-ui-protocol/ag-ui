@@ -39,62 +39,93 @@ const secureToolsAllowedTools: ToolSpec[] = [
   // Note: "say_hello" is intentionally NOT in this list to demonstrate blocking
 ];
 
+// Custom logger for the secure_tools demo
+// Demonstrates the `logger` option for custom logging output
+const secureToolsLogger = {
+  warn: (message: string, ...args: unknown[]) => {
+    console.warn(`[SecureTools Logger] ${message}`, ...args);
+  },
+  error: (message: string, ...args: unknown[]) => {
+    console.error(`[SecureTools Logger] ${message}`, ...args);
+  },
+  info: (message: string, ...args: unknown[]) => {
+    console.info(`[SecureTools Logger] ${message}`, ...args);
+  },
+};
+
 /**
  * Helper to wrap an agent with SecureToolsMiddleware for the secure_tools demo.
  * This demonstrates blocking unauthorized tool calls.
  *
- * Features demonstrated:
+ * ALL CONFIGURATION OPTIONS DEMONSTRATED:
  * - allowedTools: Declarative allowlist with full spec validation
  * - isToolAllowed: Custom callback for additional validation logic
- * - onDeviation: Custom handler when a tool call is blocked (defaults to console.warn)
+ * - onDeviation: Custom handler when a tool call is blocked
+ * - strictParameterMatch: Whether to require exact parameter schema match
+ * - metadata: Custom data passed through to security context
+ * - logger: Custom logger instance for middleware output
  */
 function wrapWithSecureTools<T extends AbstractAgent>(agent: T): T {
   agent.use(
     secureToolsMiddleware({
+      // OPTION 1: allowedTools - Declarative allowlist
+      // Tools must match specs here to be allowed (name + description + parameters)
       allowedTools: secureToolsAllowedTools,
 
-      /**
-       * Custom validation callback - runs AFTER allowedTools check.
-       * Use for dynamic policies like per-user restrictions, rate limiting, etc.
-       *
-       * In this demo: we could add custom logic here, but we'll just log and allow
-       * any tool that passed the allowedTools check.
-       */
-      isToolAllowed: (toolCall, context) => {
-        // Example: Additional custom validation logic
-        // You could check per-user permissions, rate limits, time-based access, etc.
-        console.info(
-          `[SecureTools Demo] isToolAllowed called for: ${toolCall.toolCallName}`,
-          { threadId: context.threadId, runId: context.runId }
-        );
+      // OPTION 2: strictParameterMatch - Schema comparison mode
+      // true (default): Parameters must match exactly
+      // false: Tool params can have additional properties beyond what spec requires
+      strictParameterMatch: false,
 
-        // Return true to allow (after allowedTools already validated)
-        // Return false to block (would trigger onDeviation)
-        return true;
+      // OPTION 3: metadata - Custom data for security policies
+      // Passed through to isToolAllowed and onDeviation callbacks via context.metadata
+      metadata: {
+        demoMode: true,
+        environment: process.env.NODE_ENV ?? "development",
       },
 
-      /**
-       * Deviation handler - called when a tool call is blocked.
-       * Default behavior: console.warn with structured logging.
-       * Override for custom audit logging, telemetry, alerts, etc.
-       *
-       * Note: This runs server-side. For browser alerts, you'd need to
-       * stream deviation events to the client via websocket or similar.
-       */
+      // OPTION 4: logger - Custom logger instance
+      // Used for internal middleware logging (not for deviation handling)
+      logger: secureToolsLogger,
+
+      // OPTION 5: isToolAllowed - Custom validation callback
+      // Runs AFTER allowedTools check. Use for dynamic policies.
+      isToolAllowed: (toolCall, context) => {
+        // Access metadata from context for policy decisions
+        const { metadata } = context;
+        secureToolsLogger.info(
+          `isToolAllowed: ${toolCall.toolCallName}`,
+          { threadId: context.threadId, metadata }
+        );
+
+        // Example policies you could implement:
+        // - Per-user permissions: context.metadata?.userId
+        // - Rate limiting: track calls per time window
+        // - Time-based access: only allow certain tools during business hours
+        // - Feature flags: check if tool is enabled for this tenant
+
+        return true; // Allow after allowedTools check
+      },
+
+      // OPTION 6: onDeviation - Custom deviation handler
+      // Called when a tool call is blocked. Override default console.warn.
       onDeviation: (deviation) => {
-        // Custom logging with more detail than the default
+        // Access metadata for audit logging
+        const { metadata } = deviation.context;
+
         console.warn(
           `\n🚨 [SecureTools] TOOL CALL BLOCKED 🚨`,
           `\n   Tool: ${deviation.toolCall.toolCallName}`,
           `\n   Reason: ${deviation.reason}`,
           `\n   Message: ${deviation.message}`,
           `\n   Thread: ${deviation.context.threadId}`,
+          `\n   Metadata: ${JSON.stringify(metadata)}`,
           `\n   Timestamp: ${new Date(deviation.timestamp).toISOString()}`
         );
 
-        // In a real app, you might:
+        // In production, you might:
         // - Send to audit log / SIEM system
-        // - Trigger admin alerts
+        // - Trigger admin alerts for suspicious activity
         // - Update security metrics/telemetry
         // - Stream to client UI via websocket
       },

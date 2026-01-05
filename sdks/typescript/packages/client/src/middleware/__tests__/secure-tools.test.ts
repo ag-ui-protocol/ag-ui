@@ -375,6 +375,98 @@ describe("SecureToolsMiddleware", () => {
       // All events should pass through
       expect(collectedEvents.length).toBe(6);
     });
+
+    it("should use strict parameter matching by default (strictParameterMatch: true)", async () => {
+      const events = createToolCallEvents("tool-1", "getWeather", '{"city": "NYC"}');
+      const agent = new MockAgent(events);
+
+      // Spec with an extra property that the tool doesn't have
+      const strictSpec: ToolSpec = {
+        name: "getWeather",
+        description: "Get current weather for a city",
+        parameters: {
+          type: "object",
+          properties: {
+            city: { type: "string" },
+            units: { type: "string" }, // Extra property not in tool
+          },
+          required: ["city"],
+        },
+      };
+
+      const deviations: ToolDeviation[] = [];
+      const middleware = secureToolsMiddleware({
+        allowedTools: [strictSpec],
+        // strictParameterMatch defaults to true
+        onDeviation: (deviation) => { deviations.push(deviation); },
+      });
+
+      const input = createInput([weatherTool]); // weatherTool doesn't have "units"
+      const collectedEvents: BaseEvent[] = [];
+
+      await new Promise<void>((resolve) => {
+        middleware.run(input, agent).subscribe({
+          next: (event) => collectedEvents.push(event),
+          complete: () => resolve(),
+        });
+      });
+
+      // Should be blocked due to strict parameter mismatch
+      expect(collectedEvents.length).toBe(2);
+      expect(deviations.length).toBe(1);
+      expect(deviations[0].reason).toBe("SPEC_MISMATCH_PARAMETERS");
+    });
+
+    it("should allow compatible schemas when strictParameterMatch is false", async () => {
+      const events = createToolCallEvents("tool-1", "getWeather", '{"city": "NYC"}');
+      const agent = new MockAgent(events);
+
+      // Spec expects the tool to have at least these properties
+      const lenientSpec: ToolSpec = {
+        name: "getWeather",
+        description: "Get current weather for a city",
+        parameters: {
+          type: "object",
+          properties: {
+            city: { type: "string" },
+          },
+          required: ["city"],
+        },
+      };
+
+      // Tool has additional properties beyond what spec requires
+      const toolWithExtraProps: Tool = {
+        name: "getWeather",
+        description: "Get current weather for a city",
+        parameters: {
+          type: "object",
+          properties: {
+            city: { type: "string" },
+            units: { type: "string" }, // Extra property
+            detailed: { type: "boolean" }, // Another extra property
+          },
+          required: ["city"],
+        },
+      };
+
+      const middleware = secureToolsMiddleware({
+        allowedTools: [lenientSpec],
+        strictParameterMatch: false, // Allow compatible schemas
+      });
+
+      const input = createInput([toolWithExtraProps]);
+      const collectedEvents: BaseEvent[] = [];
+
+      await new Promise<void>((resolve) => {
+        middleware.run(input, agent).subscribe({
+          next: (event) => collectedEvents.push(event),
+          complete: () => resolve(),
+        });
+      });
+
+      // Should pass since the tool has all required properties from spec
+      expect(collectedEvents.length).toBe(6);
+    });
   });
 
   describe("Description validation", () => {
