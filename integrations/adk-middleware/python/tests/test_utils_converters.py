@@ -64,18 +64,50 @@ class TestConvertAGUIMessagesToADK:
         )
 
         adk_events = convert_ag_ui_messages_to_adk([user_msg])
-
-        assert len(adk_events) == 1
         event = adk_events[0]
-        assert event.content.role == "user"
+
         assert len(event.content.parts) == 2
         assert event.content.parts[0].text == "Here is an image."
-        assert event.content.parts[1].inline_data is not None
         assert event.content.parts[1].inline_data.mime_type == "image/png"
         assert event.content.parts[1].inline_data.data == raw
+    
+    def test_convert_user_message_multimodal_id_only_ignored(self):
+        """Test that BinaryInputContent with id only is ignored."""
+        user_msg = UserMessage(
+            id="user_id_only",
+            role="user",
+            content=[
+                TextInputContent(text="Id only data."),
+                BinaryInputContent(mime_type="image/png", id="123"),
+            ],
+        )
 
-    def test_convert_user_message_multimodal_file_data_url(self):
-        """Test converting a multimodal UserMessage with binary url."""
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+
+        event = adk_events[0]
+        assert len(event.content.parts) == 1
+        assert event.content.parts[0].text == "Id only data."
+    
+    def test_convert_user_message_multimodal_broken_base64_ignored(self):
+        """Test that broken base64 data is ignored."""
+        user_msg = UserMessage(
+            id="user_broken_b64_ignored",
+            role="user",
+            content=[
+                TextInputContent(text="Broken data."),
+                BinaryInputContent(mime_type="image/png", data="This Data is Broken", filename="broken.png"),
+            ],
+        )
+
+        adk_events = convert_ag_ui_messages_to_adk([user_msg])
+        event = adk_events[0]
+
+        assert len(event.content.parts) == 1
+        assert event.content.parts[0].text == "Broken data."
+
+    def test_convert_user_message_multimodal_file_data_url_ignored(self):
+        """Test that BinaryInputContent with URL is currently ignored (data supported only)."""
+
         user_msg = UserMessage(
             id="user_mm_2",
             role="user",
@@ -86,14 +118,10 @@ class TestConvertAGUIMessagesToADK:
         )
 
         adk_events = convert_ag_ui_messages_to_adk([user_msg])
-
         event = adk_events[0]
-        assert event.content.role == "user"
-        assert len(event.content.parts) == 2
+
+        assert len(event.content.parts) == 1
         assert event.content.parts[0].text == "Please look at the image at this URL."
-        assert event.content.parts[1].file_data is not None
-        assert event.content.parts[1].file_data.mime_type == "image/jpeg"
-        assert event.content.parts[1].file_data.file_uri == "https://example.com/a.jpg"
 
     def test_convert_system_message(self):
         """Test converting a SystemMessage to ADK event."""

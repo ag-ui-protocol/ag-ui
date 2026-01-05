@@ -6,7 +6,7 @@ import asyncio
 import os
 import pytest
 import uuid
-from ag_ui.core import EventType, RunAgentInput, UserMessage
+from ag_ui.core import EventType, RunAgentInput, UserMessage, BinaryInputContent, TextInputContent
 from ag_ui_adk import ADKAgent
 from ag_ui_adk.session_manager import SessionManager
 from google.adk.apps import App
@@ -151,6 +151,77 @@ async def test_from_app_multi_turn_conversation(sample_app):
 
     assert any(e.type == EventType.RUN_FINISHED for e in events2)
 
+RED_PIXEL_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
+@pytest.mark.asyncio
+async def test_from_app_with_valid_mime_type(sample_app):
+    """Test multimodal input with valid MIME type (image/png) is accepted by Google API."""
+    adk_agent = ADKAgent.from_app(sample_app, user_id="test_user_valid_mime")
+    
+    input_data = RunAgentInput(
+        thread_id=f"test_thread_{uuid.uuid4().hex[:8]}",
+        run_id=f"test_run_{uuid.uuid4().hex[:8]}",
+        messages=[
+            UserMessage(
+                id="msg1",
+                content=[
+                    TextInputContent(text="What color is this? Reply briefly."),
+                    BinaryInputContent(mime_type="image/png", data=RED_PIXEL_PNG_B64, filename="what_color_is_this.png"),
+                ],
+            )
+        ],
+        state={},
+        tools=[],
+        context=[],
+        forwarded_props={},
+    )
+    
+    events = []
+    async for event in adk_agent.run(input_data):
+        events.append(event)
+    event_types = [e.type for e in events]
+
+    # Valid MIME type should work without errors
+    assert EventType.RUN_STARTED in event_types
+    assert EventType.RUN_FINISHED in event_types
+    assert EventType.RUN_ERROR not in event_types
+
+
+@pytest.mark.asyncio
+async def test_from_app_with_unsupported_mime_type(sample_app):
+    """Test that unsupported MIME type is gracefully ignored by Google API.
+    
+    Google API appears to ignore unsupported MIME types rather than rejecting them.
+    This test verifies that the system handles this gracefully without crashing.
+    """
+    adk_agent = ADKAgent.from_app(sample_app, user_id="test_user_bad_mime")
+    
+    input_data = RunAgentInput(
+        thread_id=f"test_thread_{uuid.uuid4().hex[:8]}",
+        run_id=f"test_run_{uuid.uuid4().hex[:8]}",
+        messages=[
+            UserMessage(
+                id="msg1",
+                content=[
+                    TextInputContent(text="What color is this? Reply briefly."),
+                    BinaryInputContent(mime_type="image_pong", data=RED_PIXEL_PNG_B64, filename="what_color_is_this.pong"),
+                ],
+            )
+        ],
+        state={},
+        tools=[],
+        context=[],
+        forwarded_props={},
+    )
+    
+    events = []
+    async for event in adk_agent.run(input_data):
+        events.append(event)
+    event_types = [e.type for e in events]
+    
+    # Google API gracefully ignores unsupported MIME types and processes the text portion normally
+    assert EventType.RUN_STARTED in event_types
+    assert EventType.RUN_FINISHED in event_types
+    assert EventType.RUN_ERROR not in event_types
 
 @pytest.mark.asyncio
 async def test_runner_supports_plugin_close_timeout():
