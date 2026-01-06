@@ -13,11 +13,11 @@ import type {
 } from "@ag-ui/client";
 import { AbstractAgent, EventType } from "@ag-ui/client";
 import type { StorageThreadType } from "@mastra/core/memory";
-import { Agent as LocalMastraAgent } from "@mastra/core/agent";
+import type { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { randomUUID } from "@ag-ui/client";
 import { Observable } from "rxjs";
-import { MastraClient } from "@mastra/client-js";
+import type { MastraClient } from "@mastra/client-js";
 import {
   convertAGUIMessagesToMastra,
   GetLocalAgentsOptions,

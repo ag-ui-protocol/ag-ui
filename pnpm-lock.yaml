@@ -361,7 +361,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -414,7 +414,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -445,7 +445,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -476,7 +476,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -507,7 +507,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -544,7 +544,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -584,7 +584,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -615,7 +615,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -632,8 +632,8 @@ importers:
         specifier: ^1.10.5
         version: 1.10.6(d4db1549185bd0a4f8a04144e50ce0ea)
       '@mastra/client-js':
-        specifier: ^1.0.0-beta.5
-        version: 1.0.0-beta.5(ai@5.0.117(zod@3.25.76))(openapi-types@12.1.3)(zod@3.25.76)
+        specifier: 1.0.0-beta.19
+        version: 1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@3.25.76))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@3.25.76)
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
@@ -645,8 +645,8 @@ importers:
         specifier: workspace:*
         version: link:../../../sdks/typescript/packages/core
       '@mastra/core':
-        specifier: ^1.0.0-beta.5
-        version: 1.0.0-beta.5(ai@5.0.117(zod@3.25.76))(openapi-types@12.1.3)(zod@3.25.76)
+        specifier: 1.0.0-beta.19
+        version: 1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@3.25.76))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@3.25.76)
       '@types/jest':
         specifier: ^29.5.14
         version: 29.5.14
@@ -658,7 +658,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -669,20 +669,20 @@ importers:
   integrations/mastra/typescript/examples:
     dependencies:
       '@mastra/client-js':
-        specifier: 1.0.0-beta.5
-        version: 1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12)
+        specifier: 1.0.0-beta.19
+        version: 1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.1.12))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@4.1.12)
       '@mastra/core':
-        specifier: 1.0.0-beta.5
-        version: 1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12)
+        specifier: 1.0.0-beta.19
+        version: 1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.1.12))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@4.1.12)
       '@mastra/libsql':
-        specifier: 1.0.0-beta.2
-        version: 1.0.0-beta.2(@mastra/core@1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12))
+        specifier: 1.0.0-beta.10
+        version: 1.0.0-beta.10(@mastra/core@1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.1.12))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@4.1.12))
       '@mastra/loggers':
-        specifier: 1.0.0-beta.1
-        version: 1.0.0-beta.1(@mastra/core@1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12))
+        specifier: 1.0.0-beta.3
+        version: 1.0.0-beta.3(@mastra/core@1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.1.12))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@4.1.12))
       '@mastra/memory':
-        specifier: 1.0.0-beta.2
-        version: 1.0.0-beta.2(@mastra/core@1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12))(react@19.2.1)(zod@4.1.12)
+        specifier: 1.0.0-beta.10
+        version: 1.0.0-beta.10(@mastra/core@1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.1.12))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@4.1.12))(zod@4.1.12)
       zod:
         specifier: ^4.1.12
         version: 4.1.12
@@ -691,8 +691,8 @@ importers:
         specifier: ^22.15.29
         version: 22.18.10
       mastra:
-        specifier: 1.0.0-beta.4
-        version: 1.0.0-beta.4(@mastra/core@1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12))(typescript@5.9.3)(zod@4.1.12)
+        specifier: 1.0.0-beta.12
+        version: 1.0.0-beta.12(@mastra/core@1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.1.12))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@4.1.12))(typescript@5.9.3)(zod@4.1.12)
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
@@ -720,7 +720,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -748,7 +748,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -776,7 +776,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -813,7 +813,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -850,7 +850,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -903,7 +903,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -937,7 +937,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -989,7 +989,7 @@ importers:
         version: 29.7.0(@types/node@20.19.21)
       ts-jest:
         specifier: ^29.1.2
-        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3)
+        version: 29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
       tsup:
         specifier: ^8.0.2
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
@@ -1122,24 +1122,6 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/azure@2.0.75':
-    resolution: {integrity: sha512-FslI8R2XHnu0if8phryo2g/Sb7i87NYWtza5qQWOMq2PZPL8a/U1he2AVLNTx9AjNUs2GwFDdNYJ78ns/0eu9A==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
-
-  '@ai-sdk/gateway@1.0.33':
-    resolution: {integrity: sha512-v9i3GPEo4t3fGcSkQkc07xM6KJN75VUv7C1Mqmmsu2xD8lQwnQfsrgAXyNuWe20yGY0eHuheSPDZhiqsGKtH1g==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
-
-  '@ai-sdk/gateway@2.0.12':
-    resolution: {integrity: sha512-W+cB1sOWvPcz9qiIsNtD+HxUrBUva2vWv2K1EFukuImX+HA0uZx3EyyOjhYQ9gtf/teqEG80M6OvJ7xx/VLV2A==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
-
   '@ai-sdk/gateway@2.0.24':
     resolution: {integrity: sha512-mflk80YF8hj8vrF9e1IHhovGKC1ubX+sY88pesSk3pUiXfH5VPO8dgzNnxjwsqsCZrnkHcztxS5cSl4TzSiEuA==}
     engines: {node: '>=18'}
@@ -1160,12 +1142,6 @@ packages:
 
   '@ai-sdk/openai@2.0.52':
     resolution: {integrity: sha512-n1arAo4+63e6/FFE6z/1ZsZbiOl4cfsoZ3F4i2X7LPIEea786Y2yd7Qdr7AdB4HTLVo3OSb1PHVIcQmvYIhmEA==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
-
-  '@ai-sdk/openai@2.0.73':
-    resolution: {integrity: sha512-TOGoxkeJMgcxq80ZfyCAqKcfvGPgFsEQEK8SgI/w3He0fqi16KlnZVMexOlg8HOLumF6szweg/YrOmQixsPVGw==}
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -1254,10 +1230,6 @@ packages:
   '@anthropic-ai/sdk@0.57.0':
     resolution: {integrity: sha512-z5LMy0MWu0+w2hflUgj4RlJr1R+0BxKXL7ldXTO8FasU8fu599STghO+QKwId2dAD0d464aHtU+ChWuRHw4FNw==}
     hasBin: true
-
-  '@apidevtools/json-schema-ref-parser@11.9.3':
-    resolution: {integrity: sha512-60vepv88RwcJtSHrD6MjIL6Ta3SOYbgfnkHb+ppAVK+o9mXprRtulx7VlRl3lN3bbvysAfCS7WMVfhUYemB0IQ==}
-    engines: {node: '>= 16'}
 
   '@aws-crypto/crc32@5.2.0':
     resolution: {integrity: sha512-nLbCWqQNgUiwwtFsen1AdzAtvuLRsQS8rYgMuxCrdKf9kOssamGLuPwyTY9wyYblNr9+1XM8v6zoDTPPSIeANg==}
@@ -2160,9 +2132,6 @@ packages:
     resolution: {integrity: sha512-sB5uyeq+dwCWyPi31B2gQlVlo+j5brPlWx4yZBrEaRo/nhdDE8Xke1gsGgtiBdaBTxuTkceLVuVt/pclrasb0A==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
 
-  '@expo/devcert@1.2.0':
-    resolution: {integrity: sha512-Uilcv3xGELD5t/b0eM4cxBFEKQRIivB3v7i+VhWLV/gL98aw810unLKKJbGAxAIhY6Ipyz8ChWibFsKFXYwstA==}
-
   '@expo/devcert@1.2.1':
     resolution: {integrity: sha512-qC4eaxmKMTmJC2ahwyui6ud8f3W60Ss7pMkpBq40Hu3zyiAaugPXnZ24145U7K36qO9UHdZUVxsCvIpz2RYYCA==}
 
@@ -2664,9 +2633,6 @@ packages:
 
   '@js-sdsl/ordered-map@4.4.2':
     resolution: {integrity: sha512-iUKgm52T8HOE/makSxjqoWhe95ZJA1/G1sYsGev2JDKUSS14KAgg1LHb+Ba+IPow0xflbnSkOsZcO08C7w1gYw==}
-
-  '@jsdevtools/ono@7.1.3':
-    resolution: {integrity: sha512-4JQNk+3mVzK3xh2rqd6RB4J46qUR19azEHBneZyTZM+c456qOrbbM/5xcR8huNCCcbVt7+UmizG6GuUvPvKUYg==}
 
   '@langchain/aws@0.1.15':
     resolution: {integrity: sha512-oyOMhTHP0rxdSCVI/g5KXYCOs9Kq/FpXMZbOk1JSIUoaIzUg4p6d98lsHu7erW//8NSaT+SX09QRbVDAgt7pNA==}
@@ -3218,37 +3184,14 @@ packages:
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
-  '@mastra/client-js@1.0.0-beta.5':
-    resolution: {integrity: sha512-PIfL8LP5f19sB3+g23A+2lvpbLTgmMY58ElLjFoEA3mlTMPUGJtZn/oB4hvh4G6Q0hjoFYIAgkgWmKkAbz+veg==}
-    engines: {node: '>=22.13.0'}
-    peerDependencies:
-      zod: ^3.25.0 || ^4.0.0
-
   '@mastra/core@1.0.0-beta.19':
     resolution: {integrity: sha512-XgLw3JL3vYbwLX/cHECwXSHF1JnMPIqIsh5iD/meJCd6395CbtvgU+SYsph1meF6jI3BzuJl4olV8+IaK1YgGQ==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
-  '@mastra/core@1.0.0-beta.5':
-    resolution: {integrity: sha512-nDg4erEKFWJ5XbZqm3qvNXsaDczlYpVjOtwrsYfaYa/KoXotFDa0QgcMxg4KOnaiprQgLzaKC/MTOUyUmDxt0w==}
-    engines: {node: '>=22.13.0'}
-    peerDependencies:
-      '@mastra/observability': '>=1.0.0-0 <2.0.0-0'
-      zod: ^3.25.0 || ^4.0.0
-    peerDependenciesMeta:
-      '@mastra/observability':
-        optional: true
-
   '@mastra/deployer@1.0.0-beta.19':
     resolution: {integrity: sha512-1295gZEEEKNBDS81idE+C+/s0LQIoGITP4x1OMkYtGCf+TOR3cygCU58Li/imG3ZNJJXy6sg/LdpgBnPBd0BfA==}
-    engines: {node: '>=22.13.0'}
-    peerDependencies:
-      '@mastra/core': '>=1.0.0-0 <2.0.0-0'
-      zod: ^3.25.0 || ^4.0.0
-
-  '@mastra/deployer@1.0.0-beta.5':
-    resolution: {integrity: sha512-3hCnnajraI+CPUvyeDbDVHsiGoRUtjd4Io5+tIpdouAnydykbSNpvnMP+pEHRvXWyN7lFE3oqZ6AE2I+C1J8YA==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       '@mastra/core': '>=1.0.0-0 <2.0.0-0'
@@ -3266,18 +3209,6 @@ packages:
     peerDependencies:
       '@mastra/core': '>=1.0.0-0 <2.0.0-0'
 
-  '@mastra/libsql@1.0.0-beta.2':
-    resolution: {integrity: sha512-CYJqrgM7AEsZtVHll17tfpxEH1h02J445Yur/nSB21Wvs6av2Jbw0kJAFR10tl/ofKMNWe7t6oatEiwZMKXyfg==}
-    engines: {node: '>=22.13.0'}
-    peerDependencies:
-      '@mastra/core': '>=1.0.0-0 <2.0.0-0'
-
-  '@mastra/loggers@1.0.0-beta.1':
-    resolution: {integrity: sha512-WW6BsUsXiSS2ztiRHz963JYAY8pVUA6f2L+EOFq44rGEQQDM+00mO0O4BrwbVWXnP4wtsFBpzCUeR7MB+PRUmw==}
-    engines: {node: '>=22.13.0'}
-    peerDependencies:
-      '@mastra/core': '>=1.0.0-0 <2.0.0-0'
-
   '@mastra/loggers@1.0.0-beta.3':
     resolution: {integrity: sha512-+gAjvyCcntGx3sCMmlKZuMMpgoZLTGgttYtAHWAsa6/rCpbeK0d3m2a2VBD+gIgH25bpf9UGVuhUa2DGGNAHHQ==}
     engines: {node: '>=22.13.0'}
@@ -3291,19 +3222,6 @@ packages:
       '@mastra/core': '>=1.0.0-0 <2.0.0-0'
       zod: ^3.25.0 || ^4.0.0
 
-  '@mastra/memory@1.0.0-beta.2':
-    resolution: {integrity: sha512-NgP8s06r8zRYxy+Sg3Des+7eoeNxaDHt8NQQ6OapRGGWJZoeI2nwxkDUE+ARiAkfyrFGzpnsUhRFfjoPkuRrLA==}
-    engines: {node: '>=22.13.0'}
-    peerDependencies:
-      '@mastra/core': '>=1.0.0-0 <2.0.0-0'
-      zod: ^3.25.0 || ^4.0.0
-
-  '@mastra/schema-compat@1.0.0-beta.1':
-    resolution: {integrity: sha512-z55GglIfBl9XMWxPyaq5HhdiYQZamwztGIAXGH+xFtSXgurYk32IWLdlG1xASvwC4TxvoRA+PaReeIwwW3u7nw==}
-    engines: {node: '>=22.13.0'}
-    peerDependencies:
-      zod: ^3.25.0 || ^4.0.0
-
   '@mastra/schema-compat@1.0.0-beta.5':
     resolution: {integrity: sha512-d3/VcjFdVOTO4UBKOzLTwLlla2plaCFnaZjJCNnCmUs4eLyX6PKpSzzUW3pxBiRnuOlO04nKMpF+CYcxgTmxsQ==}
     engines: {node: '>=22.13.0'}
@@ -3312,13 +3230,6 @@ packages:
 
   '@mastra/server@1.0.0-beta.19':
     resolution: {integrity: sha512-FFtgjwcra7tfc2d4CteKHwkqS+a5zAdzs6zjI0skEUNTMFAkXHaPrMAVdx2q2trGvj4ARZBygROafOAGfBdLDg==}
-    engines: {node: '>=22.13.0'}
-    peerDependencies:
-      '@mastra/core': '>=1.0.0-0 <2.0.0-0'
-      zod: ^3.25.0 || ^4.0.0
-
-  '@mastra/server@1.0.0-beta.5':
-    resolution: {integrity: sha512-4dOj9xfrdUVAQsN6ezAXmVZGtpzHou9PTCOFdJ7sdMLaThZbcPulIVpqXFnV+MOrpYpUK8r89xyjWgenPyL11A==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       '@mastra/core': '>=1.0.0-0 <2.0.0-0'
@@ -3445,16 +3356,6 @@ packages:
     resolution: {integrity: sha512-nn5ozdjYQpUCZlWGuxcJY/KpxkWQs4DcbMCmKojjyrYDEAGy4Ce19NN4v5MduafTwJlbKc99UA8YhSVqq9yPZA==}
     engines: {node: '>=12.4.0'}
 
-  '@openrouter/ai-sdk-provider@1.2.3':
-    resolution: {integrity: sha512-a6Nc8dPRHakRH9966YJ/HZJhLOds7DuPTscNZDoAr+Aw+tEFUlacSJMvb/b3gukn74mgbuaJRji9YOn62ipfVg==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      ai: ^5.0.0
-      zod: ^3.24.1 || ^v4
-
-  '@openrouter/sdk@0.1.27':
-    resolution: {integrity: sha512-RH//L10bSmc81q25zAZudiI4kNkLgxF2E+WU42vghp3N6TEvZ6F0jK7uT3tOxkEn91gzmMw9YVmDENy7SJsajQ==}
-
   '@opentelemetry/api-logs@0.203.0':
     resolution: {integrity: sha512-9B9RU0H7Ya1Dx/Rkyc4stuBZSGVQF27WigitInx2QQoj6KUpEFYPKoWjdFTunJYxmXmh17HeBvbMa1EhGyPmqQ==}
     engines: {node: '>=8.0.0'}
@@ -3564,9 +3465,6 @@ packages:
 
   '@popperjs/core@2.11.8':
     resolution: {integrity: sha512-P1st0aksCrn9sGZhp8GMYwBnQsbvAWsZAX44oXNNvLHGqAOcoVxmjZiohstwQ7SqKnbR47akdNi+uleWD8+g6A==}
-
-  '@posthog/core@1.5.2':
-    resolution: {integrity: sha512-iedUP3EnOPPxTA2VaIrsrd29lSZnUV+ZrMnvY56timRVeZAXoYCkmjfIs3KBAsF8OUT5h1GXLSkoQdrV0r31OQ==}
 
   '@posthog/core@1.7.1':
     resolution: {integrity: sha512-kjK0eFMIpKo9GXIbts8VtAknsoZ18oZorANdtuTj1CbgS28t4ZVq//HAWhnxEuXRTrtkd+SUJ6Ux3j2Af8NCuA==}
@@ -5394,18 +5292,6 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  ai@5.0.60:
-    resolution: {integrity: sha512-80U/3kmdBW6g+JkLXpz/P2EwkyEaWlPlYtuLUpx/JYK9F7WZh9NnkYoh1KvUi1Sbpo0NyurBTvX0a2AG9mmbDA==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
-
-  ai@5.0.97:
-    resolution: {integrity: sha512-8zBx0b/owis4eJI2tAlV8a1Rv0BANmLxontcAelkLNwEHhgfgXeKpDkhNB6OgV+BJSwboIUDkgd9312DdJnCOQ==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
-
   ajv@6.12.6:
     resolution: {integrity: sha512-j3fVLgvTo527anyYyJOGTYJbG+vnnQYvE0m5mmkc1TK+nxAppkCLMIL0aZ4dblVCNoGShhm+kzE4ZUykBoMg4g==}
 
@@ -5819,10 +5705,6 @@ packages:
 
   clone@1.0.4:
     resolution: {integrity: sha512-JQHZ2QMW6l3aH/j6xCqQThY/9OH4D/9ls34cgkUBiEeocRTU04tHfKPBsUK1PqZCUQM7GiA0IIXJSuXHI64Kbg==}
-    engines: {node: '>=0.8'}
-
-  clone@2.1.2:
-    resolution: {integrity: sha512-3Pe/CF1Nn94hyhIYpjtiLhdCoEoz0DqQ+988E9gmeEdQZlojxnOb74wctFyuwWQHzqyf9X7C7MG8juUpqBJT8w==}
     engines: {node: '>=0.8'}
 
   clsx@2.1.1:
@@ -6659,10 +6541,6 @@ packages:
     resolution: {integrity: sha512-UduyVP7TLB5IcAQl+OzLyLcS/l32W/GLg+AhHJ+ow40FOk2U3SAllPwR44v4vmdFwIWqpdwxxpQbF1n5ta9seA==}
     engines: {node: ^14.18.0 || ^16.14.0 || >=18.0.0}
 
-  execa@9.6.0:
-    resolution: {integrity: sha512-jpWzZ1ZhwUmeWRhS7Qv3mhpOhLfwI+uAX4e5fOcXqwMR7EcJ0pj2kV1CVzHVMX/LphnKWD3LObjZCoJ71lKpHw==}
-    engines: {node: ^18.19.0 || >=20.5.0}
-
   execa@9.6.1:
     resolution: {integrity: sha512-9Be3ZoN4LmYR90tUoVu2te2BsbzHfhJyfEiAVfz7N5/zv+jduIfLrV2xdQXOHbaD6KgpGdO9PRPM1Y4Q9QkPkA==}
     engines: {node: ^18.19.0 || >=20.5.0}
@@ -7133,51 +7011,6 @@ packages:
 
   highlightjs-vue@1.0.0:
     resolution: {integrity: sha512-PDEfEF102G23vHmPhLyPboFCD+BkMGu+GuJe2d9/eH4FsCwvgBpnc9n0pGE+ffKdph38s6foEZiEjdgHdzp+IA==}
-
-  hono-openapi@0.4.8:
-    resolution: {integrity: sha512-LYr5xdtD49M7hEAduV1PftOMzuT8ZNvkyWfh1DThkLsIr4RkvDb12UxgIiFbwrJB6FLtFXLoOZL9x4IeDk2+VA==}
-    peerDependencies:
-      '@hono/arktype-validator': ^2.0.0
-      '@hono/effect-validator': ^1.2.0
-      '@hono/typebox-validator': ^0.2.0 || ^0.3.0
-      '@hono/valibot-validator': ^0.5.1
-      '@hono/zod-validator': ^0.4.1
-      '@sinclair/typebox': ^0.34.9
-      '@valibot/to-json-schema': ^1.0.0-beta.3
-      arktype: ^2.0.0
-      effect: ^3.11.3
-      hono: ^4.6.13
-      openapi-types: ^12.1.3
-      valibot: ^1.0.0-beta.9
-      zod: ^3.23.8
-      zod-openapi: ^4.0.0
-    peerDependenciesMeta:
-      '@hono/arktype-validator':
-        optional: true
-      '@hono/effect-validator':
-        optional: true
-      '@hono/typebox-validator':
-        optional: true
-      '@hono/valibot-validator':
-        optional: true
-      '@hono/zod-validator':
-        optional: true
-      '@sinclair/typebox':
-        optional: true
-      '@valibot/to-json-schema':
-        optional: true
-      arktype:
-        optional: true
-      effect:
-        optional: true
-      hono:
-        optional: true
-      valibot:
-        optional: true
-      zod:
-        optional: true
-      zod-openapi:
-        optional: true
 
   hono-openapi@1.1.2:
     resolution: {integrity: sha512-toUcO60MftRBxqcVyxsHNYs2m4vf4xkQaiARAucQx3TiBPDtMNNkoh+C4I1vAretQZiGyaLOZNWn1YxfSyUA5g==}
@@ -7735,10 +7568,6 @@ packages:
   json-parse-even-better-errors@2.3.1:
     resolution: {integrity: sha512-xyFwyhro/JEof6Ghe2iz2NcXoj2sloNsWr/XsERDK/oiPCfaNhl5ONfp+jQdAZRQQ0IJWNzH9zIZF7li91kh2w==}
 
-  json-schema-to-zod@2.6.1:
-    resolution: {integrity: sha512-uiHmWH21h9FjKJkRBntfVGTLpYlCZ1n98D0izIlByqQLqpmkQpNTBtfbdP04Na6+43lgsvrShFh2uWLkQDKJuQ==}
-    hasBin: true
-
   json-schema-to-zod@2.7.0:
     resolution: {integrity: sha512-eW59l3NQ6sa3HcB+Ahf7pP6iGU7MY4we5JsPqXQ2ZcIPF8QxSg/lkY8lN0Js/AG0NjMbk+nZGUfHlceiHF+bwQ==}
     hasBin: true
@@ -7748,10 +7577,6 @@ packages:
 
   json-schema-traverse@1.0.0:
     resolution: {integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==}
-
-  json-schema-walker@2.0.0:
-    resolution: {integrity: sha512-nXN2cMky0Iw7Af28w061hmxaPDaML5/bQD9nwm1lOoIKEGjHcRGxqWe4MfrkYThYAPjSUhmsp4bJNoLAyVn9Xw==}
-    engines: {node: '>=10'}
 
   json-schema@0.4.0:
     resolution: {integrity: sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA==}
@@ -8167,14 +7992,6 @@ packages:
 
   mastra@1.0.0-beta.12:
     resolution: {integrity: sha512-MnDXEHZbJkU/p8g/6IeTrHKCo/Uw6pbkNah0+NoOrrjnWxQKexEwsBveqOd62CWsXQBpizXBh3AYXC0gsgUpqQ==}
-    engines: {node: '>=22.13.0'}
-    hasBin: true
-    peerDependencies:
-      '@mastra/core': '>=1.0.0-0 <2.0.0-0'
-      zod: ^3.25.0 || ^4.0.0
-
-  mastra@1.0.0-beta.4:
-    resolution: {integrity: sha512-AuEpChPIj2hwYWrMbxH4aS1OVmskg6LXzwTVLRuS3LAayyeL0bvJ/cCa3oKIO2MyqJrqMm+FaoYRQo2gRjOb6A==}
     engines: {node: '>=22.13.0'}
     hasBin: true
     peerDependencies:
@@ -9088,10 +8905,6 @@ packages:
   postgres-interval@1.2.0:
     resolution: {integrity: sha512-9ZhXKM/rw350N1ovuWHbGxnGh/SNJ4cnxHiM0rxE4VN41wsg8P8zWn9hv/buK00RP4WvlOyr/RBDiptyxVbkZQ==}
     engines: {node: '>=0.10.0'}
-
-  posthog-node@5.11.2:
-    resolution: {integrity: sha512-z+XekcBUmGePMsjPlGaEF2bJFiDHKHYPQjS4OEw4YPDQz8s7Owuim/L7xNX+6UJkyIRniBza9iC7bW8yrGTv1g==}
-    engines: {node: '>=20'}
 
   posthog-node@5.17.2:
     resolution: {integrity: sha512-lz3YJOr0Nmiz0yHASaINEDHqoV+0bC3eD8aZAG+Ky292dAnVYul+ga/dMX8KCBXg8hHfKdxw0SztYD5j6dgUqQ==}
@@ -10797,54 +10610,12 @@ snapshots:
       '@ai-sdk/provider-utils': 3.0.10(zod@3.25.76)
       zod: 3.25.76
 
-  '@ai-sdk/azure@2.0.75(zod@3.25.76)':
-    dependencies:
-      '@ai-sdk/openai': 2.0.73(zod@3.25.76)
-      '@ai-sdk/provider': 2.0.0
-      '@ai-sdk/provider-utils': 3.0.17(zod@3.25.76)
-      zod: 3.25.76
-
-  '@ai-sdk/azure@2.0.75(zod@4.1.12)':
-    dependencies:
-      '@ai-sdk/openai': 2.0.73(zod@4.1.12)
-      '@ai-sdk/provider': 2.0.0
-      '@ai-sdk/provider-utils': 3.0.17(zod@4.1.12)
-      zod: 4.1.12
-
-  '@ai-sdk/gateway@1.0.33(zod@4.1.12)':
-    dependencies:
-      '@ai-sdk/provider': 2.0.0
-      '@ai-sdk/provider-utils': 3.0.10(zod@4.1.12)
-      '@vercel/oidc': 3.0.5
-      zod: 4.1.12
-
-  '@ai-sdk/gateway@2.0.12(zod@3.25.76)':
-    dependencies:
-      '@ai-sdk/provider': 2.0.0
-      '@ai-sdk/provider-utils': 3.0.17(zod@3.25.76)
-      '@vercel/oidc': 3.0.5
-      zod: 3.25.76
-
-  '@ai-sdk/gateway@2.0.12(zod@4.1.12)':
-    dependencies:
-      '@ai-sdk/provider': 2.0.0
-      '@ai-sdk/provider-utils': 3.0.17(zod@4.1.12)
-      '@vercel/oidc': 3.0.5
-      zod: 4.1.12
-
   '@ai-sdk/gateway@2.0.24(zod@3.25.76)':
     dependencies:
       '@ai-sdk/provider': 2.0.1
       '@ai-sdk/provider-utils': 3.0.20(zod@3.25.76)
       '@vercel/oidc': 3.0.5
       zod: 3.25.76
-
-  '@ai-sdk/gateway@2.0.24(zod@4.1.12)':
-    dependencies:
-      '@ai-sdk/provider': 2.0.1
-      '@ai-sdk/provider-utils': 3.0.20(zod@4.1.12)
-      '@vercel/oidc': 3.0.5
-      zod: 4.1.12
 
   '@ai-sdk/google@2.0.17(zod@3.25.76)':
     dependencies:
@@ -10871,18 +10642,6 @@ snapshots:
       '@ai-sdk/provider-utils': 3.0.12(zod@4.1.12)
       zod: 4.1.12
 
-  '@ai-sdk/openai@2.0.73(zod@3.25.76)':
-    dependencies:
-      '@ai-sdk/provider': 2.0.0
-      '@ai-sdk/provider-utils': 3.0.17(zod@3.25.76)
-      zod: 3.25.76
-
-  '@ai-sdk/openai@2.0.73(zod@4.1.12)':
-    dependencies:
-      '@ai-sdk/provider': 2.0.0
-      '@ai-sdk/provider-utils': 3.0.17(zod@4.1.12)
-      zod: 4.1.12
-
   '@ai-sdk/provider-utils@2.2.8(zod@3.25.76)':
     dependencies:
       '@ai-sdk/provider': 1.1.3
@@ -10903,13 +10662,6 @@ snapshots:
       '@standard-schema/spec': 1.1.0
       eventsource-parser: 3.0.6
       zod: 3.25.76
-
-  '@ai-sdk/provider-utils@3.0.10(zod@4.1.12)':
-    dependencies:
-      '@ai-sdk/provider': 2.0.0
-      '@standard-schema/spec': 1.1.0
-      eventsource-parser: 3.0.6
-      zod: 4.1.12
 
   '@ai-sdk/provider-utils@3.0.12(zod@3.25.76)':
     dependencies:
@@ -10932,13 +10684,6 @@ snapshots:
       eventsource-parser: 3.0.6
       zod: 3.25.76
 
-  '@ai-sdk/provider-utils@3.0.17(zod@4.1.12)':
-    dependencies:
-      '@ai-sdk/provider': 2.0.0
-      '@standard-schema/spec': 1.1.0
-      eventsource-parser: 3.0.6
-      zod: 4.1.12
-
   '@ai-sdk/provider-utils@3.0.20(zod@3.25.76)':
     dependencies:
       '@ai-sdk/provider': 2.0.1
@@ -10946,12 +10691,12 @@ snapshots:
       eventsource-parser: 3.0.6
       zod: 3.25.76
 
-  '@ai-sdk/provider-utils@3.0.20(zod@4.1.12)':
+  '@ai-sdk/provider-utils@4.0.0(zod@3.25.76)':
     dependencies:
-      '@ai-sdk/provider': 2.0.1
+      '@ai-sdk/provider': 3.0.0
       '@standard-schema/spec': 1.1.0
       eventsource-parser: 3.0.6
-      zod: 4.1.12
+      zod: 3.25.76
 
   '@ai-sdk/provider-utils@4.0.0(zod@4.1.12)':
     dependencies:
@@ -10985,16 +10730,6 @@ snapshots:
       throttleit: 2.1.0
     optionalDependencies:
       zod: 3.25.76
-
-  '@ai-sdk/react@1.2.12(react@19.2.1)(zod@4.1.12)':
-    dependencies:
-      '@ai-sdk/provider-utils': 2.2.8(zod@4.1.12)
-      '@ai-sdk/ui-utils': 1.2.11(zod@4.1.12)
-      react: 19.2.1
-      swr: 2.3.6(react@19.2.1)
-      throttleit: 2.1.0
-    optionalDependencies:
-      zod: 4.1.12
 
   '@ai-sdk/ui-utils@1.2.11(zod@3.25.76)':
     dependencies:
@@ -11032,12 +10767,6 @@ snapshots:
       - encoding
 
   '@anthropic-ai/sdk@0.57.0': {}
-
-  '@apidevtools/json-schema-ref-parser@11.9.3':
-    dependencies:
-      '@jsdevtools/ono': 7.1.3
-      '@types/json-schema': 7.0.15
-      js-yaml: 4.1.0
 
   '@aws-crypto/crc32@5.2.0':
     dependencies:
@@ -12635,14 +12364,6 @@ snapshots:
       '@eslint/core': 0.16.0
       levn: 0.4.1
 
-  '@expo/devcert@1.2.0':
-    dependencies:
-      '@expo/sudo-prompt': 9.3.2
-      debug: 3.2.7
-      glob: 10.4.5
-    transitivePeerDependencies:
-      - supports-color
-
   '@expo/devcert@1.2.1':
     dependencies:
       '@expo/sudo-prompt': 9.3.2
@@ -13228,8 +12949,6 @@ snapshots:
 
   '@js-sdsl/ordered-map@4.4.2': {}
 
-  '@jsdevtools/ono@7.1.3': {}
-
   '@langchain/aws@0.1.15(@langchain/core@0.3.78(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@3.25.76)))':
     dependencies:
       '@aws-sdk/client-bedrock-agent-runtime': 3.910.0
@@ -13631,6 +13350,21 @@ snapshots:
     dependencies:
       '@lukeed/csprng': 1.1.0
 
+  '@mastra/client-js@1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@3.25.76))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@3.25.76)':
+    dependencies:
+      '@lukeed/uuid': 2.0.1
+      '@mastra/core': 1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@3.25.76))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@3.25.76)
+      '@mastra/schema-compat': 1.0.0-beta.5(zod@3.25.76)
+      json-schema: 0.4.0
+      zod: 3.25.76
+    transitivePeerDependencies:
+      - '@hono/standard-validator'
+      - '@standard-community/standard-json'
+      - '@standard-community/standard-openapi'
+      - '@types/json-schema'
+      - openapi-types
+      - supports-color
+
   '@mastra/client-js@1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.1.12))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@4.1.12)':
     dependencies:
       '@lukeed/uuid': 2.0.1
@@ -13646,55 +13380,37 @@ snapshots:
       - openapi-types
       - supports-color
 
-  '@mastra/client-js@1.0.0-beta.5(ai@5.0.117(zod@3.25.76))(openapi-types@12.1.3)(zod@3.25.76)':
+  '@mastra/core@1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@3.25.76))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@3.25.76)':
     dependencies:
-      '@ai-sdk/ui-utils': 1.2.11(zod@3.25.76)
+      '@a2a-js/sdk': 0.2.5
+      '@ai-sdk/provider-utils-v5': '@ai-sdk/provider-utils@3.0.12(zod@3.25.76)'
+      '@ai-sdk/provider-utils-v6': '@ai-sdk/provider-utils@4.0.0(zod@3.25.76)'
+      '@ai-sdk/provider-v5': '@ai-sdk/provider@2.0.0'
+      '@ai-sdk/provider-v6': '@ai-sdk/provider@3.0.0'
+      '@ai-sdk/ui-utils-v5': '@ai-sdk/ui-utils@1.2.11(zod@3.25.76)'
+      '@isaacs/ttlcache': 1.4.1
       '@lukeed/uuid': 2.0.1
-      '@mastra/core': 1.0.0-beta.5(ai@5.0.117(zod@3.25.76))(openapi-types@12.1.3)(zod@3.25.76)
+      '@mastra/schema-compat': 1.0.0-beta.5(zod@3.25.76)
+      '@modelcontextprotocol/sdk': 1.20.0
+      '@sindresorhus/slugify': 2.2.1
+      dotenv: 16.6.1
+      hono: 4.10.7
+      hono-openapi: 1.1.2(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@3.25.76))(@types/json-schema@7.0.15)(hono@4.10.7)(openapi-types@12.1.3)
+      js-tiktoken: 1.0.21
       json-schema: 0.4.0
+      lru-cache: 11.2.4
+      p-map: 7.0.3
+      p-retry: 7.1.0
+      radash: 12.1.1
+      xxhash-wasm: 1.1.0
       zod: 3.25.76
-      zod-to-json-schema: 3.24.6(zod@3.25.76)
     transitivePeerDependencies:
-      - '@hono/arktype-validator'
-      - '@hono/effect-validator'
-      - '@hono/typebox-validator'
-      - '@hono/valibot-validator'
-      - '@hono/zod-validator'
-      - '@mastra/observability'
-      - '@sinclair/typebox'
-      - '@valibot/to-json-schema'
-      - ai
-      - arktype
-      - effect
+      - '@hono/standard-validator'
+      - '@standard-community/standard-json'
+      - '@standard-community/standard-openapi'
+      - '@types/json-schema'
       - openapi-types
       - supports-color
-      - valibot
-      - zod-openapi
-
-  '@mastra/client-js@1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12)':
-    dependencies:
-      '@ai-sdk/ui-utils': 1.2.11(zod@4.1.12)
-      '@lukeed/uuid': 2.0.1
-      '@mastra/core': 1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12)
-      json-schema: 0.4.0
-      zod: 4.1.12
-      zod-to-json-schema: 3.24.6(zod@4.1.12)
-    transitivePeerDependencies:
-      - '@hono/arktype-validator'
-      - '@hono/effect-validator'
-      - '@hono/typebox-validator'
-      - '@hono/valibot-validator'
-      - '@hono/zod-validator'
-      - '@mastra/observability'
-      - '@sinclair/typebox'
-      - '@valibot/to-json-schema'
-      - ai
-      - arktype
-      - effect
-      - openapi-types
-      - supports-color
-      - valibot
-      - zod-openapi
 
   '@mastra/core@1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.1.12))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@4.1.12)':
     dependencies:
@@ -13728,86 +13444,6 @@ snapshots:
       - openapi-types
       - supports-color
 
-  '@mastra/core@1.0.0-beta.5(ai@5.0.117(zod@3.25.76))(openapi-types@12.1.3)(zod@3.25.76)':
-    dependencies:
-      '@a2a-js/sdk': 0.2.5
-      '@ai-sdk/azure': 2.0.75(zod@3.25.76)
-      '@ai-sdk/provider-utils-v5': '@ai-sdk/provider-utils@3.0.12(zod@3.25.76)'
-      '@ai-sdk/provider-v5': '@ai-sdk/provider@2.0.0'
-      '@ai-sdk/ui-utils-v5': '@ai-sdk/ui-utils@1.2.11(zod@3.25.76)'
-      '@isaacs/ttlcache': 1.4.1
-      '@lukeed/uuid': 2.0.1
-      '@mastra/schema-compat': 1.0.0-beta.1(zod@3.25.76)
-      '@modelcontextprotocol/sdk': 1.20.0
-      '@openrouter/ai-sdk-provider-v5': '@openrouter/ai-sdk-provider@1.2.3(ai@5.0.117(zod@3.25.76))(zod@3.25.76)'
-      '@sindresorhus/slugify': 2.2.1
-      ai-v5: ai@5.0.97(zod@3.25.76)
-      dotenv: 16.6.1
-      hono: 4.10.7
-      hono-openapi: 0.4.8(hono@4.10.7)(openapi-types@12.1.3)(zod@3.25.76)
-      js-tiktoken: 1.0.21
-      json-schema: 0.4.0
-      json-schema-to-zod: 2.6.1
-      p-map: 7.0.3
-      p-retry: 7.1.0
-      radash: 12.1.1
-      zod: 3.25.76
-    transitivePeerDependencies:
-      - '@hono/arktype-validator'
-      - '@hono/effect-validator'
-      - '@hono/typebox-validator'
-      - '@hono/valibot-validator'
-      - '@hono/zod-validator'
-      - '@sinclair/typebox'
-      - '@valibot/to-json-schema'
-      - ai
-      - arktype
-      - effect
-      - openapi-types
-      - supports-color
-      - valibot
-      - zod-openapi
-
-  '@mastra/core@1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12)':
-    dependencies:
-      '@a2a-js/sdk': 0.2.5
-      '@ai-sdk/azure': 2.0.75(zod@4.1.12)
-      '@ai-sdk/provider-utils-v5': '@ai-sdk/provider-utils@3.0.12(zod@4.1.12)'
-      '@ai-sdk/provider-v5': '@ai-sdk/provider@2.0.0'
-      '@ai-sdk/ui-utils-v5': '@ai-sdk/ui-utils@1.2.11(zod@4.1.12)'
-      '@isaacs/ttlcache': 1.4.1
-      '@lukeed/uuid': 2.0.1
-      '@mastra/schema-compat': 1.0.0-beta.1(zod@4.1.12)
-      '@modelcontextprotocol/sdk': 1.20.0
-      '@openrouter/ai-sdk-provider-v5': '@openrouter/ai-sdk-provider@1.2.3(ai@5.0.117(zod@4.1.12))(zod@4.1.12)'
-      '@sindresorhus/slugify': 2.2.1
-      ai-v5: ai@5.0.97(zod@4.1.12)
-      dotenv: 16.6.1
-      hono: 4.10.7
-      hono-openapi: 0.4.8(hono@4.10.7)(openapi-types@12.1.3)(zod@4.1.12)
-      js-tiktoken: 1.0.21
-      json-schema: 0.4.0
-      json-schema-to-zod: 2.6.1
-      p-map: 7.0.3
-      p-retry: 7.1.0
-      radash: 12.1.1
-      zod: 4.1.12
-    transitivePeerDependencies:
-      - '@hono/arktype-validator'
-      - '@hono/effect-validator'
-      - '@hono/typebox-validator'
-      - '@hono/valibot-validator'
-      - '@hono/zod-validator'
-      - '@sinclair/typebox'
-      - '@valibot/to-json-schema'
-      - ai
-      - arktype
-      - effect
-      - openapi-types
-      - supports-color
-      - valibot
-      - zod-openapi
-
   '@mastra/deployer@1.0.0-beta.19(@mastra/core@1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.1.12))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@4.1.12))(typescript@5.9.3)(zod@4.1.12)':
     dependencies:
       '@babel/core': 7.28.5
@@ -13840,37 +13476,6 @@ snapshots:
       - supports-color
       - typescript
 
-  '@mastra/deployer@1.0.0-beta.5(@mastra/core@1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12))(typescript@5.9.3)(zod@4.1.12)':
-    dependencies:
-      '@babel/core': 7.28.5
-      '@babel/preset-typescript': 7.27.1(@babel/core@7.28.5)
-      '@mastra/core': 1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12)
-      '@mastra/server': 1.0.0-beta.5(@mastra/core@1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12))(zod@4.1.12)
-      '@optimize-lodash/rollup-plugin': 5.0.2(rollup@4.50.2)
-      '@rollup/plugin-alias': 6.0.0(rollup@4.50.2)
-      '@rollup/plugin-commonjs': 29.0.0(rollup@4.50.2)
-      '@rollup/plugin-esm-shim': 0.1.8(rollup@4.50.2)
-      '@rollup/plugin-json': 6.1.0(rollup@4.50.2)
-      '@rollup/plugin-node-resolve': 16.0.3(rollup@4.50.2)
-      '@rollup/plugin-virtual': 3.0.2(rollup@4.50.2)
-      '@sindresorhus/slugify': 2.2.1
-      empathic: 2.0.0
-      esbuild: 0.25.10
-      find-workspaces: 0.3.1
-      fs-extra: 11.3.2
-      hono: 4.10.7
-      local-pkg: 1.1.2
-      resolve-from: 5.0.0
-      resolve.exports: 2.0.3
-      rollup: 4.50.2
-      rollup-plugin-esbuild: 6.2.1(esbuild@0.25.10)(rollup@4.50.2)
-      tinyglobby: 0.2.15
-      typescript-paths: 1.5.1(typescript@5.9.3)
-      zod: 4.1.12
-    transitivePeerDependencies:
-      - supports-color
-      - typescript
-
   '@mastra/dynamodb@1.0.0-beta.8(@mastra/core@1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.1.12))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@4.1.12))':
     dependencies:
       '@aws-sdk/client-dynamodb': 3.910.0
@@ -13888,29 +13493,9 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@mastra/libsql@1.0.0-beta.2(@mastra/core@1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12))':
-    dependencies:
-      '@libsql/client': 0.15.15
-      '@mastra/core': 1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12)
-    transitivePeerDependencies:
-      - bufferutil
-      - utf-8-validate
-
-  '@mastra/loggers@1.0.0-beta.1(@mastra/core@1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12))':
-    dependencies:
-      '@mastra/core': 1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12)
-      pino: 10.1.0
-      pino-pretty: 13.1.2
-
   '@mastra/loggers@1.0.0-beta.3(@mastra/core@1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.1.12))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@4.1.12))':
     dependencies:
       '@mastra/core': 1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.1.12))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@4.1.12)
-      pino: 10.1.0
-      pino-pretty: 13.1.2
-
-  '@mastra/loggers@1.0.0-beta.3(@mastra/core@1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12))':
-    dependencies:
-      '@mastra/core': 1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12)
       pino: 10.1.0
       pino-pretty: 13.1.2
 
@@ -13925,35 +13510,13 @@ snapshots:
       xxhash-wasm: 1.1.0
       zod: 4.1.12
 
-  '@mastra/memory@1.0.0-beta.2(@mastra/core@1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12))(react@19.2.1)(zod@4.1.12)':
+  '@mastra/schema-compat@1.0.0-beta.5(zod@3.25.76)':
     dependencies:
-      '@mastra/core': 1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12)
-      '@mastra/schema-compat': 1.0.0-beta.1(zod@4.1.12)
-      ai: 4.3.19(react@19.2.1)(zod@4.1.12)
-      ai-v5: ai@5.0.60(zod@4.1.12)
-      async-mutex: 0.5.0
-      js-tiktoken: 1.0.21
-      json-schema: 0.4.0
-      xxhash-wasm: 1.1.0
-      zod: 4.1.12
-    transitivePeerDependencies:
-      - react
-
-  '@mastra/schema-compat@1.0.0-beta.1(zod@3.25.76)':
-    dependencies:
-      json-schema: 0.4.0
+      json-schema-to-zod: 2.7.0
       zod: 3.25.76
       zod-from-json-schema: 0.5.0
       zod-from-json-schema-v3: zod-from-json-schema@0.0.5
       zod-to-json-schema: 3.24.6(zod@3.25.76)
-
-  '@mastra/schema-compat@1.0.0-beta.1(zod@4.1.12)':
-    dependencies:
-      json-schema: 0.4.0
-      zod: 4.1.12
-      zod-from-json-schema: 0.5.0
-      zod-from-json-schema-v3: zod-from-json-schema@0.0.5
-      zod-to-json-schema: 3.24.6(zod@4.1.12)
 
   '@mastra/schema-compat@1.0.0-beta.5(zod@4.1.12)':
     dependencies:
@@ -13966,12 +13529,6 @@ snapshots:
   '@mastra/server@1.0.0-beta.19(@mastra/core@1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.1.12))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@4.1.12))(zod@4.1.12)':
     dependencies:
       '@mastra/core': 1.0.0-beta.19(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.1.12))(@types/json-schema@7.0.15)(openapi-types@12.1.3)(zod@4.1.12)
-      hono: 4.10.7
-      zod: 4.1.12
-
-  '@mastra/server@1.0.0-beta.5(@mastra/core@1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12))(zod@4.1.12)':
-    dependencies:
-      '@mastra/core': 1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12)
       hono: 4.10.7
       zod: 4.1.12
 
@@ -14110,22 +13667,6 @@ snapshots:
 
   '@nolyfill/is-core-module@1.0.39': {}
 
-  '@openrouter/ai-sdk-provider@1.2.3(ai@5.0.117(zod@3.25.76))(zod@3.25.76)':
-    dependencies:
-      '@openrouter/sdk': 0.1.27
-      ai: 5.0.117(zod@3.25.76)
-      zod: 3.25.76
-
-  '@openrouter/ai-sdk-provider@1.2.3(ai@5.0.117(zod@4.1.12))(zod@4.1.12)':
-    dependencies:
-      '@openrouter/sdk': 0.1.27
-      ai: 5.0.117(zod@4.1.12)
-      zod: 4.1.12
-
-  '@openrouter/sdk@0.1.27':
-    dependencies:
-      zod: 4.1.12
-
   '@opentelemetry/api-logs@0.203.0':
     dependencies:
       '@opentelemetry/api': 1.9.0
@@ -14248,10 +13789,6 @@ snapshots:
       playwright: 1.56.0
 
   '@popperjs/core@2.11.8': {}
-
-  '@posthog/core@1.5.2':
-    dependencies:
-      cross-spawn: 7.0.6
 
   '@posthog/core@1.7.1':
     dependencies:
@@ -15228,6 +14765,15 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
+  '@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76)':
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+      '@types/json-schema': 7.0.15
+      quansync: 0.2.11
+    optionalDependencies:
+      zod: 3.25.76
+      zod-to-json-schema: 3.24.6(zod@3.25.76)
+
   '@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12)':
     dependencies:
       '@standard-schema/spec': 1.1.0
@@ -15236,6 +14782,14 @@ snapshots:
     optionalDependencies:
       zod: 4.1.12
       zod-to-json-schema: 3.24.6(zod@4.1.12)
+
+  '@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@3.25.76)':
+    dependencies:
+      '@standard-community/standard-json': 0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76)
+      '@standard-schema/spec': 1.1.0
+      openapi-types: 12.1.3
+    optionalDependencies:
+      zod: 3.25.76
 
   '@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.1.12)':
     dependencies:
@@ -16123,18 +15677,6 @@ snapshots:
     optionalDependencies:
       react: 19.2.1
 
-  ai@4.3.19(react@19.2.1)(zod@4.1.12):
-    dependencies:
-      '@ai-sdk/provider': 1.1.3
-      '@ai-sdk/provider-utils': 2.2.8(zod@4.1.12)
-      '@ai-sdk/react': 1.2.12(react@19.2.1)(zod@4.1.12)
-      '@ai-sdk/ui-utils': 1.2.11(zod@4.1.12)
-      '@opentelemetry/api': 1.9.0
-      jsondiffpatch: 0.6.0
-      zod: 4.1.12
-    optionalDependencies:
-      react: 19.2.1
-
   ai@5.0.117(zod@3.25.76):
     dependencies:
       '@ai-sdk/gateway': 2.0.24(zod@3.25.76)
@@ -16142,38 +15684,6 @@ snapshots:
       '@ai-sdk/provider-utils': 3.0.20(zod@3.25.76)
       '@opentelemetry/api': 1.9.0
       zod: 3.25.76
-
-  ai@5.0.117(zod@4.1.12):
-    dependencies:
-      '@ai-sdk/gateway': 2.0.24(zod@4.1.12)
-      '@ai-sdk/provider': 2.0.1
-      '@ai-sdk/provider-utils': 3.0.20(zod@4.1.12)
-      '@opentelemetry/api': 1.9.0
-      zod: 4.1.12
-
-  ai@5.0.60(zod@4.1.12):
-    dependencies:
-      '@ai-sdk/gateway': 1.0.33(zod@4.1.12)
-      '@ai-sdk/provider': 2.0.0
-      '@ai-sdk/provider-utils': 3.0.10(zod@4.1.12)
-      '@opentelemetry/api': 1.9.0
-      zod: 4.1.12
-
-  ai@5.0.97(zod@3.25.76):
-    dependencies:
-      '@ai-sdk/gateway': 2.0.12(zod@3.25.76)
-      '@ai-sdk/provider': 2.0.0
-      '@ai-sdk/provider-utils': 3.0.17(zod@3.25.76)
-      '@opentelemetry/api': 1.9.0
-      zod: 3.25.76
-
-  ai@5.0.97(zod@4.1.12):
-    dependencies:
-      '@ai-sdk/gateway': 2.0.12(zod@4.1.12)
-      '@ai-sdk/provider': 2.0.0
-      '@ai-sdk/provider-utils': 3.0.17(zod@4.1.12)
-      '@opentelemetry/api': 1.9.0
-      zod: 4.1.12
 
   ajv@6.12.6:
     dependencies:
@@ -16644,8 +16154,6 @@ snapshots:
       wrap-ansi: 7.0.0
 
   clone@1.0.4: {}
-
-  clone@2.1.2: {}
 
   clsx@2.1.1: {}
 
@@ -17372,7 +16880,7 @@ snapshots:
       '@next/eslint-plugin-next': 16.0.7
       eslint: 9.37.0(jiti@2.6.1)
       eslint-import-resolver-node: 0.3.9
-      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.48.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(eslint@9.37.0(jiti@2.6.1)))(eslint@9.37.0(jiti@2.6.1))
+      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@9.37.0(jiti@2.6.1))
       eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.48.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(eslint-import-resolver-typescript@3.10.1)(eslint@9.37.0(jiti@2.6.1))
       eslint-plugin-jsx-a11y: 6.10.2(eslint@9.37.0(jiti@2.6.1))
       eslint-plugin-react: 7.37.5(eslint@9.37.0(jiti@2.6.1))
@@ -17395,7 +16903,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.48.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(eslint@9.37.0(jiti@2.6.1)))(eslint@9.37.0(jiti@2.6.1)):
+  eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0)(eslint@9.37.0(jiti@2.6.1)):
     dependencies:
       '@nolyfill/is-core-module': 1.0.39
       debug: 4.4.3
@@ -17410,14 +16918,14 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-module-utils@2.12.1(@typescript-eslint/parser@8.48.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.48.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(eslint@9.37.0(jiti@2.6.1)))(eslint@9.37.0(jiti@2.6.1)))(eslint@9.37.0(jiti@2.6.1)):
+  eslint-module-utils@2.12.1(@typescript-eslint/parser@8.48.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.10.1)(eslint@9.37.0(jiti@2.6.1)):
     dependencies:
       debug: 3.2.7
     optionalDependencies:
       '@typescript-eslint/parser': 8.48.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3)
       eslint: 9.37.0(jiti@2.6.1)
       eslint-import-resolver-node: 0.3.9
-      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.48.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(eslint@9.37.0(jiti@2.6.1)))(eslint@9.37.0(jiti@2.6.1))
+      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@9.37.0(jiti@2.6.1))
     transitivePeerDependencies:
       - supports-color
 
@@ -17432,7 +16940,7 @@ snapshots:
       doctrine: 2.1.0
       eslint: 9.37.0(jiti@2.6.1)
       eslint-import-resolver-node: 0.3.9
-      eslint-module-utils: 2.12.1(@typescript-eslint/parser@8.48.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.48.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(eslint@9.37.0(jiti@2.6.1)))(eslint@9.37.0(jiti@2.6.1)))(eslint@9.37.0(jiti@2.6.1))
+      eslint-module-utils: 2.12.1(@typescript-eslint/parser@8.48.1(eslint@9.37.0(jiti@2.6.1))(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.10.1)(eslint@9.37.0(jiti@2.6.1))
       hasown: 2.0.2
       is-core-module: 2.16.1
       is-glob: 4.0.3
@@ -17645,21 +17153,6 @@ snapshots:
       onetime: 6.0.0
       signal-exit: 3.0.7
       strip-final-newline: 3.0.0
-
-  execa@9.6.0:
-    dependencies:
-      '@sindresorhus/merge-streams': 4.0.0
-      cross-spawn: 7.0.6
-      figures: 6.1.0
-      get-stream: 9.0.1
-      human-signals: 8.0.1
-      is-plain-obj: 4.1.0
-      is-stream: 4.0.1
-      npm-run-path: 6.0.0
-      pretty-ms: 9.3.0
-      signal-exit: 4.1.0
-      strip-final-newline: 4.0.0
-      yoctocolors: 2.1.2
 
   execa@9.6.1:
     dependencies:
@@ -18357,21 +17850,14 @@ snapshots:
 
   highlightjs-vue@1.0.0: {}
 
-  hono-openapi@0.4.8(hono@4.10.7)(openapi-types@12.1.3)(zod@3.25.76):
+  hono-openapi@1.1.2(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@3.25.76))(@types/json-schema@7.0.15)(hono@4.10.7)(openapi-types@12.1.3):
     dependencies:
-      json-schema-walker: 2.0.0
+      '@standard-community/standard-json': 0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76)
+      '@standard-community/standard-openapi': 0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@3.25.76)
+      '@types/json-schema': 7.0.15
       openapi-types: 12.1.3
     optionalDependencies:
       hono: 4.10.7
-      zod: 3.25.76
-
-  hono-openapi@0.4.8(hono@4.10.7)(openapi-types@12.1.3)(zod@4.1.12):
-    dependencies:
-      json-schema-walker: 2.0.0
-      openapi-types: 12.1.3
-    optionalDependencies:
-      hono: 4.10.7
-      zod: 4.1.12
 
   hono-openapi@1.1.2(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod-to-json-schema@3.24.6(zod@4.1.12))(zod@4.1.12))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(zod@4.1.12))(@types/json-schema@7.0.15)(hono@4.10.7)(openapi-types@12.1.3):
     dependencies:
@@ -19091,18 +18577,11 @@ snapshots:
 
   json-parse-even-better-errors@2.3.1: {}
 
-  json-schema-to-zod@2.6.1: {}
-
   json-schema-to-zod@2.7.0: {}
 
   json-schema-traverse@0.4.1: {}
 
   json-schema-traverse@1.0.0: {}
-
-  json-schema-walker@2.0.0:
-    dependencies:
-      '@apidevtools/json-schema-ref-parser': 11.9.3
-      clone: 2.1.2
 
   json-schema@0.4.0: {}
 
@@ -19536,29 +19015,6 @@ snapshots:
       prettier: 3.7.4
       serve: 14.2.5
       serve-handler: 6.1.6
-      shell-quote: 1.8.3
-      strip-json-comments: 5.0.3
-      yocto-spinner: 1.0.0
-      zod: 4.1.12
-    transitivePeerDependencies:
-      - supports-color
-      - typescript
-
-  mastra@1.0.0-beta.4(@mastra/core@1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12))(typescript@5.9.3)(zod@4.1.12):
-    dependencies:
-      '@clack/prompts': 0.11.0
-      '@expo/devcert': 1.2.0
-      '@mastra/core': 1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12)
-      '@mastra/deployer': 1.0.0-beta.5(@mastra/core@1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12))(typescript@5.9.3)(zod@4.1.12)
-      '@mastra/loggers': 1.0.0-beta.3(@mastra/core@1.0.0-beta.5(ai@5.0.117(zod@4.1.12))(openapi-types@12.1.3)(zod@4.1.12))
-      commander: 14.0.2
-      dotenv: 17.2.3
-      execa: 9.6.0
-      fs-extra: 11.3.2
-      get-port: 7.1.0
-      picocolors: 1.1.1
-      posthog-node: 5.11.2
-      prettier: 3.6.2
       shell-quote: 1.8.3
       strip-json-comments: 5.0.3
       yocto-spinner: 1.0.0
@@ -20900,10 +20356,6 @@ snapshots:
       xtend: 4.0.2
     optional: true
 
-  posthog-node@5.11.2:
-    dependencies:
-      '@posthog/core': 1.5.2
-
   posthog-node@5.17.2:
     dependencies:
       '@posthog/core': 1.7.1
@@ -22169,27 +21621,6 @@ snapshots:
   ts-error@1.0.6: {}
 
   ts-interface-checker@0.1.13: {}
-
-  ts-jest@29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(esbuild@0.25.10)(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.21))(typescript@5.9.3):
-    dependencies:
-      bs-logger: 0.2.6
-      fast-json-stable-stringify: 2.1.0
-      handlebars: 4.7.8
-      jest: 29.7.0(@types/node@20.19.21)
-      json5: 2.2.3
-      lodash.memoize: 4.1.2
-      make-error: 1.3.6
-      semver: 7.7.3
-      type-fest: 4.41.0
-      typescript: 5.9.3
-      yargs-parser: 21.1.1
-    optionalDependencies:
-      '@babel/core': 7.28.5
-      '@jest/transform': 29.7.0
-      '@jest/types': 29.6.3
-      babel-jest: 29.7.0(@babel/core@7.28.5)
-      esbuild: 0.25.10
-      jest-util: 29.7.0
 
   ts-jest@29.4.5(@babel/core@7.28.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.28.5))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3):
     dependencies:
