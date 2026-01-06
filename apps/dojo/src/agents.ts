@@ -88,6 +88,7 @@ export const agentsIntegrations = {
     });
 
     return MastraAgent.getRemoteAgents({
+      // @ts-expect-error - Type error due to multiple zod versions in monorepo
       mastraClient,
       resourceId: "mastra-agent-remote"
     }) as Promise<Record<"agentic_chat" | "backend_tool_rendering" | "human_in_the_loop" | "tool_based_generative_ui", AbstractAgent>>;
@@ -95,6 +96,7 @@ export const agentsIntegrations = {
 
   "mastra-agent-local": async () => {
     return MastraAgent.getLocalAgents({
+      // @ts-expect-error - Type error due to multiple zod versions in monorepo
       mastra,
       resourceId: "mastra-agent-local"
     }) as Record<"agentic_chat" | "backend_tool_rendering" | "human_in_the_loop" | "shared_state" | "tool_based_generative_ui", AbstractAgent>;

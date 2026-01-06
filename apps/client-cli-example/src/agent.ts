@@ -7,6 +7,7 @@ import { browserTool } from "./tools/browser.tool";
 
 export const agent = new MastraAgent({
   resourceId: "cliExample",
+  // @ts-expect-error - Type error due to multiple zod versions in monorepo
   agent: new Agent({
     id: "ag-ui-agent",
     name: "AG-UI Agent",
