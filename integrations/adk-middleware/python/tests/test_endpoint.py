@@ -435,7 +435,20 @@ class TestCreateADKApp:
         app = create_adk_app(mock_agent, path="/test")
 
         # Should call add_adk_fastapi_endpoint with correct parameters
-        mock_add_endpoint.assert_called_once_with(app, mock_agent, "/test")
+        mock_add_endpoint.assert_called_once_with(
+            app, mock_agent, "/test", extract_headers=None
+        )
+
+    @patch('ag_ui_adk.endpoint.add_adk_fastapi_endpoint')
+    def test_create_app_passes_extract_headers(self, mock_add_endpoint, mock_agent):
+        """Test that create_adk_app passes extract_headers to add_adk_fastapi_endpoint."""
+        headers = ["x-user-id", "x-tenant-id"]
+        app = create_adk_app(mock_agent, path="/test", extract_headers=headers)
+
+        # Should call add_adk_fastapi_endpoint with extract_headers
+        mock_add_endpoint.assert_called_once_with(
+            app, mock_agent, "/test", extract_headers=headers
+        )
 
     def test_create_app_default_path(self, mock_agent):
         """Test creating app with default path."""
@@ -608,3 +621,480 @@ class TestEndpointIntegration:
 
         # Should have encoded 10 events
         assert mock_encoder.encode.call_count == 10
+
+
+class TestExtractHeaders:
+    """Tests for extract_headers functionality."""
+
+    @pytest.fixture
+    def mock_agent(self):
+        """Create a mock ADKAgent."""
+        return MagicMock(spec=ADKAgent)
+
+    @pytest.fixture
+    def sample_input(self):
+        """Create sample RunAgentInput."""
+        return RunAgentInput(
+            thread_id="test_thread",
+            run_id="test_run",
+            messages=[UserMessage(id="1", role="user", content="Hello")],
+            tools=[],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+    @patch('ag_ui_adk.endpoint.EventEncoder')
+    def test_extract_headers_into_nested_state(self, mock_encoder_class, mock_agent, sample_input):
+        """Test that headers are extracted into state.headers."""
+        mock_encoder = MagicMock()
+        mock_encoder.encode.return_value = "data: event\n\n"
+        mock_encoder.get_content_type.return_value = "text/event-stream"
+        mock_encoder_class.return_value = mock_encoder
+
+        captured_input = []
+
+        async def mock_agent_run(input_data):
+            captured_input.append(input_data)
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id="test_thread",
+                run_id="test_run"
+            )
+
+        mock_agent.run = mock_agent_run
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, "/test",
+            extract_headers=["x-user-id", "x-tenant-id"]
+        )
+
+        client = TestClient(app)
+        response = client.post(
+            "/test",
+            json=sample_input.model_dump(),
+            headers={"x-user-id": "user123", "x-tenant-id": "tenant456"}
+        )
+
+        assert response.status_code == 200
+        assert len(captured_input) == 1
+        # Headers should be in nested state.headers
+        assert captured_input[0].state["headers"]["user_id"] == "user123"
+        assert captured_input[0].state["headers"]["tenant_id"] == "tenant456"
+
+    @patch('ag_ui_adk.endpoint.EventEncoder')
+    def test_extract_headers_strips_x_prefix(self, mock_encoder_class, mock_agent, sample_input):
+        """Test that x- prefix is stripped from header names."""
+        mock_encoder = MagicMock()
+        mock_encoder.encode.return_value = "data: event\n\n"
+        mock_encoder.get_content_type.return_value = "text/event-stream"
+        mock_encoder_class.return_value = mock_encoder
+
+        captured_input = []
+
+        async def mock_agent_run(input_data):
+            captured_input.append(input_data)
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id="test_thread",
+                run_id="test_run"
+            )
+
+        mock_agent.run = mock_agent_run
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, "/test",
+            extract_headers=["x-user-id"]
+        )
+
+        client = TestClient(app)
+        response = client.post(
+            "/test",
+            json=sample_input.model_dump(),
+            headers={"x-user-id": "user123"}
+        )
+
+        assert response.status_code == 200
+        assert len(captured_input) == 1
+        # x- prefix should be stripped: x-user-id -> user_id
+        assert "user_id" in captured_input[0].state["headers"]
+        assert "x-user-id" not in captured_input[0].state["headers"]
+
+    @patch('ag_ui_adk.endpoint.EventEncoder')
+    def test_extract_headers_converts_hyphens_to_underscores(self, mock_encoder_class, mock_agent, sample_input):
+        """Test that hyphens are converted to underscores in key names."""
+        mock_encoder = MagicMock()
+        mock_encoder.encode.return_value = "data: event\n\n"
+        mock_encoder.get_content_type.return_value = "text/event-stream"
+        mock_encoder_class.return_value = mock_encoder
+
+        captured_input = []
+
+        async def mock_agent_run(input_data):
+            captured_input.append(input_data)
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id="test_thread",
+                run_id="test_run"
+            )
+
+        mock_agent.run = mock_agent_run
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, "/test",
+            extract_headers=["x-some-long-header-name"]
+        )
+
+        client = TestClient(app)
+        response = client.post(
+            "/test",
+            json=sample_input.model_dump(),
+            headers={"x-some-long-header-name": "value123"}
+        )
+
+        assert response.status_code == 200
+        assert len(captured_input) == 1
+        # Hyphens should be converted: x-some-long-header-name -> some_long_header_name
+        assert captured_input[0].state["headers"]["some_long_header_name"] == "value123"
+
+    @patch('ag_ui_adk.endpoint.EventEncoder')
+    def test_extract_headers_missing_headers_skipped(self, mock_encoder_class, mock_agent, sample_input):
+        """Test that missing headers are silently skipped."""
+        mock_encoder = MagicMock()
+        mock_encoder.encode.return_value = "data: event\n\n"
+        mock_encoder.get_content_type.return_value = "text/event-stream"
+        mock_encoder_class.return_value = mock_encoder
+
+        captured_input = []
+
+        async def mock_agent_run(input_data):
+            captured_input.append(input_data)
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id="test_thread",
+                run_id="test_run"
+            )
+
+        mock_agent.run = mock_agent_run
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, "/test",
+            extract_headers=["x-user-id", "x-tenant-id"]
+        )
+
+        client = TestClient(app)
+        # Only send x-user-id, not x-tenant-id
+        response = client.post(
+            "/test",
+            json=sample_input.model_dump(),
+            headers={"x-user-id": "user123"}
+        )
+
+        assert response.status_code == 200
+        assert len(captured_input) == 1
+        assert captured_input[0].state["headers"]["user_id"] == "user123"
+        assert "tenant_id" not in captured_input[0].state["headers"]
+
+    @patch('ag_ui_adk.endpoint.EventEncoder')
+    def test_extract_headers_client_state_preserved(self, mock_encoder_class, mock_agent):
+        """Test that client-provided top-level state is preserved."""
+        mock_encoder = MagicMock()
+        mock_encoder.encode.return_value = "data: event\n\n"
+        mock_encoder.get_content_type.return_value = "text/event-stream"
+        mock_encoder_class.return_value = mock_encoder
+
+        captured_input = []
+
+        async def mock_agent_run(input_data):
+            captured_input.append(input_data)
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id="test_thread",
+                run_id="test_run"
+            )
+
+        mock_agent.run = mock_agent_run
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, "/test",
+            extract_headers=["x-user-id"]
+        )
+
+        # Input with existing state
+        input_with_state = RunAgentInput(
+            thread_id="test_thread",
+            run_id="test_run",
+            messages=[UserMessage(id="1", role="user", content="Hello")],
+            tools=[],
+            context=[],
+            state={"existing_key": "existing_value", "another_key": "another_value"},
+            forwarded_props={}
+        )
+
+        client = TestClient(app)
+        response = client.post(
+            "/test",
+            json=input_with_state.model_dump(),
+            headers={"x-user-id": "user123"}
+        )
+
+        assert response.status_code == 200
+        assert len(captured_input) == 1
+        # Header value should be in nested headers
+        assert captured_input[0].state["headers"]["user_id"] == "user123"
+        # Client state should be preserved at top level
+        assert captured_input[0].state["existing_key"] == "existing_value"
+        assert captured_input[0].state["another_key"] == "another_value"
+
+    @patch('ag_ui_adk.endpoint.EventEncoder')
+    def test_extract_headers_client_headers_take_precedence(self, mock_encoder_class, mock_agent):
+        """Test that client-provided state.headers takes precedence over extracted headers."""
+        mock_encoder = MagicMock()
+        mock_encoder.encode.return_value = "data: event\n\n"
+        mock_encoder.get_content_type.return_value = "text/event-stream"
+        mock_encoder_class.return_value = mock_encoder
+
+        captured_input = []
+
+        async def mock_agent_run(input_data):
+            captured_input.append(input_data)
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id="test_thread",
+                run_id="test_run"
+            )
+
+        mock_agent.run = mock_agent_run
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, "/test",
+            extract_headers=["x-user-id"]
+        )
+
+        # Input with state.headers that conflicts with HTTP header
+        input_with_conflicting_headers = RunAgentInput(
+            thread_id="test_thread",
+            run_id="test_run",
+            messages=[UserMessage(id="1", role="user", content="Hello")],
+            tools=[],
+            context=[],
+            state={"headers": {"user_id": "client_user"}},
+            forwarded_props={}
+        )
+
+        client = TestClient(app)
+        response = client.post(
+            "/test",
+            json=input_with_conflicting_headers.model_dump(),
+            headers={"x-user-id": "header_user"}
+        )
+
+        assert response.status_code == 200
+        assert len(captured_input) == 1
+        # Client state.headers should take precedence
+        assert captured_input[0].state["headers"]["user_id"] == "client_user"
+
+    @patch('ag_ui_adk.endpoint.EventEncoder')
+    def test_no_extract_headers_backward_compatible(self, mock_encoder_class, mock_agent, sample_input):
+        """Test that omitting extract_headers works as before."""
+        mock_encoder = MagicMock()
+        mock_encoder.encode.return_value = "data: event\n\n"
+        mock_encoder.get_content_type.return_value = "text/event-stream"
+        mock_encoder_class.return_value = mock_encoder
+
+        captured_input = []
+
+        async def mock_agent_run(input_data):
+            captured_input.append(input_data)
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id="test_thread",
+                run_id="test_run"
+            )
+
+        mock_agent.run = mock_agent_run
+
+        app = FastAPI()
+        # No extract_headers parameter
+        add_adk_fastapi_endpoint(app, mock_agent, "/test")
+
+        client = TestClient(app)
+        response = client.post(
+            "/test",
+            json=sample_input.model_dump(),
+            headers={"x-user-id": "user123"}
+        )
+
+        assert response.status_code == 200
+        assert len(captured_input) == 1
+        # State should remain empty (headers not extracted)
+        assert captured_input[0].state == {}
+
+    @patch('ag_ui_adk.endpoint.EventEncoder')
+    def test_extract_headers_with_non_dict_state(self, mock_encoder_class, mock_agent):
+        """Test header extraction when input.state is not a dict."""
+        mock_encoder = MagicMock()
+        mock_encoder.encode.return_value = "data: event\n\n"
+        mock_encoder.get_content_type.return_value = "text/event-stream"
+        mock_encoder_class.return_value = mock_encoder
+
+        captured_input = []
+
+        async def mock_agent_run(input_data):
+            captured_input.append(input_data)
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id="test_thread",
+                run_id="test_run"
+            )
+
+        mock_agent.run = mock_agent_run
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, "/test",
+            extract_headers=["x-user-id"]
+        )
+
+        # Input with None state
+        input_with_none_state = RunAgentInput(
+            thread_id="test_thread",
+            run_id="test_run",
+            messages=[UserMessage(id="1", role="user", content="Hello")],
+            tools=[],
+            context=[],
+            state=None,
+            forwarded_props={}
+        )
+
+        client = TestClient(app)
+        response = client.post(
+            "/test",
+            json=input_with_none_state.model_dump(),
+            headers={"x-user-id": "user123"}
+        )
+
+        assert response.status_code == 200
+        assert len(captured_input) == 1
+        # Should create new state dict with headers
+        assert captured_input[0].state["headers"]["user_id"] == "user123"
+
+    @patch('ag_ui_adk.endpoint.EventEncoder')
+    def test_extract_headers_case_insensitive(self, mock_encoder_class, mock_agent, sample_input):
+        """Test that header names are case-insensitive (HTTP standard)."""
+        mock_encoder = MagicMock()
+        mock_encoder.encode.return_value = "data: event\n\n"
+        mock_encoder.get_content_type.return_value = "text/event-stream"
+        mock_encoder_class.return_value = mock_encoder
+
+        captured_input = []
+
+        async def mock_agent_run(input_data):
+            captured_input.append(input_data)
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id="test_thread",
+                run_id="test_run"
+            )
+
+        mock_agent.run = mock_agent_run
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, "/test",
+            extract_headers=["x-user-id"]
+        )
+
+        client = TestClient(app)
+        # Client sends mixed-case header (HTTP headers are case-insensitive)
+        response = client.post(
+            "/test",
+            json=sample_input.model_dump(),
+            headers={"X-User-Id": "user123"}
+        )
+
+        assert response.status_code == 200
+        assert len(captured_input) == 1
+        # Should extract header regardless of case
+        assert captured_input[0].state["headers"]["user_id"] == "user123"
+
+    @patch('ag_ui_adk.endpoint.EventEncoder')
+    def test_create_adk_app_with_extract_headers(self, mock_encoder_class, mock_agent, sample_input):
+        """Test create_adk_app with extract_headers parameter."""
+        mock_encoder = MagicMock()
+        mock_encoder.encode.return_value = "data: event\n\n"
+        mock_encoder.get_content_type.return_value = "text/event-stream"
+        mock_encoder_class.return_value = mock_encoder
+
+        captured_input = []
+
+        async def mock_agent_run(input_data):
+            captured_input.append(input_data)
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id="test_thread",
+                run_id="test_run"
+            )
+
+        mock_agent.run = mock_agent_run
+
+        app = create_adk_app(
+            mock_agent,
+            extract_headers=["x-user-id"]
+        )
+
+        client = TestClient(app)
+        response = client.post(
+            "/",
+            json=sample_input.model_dump(),
+            headers={"x-user-id": "user123"}
+        )
+
+        assert response.status_code == 200
+        assert len(captured_input) == 1
+        assert captured_input[0].state["headers"]["user_id"] == "user123"
+
+    @patch('ag_ui_adk.endpoint.EventEncoder')
+    def test_extract_headers_non_x_prefix_header(self, mock_encoder_class, mock_agent, sample_input):
+        """Test extracting headers that don't have x- prefix."""
+        mock_encoder = MagicMock()
+        mock_encoder.encode.return_value = "data: event\n\n"
+        mock_encoder.get_content_type.return_value = "text/event-stream"
+        mock_encoder_class.return_value = mock_encoder
+
+        captured_input = []
+
+        async def mock_agent_run(input_data):
+            captured_input.append(input_data)
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id="test_thread",
+                run_id="test_run"
+            )
+
+        mock_agent.run = mock_agent_run
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, "/test",
+            extract_headers=["authorization", "custom-header"]
+        )
+
+        client = TestClient(app)
+        response = client.post(
+            "/test",
+            json=sample_input.model_dump(),
+            headers={"authorization": "Bearer token123", "custom-header": "custom_value"}
+        )
+
+        assert response.status_code == 200
+        assert len(captured_input) == 1
+        # Non x- headers should just have hyphens converted to underscores
+        assert captured_input[0].state["headers"]["authorization"] == "Bearer token123"
+        assert captured_input[0].state["headers"]["custom_header"] == "custom_value"

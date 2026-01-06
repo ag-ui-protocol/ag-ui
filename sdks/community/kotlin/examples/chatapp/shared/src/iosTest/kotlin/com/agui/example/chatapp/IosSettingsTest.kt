@@ -8,14 +8,14 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class IosSettingsTest {
-    
+
     @Test
     fun testIosSettingsCreation() {
         val settings = getPlatformSettings()
         assertNotNull(settings)
         assertTrue(settings is Settings)
     }
-    
+
     @Test
     fun testIosSettingsPersistence() {
         val settings = getPlatformSettings()

@@ -112,7 +112,8 @@ interface ToolMessage {
 
 ### Activity Messages
 
-Structured progress updates that appear between chat messages:
+Structured UI messages that exist only on the frontend.
+ Used for progress, status, or any custom visual element that shouldn’t be sent to the model: 
 
 ```typescript
 interface ActivityMessage {
@@ -122,11 +123,13 @@ interface ActivityMessage {
   content: Record<string, any> // Structured payload rendered by the frontend
 }
 ```
+Key points
+- Emitted via `ACTIVITY_SNAPSHOT` and `ACTIVITY_DELTA` to support live, updateable UI (checklists, steps, search-in-progress, etc.).
+- **Frontend-only:** never forwarded to the agent, so no filtering and no LLM confusion.
+- **Customizable:** define your own `activityType` and `content` and render a matching UI component.
+- **Streamable:** can be updated over time for long-running operations.
+- Helps persist/restore custom events by turning them into durable message objects.
 
-Activity messages are populated by `ACTIVITY_SNAPSHOT` and `ACTIVITY_DELTA`
-events. The structured `content` object gives frontends everything they need to
-render bespoke status views, such as checklists, workflow progress, or search
-results in flight.
 
 ### Developer Messages
 

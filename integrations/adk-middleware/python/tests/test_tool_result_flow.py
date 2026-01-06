@@ -3,6 +3,7 @@
 
 import pytest
 import json
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from ag_ui.core import (
@@ -755,3 +756,638 @@ class TestToolResultFlow:
             assert len(events) == 2
             assert isinstance(events[0], RunStartedEvent)
             assert isinstance(events[1], RunFinishedEvent)
+
+
+class TestConfirmChangesFiltering:
+    """Test cases for filtering synthetic confirm_changes tool results."""
+
+    @pytest.fixture
+    def mock_adk_agent(self):
+        """Create a mock ADK agent."""
+        from google.adk.agents import LlmAgent
+        return LlmAgent(
+            name="test_agent",
+            model="gemini-2.0-flash",
+            instruction="Test agent for confirm_changes filtering"
+        )
+
+    @pytest.fixture
+    def ag_ui_adk(self, mock_adk_agent):
+        """Create ADK middleware with mocked dependencies."""
+        SessionManager.reset_instance()
+        agent = ADKAgent(
+            adk_agent=mock_adk_agent,
+            user_id="test_user",
+            execution_timeout_seconds=60,
+            tool_timeout_seconds=30
+        )
+        try:
+            yield agent
+        finally:
+            SessionManager.reset_instance()
+
+    @pytest.mark.asyncio
+    async def test_extract_tool_results_filters_confirm_changes(self, ag_ui_adk):
+        """Test that _extract_tool_results filters out confirm_changes tool results."""
+        # Create a message history with a confirm_changes tool call and result
+        input_data = RunAgentInput(
+            thread_id="thread_1",
+            run_id="run_1",
+            messages=[
+                UserMessage(id="1", role="user", content="Create a document"),
+                AssistantMessage(
+                    id="2",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="call_confirm",
+                            function=FunctionCall(name="confirm_changes", arguments="{}")
+                        )
+                    ]
+                ),
+                ToolMessage(id="3", role="tool", content='{"approved": true}', tool_call_id="call_confirm")
+            ],
+            tools=[],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        # Extract tool results - confirm_changes should be filtered out
+        tool_results = await ag_ui_adk._extract_tool_results(input_data, input_data.messages)
+
+        # Should return empty list because confirm_changes is filtered
+        assert len(tool_results) == 0
+
+    @pytest.mark.asyncio
+    async def test_extract_tool_results_keeps_regular_tools(self, ag_ui_adk):
+        """Test that _extract_tool_results keeps regular (non-confirm_changes) tool results."""
+        # Create a message history with a regular tool call and result
+        input_data = RunAgentInput(
+            thread_id="thread_1",
+            run_id="run_1",
+            messages=[
+                UserMessage(id="1", role="user", content="Search for something"),
+                AssistantMessage(
+                    id="2",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="call_search",
+                            function=FunctionCall(name="search_tool", arguments='{"query": "test"}')
+                        )
+                    ]
+                ),
+                ToolMessage(id="3", role="tool", content='{"results": ["item1"]}', tool_call_id="call_search")
+            ],
+            tools=[],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        # Extract tool results - regular tools should be kept
+        tool_results = await ag_ui_adk._extract_tool_results(input_data, input_data.messages)
+
+        # Should return the search_tool result
+        assert len(tool_results) == 1
+        assert tool_results[0]['tool_name'] == "search_tool"
+        assert tool_results[0]['message'].tool_call_id == "call_search"
+
+    @pytest.mark.asyncio
+    async def test_extract_tool_results_mixed_tools(self, ag_ui_adk):
+        """Test that _extract_tool_results filters confirm_changes but keeps other tools."""
+        # Create a message history with both confirm_changes and regular tool results
+        input_data = RunAgentInput(
+            thread_id="thread_1",
+            run_id="run_1",
+            messages=[
+                UserMessage(id="1", role="user", content="Search and confirm"),
+                AssistantMessage(
+                    id="2",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="call_search",
+                            function=FunctionCall(name="search_tool", arguments='{"query": "test"}')
+                        ),
+                        ToolCall(
+                            id="call_confirm",
+                            function=FunctionCall(name="confirm_changes", arguments="{}")
+                        )
+                    ]
+                ),
+                ToolMessage(id="3", role="tool", content='{"results": ["item1"]}', tool_call_id="call_search"),
+                ToolMessage(id="4", role="tool", content='{"approved": true}', tool_call_id="call_confirm")
+            ],
+            tools=[],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        # Extract tool results
+        tool_results = await ag_ui_adk._extract_tool_results(input_data, input_data.messages)
+
+        # Should return only the search_tool result
+        assert len(tool_results) == 1
+        assert tool_results[0]['tool_name'] == "search_tool"
+
+    @pytest.mark.asyncio
+    async def test_handle_tool_result_submission_only_confirm_changes(self, ag_ui_adk):
+        """Test _handle_tool_result_submission with only confirm_changes tool results.
+
+        When all tool results are synthetic (confirm_changes), the method should:
+        - Mark the tool messages as processed
+        - NOT emit an error
+        - Simply return without starting a new execution
+        """
+        input_data = RunAgentInput(
+            thread_id="thread_confirm_only",
+            run_id="run_1",
+            messages=[
+                UserMessage(id="1", role="user", content="Create document"),
+                AssistantMessage(
+                    id="2",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="call_confirm",
+                            function=FunctionCall(name="confirm_changes", arguments="{}")
+                        )
+                    ]
+                ),
+                ToolMessage(id="3", role="tool", content='{"approved": true}', tool_call_id="call_confirm")
+            ],
+            tools=[],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        # Mark user and assistant messages as processed
+        app_name = ag_ui_adk._get_app_name(input_data)
+        ag_ui_adk._session_manager.mark_messages_processed(app_name, input_data.thread_id, ["1", "2"])
+
+        events = []
+        async for event in ag_ui_adk._handle_tool_result_submission(
+            input_data,
+            tool_messages=[input_data.messages[2]],  # Just the tool message
+        ):
+            events.append(event)
+
+        # Should NOT emit any events (no error, no new execution)
+        assert len(events) == 0
+
+        # Confirm_changes tool message should be marked as processed
+        processed_ids = ag_ui_adk._session_manager.get_processed_message_ids(app_name, input_data.thread_id)
+        assert "3" in processed_ids
+
+    @pytest.mark.asyncio
+    async def test_handle_tool_result_submission_confirm_changes_with_trailing_messages(self, ag_ui_adk):
+        """Test _handle_tool_result_submission with confirm_changes and trailing user message.
+
+        When all tool results are synthetic but there's a follow-up user message,
+        it should start a new execution for that user message.
+        """
+        input_data = RunAgentInput(
+            thread_id="thread_confirm_trailing",
+            run_id="run_1",
+            messages=[
+                UserMessage(id="1", role="user", content="Create document"),
+                AssistantMessage(
+                    id="2",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="call_confirm",
+                            function=FunctionCall(name="confirm_changes", arguments="{}")
+                        )
+                    ]
+                ),
+                ToolMessage(id="3", role="tool", content='{"approved": true}', tool_call_id="call_confirm"),
+                UserMessage(id="4", role="user", content="Now add a title")  # Trailing message
+            ],
+            tools=[],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        # Mark initial messages as processed
+        app_name = ag_ui_adk._get_app_name(input_data)
+        ag_ui_adk._session_manager.mark_messages_processed(app_name, input_data.thread_id, ["1", "2"])
+
+        # Mock _start_new_execution to track calls
+        start_calls = []
+
+        async def mock_start_new_execution(input_data, *, tool_results=None, message_batch=None):
+            start_calls.append({"tool_results": tool_results, "message_batch": message_batch})
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=input_data.thread_id,
+                run_id=input_data.run_id
+            )
+            yield RunFinishedEvent(
+                type=EventType.RUN_FINISHED,
+                thread_id=input_data.thread_id,
+                run_id=input_data.run_id
+            )
+
+        with patch.object(ag_ui_adk, '_start_new_execution', side_effect=mock_start_new_execution):
+            events = []
+            async for event in ag_ui_adk._handle_tool_result_submission(
+                input_data,
+                tool_messages=[input_data.messages[2]],  # confirm_changes tool message
+                trailing_messages=[input_data.messages[3]],  # Trailing user message
+            ):
+                events.append(event)
+
+        # Should have started a new execution for the trailing message
+        assert len(events) == 2
+        assert events[0].type == EventType.RUN_STARTED
+        assert events[1].type == EventType.RUN_FINISHED
+
+        # Should have called _start_new_execution with the trailing message, no tool results
+        assert len(start_calls) == 1
+        assert start_calls[0]["tool_results"] is None
+        assert len(start_calls[0]["message_batch"]) == 1
+        assert start_calls[0]["message_batch"][0].id == "4"
+
+
+class TestClientToolResultPersistence:
+    """Test that client-side tool results are persisted to the ADK session database."""
+
+    @pytest.fixture
+    def mock_adk_agent(self):
+        """Create a mock ADK agent."""
+        from google.adk.agents import LlmAgent
+        return LlmAgent(
+            name="test_agent",
+            model="gemini-2.0-flash",
+            instruction="Test agent for persistence testing"
+        )
+
+    @pytest.fixture
+    def ag_ui_adk(self, mock_adk_agent):
+        """Create ADK middleware with mocked dependencies."""
+        SessionManager.reset_instance()
+        agent = ADKAgent(
+            adk_agent=mock_adk_agent,
+            app_name="test_app",
+            user_id="test_user",
+            execution_timeout_seconds=60,
+            tool_timeout_seconds=30
+        )
+        try:
+            yield agent
+        finally:
+            SessionManager.reset_instance()
+
+    @pytest.mark.asyncio
+    async def test_client_tool_result_persisted_to_session_db(self, ag_ui_adk):
+        """Test that client-side tool results are persisted to the ADK session database.
+
+        This is a regression test for GitHub issue #568 where client-side tool call
+        results were not being persisted to the ADK Session DB when they arrived
+        alongside a user message.
+
+        The fix uses append_event() instead of just session.events.append() to ensure
+        the FunctionResponse is properly persisted.
+        """
+        thread_id = "test_thread_persistence"
+        tool_call_id = "client_tool_call_123"
+
+        # Create the input with tool result + user message (the problematic scenario)
+        input_data = RunAgentInput(
+            thread_id=thread_id,
+            run_id="run_1",
+            messages=[
+                UserMessage(id="user_1", role="user", content="Initial request"),
+                AssistantMessage(
+                    id="assistant_1",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id=tool_call_id,
+                            function=FunctionCall(name="render_items", arguments='{"items": ["a", "b"]}')
+                        )
+                    ]
+                ),
+                ToolMessage(
+                    id="tool_result_1",
+                    role="tool",
+                    content='{"status": "success", "rendered": true}',
+                    tool_call_id=tool_call_id
+                ),
+                UserMessage(id="user_2", role="user", content="Thanks, that looks good!")
+            ],
+            tools=[
+                AGUITool(
+                    name="render_items",
+                    description="Render items in UI",
+                    parameters={"type": "object", "properties": {"items": {"type": "array"}}}
+                )
+            ],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        # Mark initial messages as processed (simulating previous run)
+        app_name = ag_ui_adk._get_app_name(input_data)
+        ag_ui_adk._session_manager.mark_messages_processed(app_name, thread_id, ["user_1", "assistant_1"])
+
+        # Add the tool call to pending (simulating HITL scenario)
+        session, backend_session_id = await ag_ui_adk._ensure_session_exists(
+            app_name=app_name,
+            user_id="test_user",
+            thread_id=thread_id,
+            initial_state={}
+        )
+        await ag_ui_adk._add_pending_tool_call_with_context(
+            thread_id, tool_call_id, app_name, "test_user"
+        )
+
+        # We need to simulate the FunctionCall being in the session first
+        # (this is what the ADK would have stored when the tool was originally called)
+        session = await ag_ui_adk._session_manager._session_service.get_session(
+            session_id=backend_session_id,
+            app_name=app_name,
+            user_id="test_user"
+        )
+
+        from google.adk.sessions.session import Event
+        from google.genai import types
+        import time
+
+        # Add the original function call to the session (simulating ADK behavior)
+        function_call_content = types.Content(
+            parts=[
+                types.Part(
+                    function_call=types.FunctionCall(
+                        id=tool_call_id,
+                        name="render_items",
+                        args={"items": ["a", "b"]}
+                    )
+                )
+            ],
+            role="model"
+        )
+        function_call_event = Event(
+            timestamp=time.time(),
+            author="test_agent",
+            content=function_call_content
+        )
+        await ag_ui_adk._session_manager._session_service.append_event(session, function_call_event)
+
+        # Mock the ADK runner to avoid actually calling the LLM
+        async def mock_run_async(**kwargs):
+            # Just yield nothing - we're testing the persistence, not the LLM response
+            if False:
+                yield None
+
+        # Create a mock runner class
+        class MockRunner:
+            def __init__(self, *args, **kwargs):
+                pass
+            async def run_async(self, **kwargs):
+                async def empty_generator():
+                    return
+                    yield  # Make it a generator
+                return empty_generator()
+
+        # Prepare tool results as the code expects
+        tool_results = [
+            {
+                'tool_name': 'render_items',
+                'message': input_data.messages[2]  # ToolMessage
+            }
+        ]
+        message_batch = [input_data.messages[3]]  # The trailing user message
+
+        with patch.object(ag_ui_adk, '_create_runner', return_value=MockRunner()):
+            event_queue = asyncio.Queue()
+
+            # Call _run_adk_in_background directly to test the persistence logic
+            await ag_ui_adk._run_adk_in_background(
+                input=input_data,
+                adk_agent=ag_ui_adk._adk_agent,
+                user_id="test_user",
+                app_name=app_name,
+                event_queue=event_queue,
+                tool_results=tool_results,
+                message_batch=message_batch
+            )
+
+        # Now verify the FunctionResponse was persisted to the session
+        # Use backend_session_id (from _ensure_session_exists earlier) for direct session lookup
+        session = await ag_ui_adk._session_manager._session_service.get_session(
+            session_id=backend_session_id,
+            app_name=app_name,
+            user_id="test_user"
+        )
+
+        assert session is not None, "Session should exist"
+
+        # Find the FunctionResponse event in the session
+        found_function_response = False
+        for event in session.events:
+            if event.content and hasattr(event.content, 'parts'):
+                for part in event.content.parts:
+                    if hasattr(part, 'function_response') and part.function_response:
+                        fr = part.function_response
+                        if hasattr(fr, 'id') and fr.id == tool_call_id:
+                            found_function_response = True
+                            # Verify the response content
+                            assert fr.name == "render_items"
+                            assert fr.response is not None
+                            break
+
+        assert found_function_response, (
+            f"FunctionResponse for tool_call_id={tool_call_id} should be persisted "
+            f"in session.events. Found {len(session.events)} events."
+        )
+
+    @pytest.mark.asyncio
+    async def test_backend_tool_results_not_double_persisted(self, ag_ui_adk):
+        """Test that backend tool results are NOT double-persisted.
+
+        Backend tool results are handled internally by the ADK Runner, which
+        automatically persists them. Our append_event() fix for client-side tools
+        (issue #568) should NOT affect backend tools.
+
+        This test verifies that when a backend tool result comes through as a
+        ToolCallResultEvent (via EventTranslator), we don't also persist it
+        via append_event() - the paths are distinct.
+        """
+        thread_id = "test_thread_backend"
+        backend_tool_call_id = "backend_tool_call_456"
+
+        # Create input WITHOUT any tool messages (backend tools don't come from client)
+        input_data = RunAgentInput(
+            thread_id=thread_id,
+            run_id="run_1",
+            messages=[
+                UserMessage(id="user_1", role="user", content="What's the weather?"),
+            ],
+            tools=[],  # No client-side tools
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        app_name = ag_ui_adk._get_app_name(input_data)
+
+        # Ensure session exists
+        session, backend_session_id = await ag_ui_adk._ensure_session_exists(
+            app_name=app_name,
+            user_id="test_user",
+            thread_id=thread_id,
+            initial_state={}
+        )
+
+        # Get initial event count
+        session_before = await ag_ui_adk._session_manager._session_service.get_session(
+            session_id=backend_session_id,
+            app_name=app_name,
+            user_id="test_user"
+        )
+        initial_event_count = len(session_before.events)
+
+        from google.genai import types
+
+        # Create a mock runner that simulates backend tool execution
+        # Backend tools emit events through runner.run_async(), not via input.messages
+        class MockRunnerWithBackendTool:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def run_async(self, **kwargs):
+                from types import SimpleNamespace
+
+                # Simulate backend tool call event
+                tool_call_event = SimpleNamespace(
+                    id="event-tool-call",
+                    author="assistant",
+                    content=SimpleNamespace(
+                        parts=[
+                            SimpleNamespace(
+                                function_call=SimpleNamespace(
+                                    id=backend_tool_call_id,
+                                    name="get_weather",
+                                    args={"city": "NYC"}
+                                ),
+                                text=None,
+                                function_response=None
+                            )
+                        ],
+                        role="model"
+                    ),
+                    partial=False,
+                    turn_complete=False,
+                    long_running_tool_ids=[],  # Not long-running - backend tool
+                    get_function_calls=lambda: [SimpleNamespace(
+                        id=backend_tool_call_id,
+                        name="get_weather",
+                        args={"city": "NYC"}
+                    )],
+                    get_function_responses=lambda: [],
+                    is_final_response=lambda: False
+                )
+
+                # Simulate backend tool result event (ADK handles this internally)
+                tool_result_event = SimpleNamespace(
+                    id="event-tool-result",
+                    author="assistant",
+                    content=SimpleNamespace(
+                        parts=[
+                            SimpleNamespace(
+                                function_response=SimpleNamespace(
+                                    id=backend_tool_call_id,
+                                    name="get_weather",
+                                    response={"temperature": "72F"}
+                                ),
+                                text=None,
+                                function_call=None
+                            )
+                        ],
+                        role="model"
+                    ),
+                    partial=False,
+                    turn_complete=False,
+                    long_running_tool_ids=[],
+                    get_function_calls=lambda: [],
+                    get_function_responses=lambda: [SimpleNamespace(
+                        id=backend_tool_call_id,
+                        name="get_weather",
+                        response={"temperature": "72F"}
+                    )],
+                    is_final_response=lambda: False
+                )
+
+                # Final text response
+                final_event = SimpleNamespace(
+                    id="event-final",
+                    author="assistant",
+                    content=SimpleNamespace(
+                        parts=[SimpleNamespace(text="The weather is 72F", function_call=None, function_response=None)],
+                        role="model"
+                    ),
+                    partial=False,
+                    turn_complete=True,
+                    long_running_tool_ids=[],
+                    get_function_calls=lambda: [],
+                    get_function_responses=lambda: [],
+                    is_final_response=lambda: True
+                )
+
+                yield tool_call_event
+                yield tool_result_event
+                yield final_event
+
+        with patch.object(ag_ui_adk, '_create_runner', return_value=MockRunnerWithBackendTool()):
+            event_queue = asyncio.Queue()
+
+            # Call _run_adk_in_background with NO tool_results (backend tools don't come this way)
+            await ag_ui_adk._run_adk_in_background(
+                input=input_data,
+                adk_agent=ag_ui_adk._adk_agent,
+                user_id="test_user",
+                app_name=app_name,
+                event_queue=event_queue,
+                tool_results=None,  # No client-side tool results
+                message_batch=None
+            )
+
+        # Get final session state
+        session_after = await ag_ui_adk._session_manager._session_service.get_session(
+            session_id=backend_session_id,
+            app_name=app_name,
+            user_id="test_user"
+        )
+
+        # Count FunctionResponse events for our backend tool
+        function_response_count = 0
+        for event in session_after.events:
+            if event.content and hasattr(event.content, 'parts'):
+                for part in event.content.parts:
+                    if hasattr(part, 'function_response') and part.function_response:
+                        fr = part.function_response
+                        if hasattr(fr, 'id') and fr.id == backend_tool_call_id:
+                            function_response_count += 1
+
+        # Backend tool results should NOT be persisted by our code
+        # (they would be persisted by the real ADK Runner, but our mock doesn't do that)
+        # The key assertion is that we didn't DOUBLE-persist via our append_event() path
+        assert function_response_count == 0, (
+            f"Backend tool FunctionResponse should NOT be persisted by our code. "
+            f"Found {function_response_count} FunctionResponse events for backend tool. "
+            "Our append_event() fix should only apply to client-side tool results."
+        )

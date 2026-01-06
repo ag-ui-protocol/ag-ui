@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from textwrap import dedent
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
@@ -68,7 +68,7 @@ async def create_plan(steps: list[str]) -> StateSnapshotEvent:
 
 
 async def update_plan_step(
-    index: int, description: str | None = None, status: StepStatus | None = None
+    index: int, description: Optional[str] = None, status: Optional[StepStatus] = None
 ) -> StateDeltaEvent:
     """Update the plan with new steps or changes.
 

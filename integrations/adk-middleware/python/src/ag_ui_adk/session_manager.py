@@ -2,12 +2,17 @@
 
 """Session manager that adds production features to ADK's native session service."""
 
-from typing import Dict, Optional, Set, Any, Union, Iterable
+from typing import Dict, Optional, Set, Any, Union, Iterable, Tuple
 import asyncio
 import logging
 import time
 
 logger = logging.getLogger(__name__)
+
+# Keys used to store AG-UI metadata in session state for recovery after restart
+THREAD_ID_STATE_KEY = "_ag_ui_thread_id"
+APP_NAME_STATE_KEY = "_ag_ui_app_name"
+USER_ID_STATE_KEY = "_ag_ui_user_id"
 
 
 class SessionManager:
@@ -100,50 +105,130 @@ class SessionManager:
     
     async def get_or_create_session(
         self,
-        session_id: str,
+        thread_id: str,
         app_name: str,
         user_id: str,
         initial_state: Optional[Dict[str, Any]] = None
-    ) -> Any:
+    ) -> Tuple[Any, str]:
         """Get existing session or create new one.
-        
-        Returns the ADK session object directly.
+
+        Args:
+            thread_id: The AG-UI thread_id (client-provided identifier)
+            app_name: Application name
+            user_id: User identifier
+            initial_state: Optional initial state for new sessions
+
+        Returns:
+            Tuple of (session, backend_session_id). The backend_session_id may differ
+            from thread_id (e.g., VertexAI generates numeric IDs). The thread_id is
+            stored in session state for recovery after middleware restarts.
         """
-        session_key = self._make_session_key(app_name, session_id)
-        
         # Check user limits before creating
-        if session_key not in self._session_keys and self._max_per_user:
+        if self._max_per_user:
             user_count = len(self._user_sessions.get(user_id, set()))
             if user_count >= self._max_per_user:
                 # Remove oldest session for this user
                 await self._remove_oldest_user_session(user_id)
-        
-        # Get or create via ADK
-        session = await self._session_service.get_session(
-            session_id=session_id,
+
+        # Try to find existing session by thread_id in state
+        session = await self._find_session_by_thread_id(app_name, user_id, thread_id)
+        if session:
+            session_key = self._make_session_key(app_name, session.id)
+            self._track_session(session_key, user_id)
+            logger.debug(f"Retrieved existing session for thread {thread_id}: {session.id}")
+
+            # Start cleanup if needed
+            if self._auto_cleanup and not self._cleanup_task:
+                self._start_cleanup_task()
+
+            return session, session.id
+
+        # Create new session - always let backend generate session_id
+        # Store AG-UI metadata in state for recovery after restart
+        state = {
+            **(initial_state or {}),
+            THREAD_ID_STATE_KEY: thread_id,
+            APP_NAME_STATE_KEY: app_name,
+            USER_ID_STATE_KEY: user_id
+        }
+
+        session = await self._session_service.create_session(
+            user_id=user_id,
             app_name=app_name,
-            user_id=user_id
+            state=state
+            # Note: session_id intentionally omitted - let backend generate it
         )
-        
-        if not session:
-            session = await self._session_service.create_session(
-                session_id=session_id,
-                user_id=user_id,
-                app_name=app_name,
-                state=initial_state or {}
-            )
-            logger.info(f"Created new session: {session_key}")
-        else:
-            logger.debug(f"Retrieved existing session: {session_key}")
-        
-        # Track the session key
+
+        session_key = self._make_session_key(app_name, session.id)
         self._track_session(session_key, user_id)
-        
+        logger.info(f"Created new session for thread {thread_id}: {session.id}")
+
         # Start cleanup if needed
         if self._auto_cleanup and not self._cleanup_task:
             self._start_cleanup_task()
-        
-        return session
+
+        return session, session.id
+
+    async def _find_session_by_thread_id(
+        self,
+        app_name: str,
+        user_id: str,
+        thread_id: str
+    ) -> Optional[Any]:
+        """Find existing session by thread_id stored in session state.
+
+        This is the recovery path after middleware restart. Since we always let
+        the backend generate session_id, we can only find existing sessions by
+        searching their state for _ag_ui_thread_id.
+
+        Args:
+            app_name: Application name
+            user_id: User identifier
+            thread_id: The AG-UI thread_id to search for
+
+        Returns:
+            Session object if found, None otherwise
+        """
+        if hasattr(self._session_service, 'list_sessions'):
+            try:
+                response = await self._session_service.list_sessions(
+                    app_name=app_name,
+                    user_id=user_id
+                )
+                # list_sessions returns ListSessionsResponse with .sessions attribute
+                for session in response.sessions:
+                    if session.state and session.state.get(THREAD_ID_STATE_KEY) == thread_id:
+                        return session
+            except Exception as e:
+                logger.error(f"Error listing sessions for thread_id lookup: {e}")
+
+        return None
+
+    async def get_session(
+        self,
+        session_id: str,
+        app_name: str,
+        user_id: str
+    ) -> Optional[Any]:
+        """Get a session by its backend session_id.
+
+        Args:
+            session_id: The backend session ID
+            app_name: Application name
+            user_id: User identifier
+
+        Returns:
+            Session object if found, None otherwise
+        """
+        try:
+            return await self._session_service.get_session(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id
+            )
+        except Exception as e:
+            logger.error(f"Error getting session {session_id}: {e}")
+            return None
     
     # ===== STATE MANAGEMENT METHODS =====
     
@@ -196,10 +281,12 @@ class SessionManager:
                 # This depends on ADK's behavior - may need to explicitly clear
             
             # Create event with state changes
+            # Use "user" as author since state updates come from the frontend
+            # Note: Using "system" causes ADK runner warnings in _find_agent_to_run
             actions = EventActions(state_delta=state_delta)
             event = Event(
                 invocation_id=f"state_update_{int(time.time())}",
-                author="system",
+                author="user",
                 actions=actions,
                 timestamp=time.time()
             )
@@ -223,12 +310,12 @@ class SessionManager:
         user_id: str
     ) -> Optional[Dict[str, Any]]:
         """Get current session state.
-        
+
         Args:
             session_id: Session identifier
             app_name: Application name
             user_id: User identifier
-            
+
         Returns:
             Session state dictionary or None if session not found
         """
@@ -238,18 +325,18 @@ class SessionManager:
                 app_name=app_name,
                 user_id=user_id
             )
-            
+
             if not session:
                 logger.debug(f"Session not found when getting state: {app_name}:{session_id}")
                 return None
-            
+
             # Return state as dictionary
             if hasattr(session.state, 'to_dict'):
                 return session.state.to_dict()
             else:
                 # Fallback for dict-like state objects
                 return dict(session.state)
-                
+
         except Exception as e:
             logger.error(f"Failed to get session state: {e}", exc_info=True)
             return None

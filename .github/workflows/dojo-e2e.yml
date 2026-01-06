@@ -25,8 +25,48 @@ on:
       - "sdks/typescript/**"
 
 jobs:
+  check-generated-files:
+    name: dojo / check-generated-files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
+      - name: Validate agentFilesMapper and regenerate files.json
+        working-directory: apps/dojo
+        run: pnpm generate-content-json
+
+      - name: Check files.json is up to date
+        working-directory: apps/dojo
+        run: |
+          if git diff --exit-code src/files.json > /dev/null; then
+            echo "✅ No changes detected in dojo/src/files.json. Everything is up to date."
+          else
+            echo "❌ Detected changes in dojo/src/files.json."
+            echo ""
+            echo "The committed files.json doesn't match what would be generated."
+            echo "Please run \`(p)npm run generate-content-json\` in the apps/dojo folder and commit the updated file."
+            echo ""
+            echo "The detected diff was as follows:"
+            echo "::group::Diff for dojo/src/files.json"
+            git diff src/files.json
+            echo "::endgroup::"
+            exit 1
+          fi
+
   dojo:
     name: dojo / ${{ matrix.suite }}
+    needs: check-generated-files
     runs-on: depot-ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -89,6 +129,10 @@ jobs:
             test_path: tests/serverStarterAllFeaturesTests
             services: ["dojo", "server-starter-all"]
             wait_on: http://localhost:9999,tcp:localhost:8001
+          - suite: aws-strands
+            test_path: tests/awsStrandsTests
+            services: ["dojo", "aws-strands"]
+            wait_on: http://localhost:9999,tcp:localhost:8017
           # - suite: vercel-ai-sdk
           #   test_path: tests/vercelAISdkTests
           #   services: ["dojo"]

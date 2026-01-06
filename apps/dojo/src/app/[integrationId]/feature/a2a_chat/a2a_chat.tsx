@@ -118,13 +118,13 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
 
   useEffect(() => {
     if (
-      visibleMessages.length > 0 &&
-      (!isLoading || (visibleMessages[visibleMessages.length - 1] as any).name === "pickTable")
+      visibleMessages?.length > 0 &&
+      (!isLoading || (visibleMessages?.[visibleMessages.length - 1] as unknown as { name: string }).name === "pickTable")
     ) {
       console.log("onNotification");
       onNotification?.();
     }
-  }, [isLoading, JSON.stringify(visibleMessages)]);
+  }, [isLoading, visibleMessages, onNotification]);
 
   useRenderToolCall({
     name: "send_message_to_a2a_agent",
@@ -224,7 +224,7 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
               table.seats
                 ?.filter((seat: Seat) => seat.status === "occupied" && seat.name)
                 .map((seat: Seat) => ({
-                  name: seat.name!,
+                  name: seat.name ?? "",
                   table: table.name,
                   seat: seat.seatNumber,
                 })) || [],
@@ -283,6 +283,7 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
 
                       return (
                         <button
+                          type="button"
                           key={seatIndex}
                           disabled={seat.status !== "available"}
                           onClick={() => handleSeatClick(tableIndex, seat.seatNumber, seat.status)}
@@ -340,6 +341,7 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
                   {selectedSeat.seatNumber}
                 </p>
                 <button
+                  type="button"
                   onClick={() => {
                     if (!isConfirmed) {
                       // Handle seat selection confirmation

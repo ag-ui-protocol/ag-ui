@@ -11,6 +11,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.agui.example.chatapp.data.model.AgentConfig
 import com.agui.example.chatapp.data.model.AuthMethod
+import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import org.jetbrains.compose.resources.stringResource
@@ -215,7 +216,7 @@ private fun getAuthMethodIcon(authMethod: AuthMethod): androidx.compose.ui.graph
     }
 }
 
-private fun formatDateTime(instant: kotlinx.datetime.Instant): String {
+private fun formatDateTime(instant: Instant): String {
     val localDateTime = instant.toLocalDateTime(TimeZone.currentSystemDefault())
     return "${localDateTime.date} ${localDateTime.hour.toString().padStart(2, '0')}:${localDateTime.minute.toString().padStart(2, '0')}"
 }

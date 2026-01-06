@@ -97,6 +97,11 @@ const ALL_TARGETS = {
     name: "Pydantic AI",
     cwd: path.join(integrationsRoot, "pydantic-ai/python/examples"),
   },
+  "aws-strands": {
+    command: "poetry install",
+    name: "AWS Strands",
+    cwd: path.join(integrationsRoot, "aws-strands/python/examples"),
+  },
   "adk-middleware": {
     command: "uv sync",
     name: "ADK Middleware",
@@ -110,6 +115,11 @@ const ALL_TARGETS = {
   dojo: {
     command: "pnpm install --no-frozen-lockfile && pnpm build --filter=demo-viewer...",
     name: "Dojo",
+    cwd: gitRoot,
+  },
+  "dojo-dev": {
+    command: "pnpm install --no-frozen-lockfile && pnpm build --filter=demo-viewer^...",
+    name: "Dojo (dev)",
     cwd: gitRoot,
   },
   "microsoft-agent-framework-python": {
@@ -142,6 +152,10 @@ async function main() {
   }
   if (excludeList && excludeList.length) {
     selectedKeys = selectedKeys.filter((k) => !excludeList.includes(k));
+  }
+
+  if (selectedKeys.includes("dojo") && selectedKeys.includes("dojo-dev")) {
+    selectedKeys= selectedKeys.filter(x => x != "dojo-dev");
   }
 
   // Build procs list, warning on unknown keys

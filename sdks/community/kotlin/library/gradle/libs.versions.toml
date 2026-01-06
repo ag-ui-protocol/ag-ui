@@ -10,6 +10,11 @@ kotlinx-datetime = "0.6.2"
 android-gradle = "8.10.1"
 kermit = "2.0.6"
 jreleaser = "1.20.0"
+# Compose Multiplatform
+compose-multiplatform = "1.7.3"
+androidx-activity-compose = "1.9.3"
+# Image loading
+coil = "3.0.4"
 
 [libraries]
 # Ktor
@@ -34,9 +39,18 @@ kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.
 # Logging
 kermit = { module = "co.touchlab:kermit", version.ref = "kermit" }
 
+# Compose / Android
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity-compose" }
+
+# Image loading (Coil 3 - Compose Multiplatform)
+coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
+coil-network-ktor3 = { module = "io.coil-kt.coil3:coil-network-ktor3", version.ref = "coil" }
+
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+kotlin-compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "compose-multiplatform" }
 android-library = { id = "com.android.library", version.ref = "android-gradle" }
 jreleaser = { id = "org.jreleaser", version.ref = "jreleaser" }
 

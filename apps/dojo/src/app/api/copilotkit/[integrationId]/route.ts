@@ -6,16 +6,17 @@ import {
 import { NextRequest } from "next/server";
 
 import { agentsIntegrations } from "@/agents";
+import { IntegrationId } from "@/menu";
 
 export async function POST(request: NextRequest) {
-  const integrationId = request.url.split("/").pop();
+  const integrationId = request.url.split("/").pop() as IntegrationId;
 
-  const integration = agentsIntegrations.find((i) => i.id === integrationId);
-  if (!integration) {
+  const getAgents = agentsIntegrations[integrationId];
+  if (!getAgents) {
     return new Response("Integration not found", { status: 404 });
   }
 
-  const agents = await integration.agents();
+  const agents = await getAgents();
   const runtime = new CopilotRuntime({
     // @ts-ignore for now
     agents,
@@ -28,4 +29,3 @@ export async function POST(request: NextRequest) {
 
   return handleRequest(request);
 }
-

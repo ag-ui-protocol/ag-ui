@@ -73,7 +73,12 @@ fun ChatScreen(
                 else -> {
                     MessageList(
                         messages = state.messages,
-                        isLoading = state.isLoading
+                        isLoading = state.isLoading,
+                        a2uiSurfaces = state.a2uiSurfaces,
+                        a2uiDataModels = state.a2uiDataModels,
+                        onA2UiEvent = { event ->
+                            viewModel.sendA2UiAction(event)
+                        }
                     )
                 }
             }

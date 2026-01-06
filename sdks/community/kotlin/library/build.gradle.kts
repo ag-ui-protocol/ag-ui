@@ -12,6 +12,8 @@ import org.jreleaser.gradle.plugin.tasks.JReleaserDeployTask
 plugins {
     kotlin("multiplatform") version "2.2.20" apply false
     kotlin("plugin.serialization") version "2.2.20" apply false
+    kotlin("plugin.compose") version "2.2.20" apply false
+    id("org.jetbrains.compose") version "1.7.3" apply false
     id("com.android.library") version "8.10.1" apply false
     id("org.jetbrains.dokka") version "2.0.0"
     id("org.jetbrains.kotlinx.kover") version "0.8.3"
@@ -25,7 +27,7 @@ plugins {
 //   - publish.sh script (reads dynamically)
 //   - GitHub Actions workflow (reads dynamically)
 // Only update these values here - they propagate automatically
-version = "0.2.3"
+version = "0.2.5"
 group = "com.ag-ui.community"
 
 allprojects {

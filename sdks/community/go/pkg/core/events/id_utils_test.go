@@ -101,7 +101,7 @@ func TestTimestampIDGenerator(t *testing.T) {
 		require.GreaterOrEqual(t, len(parts), 3)
 		timestamp := parts[1]
 		_, err := time.Parse("", timestamp) // Just check it's a number
-		assert.NotNil(t, err) // We expect an error because timestamp is just a number
+		assert.NotNil(t, err)               // We expect an error because timestamp is just a number
 
 		// Test uniqueness
 		id2 := gen.GenerateRunID()
@@ -172,19 +172,19 @@ func TestTimestampIDGenerator(t *testing.T) {
 
 	t.Run("Timestamp_Ordering", func(t *testing.T) {
 		gen := NewTimestampIDGenerator("")
-		
+
 		// Generate IDs with slight delay
 		id1 := gen.GenerateRunID()
 		time.Sleep(2 * time.Millisecond)
 		id2 := gen.GenerateRunID()
-		
+
 		// Extract timestamps
 		parts1 := strings.Split(id1, "-")
 		parts2 := strings.Split(id2, "-")
-		
+
 		require.GreaterOrEqual(t, len(parts1), 3)
 		require.GreaterOrEqual(t, len(parts2), 3)
-		
+
 		// The timestamp in id2 should be >= timestamp in id1
 		// (We can't parse them as ints here but the string comparison should work for ordering)
 		assert.True(t, parts2[1] >= parts1[1])
@@ -195,7 +195,7 @@ func TestGlobalIDGenerator(t *testing.T) {
 	t.Run("GetDefaultIDGenerator", func(t *testing.T) {
 		gen := GetDefaultIDGenerator()
 		assert.NotNil(t, gen)
-		
+
 		// Should be a DefaultIDGenerator by default
 		_, ok := gen.(*DefaultIDGenerator)
 		assert.True(t, ok)

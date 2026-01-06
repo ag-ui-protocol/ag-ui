@@ -8,6 +8,7 @@ description:
 
 AG-UI is an <u><strong>open</strong></u>, <u><strong>lightweight</strong></u>, <u><strong>event-based</strong></u> protocol that standardizes how AI agents connect to user-facing applications.
 
+AG-UI is designed to be the general-purpose, bi-directional connection between a user-facing application and any agentic backend.
 
 Built for simplicity and flexibility, it standardizes how agent state, UI intents, and user interactions flow between your model/agent runtime and user-facing frontend applications—to allow application developers to ship reliable, debuggable, user‑friendly agentic features fast while focusing on application needs and avoiding complex ad-hoc wiring.
 
@@ -17,6 +18,24 @@ Built for simplicity and flexibility, it standardizes how agent state, UI intent
   <img className="block dark:hidden" src="/images/ag-ui-overview-with-partners.png" alt="AG-UI Overview" style={{maxWidth: '100%', height: 'auto', borderRadius: '8px'}} />
   <img className="hidden dark:block" src="/images/ag-ui-overview-with-partners-dark.png" alt="AG-UI Overview" style={{maxWidth: '100%', height: 'auto', borderRadius: '8px'}} />
 </div>
+
+---
+
+## Agentic Protocols
+
+<Note>
+<strong>Confused about "A2UI" and "AG-UI"?</strong>  That's understandable!  Despite the naming similarities, they are quite different and work well together.  A2UI is a [generative UI specification](./concepts/generative-ui-specs) - allowing agents to deliver UI widgets, where AG-UI is the Agent↔User Interaction protocol - which connects an agentic frontend to any agentic backend.  [Learn more](https://copilotkit.ai/ag-ui-and-a2ui)
+</Note>
+
+AG-UI is one of three prominent open [agentic protocols](./agentic-protocols).
+
+| **Layer** | **Protocol / Example** | **Purpose** |
+| --- | --- | --- |
+| **Agent ↔ User Interaction** | **AG-UI<br />(Agent–User Interaction Protocol)** | The open, event-based standard that connects agents to user-facing applications — enabling real-time, multimodal, interactive experiences. |
+| **Agent ↔ Tools & Data** | **MCP <br />(Model Context Protocol)** | Open standard (originated by Anthropic) that lets agents securely connect to external systems — tools, workflows, and data sources. |
+| **Agent ↔ Agent** | **A2A<br />(Agent to Agent)** | Open standard (originated by Google) which defines how agents coordinate and share work across distributed agentic systems. |
+
+
 
 ---
 
@@ -187,28 +206,9 @@ While agents are just software, they exhibit characteristics that make them chal
 
 AG-UI is an event-based protocol that enables dynamic communication between agentic frontends and backends. It builds on top of the foundational protocols of the web (HTTP, WebSockets) as an abstraction layer designed for the agentic age—bridging the gap between traditional client-server architectures and the dynamic, stateful nature of AI agents.
 
-## The AI protocol landscape
-
-AG-UI has emerged as the 3rd leg of the AI protocol landscape:
-<div style={{textAlign: 'center', margin: '2rem 0'}}>
-  <img src="/images/ai-protocol-stack.png" alt="AI Protocol Stack" style={{maxWidth: '40%', height: 'auto', borderRadius: '8px'}} />
-</div>
-
-- MCP: Connects agents to tool and to context.
-- A2A: Connects agents to other agents.
-- **AG-UI:** Connects agents to users (through user-facing applications)
-
-
-These protocols are complimentary and have distinct technical goals; a single agent can and often does use all 3 simultanously.
-Where these protocols intersect, there are opportunities for seamless handshakes facilitating interoperability—work on these integration points is actively ongoing.
-AG-UI's mandate is to support the full set of building blocks required by modern agentic applications.
-
-
-
-
 ---
 
-## AG-UI in action
+## AG-UI in Action
 
 <div style={{textAlign: 'center', margin: '3rem 0 1rem 0'}}>
   <video 
@@ -237,35 +237,35 @@ AG-UI was born from CopilotKit's initial **partnership** with LangGraph and Crew
 
 **1st party** = the platforms that have AG‑UI built in and provide documentation for guidance.
 
-#### Direct to LLM
+### Direct to LLM
 
 | Framework | Status | AG-UI Resources |
 | :-------- | ------ | --------------- |
 | Direct to LLM | Supported | [Docs](https://docs.copilotkit.ai/direct-to-llm) |
 
-#### Agent Framework - Partnerships
+### Agent Framework - Partnerships
 | Framework | Status | AG-UI Resources |
 | :-------- | ------ | --------------- |
 | [LangGraph](https://www.langchain.com/langgraph) | Supported | [Docs](https://docs.copilotkit.ai/langgraph/), [Demos](https://dojo.ag-ui.com/langgraph-fastapi/feature/shared_state) |
 | [CrewAI](https://crewai.com/) | Supported | [Docs](https://docs.copilotkit.ai/crewai-flows), [Demos](https://dojo.ag-ui.com/crewai/feature/shared_state) |
 
-#### Agent Framework - 1st Party
+### Agent Framework - 1st Party
 | Framework | Status | AG-UI Resources |
 | :-------- | ------ | --------------- |
 | [Microsoft Agent Framework](https://azure.microsoft.com/en-us/blog/introducing-microsoft-agent-framework/) | Supported | [Docs](https://docs.copilotkit.ai/microsoft-agent-framework), [Demos](https://dojo.ag-ui.com/microsoft-agent-framework-dotnet/feature/shared_state) |
 | [Google ADK](https://google.github.io/adk-docs/get-started/) | Supported | [Docs](https://docs.copilotkit.ai/adk), [Demos](https://dojo.ag-ui.com/adk-middleware/feature/shared_state?openCopilot=true) |
+| [AWS Strands Agents](https://github.com/strands-agents/sdk-python) | Supported | [Docs](https://docs.copilotkit.ai/aws-strands), [Demos](https://dojo.ag-ui.com/aws-strands/feature/shared_state) |
 | [Mastra](https://mastra.ai/) | Supported | [Docs](https://docs.copilotkit.ai/mastra/), [Demos](https://dojo.ag-ui.com/mastra/feature/tool_based_generative_ui) |
 | [Pydantic AI](https://github.com/pydantic/pydantic-ai) | Supported | [Docs](https://docs.copilotkit.ai/pydantic-ai/), [Demos](https://dojo.ag-ui.com/pydantic-ai/feature/shared_state) |
 | [Agno](https://github.com/agno-agi/agno) | Supported | [Docs](https://docs.copilotkit.ai/agno/), [Demos](https://dojo.ag-ui.com/agno/feature/tool_based_generative_ui) |
 | [LlamaIndex](https://github.com/run-llama/llama_index) | Supported | [Docs](https://docs.copilotkit.ai/llamaindex/), [Demos](https://dojo.ag-ui.com/llamaindex/feature/shared_state) |
 | [AG2](https://ag2.ai/) | Supported | [Docs](https://docs.copilotkit.ai/ag2/) |
 | [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/) | In Progress | – |
-| [AWS Strands Agents](https://github.com/strands-agents/sdk-python) | In Progress | – |
 
-#### Agent Framework - Community
+
+### Agent Framework - Community
 | Framework | Status | AG-UI Resources |
 | :-------- | ------ | --------------- |
-| [Vercel AI SDK](https://github.com/vercel/ai) | Supported | [Docs](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/vercel-ai-sdk/typescript) |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | In Progress | – |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/) | In Progress | – |
 
@@ -274,6 +274,11 @@ AG-UI was born from CopilotKit's initial **partnership** with LangGraph and Crew
 | Protocol | Status | AG-UI Resources | Integrations |
 | :------- | ------ | --------------- | ------------ |
 | [A2A Middleware](https://a2a.org/) | Supported | [Docs](https://docs.copilotkit.ai/a2a-protocol) | Partnership |
+
+### Specification (standard)
+| Framework | Status | AG-UI Resources |
+| :-------- | ------ | --------------- |
+| [Oracle Agent Spec](http://oracle.github.io/agent-spec/) | Supported | [Docs](https://go.copilotkit.ai/copilotkit-oracle-docs), [Demos](https://dojo.ag-ui.com/agent-spec-langgraph/feature/tool_based_generative_ui) |
 
 ### SDKs
 

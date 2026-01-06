@@ -222,6 +222,41 @@ func TestEventDecoder(t *testing.T) {
 		assert.Equal(t, "msg-1", msgEvent.Messages[0].ID)
 	})
 
+	t.Run("DecodeEvent_ActivitySnapshot", func(t *testing.T) {
+		decoder := NewEventDecoder(nil)
+		data := []byte(`{"messageId": "activity-1", "activityType": "PLAN", "content": {"status": "draft"}, "replace": false}`)
+
+		event, err := decoder.DecodeEvent("ACTIVITY_SNAPSHOT", data)
+		require.NoError(t, err)
+		require.NotNil(t, event)
+
+		activityEvent, ok := event.(*ActivitySnapshotEvent)
+		require.True(t, ok)
+		assert.Equal(t, "activity-1", activityEvent.MessageID)
+		assert.Equal(t, "PLAN", activityEvent.ActivityType)
+		require.NotNil(t, activityEvent.Replace)
+		assert.False(t, *activityEvent.Replace)
+		content, ok := activityEvent.Content.(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "draft", content["status"])
+	})
+
+	t.Run("DecodeEvent_ActivityDelta", func(t *testing.T) {
+		decoder := NewEventDecoder(nil)
+		data := []byte(`{"messageId": "activity-1", "activityType": "PLAN", "patch": [{"op": "replace", "path": "/status", "value": "streaming"}]}`)
+
+		event, err := decoder.DecodeEvent("ACTIVITY_DELTA", data)
+		require.NoError(t, err)
+		require.NotNil(t, event)
+
+		activityEvent, ok := event.(*ActivityDeltaEvent)
+		require.True(t, ok)
+		assert.Equal(t, "activity-1", activityEvent.MessageID)
+		assert.Equal(t, "PLAN", activityEvent.ActivityType)
+		assert.Len(t, activityEvent.Patch, 1)
+		assert.Equal(t, "replace", activityEvent.Patch[0].Op)
+	})
+
 	t.Run("DecodeEvent_StepStarted", func(t *testing.T) {
 		decoder := NewEventDecoder(nil)
 		data := []byte(`{"stepName": "step-1"}`)

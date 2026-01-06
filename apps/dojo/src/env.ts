@@ -9,6 +9,7 @@ type envVars = {
   springAiUrl: string;
   llamaIndexUrl: string;
   crewAiUrl: string;
+  agentSpecUrl: string;
   pydanticAIUrl: string;
   adkMiddlewareUrl: string;
   agentFrameworkPythonUrl: string;
@@ -18,6 +19,7 @@ type envVars = {
   a2aMiddlewareFinanceUrl: string;
   a2aMiddlewareItUrl: string;
   a2aMiddlewareOrchestratorUrl: string;
+  awsStrandsUrl: string;
   customDomainTitle: Record<string, string>;
 }
 
@@ -40,6 +42,7 @@ export default function getEnvVars(): envVars {
     agnoUrl: process.env.AGNO_URL || 'http://localhost:9001',
     llamaIndexUrl: process.env.LLAMA_INDEX_URL || 'http://localhost:9000',
     crewAiUrl: process.env.CREW_AI_URL || 'http://localhost:9002',
+    agentSpecUrl: process.env.AGENT_SPEC_URL || 'http://localhost:9003',
     pydanticAIUrl: process.env.PYDANTIC_AI_URL || 'http://localhost:9000',
     adkMiddlewareUrl: process.env.ADK_MIDDLEWARE_URL || 'http://localhost:8000',
     agentFrameworkPythonUrl: process.env.AGENT_FRAMEWORK_PYTHON_URL || 'http://localhost:8888',
@@ -50,6 +53,7 @@ export default function getEnvVars(): envVars {
     a2aMiddlewareFinanceUrl: process.env.A2A_MIDDLEWARE_FINANCE_URL || 'http://localhost:9002',
     a2aMiddlewareItUrl: process.env.A2A_MIDDLEWARE_IT_URL || 'http://localhost:9003',
     a2aMiddlewareOrchestratorUrl: process.env.A2A_MIDDLEWARE_ORCHESTRATOR_URL || 'http://localhost:9000',
+    awsStrandsUrl: process.env.AWS_STRANDS_URL || 'http://localhost:8000',
     customDomainTitle: customDomainTitle,
   }
 }

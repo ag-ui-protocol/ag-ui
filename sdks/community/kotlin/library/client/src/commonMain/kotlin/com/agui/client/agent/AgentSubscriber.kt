@@ -93,6 +93,7 @@ internal fun Message.deepCopy(): Message = when (this) {
     )
     is UserMessage -> this.copy()
     is ToolMessage -> this.copy()
+    is ActivityMessage -> this.copy()
 }
 
 internal fun List<Message>.deepCopyMessages(): List<Message> = map { it.deepCopy() }

@@ -1,6 +1,9 @@
 import os
 import uvicorn
 from fastapi import FastAPI
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from .routers.agentic_chat import agentic_chat_router
 from .routers.human_in_the_loop import human_in_the_loop_router

@@ -89,7 +89,7 @@ class AgentRepository private constructor(
 
             // Update last used time
             val updatedAgent = agent.copy(
-                lastUsedAt = kotlinx.datetime.Clock.System.now()
+                lastUsedAt = Clock.System.now()
             )
             updateAgent(updatedAgent)
 

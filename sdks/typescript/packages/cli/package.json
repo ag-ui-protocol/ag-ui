@@ -1,7 +1,7 @@
 {
   "name": "create-ag-ui-app",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.42-alpha.2",
+  "version": "0.0.42",
   "private": false,
   "publishConfig": {
     "access": "public"
