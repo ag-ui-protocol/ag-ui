@@ -83,7 +83,9 @@ export class MastraAgent extends AbstractAgent {
 
         // Handle local agent memory management (from Mastra implementation)
         if (this.isLocalMastraAgent(this.agent)) {
-          const memory = await this.agent.getMemory();
+          const memory = await this.agent.getMemory({
+            requestContext: this.requestContext,
+          });
 
           if (
             memory &&
@@ -182,7 +184,9 @@ export class MastraAgent extends AbstractAgent {
             onRunFinished: async () => {
               if (this.isLocalMastraAgent(this.agent)) {
                 try {
-                  const memory = await this.agent.getMemory();
+                  const memory = await this.agent.getMemory({
+                    requestContext: this.requestContext,
+                  });
                   if (memory) {
                     const workingMemory = await memory.getWorkingMemory({
                       resourceId: this.resourceId,
@@ -343,6 +347,7 @@ export class MastraAgent extends AbstractAgent {
           runId,
           messages: convertedMessages,
           clientTools,
+          requestContext,
         });
 
         // Remote agents should have a processDataStream method
