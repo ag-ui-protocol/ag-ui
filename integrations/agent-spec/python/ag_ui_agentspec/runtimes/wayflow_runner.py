@@ -8,6 +8,7 @@ from wayflowcore.events.eventlistener import register_event_listeners
 from wayflowcore.messagelist import Message, MessageType, ToolRequest, ToolResult
 
 from ag_ui.core import RunAgentInput
+import json as _json
 from ag_ui_agentspec.agentspec_tracing_exporter import EVENT_QUEUE
 
 def prepare_wayflow_agent_input(input_data: RunAgentInput) -> Dict[str, Any]:
@@ -46,8 +47,12 @@ def prepare_wayflow_agent_input(input_data: RunAgentInput) -> Dict[str, Any]:
 
 
 def prepare_wayflow_flow_input(input_data: RunAgentInput) -> Dict[str, Any]:
+    # Build a single input string that contains last user content and forwarded props
     messages = input_data.messages
-    return {"user_input": messages[-1].content}
+    user_text = messages[-1].content if messages else ""
+    fwd = _json.dumps(input_data.forwarded_props) if input_data.forwarded_props is not None else None
+    combined = user_text if not fwd else f"{user_text}\nFORWARDED_PROPS: {fwd}"
+    return {"user_input": combined}
 
 
 async def run_wayflow(agent: Any, input_data: RunAgentInput) -> None:
@@ -85,4 +90,3 @@ async def run_wayflow(agent: Any, input_data: RunAgentInput) -> None:
 
     else:
         raise NotImplementedError("Unsupported Wayflow component type")
-

@@ -47,7 +47,7 @@ def add_agentspec_fastapi_endpoint(app: FastAPI, agentspec_agent: AgentSpecAgent
                     queue.put_nowait(None)
 
             try:
-                # Important: create the task after setting the ContextVar so the new Task inherits it
+                # Important: create the task after setting the ContextVars so the new Task inherits them
                 asyncio.create_task(run_and_close())
 
                 while True:

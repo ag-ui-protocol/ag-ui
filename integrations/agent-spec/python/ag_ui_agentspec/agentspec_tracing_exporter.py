@@ -1,9 +1,3 @@
-# Copyright © 2025 Oracle and/or its affiliates.
-#
-# This software is under the Apache License 2.0
-# (LICENSE-APACHE or http://www.apache.org/licenses/LICENSE-2.0) or Universal Permissive License
-# (UPL) 1.0 (LICENSE-UPL or https://oss.oracle.com/licenses/upl), at your option.
-
 """
 AG-UI span processor for pyagentspec.tracing
 
@@ -26,8 +20,10 @@ import ast
 import os
 import json
 import uuid
+import logging
+logger = logging.getLogger(__file__)
 from contextvars import ContextVar
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 # AG‑UI Python SDK (events)
 from ag_ui.core.events import (
@@ -38,6 +34,7 @@ from ag_ui.core.events import (
     TextMessageChunkEvent,
     ToolCallResultEvent,
     ToolCallChunkEvent,
+    ActivitySnapshotEvent,
 )
 
 from pyagentspec.tracing.events.exception import ExceptionRaised
@@ -169,18 +166,46 @@ class AgUiSpanProcessor(SpanProcessor):
                 message_id = event.completion_id
                 if not message_id:
                     raise ValueError("Expected assistant message id in LLM response")
-                # If no text chunks were streamed in this span, emit the full completion text as a single content event
-                if not self._llm_chunks_seen.get(span.id, False):
-                    completion_text = event.content
-                    if completion_text:
+                completion_text = event.content or ""
+                
+                # Non-strict: best-effort detect A2UI JSON, otherwise emit text
+                a2ui_payload = _extract_a2ui_payload(completion_text)
+                if a2ui_payload is not None:
+                    try:
+                        content_obj = a2ui_payload
+                        content_obj = _normalize_a2ui_operations(content_obj)
+                        # if we use a random id here, it will not delete the streamed JSON from the UI, but if we use message_id, then it will delete the JSON and render the actual component instead
                         self._emit(
-                            TextMessageChunkEvent(
+                            ActivitySnapshotEvent(
                                 message_id=message_id,
-                                role="assistant",
-                                delta=self._escape_html(completion_text),
+                                activity_type="a2ui-surface",
+                                content=content_obj,
+                                replace=True,
                             )
                         )
-                    self._llm_chunks_seen[span.id] = True
+                    except Exception:
+                        # Fall back to text on any parsing/validation failure
+                        if not self._llm_chunks_seen.get(span.id, False) and completion_text:
+                            self._emit(
+                                TextMessageChunkEvent(
+                                    message_id=message_id,
+                                    role="assistant",
+                                    delta=self._escape_html(completion_text),
+                                )
+                            )
+                            self._llm_chunks_seen[span.id] = True
+                else:
+                    # If no text chunks were streamed in this span, emit the full completion text as a single content event
+                    if not self._llm_chunks_seen.get(span.id, False):
+                        if completion_text:
+                            self._emit(
+                                TextMessageChunkEvent(
+                                    message_id=message_id,
+                                    role="assistant",
+                                    delta=self._escape_html(completion_text),
+                                )
+                            )
+                        self._llm_chunks_seen[span.id] = True
                 # if a tool_call was not streamed, we emit it here
                 for tool_call in event.tool_calls:
                     if tool_call.call_id not in self._started_tool_calls:
@@ -238,6 +263,7 @@ class AgUiSpanProcessor(SpanProcessor):
     async def startup_async(self) -> None:
         self.startup()
 
+
 def _normalize_tool_output(outputs: Any) -> str:
     """Return a JSON string for AG-UI ToolCallResultEvent.content without double-encoding.
 
@@ -279,3 +305,37 @@ def jsonable(string):
         return True
     except:
         return False
+
+
+def _extract_a2ui_payload(text: str) -> Optional[str]:
+    """Extract A2UI JSON payload if model output follows with-a2a-a2ui style.
+
+    Accepts either a raw JSON (array/object) or a two-part string separated by
+    '---a2ui_JSON---' where the trailing segment is the JSON payload.
+    Returns the JSON string if found, else None.
+    """
+    if not text:
+        return None
+    s = text.strip()
+    if (s.startswith("[") and s.endswith("]")) or (s.startswith("{") and s.endswith("}")):
+        return s
+    delimiter = "---a2ui_JSON---"
+    if delimiter in s:
+        try:
+            _, json_part = s.split(delimiter, 1)
+            return json_part.strip().lstrip("```json").rstrip("```").strip()
+        except Exception:
+            return None
+    return None
+
+
+def _normalize_a2ui_operations(payload: str) -> dict:
+    logger.error("RAW generated A2UI JSON with type=%s: %s", type(payload), payload)
+    content_obj = json.loads(payload)
+    # to be compatible with the A2UI renderer, the content of the ActivitySnapshot event should be a dict with a single key "operations"
+    # see L390 in ag-ui/integrations/a2a/typescript/src/utils.ts
+    if isinstance(content_obj, list):
+        content_obj = {"operations": content_obj}
+    elif isinstance(content_obj, dict) and "operations" not in content_obj:
+        content_obj = {"operations": [content_obj]}
+    return content_obj

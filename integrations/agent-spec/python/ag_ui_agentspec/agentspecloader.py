@@ -1,4 +1,3 @@
-import json
 from typing import Any, Dict, Literal, Optional, TYPE_CHECKING, overload
 
 if TYPE_CHECKING:
