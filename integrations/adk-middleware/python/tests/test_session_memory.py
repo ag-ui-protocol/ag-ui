@@ -60,7 +60,8 @@ class TestSessionMemory:
         """Test that memory service is disabled when not provided."""
         manager = SessionManager.get_instance(
             session_service=mock_session_service,
-            auto_cleanup=False
+            delete_session_on_cleanup=True,
+            save_session_to_memory_on_cleanup=True
         )
 
         # Verify memory service is None
@@ -82,7 +83,8 @@ class TestSessionMemory:
         manager = SessionManager.get_instance(
             session_service=mock_session_service,
             memory_service=mock_memory_service,
-            auto_cleanup=False
+            delete_session_on_cleanup=True,
+            save_session_to_memory_on_cleanup=True
         )
 
         # Verify memory service is set
@@ -107,7 +109,8 @@ class TestSessionMemory:
         manager = SessionManager.get_instance(
             session_service=mock_session_service,
             memory_service=mock_memory_service,
-            auto_cleanup=False
+            delete_session_on_cleanup=True,
+            save_session_to_memory_on_cleanup=True
         )
 
         # Make memory service fail
@@ -126,7 +129,8 @@ class TestSessionMemory:
         manager = SessionManager.get_instance(
             session_service=mock_session_service,
             memory_service=mock_memory_service,
-            auto_cleanup=False
+            delete_session_on_cleanup=False,
+            save_session_to_memory_on_cleanup=False
         )
 
         # Delete a None session (simulates session not found)
@@ -145,7 +149,8 @@ class TestSessionMemory:
             session_service=mock_session_service,
             memory_service=mock_memory_service,
             session_timeout_seconds=1,  # 1 second timeout
-            auto_cleanup=False  # We'll trigger cleanup manually
+            delete_session_on_cleanup=True,
+            save_session_to_memory_on_cleanup=True
         )
 
         # Create an expired session
@@ -172,7 +177,8 @@ class TestSessionMemory:
             session_service=mock_session_service,
             memory_service=mock_memory_service,
             max_sessions_per_user=1,  # Limit to 1 session per user
-            auto_cleanup=False
+            delete_session_on_cleanup=True,
+            save_session_to_memory_on_cleanup=True
         )
 
         # Create an old session that will be removed
@@ -277,7 +283,8 @@ class TestSessionStateManagement:
         """Create a session manager instance."""
         return SessionManager.get_instance(
             session_service=mock_session_service,
-            auto_cleanup=False
+            delete_session_on_cleanup=False,
+            save_session_to_memory_on_cleanup=False
         )
 
     # ===== UPDATE SESSION STATE TESTS =====

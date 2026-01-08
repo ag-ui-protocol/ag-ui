@@ -33,7 +33,8 @@ async def test_session_deletion():
     # Create session manager with mock service
     session_manager = SessionManager.get_instance(
         session_service=mock_session_service,
-        auto_cleanup=False
+        delete_session_on_cleanup=True,
+        save_session_to_memory_on_cleanup=True
     )
 
     # Create a session using thread_id (backend generates session_id)
@@ -103,7 +104,8 @@ async def test_session_deletion_error_handling():
     # Create session manager with mock service
     session_manager = SessionManager.get_instance(
         session_service=mock_session_service,
-        auto_cleanup=False
+        delete_session_on_cleanup=False,
+        save_session_to_memory_on_cleanup=False
     )
 
     # Create a session
@@ -186,7 +188,8 @@ async def test_user_session_limits():
     session_manager = SessionManager.get_instance(
         session_service=mock_session_service,
         max_sessions_per_user=2,
-        auto_cleanup=False
+        delete_session_on_cleanup=False,
+        save_session_to_memory_on_cleanup=False
     )
 
     test_user = "limited_user"
