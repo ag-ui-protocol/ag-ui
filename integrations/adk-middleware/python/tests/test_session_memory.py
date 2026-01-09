@@ -177,25 +177,33 @@ class TestSessionMemory:
 
         # Create an old session that will be removed
         old_session = MagicMock()
+        old_session.id = "backend_session_1"
         old_session.last_update_time = time.time() - 60  # 1 minute ago
+        old_session.state = {"_ag_ui_thread_id": "thread1"}
 
-        # Mock initial session creation and retrieval
-        mock_session_service.get_session.return_value = None
-        mock_session_service.create_session.return_value = MagicMock()
+        # Create first session - mock shows no existing sessions
+        first_created_session = MagicMock()
+        first_created_session.id = "backend_session_1"
+        first_created_session.state = {"_ag_ui_thread_id": "thread1"}
+
+        mock_session_service.list_sessions = AsyncMock(return_value=[])
+        mock_session_service.create_session = AsyncMock(return_value=first_created_session)
+        mock_session_service.get_session = AsyncMock(return_value=None)
 
         # Create first session
-        await manager.get_or_create_session("session1", "test_app", "test_user")
+        await manager.get_or_create_session("thread1", "test_app", "test_user")
 
-        # Now mock the old session for limit enforcement
-        def mock_get_session_side_effect(session_id, app_name, user_id):
-            if session_id == "session1":
-                return old_session
-            return None
-
-        mock_session_service.get_session.side_effect = mock_get_session_side_effect
+        # Now mock for second session creation:
+        # - get_session returns old_session for limit enforcement
+        # - list_sessions still returns empty (different thread_id)
+        mock_session_service.get_session = AsyncMock(return_value=old_session)
+        second_created_session = MagicMock()
+        second_created_session.id = "backend_session_2"
+        second_created_session.state = {"_ag_ui_thread_id": "thread2"}
+        mock_session_service.create_session = AsyncMock(return_value=second_created_session)
 
         # Create second session - should trigger removal of first session
-        await manager.get_or_create_session("session2", "test_app", "test_user")
+        await manager.get_or_create_session("thread2", "test_app", "test_user")
 
         # Verify memory service was called for the removed session
         mock_memory_service.add_session_to_memory.assert_called_once_with(old_session)

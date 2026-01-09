@@ -14,10 +14,20 @@ async def test_session_deletion():
     # Reset singleton for clean test
     SessionManager.reset_instance()
 
-    # Create mock session service
+    # Create mock session and service
+    test_thread_id = "test_thread_123"
+    test_backend_session_id = "backend_session_123"  # Backend generates this
+    test_app_name = "test_app"
+    test_user_id = "test_user"
+
+    # Mock session with state containing thread_id
+    created_session = MagicMock()
+    created_session.id = test_backend_session_id
+    created_session.state = {"_ag_ui_thread_id": test_thread_id, "test": "data"}
+
     mock_session_service = AsyncMock()
-    mock_session_service.get_session = AsyncMock(return_value=None)
-    mock_session_service.create_session = AsyncMock(return_value=MagicMock())
+    mock_session_service.list_sessions = AsyncMock(return_value=[])  # No existing sessions
+    mock_session_service.create_session = AsyncMock(return_value=created_session)
     mock_session_service.delete_session = AsyncMock()
 
     # Create session manager with mock service
@@ -26,28 +36,24 @@ async def test_session_deletion():
         auto_cleanup=False
     )
 
-    # Create a session
-    test_session_id = "test_session_123"
-    test_app_name = "test_app"
-    test_user_id = "test_user"
-
-    adk_session = await session_manager.get_or_create_session(
-        session_id=test_session_id,
+    # Create a session using thread_id (backend generates session_id)
+    session, backend_session_id = await session_manager.get_or_create_session(
+        thread_id=test_thread_id,
         app_name=test_app_name,
         user_id=test_user_id,
         initial_state={"test": "data"}
     )
 
-    print(f"✅ Created session: {test_session_id}")
+    print(f"✅ Created session with thread_id: {test_thread_id}, backend_id: {backend_session_id}")
 
-    # Verify session exists in tracking
-    session_key = f"{test_app_name}:{test_session_id}"
+    # Verify session exists in tracking (uses backend session_id)
+    session_key = f"{test_app_name}:{test_backend_session_id}"
     assert session_key in session_manager._session_keys
     print(f"✅ Session tracked: {session_key}")
 
     # Create a mock session object for deletion
     mock_session = MagicMock()
-    mock_session.id = test_session_id
+    mock_session.id = test_backend_session_id
     mock_session.app_name = test_app_name
     mock_session.user_id = test_user_id
 
@@ -60,12 +66,12 @@ async def test_session_deletion():
 
     # Verify delete_session was called with correct parameters
     mock_session_service.delete_session.assert_called_once_with(
-        session_id=test_session_id,
+        session_id=test_backend_session_id,
         app_name=test_app_name,
         user_id=test_user_id
     )
     print("✅ delete_session called with correct parameters:")
-    print(f"   session_id: {test_session_id}")
+    print(f"   session_id: {test_backend_session_id}")
     print(f"   app_name: {test_app_name}")
     print(f"   user_id: {test_user_id}")
 
@@ -79,10 +85,19 @@ async def test_session_deletion_error_handling():
     # Reset singleton for clean test
     SessionManager.reset_instance()
 
-    # Create mock session service that raises an error on delete
+    # Create mock session and service
+    test_thread_id = "test_thread_456"
+    test_backend_session_id = "backend_session_456"
+    test_app_name = "test_app"
+    test_user_id = "test_user"
+
+    created_session = MagicMock()
+    created_session.id = test_backend_session_id
+    created_session.state = {"_ag_ui_thread_id": test_thread_id}
+
     mock_session_service = AsyncMock()
-    mock_session_service.get_session = AsyncMock(return_value=None)
-    mock_session_service.create_session = AsyncMock(return_value=MagicMock())
+    mock_session_service.list_sessions = AsyncMock(return_value=[])
+    mock_session_service.create_session = AsyncMock(return_value=created_session)
     mock_session_service.delete_session = AsyncMock(side_effect=Exception("Delete failed"))
 
     # Create session manager with mock service
@@ -92,22 +107,24 @@ async def test_session_deletion_error_handling():
     )
 
     # Create a session
-    test_session_id = "test_session_456"
-    test_app_name = "test_app"
-    test_user_id = "test_user"
-
     await session_manager.get_or_create_session(
-        session_id=test_session_id,
+        thread_id=test_thread_id,
         app_name=test_app_name,
         user_id=test_user_id
     )
 
-    session_key = f"{test_app_name}:{test_session_id}"
+    session_key = f"{test_app_name}:{test_backend_session_id}"
     assert session_key in session_manager._session_keys
+
+    # Create mock session object for deletion
+    mock_session = MagicMock()
+    mock_session.id = test_backend_session_id
+    mock_session.app_name = test_app_name
+    mock_session.user_id = test_user_id
 
     # Try to delete - should handle the error gracefully
     try:
-        await session_manager._delete_session(test_session_id, test_app_name, test_user_id)
+        await session_manager._delete_session(mock_session)
 
         # Even if deletion failed, session should be untracked
         assert session_key not in session_manager._session_keys
@@ -126,30 +143,41 @@ async def test_user_session_limits():
     # Reset singleton for clean test
     SessionManager.reset_instance()
 
+    import time
+    import uuid
+
     # Create mock session service
     mock_session_service = AsyncMock()
 
     # Mock session objects with last_update_time and required attributes
     class MockSession:
-        def __init__(self, update_time, session_id=None, app_name=None, user_id=None):
+        def __init__(self, update_time, session_id=None, app_name=None, user_id=None, state=None):
             self.last_update_time = update_time
             self.id = session_id
             self.app_name = app_name
             self.user_id = user_id
+            self.state = state or {}
 
     created_sessions = {}
+
+    async def mock_list_sessions(app_name, user_id):
+        # Return sessions that match app_name/user_id
+        return [s for s in created_sessions.values()
+                if s.app_name == app_name and s.user_id == user_id]
 
     async def mock_get_session(session_id, app_name, user_id):
         key = f"{app_name}:{session_id}"
         return created_sessions.get(key)
 
-    async def mock_create_session(session_id, app_name, user_id, state):
-        import time
-        session = MockSession(time.time(), session_id, app_name, user_id)
+    async def mock_create_session(app_name, user_id, state):
+        # Backend generates session_id
+        session_id = str(uuid.uuid4())
+        session = MockSession(time.time(), session_id, app_name, user_id, state)
         key = f"{app_name}:{session_id}"
         created_sessions[key] = session
         return session
 
+    mock_session_service.list_sessions = mock_list_sessions
     mock_session_service.get_session = mock_get_session
     mock_session_service.create_session = mock_create_session
     mock_session_service.delete_session = AsyncMock()
@@ -164,10 +192,10 @@ async def test_user_session_limits():
     test_user = "limited_user"
     test_app = "test_app"
 
-    # Create 3 sessions for the same user
+    # Create 3 sessions for the same user (using different thread_ids)
     for i in range(3):
         await session_manager.get_or_create_session(
-            session_id=f"session_{i}",
+            thread_id=f"thread_{i}",
             app_name=test_app,
             user_id=test_user
         )
@@ -179,10 +207,9 @@ async def test_user_session_limits():
     assert user_count == 2, f"Expected 2 sessions, got {user_count}"
     print(f"✅ User session limit enforced: {user_count} sessions")
 
-    # Verify the oldest session was removed
-    assert f"{test_app}:session_0" not in session_manager._session_keys
-    assert f"{test_app}:session_1" in session_manager._session_keys
-    assert f"{test_app}:session_2" in session_manager._session_keys
+    # Verify we have exactly 2 session keys (session IDs are now UUIDs)
+    app_session_keys = [k for k in session_manager._session_keys if k.startswith(f"{test_app}:")]
+    assert len(app_session_keys) == 2, f"Expected 2 session keys, got {len(app_session_keys)}"
     print("✅ Oldest session was removed")
 
     return True

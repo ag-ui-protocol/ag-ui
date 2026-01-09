@@ -23,6 +23,8 @@ class AgentStateRequest(BaseModel):
     EXPERIMENTAL: This endpoint is subject to change in future versions.
     """
     threadId: str
+    appName: Optional[str] = None  # Required for session lookup; falls back to agent's static value
+    userId: Optional[str] = None   # Required for session lookup; falls back to agent's static value
     name: Optional[str] = None
     properties: Optional[Any] = None
 
@@ -167,23 +169,46 @@ def add_adk_fastapi_endpoint(
         thread_id = request_data.threadId
 
         try:
-            # Get session metadata from existing session
-            # This works correctly whether static values or extractors were used
+            # Resolve app_name and user_id: request params > static values
+            app_name = request_data.appName or agent._static_app_name
+            user_id = request_data.userId or agent._static_user_id
+
+            if not app_name or not user_id:
+                return JSONResponse(content={
+                    "threadId": thread_id,
+                    "threadExists": False,
+                    "state": "{}",
+                    "messages": "[]",
+                    "error": "appName and userId are required (either in request or as agent static values)"
+                })
+
+            session = None
+            session_id = None
+
+            # Fast path: check cache first
             metadata = agent._get_session_metadata(thread_id)
-
             if metadata:
-                app_name = metadata["app_name"]
-                user_id = metadata["user_id"]
-
-                # Get the session (don't create - just retrieve)
+                session_id, cached_app_name, cached_user_id = metadata
                 session = await agent._session_manager._session_service.get_session(
-                    session_id=thread_id,
-                    app_name=app_name,
-                    user_id=user_id
+                    session_id=session_id,
+                    app_name=cached_app_name,
+                    user_id=cached_user_id
                 )
-            else:
-                # Session doesn't exist - return not found
-                session = None
+                # Use cached values for subsequent operations
+                app_name = cached_app_name
+                user_id = cached_user_id
+
+            # Cache miss - search backend by thread_id
+            if not session:
+                session = await agent._session_manager._find_session_by_thread_id(
+                    app_name=app_name,
+                    user_id=user_id,
+                    thread_id=thread_id
+                )
+                if session:
+                    # Found - cache for future lookups
+                    session_id = session.id
+                    agent._session_lookup_cache[thread_id] = (session_id, app_name, user_id)
 
             thread_exists = session is not None
 
@@ -191,7 +216,7 @@ def add_adk_fastapi_endpoint(
             state = {}
             if thread_exists:
                 state = await agent._session_manager.get_session_state(
-                    session_id=thread_id,
+                    session_id=session_id,
                     app_name=app_name,
                     user_id=user_id
                 ) or {}

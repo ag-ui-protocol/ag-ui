@@ -1,6 +1,6 @@
 [versions]
 activity-compose = "1.10.1"
-agui-core = "0.2.3"
+agui-core = "0.2.5"
 appcompat = "1.7.1"
 core = "1.6.1"
 core-ktx = "1.16.0"
@@ -30,6 +30,7 @@ activity-compose = { module = "androidx.activity:activity-compose", version.ref 
 agui-client = { module = "com.agui:kotlin-client", version.ref = "agui-core" }
 agui-core = { module = "com.agui:kotlin-core", version.ref = "agui-core" }
 agui-tools = { module = "com.agui:kotlin-tools", version.ref = "agui-core" }
+agui-a2ui = { module = "com.ag-ui.community:kotlin-a2ui", version.ref = "agui-core" }
 androidx-ui-tooling = { module = "androidx.compose.ui:ui-tooling", version.ref = "compose" }
 appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
 core = { module = "androidx.test:core", version.ref = "core" }

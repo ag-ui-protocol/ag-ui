@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useMemo } from "react";
+import { usePathname } from "next/navigation";
 import filesJSON from '../../../files.json'
 import Readme from "@/components/readme/readme";
 import CodeViewer from "@/components/code-viewer/code-viewer";
@@ -18,14 +19,18 @@ type FileItem = {
 type FilesJsonType = Record<string, FileItem[]>;
 
 interface Props {
-  integrationId: string;
-  featureId: Feature;
   children: React.ReactNode;
 }
 
-export default function FeatureLayoutClient({ children, integrationId, featureId }: Props) {
+export default function FeatureLayoutClient({ children }: Props) {
   const { sidebarHidden } = useURLParams();
   const { view } = useURLParams();
+  const pathname = usePathname();
+
+  // Extract integrationId and featureId from pathname: /[integrationId]/feature/[featureId]
+  const pathParts = pathname.split("/").filter(Boolean);
+  const integrationId = pathParts[0] || "";
+  const featureId = pathParts[2] as Feature;
 
   const files = (filesJSON as FilesJsonType)[`${integrationId}::${featureId}`] || [];
 
@@ -38,18 +43,18 @@ export default function FeatureLayoutClient({ children, integrationId, featureId
     switch (view) {
       case "code":
         return (
-          <CodeViewer codeFiles={codeFiles} />
+          <CodeViewer key={`${integrationId}::${featureId}`} codeFiles={codeFiles} />
         )
       case "readme":
         return (
-          <Readme content={readme?.content ?? ''} />
+          <Readme key={`${integrationId}::${featureId}`} content={readme?.content ?? ''} />
         )
       default:
         return (
           <div className="h-full">{children}</div>
         )
     }
-  }, [children, codeFiles, readme, view])
+  }, [children, codeFiles, readme, view, integrationId, featureId])
 
   return (
     <div className={cn(
@@ -65,4 +70,3 @@ export default function FeatureLayoutClient({ children, integrationId, featureId
     </div>
   );
 }
-

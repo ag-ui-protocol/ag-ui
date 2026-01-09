@@ -24,6 +24,9 @@ import {
   MessagesSnapshotEvent,
 } from "@ag-ui/core";
 
+const defaultRunContext = { threadId: "test-thread-id", runId: "test-run-id" };
+const finishedEvent: RunFinishedEvent = { type: EventType.RUN_FINISHED, ...defaultRunContext };
+
 describe("verifyEvents general validation", () => {
   // Test: Event IDs must match their parent events (e.g. TEXT_MESSAGE_CONTENT must have same ID as TEXT_MESSAGE_START)
   it("should ensure message content has the same ID as message start", async () => {
@@ -232,7 +235,7 @@ describe("verifyEvents general validation", () => {
       type: EventType.TEXT_MESSAGE_END,
       messageId: "1",
     } as TextMessageEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next(finishedEvent);
 
     // Complete the source
     source$.complete();
@@ -289,7 +292,7 @@ describe("verifyEvents general validation", () => {
       type: EventType.STATE_DELTA,
       delta: [{ op: "add", path: "/result", value: "success" }],
     } as StateDeltaEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next(finishedEvent);
 
     // Complete the source
     source$.complete();
@@ -372,7 +375,7 @@ describe("verifyEvents general validation", () => {
       type: EventType.STEP_FINISHED,
       stepName: "step1",
     } as StepFinishedEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next(finishedEvent);
 
     // Complete the source
     source$.complete();
@@ -600,7 +603,7 @@ describe("verifyEvents events", () => {
       type: EventType.TEXT_MESSAGE_END,
       messageId: "1",
     } as TextMessageEndEvent);
-    source$.next({ type: EventType.RUN_FINISHED } as RunFinishedEvent);
+    source$.next(finishedEvent);
 
     // Complete the source
     source$.complete();

@@ -52,6 +52,8 @@ export const transformHttpEventStream = (source$: Observable<HttpEvent>): Observ
               if ((err as DOMException)?.name === "AbortError") {
                 eventSubject.next({
                   type: EventType.RUN_ERROR,
+                  message: (err as DOMException).message || "Request aborted",
+                  code: "abort",
                   rawEvent: err,
                 });
                 eventSubject.complete();

@@ -73,11 +73,11 @@ class TestHITLToolTracking:
             forwarded_props={}
         )
 
-        # Ensure session exists first
-        await adk_middleware._ensure_session_exists(
+        # Ensure session exists first (returns tuple: session, backend_session_id)
+        session, backend_session_id = await adk_middleware._ensure_session_exists(
             app_name="test_app",
             user_id="test_user",
-            session_id="test_thread",
+            thread_id="test_thread",
             initial_state={}
         )
 
@@ -125,9 +125,9 @@ class TestHITLToolTracking:
             has_pending = await adk_middleware._has_pending_tool_calls("test_thread")
             assert has_pending, "Tool call should be tracked as pending"
 
-            # Verify session state contains the tool call
+            # Verify session state contains the tool call (use backend_session_id)
             session = await adk_middleware._session_manager._session_service.get_session(
-                session_id="test_thread",
+                session_id=backend_session_id,
                 app_name="test_app",
                 user_id="test_user"
             )
@@ -150,11 +150,11 @@ class TestHITLToolTracking:
             forwarded_props={}
         )
 
-        # Ensure session exists first
-        await adk_middleware._ensure_session_exists(
+        # Ensure session exists first (returns tuple: session, backend_session_id)
+        session, backend_session_id = await adk_middleware._ensure_session_exists(
             app_name="test_app",
             user_id="test_user",
-            session_id="test_thread",
+            thread_id="test_thread",
             initial_state={}
         )
 

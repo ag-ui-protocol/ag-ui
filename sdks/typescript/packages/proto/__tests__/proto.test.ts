@@ -14,6 +14,8 @@ describe("Proto", () => {
     const event: BaseEvent = {
       type: EventType.TOOL_CALL_START,
       timestamp: Date.now(),
+      toolCallId: "call-1",
+      toolCallName: "test-tool",
     };
     const encoded = encode(event);
     expect(encoded).toBeInstanceOf(Uint8Array);

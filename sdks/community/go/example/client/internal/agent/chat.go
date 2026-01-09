@@ -9,6 +9,7 @@ import (
 	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/example/client/internal/event"
 	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/example/client/internal/message"
 	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/client/sse"
+	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/types"
 	"github.com/sirupsen/logrus"
 )
 
@@ -37,20 +38,20 @@ func Chat(ctx context.Context, inputMsg string, endpoint string, send func(msg *
 	sessionID := "test-session-1755371887"
 	runID := "run-1755744865857245000"
 
-	payload := map[string]interface{}{
-		"threadId": sessionID,
-		"runId":    runID,
-		"state":    map[string]interface{}{},
-		"messages": []map[string]interface{}{
+	payload := types.RunAgentInput{
+		ThreadID: sessionID,
+		RunID:    runID,
+		State:    map[string]any{},
+		Messages: []types.Message{
 			{
-				"id":      "msg-1",
-				"role":    "user",
-				"content": inputMsg,
+				ID:      "msg-1",
+				Role:    types.RoleUser,
+				Content: inputMsg,
 			},
 		},
-		"tools":          []interface{}{},
-		"context":        []interface{}{},
-		"forwardedProps": map[string]interface{}{},
+		Tools:          []types.Tool{},
+		Context:        []types.Context{},
+		ForwardedProps: map[string]any{},
 	}
 
 	// Start the SSE stream

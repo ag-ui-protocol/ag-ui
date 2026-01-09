@@ -21,6 +21,8 @@ describe("transformHttpEventStream", () => {
     const mockBaseEvent: BaseEvent = {
       type: EventType.TEXT_MESSAGE_CONTENT,
       timestamp: Date.now(),
+      messageId: "msg-1",
+      delta: "hello",
     };
 
     // Mock parseProtoStream to return our test event

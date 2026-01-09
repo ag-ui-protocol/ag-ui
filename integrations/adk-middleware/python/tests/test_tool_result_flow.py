@@ -1105,10 +1105,10 @@ class TestClientToolResultPersistence:
         ag_ui_adk._session_manager.mark_messages_processed(app_name, thread_id, ["user_1", "assistant_1"])
 
         # Add the tool call to pending (simulating HITL scenario)
-        await ag_ui_adk._ensure_session_exists(
+        session, backend_session_id = await ag_ui_adk._ensure_session_exists(
             app_name=app_name,
             user_id="test_user",
-            session_id=thread_id,
+            thread_id=thread_id,
             initial_state={}
         )
         await ag_ui_adk._add_pending_tool_call_with_context(
@@ -1118,7 +1118,7 @@ class TestClientToolResultPersistence:
         # We need to simulate the FunctionCall being in the session first
         # (this is what the ADK would have stored when the tool was originally called)
         session = await ag_ui_adk._session_manager._session_service.get_session(
-            session_id=thread_id,
+            session_id=backend_session_id,
             app_name=app_name,
             user_id="test_user"
         )
@@ -1187,8 +1187,9 @@ class TestClientToolResultPersistence:
             )
 
         # Now verify the FunctionResponse was persisted to the session
+        # Use backend_session_id (from _ensure_session_exists earlier) for direct session lookup
         session = await ag_ui_adk._session_manager._session_service.get_session(
-            session_id=thread_id,
+            session_id=backend_session_id,
             app_name=app_name,
             user_id="test_user"
         )
@@ -1245,16 +1246,16 @@ class TestClientToolResultPersistence:
         app_name = ag_ui_adk._get_app_name(input_data)
 
         # Ensure session exists
-        await ag_ui_adk._ensure_session_exists(
+        session, backend_session_id = await ag_ui_adk._ensure_session_exists(
             app_name=app_name,
             user_id="test_user",
-            session_id=thread_id,
+            thread_id=thread_id,
             initial_state={}
         )
 
         # Get initial event count
         session_before = await ag_ui_adk._session_manager._session_service.get_session(
-            session_id=thread_id,
+            session_id=backend_session_id,
             app_name=app_name,
             user_id="test_user"
         )
@@ -1367,7 +1368,7 @@ class TestClientToolResultPersistence:
 
         # Get final session state
         session_after = await ag_ui_adk._session_manager._session_service.get_session(
-            session_id=thread_id,
+            session_id=backend_session_id,
             app_name=app_name,
             user_id="test_user"
         )

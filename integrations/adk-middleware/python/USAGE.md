@@ -54,6 +54,33 @@ agent = ADKAgent(
 )
 ```
 
+### Thread ID vs Session ID Mapping
+
+The middleware transparently handles the mapping between AG-UI's `thread_id` and ADK's internal `session_id`:
+
+- **AG-UI `thread_id`**: The client-provided identifier (typically a UUID) that uniquely identifies a conversation thread from the frontend perspective
+- **ADK `session_id`**: The backend-generated identifier used by ADK session services (e.g., VertexAI generates numeric IDs)
+
+This mapping is completely transparent to frontend implementations:
+- All AG-UI events (`RUN_STARTED`, `RUN_FINISHED`, etc.) use `thread_id`
+- The middleware internally maintains a mapping from `thread_id` to `session_id`
+- Session state includes metadata (`_ag_ui_thread_id`, `_ag_ui_app_name`, `_ag_ui_user_id`) for recovery after middleware restarts
+
+```python
+# Frontend sends thread_id - the backend session_id is handled internally
+input = RunAgentInput(
+    thread_id="my-uuid-thread-id",  # AG-UI thread identifier
+    run_id="run_001",
+    messages=[UserMessage(id="1", role="user", content="Hello!")],
+    # ...
+)
+
+# Events returned to frontend always use thread_id
+async for event in agent.run(input):
+    # event.thread_id == "my-uuid-thread-id" (not the internal session_id)
+    print(f"Event for thread: {event.thread_id}")
+```
+
 ### Service Configuration
 
 ```python
@@ -74,6 +101,51 @@ agent = ADKAgent(
     use_in_memory_services=False
 )
 ```
+
+### Using App for Full ADK Features
+
+For access to App-level features like resumability, context caching, and plugins,
+use the `from_app()` constructor:
+
+```python
+from google.adk.apps import App
+from google.adk.agents import Agent
+from google.adk.plugins.logging_plugin import LoggingPlugin
+from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+
+# Create ADK App with plugins and configs
+app = App(
+    name="my_assistant",
+    root_agent=Agent(
+        name="assistant",
+        model="gemini-2.5-flash",
+        instruction="You are a helpful assistant.",
+    ),
+    plugins=[LoggingPlugin()],
+    # resumability_config=ResumabilityConfig(is_resumable=True),  # Optional
+)
+
+# Create ADKAgent from App
+agent = ADKAgent.from_app(
+    app,
+    user_id="demo_user",
+    plugin_close_timeout=10.0,  # Optional, requires ADK 1.19+
+)
+
+# Use with FastAPI
+from fastapi import FastAPI
+fastapi_app = FastAPI()
+add_adk_fastapi_endpoint(fastapi_app, agent, path="/chat")
+```
+
+The `from_app()` constructor enables:
+- **Plugin support**: Use ADK plugins like `LoggingPlugin` for debugging and tracing
+- **Resumability**: Configure pause/resume workflows for long-running operations
+- **Context caching**: Optimize LLM calls with context caching configuration
+- **Events compaction**: Configure how events are compacted in the application
+
+Note: The `plugin_close_timeout` parameter requires ADK 1.19.0 or later. On older
+versions, the parameter is silently ignored.
 
 ### Automatic Session Memory
 
@@ -290,10 +362,14 @@ When using `add_adk_fastapi_endpoint()`, an additional `POST /agents/state` endp
 ```json
 {
   "threadId": "thread_123",
+  "appName": "my_app",
+  "userId": "user_123",
   "name": "optional_agent_name",
   "properties": {}
 }
 ```
+
+The `appName` and `userId` parameters are optional if the `ADKAgent` was configured with static values. They are required for session lookup when using dynamic extractors or after middleware restart.
 
 **Response:**
 ```json
@@ -311,11 +387,15 @@ Note: The `state` and `messages` fields are JSON-stringified for compatibility w
 ```python
 import httpx
 
-async def get_thread_history(thread_id: str):
+async def get_thread_history(thread_id: str, app_name: str, user_id: str):
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "http://localhost:8000/agents/state",
-            json={"threadId": thread_id}
+            json={
+                "threadId": thread_id,
+                "appName": app_name,
+                "userId": user_id
+            }
         )
         data = response.json()
         if data["threadExists"]:

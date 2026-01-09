@@ -47,6 +47,7 @@ kotlin {
         val commonMain by getting {
             dependencies {
                 implementation(libs.agui.client)
+                implementation(libs.a2ui4k)
                 implementation(libs.kotlinx.coroutines.core)
                 implementation("org.jetbrains.kotlinx:atomicfu:0.23.2")
                 implementation(libs.kotlinx.serialization.json)

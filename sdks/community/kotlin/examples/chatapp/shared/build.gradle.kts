@@ -52,6 +52,9 @@ kotlin {
 
                 implementation(project(":chatapp-shared"))
 
+                // A2UI rendering
+                implementation(libs.a2ui4k)
+
                 // Coroutines
                 implementation(libs.kotlinx.coroutines.core)
 

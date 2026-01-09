@@ -1,15 +1,11 @@
-### Performance Improvements
-- Up to 2x faster compilation with K2 compiler
-- Reduced memory usage in streaming scenarios
-- Smaller binary sizes due to better optimization
-- Improved coroutine performance with latest kotlinx.coroutines# Changelog
+# Changelog
 
 All notable changes to ag-ui-4k will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.5] - 2025-12-29
 
 ### Added
 - Agent subscriber system for opt-in lifecycle and event interception.
@@ -21,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 - Expanded chunk transformation and state application coverage for role propagation and subscriber behavior.
+
+### Performance Improvements
+- Up to 2x faster compilation with K2 compiler
+- Reduced memory usage in streaming scenarios
+- Smaller binary sizes due to better optimization
+- Improved coroutine performance with latest kotlinx.coroutines
 
 ## [0.1.0] - 2025-06-14
 
