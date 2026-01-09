@@ -1,4 +1,3 @@
-import { openai } from "@ai-sdk/openai";
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { z } from "zod";
@@ -6,6 +5,7 @@ import { weatherTool } from "../tools";
 import { getStorage } from "../storage";
 
 export const agenticChatAgent = new Agent({
+  id: 'agentic_chat',
   name: "agentic_chat",
   instructions: `
     You are a helpful weather assistant that provides accurate weather information.
@@ -17,7 +17,7 @@ export const agenticChatAgent = new Agent({
     - Include relevant details like humidity, wind conditions, and precipitation
     - Keep responses concise but informative
   `,
-  model: openai("gpt-4o"),
+  model: "openai/gpt-4o",
   tools: { get_weather: weatherTool },
   memory: new Memory({
     storage: getStorage(),
