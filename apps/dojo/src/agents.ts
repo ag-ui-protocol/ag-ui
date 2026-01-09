@@ -25,6 +25,7 @@ import { AWSStrandsAgent } from "@ag-ui/aws-strands";
 import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
+import { ClaudeAgentSDKAgent } from "@ag-ui/claude-agent-sdk";
 
 const envVars = getEnvVars();
 
@@ -332,4 +333,13 @@ export const agentsIntegrations = {
     ),
     human_in_the_loop: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/human-in-the-loop`, debug: true }),
   }),
+
+  "claude-agent-sdk": async () =>
+    mapAgents(
+      (path) => new ClaudeAgentSDKAgent({ url: `${envVars.claudeAgentSdkUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+      }
+    ),
 } satisfies AgentsMap;

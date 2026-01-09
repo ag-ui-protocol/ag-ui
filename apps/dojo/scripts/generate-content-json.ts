@@ -399,6 +399,21 @@ const agentFilesMapper: Record<
   // A2A integrations use runtime-configured agents without per-feature source files
   "a2a-basic": () => ({}),
   "a2a": () => ({}),
+  "claude-agent-sdk": (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/claude-agent-sdk/python/examples/agents/${agentId}.py`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
 };
 
 async function runGenerateContent() {
