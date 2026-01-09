@@ -124,6 +124,16 @@ const ALL_TARGETS = {
     name: "Dojo (dev)",
     cwd: gitRoot,
   },
+  "claude-agent-sdk-python": {
+    command: "uv sync",
+    name: "Claude Agent SDK (Python)",
+    cwd: path.join(integrationsRoot, "claude-agent-sdk/python"),
+  },
+  "claude-agent-sdk-typescript": {
+    command: "pnpm install",
+    name: "Claude Agent SDK (TypeScript)",
+    cwd: path.join(integrationsRoot, "claude-agent-sdk/typescript"),
+  },
   "microsoft-agent-framework-python": {
     command: "uv sync",
     name: "Microsoft Agent Framework (Python)",
