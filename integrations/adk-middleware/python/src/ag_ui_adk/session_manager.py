@@ -43,7 +43,8 @@ class SessionManager:
         session_timeout_seconds: int = 1200,  # 20 minutes default
         cleanup_interval_seconds: int = 300,  # 5 minutes
         max_sessions_per_user: Optional[int] = None,
-        auto_cleanup: bool = True
+        delete_session_on_cleanup: bool = True,
+        save_session_to_memory_on_cleanup: bool = True,
     ):
         """Initialize the session manager.
         
@@ -53,7 +54,8 @@ class SessionManager:
             session_timeout_seconds: Time before a session is considered expired
             cleanup_interval_seconds: Interval between cleanup cycles
             max_sessions_per_user: Maximum concurrent sessions per user (None = unlimited)
-            auto_cleanup: Enable automatic session cleanup task
+            delete_session_on_cleanup: Whether to delete sessions on cleanup
+            save_session_to_memory_on_cleanup: Whether to save sessions to memory on cleanup
         """
         if self._initialized:
             return
@@ -67,7 +69,8 @@ class SessionManager:
         self._timeout = session_timeout_seconds
         self._cleanup_interval = cleanup_interval_seconds
         self._max_per_user = max_sessions_per_user
-        self._auto_cleanup = auto_cleanup
+        self._delete_session_on_cleanup = delete_session_on_cleanup
+        self._save_session_to_memory_on_cleanup = save_session_to_memory_on_cleanup
         
         # Minimal tracking: just keys and user counts
         self._session_keys: Set[str] = set()  # "app_name:session_id" keys
@@ -137,8 +140,8 @@ class SessionManager:
             self._track_session(session_key, user_id)
             logger.debug(f"Retrieved existing session for thread {thread_id}: {session.id}")
 
-            # Start cleanup if needed
-            if self._auto_cleanup and not self._cleanup_task:
+            # Start cleanup
+            if not self._cleanup_task:
                 self._start_cleanup_task()
 
             return session, session.id
@@ -163,8 +166,8 @@ class SessionManager:
         self._track_session(session_key, user_id)
         logger.info(f"Created new session for thread {thread_id}: {session.id}")
 
-        # Start cleanup if needed
-        if self._auto_cleanup and not self._cleanup_task:
+        # Start cleanup
+        if not self._cleanup_task:
             self._start_cleanup_task()
 
         return session, session.id
@@ -671,22 +674,23 @@ class SessionManager:
         
         # If memory service is available, add session to memory before deletion
         logger.debug(f"Deleting session {session_key}, memory_service: {self._memory_service is not None}")
-        if self._memory_service:
+        if self._memory_service and self._save_session_to_memory_on_cleanup:
             try:
                 await self._memory_service.add_session_to_memory(session)
                 logger.debug(f"Added session {session_key} to memory before deletion")
             except Exception as e:
                 logger.error(f"Failed to add session {session_key} to memory: {e}")
         
-        try:
-            await self._session_service.delete_session(
-                session_id=session.id,
-                app_name=session.app_name,
-                user_id=session.user_id
-            )
-            logger.debug(f"Deleted session: {session_key}")
-        except Exception as e:
-            logger.error(f"Failed to delete session {session_key}: {e}")
+        if self._delete_session_on_cleanup:
+            try:
+                await self._session_service.delete_session(
+                    session_id=session.id,
+                    app_name=session.app_name,
+                    user_id=session.user_id
+                )
+                logger.debug(f"Deleted session: {session_key}")
+            except Exception as e:
+                logger.error(f"Failed to delete session {session_key}: {e}")
         
         self._untrack_session(session_key, session.user_id)
     
