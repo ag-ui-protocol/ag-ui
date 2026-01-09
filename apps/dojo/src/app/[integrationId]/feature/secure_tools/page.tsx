@@ -6,8 +6,9 @@ import {
   CopilotKit,
   useFrontendTool,
 } from "@copilotkit/react-core";
-import { CopilotChat } from "@copilotkit/react-ui";
+import { CopilotChat, RenderSuggestion } from "@copilotkit/react-ui";
 import { useTheme } from "next-themes";
+import { cn } from "@/lib/utils";
 
 interface SecureToolsProps {
   params: Promise<{
@@ -113,19 +114,13 @@ const Chat = () => {
       <div
         className={`px-4 py-2 text-sm flex flex-col gap-1 ${
           theme === "dark"
-            ? "bg-green-900/30 text-green-300 border-b border-green-500/30"
-            : "bg-green-50 text-green-700 border-b border-green-200"
+            ? "bg-green-900/30 text-sky-300 border-b border-sky-500/30"
+            : "bg-sky-50 text-sky-700 border-b border-sky-200"
         }`}
       >
         <div className="flex items-center gap-2">
           <span className="text-lg">🔒</span>
           <span className="font-medium">SecureToolsMiddleware Active</span>
-          <span className="text-xs opacity-75">
-            • Allowed: change_background • Not in allowlist: say_hello
-          </span>
-        </div>
-        <div className="text-xs opacity-60 ml-7">
-          ℹ️ Check server console for security logs when tools are blocked (isToolAllowed + onDeviation callbacks)
         </div>
       </div>
 
@@ -151,18 +146,45 @@ const Chat = () => {
       <div className="flex-1 flex justify-center items-center">
         <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
           <CopilotChat
-            className="h-full rounded-2xl max-w-6xl mx-auto"
+            className={cn(
+              "h-full rounded-2xl max-w-6xl mx-auto",
+              "[&_button.suggestion:nth-of-type(2)]:text-red-500",
+            )}
             labels={{
               initial:
                 "Hi! I'm an agent with two tools available: I can change the background color, and I can say hello to people.",
             }}
+            RenderSuggestionsList={function Suggestions({
+              suggestions,
+              onSuggestionClick,
+              isLoading,
+            }) {
+              return (
+                <div className="suggestions">
+                  {suggestions.map(({ title, message, isLoading, partial, className }) => (
+                    <RenderSuggestion
+                      key={title}
+                      title={title}
+                      message={message}
+                      partial={isLoading ?? partial ?? isLoading}
+                      className={`suggestion ${partial ? "loading" : ''} ${cn(
+                        className,
+                        title.includes("(not allowed)") && "text-red-700! border-red-600/25! bg-red-50!",
+                        title.includes("(allowed)") && "text-green-700! border-green-600/25! bg-green-50!",
+                      )}`}
+                      onClick={() => onSuggestionClick(message)}
+                    />
+                  ))}
+                </div>
+              );
+            }}
             suggestions={[
               {
-                title: "Change background",
+                title: "Change background (allowed)",
                 message: "Change the background to a purple gradient.",
               },
               {
-                title: "Say hello",
+                title: "Say hello (not allowed)",
                 message: "Say hello.",
               },
               {
