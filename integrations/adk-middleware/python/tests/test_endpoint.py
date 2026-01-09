@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from ag_ui.core import RunAgentInput, UserMessage, RunStartedEvent, RunErrorEvent, EventType
 from ag_ui.encoder import EventEncoder
-from ag_ui_adk.endpoint import add_adk_fastapi_endpoint, create_adk_app
+from ag_ui_adk.endpoint import add_adk_fastapi_endpoint, create_adk_app, make_extract_headers
 from ag_ui_adk.adk_agent import ADKAgent
 
 
@@ -436,18 +436,19 @@ class TestCreateADKApp:
 
         # Should call add_adk_fastapi_endpoint with correct parameters
         mock_add_endpoint.assert_called_once_with(
-            app, mock_agent, "/test", extract_headers=None
+            app, mock_agent, "/test", extract_state_from_request=None
         )
 
     @patch('ag_ui_adk.endpoint.add_adk_fastapi_endpoint')
     def test_create_app_passes_extract_headers(self, mock_add_endpoint, mock_agent):
         """Test that create_adk_app passes extract_headers to add_adk_fastapi_endpoint."""
-        headers = ["x-user-id", "x-tenant-id"]
-        app = create_adk_app(mock_agent, path="/test", extract_headers=headers)
+        async def extract_headers(request, input_data):
+            return {}
+        app = create_adk_app(mock_agent, path="/test", extract_state_from_request=extract_headers)
 
         # Should call add_adk_fastapi_endpoint with extract_headers
         mock_add_endpoint.assert_called_once_with(
-            app, mock_agent, "/test", extract_headers=headers
+            app, mock_agent, "/test", extract_state_from_request=extract_headers
         )
 
     def test_create_app_default_path(self, mock_agent):
@@ -622,7 +623,6 @@ class TestEndpointIntegration:
         # Should have encoded 10 events
         assert mock_encoder.encode.call_count == 10
 
-
 class TestExtractHeaders:
     """Tests for extract_headers functionality."""
 
@@ -667,7 +667,7 @@ class TestExtractHeaders:
         app = FastAPI()
         add_adk_fastapi_endpoint(
             app, mock_agent, "/test",
-            extract_headers=["x-user-id", "x-tenant-id"]
+            extract_state_from_request=make_extract_headers(["x-user-id", "x-tenant-id"])
         )
 
         client = TestClient(app)
@@ -706,7 +706,7 @@ class TestExtractHeaders:
         app = FastAPI()
         add_adk_fastapi_endpoint(
             app, mock_agent, "/test",
-            extract_headers=["x-user-id"]
+            extract_state_from_request=make_extract_headers(["x-user-id"])
         )
 
         client = TestClient(app)
@@ -745,7 +745,7 @@ class TestExtractHeaders:
         app = FastAPI()
         add_adk_fastapi_endpoint(
             app, mock_agent, "/test",
-            extract_headers=["x-some-long-header-name"]
+            extract_state_from_request=make_extract_headers(["x-some-long-header-name"])
         )
 
         client = TestClient(app)
@@ -783,7 +783,7 @@ class TestExtractHeaders:
         app = FastAPI()
         add_adk_fastapi_endpoint(
             app, mock_agent, "/test",
-            extract_headers=["x-user-id", "x-tenant-id"]
+            extract_state_from_request=make_extract_headers(["x-user-id", "x-tenant-id"])
         )
 
         client = TestClient(app)
@@ -822,7 +822,7 @@ class TestExtractHeaders:
         app = FastAPI()
         add_adk_fastapi_endpoint(
             app, mock_agent, "/test",
-            extract_headers=["x-user-id"]
+            extract_state_from_request=make_extract_headers(["x-user-id"])
         )
 
         # Input with existing state
@@ -874,7 +874,7 @@ class TestExtractHeaders:
         app = FastAPI()
         add_adk_fastapi_endpoint(
             app, mock_agent, "/test",
-            extract_headers=["x-user-id"]
+            extract_state_from_request=make_extract_headers(["x-user-id"])
         )
 
         # Input with state.headers that conflicts with HTTP header
@@ -959,7 +959,7 @@ class TestExtractHeaders:
         app = FastAPI()
         add_adk_fastapi_endpoint(
             app, mock_agent, "/test",
-            extract_headers=["x-user-id"]
+            extract_state_from_request=make_extract_headers(["x-user-id"])
         )
 
         # Input with None state
@@ -1008,7 +1008,7 @@ class TestExtractHeaders:
         app = FastAPI()
         add_adk_fastapi_endpoint(
             app, mock_agent, "/test",
-            extract_headers=["x-user-id"]
+            extract_state_from_request=make_extract_headers(["x-user-id"])
         )
 
         client = TestClient(app)
@@ -1046,7 +1046,7 @@ class TestExtractHeaders:
 
         app = create_adk_app(
             mock_agent,
-            extract_headers=["x-user-id"]
+            extract_state_from_request=make_extract_headers(["x-user-id"])
         )
 
         client = TestClient(app)
@@ -1083,7 +1083,7 @@ class TestExtractHeaders:
         app = FastAPI()
         add_adk_fastapi_endpoint(
             app, mock_agent, "/test",
-            extract_headers=["authorization", "custom-header"]
+            extract_state_from_request=make_extract_headers(["authorization", "custom-header"])
         )
 
         client = TestClient(app)
