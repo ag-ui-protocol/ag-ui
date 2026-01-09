@@ -794,27 +794,13 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
     messages: List[Message] = []
 
     for event in events:
-        # Skip events without content
-        if not hasattr(event, 'content') or event.content is None:
-            continue
-
         # Skip partial/streaming events - we only want complete messages
         if hasattr(event, 'partial') and event.partial:
             continue
 
-        content = event.content
-
-        # Skip events without parts
-        if not hasattr(content, 'parts') or not content.parts:
-            continue
-
-        # Extract text content from parts
-        text_content = ""
-        for part in content.parts:
-            if hasattr(part, 'text') and part.text:
-                text_content += part.text
-
-        # Get function calls and responses
+        # Get function calls and responses early - these may exist even without content parts
+        # This is critical for Google ADK 1.21.0+ where function responses may be in events
+        # with empty or missing content.parts (fixes GitHub issue #905)
         function_calls = event.get_function_calls() if hasattr(event, 'get_function_calls') else []
         function_responses = event.get_function_responses() if hasattr(event, 'get_function_responses') else []
 
@@ -823,6 +809,7 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
         event_id = getattr(event, 'id', None) or str(uuid.uuid4())
 
         # Handle function responses as ToolMessages
+        # Process these first as they can exist without text content
         if function_responses:
             for fr in function_responses:
                 tool_message = ToolMessage(
@@ -832,9 +819,19 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
                     tool_call_id=fr.id if hasattr(fr, 'id') and fr.id else str(uuid.uuid4())
                 )
                 messages.append(tool_message)
+            # Continue to next event after processing function responses
+            # (function response events typically don't have other content)
             continue
 
-        # Skip events with no meaningful content
+        # Extract text content from parts (if available)
+        text_content = ""
+        content = getattr(event, 'content', None)
+        if content is not None and hasattr(content, 'parts') and content.parts:
+            for part in content.parts:
+                if hasattr(part, 'text') and part.text:
+                    text_content += part.text
+
+        # Skip events with no meaningful content (no text and no function calls)
         if not text_content and not function_calls:
             continue
 

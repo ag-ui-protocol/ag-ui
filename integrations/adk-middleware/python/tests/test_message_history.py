@@ -255,6 +255,167 @@ class TestAdkEventsToMessages:
         assert messages[0].content is None or messages[0].content == ""
         assert len(messages[0].tool_calls) == 1
 
+    def test_function_response_with_no_content(self):
+        """Should handle function responses in events with no content (GitHub #905).
+
+        In Google ADK 1.21.0+, function response events may have content=None
+        while still containing valid function responses via get_function_responses().
+        """
+        fr = create_mock_function_response(
+            response={"result": "success", "data": [1, 2, 3]},
+            fr_id="fr-no-content"
+        )
+
+        # Create event with content=None but valid function responses
+        event = MagicMock()
+        event.id = "tool-response-no-content"
+        event.author = "model"
+        event.partial = False
+        event.content = None  # No content, but function response exists
+        event.get_function_calls = MagicMock(return_value=[])
+        event.get_function_responses = MagicMock(return_value=[fr])
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        assert isinstance(messages[0], ToolMessage)
+        assert messages[0].role == "tool"
+        assert messages[0].tool_call_id == "fr-no-content"
+        content = json.loads(messages[0].content)
+        assert content["result"] == "success"
+        assert content["data"] == [1, 2, 3]
+
+    def test_function_response_with_empty_parts(self):
+        """Should handle function responses in events with empty content.parts (GitHub #905).
+
+        In some ADK versions, events may have content with empty parts list
+        while still containing valid function responses.
+        """
+        fr = create_mock_function_response(
+            response={"status": "completed"},
+            fr_id="fr-empty-parts"
+        )
+
+        # Create event with content.parts = [] but valid function responses
+        event = MagicMock()
+        event.id = "tool-response-empty-parts"
+        event.author = "model"
+        event.partial = False
+        event.content = MagicMock()
+        event.content.parts = []  # Empty parts list
+        event.get_function_calls = MagicMock(return_value=[])
+        event.get_function_responses = MagicMock(return_value=[fr])
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        assert isinstance(messages[0], ToolMessage)
+        assert messages[0].tool_call_id == "fr-empty-parts"
+
+    def test_function_call_with_no_content(self):
+        """Should handle function calls in events with no content (GitHub #905).
+
+        Assistant messages with only tool calls and no text content should still
+        be converted properly when content is None.
+        """
+        fc = create_mock_function_call(
+            name="search_database",
+            args={"query": "test"},
+            fc_id="fc-no-content"
+        )
+
+        # Create event with content=None but valid function calls
+        event = MagicMock()
+        event.id = "assistant-fc-no-content"
+        event.author = "model"
+        event.partial = False
+        event.content = None  # No content
+        event.get_function_calls = MagicMock(return_value=[fc])
+        event.get_function_responses = MagicMock(return_value=[])
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        assert isinstance(messages[0], AssistantMessage)
+        assert messages[0].id == "assistant-fc-no-content"
+        assert messages[0].tool_calls is not None
+        assert len(messages[0].tool_calls) == 1
+        assert messages[0].tool_calls[0].id == "fc-no-content"
+        assert messages[0].tool_calls[0].function.name == "search_database"
+
+    def test_mixed_conversation_with_no_content_events(self):
+        """Should handle a full conversation including events with no content (GitHub #905).
+
+        This tests a realistic conversation flow where some events have content=None.
+        """
+        # User message
+        user_event = create_mock_adk_event(
+            event_id="user-1",
+            author="user",
+            text="Search for weather in Seattle"
+        )
+
+        # Assistant makes a tool call (with no text content, content=None)
+        fc = create_mock_function_call(
+            name="get_weather",
+            args={"city": "Seattle"},
+            fc_id="fc-weather"
+        )
+        assistant_fc_event = MagicMock()
+        assistant_fc_event.id = "assistant-1"
+        assistant_fc_event.author = "model"
+        assistant_fc_event.partial = False
+        assistant_fc_event.content = None
+        assistant_fc_event.get_function_calls = MagicMock(return_value=[fc])
+        assistant_fc_event.get_function_responses = MagicMock(return_value=[])
+
+        # Tool response (with content=None)
+        fr = create_mock_function_response(
+            response={"temperature": 65, "conditions": "cloudy"},
+            fr_id="fc-weather"
+        )
+        tool_response_event = MagicMock()
+        tool_response_event.id = "tool-1"
+        tool_response_event.author = "model"
+        tool_response_event.partial = False
+        tool_response_event.content = None
+        tool_response_event.get_function_calls = MagicMock(return_value=[])
+        tool_response_event.get_function_responses = MagicMock(return_value=[fr])
+
+        # Final assistant response
+        final_event = create_mock_adk_event(
+            event_id="assistant-2",
+            author="model",
+            text="The weather in Seattle is 65°F and cloudy."
+        )
+
+        messages = adk_events_to_messages([
+            user_event,
+            assistant_fc_event,
+            tool_response_event,
+            final_event
+        ])
+
+        assert len(messages) == 4
+
+        # User message
+        assert isinstance(messages[0], UserMessage)
+        assert messages[0].content == "Search for weather in Seattle"
+
+        # Assistant with tool call
+        assert isinstance(messages[1], AssistantMessage)
+        assert messages[1].tool_calls is not None
+        assert len(messages[1].tool_calls) == 1
+        assert messages[1].tool_calls[0].function.name == "get_weather"
+
+        # Tool response
+        assert isinstance(messages[2], ToolMessage)
+        assert messages[2].tool_call_id == "fc-weather"
+
+        # Final assistant response
+        assert isinstance(messages[3], AssistantMessage)
+        assert "65°F" in messages[3].content
+
 
 class TestTranslateFunctionCallsToToolCalls:
     """Unit tests for _translate_function_calls_to_tool_calls helper."""
