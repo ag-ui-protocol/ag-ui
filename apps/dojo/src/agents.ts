@@ -135,6 +135,12 @@ function wrapWithSecureTools<T extends AbstractAgent>(agent: T): T {
       // The presence of this function enables the feature
       blockedToolMessage: (toolName) =>
         `🔒 Tool call blocked: The tool "${toolName}" is not in the allowed tools list.`,
+
+      // OPTION 8: preserveBlockedInHistory - Keep blocked tools in history (default: false)
+      // By default, blocked tool calls are stripped from history so the LLM
+      // consistently tries to use them (and shows blocked messages each time).
+      // Set to true if you want the LLM to "learn" from blocked attempts.
+      // preserveBlockedInHistory: true,
     })
   );
   return agent;
