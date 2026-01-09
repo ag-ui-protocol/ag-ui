@@ -12,10 +12,16 @@ import {
   type TextMessageContentEvent,
   type TextMessageEndEvent,
   type Tool,
+  type Message,
+  type AssistantMessage,
+  type ToolMessage,
 } from "@ag-ui/core";
 import type { Observable } from "rxjs";
 import { from } from "rxjs";
 import { concatMap, mergeMap } from "rxjs/operators";
+
+/** Marker in tool results to identify blocked tool calls */
+const BLOCKED_TOOL_MARKER = "TOOL_BLOCKED_BY_SECURITY_POLICY";
 
 // =============================================================================
 // CONSTANTS
@@ -292,6 +298,31 @@ export interface SecureToolsConfig {
    * ```
    */
   blockedToolMessage?: (toolName: string, reason: string) => string;
+
+  /**
+   * If true, keeps blocked tool calls in the conversation history.
+   * This allows the LLM to "learn" that certain tools are blocked and
+   * potentially avoid calling them on subsequent requests.
+   *
+   * Default: false (blocked tool calls are stripped from history)
+   *
+   * When false (default):
+   * - Blocked tool calls are removed from message history
+   * - The LLM will attempt to use blocked tools again on each request
+   * - Users will consistently see blocked messages (when blockedToolMessage is set)
+   *
+   * When true:
+   * - Blocked tool calls remain in history
+   * - The LLM may learn to avoid blocked tools after seeing errors
+   * - Blocked messages may only appear on the first attempt
+   *
+   * @example
+   * ```ts
+   * preserveBlockedInHistory: true
+   * // LLM will see previous blocked attempts and may stop trying
+   * ```
+   */
+  preserveBlockedInHistory?: boolean;
 }
 
 // =============================================================================
@@ -607,22 +638,101 @@ export class SecureToolsMiddleware extends Middleware {
     this.blockedToolCalls.clear();
     this.toolCallArgsBuffer.clear();
 
+    // By default, strip blocked tool calls from history so LLM doesn't "learn" to avoid them
+    // Set preserveBlockedInHistory: true to keep them in history
+    const processedInput = this.config.preserveBlockedInHistory
+      ? input
+      : this.stripBlockedToolsFromHistory(input);
+
     // Build security context
     const context: AgentSecurityContext = {
-      input,
-      declaredTools: input.tools,
-      threadId: input.threadId,
-      runId: input.runId,
+      input: processedInput,
+      declaredTools: processedInput.tools,
+      threadId: processedInput.threadId,
+      runId: processedInput.runId,
       metadata: this.config.metadata,
     };
 
-    return this.runNext(input, next).pipe(
+    return this.runNext(processedInput, next).pipe(
       // Process each event, validating tool calls
       // processEvent returns an array of events (may include synthetic results for blocked tools)
       concatMap((event) => from(this.processEvent(event, context))),
       // Flatten the array of events into individual events
       mergeMap((events) => from(events)),
     );
+  }
+
+  /**
+   * Remove blocked tool calls and their results from the message history.
+   * This prevents the LLM from learning to avoid blocked tools.
+   */
+  private stripBlockedToolsFromHistory(input: RunAgentInput): RunAgentInput {
+    // Find all tool message IDs that contain our blocked marker
+    const blockedToolCallIds = new Set<string>();
+    
+    for (const message of input.messages) {
+      if (message.role === "tool") {
+        const toolMessage = message as ToolMessage;
+        // Check if this is a blocked tool result (contains our marker)
+        if (toolMessage.content.includes(BLOCKED_TOOL_MARKER)) {
+          blockedToolCallIds.add(toolMessage.toolCallId);
+        }
+      }
+    }
+
+    // If no blocked tools found, return input unchanged
+    if (blockedToolCallIds.size === 0) {
+      return input;
+    }
+
+    // Filter messages to remove blocked tool interactions
+    const filteredMessages: Message[] = [];
+    
+    for (const message of input.messages) {
+      // Remove tool messages for blocked tool calls
+      if (message.role === "tool") {
+        const toolMessage = message as ToolMessage;
+        if (blockedToolCallIds.has(toolMessage.toolCallId)) {
+          continue; // Skip this blocked tool result
+        }
+      }
+      
+      // For assistant messages, remove blocked tool calls from toolCalls array
+      if (message.role === "assistant") {
+        const assistantMessage = message as AssistantMessage;
+        if (assistantMessage.toolCalls && assistantMessage.toolCalls.length > 0) {
+          const filteredToolCalls = assistantMessage.toolCalls.filter(
+            (tc) => !blockedToolCallIds.has(tc.id)
+          );
+          
+          // If all tool calls were blocked and there's no content, skip this message
+          if (filteredToolCalls.length === 0 && !assistantMessage.content) {
+            continue;
+          }
+          
+          // If some tool calls remain, update the message
+          if (filteredToolCalls.length !== assistantMessage.toolCalls.length) {
+            filteredMessages.push({
+              ...assistantMessage,
+              toolCalls: filteredToolCalls.length > 0 ? filteredToolCalls : undefined,
+            });
+            continue;
+          }
+        }
+        
+        // Skip our synthetic blocked messages (they start with the lock emoji or have blocked-msg- id)
+        if (message.id.startsWith("blocked-msg-")) {
+          continue;
+        }
+      }
+      
+      filteredMessages.push(message);
+    }
+
+    return {
+      ...input,
+      messages: filteredMessages,
+    };
   }
 
   /**
