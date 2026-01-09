@@ -1,6 +1,9 @@
 import { test, expect, waitForAIResponse, retryOnAIFailure } from "../../test-isolation-helper";
 import { HumanInLoopPage } from "../../pages/adkMiddlewarePages/HumanInLoopPage";
 
+// Skip all tests in this file when CLOUD_AGENTS is set
+test.skip(!!process.env.CLOUD_AGENTS, 'Skipping ADK Middleware tests when CLOUD_AGENTS is set');
+
 test.describe("Human in the Loop Feature", () => {
   test("[ADK Middleware] should interact with the chat and perform steps", async ({
     page,

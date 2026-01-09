@@ -8,6 +8,7 @@ import "./style.css";
 import { useMobileView } from "@/utils/use-mobile-view";
 import { useMobileChat } from "@/utils/use-mobile-chat";
 import { useURLParams } from "@/contexts/url-params-context";
+import { cloudAgents } from "@/cloudAgents";
 
 interface SharedStateProps {
   params: Promise<{
@@ -27,10 +28,21 @@ export default function SharedState({ params }: SharedStateProps) {
   const chatDescription = "Ask me to craft recipes";
   const initialLabel = "Hi 👋 How can I help with your recipe?";
 
+  let runtimeUrl = `/api/copilotkit/${integrationId}`;
+  let publicApiKey: string | undefined = undefined;
+  if (process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL) {
+    runtimeUrl = process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL;
+    publicApiKey = cloudAgents.find((agent) => agent.id === integrationId)?.publicApiKey;
+  }
+
   return (
     <CopilotKit
-      runtimeUrl={`/api/copilotkit/${integrationId}`}
+      runtimeUrl={runtimeUrl}
       showDevConsole={false}
+      publicApiKey={publicApiKey}
+      headers={{
+        "x-copilotkit-runtime-client-gql-version": "1.50.0"
+      }}
       // agent lock to the relevant agent
       agent="shared_state"
     >

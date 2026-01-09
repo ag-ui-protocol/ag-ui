@@ -1,6 +1,9 @@
 import { test, expect } from "@playwright/test";
 import { AgenticGenUIPage } from "../../pages/serverStarterAllFeaturesPages/AgenticUIGenPage";
 
+// Skip all tests in this file when CLOUD_AGENTS is set
+test.skip(!!process.env.CLOUD_AGENTS, 'Skipping Server Starter all features tests when CLOUD_AGENTS is set');
+
 test.describe("Agent Generative UI Feature", () => {
 // Temporarily disabled because the agent planner UI element is currently missing in CI runs.
 test.skip("[Server Starter all features] should interact with the chat to get a planner on prompt", async ({

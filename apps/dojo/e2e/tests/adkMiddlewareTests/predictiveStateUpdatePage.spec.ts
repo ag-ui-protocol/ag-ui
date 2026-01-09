@@ -5,8 +5,10 @@ import {
 } from "../../test-isolation-helper";
 import { PredictiveStateUpdatesPage } from "../../pages/adkMiddlewarePages/PredictiveStateUpdatesPage";
 
-// TODO: Re-enable when ADK middleware agent is uncommented in agents.ts and menu.ts
-test.describe.skip("Predictive State Updates Feature", () => {
+// Skip all tests in this file when CLOUD_AGENTS is set
+test.skip(!!process.env.CLOUD_AGENTS, 'Skipping ADK Middleware tests when CLOUD_AGENTS is set');
+
+test.describe("Predictive State Updates Feature", () => {
   test("[ADK Middleware] should interact with agent and approve asked changes", async ({
     page,
   }) => {

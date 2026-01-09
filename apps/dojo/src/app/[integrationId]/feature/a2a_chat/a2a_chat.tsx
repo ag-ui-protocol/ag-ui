@@ -11,6 +11,7 @@ import {
 } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 import dedent from "dedent";
+import { cloudAgents } from "@/cloudAgents";
 
 interface A2AChatProps {
   params: Promise<{
@@ -22,10 +23,21 @@ interface A2AChatProps {
 const A2AChat: React.FC<A2AChatProps> = ({ params, onNotification }) => {
   const { integrationId } = React.use(params);
 
+  let runtimeUrl = `/api/copilotkit/${integrationId}`;
+  let publicApiKey: string | undefined = undefined;
+  if (process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL) {
+    runtimeUrl = process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL;
+    publicApiKey = cloudAgents.find((agent) => agent.id === integrationId)?.publicApiKey;
+  }
+
   return (
     <CopilotKit
-      runtimeUrl={`/api/copilotkit/${integrationId}`}
+      runtimeUrl={runtimeUrl}
       showDevConsole={false}
+      publicApiKey={publicApiKey}
+      headers={{
+        "x-copilotkit-runtime-client-gql-version": "1.50.0"
+      }}
       // agent lock to the relevant agent
       agent="a2a_chat"
     >
