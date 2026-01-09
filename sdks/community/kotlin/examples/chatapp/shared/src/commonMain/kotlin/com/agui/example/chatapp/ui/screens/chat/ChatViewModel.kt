@@ -3,6 +3,7 @@ package com.agui.example.chatapp.ui.screens.chat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
+import com.contextable.a2ui4k.model.UiEvent
 import com.agui.example.chatapp.chat.ChatController
 import com.agui.example.chatapp.chat.ChatState
 import kotlinx.coroutines.CoroutineScope
@@ -24,6 +25,8 @@ class ChatViewModel(
     val state: StateFlow<ChatState> = controller.state
 
     fun sendMessage(content: String) = controller.sendMessage(content)
+
+    fun sendA2UiAction(event: UiEvent) = controller.sendA2UiAction(event)
 
     fun cancelCurrentOperation() = controller.cancelCurrentOperation()
 

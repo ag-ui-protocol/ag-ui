@@ -34,6 +34,7 @@ from .session_manager import SessionManager
 from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
 from .config import PredictStateMapping
+from .utils.converters import convert_message_content_to_parts
 
 import logging
 logger = logging.getLogger(__name__)
@@ -773,10 +774,10 @@ class ADKAgent:
         # Get the latest user message
         for message in reversed(target_messages):
             if getattr(message, "role", None) == "user" and getattr(message, "content", None):
-                return types.Content(
-                    role="user",
-                    parts=[types.Part(text=message.content)]
-                )
+                parts = convert_message_content_to_parts(getattr(message, "content", None))
+                if not parts:
+                    return None
+                return types.Content(role="user", parts=parts)
 
         return None
     

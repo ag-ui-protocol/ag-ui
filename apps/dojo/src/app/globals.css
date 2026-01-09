@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "../styles/typography.css";
 
+@source "../../node_modules/streamdown/dist/*.js";
+
 @plugin "tailwindcss-animate";
 
 @custom-variant dark (&:is(.dark *));

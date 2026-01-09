@@ -114,7 +114,6 @@ AG-UI was born from CopilotKit's initial **partnership** with LangGraph and Crew
 ### 🌐 Community
 | Framework | Status | AG-UI Resources |
 | ---------- | ------- | ---------------- |
-| [Vercel AI SDK](https://github.com/vercel/ai) | ✅ Supported | ➡️ [Docs](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/vercel-ai-sdk/typescript) |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress | – |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/) | 🛠️ In Progress | – |
 

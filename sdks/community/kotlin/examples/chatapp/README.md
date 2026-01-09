@@ -10,6 +10,47 @@ A Compose Multiplatform chat client for connecting to AI agents using the AG-UI 
 - 🤖 **Multi-Agent Support**: Add and manage multiple AI agents
 - 💬 **Real-time Streaming**: See AI responses character-by-character
 - ⚙️ **Settings Management**: Persistent storage of agent configurations
+- 🖼️ **A2UI Support**: Render agent-driven dynamic UI surfaces
+
+## A2UI (Agent-to-UI) Support
+
+The chat client supports [A2UI](https://github.com/google/A2UI), Google's specification for agent-driven user interfaces. When connected to an A2UI-enabled agent, the app can render rich, interactive UI surfaces directly within the chat.
+
+### Supported Components
+
+All 18 standard A2UI components are supported:
+
+| Category | Components |
+|----------|------------|
+| **Layout** | Column, Row, List, Card, Tabs, Modal, Divider |
+| **Display** | Text, Image, Icon |
+| **Input** | TextField, CheckBox, Slider, MultipleChoice, DateTimeInput |
+| **Action** | Button |
+| **Media** | Video, AudioPlayer (placeholder UI) |
+
+### Features
+
+- **Dynamic Surfaces**: Agent can create, update, and replace UI surfaces in real-time
+- **Two-Way Data Binding**: Input components automatically sync state with the agent
+- **User Actions**: Button clicks and form submissions are sent back to the agent
+- **Streaming Updates**: UI surfaces update incrementally via JSON Patch (RFC 6902)
+
+### How It Works
+
+1. Agent sends A2UI messages via AG-UI `ActivitySnapshot`/`ActivityDelta` events
+2. The `SurfaceStateManager` processes messages and maintains surface state
+3. `A2UISurface` from [a2ui-4k](https://github.com/AIsOfTheWater/a2ui-4k) renders the component tree using Compose Multiplatform
+4. User interactions generate `UserActionEvent` sent back via `forwardedProps`
+
+### Connecting to an A2UI Agent
+
+The chatapp connects to A2UI agents via the CopilotKit bridge. Use the bridge endpoint URL when adding an agent:
+
+```
+http://localhost:3000/api/copilotkit
+```
+
+The demo has been tested with the [CopilotKit/with-a2a-a2ui](https://github.com/CopilotKit/with-a2a-a2ui) Restaurant Agent sample.
 
 ## Architecture
 
@@ -164,6 +205,7 @@ Agent configurations are stored using platform-specific preferences:
 ## Dependencies
 
 - **agui-kotlin-sdk**: The core AG-UI protocol implementation
+- **a2ui-4k**: A2UI rendering engine for Compose Multiplatform
 - **Compose Multiplatform**: UI framework
 - **Voyager**: Navigation and ViewModels
 - **Ktor**: HTTP client (inherited from agui-kotlin-sdk)
