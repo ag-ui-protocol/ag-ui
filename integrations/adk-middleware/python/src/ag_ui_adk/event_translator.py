@@ -799,8 +799,9 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
             continue
 
         # Get function calls and responses early - these may exist even without content parts
-        # This is critical for Google ADK 1.21.0+ where function responses may be in events
-        # with empty or missing content.parts (fixes GitHub issue #905)
+        # This is critical when using non-Gemini models (e.g., Qwen via vLLM/Ollama) where
+        # function responses exist via get_function_responses() but content.parts may be
+        # empty or None (fixes GitHub issue #905)
         function_calls = event.get_function_calls() if hasattr(event, 'get_function_calls') else []
         function_responses = event.get_function_responses() if hasattr(event, 'get_function_responses') else []
 

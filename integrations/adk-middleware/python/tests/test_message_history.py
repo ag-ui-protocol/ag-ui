@@ -258,8 +258,9 @@ class TestAdkEventsToMessages:
     def test_function_response_with_no_content(self):
         """Should handle function responses in events with no content (GitHub #905).
 
-        In Google ADK 1.21.0+, function response events may have content=None
-        while still containing valid function responses via get_function_responses().
+        When using non-Gemini models (e.g., Qwen via vLLM/Ollama), function response
+        events may have content=None while still containing valid function responses
+        via get_function_responses().
         """
         fr = create_mock_function_response(
             response={"result": "success", "data": [1, 2, 3]},
@@ -288,8 +289,8 @@ class TestAdkEventsToMessages:
     def test_function_response_with_empty_parts(self):
         """Should handle function responses in events with empty content.parts (GitHub #905).
 
-        In some ADK versions, events may have content with empty parts list
-        while still containing valid function responses.
+        When using non-Gemini models, events may have content with empty parts list
+        while still containing valid function responses via get_function_responses().
         """
         fr = create_mock_function_response(
             response={"status": "completed"},
@@ -315,8 +316,9 @@ class TestAdkEventsToMessages:
     def test_function_call_with_no_content(self):
         """Should handle function calls in events with no content (GitHub #905).
 
-        Assistant messages with only tool calls and no text content should still
-        be converted properly when content is None.
+        When using non-Gemini models (e.g., Qwen via vLLM/Ollama), assistant messages
+        with tool calls may have content=None while function calls are accessible
+        via get_function_calls().
         """
         fc = create_mock_function_call(
             name="search_database",
@@ -346,7 +348,8 @@ class TestAdkEventsToMessages:
     def test_mixed_conversation_with_no_content_events(self):
         """Should handle a full conversation including events with no content (GitHub #905).
 
-        This tests a realistic conversation flow where some events have content=None.
+        This tests a realistic conversation flow with non-Gemini models where
+        tool call and tool response events have content=None.
         """
         # User message
         user_event = create_mock_adk_event(
