@@ -8,11 +8,14 @@ import {
   type ToolCallArgsEvent,
   type ToolCallEndEvent,
   type ToolCallResultEvent,
+  type TextMessageStartEvent,
+  type TextMessageContentEvent,
+  type TextMessageEndEvent,
   type Tool,
 } from "@ag-ui/core";
 import type { Observable } from "rxjs";
 import { from } from "rxjs";
-import { concatMap, filter } from "rxjs/operators";
+import { concatMap, mergeMap } from "rxjs/operators";
 
 // =============================================================================
 // CONSTANTS
@@ -263,6 +266,32 @@ export interface SecureToolsConfig {
     error: (message: string, ...args: unknown[]) => void;
     info: (message: string, ...args: unknown[]) => void;
   };
+
+  /**
+   * Function to generate a visible message shown to users when a tool call is blocked.
+   * If provided, a text message will be emitted to the chat informing the user.
+   * If not provided, no user-visible message is shown (only server-side logging via onDeviation).
+   *
+   * The `reason` parameter will be one of:
+   * - `NOT_IN_ALLOWLIST` - Tool not in the allowed tools list
+   * - `SPEC_MISMATCH_DESCRIPTION` - Tool description doesn't match
+   * - `SPEC_MISMATCH_PARAMETERS` - Tool parameters don't match
+   * - `IS_TOOL_ALLOWED_REJECTED` - Rejected by isToolAllowed callback
+   * - `UNDECLARED_TOOL` - Tool not declared in agent config
+   * - `CUSTOM` - Custom rejection reason
+   *
+   * @example
+   * ```ts
+   * // Simple message
+   * blockedToolMessage: (toolName) =>
+   *   `🔒 The tool "${toolName}" is not available.`
+   *
+   * // Include reason
+   * blockedToolMessage: (toolName, reason) =>
+   *   `Security: "${toolName}" was blocked (${reason})`
+   * ```
+   */
+  blockedToolMessage?: (toolName: string, reason: string) => string;
 }
 
 // =============================================================================
@@ -550,8 +579,14 @@ function defaultOnDeviation(
  * - Deviation logging and custom handlers (onDeviation)
  * - Express-like middleware pattern
  */
+/** Info about a blocked tool call for message generation */
+interface BlockedToolInfo {
+  toolName: string;
+  reason: string;
+}
+
 export class SecureToolsMiddleware extends Middleware {
-  private blockedToolCallIds = new Set<string>();
+  private blockedToolCalls = new Map<string, BlockedToolInfo>();
   private toolCallArgsBuffer = new Map<string, string>();
   private readonly config: SecureToolsConfig;
 
@@ -569,7 +604,7 @@ export class SecureToolsMiddleware extends Middleware {
 
   run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
     // Reset state for new run
-    this.blockedToolCallIds.clear();
+    this.blockedToolCalls.clear();
     this.toolCallArgsBuffer.clear();
 
     // Build security context
@@ -582,21 +617,31 @@ export class SecureToolsMiddleware extends Middleware {
     };
 
     return this.runNext(input, next).pipe(
-      // Process each event, validating tool calls and filtering blocked ones
+      // Process each event, validating tool calls
+      // processEvent returns an array of events (may include synthetic results for blocked tools)
       concatMap((event) => from(this.processEvent(event, context))),
-      // Filter out null events (blocked tool calls)
-      filter((event): event is BaseEvent => event !== null),
+      // Flatten the array of events into individual events
+      mergeMap((events) => from(events)),
     );
   }
 
   /**
-   * Process a single event, validating tool calls and returning null if blocked.
+   * Process a single event, validating tool calls.
+   * Returns an array of events to emit (may include synthetic results for blocked tools).
+   * 
+   * When a tool call is blocked:
+   * - We still pass through TOOL_CALL_START, TOOL_CALL_ARGS, TOOL_CALL_END events
+   * - After TOOL_CALL_END, we emit a synthetic TOOL_CALL_RESULT with an error message
+   * 
+   * This ensures the conversation history remains balanced (every function call
+   * has a corresponding function response), which is required by LLM APIs like
+   * Google's Gemini that validate function call/response parity.
    */
   private async processEvent(
     event: BaseEvent,
     context: AgentSecurityContext,
-  ): Promise<BaseEvent | null> {
-    // Handle TOOL_CALL_START events - validate and potentially block
+  ): Promise<BaseEvent[]> {
+    // Handle TOOL_CALL_START events - validate and track blocked calls
     if (event.type === EventType.TOOL_CALL_START) {
       const toolCallStartEvent = event as ToolCallStartEvent;
       const toolCallId = toolCallStartEvent.toolCallId;
@@ -617,56 +662,109 @@ export class SecureToolsMiddleware extends Middleware {
       const allowed = await this.isToolCallAllowed(toolCall, context);
 
       if (!allowed) {
+        // Tool is blocked - track it but still pass through the event
+        // so that the conversation history includes the tool call.
+        // We'll emit a synthetic TOOL_CALL_RESULT after TOOL_CALL_END.
         // Already added to blockedToolCallIds in isToolCallAllowed
-        return null;
       }
 
-      return event;
+      // Always pass through TOOL_CALL_START to maintain conversation history
+      return [event];
     }
 
-    // Handle TOOL_CALL_ARGS events
+    // Handle TOOL_CALL_ARGS events - always pass through
     if (event.type === EventType.TOOL_CALL_ARGS) {
       const toolCallArgsEvent = event as ToolCallArgsEvent;
       
-      if (this.blockedToolCallIds.has(toolCallArgsEvent.toolCallId)) {
-        return null;
-      }
-
-      // Accumulate args
+      // Accumulate args (needed for logging/debugging, even for blocked tools)
       const currentArgs = this.toolCallArgsBuffer.get(toolCallArgsEvent.toolCallId) ?? "";
       this.toolCallArgsBuffer.set(toolCallArgsEvent.toolCallId, currentArgs + toolCallArgsEvent.delta);
-      return event;
+      
+      // Always pass through to maintain conversation history
+      return [event];
     }
 
     // Handle TOOL_CALL_END events
     if (event.type === EventType.TOOL_CALL_END) {
       const toolCallEndEvent = event as ToolCallEndEvent;
+      const toolCallId = toolCallEndEvent.toolCallId;
+      const blockedInfo = this.blockedToolCalls.get(toolCallId);
       
-      if (this.blockedToolCallIds.has(toolCallEndEvent.toolCallId)) {
-        return null;
+      if (blockedInfo) {
+        // For blocked tools, emit TOOL_CALL_END followed by a synthetic TOOL_CALL_RESULT
+        // This ensures the conversation history is balanced
+        const syntheticResult: ToolCallResultEvent = {
+          type: EventType.TOOL_CALL_RESULT,
+          messageId: `blocked-result-${toolCallId}`,
+          toolCallId,
+          content: JSON.stringify({
+            error: "TOOL_BLOCKED_BY_SECURITY_POLICY",
+            message: "This tool call was blocked by the security middleware. The tool is not in the allowed tools list or was rejected by the security policy.",
+          }),
+          role: "tool",
+        };
+        
+        // Clean up tracking state for blocked tool
+        this.blockedToolCalls.delete(toolCallId);
+        this.toolCallArgsBuffer.delete(toolCallId);
+        
+        const events: BaseEvent[] = [event, syntheticResult];
+        
+        // If blockedToolMessage is provided, add text message events to inform the user
+        if (this.config.blockedToolMessage) {
+          const messageId = `blocked-msg-${toolCallId}`;
+          const { toolName, reason } = blockedInfo;
+          
+          // Generate the blocked message using the provided formatter
+          const messageText = this.config.blockedToolMessage(toolName, reason);
+          
+          // Emit text message events: START, CONTENT, END
+          const textStart: TextMessageStartEvent = {
+            type: EventType.TEXT_MESSAGE_START,
+            messageId,
+            role: "assistant",
+          };
+          const textContent: TextMessageContentEvent = {
+            type: EventType.TEXT_MESSAGE_CONTENT,
+            messageId,
+            delta: messageText,
+          };
+          const textEnd: TextMessageEndEvent = {
+            type: EventType.TEXT_MESSAGE_END,
+            messageId,
+          };
+          
+          events.push(textStart, textContent, textEnd);
+        }
+        
+        return events;
       }
 
-      return event;
+      return [event];
     }
 
     // Handle TOOL_CALL_RESULT events
     if (event.type === EventType.TOOL_CALL_RESULT) {
       const toolCallResultEvent = event as ToolCallResultEvent;
-      const isBlocked = this.blockedToolCallIds.has(toolCallResultEvent.toolCallId);
-
-      // Clean up tracking state
-      this.blockedToolCallIds.delete(toolCallResultEvent.toolCallId);
-      this.toolCallArgsBuffer.delete(toolCallResultEvent.toolCallId);
-
-      if (isBlocked) {
-        return null;
+      const toolCallId = toolCallResultEvent.toolCallId;
+      
+      // If this tool was blocked, we've already emitted a synthetic result
+      // after TOOL_CALL_END. Skip this external result to avoid duplicates.
+      if (this.blockedToolCalls.has(toolCallId)) {
+        // Clean up (though it should already be cleaned up after TOOL_CALL_END)
+        this.blockedToolCalls.delete(toolCallId);
+        this.toolCallArgsBuffer.delete(toolCallId);
+        return [];
       }
 
-      return event;
+      // Clean up tracking state
+      this.toolCallArgsBuffer.delete(toolCallId);
+
+      return [event];
     }
 
     // Allow all other events through
-    return event;
+    return [event];
   }
 
   /**
@@ -703,8 +801,11 @@ export class SecureToolsMiddleware extends Middleware {
           defaultOnDeviation(deviation, logger);
         }
 
-        // Block the tool call
-        this.blockedToolCallIds.add(toolCall.toolCallId);
+        // Block the tool call and store info for message generation
+        this.blockedToolCalls.set(toolCall.toolCallId, {
+          toolName: toolCall.toolCallName,
+          reason: validationResult.reason ?? "CUSTOM",
+        });
         return false;
       }
     }
@@ -730,8 +831,11 @@ export class SecureToolsMiddleware extends Middleware {
           defaultOnDeviation(deviation, logger);
         }
 
-        // Block the tool call
-        this.blockedToolCallIds.add(toolCall.toolCallId);
+        // Block the tool call and store info for message generation
+        this.blockedToolCalls.set(toolCall.toolCallId, {
+          toolName: toolCall.toolCallName,
+          reason: "IS_TOOL_ALLOWED_REJECTED",
+        });
         return false;
       }
     }
