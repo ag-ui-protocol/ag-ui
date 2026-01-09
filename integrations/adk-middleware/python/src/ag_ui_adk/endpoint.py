@@ -5,7 +5,7 @@
 from typing import List, Optional, Any
 import json
 
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from ag_ui.core import RunAgentInput
@@ -50,7 +50,7 @@ def _header_to_key(header_name: str) -> str:
 
 
 def add_adk_fastapi_endpoint(
-    app: FastAPI,
+    app: FastAPI | APIRouter,
     agent: ADKAgent,
     path: str = "/",
     extract_headers: Optional[List[str]] = None,
