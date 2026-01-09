@@ -129,6 +129,12 @@ function wrapWithSecureTools<T extends AbstractAgent>(agent: T): T {
         // - Update security metrics/telemetry
         // - Stream to client UI via websocket
       },
+
+      // OPTION 7: blockedToolMessage - Show blocked tool messages in chat
+      // If provided, emits a visible text message to the user when a tool is blocked
+      // The presence of this function enables the feature
+      blockedToolMessage: (toolName) =>
+        `🔒 Tool call blocked: The tool "${toolName}" is not in the allowed tools list.`,
     })
   );
   return agent;
