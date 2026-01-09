@@ -347,7 +347,7 @@ class ClaudeAgentAdapter:
         options = self._build_options()
         
         # Create client
-        logger.info("Creating ClaudeSDKClient...")
+        logger.debug("Creating ClaudeSDKClient...")
         client = ClaudeSDKClient(options=options)
         
         try:
@@ -355,16 +355,16 @@ class ClaudeAgentAdapter:
             self._active_client = client
             
             # Connect to SDK
-            logger.info("Connecting to Claude SDK...")
+            logger.debug("Connecting to Claude SDK...")
             await client.connect()
-            logger.info("Connected successfully!")
+            logger.debug("Connected successfully!")
             
             # Use thread_id as session_id for conversation continuity
             # Claude SDK manages separate conversation state per session_id
             session_id = thread_id  # thread_id is guaranteed non-None from run()
-            logger.info(f"Sending query to Claude SDK (session_id={session_id[:8]}...)...")
+            logger.debug(f"Sending query to Claude SDK (session_id={session_id[:8]}...)...")
             await client.query(prompt, session_id=session_id)
-            logger.info("Query sent, waiting for response stream...")
+            logger.debug("Query sent, waiting for response stream...")
             
             # Process response stream
             message_count = 0
@@ -467,7 +467,7 @@ class ClaudeAgentAdapter:
                             tool_id = getattr(block, 'id', None) or str(uuid.uuid4())
                             parent_tool_use_id = getattr(message, 'parent_tool_use_id', None)
                             
-                            logger.info(f"ToolUseBlock detected: {tool_name}")
+                            logger.debug(f"ToolUseBlock detected: {tool_name}")
                             
                             yield ToolCallStartEvent(
                                 type=EventType.TOOL_CALL_START,
@@ -558,10 +558,7 @@ class ClaudeAgentAdapter:
                     subtype = getattr(message, 'subtype', '')
                     data = getattr(message, 'data', {}) or {}
                     
-                    # Skip init messages
-                    if subtype == 'init':
-                        continue
-                    
+                  
                     # Extract message content from data dict
                     if data:
                         msg_text = data.get('message') or data.get('text') or str(data)
@@ -569,7 +566,7 @@ class ClaudeAgentAdapter:
                         msg_text = ''
                     
                     if msg_text:
-                        logger.info(f"SystemMessage: subtype={subtype}")
+                        logger.debug(f"SystemMessage: subtype={subtype}")
                         # Emit as text message events with role="system"
                         for evt in self._emit_system_message(thread_id, run_id, msg_text):
                             yield evt
@@ -592,9 +589,7 @@ class ClaudeAgentAdapter:
                     }
                     
                     # Only display result text if we haven't streamed text (avoids duplicates)
-                    # For example: slash command errors come via ResultMessage, not streaming
-                    if not is_error and result_text and not has_streamed_text:
-                        logger.debug(f"ResultMessage with non-streamed result: {result_text}")
+                    if not has_streamed_text:
                         result_msg_id = str(uuid.uuid4())
                         yield TextMessageStartEvent(
                             type=EventType.TEXT_MESSAGE_START,
@@ -617,8 +612,8 @@ class ClaudeAgentAdapter:
                             message_id=result_msg_id,
                         )
             
-            logger.info(f"Response stream completed ({message_count} messages)")
-            logger.info(f"Conversation state saved in .claude/ (session_id={session_id[:8]})")
+            logger.debug(f"Response stream completed ({message_count} messages)")
+            logger.debug(f"Conversation state saved in .claude/ (session_id={session_id[:8]})")
         
         # Errors propagate to run() which emits RunErrorEvent
             
@@ -628,7 +623,7 @@ class ClaudeAgentAdapter:
             
             # Always disconnect client
             if client is not None:
-                logger.info("Disconnecting Claude SDK client")
+                logger.debug("Disconnecting Claude SDK client")
                 await client.disconnect()
     
     async def interrupt(self) -> None:
@@ -640,9 +635,9 @@ class ClaudeAgentAdapter:
             return
         
         try:
-            logger.info("Sending interrupt signal to Claude SDK...")
+            logger.debug("Sending interrupt signal to Claude SDK...")
             await self._active_client.interrupt()
-            logger.info("Interrupt signal sent successfully")
+            logger.debug("Interrupt signal sent successfully")
         except Exception as e:
             logger.error(f"Failed to interrupt Claude SDK: {e}")
 
