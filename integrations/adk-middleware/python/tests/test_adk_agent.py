@@ -405,7 +405,7 @@ class TestADKAgent:
     async def test_error_handling(self, adk_agent, sample_input):
         """Test error handling in run method."""
         # Force an error by making the underlying agent fail
-        adk_agent._adk_agent = None  # This will cause an error
+        adk_agent._adk_agent.side_effect = Exception('test exception')  # This will cause an error
 
         events = []
         async for event in adk_agent.run(sample_input):
