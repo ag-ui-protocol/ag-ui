@@ -1,15 +1,15 @@
 "use client";
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import "@copilotkit/react-ui/styles.css";
 import "./style.css";
 import {
   CopilotKit,
+  useCopilotChat,
   useFrontendTool,
 } from "@copilotkit/react-core";
 import { CopilotChat, RenderSuggestion } from "@copilotkit/react-ui";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/utils";
-import { useSecurityDeviations } from "@/hooks/useSecurityDeviations";
 
 interface SecureToolsProps {
   params: Promise<{
@@ -56,10 +56,66 @@ const SecureTools: React.FC<SecureToolsProps> = ({ params }) => {
   );
 };
 
+interface DeviationLog {
+  id: string;
+  timestamp: number;
+  toolName: string;
+  reason: string;
+}
+
+const CHAT_ID = "secure-tools-chat";
+
 const Chat = () => {
   const { theme } = useTheme();
   const [background, setBackground] = useState<string>("var(--copilot-kit-background-color)");
-  const { deviations } = useSecurityDeviations();
+  const [deviations, setDeviations] = useState<DeviationLog[]>([]);
+  const processedIds = useRef<Set<string>>(new Set());
+  
+  // Get messages from useCopilotChat with matching ID
+  const { visibleMessages, isLoading } = useCopilotChat({ id: CHAT_ID });
+  
+  // Debug log - only log when values change
+  useEffect(() => {
+    console.log("[SecureTools] visibleMessages updated:", visibleMessages?.length, visibleMessages);
+  }, [visibleMessages]);
+  
+  useEffect(() => {
+    console.log("[SecureTools] isLoading:", isLoading);
+  }, [isLoading]);
+
+  // Detect blocked tool messages
+  useEffect(() => {
+    if (!visibleMessages || visibleMessages.length === 0) return;
+
+    console.log("[SecureTools] Processing messages:", visibleMessages.length);
+    
+    for (const message of visibleMessages) {
+      const msg = message as { id?: string; content?: string };
+      const msgId = msg.id;
+      if (!msgId) continue;
+
+      console.log("[SecureTools] Message ID:", msgId, "Content:", msg.content?.substring(0, 50));
+
+      // Check if this is a blocked message we haven't processed yet
+      if (msgId.startsWith("blocked-msg-") && !processedIds.current.has(msgId)) {
+        processedIds.current.add(msgId);
+
+        const content = msg.content ?? "";
+        const toolNameMatch = content.match(/tool "([^"]+)"/i);
+        const toolName = toolNameMatch?.[1] ?? "unknown";
+
+        setDeviations((prev) => [
+          ...prev,
+          {
+            id: msgId,
+            timestamp: Date.now(),
+            toolName,
+            reason: "NOT_IN_ALLOWLIST",
+          },
+        ]);
+      }
+    }
+  }, [visibleMessages]);
 
   // Allowed tool: change_background
   useFrontendTool({

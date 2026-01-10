@@ -34,12 +34,25 @@ import type { SecurityDeviationEventPayload } from "@ag-ui/client";
  * ```
  */
 export function useSecurityDeviations() {
-  const { visibleMessages } = useCopilotChat();
+  const chatContext = useCopilotChat();
+  const { visibleMessages } = chatContext;
   const [deviations, setDeviations] = useState<SecurityDeviationEventPayload[]>([]);
   const processedIds = useRef<Set<string>>(new Set());
 
+  // Debug: Log on every render to see if the hook is being called
+  console.log("[useSecurityDeviations] Hook called, visibleMessages count:", visibleMessages?.length ?? "undefined");
+
   useEffect(() => {
-    if (!visibleMessages) return;
+    if (!visibleMessages) {
+      console.log("[useSecurityDeviations] visibleMessages is undefined/null");
+      return;
+    }
+
+    // Debug: Log all message IDs to see what format they're in
+    console.log("[useSecurityDeviations] Checking messages:", visibleMessages.map((m) => ({
+      id: (m as { id?: string }).id,
+      content: (m as { content?: string }).content?.substring(0, 50),
+    })));
 
     for (const message of visibleMessages) {
       const msgId = (message as { id?: string }).id;
@@ -48,6 +61,7 @@ export function useSecurityDeviations() {
       // Check if this is a blocked message we haven't processed yet
       // The middleware emits messages with IDs starting with "blocked-msg-{toolCallId}"
       if (msgId.startsWith("blocked-msg-") && !processedIds.current.has(msgId)) {
+        console.log("[useSecurityDeviations] Found blocked message:", msgId);
         processedIds.current.add(msgId);
 
         const content = (message as { content?: string }).content ?? "";
