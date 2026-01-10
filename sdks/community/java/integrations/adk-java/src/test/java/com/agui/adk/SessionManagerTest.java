@@ -2,20 +2,21 @@ package com.agui.adk;
 
 import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.sessions.BaseSessionService;
+import com.google.adk.sessions.ListSessionsResponse;
 import com.google.adk.sessions.Session;
+import com.google.genai.types.Content;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
-import java.time.Duration;
-import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -28,113 +29,96 @@ class SessionManagerTest {
 
     @Mock
     private BaseSessionService sessionService;
-
     @Mock
     private BaseMemoryService memoryService;
-
-    private AutoCloseable mocks;
+    @Mock
+    private RunContext runContext;
+    @Mock
+    private Session session;
 
     @BeforeEach
     void setUp() {
-        mocks = MockitoAnnotations.openMocks(this);
-        sessionManager = new SessionManager(
-                sessionService,
-                memoryService,
-                Duration.ofMinutes(20),
-                Duration.ofMinutes(5)
-        );
+        MockitoAnnotations.openMocks(this);
+        sessionManager = new SessionManager(sessionService, memoryService);
 
-        when(memoryService.addSessionToMemory(any(Session.class)))
-                .thenReturn(Completable.complete());
-    }
+        // Common mocks for RunContext
+        when(runContext.appName()).thenReturn("test-app");
+        when(runContext.userId()).thenReturn("test-user");
+        when(runContext.sessionId()).thenReturn("test-session");
 
-    @AfterEach
-    void tearDown() throws Exception {
-        sessionManager.shutdown();
-        mocks.close();
+        // Common mocks for Session
+        when(session.id()).thenReturn("test-session");
+        when(session.appName()).thenReturn("test-app");
+        when(session.userId()).thenReturn("test-user");
+        when(session.state()).thenReturn(new ConcurrentHashMap<>());
     }
 
     @Test
-    void getOrCreateSession_shouldCreateNewSession_whenNoneExists() throws ExecutionException, InterruptedException {
-        // --- Setup ---
-        String sessionId = "new-session";
-        String appName = "test-app";
-        String userId = "test-user";
-
-        Session newSession = mock(Session.class);
-        when(newSession.id()).thenReturn(sessionId);
-        when(newSession.appName()).thenReturn(appName);
-
+    void shouldCreateNewSession_whenNoneExists() {
+        // Arrange
         when(sessionService.getSession(any(), any(), any(), any())).thenReturn(Maybe.empty());
-        when(sessionService.createSession(any(), any(), any(), any())).thenReturn(Single.just(newSession));
+        when(sessionService.createSession(any(), any(), any(), any())).thenReturn(Single.just(session));
 
-        // --- Execution ---
-        Session session = sessionManager.getOrCreateSession(sessionId, appName, userId).get();
+        // Act
+        Session resultSession = sessionManager.getOrCreateSession(runContext).blockingGet();
 
-        // --- Verification ---
-        assertNotNull(session);
-        assertEquals(newSession, session);
-        verify(sessionService, times(1)).getSession(appName, userId, sessionId, Optional.empty());
-        verify(sessionService, times(1)).createSession(appName, userId, null, sessionId);
+        // Assert
+        assertNotNull(resultSession);
+        assertEquals(session, resultSession);
+        verify(sessionService, times(1)).getSession("test-app", "test-user", "test-session", Optional.empty());
+        verify(sessionService, times(1)).createSession("test-app", "test-user", null, "test-session");
     }
 
     @Test
-    void getOrCreateSession_shouldReturnExistingSession() throws ExecutionException, InterruptedException {
-        // --- Setup ---
-        String sessionId = "existing-session";
-        String appName = "test-app";
-        String userId = "test-user";
+    void shouldReturnExistingSession_whenOneExists() {
+        // Arrange
+        when(sessionService.getSession(any(), any(), any(), any())).thenReturn(Maybe.just(session));
 
-        Session existingSession = mock(Session.class);
-        when(sessionService.getSession(any(), any(), any(), any())).thenReturn(Maybe.just(existingSession));
+        // Act
+        Session resultSession = sessionManager.getOrCreateSession(runContext).blockingGet();
 
-        // --- Execution ---
-        Session session = sessionManager.getOrCreateSession(sessionId, appName, userId).get();
-
-        // --- Verification ---
-        assertNotNull(session);
-        assertEquals(existingSession, session);
-        verify(sessionService, times(1)).getSession(appName, userId, sessionId, Optional.empty());
+        // Assert
+        assertNotNull(resultSession);
+        assertEquals(session, resultSession);
+        verify(sessionService, times(1)).getSession("test-app", "test-user", "test-session", Optional.empty());
         verify(sessionService, never()).createSession(any(), any(), any(), any());
     }
 
     @Test
-    void cleanupExpiredSessions_shouldRemoveExpiredSession() throws InterruptedException {
-        // --- Setup ---
-        // Re-initialize SessionManager with a very short timeout for this test
-        sessionManager.shutdown(); // Shutdown the one from setUp
-        sessionManager = new SessionManager(
-                sessionService,
-                memoryService,
-                Duration.ofMillis(100), // Expire after 100ms
-                Duration.ofMillis(200)  // Cleanup runs every 200ms
-        );
+    void shouldDeleteAllUserSessions_whenRequested() {
+        // Arrange
+        Session session1 = mock(Session.class);
+        Session session2 = mock(Session.class);
+        ListSessionsResponse response = mock(ListSessionsResponse.class);
 
-        String sessionId = "expired-session";
-        String appName = "test-app";
-        String userId = "test-user";
-
-        Session expiredSession = mock(Session.class);
-        when(expiredSession.id()).thenReturn(sessionId);
-        when(expiredSession.appName()).thenReturn(appName);
-        when(expiredSession.userId()).thenReturn(userId);
-        // Make the session appear old
-        when(expiredSession.lastUpdateTime()).thenReturn(Instant.now().minusSeconds(10));
-
-        // Stub the service calls
-        when(sessionService.getSession(appName, userId, sessionId, Optional.empty())).thenReturn(Maybe.just(expiredSession));
-        when(sessionService.createSession(any(), any(), any(), any())).thenReturn(Single.just(expiredSession));
+        when(response.sessions()).thenReturn(List.of(session1, session2));
+        when(sessionService.listSessions(any(), any())).thenReturn(Single.just(response));
+        
+        when(memoryService.addSessionToMemory(any(Session.class))).thenReturn(Completable.complete());
         when(sessionService.deleteSession(any(), any(), any())).thenReturn(Completable.complete());
 
-        // --- Execution ---
-        // 1. Create a session to get it into the manager's internal map
-        sessionManager.getOrCreateSession(sessionId, appName, userId);
+        // Act
+        sessionManager.deleteAllUserAppNameSessions("test-app", "test-user").blockingAwait();
 
-        // 2. Wait for the cleanup task to run
-        Thread.sleep(300);
+        // Assert
+        verify(sessionService, times(1)).listSessions("test-app", "test-user");
+        verify(sessionService, times(2)).deleteSession(any(), any(), any());
+        verify(memoryService, times(2)).addSessionToMemory(any());
+    }
+    
+    @Test
+    void shouldAppendMessageIdsToState_whenMarkingAsProcessed() {
+        // Arrange
+        when(sessionService.appendEvent(any(), any())).thenReturn(Single.just(mock(com.google.adk.events.Event.class)));
+        List<String> messageIds = List.of("msg-1", "msg-2");
 
-        // --- Verification ---
-        // 3. Verify that the delete method was called on the underlying service
-        verify(sessionService, times(1)).deleteSession(sessionId, appName, userId);
+        // Act
+        sessionManager.markMessagesProcessed(session, messageIds).blockingAwait();
+
+        // Assert
+        verify(sessionService, times(1)).appendEvent(eq(session), argThat(event -> {
+            Map<String, Object> stateDelta = event.actions().stateDelta();
+            return stateDelta != null && stateDelta.containsKey("processedMessageIds");
+        }));
     }
 }

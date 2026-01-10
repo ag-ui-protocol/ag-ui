@@ -17,7 +17,7 @@
     <description>AG-UI ADK Java Integration</description>
 
     <properties>
-        <adk-java.version>0.4.0</adk-java.version>
+        <adk-java.version>0.5.0</adk-java.version>
         <ag-ui.version>0.0.1</ag-ui.version>
         <maven.deploy.skip>false</maven.deploy.skip>
 

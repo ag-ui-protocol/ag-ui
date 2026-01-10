@@ -1,143 +1,214 @@
 package com.agui.adk;
 
+import com.agui.adk.processor.ToolResult;
+import com.agui.core.message.BaseMessage;
+import com.agui.core.message.ToolMessage;
+import com.google.adk.events.Event;
+import com.google.adk.events.EventActions;
 import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.sessions.BaseSessionService;
+import com.google.adk.sessions.ListSessionsResponse;
 import com.google.adk.sessions.Session;
+import io.reactivex.rxjava3.core.Completable;
+import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Single;
-import io.reactivex.rxjava3.disposables.CompositeDisposable;
+import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.Duration;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.*;
+import java.time.Instant;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.function.BiFunction;
+import java.util.function.BinaryOperator;
+import java.util.stream.Collectors;
 
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
-
-public class SessionManager {
+public final class SessionManager {
 
     private static final Logger logger = LoggerFactory.getLogger(SessionManager.class);
+    private static final String PROCESSED_MESSAGE_IDS_KEY = "processedMessageIds";
+    private static final String PENDING_TOOL_CALL_IDS_KEY = "pendingToolCallIds";
     private final BaseSessionService sessionService;
     private final BaseMemoryService memoryService;
-    private final Duration sessionTimeout;
-    private final ScheduledExecutorService cleanupScheduler;
-    private final Map<String, String> sessionUserMap = new ConcurrentHashMap<>(); // sessionKey -> userId
-    private final Map<String, Set<String>> userSessionsMap = new ConcurrentHashMap<>(); // userId -> set of sessionKeys
-    private final CompositeDisposable cleanupDisposables = new CompositeDisposable();
 
-    /**
-     * Public constructor for Spring-friendly bean creation.
-     * @param sessionService The ADK session service.
-     * @param memoryService The ADK memory service (optional).
-     * @param sessionTimeout The duration after which inactive sessions expire.
-     * @param cleanupInterval The interval at which to run the cleanup task.
-     */
-    public SessionManager(BaseSessionService sessionService, BaseMemoryService memoryService, Duration sessionTimeout, Duration cleanupInterval) {
+    record SessionWithProcessedIds(Session session, Set<String> processedIds) {}
+    private record ToolProcessingAccumulator(List<ToolResult> validResults, Set<String> processedIds) {}
+
+
+    public SessionManager(BaseSessionService sessionService, BaseMemoryService memoryService) {
         this.sessionService = sessionService;
         this.memoryService = memoryService;
-        this.sessionTimeout = sessionTimeout;
-        this.cleanupScheduler = Executors.newSingleThreadScheduledExecutor();
-        this.startCleanupTask(cleanupInterval);
-        logger.info("SessionManager initialized with timeout: {} and cleanup interval: {}", sessionTimeout, cleanupInterval);
     }
 
-    public CompletableFuture<Session> getOrCreateSession(String sessionId, String appName, String userId) {
-        CompletableFuture<Session> future = new CompletableFuture<>();
-
-        var disposable = sessionService.getSession(appName, userId, sessionId, Optional.empty())
-                .doOnSuccess(session -> logger.debug("Reusing existing session: {} for user: {}", makeSessionKey(appName, sessionId), userId))
-                .switchIfEmpty(Single.defer(() -> {
-                    logger.info("Creating new session: {} for user: {}", makeSessionKey(appName, sessionId), userId);
-                    // Assuming sessionService.createSession returns a Single<Session>
-                    return sessionService.createSession(appName, userId,  null, sessionId);
-                }))
-                .doOnSuccess(session -> trackSession(session, userId))
-                .subscribe(
-                        future::complete, // OnSuccess
-                        future::completeExceptionally // OnError
-                );
-
-        future.whenComplete((session, throwable) -> {
-            if (future.isCancelled()) {
-                disposable.dispose();
-            }
-        });
-
-        return future;
+    public Completable deleteAllUserAppNameSessions(String appName, String userId) {
+        return sessionService.listSessions(appName, userId)
+                .toFlowable()
+                .map(ListSessionsResponse::sessions)
+                .flatMapIterable(userSessions -> userSessions)
+                .flatMapCompletable(this::deleteSession)
+                .doOnComplete(() -> logger.info("Cleanup for user {} in app {} completed successfully.", userId, appName))
+                .doOnError(ex -> logger.error("Failed to cleanup sessions for user {} in app {}.", userId, appName, ex));
     }
 
-    private void trackSession(Session session, String userId) {
-        String sessionKey = makeSessionKey(session.appName(), session.id());
-        sessionUserMap.put(sessionKey, userId);
-        userSessionsMap.computeIfAbsent(userId, k -> ConcurrentHashMap.newKeySet()).add(sessionKey);
-    }
-
-    private void untrackSession(String sessionKey) {
-        String userId = sessionUserMap.remove(sessionKey);
-        if (userId != null && userSessionsMap.containsKey(userId)) {
-            userSessionsMap.get(userId).remove(sessionKey);
-            if (userSessionsMap.get(userId).isEmpty()) {
-                userSessionsMap.remove(userId);
-            }
-        }
-    }
-
-private void deleteSession(Session session) {
-    if (memoryService != null) {
-        var memoryDisposable = memoryService.addSessionToMemory(session)
-            .subscribe(
-                () -> logger.debug("Session {} saved to memory.", session.id()),
-                ex -> logger.error("Failed to save session {} to memory.", session.id(), ex)
+    Single<SessionWithProcessedIds> getSessionAndProcessedMessageIds(RunContext context) {
+        return getOrCreateSession(context)
+            .flatMap(session -> getProcessedMessageIds(session)
+                    .map(processedIds -> new SessionWithProcessedIds(session, processedIds))
             );
-        cleanupDisposables.add(memoryDisposable);
     }
 
-    var deleteDisposable = sessionService.deleteSession(session.id(), session.appName(), session.userId())
-        .subscribe(
-            () -> {
-                untrackSession(makeSessionKey(session.appName(), session.id()));
-                logger.info("Session {} deleted.", session.id());
-            },
-            ex -> logger.error("Failed to delete session {}.", session.id(), ex)
-        );
-    cleanupDisposables.add(deleteDisposable);
-}
-
-    private String makeSessionKey(String appName, String sessionId) {
-        return appName + ":" + sessionId;
+    Flowable<ToolResult> processToolResults(Session session, List<BaseMessage> toolMessages, Map<String, String> toolCallIdToName) {
+        return getPendingToolCallIds(session)
+                .collect(Collectors.toSet())
+                .flatMapPublisher(pendingIds -> finalizeToolResults(session, toolMessages, toolCallIdToName, pendingIds));
     }
 
-    private void startCleanupTask(Duration cleanupInterval) {
-        cleanupScheduler.scheduleAtFixedRate(this::cleanupExpiredSessions, cleanupInterval.toMillis(), cleanupInterval.toMillis(), MILLISECONDS);
+    Completable markMessagesProcessed(Session session, List<String> messageIds) {
+        return Optional.ofNullable(messageIds)
+                .filter(ids -> !ids.isEmpty())
+                .map(ids -> processAndAppendEvent(session, ids))
+                .orElse(Completable.complete());
     }
 
-    private void cleanupExpiredSessions() {
-        long now = System.currentTimeMillis();
-        sessionUserMap.keySet().forEach(sessionKey -> {
-            String[] parts = sessionKey.split(":", 2);
-            String appName = parts[0];
-            String sessionId = parts[1];
-            String userId = sessionUserMap.get(sessionKey);
+    private Completable processAndAppendEvent(Session session, List<String> ids) {
+        Set<String> updatedProcessedIds = getUpdatedProcessedIds(session);
+        updatedProcessedIds.addAll(ids);
+        ConcurrentMap<String, Object> stateDelta = new ConcurrentHashMap<>();
+        stateDelta.put(PROCESSED_MESSAGE_IDS_KEY, updatedProcessedIds);
+        EventActions actions = EventActions.builder().stateDelta(stateDelta).build();
 
-            if (userId == null) return;
+        Event event = Event.builder()
+                .invocationId("processed_messages_" + Instant.now().toEpochMilli())
+                .author("system")
+                .actions(actions)
+                .timestamp(Instant.now().toEpochMilli())
+                .build();
 
-            var disposable = sessionService.getSession(appName, userId, sessionId, Optional.empty())
-                    .filter(session -> (now - session.lastUpdateTime().toEpochMilli()) > sessionTimeout.toMillis())
-                    .subscribe(
-                            session -> {
-                                logger.info("Session {} has expired. Cleaning up.", sessionKey);
-                                deleteSession(session);
-                            },
-                            ex -> logger.error("Error during session cleanup for session key: {}", sessionKey, ex)
-                    );
-            cleanupDisposables.add(disposable);
-        });
+        return sessionService.appendEvent(session, event).ignoreElement();
     }
 
-    public void shutdown() {
-        cleanupScheduler.shutdown();
-        cleanupDisposables.dispose();
+    @NotNull
+    private static Set<String> getUpdatedProcessedIds(Session session) {
+        ConcurrentMap<String, Object> sessionState = session.state();
+        Object storedValue = sessionState.get(PROCESSED_MESSAGE_IDS_KEY);
+
+        Set<String> updatedProcessedIds = new HashSet<>();
+        if (storedValue instanceof Set) {
+            updatedProcessedIds = ((Set<?>) storedValue).stream()
+                    .filter(String.class::isInstance)
+                    .map(String.class::cast)
+                    .collect(Collectors.toSet());
+        }
+        return updatedProcessedIds;
+    }
+
+    private Single<Session> getOrCreateSession(RunContext context) {
+        String sessionId = context.sessionId();
+        String appName = context.appName();
+        String userId = context.userId();
+
+        return sessionService.getSession(appName, userId, sessionId, Optional.empty())
+                .doOnSuccess(session -> logger.debug("Reusing existing session: {} for appname  : {} and user: {}", sessionId, appName, userId))
+                .switchIfEmpty(Single.defer(() -> {
+                    logger.info("Creating new session: {} for appname  : {} and user: {}", sessionId, appName, userId);
+                    return sessionService.createSession(appName, userId, null, sessionId);
+                }));
+    }
+    private Single<Set<String>> getProcessedMessageIds(Session session) {
+        Object storedValue = session.state().get(PROCESSED_MESSAGE_IDS_KEY);
+        Set<String> processedIds = Set.of();
+        if (storedValue instanceof Set) {
+            processedIds = ((Set<?>) storedValue).stream()
+                    .filter(String.class::isInstance)
+                    .map(String.class::cast)
+                    .collect(Collectors.toUnmodifiableSet());
+        }
+        return Single.just(processedIds);
+    }
+
+    @NotNull
+    private Flowable<ToolResult> finalizeToolResults(Session session, List<BaseMessage> toolMessages, Map<String, String> toolCallIdToName, Set<String> pendingIds) {
+        ToolProcessingAccumulator toolProcessingAccumulator = accumulateValidToolResults(toolMessages, toolCallIdToName, pendingIds);
+
+        if (toolProcessingAccumulator.validResults.isEmpty()) {
+            return Flowable.empty();
+        }
+
+        Set<String> newPendingIds = new HashSet<>(pendingIds);
+        newPendingIds.removeAll(toolProcessingAccumulator.processedIds);
+
+        return updatePendingToolCallIds(session, newPendingIds)
+                .andThen(Flowable.fromIterable(toolProcessingAccumulator.validResults));
+    }
+
+    private static ToolProcessingAccumulator accumulateValidToolResults(List<BaseMessage> toolMessages, Map<String, String> toolCallIdToName, Set<String> pendingIds) {
+        return toolMessages.stream()
+            .filter(baseMessage -> baseMessage instanceof ToolMessage)
+            .map(baseMessage -> (ToolMessage) baseMessage)
+            .reduce(
+                new ToolProcessingAccumulator(new ArrayList<>(), new HashSet<>()), // Supplier
+                    createToolProcessingAccumulatorFunction(toolCallIdToName, pendingIds),
+                    createToolProcessingCombiner()
+            );
+    }
+
+    @NotNull
+    private static BinaryOperator<ToolProcessingAccumulator> createToolProcessingCombiner() {
+        return (acc1, acc2) -> {
+            acc1.validResults.addAll(acc2.validResults);
+            acc1.processedIds.addAll(acc2.processedIds);
+            return acc1;
+        };
+    }
+
+    @NotNull
+    private static BiFunction<ToolProcessingAccumulator, ToolMessage, ToolProcessingAccumulator> createToolProcessingAccumulatorFunction(Map<String, String> toolCallIdToName, Set<String> pendingIds) {
+        return (acc, toolMessage) -> { // Accumulator
+            String toolCallId = toolMessage.getToolCallId();
+            String toolName = toolCallIdToName.get(toolCallId);
+
+            if (pendingIds.contains(toolCallId) && !"confirm_changes".equals(toolName)) {
+                acc.validResults().add(new ToolResult(toolName, toolMessage));
+                acc.processedIds().add(toolCallId);
+            }
+            return acc;
+        };
+    }
+
+    private Flowable<String> getPendingToolCallIds(Session session) {
+        Object storedValue = session.state().get(PENDING_TOOL_CALL_IDS_KEY);
+        if (storedValue instanceof Set) {
+            return Flowable.fromIterable((Set<?>) storedValue)
+                .filter(String.class::isInstance)
+                .map(String.class::cast);
+        }
+        return Flowable.empty();
+    }
+
+    private Completable updatePendingToolCallIds(Session session, Set<String> updatedPendingIds) {
+        ConcurrentMap<String, Object> stateDelta = new ConcurrentHashMap<>();
+        stateDelta.put(PENDING_TOOL_CALL_IDS_KEY, updatedPendingIds);
+
+        EventActions actions = EventActions.builder().stateDelta(stateDelta).build();
+
+        Event event = Event.builder()
+                .invocationId("updated_pending_tool_calls_" + Instant.now().toEpochMilli())
+                .author("system")
+                .actions(actions)
+                .timestamp(Instant.now().toEpochMilli())
+                .build();
+
+        return sessionService.appendEvent(session, event).ignoreElement();
+    }
+
+    private Completable deleteSession(Session session) {
+        return memoryService.addSessionToMemory(session)
+                .doOnError(ex -> logger.error("Failed to save session {} to memory.", session.id(), ex))
+                .andThen(
+                        sessionService.deleteSession(session.id(), session.appName(), session.userId())
+                                .doOnComplete(() -> logger.info("Session {} deleted.", session.id()))
+                                .doOnError(ex -> logger.error("Failed to delete session {}.", session.id(), ex))
+                );
     }
 }

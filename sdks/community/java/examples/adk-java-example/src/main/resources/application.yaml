@@ -1,0 +1,14 @@
+agent:
+  model:
+    name: gemini-2.5-flash
+
+logging:
+  level:
+    root: INFO
+    com.google: DEBUG
+    org:
+      springframework:
+        web: DEBUG
+google:
+  gemini:
+    api-key: ${GOOGLE_API_KEY}
