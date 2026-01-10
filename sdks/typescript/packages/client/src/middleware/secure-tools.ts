@@ -23,6 +23,14 @@ import { concatMap, mergeMap } from "rxjs/operators";
 /** Marker in tool results to identify blocked tool calls */
 const BLOCKED_TOOL_MARKER = "TOOL_BLOCKED_BY_SECURITY_POLICY";
 
+/**
+ * Generic message used to replace blocked tool messages in conversation history.
+ * This prevents the LLM from learning which specific tool was blocked while
+ * maintaining conversation coherence (no unanswered user requests).
+ */
+const GENERIC_BLOCKED_MESSAGE_FOR_HISTORY =
+  "I wasn't able to complete that request.";
+
 // =============================================================================
 // CONSTANTS
 // =============================================================================
@@ -685,7 +693,7 @@ export class SecureToolsMiddleware extends Middleware {
       return input;
     }
 
-    // Filter messages to remove blocked tool interactions
+    // Filter messages to remove blocked tool interactions while keeping responses
     const filteredMessages: Message[] = [];
     
     for (const message of input.messages) {
@@ -697,15 +705,30 @@ export class SecureToolsMiddleware extends Middleware {
         }
       }
       
-      // For assistant messages, remove blocked tool calls from toolCalls array
+      // For assistant messages, handle blocked tool calls
       if (message.role === "assistant") {
         const assistantMessage = message as AssistantMessage;
+        
+        // KEEP blocked text messages but REPLACE their content with a generic message.
+        // This maintains conversation coherence (LLM sees request was addressed) while
+        // preventing the LLM from learning which specific tool was blocked.
+        // User sees: "🔒 Tool 'X' is blocked" (in real-time)
+        // LLM sees: "I wasn't able to complete that request." (in history)
+        if (message.id.startsWith("blocked-msg-")) {
+          filteredMessages.push({
+            ...assistantMessage,
+            content: GENERIC_BLOCKED_MESSAGE_FOR_HISTORY,
+          });
+          continue;
+        }
+        
         if (assistantMessage.toolCalls && assistantMessage.toolCalls.length > 0) {
           const filteredToolCalls = assistantMessage.toolCalls.filter(
             (tc) => !blockedToolCallIds.has(tc.id)
           );
           
           // If all tool calls were blocked and there's no content, skip this message
+          // (the blocked-msg- message provides the response instead)
           if (filteredToolCalls.length === 0 && !assistantMessage.content) {
             continue;
           }
@@ -718,11 +741,6 @@ export class SecureToolsMiddleware extends Middleware {
             });
             continue;
           }
-        }
-        
-        // Skip our synthetic blocked messages (they start with the lock emoji or have blocked-msg- id)
-        if (message.id.startsWith("blocked-msg-")) {
-          continue;
         }
       }
       
