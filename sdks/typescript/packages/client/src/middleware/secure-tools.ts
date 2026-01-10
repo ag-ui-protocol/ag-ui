@@ -11,6 +11,7 @@ import {
   type TextMessageStartEvent,
   type TextMessageContentEvent,
   type TextMessageEndEvent,
+  type CustomEvent,
   type Tool,
   type Message,
   type AssistantMessage,
@@ -30,6 +31,12 @@ const BLOCKED_TOOL_MARKER = "TOOL_BLOCKED_BY_SECURITY_POLICY";
  */
 const GENERIC_BLOCKED_MESSAGE_FOR_HISTORY =
   "I wasn't able to complete that request.";
+
+/**
+ * Name of the custom event emitted when a tool call is blocked.
+ * Frontend applications can subscribe to this event to track security deviations.
+ */
+export const SECURITY_DEVIATION_EVENT = "security_deviation";
 
 // =============================================================================
 // CONSTANTS
@@ -171,6 +178,29 @@ export interface ToolDeviation {
   context: AgentSecurityContext;
   /** Timestamp of the deviation */
   timestamp: number;
+}
+
+/**
+ * Payload for the security deviation custom event.
+ * This is a frontend-friendly subset of ToolDeviation that's streamed to the client.
+ */
+export interface SecurityDeviationEventPayload {
+  /** Unique identifier for this deviation */
+  id: string;
+  /** Name of the tool that was blocked */
+  toolName: string;
+  /** ID of the blocked tool call */
+  toolCallId: string;
+  /** Why the tool was blocked */
+  reason: DeviationReason;
+  /** Human-readable explanation */
+  message: string;
+  /** Timestamp of the deviation */
+  timestamp: number;
+  /** Thread ID where the deviation occurred */
+  threadId: string;
+  /** Run ID where the deviation occurred */
+  runId: string;
 }
 
 /**
@@ -621,7 +651,8 @@ function defaultOnDeviation(
 /** Info about a blocked tool call for message generation */
 interface BlockedToolInfo {
   toolName: string;
-  reason: string;
+  reason: DeviationReason;
+  message?: string;
 }
 
 export class SecureToolsMiddleware extends Middleware {
@@ -819,6 +850,8 @@ export class SecureToolsMiddleware extends Middleware {
       const blockedInfo = this.blockedToolCalls.get(toolCallId);
       
       if (blockedInfo) {
+        const { toolName, reason, message: deviationMessage } = blockedInfo;
+        
         // For blocked tools, emit TOOL_CALL_END followed by a synthetic TOOL_CALL_RESULT
         // This ensures the conversation history is balanced
         const syntheticResult: ToolCallResultEvent = {
@@ -832,16 +865,31 @@ export class SecureToolsMiddleware extends Middleware {
           role: "tool",
         };
         
+        // Emit a CUSTOM event so the frontend can track security deviations
+        const deviationEvent: CustomEvent = {
+          type: EventType.CUSTOM,
+          name: SECURITY_DEVIATION_EVENT,
+          value: {
+            id: `deviation-${toolCallId}`,
+            toolName,
+            toolCallId,
+            reason,
+            message: deviationMessage ?? `Tool "${toolName}" was blocked by security policy`,
+            timestamp: Date.now(),
+            threadId: context.threadId,
+            runId: context.runId,
+          } satisfies SecurityDeviationEventPayload,
+        };
+        
         // Clean up tracking state for blocked tool
         this.blockedToolCalls.delete(toolCallId);
         this.toolCallArgsBuffer.delete(toolCallId);
         
-        const events: BaseEvent[] = [event, syntheticResult];
+        const events: BaseEvent[] = [event, syntheticResult, deviationEvent];
         
         // If blockedToolMessage is provided, add text message events to inform the user
         if (this.config.blockedToolMessage) {
           const messageId = `blocked-msg-${toolCallId}`;
-          const { toolName, reason } = blockedInfo;
           
           // Generate the blocked message using the provided formatter
           const messageText = this.config.blockedToolMessage(toolName, reason);
@@ -933,6 +981,7 @@ export class SecureToolsMiddleware extends Middleware {
         this.blockedToolCalls.set(toolCall.toolCallId, {
           toolName: toolCall.toolCallName,
           reason: validationResult.reason ?? "CUSTOM",
+          message: deviation.message,
         });
         return false;
       }
@@ -943,11 +992,13 @@ export class SecureToolsMiddleware extends Middleware {
       const callbackResult = await isToolAllowed(toolCall, context);
 
       if (!callbackResult) {
+        const deviationMessage = `Tool "${toolCall.toolCallName}" was rejected by isToolAllowed callback`;
+        
         // Create deviation report for callback rejection
         const deviation: ToolDeviation = {
           toolCall,
           reason: "IS_TOOL_ALLOWED_REJECTED",
-          message: `Tool "${toolCall.toolCallName}" was rejected by isToolAllowed callback`,
+          message: deviationMessage,
           context,
           timestamp: Date.now(),
         };
@@ -963,6 +1014,7 @@ export class SecureToolsMiddleware extends Middleware {
         this.blockedToolCalls.set(toolCall.toolCallId, {
           toolName: toolCall.toolCallName,
           reason: "IS_TOOL_ALLOWED_REJECTED",
+          message: deviationMessage,
         });
         return false;
       }

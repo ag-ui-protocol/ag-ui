@@ -9,6 +9,7 @@ import {
 import { CopilotChat, RenderSuggestion } from "@copilotkit/react-ui";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/utils";
+import { useSecurityDeviations } from "@/hooks/useSecurityDeviations";
 
 interface SecureToolsProps {
   params: Promise<{
@@ -25,11 +26,13 @@ interface SecureToolsProps {
  * 1. Validates tool calls against full specifications (not just names)
  * 2. Blocks unauthorized or mismatched tool calls
  * 3. Logs deviations for audit purposes
+ * 4. Streams security deviations as CUSTOM events for frontend tracking
  *
  * Configuration used in this demo (see agents.ts):
  * - allowedTools: Declarative allowlist with ToolSpec objects
  * - isToolAllowed: Custom callback for additional validation logic
  * - onDeviation: Custom handler that logs when tool calls are blocked
+ * - blockedToolMessage: Custom message formatter for blocked tools
  *
  * In this demo:
  * - "change_background" is an ALLOWED tool (in the security allowlist)
@@ -37,10 +40,7 @@ interface SecureToolsProps {
  *
  * Try asking the agent to:
  * - "Change the background to blue" (will succeed)
- * - "Say hello" (will be blocked by middleware - check server console)
- *
- * Note: Deviations are logged server-side via console.warn. Check your
- * terminal/server logs to see the security warnings when tools are blocked.
+ * - "Say hello" (will be blocked by middleware - see deviation panel)
  */
 const SecureTools: React.FC<SecureToolsProps> = ({ params }) => {
   const { integrationId } = React.use(params);
@@ -56,20 +56,10 @@ const SecureTools: React.FC<SecureToolsProps> = ({ params }) => {
   );
 };
 
-interface DeviationLog {
-  id: string;
-  timestamp: Date;
-  toolName: string;
-  reason: string;
-  message: string;
-}
-
 const Chat = () => {
   const { theme } = useTheme();
   const [background, setBackground] = useState<string>("var(--copilot-kit-background-color)");
-  // Deviation logging is handled server-side by the middleware's onDeviation callback
-  // This state could be used if we implement a websocket to stream deviations to the UI
-  const [deviations] = useState<DeviationLog[]>([]);
+  const { deviations } = useSecurityDeviations();
 
   // Allowed tool: change_background
   useFrontendTool({
@@ -136,7 +126,7 @@ const Chat = () => {
           <div className="font-medium mb-1">⚠️ Security Deviations Detected:</div>
           {deviations.map((d) => (
             <div key={d.id} className="text-xs opacity-90 ml-4">
-              • [{d.timestamp.toLocaleTimeString()}] Tool "{d.toolName}" blocked: {d.reason}
+              • [{new Date(d.timestamp).toLocaleTimeString()}] Tool &quot;{d.toolName}&quot; blocked: {d.reason}
             </div>
           ))}
         </div>

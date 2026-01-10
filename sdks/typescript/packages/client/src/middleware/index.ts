@@ -9,6 +9,7 @@ export {
   createToolSpec,
   createToolSpecs,
   SKIP_VALIDATION,
+  SECURITY_DEVIATION_EVENT,
 } from "./secure-tools";
 export type {
   ToolSpec,
@@ -21,4 +22,5 @@ export type {
   OnDeviationCallback,
   SecureToolsConfig,
   SkipValidation,
+  SecurityDeviationEventPayload,
 } from "./secure-tools";
