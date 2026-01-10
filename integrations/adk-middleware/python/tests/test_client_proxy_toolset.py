@@ -288,6 +288,22 @@ class TestClientProxyToolset:
         assert tools[0].name == "calculator"
 
     @pytest.mark.asyncio
+    async def test_filtered_toolset_with_function(self, sample_tools, mock_event_queue):
+        """Test toolset with a tool filter applied."""
+        # Filter to only include 'calculator' tool
+        toolset = ClientProxyToolset(
+            ag_ui_tools=sample_tools,
+            event_queue=mock_event_queue,
+            tool_filter=lambda tool, readonly_context=None: tool.name == "weather",
+        )
+
+        tools = await toolset.get_tools()
+
+        # Should only have the calculator tool
+        assert len(tools) == 1
+        assert tools[0].name == "weather"
+
+    @pytest.mark.asyncio
     async def test_toolset_with_name_prefix(self, sample_tools, mock_event_queue):
         """Test toolset with a name prefix applied."""
         prefix = "test_"
