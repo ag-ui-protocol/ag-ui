@@ -270,3 +270,67 @@ class TestClientProxyToolset:
 
         for tool in tools2:
             assert tool.event_queue is queue2
+
+    @pytest.mark.asyncio
+    async def test_filtered_toolset(self, sample_tools, mock_event_queue):
+        """Test toolset with a tool filter applied."""
+        # Filter to only include 'calculator' tool
+        toolset = ClientProxyToolset(
+            ag_ui_tools=sample_tools,
+            event_queue=mock_event_queue,
+            tool_filter=["calculator"]
+        )
+
+        tools = await toolset.get_tools()
+
+        # Should only have the calculator tool
+        assert len(tools) == 1
+        assert tools[0].name == "calculator"
+
+    @pytest.mark.asyncio
+    async def test_filtered_toolset_with_function(self, sample_tools, mock_event_queue):
+        """Test toolset with a tool filter applied."""
+        # Filter to only include 'calculator' tool
+        toolset = ClientProxyToolset(
+            ag_ui_tools=sample_tools,
+            event_queue=mock_event_queue,
+            tool_filter=lambda tool, readonly_context=None: tool.name == "weather",
+        )
+
+        tools = await toolset.get_tools()
+
+        # Should only have the calculator tool
+        assert len(tools) == 1
+        assert tools[0].name == "weather"
+
+    @pytest.mark.asyncio
+    async def test_toolset_with_name_prefix(self, sample_tools, mock_event_queue):
+        """Test toolset with a name prefix applied."""
+        prefix = "test_"
+        toolset = ClientProxyToolset(
+            ag_ui_tools=sample_tools,
+            event_queue=mock_event_queue,
+            tool_name_prefix=prefix
+        )
+
+        tools = await toolset.get_tools_with_prefix()
+
+        # All tool names should have the prefix
+        for tool in tools:
+            assert tool.name.startswith(prefix)
+            original_name = tool.name[len(prefix)+1:]
+            assert original_name in [t.name for t in sample_tools]
+
+    @pytest.mark.asyncio
+    async def test_toolset_with_no_tools(self, mock_event_queue):
+        """Test toolset behavior with no tools provided."""
+        toolset = ClientProxyToolset(
+            ag_ui_tools=[],
+            event_queue=mock_event_queue,
+            tool_filter=['None'],
+        )
+
+        tools = await toolset.get_tools()
+
+        # Should return an empty list
+        assert tools == []

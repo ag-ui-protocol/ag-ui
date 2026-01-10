@@ -1,6 +1,10 @@
 # tests/test_adk_agent.py
 
 """Tests for ADKAgent middleware."""
+from ag_ui_adk.client_proxy_toolset import ClientProxyToolset
+from typing import AsyncGenerator
+from ag_ui.core import BaseEvent
+from ag_ui_adk.agui_toolset import AGUIToolset
 
 import pytest
 import asyncio
@@ -405,7 +409,7 @@ class TestADKAgent:
     async def test_error_handling(self, adk_agent, sample_input):
         """Test error handling in run method."""
         # Force an error by making the underlying agent fail
-        adk_agent._adk_agent = None  # This will cause an error
+        adk_agent._adk_agent.side_effect = Exception('test exception')  # This will cause an error
 
         events = []
         async for event in adk_agent.run(sample_input):
@@ -882,6 +886,86 @@ class TestADKAgent:
         assert len(tool_results) == 1, "Expected one ToolCallResultEvent"
         assert tool_results[0].tool_call_id == "tool-skip-sum"
 
+    @pytest.mark.asyncio
+    async def test_agui_tools_properly_converted_in_subagents(self):
+        deep_agent = Agent(
+            name="deep_agent",
+            instruction="An agent deep in the hierarchy",
+            tools=[AGUIToolset(tool_filter=['deep_tool'])]
+        )
+
+        hello_agent = Agent(
+            name="hello_agent",
+            instruction="Says hello",
+            tools=[AGUIToolset(tool_filter=['hello_tool'])],
+            sub_agents=[deep_agent]
+        )
+
+        goodbye_agent = Agent(
+            name="goodbye_agent",
+            instruction="Says goodbye",
+            tools=[AGUIToolset(tool_filter=['goodbye_tool'])]
+        )
+
+        root_agent = Agent(
+            name="root_agent",
+            instruction="Root agent that delegates to sub-agents",
+            sub_agents=[hello_agent, goodbye_agent]
+        )
+        with patch.object(ADKAgent, "_run_adk_in_background") as submethod_mocked:
+
+            async def empty_async_generator() -> AsyncGenerator[BaseEvent, None]:
+                """An async generator that is always empty."""
+                if False:
+                    yield # Required to make it an async generator
+                return # The function simply returns, ending iteration
+
+            adk_agent = ADKAgent(
+                adk_agent=root_agent,
+                app_name="test_app",
+                user_id="test_user",
+                use_in_memory_services=True
+            )
+            input = RunAgentInput(
+                thread_id="test_thread",
+                run_id="test_run",
+                messages=[
+                    UserMessage(id="msg_1", role="user", content="Start conversation")
+                ],
+                context=[],
+                state={},
+                tools=[],
+                forwarded_props={}
+            )
+            async for e in adk_agent.run(input):
+                if not isinstance(e, RunStartedEvent):
+                    break  # We only care about tool registration side effects so stop after the RunStartedEvent
+
+            submethod_mocked.assert_called_once()
+            agent_under_test = submethod_mocked.call_args.kwargs['adk_agent']
+
+            # assert the base agent has no tools, and has two sub-agents
+            assert isinstance(agent_under_test, Agent)
+            assert agent_under_test.tools == []
+            assert len(agent_under_test.sub_agents) == 2
+
+            # assert that the hello_agent has only the hello_tool via ClientProxyToolset
+            assert agent_under_test.sub_agents[0].name == "hello_agent"
+            assert len(agent_under_test.sub_agents[0].tools) == 1
+            assert isinstance(agent_under_test.sub_agents[0].tools[0], ClientProxyToolset)
+            assert agent_under_test.sub_agents[0].tools[0].tool_filter == ['hello_tool']
+
+            # assert that the deep_agent has only the deep_tool via ClientProxyToolset
+            assert agent_under_test.sub_agents[0].sub_agents[0].name == "deep_agent"
+            assert len(agent_under_test.sub_agents[0].sub_agents[0].tools) == 1
+            assert isinstance(agent_under_test.sub_agents[0].sub_agents[0].tools[0], ClientProxyToolset)
+            assert agent_under_test.sub_agents[0].sub_agents[0].tools[0].tool_filter == ['deep_tool']
+
+            # assert that the goodbye_agent has only the goodbye_tool via ClientProxyToolset
+            assert agent_under_test.sub_agents[1].name == "goodbye_agent"
+            assert len(agent_under_test.sub_agents[1].tools) == 1
+            assert isinstance(agent_under_test.sub_agents[1].tools[0], ClientProxyToolset)
+            assert agent_under_test.sub_agents[1].tools[0].tool_filter == ['goodbye_tool']
 
 class TestThreadIdSessionIdMapping:
     """Test cases for thread_id to session_id mapping and initial state."""

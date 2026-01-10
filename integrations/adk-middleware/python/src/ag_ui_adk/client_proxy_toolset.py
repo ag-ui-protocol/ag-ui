@@ -3,11 +3,11 @@
 """Dynamic toolset creation for client-side tools."""
 
 import asyncio
-from typing import List, Optional
+from typing import List, Optional, Union
 import logging
 
 from google.adk.tools import BaseTool
-from google.adk.tools.base_toolset import BaseToolset
+from google.adk.tools.base_toolset import BaseToolset, ToolPredicate
 from google.adk.agents.readonly_context import ReadonlyContext
 from ag_ui.core import Tool as AGUITool
 
@@ -26,15 +26,19 @@ class ClientProxyToolset(BaseToolset):
     def __init__(
         self,
         ag_ui_tools: List[AGUITool],
-        event_queue: asyncio.Queue
+        event_queue: asyncio.Queue,
+        tool_filter: Optional[Union[ToolPredicate, List[str]]] = None,
+        tool_name_prefix: Optional[str] = None,
     ):
         """Initialize the client proxy toolset.
 
         Args:
             ag_ui_tools: List of AG-UI tool definitions
             event_queue: Queue to emit AG-UI events
+            tool_filter: Filter to apply to tools.
+            tool_name_prefix: The prefix to prepend to the names of the tools returned by the toolset.
         """
-        super().__init__()
+        super().__init__(tool_filter=tool_filter, tool_name_prefix=tool_name_prefix)
         self.ag_ui_tools = ag_ui_tools
         self.event_queue = event_queue
 
@@ -70,6 +74,18 @@ class ClientProxyToolset(BaseToolset):
             except Exception as e:
                 logger.error(f"Failed to create proxy tool for '{ag_ui_tool.name}': {e}")
                 # Continue with other tools rather than failing completely
+
+        # Apply tool filtering if configured
+        if self.tool_filter is not None:
+            if callable(self.tool_filter):
+                # ToolPredicate - function that takes BaseTool and returns bool
+                proxy_tools = [tool for tool in proxy_tools if self.tool_filter(tool)]
+            elif isinstance(self.tool_filter, list):
+                # List of allowed tool names
+                allowed_names = set(self.tool_filter)
+                proxy_tools = [
+                    tool for tool in proxy_tools if tool.name in allowed_names
+                ]
 
         return proxy_tools
 
