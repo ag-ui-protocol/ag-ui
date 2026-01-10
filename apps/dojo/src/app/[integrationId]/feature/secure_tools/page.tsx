@@ -1,13 +1,16 @@
 "use client";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import "@copilotkit/react-ui/styles.css";
 import "./style.css";
 import {
   CopilotKit,
-  useCopilotChat,
   useFrontendTool,
 } from "@copilotkit/react-core";
-import { CopilotChat, RenderSuggestion } from "@copilotkit/react-ui";
+import { 
+  CopilotChat, 
+  RenderSuggestion,
+  type AssistantMessageProps,
+} from "@copilotkit/react-ui";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/utils";
 
@@ -63,7 +66,48 @@ interface DeviationLog {
   reason: string;
 }
 
-const CHAT_ID = "secure-tools-chat";
+// Context for tracking deviations from custom AssistantMessage component
+const DeviationContext = React.createContext<{
+  addDeviation: (deviation: DeviationLog) => void;
+  processedIds: React.MutableRefObject<Set<string>>;
+} | null>(null);
+
+// Custom AssistantMessage that detects blocked messages and reports them
+function SecurityAwareAssistantMessage(props: AssistantMessageProps) {
+  const ctx = React.useContext(DeviationContext);
+  const { message } = props;
+  
+  // Check if this is a blocked message
+  React.useEffect(() => {
+    if (!ctx || !message) return;
+    
+    const msgId = message.id;
+    const content = message.content;
+    
+    // Detect blocked messages by their ID pattern or content
+    if (msgId?.startsWith("blocked-msg-") && !ctx.processedIds.current.has(msgId)) {
+      ctx.processedIds.current.add(msgId);
+      
+      // Extract tool name from content
+      const toolNameMatch = content?.match(/tool "([^"]+)"/i);
+      const toolName = toolNameMatch?.[1] ?? "unknown";
+      
+      ctx.addDeviation({
+        id: msgId,
+        timestamp: Date.now(),
+        toolName,
+        reason: "NOT_IN_ALLOWLIST",
+      });
+    }
+  }, [ctx, message]);
+  
+  // Render the default message content
+  return (
+    <div className="copilotkit-assistant-message">
+      {message?.content}
+    </div>
+  );
+}
 
 const Chat = () => {
   const { theme } = useTheme();
@@ -71,51 +115,16 @@ const Chat = () => {
   const [deviations, setDeviations] = useState<DeviationLog[]>([]);
   const processedIds = useRef<Set<string>>(new Set());
   
-  // Get messages from useCopilotChat with matching ID
-  const { visibleMessages, isLoading } = useCopilotChat({ id: CHAT_ID });
+  // Callback for custom AssistantMessage to report blocked messages
+  const addDeviation = useCallback((deviation: DeviationLog) => {
+    setDeviations((prev) => [...prev, deviation]);
+  }, []);
   
-  // Debug log - only log when values change
-  useEffect(() => {
-    console.log("[SecureTools] visibleMessages updated:", visibleMessages?.length, visibleMessages);
-  }, [visibleMessages]);
-  
-  useEffect(() => {
-    console.log("[SecureTools] isLoading:", isLoading);
-  }, [isLoading]);
-
-  // Detect blocked tool messages
-  useEffect(() => {
-    if (!visibleMessages || visibleMessages.length === 0) return;
-
-    console.log("[SecureTools] Processing messages:", visibleMessages.length);
-    
-    for (const message of visibleMessages) {
-      const msg = message as { id?: string; content?: string };
-      const msgId = msg.id;
-      if (!msgId) continue;
-
-      console.log("[SecureTools] Message ID:", msgId, "Content:", msg.content?.substring(0, 50));
-
-      // Check if this is a blocked message we haven't processed yet
-      if (msgId.startsWith("blocked-msg-") && !processedIds.current.has(msgId)) {
-        processedIds.current.add(msgId);
-
-        const content = msg.content ?? "";
-        const toolNameMatch = content.match(/tool "([^"]+)"/i);
-        const toolName = toolNameMatch?.[1] ?? "unknown";
-
-        setDeviations((prev) => [
-          ...prev,
-          {
-            id: msgId,
-            timestamp: Date.now(),
-            toolName,
-            reason: "NOT_IN_ALLOWLIST",
-          },
-        ]);
-      }
-    }
-  }, [visibleMessages]);
+  // Context value for the custom AssistantMessage component
+  const deviationContextValue = React.useMemo(() => ({
+    addDeviation,
+    processedIds,
+  }), [addDeviation]);
 
   // Allowed tool: change_background
   useFrontendTool({
@@ -152,47 +161,49 @@ const Chat = () => {
   });
 
   return (
-    <div
-      className="flex flex-col h-full w-full"
-      style={{ background }}
-    >
-      {/* Security Status Banner */}
+    <DeviationContext.Provider value={deviationContextValue}>
       <div
-        className={`px-4 py-2 text-sm flex flex-col gap-1 ${
-          theme === "dark"
-            ? "bg-green-900/30 text-sky-300 border-b border-sky-500/30"
-            : "bg-sky-50 text-sky-700 border-b border-sky-200"
-        }`}
+        className="flex flex-col h-full w-full"
+        style={{ background }}
       >
-        <div className="flex items-center gap-2">
-          <span className="text-lg">🔒</span>
-          <span className="font-medium">SecureToolsMiddleware Active</span>
-        </div>
-      </div>
-
-      {/* Deviation Log Panel */}
-      {deviations.length > 0 && (
+        {/* Security Status Banner */}
         <div
-          className={`px-4 py-2 text-sm ${
+          className={`px-4 py-2 text-sm flex flex-col gap-1 ${
             theme === "dark"
-              ? "bg-red-900/20 text-red-300 border-b border-red-500/30"
-              : "bg-red-50 text-red-700 border-b border-red-200"
+              ? "bg-green-900/30 text-sky-300 border-b border-sky-500/30"
+              : "bg-sky-50 text-sky-700 border-b border-sky-200"
           }`}
         >
-          <div className="font-medium mb-1">⚠️ Security Deviations Detected:</div>
-          {deviations.map((d) => (
-            <div key={d.id} className="text-xs opacity-90 ml-4">
-              • [{new Date(d.timestamp).toLocaleTimeString()}] Tool &quot;{d.toolName}&quot; blocked: {d.reason}
-            </div>
-          ))}
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🔒</span>
+            <span className="font-medium">SecureToolsMiddleware Active</span>
+          </div>
         </div>
-      )}
 
-      {/* Chat Area */}
-      <div className="flex-1 flex justify-center items-center">
-        <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
-          <CopilotChat
-            className={cn(
+        {/* Deviation Log Panel */}
+        {deviations.length > 0 && (
+          <div
+            className={`px-4 py-2 text-sm ${
+              theme === "dark"
+                ? "bg-red-900/20 text-red-300 border-b border-red-500/30"
+                : "bg-red-50 text-red-700 border-b border-red-200"
+            }`}
+          >
+            <div className="font-medium mb-1">⚠️ Security Deviations Detected:</div>
+            {deviations.map((d) => (
+              <div key={d.id} className="text-xs opacity-90 ml-4">
+                • [{new Date(d.timestamp).toLocaleTimeString()}] Tool &quot;{d.toolName}&quot; blocked: {d.reason}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Chat Area */}
+        <div className="flex-1 flex justify-center items-center">
+          <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
+            <CopilotChat
+              AssistantMessage={SecurityAwareAssistantMessage}
+              className={cn(
               "h-full rounded-2xl max-w-6xl mx-auto",
               "[&_button.suggestion:nth-of-type(2)]:text-red-500",
             )}
@@ -239,9 +250,10 @@ const Chat = () => {
               },
             ]}
           />
+          </div>
         </div>
       </div>
-    </div>
+    </DeviationContext.Provider>
   );
 };
 
