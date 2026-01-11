@@ -20,6 +20,7 @@
         <adk-java.version>0.5.0</adk-java.version>
         <ag-ui.version>0.0.1</ag-ui.version>
         <maven.deploy.skip>false</maven.deploy.skip>
+        <mockito.version>5.21.0</mockito.version>
 
         <skipUTs>false</skipUTs>
         <skipITs>false</skipITs>
@@ -60,7 +61,13 @@
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-core</artifactId>
-            <version>5.19.0</version>
+            <version>${mockito.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <version>${mockito.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

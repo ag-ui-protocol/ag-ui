@@ -40,7 +40,6 @@ class MessageProcessorTest {
     void shouldReturnContentWithTextPart_whenOnlyUserMessageProvided() {
         // Arrange
         UserMessage userMessage = new UserMessage();
-        userMessage.setRole(com.agui.core.message.Role.user);
         userMessage.setContent("Hello, world!");
         List<com.agui.core.message.BaseMessage> messageBatch = List.of(userMessage);
 
@@ -50,7 +49,7 @@ class MessageProcessorTest {
         // Assert
         assertTrue(result.isPresent(), "Expected a non-empty Optional");
         Content content = result.get();
-        assertEquals("user", content.role());
+        assertEquals("user", content.role().get());
         assertEquals(1, content.parts().get().size());
         assertEquals("Hello, world!", content.parts().get().get(0).text().get());
     }
@@ -69,15 +68,15 @@ class MessageProcessorTest {
         // Assert
         assertTrue(result.isPresent(), "Expected a non-empty Optional");
         Content content = result.get();
-        assertEquals("user", content.role());
+        assertEquals("user", content.role().get());
         assertEquals(1, content.parts().get().size());
         
         assertTrue(content.parts().get().get(0).functionResponse().isPresent(), "Expected a function response part");
         FunctionResponse funcResponse = content.parts().get().get(0).functionResponse().get();
         
-        assertEquals("test-tool", funcResponse.name());
-        assertTrue(funcResponse.response().containsKey("status"));
-        assertEquals("done", funcResponse.response().get("status"));
+        assertEquals("test-tool", funcResponse.name().get());
+        assertTrue(funcResponse.response().get().containsKey("status"));
+        assertEquals("done", funcResponse.response().get().get("status"));
     }
     @Test
     void shouldReturnContentWithBothParts_whenBothToolResultAndUserMessageProvided() {
@@ -88,7 +87,6 @@ class MessageProcessorTest {
         List<ToolResult> toolResults = List.of(toolResult);
 
         UserMessage userMessage = new UserMessage();
-        userMessage.setRole(com.agui.core.message.Role.user);
         userMessage.setContent("Is it done yet?");
         List<com.agui.core.message.BaseMessage> messageBatch = List.of(userMessage);
 
@@ -98,19 +96,18 @@ class MessageProcessorTest {
         // Assert
         assertTrue(result.isPresent(), "Expected a non-empty Optional");
         Content content = result.get();
-        assertEquals("user", content.role());
+        assertEquals("user", content.role().get());
         assertEquals(2, content.parts().get().size(), "Expected two parts in the content");
 
         // Verify Part 1: FunctionResponse
         assertTrue(content.parts().get().get(0).functionResponse().isPresent(), "Expected the first part to be a function response");
         FunctionResponse funcResponse = content.parts().get().get(0).functionResponse().get();
-        assertEquals("test-tool", funcResponse.name());
-        assertEquals("done", funcResponse.response().get("status"));
+        assertEquals("test-tool", funcResponse.name().get());
+        assertTrue(funcResponse.response().get().containsKey("status"));
+        assertEquals("done", funcResponse.response().get().get("status"));
         
         // Verify Part 2: Text
         assertTrue(content.parts().get().get(1).text().isPresent(), "Expected the second part to be text");
         assertEquals("Is it done yet?", content.parts().get().get(1).text().get());
     }
-    
-    // More tests will be added here
 }

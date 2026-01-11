@@ -1,34 +1,26 @@
-# Java ADK Middleware Server
+# Java ADK Example
 
-This directory should contain your Java implementation of the ADK middleware.
+This project is an example implementation of a Java ADK middleware server based on Spring Boot.
 
 ## 1. Project Structure
 
-This project is set up as a standard Maven project. You should place your Java source code under `src/main/java`.
-
-Your Java application should be a web server (e.g., using Spring Boot) that exposes an AG-UI compliant endpoint. You can use the `LocalAgent` class from the `com.agui.server` package as a base for your agent implementation.
-
-Refer to the `sdks/community/java/examples/spring-ai-example` for a good example of how to structure a similar Java agent server.
+This project is a standard Maven project. The main application logic is in `src/main/java/com/example/agent/AgentApplication.java`.
+It uses Spring Boot to create a web server that exposes an AG-UI compliant endpoint. The `ChatHandler` class implements the agent logic, and the `ApiRouter` class routes the requests to the handler.
 
 ## 2. Running the Server
 
-Because this is a standard Maven project (and assuming you are using Spring Boot), you can typically run the server with:
+Because this is a standard Spring Boot project, you can run the server with:
 
 ```bash
-# Navigate to this directory
-cd integrations/adk-middleware/java
-
 # Run the spring boot application
 ./mvnw spring-boot:run
 ```
 
-This will start your Java server, ready to accept connections from the Dojo.
+This will start the Java server on `http://localhost:8080`.
 
-## 3. Connecting to the Dojo
+## 3. Testing with Dojo
 
-To connect this server to the Dojo, you will need to:
-
-1.  **Update Environment Variables:** Add a new variable to `apps/dojo/src/env.ts` to hold the URL of this server.
-2.  **Update Dojo Agents:** Add a new entry to the `agentsIntegrations` array in `apps/dojo/src/agents.ts` to make the Dojo UI aware of your new agent.
-
-I can guide you through these next steps once your Java server is ready.
+To test the project with Dojo:
+1. First, run this project.
+2. Then, set the environment variable `ADK_MIDDLEWARE_URL = 'http://localhost:8080'`. This environment variable is also used for the Python ADK integration.
+3. Finally, run the Dojo app and select Google ADK from integrations in the UI.

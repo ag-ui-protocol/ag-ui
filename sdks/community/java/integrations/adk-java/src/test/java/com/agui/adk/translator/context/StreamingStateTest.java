@@ -16,12 +16,17 @@ class StreamingStateTest {
         streamingState = new StreamingState();
     }
 
+    private void startAndAppend(String text) {
+        streamingState.startStreaming();
+        streamingState.appendToCurrentText(text);
+    }
+
     @Test
     void shouldBeInInitialState_whenConstructed() {
         assertTrue(streamingState.getMessageId().isEmpty());
         assertFalse(streamingState.isStreaming());
-        assertTrue(streamingState.getLastStreamedText() == null || streamingState.getLastStreamedText().isEmpty());
-        assertTrue(streamingState.getLastStreamedRunId() == null || streamingState.getLastStreamedRunId().isEmpty());
+        assertNull(streamingState.getLastStreamedText());
+        assertNull(streamingState.getLastStreamedRunId());
     }
 
     @Test
@@ -30,7 +35,7 @@ class StreamingStateTest {
         assertTrue(messageId.isPresent());
         assertTrue(streamingState.isStreaming());
         assertEquals(messageId, streamingState.getMessageId());
-        assertTrue(streamingState.getLastStreamedText() == null || streamingState.getLastStreamedText().isEmpty());
+        assertNull(streamingState.getLastStreamedText());
     }
 
     @Test
@@ -42,25 +47,22 @@ class StreamingStateTest {
 
     @Test
     void shouldAppendText_whenCalled() {
-        streamingState.startStreaming();
-        streamingState.appendToCurrentText("Hello");
+        startAndAppend("Hello");
         streamingState.appendToCurrentText(" World");
-        // This is problematic. currentText is private. We can only test it indirectly via endStream or by making it public.
-        // For now, I will rely on the endStream test to confirm currentText is correctly built.
+        // This is problematic. currentText is private. We can only test it indirectly via endStream.
+        // We rely on the endStream test to confirm currentText is correctly built.
     }
-    
+
     @Test
     void shouldUpdateLastStreamedAndReset_whenEndStreamCalled() {
         String runId = "testRun123";
-        streamingState.startStreaming();
+        startAndAppend("Some streamed content");
         String msgId = streamingState.getMessageId().get();
-        streamingState.appendToCurrentText("Some streamed content");
 
         streamingState.endStream(runId);
 
         assertFalse(streamingState.isStreaming());
         assertTrue(streamingState.getMessageId().isEmpty());
-        assertEquals("", streamingState.currentText); // This should be empty after endStream
         assertEquals("Some streamed content", streamingState.getLastStreamedText());
         assertEquals(runId, streamingState.getLastStreamedRunId());
     }
@@ -77,8 +79,7 @@ class StreamingStateTest {
 
     @Test
     void shouldClearLastStreamedData_whenResetHistoryCalled() {
-        streamingState.startStreaming();
-        streamingState.appendToCurrentText("Content");
+        startAndAppend("Content");
         streamingState.endStream("runId");
         assertNotNull(streamingState.getLastStreamedText());
         

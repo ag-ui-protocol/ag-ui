@@ -3,6 +3,7 @@ package com.agui.adk.translator.step;
 import com.agui.adk.translator.PredictStateMapping;
 import com.agui.adk.translator.TranslationContext;
 import com.agui.core.event.*;
+import com.agui.core.event.TextMessageEndEvent;
 import com.google.adk.events.Event;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
@@ -52,7 +53,11 @@ public enum ToolCallRequestStep implements EventTranslationStep {
         }
 
         Flowable<BaseEvent> closeStreamEvent = context.forceCloseStreamingMessage()
-                .map(messageId -> (BaseEvent) textMessageEndEvent(messageId))
+                .map(messageId -> {
+                    TextMessageEndEvent endEvent = new TextMessageEndEvent();
+                    endEvent.setMessageId(messageId);
+                    return (BaseEvent) endEvent;
+                })
                 .map(Flowable::just)
                 .orElse(Flowable.empty());
 

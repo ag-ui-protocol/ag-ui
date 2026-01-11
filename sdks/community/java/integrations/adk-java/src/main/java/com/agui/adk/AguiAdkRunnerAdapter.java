@@ -80,7 +80,7 @@ public final class AguiAdkRunnerAdapter {
                 logger.error("Failed to prepare reactive agent run", e);
                 return Flowable.just(runErrorEvent(e.getMessage()));
             }
-        });
+        }).cache();
     }
 
 

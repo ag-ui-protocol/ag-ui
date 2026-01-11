@@ -1,10 +1,10 @@
 package com.agui.adk;
 
 import com.agui.core.agent.RunAgentParameters;
-import com.agui.core.message.BaseMessage;
-import com.agui.core.message.Role;
+import com.agui.core.message.AssistantMessage;
 import com.agui.core.message.UserMessage;
 import com.google.genai.types.Content;
+import org.jetbrains.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -23,7 +23,6 @@ class RunContextTest {
         String userId = "test-user";
 
         UserMessage userMessage = new UserMessage();
-        userMessage.setRole(Role.user);
         userMessage.setContent("Hello");
 
         RunAgentParameters params = RunAgentParameters.builder()
@@ -43,8 +42,14 @@ class RunContextTest {
         
         Content latestMessage = context.latestMessage();
         assertNotNull(latestMessage);
-        assertEquals("user", latestMessage.role());
-        assertEquals("Hello", latestMessage.parts().get().get(0).text().get());
+        assertEquals("user", latestMessage.role().orElse(null));
+        assertEquals("Hello", extractFromPartsOf(latestMessage));
+    }
+
+    @Nullable
+    private static String extractFromPartsOf(Content latestMessage) {
+        return latestMessage.parts().filter(items -> !items.isEmpty())
+                .flatMap(items -> items.get(0).text()).orElse(null);
     }
 
     @Test
@@ -68,16 +73,12 @@ class RunContextTest {
     void shouldExtractLatestUserMessage_whenMultipleMessagesExist() {
         // Arrange
         UserMessage firstUserMessage = new UserMessage();
-        firstUserMessage.setRole(Role.user);
         firstUserMessage.setContent("First message");
 
-        // A non-user message in between
-        BaseMessage otherMessage = new UserMessage();
-        otherMessage.setRole(Role.model); // Not a user message
+        AssistantMessage otherMessage = new AssistantMessage();
         otherMessage.setContent("Some other content");
         
         UserMessage latestUserMessage = new UserMessage();
-        latestUserMessage.setRole(Role.user);
         latestUserMessage.setContent("Latest message");
 
         RunAgentParameters params = RunAgentParameters.builder()
@@ -91,14 +92,13 @@ class RunContextTest {
         // Assert
         Content latestMessage = context.latestMessage();
         assertNotNull(latestMessage);
-        assertEquals("Latest message", latestMessage.parts().get().get(0).text().get());
+        assertEquals("Latest message", extractFromPartsOf(latestMessage));
     }
 
     @Test
     void shouldHaveNullLatestMessage_whenNoUserMessagesExist() {
         // Arrange
-        BaseMessage assistantMessage = new UserMessage();
-        assistantMessage.setRole(Role.model);
+        AssistantMessage assistantMessage = new AssistantMessage();
         assistantMessage.setContent("I am a model");
 
         RunAgentParameters params = RunAgentParameters.builder()

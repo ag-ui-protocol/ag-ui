@@ -8,8 +8,9 @@ import com.google.adk.events.EventActions;
 import io.reactivex.rxjava3.subscribers.TestSubscriber;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 import java.util.Map;
@@ -17,8 +18,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 
+@ExtendWith(MockitoExtension.class)
 class StateDeltaTranslationStepTest {
 
     private StateDeltaTranslationStep translationStep;
@@ -34,7 +37,6 @@ class StateDeltaTranslationStepTest {
 
     @BeforeEach
     void setUp() {
-        MockitoAnnotations.openMocks(this);
         translationStep = StateDeltaTranslationStep.INSTANCE;
         when(event.actions()).thenReturn(actions);
     }
@@ -84,6 +86,7 @@ class StateDeltaTranslationStepTest {
         assertTrue(emittedEvent instanceof StateDeltaEvent);
         StateDeltaEvent stateDeltaEvent = (StateDeltaEvent) emittedEvent;
         
+        @SuppressWarnings("unchecked")
         List<Map<String, Object>> patches = (List<Map<String, Object>>) stateDeltaEvent.getRawEvent();
         assertEquals(2, patches.size());
 

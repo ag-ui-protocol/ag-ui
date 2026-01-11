@@ -47,12 +47,7 @@ public class AguiConfiguration {
     @Bean
     public SessionManager sessionManager(BaseSessionService sessionService, BaseMemoryService memoryService) {
         // The SessionManager is a singleton that manages all user sessions.
-        return new SessionManager(
-                sessionService,
-                memoryService,
-                Duration.ofMinutes(20), // Session timeout
-                Duration.ofMinutes(5)   // Cleanup interval
-        );
+        return new SessionManager(sessionService, memoryService);
     }
 
     @Bean

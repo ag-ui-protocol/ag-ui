@@ -10,9 +10,6 @@ import org.reactivestreams.Publisher;
 
 import java.util.List;
 
-import static com.agui.server.EventFactory.runFinishedEvent;
-import static com.agui.server.EventFactory.runStartedEvent;
-
 /**
  * A stateful transformer, created once per agent run, that translates a stream of ADK Events
  * into a full, compliant stream of AG-UI BaseEvents, including start, finish, and deferred events.
@@ -40,10 +37,7 @@ public class EventTranslator implements FlowableTransformer<Event, BaseEvent> {
      */
     @Override
     @NonNull
-    public Publisher<BaseEvent> apply(Flowable<Event> upstream) {
-        // Define the event streams
-        Flowable<BaseEvent> startEvent = Flowable.just(runStartedEvent(this.context.getThreadId(), this.context.getRunId()));
-
+    public Publisher<BaseEvent> apply(@NonNull Flowable<Event> upstream) {
         Flowable<BaseEvent> mainTranslationStream = upstream
                 .concatMap(this::translate);
 
@@ -51,13 +45,8 @@ public class EventTranslator implements FlowableTransformer<Event, BaseEvent> {
             Flowable.fromIterable(this.getAndClearDeferredConfirmEvents())
         );
 
-        Flowable<BaseEvent> finishEvent = Flowable.just(runFinishedEvent(this.context.getThreadId(), this.context.getRunId()));
-
-        // Compose the final stream in the correct order.
-        return startEvent
-            .concatWith(mainTranslationStream)
-            .concatWith(deferredEvents) // Deferred events are emitted after the main stream, but before finish.
-            .concatWith(finishEvent);
+        // Compose the final stream, letting the adapter handle Start/Finish events.
+        return mainTranslationStream.concatWith(deferredEvents);
     }
     
     /**
