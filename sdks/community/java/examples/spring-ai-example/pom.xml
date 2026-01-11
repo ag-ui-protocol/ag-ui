@@ -31,25 +31,18 @@
             <artifactId>spring-ai-starter-model-openai</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.ag-ui</groupId>
+            <groupId>com.ag-ui.community</groupId>
             <artifactId>spring-ai</artifactId>
             <version>${spring-ai.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.ag-ui</groupId>
-            <artifactId>server</artifactId>
+            <groupId>com.ag-ui.community</groupId>
+            <artifactId>java-server</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>
 
-        <!-- Figlet (needed for the tool) !-->
         <dependency>
-            <groupId>com.github.lalyos</groupId>
-            <artifactId>jfiglet</artifactId>
-            <version>0.0.9</version>
-        </dependency>
-
-        <dependency>
-            <groupId>com.ag-ui</groupId>
+            <groupId>com.ag-ui.community</groupId>
             <artifactId>spring</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>
