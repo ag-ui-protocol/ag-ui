@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **FIXED**: Text message events not emitted when non-streaming response includes client function call (issue #906)
+  - In non-streaming mode, when an ADK event contained both text and an LRO (long-running) tool call, text was skipped entirely
+  - Added `translate_text_only()` method to EventTranslator to handle text extraction for LRO events
+  - Modified LRO routing in ADKAgent to emit TEXT_MESSAGE events before TOOL_CALL events
+
 ## [0.4.1] - 2025-01-06
 
 ### Added
