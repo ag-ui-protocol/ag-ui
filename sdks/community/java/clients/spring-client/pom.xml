@@ -17,7 +17,7 @@
     <description>AG-UI Spring Client</description>
 
     <properties>
-        <spring.version>6.2.7</spring.version>
+        <spring.version>6.2.15</spring.version>
         <ag-ui.version>0.0.1</ag-ui.version>
         <maven.deploy.skip>false</maven.deploy.skip>
     </properties>
