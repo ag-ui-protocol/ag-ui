@@ -253,4 +253,12 @@ export const menuIntegrations = [
       "human_in_the_loop",
     ],
   },
+  {
+    id: "claude-agent-sdk",
+    name: "Claude Agent SDK",
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+    ],
+  },
 ] as const satisfies MenuIntegrationConfig[];
