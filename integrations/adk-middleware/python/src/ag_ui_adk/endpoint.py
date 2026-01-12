@@ -2,7 +2,8 @@
 
 """FastAPI endpoint for ADK middleware."""
 
-from typing import Optional, Any, Coroutine, Callable
+import warnings
+from typing import Optional, Any, Coroutine, Callable, List
 import json
 
 from fastapi import FastAPI, Request
@@ -84,6 +85,7 @@ def add_adk_fastapi_endpoint(
     app: FastAPI,
     agent: ADKAgent,
     path: str = "/",
+    extract_headers: Optional[List[str]] = None,
     extract_state_from_request: Optional[Callable[[Request, RunAgentInput], Coroutine[dict[str,Any], Any, Any]]] = None,
 ):
     """Add ADK middleware endpoint to FastAPI app.
@@ -92,23 +94,37 @@ def add_adk_fastapi_endpoint(
         app: FastAPI application instance
         agent: Configured ADKAgent instance
         path: API endpoint path
+        extract_headers: Optional list of HTTP header names to extract into state. Cannot be used with extract_state_from_request.
         extract_state_from_request: Optional async function to extract values mapped from the request into state.
             State values returned from this function will override any existing state values. 
             The RunAgentInput is provided so conflicts can be identified and resolved appropriately.
+            Cannot be used with extract_headers.
 
     Note:
         This function also adds an experimental POST /agents/state endpoint for
         consumption by front-end frameworks that need to retrieve thread state and
         message history. This endpoint is subject to change in future versions.
     """
+    extract_state_fn = extract_state_from_request
+    if extract_headers is not None:
+        if extract_state_from_request is None:
+            warnings.warn(
+                "The 'extract_headers' parameter is deprecated and will be removed in future versions. "
+                "Please use 'extract_state_from_request' instead. Example: extract_state_from_request = make_extract_headers(extract_headers)",
+                DeprecationWarning
+            )
+            # Create extractor from headers list
+            extract_state_fn = make_extract_headers(extract_headers)
+        else:
+            raise ValueError("Cannot use both 'extract_headers' and 'extract_state_from_request' parameters together.")
 
     @app.post(path)
     async def adk_endpoint(input_data: RunAgentInput, request: Request):
         """ADK middleware endpoint."""
 
         # Extract headers into state.headers if list provided
-        if extract_state_from_request:
-            extracted_state_dict = await extract_state_from_request(request, input_data)
+        if extract_state_fn:
+            extracted_state_dict = await extract_state_fn(request, input_data)
             
             if extracted_state_dict:
                 existing_state = input_data.state if isinstance(input_data.state, dict) else {}
@@ -274,6 +290,7 @@ def add_adk_fastapi_endpoint(
 def create_adk_app(
     agent: ADKAgent,
     path: str = "/",
+    extract_headers: Optional[List[str]] = None,
     extract_state_from_request: Optional[Callable[[Request, RunAgentInput], Coroutine[dict[str,Any], Any, Any]]] = None,
 ) -> FastAPI:
     """Create a FastAPI app with ADK middleware endpoint.
@@ -281,13 +298,15 @@ def create_adk_app(
     Args:
         agent: Configured ADKAgent instance
         path: API endpoint path
+        extract_headers: Optional list of HTTP header names to extract into state. Cannot be used with extract_state_from_request.
         extract_state_from_request: Optional async function to extract values mapped from the request into state.
             State values returned from this function will override any existing state values. 
             The RunAgentInput is provided so conflicts can be identified and resolved appropriately.
+            Cannot be used with extract_headers.
 
     Returns:
         FastAPI application instance
     """
     app = FastAPI(title="ADK Middleware for AG-UI Protocol")
-    add_adk_fastapi_endpoint(app, agent, path, extract_state_from_request=extract_state_from_request)
+    add_adk_fastapi_endpoint(app, agent, path, extract_headers=extract_headers, extract_state_from_request=extract_state_from_request)
     return app

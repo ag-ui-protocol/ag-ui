@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch, AsyncMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from fastapi.responses import StreamingResponse
-
+from starlette.requests import Request
 from ag_ui.core import RunAgentInput, UserMessage, RunStartedEvent, RunErrorEvent, EventType
 from ag_ui.encoder import EventEncoder
 from ag_ui_adk.endpoint import add_adk_fastapi_endpoint, create_adk_app, make_extract_headers
@@ -436,7 +436,7 @@ class TestCreateADKApp:
 
         # Should call add_adk_fastapi_endpoint with correct parameters
         mock_add_endpoint.assert_called_once_with(
-            app, mock_agent, "/test", extract_state_from_request=None
+            app, mock_agent, "/test", extract_headers = None, extract_state_from_request=None
         )
 
     @patch('ag_ui_adk.endpoint.add_adk_fastapi_endpoint')
@@ -444,11 +444,11 @@ class TestCreateADKApp:
         """Test that create_adk_app passes extract_headers to add_adk_fastapi_endpoint."""
         async def extract_headers(request, input_data):
             return {}
-        app = create_adk_app(mock_agent, path="/test", extract_state_from_request=extract_headers)
+        app = create_adk_app(mock_agent, path="/test",extract_headers = ['Authorization'], extract_state_from_request=extract_headers)
 
         # Should call add_adk_fastapi_endpoint with extract_headers
         mock_add_endpoint.assert_called_once_with(
-            app, mock_agent, "/test", extract_state_from_request=extract_headers
+            app, mock_agent, "/test", extract_headers = ['Authorization'], extract_state_from_request=extract_headers
         )
 
     def test_create_app_default_path(self, mock_agent):
@@ -1098,3 +1098,52 @@ class TestExtractHeaders:
         # Non x- headers should just have hyphens converted to underscores
         assert captured_input[0].state["headers"]["authorization"] == "Bearer token123"
         assert captured_input[0].state["headers"]["custom_header"] == "custom_value"
+
+    def test_fail_with_both_extraction_options(self):
+        """Test that extract_headers and extract_state_from_request cannot be used together."""
+        with pytest.raises(ValueError):
+            create_adk_app(
+                MagicMock(spec=ADKAgent),
+                extract_headers=["x-user-id"],
+                extract_state_from_request=make_extract_headers(["x-user-id"]),
+            )
+
+    def test_legacy_extract_headers_parameter(self, sample_input):
+        """Test that legacy extract_headers parameter is used to make an extract_state_from_request by calling make_extract_headers and that the created function works as expected."""
+        app = create_adk_app(
+            MagicMock(spec=ADKAgent),
+            extract_headers=["x-user-id", "x-tenant-id"]
+        )
+
+        # Mock the inner function created by make_extract_headers
+        mock_inner_extract_headers_fn = AsyncMock(return_value={})
+
+        # Patch make_extract_headers to return the mock_inner_extract_headers_fn
+        with patch('ag_ui_adk.endpoint.make_extract_headers') as mock_make_extract_headers:
+            mock_make_extract_headers.return_value = mock_inner_extract_headers_fn
+
+            extract_headers = ["x-user-id", "x-tenant-id"]
+            app = create_adk_app(
+                MagicMock(spec=ADKAgent),
+                extract_headers=extract_headers
+            )
+
+            # Ensure make_extract_headers was called with extract_headers list
+            mock_make_extract_headers.assert_called_once_with(extract_headers)
+
+            client = TestClient(app)
+            response = client.post(
+                "/",
+                json=sample_input.model_dump(),
+                headers={"x-user-id": "user123"}
+            )
+            assert response.status_code == 200
+
+            # Ensure the inner extract_headers function was called with correct parameters
+            request = mock_inner_extract_headers_fn.call_args.args[0]
+            assert isinstance(request, Request)
+            assert request.headers["x-user-id"] == "user123"
+
+            input= mock_inner_extract_headers_fn.call_args.args[1]
+            assert isinstance(input, RunAgentInput)
+            assert input == sample_input
