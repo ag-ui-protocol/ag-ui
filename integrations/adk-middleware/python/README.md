@@ -327,3 +327,27 @@ For detailed information about tool support, see [TOOLS.md](./TOOLS.md).
 - **[TOOLS.md](./TOOLS.md)** - Tool support documentation
 - **[USAGE.md](./USAGE.md)** - Usage examples and patterns
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Technical architecture and design details
+
+## Migration Guide
+
+### Migrating from v0.4.x 
+
+If you are upgrading from version 0.4.x, please note the following changes:
+
+- Agui tools are no longer automatically included in the root agent's toolset. You must explicitly add the `AGUIToolset` to your agent's tools list to access AG-UI client tools.
+
+- Agui tools with names that conflict with existing agent tools will no longer be automatically removed. Use the `tool_name_prefix` and `tool_filter` parameters of `AGUIToolset` to manage tool name conflicts and filter which tools to include.
+
+- If you want to maintain the previous behavior of only the root agent having access to AG-UI tools, and ensure no name conflicts, you can add the `AGUIToolset` with a custom filter as the first tool in the root agent like this:
+
+    ```python
+    tools=[
+        AGUIToolset(
+            tool_filter=lambda tool, readonly_context=None: tool.name not in [
+                "transfer_to_agent", 
+                "any other tools provided to this agent that overlap with agui tools...",
+            ],
+        ),
+        ...other tools...
+    ]
+    ```
