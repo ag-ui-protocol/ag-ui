@@ -874,7 +874,9 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
             messages.append(user_message)
 
         # Handle assistant/model messages
-        elif author == "model" or author is None:
+        # Note: ADK agents set author to the agent's name (e.g., "my_agent"),
+        # not "model". We treat any non-"user" author as an assistant message.
+        else:
             # Convert function calls to tool calls if present
             tool_calls = _translate_function_calls_to_tool_calls(function_calls) if function_calls else None
 
