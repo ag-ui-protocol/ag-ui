@@ -120,6 +120,9 @@ app = App(
         name="assistant",
         model="gemini-2.5-flash",
         instruction="You are a helpful assistant.",
+        tools=[
+            AGUIToolset(), # Add the tools provided by the AG-UI client
+        ]
     ),
     plugins=[LoggingPlugin()],
     # resumability_config=ResumabilityConfig(is_resumable=True),  # Optional
@@ -181,7 +184,10 @@ my_agent = Agent(
     name="assistant",
     model="gemini-2.0-flash", 
     instruction="You are a helpful assistant.",
-    tools=[adk_tools.preload_memory_tool.PreloadMemoryTool()]  # Add memory tools here
+    tools=[
+        AGUIToolset(), # Add the tools provided by the AG-UI client
+        adk_tools.preload_memory_tool.PreloadMemoryTool(), # Add memory tools here
+    ]
 )
 
 # Create middleware with direct agent embedding
@@ -193,7 +199,7 @@ adk_agent = ADKAgent(
 )
 ```
 
-**⚠️ Important**: The `tools` parameter belongs to the ADK agent (like `Agent` or `LlmAgent`), **not** to the `ADKAgent` middleware. The middleware automatically handles any tools defined on the embedded agents.
+**⚠️ Important**: The `tools` parameter belongs to the ADK agent (like `Agent` or `LlmAgent`), **not** to the `ADKAgent` middleware. To add agui client tools, use the `AGUIToolset()` as shown above.
 
 **Testing Memory Workflow:**
 
