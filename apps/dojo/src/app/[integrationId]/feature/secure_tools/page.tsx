@@ -1,18 +1,15 @@
 "use client";
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState } from "react";
 import "@copilotkit/react-ui/styles.css";
 import "./style.css";
 import {
   CopilotKit,
   useFrontendTool,
 } from "@copilotkit/react-core";
-import { 
-  CopilotChat, 
-  RenderSuggestion,
-  type AssistantMessageProps,
-} from "@copilotkit/react-ui";
+import { CopilotChat, RenderSuggestion } from "@copilotkit/react-ui";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/utils";
+import { useSecurityDeviations } from "@/hooks/useSecurityDeviations";
 
 interface SecureToolsProps {
   params: Promise<{
@@ -59,72 +56,16 @@ const SecureTools: React.FC<SecureToolsProps> = ({ params }) => {
   );
 };
 
-interface DeviationLog {
-  id: string;
-  timestamp: number;
-  toolName: string;
-  reason: string;
-}
-
-// Context for tracking deviations from custom AssistantMessage component
-const DeviationContext = React.createContext<{
-  addDeviation: (deviation: DeviationLog) => void;
-  processedIds: React.MutableRefObject<Set<string>>;
-} | null>(null);
-
-// Custom AssistantMessage that detects blocked messages and reports them
-function SecurityAwareAssistantMessage(props: AssistantMessageProps) {
-  const ctx = React.useContext(DeviationContext);
-  const { message } = props;
-  
-  // Check if this is a blocked message
-  React.useEffect(() => {
-    if (!ctx || !message) return;
-    
-    const msgId = message.id;
-    const content = message.content;
-    
-    // Detect blocked messages by their ID pattern or content
-    if (msgId?.startsWith("blocked-msg-") && !ctx.processedIds.current.has(msgId)) {
-      ctx.processedIds.current.add(msgId);
-      
-      // Extract tool name from content
-      const toolNameMatch = content?.match(/tool "([^"]+)"/i);
-      const toolName = toolNameMatch?.[1] ?? "unknown";
-      
-      ctx.addDeviation({
-        id: msgId,
-        timestamp: Date.now(),
-        toolName,
-        reason: "NOT_IN_ALLOWLIST",
-      });
-    }
-  }, [ctx, message]);
-  
-  // Render the default message content
-  return (
-    <div className="copilotkit-assistant-message">
-      {message?.content}
-    </div>
-  );
-}
-
 const Chat = () => {
   const { theme } = useTheme();
   const [background, setBackground] = useState<string>("var(--copilot-kit-background-color)");
-  const [deviations, setDeviations] = useState<DeviationLog[]>([]);
-  const processedIds = useRef<Set<string>>(new Set());
   
-  // Callback for custom AssistantMessage to report blocked messages
-  const addDeviation = useCallback((deviation: DeviationLog) => {
-    setDeviations((prev) => [...prev, deviation]);
-  }, []);
-  
-  // Context value for the custom AssistantMessage component
-  const deviationContextValue = React.useMemo(() => ({
-    addDeviation,
-    processedIds,
-  }), [addDeviation]);
+  // Use the security deviations hook for tracking blocked tool calls
+  const { 
+    deviations, 
+    DeviationProvider, 
+    SecurityAwareAssistantMessage 
+  } = useSecurityDeviations();
 
   // Allowed tool: change_background
   useFrontendTool({
@@ -161,7 +102,7 @@ const Chat = () => {
   });
 
   return (
-    <DeviationContext.Provider value={deviationContextValue}>
+    <DeviationProvider>
       <div
         className="flex flex-col h-full w-full"
         style={{ background }}
@@ -204,56 +145,55 @@ const Chat = () => {
             <CopilotChat
               AssistantMessage={SecurityAwareAssistantMessage}
               className={cn(
-              "h-full rounded-2xl max-w-6xl mx-auto",
-              "[&_button.suggestion:nth-of-type(2)]:text-red-500",
-            )}
-            labels={{
-              initial:
-                "Hi! I'm an agent with two tools available: I can change the background color, and I can say hello to people.",
-            }}
-            RenderSuggestionsList={function Suggestions({
-              suggestions,
-              onSuggestionClick,
-              isLoading,
-            }) {
-              return (
-                <div className="suggestions">
-                  {suggestions.map(({ title, message, isLoading, partial, className }) => (
-                    <RenderSuggestion
-                      key={title}
-                      title={title}
-                      message={message}
-                      partial={isLoading ?? partial ?? isLoading}
-                      className={`suggestion ${partial ? "loading" : ''} ${cn(
-                        className,
-                        title.includes("(not allowed)") && "text-red-700! border-red-600/25! bg-red-50!",
-                        title.includes("(allowed)") && "text-green-700! border-green-600/25! bg-green-50!",
-                      )}`}
-                      onClick={() => onSuggestionClick(message)}
-                    />
-                  ))}
-                </div>
-              );
-            }}
-            suggestions={[
-              {
-                title: "Change background (allowed)",
-                message: "Change the background to a purple gradient.",
-              },
-              {
-                title: "Say hello (not allowed)",
-                message: "Say hello.",
-              },
-              {
-                title: "Try both",
-                message: "Change the background to blue and then say hello.",
-              },
-            ]}
-          />
+                "h-full rounded-2xl max-w-6xl mx-auto",
+                "[&_button.suggestion:nth-of-type(2)]:text-red-500",
+              )}
+              labels={{
+                initial:
+                  "Hi! I'm an agent with two tools available: I can change the background color, and I can say hello to people.",
+              }}
+              RenderSuggestionsList={function Suggestions({
+                suggestions,
+                onSuggestionClick,
+              }) {
+                return (
+                  <div className="suggestions">
+                    {suggestions.map(({ title, message, isLoading, partial, className }) => (
+                      <RenderSuggestion
+                        key={title}
+                        title={title}
+                        message={message}
+                        partial={isLoading ?? partial}
+                        className={`suggestion ${partial ? "loading" : ""} ${cn(
+                          className,
+                          title.includes("(not allowed)") && "text-red-700! border-red-600/25! bg-red-50!",
+                          title.includes("(allowed)") && "text-green-700! border-green-600/25! bg-green-50!",
+                        )}`}
+                        onClick={() => onSuggestionClick(message)}
+                      />
+                    ))}
+                  </div>
+                );
+              }}
+              suggestions={[
+                {
+                  title: "Change background (allowed)",
+                  message: "Change the background to a purple gradient.",
+                },
+                {
+                  title: "Say hello (not allowed)",
+                  message: "Say hello.",
+                },
+                {
+                  title: "Try both",
+                  message: "Change the background to blue and then say hello.",
+                },
+              ]}
+            />
           </div>
         </div>
       </div>
-    </DeviationContext.Provider>
+    </DeviationProvider>
   );
 };
 

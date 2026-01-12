@@ -25,12 +25,13 @@ import { concatMap, mergeMap } from "rxjs/operators";
 const BLOCKED_TOOL_MARKER = "TOOL_BLOCKED_BY_SECURITY_POLICY";
 
 /**
- * Generic message used to replace blocked tool messages in conversation history.
- * This prevents the LLM from learning which specific tool was blocked while
- * maintaining conversation coherence (no unanswered user requests).
+ * System instruction injected to ensure the LLM always attempts tool calls,
+ * even if it has seen them blocked before. This is critical for:
+ * 1. Consistent user experience (blocked message shown every time)
+ * 2. Reliable security auditing (all tool call attempts are logged)
+ * 3. Preserving full conversation context
  */
-const GENERIC_BLOCKED_MESSAGE_FOR_HISTORY =
-  "I wasn't able to complete that request.";
+const ALWAYS_ATTEMPT_TOOLS_INSTRUCTION = `IMPORTANT SECURITY INSTRUCTION: When a user requests functionality that matches an available tool, you MUST always attempt to call that tool, even if you have seen it blocked or fail in previous messages. Do not assume any tool is unavailable based on past attempts. The security system needs to intercept every tool call attempt to properly log and report blocked tools. Never respond with plain text when a tool call would be appropriate - always make the tool call attempt so the system can handle it properly.`;
 
 /**
  * Name of the custom event emitted when a tool call is blocked.
@@ -338,29 +339,27 @@ export interface SecureToolsConfig {
   blockedToolMessage?: (toolName: string, reason: string) => string;
 
   /**
-   * If true, keeps blocked tool calls in the conversation history.
-   * This allows the LLM to "learn" that certain tools are blocked and
-   * potentially avoid calling them on subsequent requests.
+   * If true (default), injects a system instruction that tells the LLM to
+   * ALWAYS attempt tool calls when the user requests tool functionality,
+   * even if the tool was blocked in previous messages.
    *
-   * Default: false (blocked tool calls are stripped from history)
+   * This ensures:
+   * 1. Consistent user experience (blocked message shown every time)
+   * 2. Reliable security auditing (all tool call attempts are logged)
+   * 3. Full conversation context is preserved
    *
-   * When false (default):
-   * - Blocked tool calls are removed from message history
-   * - The LLM will attempt to use blocked tools again on each request
-   * - Users will consistently see blocked messages (when blockedToolMessage is set)
+   * Set to false if you want the LLM to naturally learn from blocked attempts
+   * and potentially stop trying to use blocked tools.
    *
-   * When true:
-   * - Blocked tool calls remain in history
-   * - The LLM may learn to avoid blocked tools after seeing errors
-   * - Blocked messages may only appear on the first attempt
+   * @default true
    *
    * @example
    * ```ts
-   * preserveBlockedInHistory: true
-   * // LLM will see previous blocked attempts and may stop trying
+   * // Disable the instruction (LLM may learn to avoid blocked tools)
+   * injectToolAttemptInstruction: false
    * ```
    */
-  preserveBlockedInHistory?: boolean;
+  injectToolAttemptInstruction?: boolean;
 }
 
 // =============================================================================
@@ -677,11 +676,12 @@ export class SecureToolsMiddleware extends Middleware {
     this.blockedToolCalls.clear();
     this.toolCallArgsBuffer.clear();
 
-    // By default, strip blocked tool calls from history so LLM doesn't "learn" to avoid them
-    // Set preserveBlockedInHistory: true to keep them in history
-    const processedInput = this.config.preserveBlockedInHistory
-      ? input
-      : this.stripBlockedToolsFromHistory(input);
+    // Inject system instruction to ensure LLM always attempts tool calls
+    // This is enabled by default (injectToolAttemptInstruction defaults to true)
+    const shouldInjectInstruction = this.config.injectToolAttemptInstruction !== false;
+    const processedInput = shouldInjectInstruction
+      ? this.injectToolAttemptInstruction(input)
+      : input;
 
     // Build security context
     const context: AgentSecurityContext = {
@@ -702,85 +702,32 @@ export class SecureToolsMiddleware extends Middleware {
   }
 
   /**
-   * Remove blocked tool calls and their results from the message history.
-   * This prevents the LLM from learning to avoid blocked tools.
+   * Inject a system instruction that tells the LLM to always attempt tool calls,
+   * even if it has seen them blocked before. This ensures consistent behavior
+   * and reliable security logging.
    */
-  private stripBlockedToolsFromHistory(input: RunAgentInput): RunAgentInput {
-    // Find all tool message IDs that contain our blocked marker
-    const blockedToolCallIds = new Set<string>();
-    
-    for (const message of input.messages) {
-      if (message.role === "tool") {
-        const toolMessage = message as ToolMessage;
-        // Check if this is a blocked tool result (contains our marker)
-        if (toolMessage.content.includes(BLOCKED_TOOL_MARKER)) {
-          blockedToolCallIds.add(toolMessage.toolCallId);
-        }
-      }
-    }
+  private injectToolAttemptInstruction(input: RunAgentInput): RunAgentInput {
+    // Check if we already have this instruction (avoid duplicates)
+    const hasInstruction = input.messages.some(
+      (msg) =>
+        msg.role === "system" &&
+        (msg as { content?: string }).content?.includes("IMPORTANT SECURITY INSTRUCTION"),
+    );
 
-    // If no blocked tools found, return input unchanged
-    if (blockedToolCallIds.size === 0) {
+    if (hasInstruction) {
       return input;
     }
 
-    // Filter messages to remove blocked tool interactions while keeping responses
-    const filteredMessages: Message[] = [];
-    
-    for (const message of input.messages) {
-      // Remove tool messages for blocked tool calls
-      if (message.role === "tool") {
-        const toolMessage = message as ToolMessage;
-        if (blockedToolCallIds.has(toolMessage.toolCallId)) {
-          continue; // Skip this blocked tool result
-        }
-      }
-      
-      // For assistant messages, handle blocked tool calls
-      if (message.role === "assistant") {
-        const assistantMessage = message as AssistantMessage;
-        
-        // KEEP blocked text messages but REPLACE their content with a generic message.
-        // This maintains conversation coherence (LLM sees request was addressed) while
-        // preventing the LLM from learning which specific tool was blocked.
-        // User sees: "🔒 Tool 'X' is blocked" (in real-time)
-        // LLM sees: "I wasn't able to complete that request." (in history)
-        if (message.id.startsWith("blocked-msg-")) {
-          filteredMessages.push({
-            ...assistantMessage,
-            content: GENERIC_BLOCKED_MESSAGE_FOR_HISTORY,
-          });
-          continue;
-        }
-        
-        if (assistantMessage.toolCalls && assistantMessage.toolCalls.length > 0) {
-          const filteredToolCalls = assistantMessage.toolCalls.filter(
-            (tc) => !blockedToolCallIds.has(tc.id)
-          );
-          
-          // If all tool calls were blocked and there's no content, skip this message
-          // (the blocked-msg- message provides the response instead)
-          if (filteredToolCalls.length === 0 && !assistantMessage.content) {
-            continue;
-          }
-          
-          // If some tool calls remain, update the message
-          if (filteredToolCalls.length !== assistantMessage.toolCalls.length) {
-            filteredMessages.push({
-              ...assistantMessage,
-              toolCalls: filteredToolCalls.length > 0 ? filteredToolCalls : undefined,
-            });
-            continue;
-          }
-        }
-      }
-      
-      filteredMessages.push(message);
-    }
+    // Create system message with the instruction
+    const systemMessage: Message = {
+      id: `security-instruction-${Date.now()}`,
+      role: "system",
+      content: ALWAYS_ATTEMPT_TOOLS_INSTRUCTION,
+    };
 
     return {
       ...input,
-      messages: filteredMessages,
+      messages: [systemMessage, ...input.messages],
     };
   }
 
@@ -859,7 +806,7 @@ export class SecureToolsMiddleware extends Middleware {
           messageId: `blocked-result-${toolCallId}`,
           toolCallId,
           content: JSON.stringify({
-            error: "TOOL_BLOCKED_BY_SECURITY_POLICY",
+            error: BLOCKED_TOOL_MARKER,
             message: "This tool call was blocked by the security middleware. The tool is not in the allowed tools list or was rejected by the security policy.",
           }),
           role: "tool",

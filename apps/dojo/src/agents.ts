@@ -133,14 +133,15 @@ function wrapWithSecureTools<T extends AbstractAgent>(agent: T): T {
       // OPTION 7: blockedToolMessage - Show blocked tool messages in chat
       // If provided, emits a visible text message to the user when a tool is blocked
       // The presence of this function enables the feature
-      blockedToolMessage: (toolName) =>
-        `🔒 Tool call blocked: The tool "${toolName}" is not in the allowed tools list.`,
+      blockedToolMessage: (toolName, reason) =>
+        `🔒 Tool call blocked: The tool "${toolName}" is not in the allowed tools list. Reason: ${reason}`,
 
-      // OPTION 8: preserveBlockedInHistory - Keep blocked tools in history (default: false)
-      // By default, blocked tool calls are stripped from history so the LLM
-      // consistently tries to use them (and shows blocked messages each time).
-      // Set to true if you want the LLM to "learn" from blocked attempts.
-      // preserveBlockedInHistory: true,
+      // OPTION 8: injectToolAttemptInstruction - Ensure LLM always attempts tool calls (default: true)
+      // Injects a system instruction telling the LLM to always attempt tool calls,
+      // even if it has seen them blocked before. This ensures consistent blocked
+      // messages and reliable security auditing.
+      // Set to false if you want the LLM to naturally learn from blocked attempts.
+      // injectToolAttemptInstruction: false,
     })
   );
   return agent;
