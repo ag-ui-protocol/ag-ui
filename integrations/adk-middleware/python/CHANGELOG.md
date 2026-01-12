@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - In non-streaming mode, when an ADK event contained both text and an LRO (long-running) tool call, text was skipped entirely
   - Added `translate_text_only()` method to EventTranslator to handle text extraction for LRO events
   - Modified LRO routing in ADKAgent to emit TEXT_MESSAGE events before TOOL_CALL events
+- **FIXED**: `adk_events_to_messages()` not converting assistant messages from DatabaseSessionService (issue #905)
+  - ADK agents set `author` to the agent's name (e.g., "my_agent"), not "model"
+  - Previous check for `author == "model"` caused assistant messages to be silently dropped
+  - Now treats any non-"user" author as an assistant message
 
 ## [0.4.1] - 2025-01-06
 
