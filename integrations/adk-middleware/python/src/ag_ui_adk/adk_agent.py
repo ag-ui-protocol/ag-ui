@@ -1592,6 +1592,17 @@ class ADKAgent:
                         logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
                 else:
                     # LongRunning Tool events are usually emitted in final response
+
+                    # CRITICAL FIX (GitHub #906): Process text content BEFORE LRO tool calls
+                    # In non-streaming mode, text and tool calls may arrive in the same event.
+                    # We must emit TEXT_MESSAGE events before TOOL_CALL events.
+                    if has_content:
+                        async for ag_ui_event in event_translator.translate_text_only(
+                            adk_event, input.thread_id, input.run_id
+                        ):
+                            await event_queue.put(ag_ui_event)
+                            logger.debug(f"Event queued (LRO text): {type(ag_ui_event).__name__} (thread {input.thread_id})")
+
                     # Ensure any active streaming text message is closed BEFORE tool calls
                     async for end_event in event_translator.force_close_streaming_message():
                         await event_queue.put(end_event)

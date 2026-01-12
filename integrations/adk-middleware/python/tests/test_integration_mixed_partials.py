@@ -54,7 +54,7 @@ async def test_mixed_partials_non_lro_then_lro(adk_agent_instance):
     # Final: LRO function call
     lro_id = "lro-777"
     lro_func = MagicMock(); lro_func.id = lro_id; lro_func.name = "long_running_tool"; lro_func.args = {"v": 1}
-    lro_part = MagicMock(); lro_part.function_call = lro_func
+    lro_part = MagicMock(); lro_part.function_call = lro_func; lro_part.text = None
 
     evt3 = MagicMock()
     evt3.author = "assistant"
