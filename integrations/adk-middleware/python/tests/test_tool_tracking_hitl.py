@@ -182,3 +182,114 @@ class TestHITLToolTracking:
             assert "test_thread" in adk_middleware._active_executions
             execution = adk_middleware._active_executions["test_thread"]
             assert execution.is_complete
+
+    @pytest.mark.asyncio
+    async def test_session_not_cleaned_up_with_pending_tools(self, mock_adk_agent, sample_tool):
+        """Test that executions with pending tool calls are not cleaned up."""
+        # Create input
+        input_data = RunAgentInput(
+            thread_id="test_thread",
+            run_id="run_1",
+            messages=[UserMessage(id="1", role="user", content="Test")],
+            tools=[sample_tool],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        adk_middleware = ADKAgent(
+            adk_agent=mock_adk_agent,
+            app_name="test_app",
+            user_id="test_user",
+            delete_session_on_cleanup=True,
+            session_timeout_seconds=0 # all sessions expire immediately for test
+        )
+
+        # Ensure session exists first (returns tuple: session, backend_session_id)
+        session, backend_session_id = await adk_middleware._ensure_session_exists(
+            app_name="test_app",
+            user_id="test_user",
+            thread_id="test_thread",
+            initial_state={}
+        )
+
+        # Mock background execution to emit tool events
+        async def mock_run_adk_in_background(*args, **kwargs):
+            event_queue = kwargs['event_queue']
+
+            # Emit tool call events
+            tool_call_id = "test_tool_call_456"
+            await event_queue.put(ToolCallEndEvent(
+                type=EventType.TOOL_CALL_END,
+                tool_call_id=tool_call_id
+            ))
+
+            # Signal completion
+            await event_queue.put(None)
+
+        # Use the mock
+        with patch.object(adk_middleware, '_run_adk_in_background', side_effect=mock_run_adk_in_background):
+            events = []
+            async for event in adk_middleware._start_new_execution(input_data):
+                events.append(event)
+
+            # Execution should NOT be cleaned up due to pending tool call
+            assert "test_thread" in adk_middleware._active_executions
+            execution = adk_middleware._active_executions["test_thread"]
+            assert execution.is_complete
+
+        await adk_middleware._session_manager._cleanup_expired_sessions()
+        # Session should still exist due to pending tool call
+        assert adk_middleware._session_manager.get_session_count() == 1
+
+    @pytest.mark.asyncio
+    async def test_session_cleaned_up_with_no_pending_tools(self, mock_adk_agent, sample_tool):
+        """Test that executions with no pending tool calls are cleaned up."""
+        # Create input
+        input_data = RunAgentInput(
+            thread_id="test_thread",
+            run_id="run_1",
+            messages=[UserMessage(id="1", role="user", content="Test")],
+            tools=[sample_tool],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        adk_middleware = ADKAgent(
+            adk_agent=mock_adk_agent,
+            app_name="test_app",
+            user_id="test_user",
+            delete_session_on_cleanup=True,
+            session_timeout_seconds=0 # all sessions expire immediately for test
+        )
+
+        # Ensure session exists first (returns tuple: session, backend_session_id)
+        session, backend_session_id = await adk_middleware._ensure_session_exists(
+            app_name="test_app",
+            user_id="test_user",
+            thread_id="test_thread",
+            initial_state={}
+        )
+
+        # Mock background execution to emit tool events
+        async def mock_run_adk_in_background(*args, **kwargs):
+            event_queue = kwargs['event_queue']
+
+            # Emit NO tool call events
+
+            # Signal completion
+            await event_queue.put(None)
+
+        # Use the mock
+        with patch.object(adk_middleware, '_run_adk_in_background', side_effect=mock_run_adk_in_background):
+            events = []
+            async for event in adk_middleware._start_new_execution(input_data):
+                events.append(event)
+
+            # Execution should be cleaned up due to NO pending tool call
+            assert "test_thread" not in adk_middleware._active_executions
+
+        await adk_middleware._session_manager._cleanup_expired_sessions()
+        # Session should not exist due cleanup
+        assert adk_middleware._session_manager.get_session_count() == 0
