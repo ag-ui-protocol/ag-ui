@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10, <3.14.0"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -29,9 +29,9 @@ wayflow = [
 requires-dist = [
     { name = "ag-ui-protocol", specifier = ">=0.1.10" },
     { name = "fastapi", specifier = ">=0.115.0" },
-    { name = "pyagentspec", git = "https://github.com/oracle/agent-spec.git?subdirectory=pyagentspec&rev=main" },
-    { name = "pyagentspec", extras = ["langgraph"], marker = "extra == 'langgraph'", git = "https://github.com/oracle/agent-spec.git?subdirectory=pyagentspec&rev=main" },
-    { name = "wayflowcore", marker = "extra == 'wayflow'", git = "https://github.com/oracle/wayflow.git?subdirectory=wayflowcore&rev=main" },
+    { name = "pyagentspec", editable = "../../../../../agent-spec/pyagentspec" },
+    { name = "pyagentspec", extras = ["langgraph"], marker = "extra == 'langgraph'", editable = "../../../../../agent-spec/pyagentspec" },
+    { name = "wayflowcore", marker = "extra == 'wayflow'", editable = "../../../../../wayflow/wayflowcore" },
 ]
 provides-extras = ["langgraph", "wayflow"]
 
@@ -1111,7 +1111,7 @@ wheels = [
 [[package]]
 name = "pyagentspec"
 version = "26.1.0.dev4"
-source = { git = "https://github.com/oracle/agent-spec.git?subdirectory=pyagentspec&rev=main#1983ac32515ada57faf5158752483ebfe293a898" }
+source = { editable = "../../../../../agent-spec/pyagentspec" }
 dependencies = [
     { name = "httpx" },
     { name = "jsonschema" },
@@ -1122,11 +1122,39 @@ dependencies = [
 
 [package.optional-dependencies]
 langgraph = [
+    { name = "anyio" },
     { name = "langchain-core" },
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
     { name = "langgraph" },
+    { name = "langgraph-checkpoint" },
 ]
+
+[package.metadata]
+requires-dist = [
+    { name = "anyio", marker = "extra == 'langgraph'", specifier = ">=4.10.0,<4.12.0" },
+    { name = "anyio", marker = "extra == 'langgraph-mcp'", specifier = ">=4.10.0,<4.12.0" },
+    { name = "autogen-agentchat", marker = "python_full_version < '3.13' and extra == 'autogen'", specifier = ">=0.5.6" },
+    { name = "autogen-core", marker = "python_full_version < '3.13' and extra == 'autogen'", specifier = ">=0.5.6" },
+    { name = "autogen-ext", extras = ["ollama", "openai"], marker = "python_full_version < '3.13' and extra == 'autogen'", specifier = ">=0.5.6" },
+    { name = "httpx", specifier = ">0.28.0" },
+    { name = "jsonschema", specifier = ">=4.23.0,<5" },
+    { name = "langchain-core", marker = "extra == 'langgraph'", specifier = ">=0.3,<1.0.0" },
+    { name = "langchain-core", marker = "extra == 'langgraph-mcp'", specifier = ">=0.3,<1.0.0" },
+    { name = "langchain-mcp-adapters", marker = "extra == 'langgraph-mcp'", specifier = ">=0.1.13,<0.2.0" },
+    { name = "langchain-ollama", marker = "extra == 'langgraph'", specifier = ">=0.3.3" },
+    { name = "langchain-ollama", marker = "extra == 'langgraph-mcp'", specifier = ">=0.3.3" },
+    { name = "langchain-openai", marker = "extra == 'langgraph'", specifier = ">=0.3.7" },
+    { name = "langchain-openai", marker = "extra == 'langgraph-mcp'", specifier = ">=0.3.7" },
+    { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=0.5.3,<1.0.0" },
+    { name = "langgraph", marker = "extra == 'langgraph-mcp'", specifier = ">=0.5.3,<1.0.0" },
+    { name = "langgraph-checkpoint", marker = "extra == 'langgraph'", specifier = ">=3.0.1,<4.0.0" },
+    { name = "langgraph-checkpoint", marker = "extra == 'langgraph-mcp'", specifier = ">=3.0.1,<4.0.0" },
+    { name = "pydantic", specifier = ">=2.10,<2.13" },
+    { name = "pyyaml", specifier = ">=6,<7" },
+    { name = "urllib3", specifier = ">=2.5.0" },
+]
+provides-extras = ["autogen", "langgraph", "langgraph-mcp"]
 
 [[package]]
 name = "pydantic"
@@ -1760,7 +1788,7 @@ wheels = [
 [[package]]
 name = "wayflowcore"
 version = "26.1.0.dev0"
-source = { git = "https://github.com/oracle/wayflow.git?subdirectory=wayflowcore&rev=main#e46b23be932c4770d9f5eecd07558920eee05b7b" }
+source = { editable = "../../../../../wayflow/wayflowcore" }
 dependencies = [
     { name = "annotated-types" },
     { name = "anyio" },
@@ -1797,6 +1825,48 @@ dependencies = [
     { name = "typing-inspection" },
     { name = "uvicorn" },
 ]
+
+[package.metadata]
+requires-dist = [
+    { name = "annotated-types", specifier = ">=0.6.0" },
+    { name = "anyio", specifier = ">=4.10.0,<4.12.0" },
+    { name = "certifi", specifier = ">=2025.4.26" },
+    { name = "click", specifier = ">=7.0" },
+    { name = "deprecated", specifier = ">=1.2.18,<2.0.0" },
+    { name = "exceptiongroup", specifier = ">=1.0.2" },
+    { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.6.0" },
+    { name = "fastapi", specifier = ">=0.116.2,<1.0.0" },
+    { name = "h11", specifier = ">=0.16" },
+    { name = "httpcore", specifier = ">=1.0.9" },
+    { name = "httpx", specifier = ">0.28.0,<1.0.0" },
+    { name = "httpx-sse", specifier = ">=0.4" },
+    { name = "idna", specifier = ">=3.7" },
+    { name = "jinja2", specifier = ">=3.1.6,<4.0.0" },
+    { name = "jq", specifier = ">=1.8.0,<2.0.0" },
+    { name = "json-repair", specifier = ">=0.30.0,<0.45.0" },
+    { name = "mcp", specifier = ">=1.12.0,<1.18.0" },
+    { name = "numpy", specifier = ">=1.24.3,<3.0.0" },
+    { name = "oci", marker = "extra == 'oci'", specifier = ">=2.158.2" },
+    { name = "opentelemetry-api", specifier = ">=1.33.0,<2.0.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.33.0,<2.0.0" },
+    { name = "oracledb", marker = "extra == 'datastore'", specifier = ">=2.2.0" },
+    { name = "pandas", specifier = ">=2.0.3,<3.0.0" },
+    { name = "pyagentspec", specifier = ">=25.4.1" },
+    { name = "pydantic", specifier = ">=2.7.4,<3.0.0" },
+    { name = "pydantic-core", specifier = ">=2.33.0" },
+    { name = "pydantic-settings", specifier = ">=2.5.2" },
+    { name = "python-dotenv", specifier = ">=0.21.0" },
+    { name = "python-multipart", specifier = ">=0.0.18" },
+    { name = "pyyaml", specifier = ">=5.4,<7.0.0" },
+    { name = "sniffio", specifier = ">=1.1" },
+    { name = "sqlalchemy", marker = "extra == 'datastore'", specifier = ">=2.0.40" },
+    { name = "sse-starlette", specifier = ">=1.6.1" },
+    { name = "starlette", specifier = ">=0.47.2,<0.48.0" },
+    { name = "typing-extensions", specifier = ">=4.12.2" },
+    { name = "typing-inspection", specifier = ">=0.4.0" },
+    { name = "uvicorn", specifier = ">=0.23.1" },
+]
+provides-extras = ["a2a", "datastore", "oci"]
 
 [[package]]
 name = "wrapt"

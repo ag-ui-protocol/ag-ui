@@ -30,18 +30,14 @@ async def run_langgraph_agent(agent: CompiledStateGraph, input_data: RunAgentInp
 
     current_queue = EVENT_QUEUE.get()
 
-    def _invoke_with_context(inputs: Dict[str, Any]) -> None:
-        token = EVENT_QUEUE.set(current_queue)
-        try:
-            for _ in agent.stream(inputs, stream_mode="messages", config=config):
-                pass
-        except Exception as e:
-            print(traceback.format_exc())
-            raise RuntimeError("LangGraph agent crashed (see printed traceback above):" + repr(e))
-        finally:
-            EVENT_QUEUE.reset(token)
-
-    await asyncio.to_thread(_invoke_with_context, inputs)
+    token = EVENT_QUEUE.set(current_queue)
+    try:
+        async for _ in agent.astream(inputs, stream_mode="messages", config=config):
+            pass
+    except Exception as e:
+        raise RuntimeError(f"LangGraph agent crashed with error: {repr(e)}\n\nTraceback: {traceback.format_exc()}")
+    finally:
+        EVENT_QUEUE.reset(token)
 
 
 async def run_langgraph_agent_nostream(agent: CompiledStateGraph, input_data: RunAgentInput) -> None:
@@ -50,12 +46,8 @@ async def run_langgraph_agent_nostream(agent: CompiledStateGraph, input_data: Ru
 
     current_queue = EVENT_QUEUE.get()
 
-    def _invoke_with_context(inputs: Dict[str, Any]) -> None:
-        token = EVENT_QUEUE.set(current_queue)
-        try:
-            agent.invoke(inputs, config=config)
-        finally:
-            EVENT_QUEUE.reset(token)
-
-    await asyncio.to_thread(_invoke_with_context, inputs)
-
+    token = EVENT_QUEUE.set(current_queue)
+    try:
+        await agent.ainvoke(inputs, config=config)
+    finally:
+        EVENT_QUEUE.reset(token)
