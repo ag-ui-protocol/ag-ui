@@ -16,9 +16,13 @@ class TestSessionDeletion:
     def save_session_to_memory_on_cleanup(self, request):
         return request.param
 
-    @pytest.fixture
-    def mock_memory_service(self):
+    @pytest.fixture(
+        params=[True, False],
+    )
+    def mock_memory_service(self, request):
         """Create a mock memory service."""
+        if request.param is False:
+            return None
         service = AsyncMock()
         service.add_session_to_memory = AsyncMock()
         return service
@@ -94,11 +98,12 @@ class TestSessionDeletion:
         print(f"   app_name: {test_app_name}")
         print(f"   user_id: {test_user_id}")
 
+        if mock_memory_service is not None:
         # Memory service add_session_to_memory should be called based on save_session_to_memory_on_cleanup flag
-        if save_session_to_memory_on_cleanup:
-            mock_memory_service.add_session_to_memory.assert_called_once()
-        else:
-            mock_memory_service.add_session_to_memory.assert_not_called()
+            if save_session_to_memory_on_cleanup:
+                mock_memory_service.add_session_to_memory.assert_called_once()
+            else:
+                mock_memory_service.add_session_to_memory.assert_not_called()
         return True
 
 
@@ -155,11 +160,12 @@ class TestSessionDeletion:
         assert session_key not in session_manager._session_keys
         print("✅ Session untracked even after deletion error")
 
-        # Memory service add_session_to_memory should be called based on save_session_to_memory_on_cleanup flag
-        if save_session_to_memory_on_cleanup:
-            mock_memory_service.add_session_to_memory.assert_called_once()
-        else:
-            mock_memory_service.add_session_to_memory.assert_not_called()
+        if mock_memory_service is not None:
+            # Memory service add_session_to_memory should be called based on save_session_to_memory_on_cleanup flag
+            if save_session_to_memory_on_cleanup:
+                mock_memory_service.add_session_to_memory.assert_called_once()
+            else:
+                mock_memory_service.add_session_to_memory.assert_not_called()
 
 
 
@@ -242,11 +248,12 @@ class TestSessionDeletion:
         assert len(app_session_keys) == 2, f"Expected 2 session keys, got {len(app_session_keys)}"
         print("✅ Oldest session was removed")
 
-        # Memory service add_session_to_memory should be called based on save_session_to_memory_on_cleanup flag
-        if save_session_to_memory_on_cleanup:
-            mock_memory_service.add_session_to_memory.assert_called_once()
-        else:
-            mock_memory_service.add_session_to_memory.assert_not_called()
+        if mock_memory_service is not None:
+            # Memory service add_session_to_memory should be called based on save_session_to_memory_on_cleanup flag
+            if save_session_to_memory_on_cleanup:
+                mock_memory_service.add_session_to_memory.assert_called_once()
+            else:
+                mock_memory_service.add_session_to_memory.assert_not_called()
 
         return True
 
