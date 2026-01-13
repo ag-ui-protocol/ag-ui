@@ -77,6 +77,9 @@ class ADKAgent:
 
         # Session cleanup configuration
         cleanup_interval_seconds: int = 300,  # 5 minutes default
+        max_sessions_per_user: Optional[int] = None,    # No limit by default
+        delete_session_on_cleanup: bool = True,
+        save_session_to_memory_on_cleanup: bool = True,
 
         # Predictive state configuration
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
@@ -102,6 +105,9 @@ class ADKAgent:
             tool_timeout_seconds: Timeout for individual tool calls
             max_concurrent_executions: Maximum concurrent background executions
             cleanup_interval_seconds: Interval for session cleanup
+            max_sessions_per_user: Maximum concurrent sessions per user (None = unlimited)
+            delete_session_on_cleanup: Whether to delete sessions from the adk SessionService on session cache cleanup
+            save_session_to_memory_on_cleanup: Whether to save sessions to the adk MemoryService on session cache cleanup
             predict_state: Configuration for predictive state updates. When provided,
                 the agent will emit PredictState CustomEvents for matching tool calls,
                 enabling the UI to show state changes in real-time as tool arguments
@@ -113,6 +119,9 @@ class ADKAgent:
                 full message history (e.g., for client-side persistence or AG-UI
                 protocol compliance). Note: Clients using CopilotKit can use the
                 /agents/state endpoint instead for on-demand history retrieval.
+
+            Note:
+            If delete_session_on_cleanup=False but save_session_to_memory_on_cleanup=True, sessions will accumulate in SessionService but still be saved to memory on cleanup.
         """
         if app_name and app_name_extractor:
             raise ValueError("Cannot specify both 'app_name' and 'app_name_extractor'")
@@ -151,8 +160,9 @@ class ADKAgent:
             memory_service=self._memory_service,  # Pass memory service for automatic session memory
             session_timeout_seconds=session_timeout_seconds,  # 20 minutes default
             cleanup_interval_seconds=cleanup_interval_seconds,
-            max_sessions_per_user=None,    # No limit by default
-            auto_cleanup=True              # Enable by default
+            max_sessions_per_user=max_sessions_per_user,
+            delete_session_on_cleanup=delete_session_on_cleanup,
+            save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup
         )
         
         # Tool execution tracking
@@ -204,6 +214,9 @@ class ADKAgent:
         # Session management
         session_timeout_seconds: Optional[int] = 1200,
         cleanup_interval_seconds: int = 300,
+        max_sessions_per_user: Optional[int] = None,    # No limit by default
+        delete_session_on_cleanup: bool = True,
+        save_session_to_memory_on_cleanup: bool = True,
         # AG-UI specific
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
         emit_messages_snapshot: bool = False,
@@ -275,6 +288,9 @@ class ADKAgent:
             max_concurrent_executions=max_concurrent_executions,
             session_timeout_seconds=session_timeout_seconds,
             cleanup_interval_seconds=cleanup_interval_seconds,
+            max_sessions_per_user=max_sessions_per_user,
+            delete_session_on_cleanup=delete_session_on_cleanup,
+            save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
             predict_state=predict_state,
             emit_messages_snapshot=emit_messages_snapshot,
         )
