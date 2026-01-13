@@ -38,6 +38,8 @@ android {
     }
     
     compileOptions {
+        // Enable core library desugaring for java.time APIs on SDK < 26
+        coreLibraryDesugaringEnabled true
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
@@ -52,6 +54,9 @@ android {
 }
 
 dependencies {
+    // Core library desugaring for java.time APIs on SDK < 26
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
+
     implementation project(':chatapp-shared')
 
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'

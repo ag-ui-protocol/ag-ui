@@ -5,6 +5,14 @@ All notable changes to ag-ui-4k will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.6] - 2026-01-14
+
+### Changed
+- Lower minimum Android SDK from 26 to 24
+- Lower Kotlin version from 2.2.20 to 2.1.20
+- Update Android Gradle Plugin from 8.10.1 to 8.12.0
+- Fix artifact group ID references from `com.agui:` to `com.ag-ui.community:`
+
 ## [0.2.5] - 2025-12-29
 
 ### Added

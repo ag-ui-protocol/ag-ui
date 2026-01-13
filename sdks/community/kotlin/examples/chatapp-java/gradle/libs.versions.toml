@@ -1,12 +1,13 @@
 [versions]
 activity-compose = "1.10.1"
-agui-core = "0.2.5"
+agui-core = "0.2.6"
+a2ui4k = "0.8.0"
 appcompat = "1.7.1"
 core = "1.6.1"
 core-ktx = "1.16.0"
 junit = "4.13.2"
 junit-version = "1.2.1"
-kotlin = "2.2.20"
+kotlin = "2.1.20"
 #Downgrading to avoid an R8 error
 ktor = "3.1.3"
 kotlinx-serialization = "1.8.1"
@@ -27,10 +28,10 @@ compose-material3 = "1.4.0"
 [libraries]
 # Ktor
 activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
-agui-client = { module = "com.agui:kotlin-client", version.ref = "agui-core" }
-agui-core = { module = "com.agui:kotlin-core", version.ref = "agui-core" }
-agui-tools = { module = "com.agui:kotlin-tools", version.ref = "agui-core" }
-agui-a2ui = { module = "com.ag-ui.community:kotlin-a2ui", version.ref = "agui-core" }
+agui-client = { module = "com.ag-ui.community:kotlin-client", version.ref = "agui-core" }
+agui-core = { module = "com.ag-ui.community:kotlin-core", version.ref = "agui-core" }
+agui-tools = { module = "com.ag-ui.community:kotlin-tools", version.ref = "agui-core" }
+a2ui4k = { module = "com.contextable:a2ui-4k", version.ref = "a2ui4k" }
 androidx-ui-tooling = { module = "androidx.compose.ui:ui-tooling", version.ref = "compose" }
 appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
 core = { module = "androidx.test:core", version.ref = "core" }
