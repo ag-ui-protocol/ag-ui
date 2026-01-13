@@ -18,7 +18,7 @@ import { MCPAppsMiddleware } from "@ag-ui/mcp-apps-middleware";
 const agent = new YourAgent().use(
   new MCPAppsMiddleware({
     mcpServers: [
-      { type: "http", url: "http://localhost:3001/mcp", serverName: "weather-server" }
+      { type: "http", url: "http://localhost:3001/mcp", serverId: "weather-server" }
     ],
   })
 );
@@ -39,18 +39,18 @@ interface MCPAppsMiddlewareConfig {
 }
 
 type MCPClientConfig =
-  | { type: "http"; url: string; serverName?: string }
-  | { type: "sse"; url: string; headers?: Record<string, string>; serverName?: string };
+  | { type: "http"; url: string; serverId?: string }
+  | { type: "sse"; url: string; headers?: Record<string, string>; serverId?: string };
 ```
 
-### Server Name
+### Server ID
 
-The optional `serverName` field provides a stable identifier for the server. This is useful when:
+The optional `serverId` field provides a stable identifier for the server. This is useful when:
 - Server URLs may change (e.g., different environments)
 - You want human-readable server identification
 - Frontend code needs to reference servers by name
 
-If `serverName` is not provided, the server is identified by an MD5 hash of its configuration.
+If `serverId` is not provided, the server is identified by an MD5 hash of its configuration.
 
 ## Activity Snapshot
 
@@ -64,14 +64,14 @@ The middleware emits activity snapshots with the following structure:
     result: MCPToolCallResult,     // Result from the tool execution
     resourceUri: string,           // URI of the UI resource to fetch
     serverHash: string,            // MD5 hash of server config
-    serverName?: string,           // Server name (if configured)
+    serverId?: string,           // Server ID (if configured)
     toolInput: Record<string, unknown>  // Arguments passed to the tool
   },
   replace: true
 }
 ```
 
-The frontend should fetch the resource content via proxied MCP request using `resourceUri` and either `serverHash` or `serverName`.
+The frontend should fetch the resource content via proxied MCP request using `resourceUri` and either `serverHash` or `serverId`.
 
 ## Proxied MCP Requests
 
@@ -80,13 +80,13 @@ The middleware supports proxied MCP requests from the frontend. Pass a `ProxiedM
 ```typescript
 interface ProxiedMCPRequest {
   serverHash: string;      // MD5 hash of server config
-  serverName?: string;     // Optional server name for lookup
+  serverId?: string;     // Optional server ID for lookup
   method: string;          // MCP method (e.g., "resources/read", "tools/call")
   params?: Record<string, unknown>;
 }
 ```
 
-Server lookup prefers `serverName` if provided, falling back to `serverHash`.
+Server lookup prefers `serverId` if provided, falling back to `serverHash`.
 
 ## Exported Utilities
 

@@ -1278,14 +1278,14 @@ describe("MCPAppsMiddleware", () => {
   });
 
   // =============================================================================
-  // 13. Server Name Tests
+  // 13. Server ID Tests
   // =============================================================================
-  describe("Server Name", () => {
-    it("includes serverName in ACTIVITY_SNAPSHOT when configured", async () => {
+  describe("Server ID", () => {
+    it("includes serverId in ACTIVITY_SNAPSHOT when configured", async () => {
       const httpServerConfig: MCPClientConfig = {
         type: "http",
         url: "http://localhost:3000",
-        serverName: "my-weather-server"
+        serverId: "my-weather-server"
       };
       const uiTool = createMCPToolWithUI("ui-tool", "ui://server/tool");
       mockListTools.mockResolvedValue({ tools: [uiTool] });
@@ -1306,10 +1306,10 @@ describe("MCPAppsMiddleware", () => {
 
       const activityEvent = events.find((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
       expect(activityEvent).toBeDefined();
-      expect((activityEvent as any).content.serverName).toBe("my-weather-server");
+      expect((activityEvent as any).content.serverId).toBe("my-weather-server");
     });
 
-    it("serverName is undefined in ACTIVITY_SNAPSHOT when not configured", async () => {
+    it("serverId is undefined in ACTIVITY_SNAPSHOT when not configured", async () => {
       const httpServerConfig: MCPClientConfig = { type: "http", url: "http://localhost:3000" };
       const uiTool = createMCPToolWithUI("ui-tool", "ui://server/tool");
       mockListTools.mockResolvedValue({ tools: [uiTool] });
@@ -1330,23 +1330,23 @@ describe("MCPAppsMiddleware", () => {
 
       const activityEvent = events.find((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
       expect(activityEvent).toBeDefined();
-      expect((activityEvent as any).content.serverName).toBeUndefined();
+      expect((activityEvent as any).content.serverId).toBeUndefined();
     });
 
-    it("looks up server by serverName in proxied requests", async () => {
+    it("looks up server by serverId in proxied requests", async () => {
       mockPing.mockResolvedValue({});
 
       const httpServerConfig: MCPClientConfig = {
         type: "http",
         url: "http://localhost:3000",
-        serverName: "my-server"
+        serverId: "my-server"
       };
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
       const agent = new MockAgent([]);
 
       const proxiedRequest: ProxiedMCPRequest = {
-        serverHash: "wrong-hash", // Wrong hash, but serverName should work
-        serverName: "my-server",
+        serverHash: "wrong-hash", // Wrong hash, but serverId should work
+        serverId: "my-server",
         method: "ping",
       };
 
@@ -1357,24 +1357,24 @@ describe("MCPAppsMiddleware", () => {
       const events = await collectEvents(middleware.run(input, agent));
 
       const finishedEvent = events.find((e) => e.type === EventType.RUN_FINISHED);
-      // Should succeed because serverName lookup worked
+      // Should succeed because serverId lookup worked
       expect((finishedEvent as any).result.error).toBeUndefined();
     });
 
-    it("falls back to serverHash when serverName not found", async () => {
+    it("falls back to serverHash when serverId not found", async () => {
       mockPing.mockResolvedValue({});
 
       const httpServerConfig: MCPClientConfig = {
         type: "http",
         url: "http://localhost:3000",
-        serverName: "my-server"
+        serverId: "my-server"
       };
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
       const agent = new MockAgent([]);
 
       const proxiedRequest: ProxiedMCPRequest = {
         serverHash: getServerHash(httpServerConfig),
-        serverName: "non-existent-server", // Wrong name, should fall back to hash
+        serverId: "non-existent-server", // Wrong name, should fall back to hash
         method: "ping",
       };
 
@@ -1389,18 +1389,18 @@ describe("MCPAppsMiddleware", () => {
       expect((finishedEvent as any).result.error).toBeUndefined();
     });
 
-    it("returns error when neither serverName nor serverHash match", async () => {
+    it("returns error when neither serverId nor serverHash match", async () => {
       const httpServerConfig: MCPClientConfig = {
         type: "http",
         url: "http://localhost:3000",
-        serverName: "my-server"
+        serverId: "my-server"
       };
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
       const agent = new MockAgent([]);
 
       const proxiedRequest: ProxiedMCPRequest = {
         serverHash: "wrong-hash",
-        serverName: "wrong-name",
+        serverId: "wrong-name",
         method: "ping",
       };
 

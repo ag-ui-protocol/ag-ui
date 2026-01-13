@@ -30,7 +30,7 @@ export interface ProxiedMCPRequest {
   /** Server hash (MD5 hash of config) */
   serverHash: string;
   /** Server name (optional, for lookup by name) */
-  serverName?: string;
+  serverId?: string;
   /** The JSON-RPC method to call */
   method: string;
   /** The JSON-RPC params */
@@ -59,7 +59,7 @@ interface UIToolInfo {
 export interface MCPClientConfigHTTP {
   type: "http";
   url: string;
-  serverName?: string;
+  serverId?: string;
 }
 
 /**
@@ -69,7 +69,7 @@ export interface MCPClientConfigSSE {
   type: "sse";
   url: string;
   headers?: Record<string, string>;
-  serverName?: string;
+  serverId?: string;
 }
 
 /**
@@ -147,8 +147,8 @@ export class MCPAppsMiddleware extends Middleware {
   private config: MCPAppsMiddlewareConfig;
   /** Map of serverHash -> server config for proxied requests */
   private serverConfigMapByHash: Map<string, MCPClientConfig> = new Map();
-  /** Map of serverName -> server config for proxied requests */
-  private serverConfigMapByName: Map<string, MCPClientConfig> = new Map();
+  /** Map of serverId -> server config for proxied requests */
+  private serverConfigMapById: Map<string, MCPClientConfig> = new Map();
 
   constructor(config: MCPAppsMiddlewareConfig = {}) {
     super();
@@ -157,8 +157,8 @@ export class MCPAppsMiddleware extends Middleware {
     for (const serverConfig of config.mcpServers || []) {
       const serverHash = getServerHash(serverConfig);
       this.serverConfigMapByHash.set(serverHash, serverConfig);
-      if (serverConfig.serverName) {
-        this.serverConfigMapByName.set(serverConfig.serverName, serverConfig);
+      if (serverConfig.serverId) {
+        this.serverConfigMapById.set(serverConfig.serverId, serverConfig);
       }
     }
   }
@@ -212,10 +212,10 @@ export class MCPAppsMiddleware extends Middleware {
     request: ProxiedMCPRequest
   ): Observable<BaseEvent> {
     return new Observable<BaseEvent>((subscriber) => {
-      // Look up server config - prefer serverName, fallback to serverHash
+      // Look up server config - prefer serverId, fallback to serverHash
       let serverConfig: MCPClientConfig | undefined;
-      if (request.serverName) {
-        serverConfig = this.serverConfigMapByName.get(request.serverName);
+      if (request.serverId) {
+        serverConfig = this.serverConfigMapById.get(request.serverId);
       }
       if (!serverConfig) {
         serverConfig = this.serverConfigMapByHash.get(request.serverHash);
@@ -235,7 +235,7 @@ export class MCPAppsMiddleware extends Middleware {
           type: EventType.RUN_FINISHED,
           runId,
           threadId: runId,
-          result: { error: `Unknown server: ${request.serverName || request.serverHash}` },
+          result: { error: `Unknown server: ${request.serverId || request.serverHash}` },
         };
         subscriber.next(runFinishedEvent);
         subscriber.complete();
@@ -412,7 +412,7 @@ export class MCPAppsMiddleware extends Middleware {
                       result: mcpResult,
                       resourceUri: toolInfo.resourceUri,
                       serverHash: getServerHash(toolInfo.serverConfig),
-                      serverName: toolInfo.serverConfig.serverName,
+                      serverId: toolInfo.serverConfig.serverId,
                       toolInput: args,
                     },
                     replace: true,
