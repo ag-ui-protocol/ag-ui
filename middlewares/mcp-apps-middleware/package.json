@@ -1,7 +1,7 @@
 {
   "name": "@ag-ui/mcp-apps-middleware",
   "author": "Markus Ecker",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publishConfig": {
     "access": "public"
   },
