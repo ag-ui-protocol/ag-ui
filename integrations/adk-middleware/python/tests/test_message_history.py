@@ -33,7 +33,7 @@ from ag_ui_adk.event_translator import _translate_function_calls_to_tool_calls
 
 def create_mock_adk_event(
     event_id: str = None,
-    author: str = "model",
+    author: str = "test_agent",  # Use realistic agent name, not "model"
     text: str = None,
     partial: bool = False,
     function_calls: List[Any] = None,
@@ -224,7 +224,7 @@ class TestAdkEventsToMessages:
         assert messages[2].id == "3"
         assert messages[3].id == "4"
 
-    def test_none_author_treated_as_model(self):
+    def test_none_author_treated_as_assistant(self):
         """Events with None author should be treated as assistant messages."""
         event = create_mock_adk_event(
             event_id="anon-1",
@@ -237,6 +237,42 @@ class TestAdkEventsToMessages:
         assert len(messages) == 1
         assert isinstance(messages[0], AssistantMessage)
         assert messages[0].content == "Anonymous response"
+
+    def test_custom_agent_name_treated_as_assistant(self):
+        """Events with custom agent names should be treated as assistant messages.
+
+        This is critical: ADK agents set author to the agent's name (e.g., "my_agent"),
+        not "model". This test ensures we handle real ADK agent names correctly.
+        """
+        # Test various realistic agent names
+        agent_names = ["my_assistant", "weather_agent", "code_helper", "assistant"]
+
+        for agent_name in agent_names:
+            event = create_mock_adk_event(
+                event_id=f"event-{agent_name}",
+                author=agent_name,
+                text=f"Response from {agent_name}"
+            )
+
+            messages = adk_events_to_messages([event])
+
+            assert len(messages) == 1, f"Failed for agent_name={agent_name}"
+            assert isinstance(messages[0], AssistantMessage), f"Failed for agent_name={agent_name}"
+            assert messages[0].content == f"Response from {agent_name}"
+
+    def test_model_author_treated_as_assistant(self):
+        """Events with author='model' should still work as assistant messages."""
+        event = create_mock_adk_event(
+            event_id="model-1",
+            author="model",
+            text="Model response"
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        assert isinstance(messages[0], AssistantMessage)
+        assert messages[0].content == "Model response"
 
     def test_empty_text_with_function_calls(self):
         """Should create assistant message with just tool calls if no text."""

@@ -67,6 +67,48 @@ async def test_from_app_preserves_app_name(sample_app):
     adk_agent = ADKAgent.from_app(sample_app, user_id="test_user")
     assert adk_agent._static_app_name == "test_app"
 
+@pytest.mark.asyncio
+async def test_from_app_preserves_cleanup_options(sample_app):
+    """Test that cleanup options are preserved."""
+    adk_agent = ADKAgent.from_app(
+        sample_app,
+        user_id="test_user",
+        delete_session_on_cleanup=False,
+        save_session_to_memory_on_cleanup=False,
+    )
+    assert adk_agent._session_manager._delete_session_on_cleanup is False
+    assert adk_agent._session_manager._save_session_to_memory_on_cleanup is False
+    SessionManager.reset_instance()
+
+    adk_agent = ADKAgent.from_app(
+        sample_app,
+        user_id="test_user",
+        delete_session_on_cleanup=True,
+        save_session_to_memory_on_cleanup=True,
+    )
+    assert adk_agent._session_manager._delete_session_on_cleanup is True
+    assert adk_agent._session_manager._save_session_to_memory_on_cleanup is True
+    SessionManager.reset_instance()
+
+    adk_agent = ADKAgent.from_app(
+        sample_app,
+        user_id="test_user",
+        delete_session_on_cleanup=False,
+        save_session_to_memory_on_cleanup=True,
+    )
+    assert adk_agent._session_manager._delete_session_on_cleanup is False
+    assert adk_agent._session_manager._save_session_to_memory_on_cleanup is True
+    SessionManager.reset_instance()
+
+    adk_agent = ADKAgent.from_app(
+        sample_app,
+        user_id="test_user",
+        delete_session_on_cleanup=True,
+        save_session_to_memory_on_cleanup=False,
+    )
+    assert adk_agent._session_manager._delete_session_on_cleanup is True
+    assert adk_agent._session_manager._save_session_to_memory_on_cleanup is False
+    SessionManager.reset_instance()
 
 @pytest.mark.asyncio
 async def test_from_app_stores_app_reference(sample_app):

@@ -293,7 +293,33 @@ class EventTranslator:
         except Exception as e:
             logger.error(f"Error translating ADK event: {e}", exc_info=True)
             # Don't yield error events here - let the caller handle errors
-    
+
+    async def translate_text_only(
+        self,
+        adk_event: ADKEvent,
+        thread_id: str,
+        run_id: str
+    ) -> AsyncGenerator[BaseEvent, None]:
+        """Translate only text content from ADK event, ignoring function calls.
+
+        Used when an event contains both text and LRO function calls,
+        to ensure text is emitted before the LRO tool call events.
+        (GitHub #906)
+
+        Args:
+            adk_event: The ADK event containing text content
+            thread_id: The AG-UI thread ID
+            run_id: The AG-UI run ID
+
+        Yields:
+            Text message events (START, CONTENT, END)
+        """
+        if adk_event.content and hasattr(adk_event.content, 'parts') and adk_event.content.parts:
+            async for event in self._translate_text_content(
+                adk_event, thread_id, run_id
+            ):
+                yield event
+
     async def _translate_text_content(
         self,
         adk_event: ADKEvent,
@@ -848,7 +874,9 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
             messages.append(user_message)
 
         # Handle assistant/model messages
-        elif author == "model" or author is None:
+        # Note: ADK agents set author to the agent's name (e.g., "my_agent"),
+        # not "model". We treat any non-"user" author as an assistant message.
+        else:
             # Convert function calls to tool calls if present
             tool_calls = _translate_function_calls_to_tool_calls(function_calls) if function_calls else None
 

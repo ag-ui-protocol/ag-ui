@@ -2,18 +2,20 @@
 
 """FastAPI endpoint for ADK middleware."""
 
-from typing import List, Optional, Any
 import json
+import logging
+import warnings
+from typing import Any, Callable, Coroutine, List, Optional
 
-from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import StreamingResponse, JSONResponse
-from pydantic import BaseModel
 from ag_ui.core import RunAgentInput
 from ag_ui.encoder import EventEncoder
+from fastapi import APIRouter, FastAPI, Request
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
+
 from .adk_agent import ADKAgent
 from .event_translator import adk_events_to_messages
 
-import logging
 logger = logging.getLogger(__name__)
 
 
@@ -48,39 +50,21 @@ def _header_to_key(header_name: str) -> str:
         key = key[2:]
     return key.replace("-", "_")
 
-
-def add_adk_fastapi_endpoint(
-    app: FastAPI | APIRouter,
-    agent: ADKAgent,
-    path: str = "/",
-    extract_headers: Optional[List[str]] = None,
-):
-    """Add ADK middleware endpoint to FastAPI app.
+def make_extract_headers(headers_to_extract: list[str]) -> Callable[[Request, RunAgentInput], Coroutine[dict[str,Any], Any, Any]]:
+    """
+    Replicate original extract_headers functionality via custom extractor
+    Create an async function to extract specified headers into state.
 
     Args:
-        app: FastAPI application instance
-        agent: Configured ADKAgent instance
-        path: API endpoint path
-        extract_headers: Optional list of HTTP header names to extract into state.
-            Example: ["x-user-id", "x-tenant-id"]
-            Headers are stored in state.headers with the 'x-' prefix stripped and
-            hyphens converted to underscores (e.g., x-user-id -> user_id).
-            Client-provided state.headers values take precedence over extracted headers.
-
-    Note:
-        This function also adds an experimental POST /agents/state endpoint for
-        consumption by front-end frameworks that need to retrieve thread state and
-        message history. This endpoint is subject to change in future versions.
+        headers_to_extract: List of HTTP header names to extract into state.
+    Returns:
+        Async function that extracts headers into state.
     """
-
-    @app.post(path)
-    async def adk_endpoint(input_data: RunAgentInput, request: Request):
-        """ADK middleware endpoint."""
-
+    async def extract_headers(request: Request, input_data: RunAgentInput) -> dict[str, Any]:
         # Extract headers into state.headers if list provided
-        if extract_headers:
+        if headers_to_extract:
             headers_dict = {}
-            for header_name in extract_headers:
+            for header_name in headers_to_extract:
                 value = request.headers.get(header_name)
                 if value is not None:
                     state_key = _header_to_key(header_name)
@@ -92,6 +76,60 @@ def add_adk_fastapi_endpoint(
                 # Client headers take precedence over extracted headers
                 merged_headers = {**headers_dict, **existing_headers}
                 merged_state = {**existing_state, "headers": merged_headers}
+                return merged_state
+
+        return {}
+
+    return extract_headers
+
+def add_adk_fastapi_endpoint(
+    app: FastAPI | APIRouter,
+    agent: ADKAgent,
+    path: str = "/",
+    extract_headers: Optional[List[str]] = None,
+    extract_state_from_request: Optional[Callable[[Request, RunAgentInput], Coroutine[dict[str,Any], Any, Any]]] = None,
+):
+    """Add ADK middleware endpoint to FastAPI app.
+
+    Args:
+        app: FastAPI application instance
+        agent: Configured ADKAgent instance
+        path: API endpoint path
+        extract_headers: Optional list of HTTP header names to extract into state. Cannot be used with extract_state_from_request.
+        extract_state_from_request: Optional async function to extract values mapped from the request into state.
+            State values returned from this function will override any existing state values. 
+            The RunAgentInput is provided so conflicts can be identified and resolved appropriately.
+            Cannot be used with extract_headers.
+
+    Note:
+        This function also adds an experimental POST /agents/state endpoint for
+        consumption by front-end frameworks that need to retrieve thread state and
+        message history. This endpoint is subject to change in future versions.
+    """
+    extract_state_fn = extract_state_from_request
+    if extract_headers is not None:
+        if extract_state_from_request is None:
+            warnings.warn(
+                "The 'extract_headers' parameter is deprecated and will be removed in future versions. "
+                "Please use 'extract_state_from_request' instead. Example: extract_state_from_request = make_extract_headers(extract_headers)",
+                DeprecationWarning
+            )
+            # Create extractor from headers list
+            extract_state_fn = make_extract_headers(extract_headers)
+        else:
+            raise ValueError("Cannot use both 'extract_headers' and 'extract_state_from_request' parameters together.")
+
+    @app.post(path)
+    async def adk_endpoint(input_data: RunAgentInput, request: Request):
+        """ADK middleware endpoint."""
+
+        # Extract headers into state.headers if list provided
+        if extract_state_fn:
+            extracted_state_dict = await extract_state_fn(request, input_data)
+            
+            if extracted_state_dict:
+                existing_state = input_data.state if isinstance(input_data.state, dict) else {}
+                merged_state = {**existing_state, **extracted_state_dict}
                 input_data = input_data.model_copy(update={"state": merged_state})
 
         # Get the accept header from the request
@@ -114,7 +152,7 @@ def add_adk_fastapi_endpoint(
                         # Handle encoding-specific errors
                         logger.error(f"❌ Event encoding error: {encoding_error}", exc_info=True)
                         # Create a RunErrorEvent for encoding failures
-                        from ag_ui.core import RunErrorEvent, EventType
+                        from ag_ui.core import EventType, RunErrorEvent
                         error_event = RunErrorEvent(
                             type=EventType.RUN_ERROR,
                             message=f"Event encoding failed: {str(encoding_error)}",
@@ -134,7 +172,7 @@ def add_adk_fastapi_endpoint(
                 # ADKAgent should have yielded a RunErrorEvent, but if something went wrong
                 # in the async generator itself, we need to handle it
                 try:
-                    from ag_ui.core import RunErrorEvent, EventType
+                    from ag_ui.core import EventType, RunErrorEvent
                     error_event = RunErrorEvent(
                         type=EventType.RUN_ERROR,
                         message=f"Agent execution failed: {str(agent_error)}",
@@ -254,21 +292,22 @@ def create_adk_app(
     agent: ADKAgent,
     path: str = "/",
     extract_headers: Optional[List[str]] = None,
+    extract_state_from_request: Optional[Callable[[Request, RunAgentInput], Coroutine[dict[str,Any], Any, Any]]] = None,
 ) -> FastAPI:
     """Create a FastAPI app with ADK middleware endpoint.
 
     Args:
         agent: Configured ADKAgent instance
         path: API endpoint path
-        extract_headers: Optional list of HTTP header names to extract into state.
-            Example: ["x-user-id", "x-tenant-id"]
-            Headers are stored in state.headers with the 'x-' prefix stripped and
-            hyphens converted to underscores (e.g., x-user-id -> user_id).
-            Client-provided state.headers values take precedence over extracted headers.
+        extract_headers: Optional list of HTTP header names to extract into state. Cannot be used with extract_state_from_request.
+        extract_state_from_request: Optional async function to extract values mapped from the request into state.
+            State values returned from this function will override any existing state values. 
+            The RunAgentInput is provided so conflicts can be identified and resolved appropriately.
+            Cannot be used with extract_headers.
 
     Returns:
         FastAPI application instance
     """
     app = FastAPI(title="ADK Middleware for AG-UI Protocol")
-    add_adk_fastapi_endpoint(app, agent, path, extract_headers=extract_headers)
+    add_adk_fastapi_endpoint(app, agent, path, extract_headers=extract_headers, extract_state_from_request=extract_state_from_request)
     return app
