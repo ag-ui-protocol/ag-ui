@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **NEW**: Fine-grained session cleanup configuration via `delete_session_on_cleanup` and `save_session_to_memory_on_cleanup` parameters (#927)
+  - Splits the previous `auto_cleanup` behavior into two independent controls
+  - `delete_session_on_cleanup`: Controls whether sessions are deleted from ADK SessionService during cleanup (default: `True`)
+  - `save_session_to_memory_on_cleanup`: Controls whether sessions are saved to MemoryService before cleanup (default: `True`)
+  - Sessions with `pending_tool_calls` are preserved even when `delete_session_on_cleanup=True`
+  - Parameters exposed on `ADKAgent` constructor and `ADKAgent.from_app()` classmethod
+  - Thanks to @jplikesbikes for the contribution
+- **NEW**: Flexible request state extraction in FastAPI endpoints (#925)
+  - Added `extract_state` parameter to `add_adk_fastapi_endpoint()` and `create_adk_app()` for custom state extraction from requests
+  - Enables extraction of request attributes beyond just headers (e.g., cookies, query params, authentication info)
+  - `extract_headers` parameter has been marked for deprecation in favor of `extract_state`
+  - Thanks to @jplikesbikes for the contribution
+
 ### Fixed
 - **FIXED**: Text message events not emitted when non-streaming response includes client function call (issue #906)
   - In non-streaming mode, when an ADK event contained both text and an LRO (long-running) tool call, text was skipped entirely
