@@ -7,6 +7,7 @@ import { CopilotSidebar } from "@copilotkit/react-ui";
 import { useMobileView } from "@/utils/use-mobile-view";
 import { useMobileChat } from "@/utils/use-mobile-chat";
 import { useURLParams } from "@/contexts/url-params-context";
+import { cloudAgents } from "@/cloudAgents";
 
 interface SubgraphsProps {
   params: Promise<{
@@ -168,10 +169,21 @@ export default function Subgraphs({ params }: SubgraphsProps) {
   const chatDescription = 'Plan your perfect trip with AI specialists';
   const initialLabel = 'Hi! ✈️ Ready to plan an amazing trip? Try saying "Plan a trip to Paris" or "Find me flights to Tokyo"';
 
+  let runtimeUrl = `/api/copilotkit/${integrationId}`;
+  let publicApiKey: string | undefined = undefined;
+  if (process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL) {
+    runtimeUrl = process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL;
+    publicApiKey = cloudAgents.find((agent) => agent.id === integrationId)?.publicApiKey;
+  }
+
   return (
     <CopilotKit
-      runtimeUrl={`/api/copilotkit/${integrationId}`}
+      runtimeUrl={runtimeUrl}
       showDevConsole={false}
+      publicApiKey={publicApiKey}
+      headers={{
+        "x-copilotkit-runtime-client-gql-version": "1.50.0"
+      }}
       agent="subgraphs"
     >
       <div className="travel-planner-container">

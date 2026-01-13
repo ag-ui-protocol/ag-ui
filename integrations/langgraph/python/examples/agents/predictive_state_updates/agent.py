@@ -34,15 +34,21 @@ class AgentState(MessagesState):
     The state of the agent.
     """
     document: Optional[str] = None
-    tools: List[Any]
+    tools: List[Any] = []
 
 
 async def start_node(state: AgentState, config: RunnableConfig): # pylint: disable=unused-argument
     """
     This is the entry point for the flow.
     """
+    if "tools" not in state:
+        state["tools"] = []
+
     return Command(
-        goto="chat_node"
+        goto="chat_node",
+        update={
+            "tools": state["tools"]
+        }
     )
 
 
@@ -77,7 +83,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     # Bind the tools to the model
     model_with_tools = model.bind_tools(
         [
-            *state["tools"],
+            *state.get("tools", []),
             write_document_local
         ],
         # Disable parallel tool calls to avoid race conditions

@@ -1,6 +1,9 @@
 import { test, expect, waitForAIResponse, retryOnAIFailure } from "../../test-isolation-helper";
 import { HumanInLoopPage } from "../../pages/serverStarterAllFeaturesPages/HumanInLoopPage";
 
+// Skip all tests in this file when CLOUD_AGENTS is set
+test.skip(!!process.env.CLOUD_AGENTS, 'Skipping Server Starter all features tests when CLOUD_AGENTS is set');
+
 test.describe("Human in the Loop Feature", () => {
   test(" [Server Starter all features] should interact with the chat using predefined prompts and perform steps", async ({
     page,

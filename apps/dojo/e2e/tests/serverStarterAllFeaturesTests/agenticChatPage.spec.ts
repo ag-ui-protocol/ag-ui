@@ -6,6 +6,9 @@ import {
 } from "../../test-isolation-helper";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
 
+// Skip all tests in this file when CLOUD_AGENTS is set
+test.skip(!!process.env.CLOUD_AGENTS, 'Skipping Server Starter all features tests when CLOUD_AGENTS is set');
+
 test("[Server Starter all features] Agentic Chat displays countdown from 10 to 1 with tick mark", async ({
   page,
 }) => {

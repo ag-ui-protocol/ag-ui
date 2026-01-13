@@ -13,12 +13,48 @@ from langgraph.types import Command
 from langgraph.graph import MessagesState
 from langgraph.prebuilt import ToolNode
 
+# This tool generates a haiku on the server.
+# The tool call will be streamed to the frontend as it is being generated.
+GENERATE_HAIKU_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "generate_haiku",
+        "description": "Generate a haiku in Japanese and its English translation",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "japanese": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "An array of three lines of the haiku in Japanese"
+                },
+                "english": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "An array of three lines of the haiku in English"
+                },
+                "image_names": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Names of 3 relevant images from the provided list"
+                }
+            },
+            "required": ["japanese", "english", "image_names"]
+        }
+    }
+}
 
 class AgentState(MessagesState):
     """
     State of the agent.
     """
-    tools: List[Any]
+    tools: List[Any] = []
 
 async def chat_node(state: AgentState, config: RunnableConfig) -> Command[Literal["tool_node", "__end__"]]:
     """
@@ -37,6 +73,7 @@ async def chat_node(state: AgentState, config: RunnableConfig) -> Command[Litera
     model_with_tools = model.bind_tools(
         [
             *state.get("tools", []), # bind tools defined by ag-ui
+            GENERATE_HAIKU_TOOL,
         ],
         parallel_tool_calls=False,
     )

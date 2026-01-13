@@ -11,6 +11,7 @@ import {
   CarouselPrevious,
 } from "@/components/ui/carousel";
 import { useURLParams } from "@/contexts/url-params-context";
+import { cloudAgents } from "@/cloudAgents";
 
 interface ToolBasedGenerativeUIProps {
   params: Promise<{
@@ -43,10 +44,21 @@ export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIP
     ],
   };
 
+  let runtimeUrl = `/api/copilotkit/${integrationId}`;
+  let publicApiKey: string | undefined = undefined;
+  if (process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL) {
+    runtimeUrl = process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL;
+    publicApiKey = cloudAgents.find((agent) => agent.id === integrationId)?.publicApiKey;
+  }
+
   return (
     <CopilotKit
-      runtimeUrl={`/api/copilotkit/${integrationId}`}
+      runtimeUrl={runtimeUrl}
       showDevConsole={false}
+      publicApiKey={publicApiKey}
+      headers={{
+        "x-copilotkit-runtime-client-gql-version": "1.50.0"
+      }}
       agent="tool_based_generative_ui"
     >
       <CopilotSidebar {...chatProps} />

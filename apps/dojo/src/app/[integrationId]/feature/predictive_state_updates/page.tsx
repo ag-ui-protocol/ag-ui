@@ -14,6 +14,7 @@ import { CopilotChat, CopilotSidebar } from "@copilotkit/react-ui";
 import { useMobileView } from "@/utils/use-mobile-view";
 import { useMobileChat } from "@/utils/use-mobile-chat";
 import { useURLParams } from "@/contexts/url-params-context";
+import { cloudAgents } from "@/cloudAgents";
 
 const extensions = [StarterKit];
 
@@ -34,10 +35,21 @@ export default function PredictiveStateUpdates({ params }: PredictiveStateUpdate
   const chatDescription = "Ask me to create or edit a document";
   const initialLabel = "Hi 👋 How can I help with your document?";
 
+  let runtimeUrl = `/api/copilotkit/${integrationId}`;
+  let publicApiKey: string | undefined = undefined;
+  if (process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL) {
+    runtimeUrl = process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL;
+    publicApiKey = cloudAgents.find((agent) => agent.id === integrationId)?.publicApiKey;
+  }
+
   return (
     <CopilotKit
-      runtimeUrl={`/api/copilotkit/${integrationId}`}
+      runtimeUrl={runtimeUrl}
       showDevConsole={false}
+      publicApiKey={publicApiKey}
+      headers={{
+        "x-copilotkit-runtime-client-gql-version": "1.50.0"
+      }}
       // agent lock to the relevant agent
       agent="predictive_state_updates"
     >
