@@ -27,8 +27,10 @@ export const MCPAppsActivityType = "mcp-apps";
  * Proxied MCP request structure from the frontend iframe
  */
 export interface ProxiedMCPRequest {
-  /** Server identifier (MD5 hash of config) */
-  serverId: string;
+  /** Server hash (MD5 hash of config) */
+  serverHash: string;
+  /** Server name (optional, for lookup by name) */
+  serverName?: string;
   /** The JSON-RPC method to call */
   method: string;
   /** The JSON-RPC params */
@@ -57,6 +59,7 @@ interface UIToolInfo {
 export interface MCPClientConfigHTTP {
   type: "http";
   url: string;
+  serverName?: string;
 }
 
 /**
@@ -66,6 +69,7 @@ export interface MCPClientConfigSSE {
   type: "sse";
   url: string;
   headers?: Record<string, string>;
+  serverName?: string;
 }
 
 /**
@@ -74,10 +78,10 @@ export interface MCPClientConfigSSE {
 export type MCPClientConfig = MCPClientConfigHTTP | MCPClientConfigSSE;
 
 /**
- * Generate a stable server ID from config using MD5 hash.
+ * Generate a stable server hash from config using MD5 hash.
  * This allows the frontend to reference servers without knowing their URLs.
  */
-export function getServerId(config: MCPClientConfig): string {
+export function getServerHash(config: MCPClientConfig): string {
   const serialized = JSON.stringify({
     type: config.type,
     url: config.url,
@@ -141,18 +145,21 @@ function convertMCPToolToAGUITool(mcpTool: {
  */
 export class MCPAppsMiddleware extends Middleware {
   private config: MCPAppsMiddlewareConfig;
-  /** Map of tool name -> server config for UI tools */
-  private uiToolsMap: Map<string, MCPClientConfig> = new Map();
-  /** Map of serverId -> server config for proxied requests */
-  private serverConfigMap: Map<string, MCPClientConfig> = new Map();
+  /** Map of serverHash -> server config for proxied requests */
+  private serverConfigMapByHash: Map<string, MCPClientConfig> = new Map();
+  /** Map of serverName -> server config for proxied requests */
+  private serverConfigMapByName: Map<string, MCPClientConfig> = new Map();
 
   constructor(config: MCPAppsMiddlewareConfig = {}) {
     super();
     this.config = config;
-    // Build server config map for proxied requests
+    // Build server config maps for proxied requests
     for (const serverConfig of config.mcpServers || []) {
-      const serverId = getServerId(serverConfig);
-      this.serverConfigMap.set(serverId, serverConfig);
+      const serverHash = getServerHash(serverConfig);
+      this.serverConfigMapByHash.set(serverHash, serverConfig);
+      if (serverConfig.serverName) {
+        this.serverConfigMapByName.set(serverConfig.serverName, serverConfig);
+      }
     }
   }
 
@@ -205,8 +212,14 @@ export class MCPAppsMiddleware extends Middleware {
     request: ProxiedMCPRequest
   ): Observable<BaseEvent> {
     return new Observable<BaseEvent>((subscriber) => {
-      // Look up server config by ID
-      const serverConfig = this.serverConfigMap.get(request.serverId);
+      // Look up server config - prefer serverName, fallback to serverHash
+      let serverConfig: MCPClientConfig | undefined;
+      if (request.serverName) {
+        serverConfig = this.serverConfigMapByName.get(request.serverName);
+      }
+      if (!serverConfig) {
+        serverConfig = this.serverConfigMapByHash.get(request.serverHash);
+      }
 
       // Emit RunStarted
       const runStartedEvent: RunStartedEvent = {
@@ -216,13 +229,13 @@ export class MCPAppsMiddleware extends Middleware {
       };
       subscriber.next(runStartedEvent);
 
-      // Handle unknown server ID
+      // Handle unknown server
       if (!serverConfig) {
         const runFinishedEvent: RunFinishedEvent = {
           type: EventType.RUN_FINISHED,
           runId,
           threadId: runId,
-          result: { error: `Unknown server ID: ${request.serverId}` },
+          result: { error: `Unknown server: ${request.serverName || request.serverHash}` },
         };
         subscriber.next(runFinishedEvent);
         subscriber.complete();
@@ -381,12 +394,6 @@ export class MCPAppsMiddleware extends Middleware {
                     args
                   );
 
-                  // Fetch the UI resource
-                  const resource = await this.readResource(
-                    toolInfo.serverConfig,
-                    toolInfo.resourceUri
-                  );
-
                   // Emit tool result event
                   const resultEvent: ToolCallResultEvent = {
                     type: EventType.TOOL_CALL_RESULT,
@@ -396,15 +403,16 @@ export class MCPAppsMiddleware extends Middleware {
                   };
                   subscriber.next(resultEvent);
 
-                  // Emit activity snapshot with full MCP result, resource, and server ID
+                  // Emit activity snapshot with MCP result and resourceUri (frontend fetches resource)
                   const activityEvent: ActivitySnapshotEvent = {
                     type: EventType.ACTIVITY_SNAPSHOT,
                     messageId: randomUUID(),
                     activityType: MCPAppsActivityType,
                     content: {
                       result: mcpResult,
-                      resource,
-                      serverId: getServerId(toolInfo.serverConfig),
+                      resourceUri: toolInfo.resourceUri,
+                      serverHash: getServerHash(toolInfo.serverConfig),
+                      serverName: toolInfo.serverConfig.serverName,
                       toolInput: args,
                     },
                     replace: true,
@@ -478,48 +486,6 @@ export class MCPAppsMiddleware extends Middleware {
       });
 
       return result;
-    } finally {
-      await client.close();
-    }
-  }
-
-  /**
-   * Read a UI resource from the MCP server
-   */
-  private async readResource(
-    serverConfig: MCPClientConfig,
-    resourceUri: string
-  ): Promise<unknown> {
-    let transport;
-
-    if (serverConfig.type === "sse") {
-      transport = new SSEClientTransport(new URL(serverConfig.url));
-    } else {
-      transport = new StreamableHTTPClientTransport(new URL(serverConfig.url));
-    }
-
-    const client = new Client(
-      { name: "mcp-apps-middleware", version: "1.0.0" },
-      {
-        capabilities: {
-          extensions: {
-            "io.modelcontextprotocol/ui": {
-              mimeTypes: ["text/html+mcp"],
-            },
-          },
-        },
-      }
-    );
-
-    try {
-      await client.connect(transport);
-
-      const result = await client.readResource({
-        uri: resourceUri,
-      });
-
-      // Return the first content item (the UI resource)
-      return result.contents[0];
     } finally {
       await client.close();
     }
