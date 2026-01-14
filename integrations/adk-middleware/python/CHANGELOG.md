@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enables extraction of request attributes beyond just headers (e.g., cookies, query params, authentication info)
   - `extract_headers` parameter has been marked for deprecation in favor of `extract_state`
   - Thanks to @jplikesbikes for the contribution
+- **NEW**: `add_adk_fastapi_endpoint()` now accepts both `FastAPI` and `APIRouter` objects (#932)
+  - Enables better organization of large FastAPI codebases by allowing routes to be added to APIRouters
+  - The `app` parameter now accepts `FastAPI | APIRouter` types
+  - Note: Using APIRouter may result in different validation error response codes (500 instead of 422 in some edge cases)
+  - Thanks to @jplikesbikes for the contribution
 
 ### Fixed
 - **FIXED**: Text message events not emitted when non-streaming response includes client function call (issue #906)
