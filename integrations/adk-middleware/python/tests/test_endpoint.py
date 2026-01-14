@@ -1,15 +1,14 @@
 #!/usr/bin/env python
 """Tests for FastAPI endpoint functionality."""
+from fastapi.exceptions import RequestValidationError
 
 import pytest
-import asyncio
 from unittest.mock import MagicMock, patch, AsyncMock
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
-from fastapi.responses import StreamingResponse
 from starlette.requests import Request
+
 from ag_ui.core import RunAgentInput, UserMessage, RunStartedEvent, RunErrorEvent, EventType
-from ag_ui.encoder import EventEncoder
 from ag_ui_adk.endpoint import add_adk_fastapi_endpoint, create_adk_app, make_extract_headers
 from ag_ui_adk.adk_agent import ADKAgent
 
@@ -23,10 +22,13 @@ class TestAddADKFastAPIEndpoint:
         agent = MagicMock(spec=ADKAgent)
         return agent
 
-    @pytest.fixture
-    def app(self):
+    @pytest.fixture(
+        params=[FastAPI, APIRouter]
+    )
+    def app(self, request):
         """Create a FastAPI app."""
-        return FastAPI()
+        return request.param()
+        # return FastAPI()
 
     @pytest.fixture
     def sample_input(self):
@@ -364,11 +366,23 @@ class TestAddADKFastAPIEndpoint:
 
         client = TestClient(app)
 
-        # Send invalid JSON
-        response = client.post("/test", json={"invalid": "data"})
+        # FastAPI and APIRouter handle validation differently
+        if isinstance(app, FastAPI):
+            # Send invalid JSON
+            response = client.post("/test", json={"invalid": "data"})
 
-        # Should return 422 for validation error
-        assert response.status_code == 422
+            # Should return 422 for validation error
+            assert response.status_code == 422
+
+        elif isinstance(app, APIRouter):
+            # Should raise RequestValidationError
+            with pytest.raises(RequestValidationError):
+
+                # Send invalid JSON
+                response = client.post("/test", json={"invalid": "data"})
+
+        else:
+            raise TypeError("app fixture must be FastAPI or APIRouter")
 
     @patch('ag_ui_adk.endpoint.EventEncoder')
     def test_endpoint_no_accept_header(self, mock_encoder_class, app, mock_agent, sample_input):

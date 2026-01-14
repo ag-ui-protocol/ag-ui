@@ -2,19 +2,20 @@
 
 """FastAPI endpoint for ADK middleware."""
 
-import warnings
-from typing import Optional, Any, Coroutine, Callable, List
 import json
+import logging
+import warnings
+from typing import Any, Callable, Coroutine, List, Optional
 
-from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, JSONResponse
-from pydantic import BaseModel
 from ag_ui.core import RunAgentInput
 from ag_ui.encoder import EventEncoder
+from fastapi import APIRouter, FastAPI, Request
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
+
 from .adk_agent import ADKAgent
 from .event_translator import adk_events_to_messages
 
-import logging
 logger = logging.getLogger(__name__)
 
 
@@ -82,7 +83,7 @@ def make_extract_headers(headers_to_extract: list[str]) -> Callable[[Request, Ru
     return extract_headers
 
 def add_adk_fastapi_endpoint(
-    app: FastAPI,
+    app: FastAPI | APIRouter,
     agent: ADKAgent,
     path: str = "/",
     extract_headers: Optional[List[str]] = None,
@@ -151,7 +152,7 @@ def add_adk_fastapi_endpoint(
                         # Handle encoding-specific errors
                         logger.error(f"❌ Event encoding error: {encoding_error}", exc_info=True)
                         # Create a RunErrorEvent for encoding failures
-                        from ag_ui.core import RunErrorEvent, EventType
+                        from ag_ui.core import EventType, RunErrorEvent
                         error_event = RunErrorEvent(
                             type=EventType.RUN_ERROR,
                             message=f"Event encoding failed: {str(encoding_error)}",
@@ -171,7 +172,7 @@ def add_adk_fastapi_endpoint(
                 # ADKAgent should have yielded a RunErrorEvent, but if something went wrong
                 # in the async generator itself, we need to handle it
                 try:
-                    from ag_ui.core import RunErrorEvent, EventType
+                    from ag_ui.core import EventType, RunErrorEvent
                     error_event = RunErrorEvent(
                         type=EventType.RUN_ERROR,
                         message=f"Agent execution failed: {str(agent_error)}",
