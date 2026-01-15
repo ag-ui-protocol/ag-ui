@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useCallback, useRef, useEffect, createContext, useContext, useMemo } from "react";
-import type { AssistantMessageProps } from "@copilotkit/react-ui";
+import { AssistantMessage, type AssistantMessageProps } from "@copilotkit/react-ui";
 
 /**
  * Represents a security deviation (blocked tool call) detected by the middleware.
@@ -34,8 +34,9 @@ const DeviationContext = createContext<DeviationContextValue | null>(null);
  * Custom AssistantMessage component that detects blocked tool messages
  * and reports them to the deviation tracking system.
  * 
- * This component should be passed to CopilotChat's `AssistantMessage` prop
- * when using the SecureToolsMiddleware.
+ * This component wraps the default CopilotKit AssistantMessage component
+ * to preserve all default styling and functionality while adding
+ * deviation detection.
  * 
  * @example
  * ```tsx
@@ -80,8 +81,8 @@ function SecurityAwareAssistantMessageInner(props: AssistantMessageProps) {
     }
   }, [ctx, message]);
 
-  // Render the default message content
-  return React.createElement("div", { className: "copilotkit-assistant-message" }, message?.content);
+  // Use the default CopilotKit AssistantMessage component for proper styling
+  return React.createElement(AssistantMessage, props);
 }
 
 /**
