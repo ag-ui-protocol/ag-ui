@@ -1524,3 +1524,77 @@ class TestThoughtHandling:
         assert translator._is_thinking is False
         assert translator._is_streaming_thinking is False
         assert translator._current_thinking_text == ""
+
+    @pytest.mark.asyncio
+    async def test_fallback_when_thought_support_unavailable(self, translator, mock_adk_event):
+        """Test fallback behavior when thought support is not available (old SDK).
+
+        When _check_thought_support() returns False (simulating an older google-genai
+        SDK without the part.thought attribute), all parts should be treated as
+        regular text, even if they have thought=True set.
+        """
+        import ag_ui_adk.event_translator as et_module
+
+        # Create a part with thought=True
+        mock_content = MagicMock()
+        mock_part = MagicMock()
+        mock_part.text = "This would be a thought in newer SDK"
+        mock_part.thought = True  # Set to True, but should be ignored
+        mock_content.parts = [mock_part]
+        mock_adk_event.content = mock_content
+
+        # Mock _check_thought_support to return False (simulating old SDK)
+        with patch.object(et_module, '_check_thought_support', return_value=False):
+            events = []
+            async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+                events.append(event)
+
+        # Should emit regular text events, NOT thinking events
+        event_types = [type(e).__name__ for e in events]
+        assert "TextMessageStartEvent" in event_types
+        assert "TextMessageContentEvent" in event_types
+        assert "ThinkingStartEvent" not in event_types
+        assert "ThinkingTextMessageStartEvent" not in event_types
+
+    @pytest.mark.asyncio
+    async def test_thought_support_check_caching(self):
+        """Test that thought support check is cached and only runs once."""
+        import ag_ui_adk.event_translator as et_module
+
+        # Reset the cached state
+        et_module._THOUGHT_SUPPORT_CHECKED = False
+        et_module._HAS_THOUGHT_SUPPORT = False
+
+        # First call should set the cached value
+        result1 = et_module._check_thought_support()
+        assert et_module._THOUGHT_SUPPORT_CHECKED is True
+
+        # Second call should return cached value without re-checking
+        cached_value = et_module._HAS_THOUGHT_SUPPORT
+        result2 = et_module._check_thought_support()
+
+        assert result1 == result2
+        assert result2 == cached_value
+
+    @pytest.mark.asyncio
+    async def test_thought_none_treated_as_non_thought(self, translator, mock_adk_event):
+        """Test that thought=None is treated as non-thought content.
+
+        Some SDK versions might return None instead of False for non-thought parts.
+        """
+        mock_content = MagicMock()
+        mock_part = MagicMock()
+        mock_part.text = "Regular response"
+        mock_part.thought = None  # Explicitly None
+        mock_content.parts = [mock_part]
+        mock_adk_event.content = mock_content
+
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
+
+        # Should emit regular text events
+        event_types = [type(e).__name__ for e in events]
+        assert "TextMessageStartEvent" in event_types
+        assert "TextMessageContentEvent" in event_types
+        assert "ThinkingStartEvent" not in event_types
