@@ -61,8 +61,13 @@ class TestThoughtToThinkingIntegration:
         adk_agent = LlmAgent(
             name="thinking_agent",
             model="gemini-2.5-flash",
-            instruction="""You are a helpful assistant that thinks through problems carefully.
-            When asked a question, reason through it step by step before providing your answer.
+            instruction="""You are a careful reasoning assistant. For every question:
+            1. First, think through the problem systematically
+            2. Consider potential pitfalls or trick questions
+            3. Work through the logic step by step
+            4. Only then provide your final answer
+
+            Always show your reasoning process before giving the answer.
             """,
             planner=BuiltInPlanner(
                 thinking_config=types.ThinkingConfig(
@@ -148,9 +153,11 @@ class TestThoughtToThinkingIntegration:
         Note: The model may not always return thoughts even with include_thoughts=True,
         so we test that when thoughts ARE returned, they are properly converted.
         """
-        # Use a prompt that encourages the model to think
+        # Use a prompt that encourages the model to think deeply
+        # Complex multi-step problems are more likely to trigger thought summaries
         input_data = self._create_input(
-            "What is 15% of 240? Show your reasoning step by step."
+            "A farmer has 17 sheep. All but 9 run away. How many sheep does the farmer have left? "
+            "Think through this carefully before answering."
         )
 
         events = []
@@ -250,8 +257,10 @@ class TestThoughtToThinkingIntegration:
 
         Then followed by regular TEXT_MESSAGE events for the response.
         """
+        # Use a logic puzzle that requires careful reasoning
         input_data = self._create_input(
-            "Explain briefly why the sky is blue."
+            "If it takes 5 machines 5 minutes to make 5 widgets, how long would it take "
+            "100 machines to make 100 widgets? Reason through this step by step."
         )
 
         events = []
