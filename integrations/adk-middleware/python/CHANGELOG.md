@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **NEW**: Convert Gemini thought summaries to AG-UI THINKING events (#951)
+  - When using `ThinkingConfig(include_thoughts=True)` with Gemini 2.5+ models, thought summaries are now emitted as THINKING events
+  - Backwards-compatible: gracefully degrades on older google-genai SDK versions without the `part.thought` attribute
+  - No dependency version bumps required - works with existing `google-adk>=1.14.0`
+  - Emits proper event sequence: `THINKING_START` → `THINKING_TEXT_MESSAGE_START/CONTENT/END` → `THINKING_END`
+  - Thinking streams are properly closed when transitioning to regular text output
 - **NEW**: Fine-grained session cleanup configuration via `delete_session_on_cleanup` and `save_session_to_memory_on_cleanup` parameters (#927)
   - Splits the previous `auto_cleanup` behavior into two independent controls
   - `delete_session_on_cleanup`: Controls whether sessions are deleted from ADK SessionService during cleanup (default: `True`)
