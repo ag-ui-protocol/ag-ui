@@ -1335,3 +1335,192 @@ class TestEventTranslatorComprehensive:
         # No TextMessageStartEvent should be created for empty content
         start_events = [e for e in events if isinstance(e, TextMessageStartEvent)]
         assert len(start_events) == 0
+
+
+class TestThoughtHandling:
+    """Tests for thought parts to THINKING events conversion."""
+
+    @pytest.fixture
+    def translator(self):
+        """Create a fresh EventTranslator instance."""
+        return EventTranslator()
+
+    @pytest.fixture
+    def mock_adk_event(self):
+        """Create a mock ADK event."""
+        event = MagicMock(spec=ADKEvent)
+        event.id = "test_event_id"
+        event.author = "model"
+        event.content = None
+        event.partial = False
+        event.turn_complete = True
+        event.is_final_response = False
+        return event
+
+    @pytest.mark.asyncio
+    async def test_thought_parts_emit_thinking_events(self, translator, mock_adk_event):
+        """Test that parts with thought=True emit THINKING events."""
+        from ag_ui.core import (
+            ThinkingStartEvent, ThinkingTextMessageStartEvent,
+            ThinkingTextMessageContentEvent
+        )
+
+        # Create a part with thought=True
+        mock_content = MagicMock()
+        mock_part = MagicMock()
+        mock_part.text = "Let me think about this..."
+        mock_part.thought = True  # Explicitly set to True
+        mock_content.parts = [mock_part]
+        mock_adk_event.content = mock_content
+
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
+
+        # Should emit THINKING_START, THINKING_TEXT_MESSAGE_START, THINKING_TEXT_MESSAGE_CONTENT
+        assert len(events) >= 3
+        assert isinstance(events[0], ThinkingStartEvent)
+        assert isinstance(events[1], ThinkingTextMessageStartEvent)
+        assert isinstance(events[2], ThinkingTextMessageContentEvent)
+        assert events[2].delta == "Let me think about this..."
+
+    @pytest.mark.asyncio
+    async def test_mixed_thought_and_text_parts(self, translator, mock_adk_event):
+        """Test handling of mixed thought and regular text parts."""
+        from ag_ui.core import (
+            ThinkingStartEvent, ThinkingTextMessageStartEvent,
+            ThinkingTextMessageContentEvent, ThinkingTextMessageEndEvent,
+            ThinkingEndEvent
+        )
+
+        # Create parts with both thought and regular text
+        mock_content = MagicMock()
+
+        thought_part = MagicMock()
+        thought_part.text = "Thinking..."
+        thought_part.thought = True
+
+        text_part = MagicMock()
+        text_part.text = "Here is my response."
+        text_part.thought = False  # Explicitly set to False
+
+        mock_content.parts = [thought_part, text_part]
+        mock_adk_event.content = mock_content
+
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
+
+        # Should have thinking events, then thinking close events, then text events
+        event_types = [type(e).__name__ for e in events]
+
+        # Verify thinking events come first
+        assert "ThinkingStartEvent" in event_types
+        assert "ThinkingTextMessageContentEvent" in event_types
+
+        # Verify text message events are present
+        assert "TextMessageStartEvent" in event_types
+        assert "TextMessageContentEvent" in event_types
+
+    @pytest.mark.asyncio
+    async def test_non_thought_parts_emit_text_events(self, translator, mock_adk_event):
+        """Test that parts without thought attribute emit regular text events."""
+        # Create a part without thought attribute (simulating older SDK)
+        mock_content = MagicMock()
+        mock_part = MagicMock()
+        mock_part.text = "Regular response"
+        # Don't set thought attribute - let it be a mock (should be treated as non-thought)
+        del mock_part.thought  # Remove the attribute if it exists
+        mock_content.parts = [mock_part]
+        mock_adk_event.content = mock_content
+
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
+
+        # Should emit regular text events, not thinking events
+        event_types = [type(e).__name__ for e in events]
+        assert "TextMessageStartEvent" in event_types
+        assert "TextMessageContentEvent" in event_types
+        assert "ThinkingStartEvent" not in event_types
+
+    @pytest.mark.asyncio
+    async def test_thought_false_emits_text_events(self, translator, mock_adk_event):
+        """Test that parts with thought=False emit regular text events."""
+        mock_content = MagicMock()
+        mock_part = MagicMock()
+        mock_part.text = "Regular response"
+        mock_part.thought = False  # Explicitly False
+        mock_content.parts = [mock_part]
+        mock_adk_event.content = mock_content
+
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
+
+        # Should emit regular text events
+        event_types = [type(e).__name__ for e in events]
+        assert "TextMessageStartEvent" in event_types
+        assert "TextMessageContentEvent" in event_types
+        assert "ThinkingStartEvent" not in event_types
+
+    @pytest.mark.asyncio
+    async def test_thinking_stream_closed_on_final_response(self, translator, mock_adk_event):
+        """Test that thinking streams are properly closed on final response."""
+        from ag_ui.core import ThinkingEndEvent, ThinkingTextMessageEndEvent
+
+        # First, start a thinking stream
+        mock_content = MagicMock()
+        thought_part = MagicMock()
+        thought_part.text = "Thinking..."
+        thought_part.thought = True
+        mock_content.parts = [thought_part]
+        mock_adk_event.content = mock_content
+        mock_adk_event.partial = True  # Still streaming
+
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
+
+        # Verify thinking is active
+        assert translator._is_thinking is True
+        assert translator._is_streaming_thinking is True
+
+        # Now send final response
+        mock_adk_event.is_final_response = MagicMock(return_value=True)
+        mock_adk_event.partial = False
+        mock_adk_event.turn_complete = True
+
+        # Create content with regular text for final response
+        final_part = MagicMock()
+        final_part.text = "Final answer"
+        final_part.thought = False
+        mock_content.parts = [final_part]
+
+        events = []
+        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+            events.append(event)
+
+        # Should have closed thinking stream
+        event_types = [type(e).__name__ for e in events]
+        assert "ThinkingTextMessageEndEvent" in event_types
+        assert "ThinkingEndEvent" in event_types
+
+        # Verify thinking state is reset
+        assert translator._is_thinking is False
+        assert translator._is_streaming_thinking is False
+
+    def test_reset_clears_thinking_state(self, translator):
+        """Test that reset() clears thinking state."""
+        # Set up some thinking state
+        translator._is_thinking = True
+        translator._is_streaming_thinking = True
+        translator._current_thinking_text = "Some thinking"
+
+        # Reset
+        translator.reset()
+
+        # Verify thinking state is cleared
+        assert translator._is_thinking is False
+        assert translator._is_streaming_thinking is False
+        assert translator._current_thinking_text == ""
