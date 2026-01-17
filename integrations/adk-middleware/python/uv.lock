@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.9, <3.14"
 resolution-markers = [
     "python_version < '0'",
@@ -20,7 +20,7 @@ wheels = [
 
 [[package]]
 name = "ag-ui-adk"
-version = "0.4.1"
+version = "0.3.5"
 source = { editable = "." }
 dependencies = [
     { name = "ag-ui-protocol" },
