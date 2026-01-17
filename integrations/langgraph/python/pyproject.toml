@@ -20,6 +20,9 @@ pydantic = ">=2.0.0"
 [tool.poetry.extras]
 fastapi = ["fastapi"]
 
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.0.2"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

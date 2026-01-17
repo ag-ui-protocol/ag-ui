@@ -353,7 +353,12 @@ def make_json_safe(value: Any, _seen: set[int] | None = None) -> Any:
     # --- 5. Dataclasses ----------------------------------------------------
     if is_dataclass(value):
         _seen.add(obj_id)
-        return make_json_safe(asdict(value), _seen)
+        try:
+            return make_json_safe(asdict(value), _seen)
+        except Exception:
+            # asdict() uses deepcopy which fails on unpicklable objects
+            # (e.g., _thread.lock, asyncio.Event). Fall through to __dict__.
+            pass
 
     # --- 6. Pydantic-like models (v2: model_dump) -------------------------
     if hasattr(value, "model_dump") and callable(getattr(value, "model_dump")):
