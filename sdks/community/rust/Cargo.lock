@@ -23,6 +23,7 @@ version = "0.1.0"
 dependencies = [
  "ag-ui-core",
  "async-trait",
+ "axum",
  "bytes",
  "env_logger",
  "futures",
@@ -33,6 +34,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.12",
  "tokio",
+ "tokio-stream",
  "uuid",
 ]
 
