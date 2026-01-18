@@ -1,10 +1,20 @@
+//! Integration tests for HttpAgent.
+//!
+//! These tests require a running AG-UI server at localhost:3001.
+//! They are marked as `#[ignore]` by default and can be run with:
+//!
+//! ```bash
+//! cargo test --test http_agent_test -- --ignored
+//! ```
+
 use ag_ui_client::HttpAgent;
 use ag_ui_client::agent::{Agent, RunAgentParams};
 use ag_ui_client::core::types::{Message, Role};
 
 #[tokio::test]
+#[ignore = "requires AG-UI server running at localhost:3001"]
 async fn test_http_agent_basic_functionality() {
-    env_logger::init();
+    let _ = env_logger::try_init();
 
     // Create an HttpAgent
     let agent = HttpAgent::builder()
@@ -54,6 +64,7 @@ async fn test_http_agent_basic_functionality() {
 }
 
 #[tokio::test]
+#[ignore = "requires AG-UI server running at localhost:3001"]
 async fn test_http_agent_tool_calls() {
     // Create an HttpAgent
     let agent = HttpAgent::builder()
@@ -91,6 +102,7 @@ async fn test_http_agent_tool_calls() {
 }
 
 #[tokio::test]
+#[ignore = "requires network access for connection error test"]
 async fn test_http_agent_error_handling() {
     // Create an HttpAgent with an invalid URL
     let agent = HttpAgent::builder()

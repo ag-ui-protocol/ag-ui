@@ -19,6 +19,13 @@
 //!     FilterConfig::block(["delete_file", "execute_code", "send_email"])
 //! );
 //! ```
+//!
+//! # Panics
+//!
+//! Methods on [`FilterToolCallsMiddleware`] may panic if the internal mutex is poisoned.
+//! This can only occur if a previous holder of the lock panicked while holding it,
+//! which indicates a serious bug elsewhere in the code. In normal operation, the
+//! middleware will not panic.
 
 use super::StreamTransformer;
 use crate::core::event::Event;
@@ -90,6 +97,12 @@ impl FilterConfig {
 /// This middleware intercepts tool call events and filters out calls to
 /// tools that are not allowed (or are explicitly blocked). When a tool call
 /// is filtered, all related events (ARGS, END, RESULT) are also filtered.
+///
+/// # Panics
+///
+/// The [`transform`](StreamTransformer::transform) method will panic if the internal
+/// `blocked_ids` mutex is poisoned. A mutex becomes poisoned when a thread panics
+/// while holding the lock. In normal operation this will not occur.
 #[derive(Debug)]
 pub struct FilterToolCallsMiddleware {
     config: FilterConfig,
@@ -178,15 +191,14 @@ impl<StateT: AgentState> StreamTransformer<StateT> for FilterToolCallsMiddleware
 
                     // Handle TOOL_CALL_CHUNK events
                     Event::ToolCallChunk(e) => {
-                        if let Some(ref tool_call_id) = e.tool_call_id {
-                            if self
+                        if let Some(ref tool_call_id) = e.tool_call_id
+                            && self
                                 .blocked_ids
                                 .lock()
                                 .expect("blocked_ids mutex poisoned")
                                 .contains(&tool_call_id.to_string())
-                            {
-                                return None; // Filter out
-                            }
+                        {
+                            return None; // Filter out blocked tool call chunks
                         }
                         Some(Ok(event))
                     }
