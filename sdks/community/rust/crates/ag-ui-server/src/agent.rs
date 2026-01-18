@@ -40,7 +40,7 @@
 
 use crate::error::AgentResult;
 use ag_ui_core::event::Event;
-use ag_ui_core::types::RunAgentInput;
+use ag_ui_core::types::input::RunAgentInput;
 use ag_ui_core::AgentState;
 use async_trait::async_trait;
 use futures::stream::BoxStream;

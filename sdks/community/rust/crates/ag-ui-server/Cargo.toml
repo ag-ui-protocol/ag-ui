@@ -10,7 +10,7 @@ categories = ["web-programming", "asynchronous"]
 
 [dependencies]
 # Core AG-UI
-ag-ui-core = { version = "0.1.0" }
+ag-ui-core = { path = "../ag-ui-core" }
 
 # Async runtime
 async-trait = "0.1"

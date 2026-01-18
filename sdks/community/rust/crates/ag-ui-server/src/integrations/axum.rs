@@ -74,7 +74,7 @@ use crate::agent::{Agent, AgentContext, HealthStatus, RequestMetadata};
 use crate::encoder::EventEncoder;
 use crate::error::AgentError;
 use ag_ui_core::event::{BaseEvent, Event, RunErrorEvent};
-use ag_ui_core::types::RunAgentInput;
+use ag_ui_core::types::input::RunAgentInput;
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::header::{ACCEPT, CACHE_CONTROL, CONNECTION, CONTENT_TYPE};

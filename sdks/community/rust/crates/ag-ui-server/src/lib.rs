@@ -99,9 +99,14 @@ pub use encoder::{encode_sse, ContentType, EventEncoder};
 pub use error::{AgentError, AgentResult, EncodeError, EncodeResult, StateError, StateResult};
 pub use state::{StateManager, StatePatch};
 
-// Re-export core types from ag-ui-core that users will need
+// Re-export the entire ag-ui-core crate for full access
+pub use ag_ui_core;
+
+// Re-export commonly used core types for convenience
 pub use ag_ui_core::event::{BaseEvent, Event};
-pub use ag_ui_core::types::{MessageId, RunAgentInput, RunId, ThreadId};
+pub use ag_ui_core::types::ids::{MessageId, RunId, ThreadId};
+pub use ag_ui_core::types::input::RunAgentInput;
+pub use ag_ui_core::types::message::Role;
 pub use ag_ui_core::AgentState;
 
 /// Prelude module for convenient imports.
@@ -118,7 +123,9 @@ pub mod prelude {
     pub use crate::state::{StateManager, StatePatch};
 
     pub use ag_ui_core::event::{BaseEvent, Event};
-    pub use ag_ui_core::types::{MessageId, RunAgentInput, RunId, ThreadId};
+    pub use ag_ui_core::types::ids::{MessageId, RunId, ThreadId};
+    pub use ag_ui_core::types::input::RunAgentInput;
+    pub use ag_ui_core::types::message::Role;
     pub use ag_ui_core::AgentState;
 
     pub use async_trait::async_trait;
