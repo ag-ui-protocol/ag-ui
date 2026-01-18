@@ -1,7 +1,7 @@
 [package]
 name = "ag-ui-server"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Server-side SDK for hosting AG-UI protocol agents."
 license = "MIT"
 readme = "README.md"
