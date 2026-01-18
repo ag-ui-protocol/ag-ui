@@ -1,6 +1,29 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::ops::Deref;
 use uuid::Uuid;
+
+/// Helper function to convert a string to a deterministic UUID by hashing.
+/// Used when the string is not a valid UUID format.
+fn string_to_uuid(s: &str) -> Uuid {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    s.hash(&mut hasher);
+    let h1 = hasher.finish();
+    s.hash(&mut hasher);
+    let h2 = hasher.finish();
+
+    let mut bytes = [0u8; 16];
+    bytes[0..8].copy_from_slice(&h1.to_le_bytes());
+    bytes[8..16].copy_from_slice(&h2.to_le_bytes());
+
+    // Set version to 4 (random) and variant bits
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    Uuid::from_bytes(bytes)
+}
 
 /// Macro to define a newtype ID based on Uuid.
 macro_rules! define_id_type {
@@ -11,8 +34,22 @@ macro_rules! define_id_type {
     // This arm handles calls that do specify extra derives (like Eq).
     ($name:ident, $($extra_derive:ident),*) => {
         #[doc = concat!(stringify!($name), ": A newtype used to prevent mixing it with other ID values.")]
-        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Eq, Hash, $($extra_derive),*)]
+        #[derive(Debug, Clone, PartialEq, Serialize, Eq, Hash, $($extra_derive),*)]
         pub struct $name(Uuid);
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let s = String::deserialize(deserializer)?;
+                // Try to parse as UUID first, if that fails hash the string
+                match Uuid::parse_str(&s) {
+                    Ok(uuid) => Ok(Self(uuid)),
+                    Err(_) => Ok(Self(string_to_uuid(&s))),
+                }
+            }
+        }
 
         impl $name {
             /// Creates a new random ID.
@@ -29,28 +66,7 @@ macro_rules! define_id_type {
                 let s = s.as_ref();
                 match Uuid::parse_str(s) {
                     Ok(uuid) => Self(uuid),
-                    Err(_) => {
-                        // Create a deterministic UUID from the string by
-                        // using a simple hash to fill 16 bytes
-                        use std::hash::{Hash, Hasher};
-                        use std::collections::hash_map::DefaultHasher;
-
-                        let mut hasher = DefaultHasher::new();
-                        s.hash(&mut hasher);
-                        let h1 = hasher.finish();
-                        s.hash(&mut hasher);
-                        let h2 = hasher.finish();
-
-                        let mut bytes = [0u8; 16];
-                        bytes[0..8].copy_from_slice(&h1.to_le_bytes());
-                        bytes[8..16].copy_from_slice(&h2.to_le_bytes());
-
-                        // Set version to 4 (random) and variant bits
-                        bytes[6] = (bytes[6] & 0x0f) | 0x40;
-                        bytes[8] = (bytes[8] & 0x3f) | 0x80;
-
-                        Self(Uuid::from_bytes(bytes))
-                    }
+                    Err(_) => Self(string_to_uuid(s)),
                 }
             }
         }
@@ -149,6 +165,8 @@ impl Deref for ToolCallId {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     // Test whether tool call ID has same format as rest of AG-UI
     #[test]
     fn test_tool_call_random() {
@@ -156,5 +174,54 @@ mod tests {
         assert_eq!(id.0.len(), 5 + 8);
         assert!(id.0.starts_with("call_"));
         dbg!(id);
+    }
+
+    #[test]
+    fn test_message_id_deserialize_valid_uuid() {
+        let uuid_str = "\"550e8400-e29b-41d4-a716-446655440000\"";
+        let id: MessageId = serde_json::from_str(uuid_str).unwrap();
+        assert_eq!(id.to_string(), "550e8400-e29b-41d4-a716-446655440000");
+    }
+
+    #[test]
+    fn test_message_id_deserialize_langgraph_format() {
+        // LangGraph uses "lc_run--<uuid>" format which is NOT a valid UUID
+        let langgraph_id = "\"lc_run--019bcffd-726e-7ca1-9708-98f26a168272\"";
+        let id: MessageId = serde_json::from_str(langgraph_id).unwrap();
+        // Should not panic, and should produce a deterministic UUID
+        assert!(!id.to_string().is_empty());
+
+        // Verify it's deterministic (same input = same output)
+        let id2: MessageId = serde_json::from_str(langgraph_id).unwrap();
+        assert_eq!(id, id2);
+    }
+
+    #[test]
+    fn test_run_id_deserialize_non_uuid_string() {
+        let arbitrary_id = "\"my-custom-run-id-123\"";
+        let id: RunId = serde_json::from_str(arbitrary_id).unwrap();
+        assert!(!id.to_string().is_empty());
+
+        // Verify determinism
+        let id2: RunId = serde_json::from_str(arbitrary_id).unwrap();
+        assert_eq!(id, id2);
+    }
+
+    #[test]
+    fn test_new_and_deserialize_produce_same_result() {
+        // The new() method and deserialize should produce the same UUID for the same input
+        let langgraph_id = "lc_run--019bcffd-726e-7ca1-9708-98f26a168272";
+        let from_new = MessageId::new(langgraph_id);
+        let from_deser: MessageId =
+            serde_json::from_str(&format!("\"{}\"", langgraph_id)).unwrap();
+        assert_eq!(from_new, from_deser);
+    }
+
+    #[test]
+    fn test_serialize_roundtrip_valid_uuid() {
+        let original = MessageId::random();
+        let serialized = serde_json::to_string(&original).unwrap();
+        let deserialized: MessageId = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(original, deserialized);
     }
 }
