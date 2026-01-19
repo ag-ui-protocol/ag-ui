@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Thanks to @jplikesbikes for the contribution
 
 ### Fixed
+- **FIXED**: `DatabaseSessionService` compatibility for HITL (human-in-the-loop) tool workflows (issue #957)
+  - Added `invocation_id` to FunctionResponse events - required by `DatabaseSessionService` for event tracking
+  - Session is now refreshed after `update_session_state` to prevent "stale session" errors from optimistic locking
+  - Both code paths (tool results with user message, and tool results only) now properly persist events
+  - Thanks to @lakshminarasimmanv for the contribution
 - **FIXED**: Text message events not emitted when non-streaming response includes client function call (issue #906)
   - In non-streaming mode, when an ADK event contained both text and an LRO (long-running) tool call, text was skipped entirely
   - Added `translate_text_only()` method to EventTranslator to handle text extraction for LRO events
