@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **NEW**: Native support for `RunAgentInput.context` in ADK agents (#959)
+  - Context from AG-UI is automatically stored in session state under `_ag_ui_context` key
+  - Accessible in tools via `tool_context.state.get(CONTEXT_STATE_KEY, [])`
+  - Accessible in instruction providers via `ctx.state.get(CONTEXT_STATE_KEY, [])`
+  - For ADK 1.22.0+, context is also available via `RunConfig.custom_metadata['ag_ui_context']`
+  - Follows the pattern established by LangGraph's context handling for cross-framework consistency
+  - `CONTEXT_STATE_KEY` constant exported from package for easy access
+  - See `examples/other/context_usage.py` for usage examples
 - **NEW**: Convert Gemini thought summaries to AG-UI THINKING events (#951)
   - When using `ThinkingConfig(include_thoughts=True)` with Gemini 2.5+ models, thought summaries are now emitted as THINKING events
   - Backwards-compatible: gracefully degrades on older google-genai SDK versions without the `part.thought` attribute
