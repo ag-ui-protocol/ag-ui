@@ -1394,6 +1394,11 @@ class ADKAgent:
             refreshed_session = await self._session_manager.get_session(backend_session_id, app_name, user_id)
             if refreshed_session:
                 session = refreshed_session
+            else:
+                logger.warning(
+                    f"Failed to refresh session {backend_session_id} after state update. "
+                    "Continuing with potentially stale session."
+                )
 
             # Convert messages
             unseen_messages = message_batch if message_batch is not None else await self._get_unseen_messages(input)
