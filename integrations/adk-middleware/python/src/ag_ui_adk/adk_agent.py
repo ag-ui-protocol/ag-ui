@@ -1519,7 +1519,21 @@ class ADKAgent:
                     )
                     function_response_parts.append(updated_function_response_part)
 
-                new_message = types.Content(parts=function_response_parts, role='user')
+                # Persist FunctionResponse event so DatabaseSessionService has invocation_id
+                from google.adk.sessions.session import Event
+                import time
+
+                function_response_content = types.Content(parts=function_response_parts, role='user')
+                function_response_event = Event(
+                    timestamp=time.time(),
+                    author='user',
+                    content=function_response_content,
+                    invocation_id=input.run_id,
+                )
+
+                await self._session_manager._session_service.append_event(session, function_response_event)
+
+                new_message = function_response_content
             else:
                 # No tool results, just use the user message
                 # If user_message is None (e.g., unseen_messages was empty because all were
