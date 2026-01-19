@@ -13,7 +13,7 @@ from typing import Dict, Iterable
 
 from .adk_agent import ADKAgent
 from .event_translator import EventTranslator, adk_events_to_messages
-from .session_manager import SessionManager
+from .session_manager import SessionManager, CONTEXT_STATE_KEY
 from .endpoint import add_adk_fastapi_endpoint, create_adk_app
 from .config import PredictStateMapping, normalize_predict_state
 
@@ -23,6 +23,7 @@ __all__ = [
     'create_adk_app',
     'EventTranslator',
     'SessionManager',
+    'CONTEXT_STATE_KEY',
     'PredictStateMapping',
     'normalize_predict_state',
     'adk_events_to_messages',

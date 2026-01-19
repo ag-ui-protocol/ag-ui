@@ -250,6 +250,46 @@ add_adk_fastapi_endpoint(app, technical_agent_wrapper, path="/agents/technical")
 add_adk_fastapi_endpoint(app, creative_agent_wrapper, path="/agents/creative")
 ```
 
+## Context Support
+
+The middleware automatically passes `context` from `RunAgentInput` to your ADK agents, following the pattern established by LangGraph. Context is stored in session state under the `_ag_ui_context` key and is accessible in both tools and instruction providers.
+
+### In Tools via Session State
+
+```python
+from google.adk.tools import ToolContext
+from ag_ui_adk import CONTEXT_STATE_KEY
+
+def my_tool(tool_context: ToolContext) -> str:
+    context_items = tool_context.state.get(CONTEXT_STATE_KEY, [])
+    for item in context_items:
+        print(f"{item['description']}: {item['value']}")
+    return "Done"
+```
+
+### In Instruction Providers via Session State
+
+```python
+from google.adk.agents.readonly_context import ReadonlyContext
+from ag_ui_adk import CONTEXT_STATE_KEY
+
+def dynamic_instructions(ctx: ReadonlyContext) -> str:
+    instructions = "You are a helpful assistant."
+
+    context_items = ctx.state.get(CONTEXT_STATE_KEY, [])
+    for item in context_items:
+        instructions += f"\n- {item['description']}: {item['value']}"
+
+    return instructions
+
+agent = LlmAgent(
+    name="assistant",
+    instruction=dynamic_instructions,  # Callable instruction provider
+)
+```
+
+See `examples/other/context_usage.py` for a complete demonstration.
+
 ## Tool Support
 
 The middleware provides complete bidirectional tool support, enabling AG-UI Protocol tools to execute within Google ADK agents. All tools supplied by the client are currently implemented as long-running tools that emit events to the client for execution and can be combined with backend tools provided by the agent to create a hybrid combined toolset.

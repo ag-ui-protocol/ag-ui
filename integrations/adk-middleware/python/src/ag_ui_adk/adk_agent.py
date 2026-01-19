@@ -30,7 +30,7 @@ from google.adk.auth.credential_service.in_memory_credential_service import InMe
 from google.genai import types
 
 from .event_translator import EventTranslator, adk_events_to_messages
-from .session_manager import SessionManager
+from .session_manager import SessionManager, CONTEXT_STATE_KEY
 from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
 from .config import PredictStateMapping
@@ -481,7 +481,12 @@ class ADKAgent:
     
     
     def _default_run_config(self, input: RunAgentInput) -> ADKRunConfig:
-        """Create default RunConfig with SSE streaming enabled."""
+        """Create default RunConfig with SSE streaming enabled.
+
+        Note: Context from RunAgentInput is stored in session state under the
+        '_ag_ui_context' key (CONTEXT_STATE_KEY), making it accessible to both
+        tools (via tool_context.state) and instruction providers (via ctx.state).
+        """
         return ADKRunConfig(
             streaming_mode=StreamingMode.SSE,
             save_input_blobs_as_artifacts=True
@@ -1379,14 +1384,24 @@ class ADKAgent:
             # Create RunConfig
             run_config = self._run_config_factory(input)
 
+            # Prepare state with context included
+            # Context from RunAgentInput is stored under _ag_ui_context key,
+            # making it accessible via tool_context.state['_ag_ui_context']
+            state_with_context = dict(input.state) if input.state else {}
+            if input.context:
+                state_with_context[CONTEXT_STATE_KEY] = [
+                    {"description": ctx.description, "value": ctx.value}
+                    for ctx in input.context
+                ]
+
             # Ensure session exists and get backend session_id
             session, backend_session_id = await self._ensure_session_exists(
-                app_name, user_id, input.thread_id, input.state
+                app_name, user_id, input.thread_id, state_with_context
             )
 
             # this will always update the backend states with the frontend states
             # Recipe Demo Example: if there is a state "salt" in the ingredients state and in frontend user remove this salt state using UI from the ingredients list then our backend should also update these state changes as well to sync both the states
-            await self._session_manager.update_session_state(backend_session_id, app_name, user_id, input.state)
+            await self._session_manager.update_session_state(backend_session_id, app_name, user_id, state_with_context)
 
             # Refresh session to get updated last_update_time after state update
             # This prevents "stale session" errors when using DatabaseSessionService
