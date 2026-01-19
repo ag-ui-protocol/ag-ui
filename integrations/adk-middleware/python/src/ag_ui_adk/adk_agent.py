@@ -1388,6 +1388,13 @@ class ADKAgent:
             # Recipe Demo Example: if there is a state "salt" in the ingredients state and in frontend user remove this salt state using UI from the ingredients list then our backend should also update these state changes as well to sync both the states
             await self._session_manager.update_session_state(backend_session_id, app_name, user_id, input.state)
 
+            # Refresh session to get updated last_update_time after state update
+            # This prevents "stale session" errors when using DatabaseSessionService
+            # See: https://github.com/ag-ui-protocol/ag-ui/issues/957
+            refreshed_session = await self._session_manager.get_session(backend_session_id, app_name, user_id)
+            if refreshed_session:
+                session = refreshed_session
+
             # Convert messages
             unseen_messages = message_batch if message_batch is not None else await self._get_unseen_messages(input)
 
@@ -1461,7 +1468,8 @@ class ADKAgent:
                 function_response_event = Event(
                     timestamp=time.time(),
                     author='user',
-                    content=function_response_content
+                    content=function_response_content,
+                    invocation_id=input.run_id,
                 )
 
                 await self._session_manager._session_service.append_event(session, function_response_event)
