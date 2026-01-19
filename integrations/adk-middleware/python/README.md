@@ -288,6 +288,19 @@ agent = LlmAgent(
 )
 ```
 
+### Alternative: Via RunConfig custom_metadata (ADK 1.22.0+)
+
+For users on ADK 1.22.0 or later, context is also available via `RunConfig.custom_metadata`:
+
+```python
+def dynamic_instructions(ctx: ReadonlyContext) -> str:
+    # Alternative access via custom_metadata (ADK 1.22.0+)
+    if ctx.run_config and ctx.run_config.custom_metadata:
+        context_items = ctx.run_config.custom_metadata.get('ag_ui_context', [])
+```
+
+**Note:** Session state is the recommended approach as it works with all ADK versions.
+
 See `examples/other/context_usage.py` for a complete demonstration.
 
 ## Tool Support

@@ -11,6 +11,12 @@ via session state. Context is stored under the '_ag_ui_context' key
 
 Context is automatically passed through by the ADK middleware, following the
 pattern established by LangGraph's context handling.
+
+Alternative (ADK 1.22.0+):
+For users on ADK 1.22.0 or later, context is also available via RunConfig:
+    ctx.run_config.custom_metadata.get('ag_ui_context', [])
+
+The session state approach is recommended as it works with all ADK versions.
 """
 
 import asyncio

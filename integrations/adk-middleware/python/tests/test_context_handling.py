@@ -323,7 +323,7 @@ class TestCustomRunConfigFactory:
 
 
 class TestDefaultRunConfigUnchanged:
-    """Test that _default_run_config works correctly without custom_metadata."""
+    """Test that _default_run_config works correctly."""
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):
@@ -374,6 +374,98 @@ class TestDefaultRunConfigUnchanged:
         assert run_config is not None
         assert run_config.streaming_mode == StreamingMode.SSE
         assert run_config.save_input_blobs_as_artifacts is True
+
+
+class TestVersionDetection:
+    """Test ADK version detection for custom_metadata support."""
+
+    @pytest.fixture(autouse=True)
+    def reset_session_manager(self):
+        """Reset session manager before each test."""
+        try:
+            SessionManager.reset_instance()
+        except RuntimeError:
+            pass
+        yield
+        try:
+            SessionManager.reset_instance()
+        except RuntimeError:
+            pass
+
+    @pytest.fixture
+    def mock_agent(self):
+        """Create a mock ADK agent."""
+        agent = Mock(spec=Agent)
+        agent.name = "test_agent"
+        return agent
+
+    @pytest.fixture
+    def adk_agent(self, mock_agent):
+        """Create an ADKAgent instance."""
+        return ADKAgent(
+            adk_agent=mock_agent,
+            app_name="test_app",
+            user_id="test_user",
+            use_in_memory_services=True
+        )
+
+    def test_run_config_supports_custom_metadata_returns_bool(self, adk_agent):
+        """Test that _run_config_supports_custom_metadata returns a boolean."""
+        result = adk_agent._run_config_supports_custom_metadata()
+        assert isinstance(result, bool)
+
+    def test_custom_metadata_included_when_supported(self, adk_agent):
+        """Test that custom_metadata is included when ADK supports it."""
+        input_data = RunAgentInput(
+            thread_id="test_thread",
+            run_id="test_run",
+            messages=[UserMessage(id="msg1", role="user", content="Hello")],
+            context=[
+                Context(description="key1", value="value1"),
+                Context(description="key2", value="value2"),
+            ],
+            state={},
+            tools=[],
+            forwarded_props={}
+        )
+
+        # Check if custom_metadata is supported
+        supports_custom_metadata = adk_agent._run_config_supports_custom_metadata()
+
+        run_config = adk_agent._default_run_config(input_data)
+
+        if supports_custom_metadata:
+            # If supported, custom_metadata should contain context
+            assert hasattr(run_config, 'custom_metadata')
+            assert run_config.custom_metadata is not None
+            assert 'ag_ui_context' in run_config.custom_metadata
+            context_data = run_config.custom_metadata['ag_ui_context']
+            assert len(context_data) == 2
+            assert {"description": "key1", "value": "value1"} in context_data
+            assert {"description": "key2", "value": "value2"} in context_data
+        else:
+            # If not supported, custom_metadata should not be set
+            # (or the attribute doesn't exist)
+            custom_metadata = getattr(run_config, 'custom_metadata', None)
+            assert custom_metadata is None
+
+    def test_empty_context_no_custom_metadata(self, adk_agent):
+        """Test that empty context doesn't set custom_metadata."""
+        input_data = RunAgentInput(
+            thread_id="test_thread",
+            run_id="test_run",
+            messages=[UserMessage(id="msg1", role="user", content="Hello")],
+            context=[],
+            state={},
+            tools=[],
+            forwarded_props={}
+        )
+
+        run_config = adk_agent._default_run_config(input_data)
+
+        # Even if supported, empty context should not set custom_metadata
+        custom_metadata = getattr(run_config, 'custom_metadata', None)
+        assert custom_metadata is None
 
 
 # Run tests with pytest

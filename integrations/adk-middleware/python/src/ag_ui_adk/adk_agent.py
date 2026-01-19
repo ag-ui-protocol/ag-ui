@@ -483,16 +483,42 @@ class ADKAgent:
     def _default_run_config(self, input: RunAgentInput) -> ADKRunConfig:
         """Create default RunConfig with SSE streaming enabled.
 
-        Note: Context from RunAgentInput is stored in session state under the
+        Context from RunAgentInput is always stored in session state under the
         '_ag_ui_context' key (CONTEXT_STATE_KEY), making it accessible to both
         tools (via tool_context.state) and instruction providers (via ctx.state).
+
+        Additionally, for ADK 1.22.0+, context is also included in RunConfig's
+        custom_metadata field, providing an alternative access pattern via
+        ctx.run_config.custom_metadata['ag_ui_context'].
         """
-        return ADKRunConfig(
-            streaming_mode=StreamingMode.SSE,
-            save_input_blobs_as_artifacts=True
-        )
-    
-    
+        config_kwargs = {
+            'streaming_mode': StreamingMode.SSE,
+            'save_input_blobs_as_artifacts': True,
+        }
+
+        # For ADK 1.22.0+, also include context in custom_metadata
+        if self._run_config_supports_custom_metadata() and input.context:
+            config_kwargs['custom_metadata'] = {
+                'ag_ui_context': [
+                    {"description": ctx.description, "value": ctx.value}
+                    for ctx in input.context
+                ]
+            }
+
+        return ADKRunConfig(**config_kwargs)
+
+    def _run_config_supports_custom_metadata(self) -> bool:
+        """Check if the installed ADK version supports custom_metadata in RunConfig.
+
+        The custom_metadata parameter was added to RunConfig in ADK 1.22.0.
+        This method checks for its presence to maintain backward compatibility.
+
+        Returns:
+            True if RunConfig accepts custom_metadata, False otherwise
+        """
+        sig = inspect.signature(ADKRunConfig.__init__)
+        return 'custom_metadata' in sig.parameters
+
     def _runner_supports_plugin_close_timeout(self) -> bool:
         """Check if the installed ADK version supports plugin_close_timeout.
 
