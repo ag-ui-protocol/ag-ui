@@ -1,7 +1,10 @@
 "use client";
 
-import React, { useState, useCallback, useRef, useEffect, createContext, useContext, useMemo } from "react";
-import { AssistantMessage, type AssistantMessageProps } from "@copilotkit/react-ui";
+import React, { useState, useCallback, useRef, useEffect, createContext, useMemo } from "react";
+import { useCopilotChat } from "@copilotkit/react-core";
+
+/** Marker in tool results to identify blocked tool calls - must match middleware */
+const BLOCKED_TOOL_MARKER = "TOOL_BLOCKED_BY_SECURITY_POLICY";
 
 /**
  * Represents a security deviation (blocked tool call) detected by the middleware.
@@ -15,115 +18,53 @@ export interface DeviationLog {
   toolName: string;
   /** Reason the tool was blocked */
   reason: string;
-  /** Optional full message content */
-  message?: string;
+  /** Display message for the UI */
+  displayMessage?: string;
 }
 
 /**
- * Context for passing deviation tracking to the SecurityAwareAssistantMessage component.
+ * Context for manually adding deviations from other components.
  * @internal
  */
 interface DeviationContextValue {
   addDeviation: (deviation: DeviationLog) => void;
-  processedIds: React.MutableRefObject<Set<string>>;
+  processedIds: Set<string>;
 }
 
 const DeviationContext = createContext<DeviationContextValue | null>(null);
 
 /**
- * Custom AssistantMessage component that detects blocked tool messages
- * and reports them to the deviation tracking system.
- * 
- * This component wraps the default CopilotKit AssistantMessage component
- * to preserve all default styling and functionality while adding
- * deviation detection.
- * 
- * @example
- * ```tsx
- * const { SecurityAwareAssistantMessage } = useSecurityDeviations();
- * 
- * <CopilotChat
- *   AssistantMessage={SecurityAwareAssistantMessage}
- *   // ... other props
- * />
- * ```
- */
-function SecurityAwareAssistantMessageInner(props: AssistantMessageProps) {
-  const ctx = useContext(DeviationContext);
-  const { message } = props;
-
-  useEffect(() => {
-    if (!ctx || !message) return;
-
-    const msgId = message.id;
-    const content = message.content;
-
-    // Detect blocked messages by their ID pattern
-    // The middleware emits messages with IDs starting with "blocked-msg-{toolCallId}"
-    if (msgId?.startsWith("blocked-msg-") && !ctx.processedIds.current.has(msgId)) {
-      ctx.processedIds.current.add(msgId);
-
-      // Extract tool name from content (pattern: tool "TOOL_NAME")
-      const toolNameMatch = content?.match(/tool "([^"]+)"/i);
-      const toolName = toolNameMatch?.[1] ?? "unknown";
-
-      // Extract reason from content if present (pattern: Reason: REASON)
-      const reasonMatch = content?.match(/Reason:\s*([A-Z_]+)/i);
-      const reason = reasonMatch?.[1] ?? "NOT_IN_ALLOWLIST";
-
-      ctx.addDeviation({
-        id: msgId,
-        timestamp: Date.now(),
-        toolName,
-        reason,
-        message: content,
-      });
-    }
-  }, [ctx, message]);
-
-  // Use the default CopilotKit AssistantMessage component for proper styling
-  return React.createElement(AssistantMessage, props);
-}
-
-/**
  * Hook to track security deviations (blocked tool calls) from the SecureToolsMiddleware.
  * 
- * This hook provides:
+ * This hook detects blocked tool calls by monitoring tool result messages for the
+ * BLOCKED_TOOL_MARKER. When a blocked tool is detected, it's added to the deviations list.
+ * 
+ * The hook provides:
  * 1. `deviations` - Array of blocked tool call records
  * 2. `clearDeviations` - Function to clear the deviation log
- * 3. `DeviationProvider` - Wrapper component that enables deviation tracking
- * 4. `SecurityAwareAssistantMessage` - Custom message component for CopilotChat
- * 
- * The middleware emits blocked tool messages with IDs starting with "blocked-msg-".
- * The `SecurityAwareAssistantMessage` component detects these and adds them to the
- * deviation log automatically.
+ * 3. `addDeviation` - Manually add a deviation to the log
+ * 4. `DeviationProvider` - Wrapper component for context (if manual additions needed)
+ * 5. `blockedMessages` - Array of display messages for blocked tools (for inline display)
  * 
  * @example
  * ```tsx
  * function SecureToolsDemo() {
- *   const { 
- *     deviations, 
- *     clearDeviations,
- *     DeviationProvider, 
- *     SecurityAwareAssistantMessage 
- *   } = useSecurityDeviations();
+ *   const { deviations, clearDeviations, blockedMessages } = useSecurityDeviations();
  * 
  *   return (
  *     <CopilotKit runtimeUrl="/api/copilotkit" agent="secure_tools">
- *       <DeviationProvider>
- *         {deviations.length > 0 && (
- *           <div className="deviation-panel">
- *             <h3>Security Deviations:</h3>
- *             {deviations.map(d => (
- *               <div key={d.id}>
- *                 Tool "{d.toolName}" blocked: {d.reason}
- *               </div>
- *             ))}
- *             <button onClick={clearDeviations}>Clear</button>
- *           </div>
- *         )}
- *         <CopilotChat AssistantMessage={SecurityAwareAssistantMessage} />
- *       </DeviationProvider>
+ *       {deviations.length > 0 && (
+ *         <div className="deviation-panel">
+ *           <h3>Security Deviations:</h3>
+ *           {deviations.map(d => (
+ *             <div key={d.id}>
+ *               Tool "{d.toolName}" blocked: {d.reason}
+ *             </div>
+ *           ))}
+ *           <button onClick={clearDeviations}>Clear</button>
+ *         </div>
+ *       )}
+ *       <CopilotChat />
  *     </CopilotKit>
  *   );
  * }
@@ -131,46 +72,129 @@ function SecurityAwareAssistantMessageInner(props: AssistantMessageProps) {
  */
 export function useSecurityDeviations() {
   const [deviations, setDeviations] = useState<DeviationLog[]>([]);
-  const processedIds = useRef<Set<string>>(new Set());
+  const [blockedMessages, setBlockedMessages] = useState<Array<{ id: string; message: string }>>([]);
+  const processedIdsRef = useRef<Set<string>>(new Set());
+  
+  // Try to get visibleMessages from CopilotChat context
+  // This will be undefined if not inside a CopilotKit provider
+  let chatContext: ReturnType<typeof useCopilotChat> | null = null;
+  try {
+    chatContext = useCopilotChat();
+  } catch {
+    // Not inside CopilotKit provider, that's fine
+  }
 
   const addDeviation = useCallback((deviation: DeviationLog) => {
+    if (processedIdsRef.current.has(deviation.id)) return;
+    processedIdsRef.current.add(deviation.id);
     setDeviations((prev) => [...prev, deviation]);
+    if (deviation.displayMessage) {
+      setBlockedMessages((prev) => [...prev, { id: deviation.id, message: deviation.displayMessage! }]);
+    }
   }, []);
 
   const clearDeviations = useCallback(() => {
     setDeviations([]);
-    processedIds.current.clear();
+    setBlockedMessages([]);
+    processedIdsRef.current.clear();
   }, []);
 
-  // Memoize the context value to prevent unnecessary re-renders
+  // Detect blocked tool calls from messages
+  useEffect(() => {
+    if (!chatContext?.visibleMessages) return;
+    
+    const messages = chatContext.visibleMessages;
+    
+    for (const msg of messages) {
+      // Check for result messages that might be blocked tool results
+      // The message structure varies, but we look for content containing our marker
+      const msgAny = msg as unknown as Record<string, unknown>;
+      const id = (msgAny.id as string) ?? "";
+      
+      // Skip if already processed
+      if (processedIdsRef.current.has(id)) continue;
+      
+      // Check if this is a blocked result (ID pattern: blocked-result-*)
+      if (id.startsWith("blocked-result-")) {
+        processedIdsRef.current.add(id);
+        
+        // Try to parse the content to get tool info
+        let content = "";
+        if (typeof msgAny.content === "string") {
+          content = msgAny.content;
+        } else if (typeof msgAny.result === "string") {
+          content = msgAny.result;
+        }
+        
+        // Check for our marker
+        if (content.includes(BLOCKED_TOOL_MARKER)) {
+          try {
+            const parsed = JSON.parse(content);
+            // Extract tool call ID from the message ID (blocked-result-{toolCallId})
+            const toolCallId = id.replace("blocked-result-", "");
+            
+            setDeviations((prev) => [
+              ...prev,
+              {
+                id,
+                timestamp: Date.now(),
+                toolName: "unknown", // We don't have the tool name in the result
+                reason: "NOT_IN_ALLOWLIST",
+                displayMessage: parsed.message,
+              },
+            ]);
+          } catch {
+            // Couldn't parse, still add as deviation
+            setDeviations((prev) => [
+              ...prev,
+              {
+                id,
+                timestamp: Date.now(),
+                toolName: "unknown",
+                reason: "NOT_IN_ALLOWLIST",
+              },
+            ]);
+          }
+        }
+      }
+    }
+  }, [chatContext?.visibleMessages]);
+
+  // Memoize context value
   const contextValue = useMemo<DeviationContextValue>(
-    () => ({ addDeviation, processedIds }),
+    () => ({ addDeviation, processedIds: processedIdsRef.current }),
     [addDeviation]
   );
 
-  // Provider component that wraps content and enables deviation tracking
+  // Provider component for manual deviation additions
   const DeviationProvider = useCallback(
     ({ children }: { children: React.ReactNode }) =>
       React.createElement(DeviationContext.Provider, { value: contextValue }, children),
     [contextValue]
   );
 
-  // Memoize the AssistantMessage component reference
-  const SecurityAwareAssistantMessage = useMemo(
-    () => SecurityAwareAssistantMessageInner,
-    []
-  );
-
   return {
     /** Array of detected security deviations (blocked tool calls) */
     deviations,
+    /** Array of display messages for blocked tools */
+    blockedMessages,
     /** Clear all recorded deviations */
     clearDeviations,
     /** Manually add a deviation to the log */
     addDeviation,
-    /** Provider component - wrap your CopilotChat with this */
+    /** Provider component - wrap your content with this for manual additions */
     DeviationProvider,
-    /** Custom AssistantMessage component - pass to CopilotChat's AssistantMessage prop */
-    SecurityAwareAssistantMessage,
   };
+}
+
+/**
+ * Hook to access deviation context for manual additions.
+ * Must be used within a DeviationProvider.
+ */
+export function useDeviationContext() {
+  const ctx = React.useContext(DeviationContext);
+  if (!ctx) {
+    throw new Error("useDeviationContext must be used within a DeviationProvider");
+  }
+  return ctx;
 }
