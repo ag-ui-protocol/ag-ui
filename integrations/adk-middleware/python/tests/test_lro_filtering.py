@@ -20,6 +20,7 @@ async def test_translate_skips_lro_function_calls():
     # Prepare mock ADK event
     adk_event = MagicMock()
     adk_event.author = "assistant"
+    adk_event.partial = False  # Not a streaming preview (required for function call processing)
     adk_event.content = MagicMock()
     adk_event.content.parts = []  # no text
 
@@ -99,8 +100,124 @@ async def test_translate_lro_function_calls_only_emits_lro():
         assert getattr(ev, 'tool_call_id', None) == lro_id
 
 
+async def test_translate_skips_function_calls_from_partial_events():
+    """Ensure function calls from partial events are skipped.
+
+    With PROGRESSIVE_SSE_STREAMING (enabled by default in google-adk >= 1.22.0),
+    partial events contain streaming "previews" of function calls that should not
+    be translated to TOOL_CALL events. Only confirmed function calls (partial=False)
+    should be emitted.
+
+    See: https://github.com/ag-ui-protocol/ag-ui/issues/968
+    """
+    translator = EventTranslator()
+
+    # Prepare mock ADK event with partial=True (streaming preview)
+    adk_event = MagicMock()
+    adk_event.author = "assistant"
+    adk_event.partial = True  # This is a streaming preview
+    adk_event.content = MagicMock()
+    adk_event.content.parts = []  # no text
+
+    # Function call in a partial event should be skipped
+    func_call = MagicMock()
+    func_call.id = "preview-tool-call-1"
+    func_call.name = "some_tool"
+    func_call.args = {"x": 1}
+
+    adk_event.get_function_calls = lambda: [func_call]
+    adk_event.long_running_tool_ids = []
+
+    events = []
+    async for e in translator.translate(adk_event, "thread", "run"):
+        events.append(e)
+
+    # No tool call events should be emitted for partial events
+    event_types = [str(ev.type).split('.')[-1] for ev in events]
+    assert event_types.count("TOOL_CALL_START") == 0, \
+        f"Expected no TOOL_CALL_START from partial event, got {event_types}"
+    assert event_types.count("TOOL_CALL_ARGS") == 0
+    assert event_types.count("TOOL_CALL_END") == 0
+
+
+async def test_translate_emits_function_calls_from_confirmed_events():
+    """Ensure function calls from confirmed (non-partial) events are emitted.
+
+    This is the counterpart to test_translate_skips_function_calls_from_partial_events.
+    When partial=False, function calls should be processed normally.
+    """
+    translator = EventTranslator()
+
+    # Prepare mock ADK event with partial=False (confirmed)
+    adk_event = MagicMock()
+    adk_event.author = "assistant"
+    adk_event.partial = False  # This is a confirmed event
+    adk_event.content = MagicMock()
+    adk_event.content.parts = []  # no text
+
+    # Function call in a confirmed event should be emitted
+    func_call = MagicMock()
+    func_call.id = "confirmed-tool-call-1"
+    func_call.name = "some_tool"
+    func_call.args = {"x": 1}
+
+    adk_event.get_function_calls = lambda: [func_call]
+    adk_event.long_running_tool_ids = []
+
+    events = []
+    async for e in translator.translate(adk_event, "thread", "run"):
+        events.append(e)
+
+    # Tool call events should be emitted for confirmed events
+    event_types = [str(ev.type).split('.')[-1] for ev in events]
+    assert event_types.count("TOOL_CALL_START") == 1, \
+        f"Expected 1 TOOL_CALL_START from confirmed event, got {event_types}"
+    assert event_types.count("TOOL_CALL_ARGS") == 1
+    assert event_types.count("TOOL_CALL_END") == 1
+
+    # Verify the correct tool call ID was emitted
+    tool_call_ids = [getattr(ev, 'tool_call_id', None) for ev in events if hasattr(ev, 'tool_call_id')]
+    assert "confirmed-tool-call-1" in tool_call_ids
+
+
+async def test_translate_handles_missing_partial_attribute():
+    """Ensure backwards compatibility when partial attribute is missing.
+
+    Older versions of google-adk may not have the partial attribute on events.
+    In this case, we should default to processing the function calls (partial=False behavior).
+    """
+    translator = EventTranslator()
+
+    # Prepare mock ADK event WITHOUT partial attribute (simulating older google-adk)
+    adk_event = MagicMock(spec=['author', 'content', 'get_function_calls', 'long_running_tool_ids'])
+    adk_event.author = "assistant"
+    # Note: partial is NOT set - spec prevents MagicMock from auto-creating it
+    adk_event.content = MagicMock()
+    adk_event.content.parts = []
+
+    func_call = MagicMock()
+    func_call.id = "legacy-tool-call-1"
+    func_call.name = "legacy_tool"
+    func_call.args = {"y": 2}
+
+    adk_event.get_function_calls = lambda: [func_call]
+    adk_event.long_running_tool_ids = []
+
+    events = []
+    async for e in translator.translate(adk_event, "thread", "run"):
+        events.append(e)
+
+    # Tool call events should be emitted (backwards compatible behavior)
+    event_types = [str(ev.type).split('.')[-1] for ev in events]
+    assert event_types.count("TOOL_CALL_START") == 1, \
+        f"Expected 1 TOOL_CALL_START for backwards compatibility, got {event_types}"
+
+
 if __name__ == "__main__":
     asyncio.run(test_translate_skips_lro_function_calls())
     asyncio.run(test_translate_lro_function_calls_only_emits_lro())
-    print("\n✅ LRO filtering tests ran to completion")
+    asyncio.run(test_translate_skips_function_calls_from_partial_events())
+    asyncio.run(test_translate_emits_function_calls_from_confirmed_events())
+    asyncio.run(test_translate_handles_missing_partial_attribute())
+    print("\n✅ LRO and partial filtering tests ran to completion")
 
