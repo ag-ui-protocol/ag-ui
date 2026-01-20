@@ -17,8 +17,20 @@ class TestEndpointErrorHandling:
         params=[FastAPI, APIRouter]
     )
     def app(self, request):
-        """Create a FastAPI app."""
+        """Create a FastAPI app or APIRouter."""
         return request.param()
+
+    def get_test_app(self, app):
+        """Return app suitable for TestClient (wrap APIRouter in FastAPI if needed).
+
+        Note: This must be called AFTER routes are added to the router,
+        since include_router copies routes at the time of inclusion.
+        """
+        if isinstance(app, APIRouter):
+            fastapi_app = FastAPI()
+            fastapi_app.include_router(app)
+            return fastapi_app
+        return app
 
     async def test_encoding_error_handling(self, app):
         """Test that encoding errors are properly handled."""
@@ -67,7 +79,7 @@ class TestEndpointErrorHandling:
             mock_encoder_class.return_value = mock_encoder
 
             # Test the endpoint
-            with TestClient(app) as client:
+            with TestClient(self.get_test_app(app)) as client:
                 response = client.post(
                     "/test",
                     json=test_input,
@@ -128,7 +140,7 @@ class TestEndpointErrorHandling:
         }
 
         # Test the endpoint
-        with TestClient(app) as client:
+        with TestClient(self.get_test_app(app)) as client:
             response = client.post(
                 "/test",
                 json=test_input,
@@ -204,7 +216,7 @@ class TestEndpointErrorHandling:
         }
 
         # Test the endpoint with real encoder
-        with TestClient(app) as client:
+        with TestClient(self.get_test_app(app)) as client:
             response = client.post(
                 "/test",
                 json=test_input,
@@ -277,7 +289,7 @@ class TestEndpointErrorHandling:
             mock_encoder_class.return_value = mock_encoder
 
             # Test the endpoint
-            with TestClient(app) as client:
+            with TestClient(self.get_test_app(app)) as client:
                 response = client.post(
                     "/test",
                     json=test_input,
@@ -354,7 +366,7 @@ class TestEndpointErrorHandling:
             mock_encoder_class.return_value = mock_encoder
 
             # Test the endpoint
-            with TestClient(app) as client:
+            with TestClient(self.get_test_app(app)) as client:
                 response = client.post(
                     "/test",
                     json=test_input,

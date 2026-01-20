@@ -428,8 +428,20 @@ class TestAgentsStateEndpoint:
         params=[FastAPI, APIRouter]
     )
     def app(self, request):
-        """Create a FastAPI app."""
+        """Create a FastAPI app or APIRouter."""
         return request.param()
+
+    def get_test_app(self, app):
+        """Return app suitable for TestClient (wrap APIRouter in FastAPI if needed).
+
+        Note: This must be called AFTER routes are added to the router,
+        since include_router copies routes at the time of inclusion.
+        """
+        if isinstance(app, APIRouter):
+            fastapi_app = FastAPI()
+            fastapi_app.include_router(app)
+            return fastapi_app
+        return app
 
     def test_agents_state_endpoint_exists(self, app, mock_agent):
         """The /agents/state endpoint should be registered."""
@@ -462,7 +474,7 @@ class TestAgentsStateEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
 
-        with TestClient(app) as client:
+        with TestClient(self.get_test_app(app)) as client:
             response = client.post(
                 "/agents/state",
                 json={"threadId": "test-thread-123"}
@@ -489,7 +501,7 @@ class TestAgentsStateEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
 
-        with TestClient(app) as client:
+        with TestClient(self.get_test_app(app)) as client:
             response = client.post(
                 "/agents/state",
                 json={"threadId": "nonexistent-thread"}
@@ -521,7 +533,7 @@ class TestAgentsStateEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
 
-        with TestClient(app) as client:
+        with TestClient(self.get_test_app(app)) as client:
             response = client.post(
                 "/agents/state",
                 json={"threadId": "empty-thread"}
@@ -540,7 +552,7 @@ class TestAgentsStateEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
 
-        with TestClient(app) as client:
+        with TestClient(self.get_test_app(app)) as client:
             response = client.post(
                 "/agents/state",
                 json={"threadId": "error-thread"}
@@ -572,7 +584,7 @@ class TestAgentsStateEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
 
-        with TestClient(app) as client:
+        with TestClient(self.get_test_app(app)) as client:
             response = client.post(
                 "/agents/state",
                 json={
@@ -609,8 +621,20 @@ class TestMessageHistoryIntegration:
         params=[FastAPI, APIRouter]
     )
     def app(self, request):
-        """Create a FastAPI app."""
+        """Create a FastAPI app or APIRouter."""
         return request.param()
+
+    def get_test_app(self, app):
+        """Return app suitable for TestClient (wrap APIRouter in FastAPI if needed).
+
+        Note: This must be called AFTER routes are added to the router,
+        since include_router copies routes at the time of inclusion.
+        """
+        if isinstance(app, APIRouter):
+            fastapi_app = FastAPI()
+            fastapi_app.include_router(app)
+            return fastapi_app
+        return app
 
     @pytest.mark.asyncio
     async def test_agents_state_with_real_session_manager(self, app, real_agent):
@@ -625,7 +649,7 @@ class TestMessageHistoryIntegration:
         )
 
         async with AsyncClient(
-            transport=ASGITransport(app=app),
+            transport=ASGITransport(app=self.get_test_app(app)),
             base_url="http://test"
         ) as client:
             # Now /agents/state should find the existing session
@@ -645,7 +669,7 @@ class TestMessageHistoryIntegration:
         add_adk_fastapi_endpoint(app, real_agent, path="/")
 
         async with AsyncClient(
-            transport=ASGITransport(app=app),
+            transport=ASGITransport(app=self.get_test_app(app)),
             base_url="http://test"
         ) as client:
             response = await client.post(
@@ -767,7 +791,7 @@ class TestLiveServerIntegration:
         else:
             raise ValueError("app fixture must be FastAPI or APIRouter")
 
-        with UvicornServer(app) as server:
+        with UvicornServer(main_app) as server:
             yield server
 
     def test_live_server_agents_state_endpoint(self, live_server, live_agent):
