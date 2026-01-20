@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Thanks to @jplikesbikes for the contribution
 
 ### Fixed
+- **FIXED**: Duplicate `TOOL_CALL_START` events with google-adk >= 1.22.0 (issue #968)
+  - google-adk 1.22.0 enables `PROGRESSIVE_SSE_STREAMING` by default, which sends function call "previews" in partial events
+  - The middleware now skips function calls from `partial=True` events, only processing confirmed calls (`partial=False`)
+  - Backwards-compatible: uses `getattr(adk_event, 'partial', False)` for older google-adk versions without the attribute
 - **FIXED**: `DatabaseSessionService` compatibility for HITL (human-in-the-loop) tool workflows (issue #957)
   - Added `invocation_id` to FunctionResponse events - required by `DatabaseSessionService` for event tracking
   - Session is now refreshed after `update_session_state` to prevent "stale session" errors from optimistic locking
