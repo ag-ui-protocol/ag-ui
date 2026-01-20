@@ -133,6 +133,39 @@ Or update data-bound values:
 
 **IMPORTANT**: Do NOT send \`beginRendering\` again for updates to an existing surface. It's only needed for the initial render.
 
+### Working with Forms and Data Binding
+
+A2UI supports forms where user input is automatically stored in a data model and can be retrieved when buttons are clicked.
+
+**How it works:**
+1. **TextField binds to a path**: Use \`"text": { "path": "/form/fieldName" }\` to bind input to the data model
+2. **Initialize the data model**: Send a \`dataModelUpdate\` to set initial values
+3. **Button retrieves values**: Use \`action.context\` with path references to include form values when clicked
+4. **Agent receives resolved values**: The context in the action will contain the actual values the user entered
+
+**Form Example:**
+
+\`\`\`json
+[
+  {
+    "surfaceUpdate": {
+      "surfaceId": "my-form",
+      "components": [
+        { "id": "root", "component": { "Card": { "child": "form-col" } } },
+        { "id": "form-col", "component": { "Column": { "children": { "explicitList": ["name-field", "submit-btn"] } } } },
+        { "id": "name-field", "component": { "TextField": { "label": { "literalString": "Name" }, "text": { "path": "/form/name" } } } },
+        { "id": "submit-btn", "component": { "Button": { "child": "btn-text", "action": { "name": "submit", "context": [{ "key": "userName", "value": { "path": "/form/name" } }] } } } },
+        { "id": "btn-text", "component": { "Text": { "text": { "literalString": "Submit" } } } }
+      ]
+    }
+  },
+  { "dataModelUpdate": { "surfaceId": "my-form", "contents": [{ "key": "form", "valueMap": [{ "key": "name", "valueString": "" }] }] } },
+  { "beginRendering": { "surfaceId": "my-form", "root": "root" } }
+]
+\`\`\`
+
+When the user types "Alice" and clicks Submit, you'll receive: \`Context: {"userName": "Alice"}\`
+
 ### Handling User Interactions
 
 When a user interacts with a UI surface you rendered (clicks a button, submits a form, etc.),
