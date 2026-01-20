@@ -58,7 +58,7 @@
   },
   "dependencies": {
     "@ai-sdk/ui-utils": "^1.1.19",
-    "@mastra/client-js": "^0.15.2",
+    "@mastra/client-js": "^0.17.2",
     "rxjs": "7.8.1"
   },
   "peerDependencies": {
