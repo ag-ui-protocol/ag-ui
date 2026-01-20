@@ -343,4 +343,10 @@ export const agentsIntegrations = {
     ),
     human_in_the_loop: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/human-in-the-loop`, debug: true }),
   }),
+
+  // Built-in Agent with A2UI middleware - uses dedicated API route /api/copilotkita2ui
+  // The actual agent is created in the API route, this is a placeholder for type satisfaction
+  "builtin-a2ui": async () => ({
+    a2ui_chat: null as unknown as AbstractAgent,
+  }),
 } satisfies AgentsMap;

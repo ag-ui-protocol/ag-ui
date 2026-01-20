@@ -3,8 +3,13 @@
 import React from "react";
 import "@copilotkit/react-core/v2/styles.css";
 import { CopilotChat, CopilotKitProvider } from "@copilotkit/react-core/v2";
+import { createA2UIMessageRenderer } from "@copilotkit/a2ui-renderer";
+import { theme } from "./theme";
 
 export const dynamic = "force-dynamic";
+
+const A2UIMessageRenderer = createA2UIMessageRenderer({ theme });
+const activityRenderers = [A2UIMessageRenderer];
 
 interface PageProps {
   params: Promise<{
@@ -17,23 +22,16 @@ export default function Page({ params }: PageProps) {
 
   return (
     <CopilotKitProvider
-      runtimeUrl={`/api/copilotkitnext/${integrationId}`}
+      runtimeUrl={`/api/copilotkita2ui/${integrationId}`}
       showDevConsole="auto"
+      renderActivityMessages={activityRenderers}
     >
       <main
         className="flex min-h-screen flex-1 flex-col overflow-hidden"
         style={{ minHeight: "100dvh" }}
       >
-        <Chat threadId={`${integrationId}-vnext_chat`} />
+        <CopilotChat style={{ flex: 1, minHeight: "100%" }} />
       </main>
     </CopilotKitProvider>
-  );
-}
-
-function Chat({ threadId }: { threadId: string }) {
-  return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <CopilotChat style={{ flex: 1, minHeight: "100%" }} threadId={threadId} />
-    </div>
   );
 }

@@ -399,6 +399,8 @@ const agentFilesMapper: Record<
   // A2A integrations use runtime-configured agents without per-feature source files
   "a2a-basic": () => ({}),
   "a2a": () => ({}),
+  // Built-in agent with A2UI middleware - uses dedicated API route
+  "builtin-a2ui": () => ({}),
 };
 
 async function runGenerateContent() {

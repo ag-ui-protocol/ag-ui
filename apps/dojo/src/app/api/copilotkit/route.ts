@@ -2,7 +2,7 @@ import {
   CopilotRuntime,
   InMemoryAgentRunner,
   createCopilotEndpoint,
-} from "@copilotkitnext/runtime";
+} from "@copilotkit/runtime/v2";
 import { handle } from "hono/vercel";
 
 const runtime = new CopilotRuntime({

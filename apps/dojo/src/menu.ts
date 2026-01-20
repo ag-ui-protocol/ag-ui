@@ -207,6 +207,11 @@ export const menuIntegrations = [
     name: "A2A (Direct)",
     features: ["vnext_chat"],
   },
+  {
+    id: "builtin-a2ui",
+    name: "Built-in Agent (A2UI)",
+    features: ["a2ui_chat"],
+  },
   // Disabled until we can support Vercel AI SDK v5
   // {
   //   id: "vercel-ai-sdk",

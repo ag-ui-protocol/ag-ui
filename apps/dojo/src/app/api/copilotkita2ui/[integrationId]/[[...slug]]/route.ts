@@ -7,6 +7,7 @@ import {
 import { handle } from "hono/vercel";
 import type { NextRequest } from "next/server";
 import type { AbstractAgent } from "@ag-ui/client";
+import { A2UIMiddleware, A2UI_PROMPT } from "@ag-ui/a2ui-middleware";
 
 type RouteParams = {
   params: Promise<{
@@ -17,15 +18,27 @@ type RouteParams = {
 
 const handlerCache = new Map<string, ReturnType<typeof handle>>();
 
+const A2UI_SYSTEM_PROMPT = `You are a helpful assistant that can render rich UI surfaces using the A2UI protocol.
+
+When the user asks for visual content (cards, forms, lists, buttons, etc.), use the send_a2ui_json_to_client tool to render A2UI surfaces.
+
+${A2UI_PROMPT}`;
+
 function getHandler(integrationId: string) {
   const cached = handlerCache.get(integrationId);
   if (cached) {
     return cached;
   }
 
-  const defaultAgent = new BuiltInAgent({
+  const builtInAgent = new BuiltInAgent({
     model: "openai/gpt-4o",
-  }) as unknown as AbstractAgent; // Cast until upstream marks run() public.
+    prompt: A2UI_SYSTEM_PROMPT,
+  });
+
+  // Apply A2UI middleware - this injects the send_a2ui_json_to_client tool
+  builtInAgent.use(new A2UIMiddleware({ systemInstructionsAdded: true }));
+
+  const defaultAgent = builtInAgent as unknown as AbstractAgent;
 
   const runtime = new CopilotRuntime({
     agents: {
@@ -36,7 +49,7 @@ function getHandler(integrationId: string) {
 
   const app = createCopilotEndpoint({
     runtime,
-    basePath: `/api/copilotkitnext/${integrationId}`,
+    basePath: `/api/copilotkita2ui/${integrationId}`,
   });
 
   const handler = handle(app);
