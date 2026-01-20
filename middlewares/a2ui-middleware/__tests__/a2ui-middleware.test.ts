@@ -138,10 +138,9 @@ describe("A2UIMiddleware", () => {
         forwardedProps: {
           a2uiAction: {
             userAction: {
-              event_type: "button_click",
-              action_name: "book_restaurant",
-              surface_id: "restaurant-card",
-              component_id: "book-btn",
+              name: "book_restaurant",
+              surfaceId: "restaurant-card",
+              sourceComponentId: "book-btn",
               context: { restaurantName: "Xi'an Famous Foods" },
             },
           },

@@ -8,14 +8,11 @@ import {
   Message,
   AssistantMessage,
   ToolMessage,
+  ToolCall,
   ActivitySnapshotEvent,
   ToolCallResultEvent,
-  ToolCallEndEvent,
-  ToolCallStartEvent,
-  ToolCallArgsEvent,
 } from "@ag-ui/client";
-import { Observable, of, from } from "rxjs";
-import { concatMap } from "rxjs/operators";
+import { Observable } from "rxjs";
 
 import {
   A2UIMiddlewareConfig,
@@ -39,6 +36,13 @@ export * from "./schema";
 export const A2UIActivityType = "a2ui-surface";
 
 /**
+ * Extract EventWithState type from Middleware.runNextWithState return type
+ */
+type ExtractObservableType<T> = T extends Observable<infer U> ? U : never;
+type RunNextWithStateReturn = ReturnType<Middleware["runNextWithState"]>;
+type EventWithState = ExtractObservableType<RunNextWithStateReturn>;
+
+/**
  * A2UI Middleware - Enables AG-UI agents to render A2UI surfaces
  * and handles bidirectional communication of user actions.
  */
@@ -59,18 +63,18 @@ export class A2UIMiddleware extends Middleware {
    * Main middleware run method
    */
   run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
-    // Process user action from forwardedProps (prepend synthetic messages)
+    // Process user action from forwardedProps (append synthetic messages)
     const enhancedInput = this.processUserAction(input);
 
     // Inject the send_a2ui_json_to_client tool
     const inputWithTool = this.injectTool(enhancedInput);
 
-    // Process the event stream
-    return this.processEventStream(inputWithTool, next);
+    // Process the event stream using runNextWithState for automatic message tracking
+    return this.processStream(this.runNextWithState(inputWithTool, next));
   }
 
   /**
-   * Check forwardedProps for a2uiAction and prepend synthetic tool call messages
+   * Check forwardedProps for a2uiAction and append synthetic tool call messages
    */
   private processUserAction(input: RunAgentInput): RunAgentInput {
     const forwardedProps = input.forwardedProps as A2UIForwardedProps | undefined;
@@ -158,106 +162,97 @@ export class A2UIMiddleware extends Middleware {
   }
 
   /**
-   * Process the event stream, intercepting tool calls for send_a2ui_json_to_client
-   *
-   * This implementation tracks tool calls directly from the event stream to handle
-   * cases where TOOL_CALL_START events are not emitted (e.g., some CopilotKit runtimes).
+   * Process the event stream, holding back RUN_FINISHED to process pending A2UI tool calls.
+   * Uses runNextWithState for automatic message tracking.
    */
-  private processEventStream(
-    input: RunAgentInput,
-    next: AbstractAgent
-  ): Observable<BaseEvent> {
-    // Track tool calls by ID: { toolCallId -> { name?, args } }
-    const toolCallTracker = new Map<string, { name?: string; args: string }>();
+  private processStream(source: Observable<EventWithState>): Observable<BaseEvent> {
+    return new Observable<BaseEvent>((subscriber) => {
+      let heldRunFinished: EventWithState | null = null;
 
-    return this.runNext(input, next).pipe(
-      concatMap((event) => {
-        switch (event.type) {
-          case EventType.TOOL_CALL_START: {
-            // Track the tool name when TOOL_CALL_START is emitted
-            const startEvent = event as ToolCallStartEvent;
-            toolCallTracker.set(startEvent.toolCallId, {
-              name: startEvent.toolCallName,
-              args: "",
-            });
-            return of(event);
+      const subscription = source.subscribe({
+        next: (eventWithState) => {
+          const event = eventWithState.event;
+
+          // If we have a held RUN_FINISHED and a new event comes, flush it first
+          if (heldRunFinished) {
+            subscriber.next(heldRunFinished.event);
+            heldRunFinished = null;
           }
 
-          case EventType.TOOL_CALL_ARGS: {
-            // Accumulate arguments for the tool call
-            const argsEvent = event as ToolCallArgsEvent;
-            const tracker = toolCallTracker.get(argsEvent.toolCallId);
-            if (tracker) {
-              tracker.args += argsEvent.delta;
-            } else {
-              // TOOL_CALL_START was not emitted - create tracker without name
-              toolCallTracker.set(argsEvent.toolCallId, {
-                name: undefined,
-                args: argsEvent.delta,
-              });
-            }
-            return of(event);
+          // If this is a RUN_FINISHED event, hold it back
+          if (event.type === EventType.RUN_FINISHED) {
+            heldRunFinished = eventWithState;
+          } else {
+            subscriber.next(event);
           }
+        },
+        error: (err) => {
+          // On error, flush any held event and propagate error
+          if (heldRunFinished) {
+            subscriber.next(heldRunFinished.event);
+            heldRunFinished = null;
+          }
+          subscriber.error(err);
+        },
+        complete: () => {
+          // Stream ended - process pending A2UI tool calls if we have a held RUN_FINISHED
+          if (heldRunFinished) {
+            // Find tool calls that don't have a corresponding result message
+            const pendingToolCalls = this.findPendingToolCalls(heldRunFinished.messages);
 
-          case EventType.TOOL_CALL_END: {
-            const endEvent = event as ToolCallEndEvent;
-            const tracker = toolCallTracker.get(endEvent.toolCallId);
-
-            // Clean up tracker
-            toolCallTracker.delete(endEvent.toolCallId);
-
-            if (!tracker) {
-              return of(event);
-            }
-
-            // Check if this is our tool - either by name or by detecting a2ui_json in args
-            const isOurTool = this.isA2UIToolCall(tracker.name, tracker.args);
-
-            if (!isOurTool) {
-              return of(event);
-            }
-
-            // Process the tool call and emit additional events
-            const { activityEvent, resultEvent } = this.processSendA2UIToolCall(
-              endEvent.toolCallId,
-              tracker.args
+            // Filter for A2UI tool calls
+            const pendingA2UIToolCalls = pendingToolCalls.filter(
+              (tc) => tc.function.name === SEND_A2UI_TOOL_NAME
             );
 
-            // Emit activity snapshot, tool result, then original end event
-            return from([activityEvent, resultEvent, event]);
-          }
+            // Process each pending A2UI tool call
+            for (const toolCall of pendingA2UIToolCalls) {
+              const { activityEvent, resultEvent } = this.processSendA2UIToolCall(
+                toolCall.id,
+                toolCall.function.arguments
+              );
+              subscriber.next(activityEvent);
+              subscriber.next(resultEvent);
+            }
 
-          default:
-            return of(event);
-        }
-      })
-    );
+            // Emit the held RUN_FINISHED
+            subscriber.next(heldRunFinished.event);
+            heldRunFinished = null;
+          }
+          subscriber.complete();
+        },
+      });
+
+      return () => subscription.unsubscribe();
+    });
   }
 
   /**
-   * Check if a tool call is for our send_a2ui_json_to_client tool.
-   * Uses both the tool name (if available) and argument detection.
+   * Find tool calls that don't have a corresponding result (role: "tool") message
    */
-  private isA2UIToolCall(toolName: string | undefined, args: string): boolean {
-    // If we have the tool name, use it
-    if (toolName === SEND_A2UI_TOOL_NAME) {
-      return true;
-    }
-
-    // If tool name is not available (no TOOL_CALL_START), try to detect from args
-    // Our tool expects { a2ui_json: "..." } so we look for that pattern
-    if (!toolName) {
-      try {
-        const parsed = JSON.parse(args);
-        if (typeof parsed === "object" && parsed !== null && "a2ui_json" in parsed) {
-          return true;
-        }
-      } catch {
-        // Not valid JSON yet or not our tool
+  private findPendingToolCalls(messages: Message[]): ToolCall[] {
+    // Collect all tool calls from assistant messages
+    const allToolCalls: ToolCall[] = [];
+    for (const message of messages) {
+      if (
+        message.role === "assistant" &&
+        "toolCalls" in message &&
+        message.toolCalls
+      ) {
+        allToolCalls.push(...message.toolCalls);
       }
     }
 
-    return false;
+    // Collect all tool call IDs that have results
+    const resolvedToolCallIds = new Set<string>();
+    for (const message of messages) {
+      if (message.role === "tool" && "toolCallId" in message) {
+        resolvedToolCallIds.add(message.toolCallId);
+      }
+    }
+
+    // Return tool calls that don't have results
+    return allToolCalls.filter((tc) => !resolvedToolCallIds.has(tc.id));
   }
 
   /**
@@ -341,4 +336,3 @@ export class A2UIMiddleware extends Middleware {
     return { activityEvent, resultEvent };
   }
 }
-
