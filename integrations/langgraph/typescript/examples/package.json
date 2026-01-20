@@ -9,7 +9,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@copilotkit/sdk-js": "^1.51.0",
+    "@copilotkit/sdk-js": "^1.51.2",
     "@langchain/core": "^1.1.7",
     "@langchain/openai": "^1.2.0",
     "@langchain/langgraph": "^1.0.7",
