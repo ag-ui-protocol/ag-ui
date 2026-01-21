@@ -10,6 +10,7 @@ import {
   ToolMessage,
   ToolCall,
   ActivitySnapshotEvent,
+  ActivityDeltaEvent,
   ToolCallResultEvent,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
@@ -20,10 +21,7 @@ import {
   A2UIUserAction,
 } from "./types";
 import { SEND_A2UI_JSON_TOOL, SEND_A2UI_TOOL_NAME, LOG_A2UI_EVENT_TOOL_NAME } from "./tools";
-import {
-  getSystemPromptWarning,
-  extractSurfaceIds,
-} from "./schema";
+import { getSystemPromptWarning, getOperationSurfaceId } from "./schema";
 
 // Re-exports
 export * from "./types";
@@ -197,6 +195,9 @@ export class A2UIMiddleware extends Middleware {
         complete: () => {
           // Stream ended - process pending A2UI tool calls if we have a held RUN_FINISHED
           if (heldRunFinished) {
+            // Extract known surfaces from COMPLETED tool calls in message history (stateless)
+            const knownSurfaceIds = this.extractKnownSurfacesFromMessages(heldRunFinished.messages);
+
             // Find tool calls that don't have a corresponding result message
             const pendingToolCalls = this.findPendingToolCalls(heldRunFinished.messages);
 
@@ -205,14 +206,16 @@ export class A2UIMiddleware extends Middleware {
               (tc) => tc.function.name === SEND_A2UI_TOOL_NAME
             );
 
-            // Process each pending A2UI tool call
+            // Process each pending A2UI tool call (knownSurfaceIds is updated as we process)
             for (const toolCall of pendingA2UIToolCalls) {
-              const { activityEvent, resultEvent } = this.processSendA2UIToolCall(
+              const events = this.processSendA2UIToolCall(
                 toolCall.id,
-                toolCall.function.arguments
+                toolCall.function.arguments,
+                knownSurfaceIds
               );
-              subscriber.next(activityEvent);
-              subscriber.next(resultEvent);
+              for (const event of events) {
+                subscriber.next(event);
+              }
             }
 
             // Emit the held RUN_FINISHED
@@ -256,16 +259,105 @@ export class A2UIMiddleware extends Middleware {
   }
 
   /**
-   * Process a completed send_a2ui_json_to_client tool call
+   * Extract surface IDs from COMPLETED A2UI tool calls in message history.
+   * This is stateless - we derive known surfaces from the conversation history.
+   */
+  private extractKnownSurfacesFromMessages(messages: Message[]): Set<string> {
+    const knownSurfaceIds = new Set<string>();
+
+    // Find all tool call IDs that have results (completed tool calls)
+    const completedToolCallIds = new Set<string>();
+    for (const message of messages) {
+      if (message.role === "tool" && "toolCallId" in message) {
+        completedToolCallIds.add(message.toolCallId);
+      }
+    }
+
+    // Find completed A2UI tool calls and extract their surface IDs
+    for (const message of messages) {
+      if (
+        message.role === "assistant" &&
+        "toolCalls" in message &&
+        message.toolCalls
+      ) {
+        for (const toolCall of message.toolCalls) {
+          // Only process completed A2UI tool calls
+          if (
+            toolCall.function.name === SEND_A2UI_TOOL_NAME &&
+            completedToolCallIds.has(toolCall.id)
+          ) {
+            // Extract surface IDs from the tool call arguments
+            const surfaceIds = this.extractSurfaceIdsFromToolCall(toolCall);
+            for (const surfaceId of surfaceIds) {
+              knownSurfaceIds.add(surfaceId);
+            }
+          }
+        }
+      }
+    }
+
+    return knownSurfaceIds;
+  }
+
+  /**
+   * Extract surface IDs from a tool call's arguments
+   */
+  private extractSurfaceIdsFromToolCall(toolCall: ToolCall): string[] {
+    const surfaceIds: string[] = [];
+
+    try {
+      // Parse the tool call arguments
+      let args: { a2ui_json?: string | Array<Record<string, unknown>> | Record<string, unknown> } = {};
+      const argsInput = toolCall.function.arguments;
+
+      if (typeof argsInput === "string") {
+        args = JSON.parse(argsInput || "{}");
+      } else if (typeof argsInput === "object" && argsInput !== null) {
+        args = argsInput as { a2ui_json?: string };
+      }
+
+      // Parse the A2UI operations
+      const a2uiJsonValue = args.a2ui_json;
+      let operations: Array<Record<string, unknown>> = [];
+
+      if (typeof a2uiJsonValue === "string") {
+        const parsed = JSON.parse(a2uiJsonValue);
+        if (Array.isArray(parsed)) {
+          operations = parsed;
+        } else if (typeof parsed === "object" && parsed !== null) {
+          operations = [parsed];
+        }
+      } else if (Array.isArray(a2uiJsonValue)) {
+        operations = a2uiJsonValue;
+      } else if (typeof a2uiJsonValue === "object" && a2uiJsonValue !== null) {
+        operations = [a2uiJsonValue];
+      }
+
+      // Extract surface IDs from operations
+      for (const op of operations) {
+        const surfaceId = getOperationSurfaceId(op);
+        if (surfaceId) {
+          surfaceIds.push(surfaceId);
+        }
+      }
+    } catch {
+      // Ignore parse errors
+    }
+
+    return surfaceIds;
+  }
+
+  /**
+   * Process a completed send_a2ui_json_to_client tool call.
+   * Returns an array of events: activity events (SNAPSHOT or DELTA) per surface + a tool result.
+   * Updates existingSurfaceIds as surfaces are created.
    */
   private processSendA2UIToolCall(
     toolCallId: string,
-    argsInput: string | Record<string, unknown>
-  ): {
-    activityEvent: ActivitySnapshotEvent;
-    resultEvent: ToolCallResultEvent;
-  } {
-    const messageId = randomUUID();
+    argsInput: string | Record<string, unknown>,
+    existingSurfaceIds: Set<string>
+  ): BaseEvent[] {
+    const events: BaseEvent[] = [];
 
     // Parse the tool arguments - argsInput can be string or object (CopilotKit gives object)
     let args: { a2ui_json?: string | Array<Record<string, unknown>> | Record<string, unknown> } = {};
@@ -287,7 +379,6 @@ export class A2UIMiddleware extends Middleware {
 
     // Parse A2UI operations (messages)
     let operations: Array<Record<string, unknown>> = [];
-    let surfaceIds: string[] = [];
 
     if (typeof a2uiJsonValue === "string") {
       // Case 1: String that needs parsing
@@ -311,16 +402,46 @@ export class A2UIMiddleware extends Middleware {
       console.warn("[A2UIMiddleware] a2ui_json has unexpected type:", typeof a2uiJsonValue);
     }
 
-    surfaceIds = extractSurfaceIds(operations);
+    // Group operations by surfaceId
+    const operationsBySurface = new Map<string, Array<Record<string, unknown>>>();
+    for (const op of operations) {
+      const surfaceId = getOperationSurfaceId(op) ?? "default";
+      if (!operationsBySurface.has(surfaceId)) {
+        operationsBySurface.set(surfaceId, []);
+      }
+      operationsBySurface.get(surfaceId)!.push(op);
+    }
 
-    // Create ACTIVITY_SNAPSHOT event
-    const activityEvent: ActivitySnapshotEvent = {
-      type: EventType.ACTIVITY_SNAPSHOT,
-      messageId,
-      activityType: A2UIActivityType,
-      content: { operations },
-      replace: false,
-    };
+    // Emit events per surface
+    for (const [surfaceId, surfaceOps] of operationsBySurface) {
+      const messageId = `a2ui-surface-${surfaceId}`;
+
+      if (!existingSurfaceIds.has(surfaceId)) {
+        // New surface - emit ACTIVITY_SNAPSHOT
+        existingSurfaceIds.add(surfaceId);
+        const activityEvent: ActivitySnapshotEvent = {
+          type: EventType.ACTIVITY_SNAPSHOT,
+          messageId,
+          activityType: A2UIActivityType,
+          content: { operations: surfaceOps },
+          replace: false,
+        };
+        events.push(activityEvent);
+      } else {
+        // Existing surface - emit ACTIVITY_DELTA to append operations
+        const deltaEvent: ActivityDeltaEvent = {
+          type: EventType.ACTIVITY_DELTA,
+          messageId,
+          activityType: A2UIActivityType,
+          patch: surfaceOps.map((op) => ({
+            op: "add" as const,
+            path: "/operations/-",
+            value: op,
+          })),
+        };
+        events.push(deltaEvent);
+      }
+    }
 
     // Create TOOL_CALL_RESULT event
     const resultEvent: ToolCallResultEvent = {
@@ -329,10 +450,11 @@ export class A2UIMiddleware extends Middleware {
       toolCallId,
       content: JSON.stringify({
         success: true,
-        surfacesRendered: surfaceIds,
+        surfacesRendered: Array.from(operationsBySurface.keys()),
       }),
     };
+    events.push(resultEvent);
 
-    return { activityEvent, resultEvent };
+    return events;
   }
 }

@@ -8,8 +8,7 @@ import { theme } from "./theme";
 
 export const dynamic = "force-dynamic";
 
-const A2UIMessageRenderer = createA2UIMessageRenderer({ theme });
-const activityRenderers = [A2UIMessageRenderer];
+const activityRenderers = [createA2UIMessageRenderer({ theme })];
 
 interface PageProps {
   params: Promise<{

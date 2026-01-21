@@ -973,6 +973,24 @@ export function getSystemPromptWarning(): string {
 }
 
 /**
+ * Extract surfaceId from a single A2UI operation
+ */
+export function getOperationSurfaceId(operation: Record<string, unknown>): string | undefined {
+  // Check each message type for surfaceId
+  const beginRendering = operation.beginRendering as { surfaceId?: string } | undefined;
+  const surfaceUpdate = operation.surfaceUpdate as { surfaceId?: string } | undefined;
+  const dataModelUpdate = operation.dataModelUpdate as { surfaceId?: string } | undefined;
+  const deleteSurface = operation.deleteSurface as { surfaceId?: string } | undefined;
+
+  return (
+    beginRendering?.surfaceId ??
+    surfaceUpdate?.surfaceId ??
+    dataModelUpdate?.surfaceId ??
+    deleteSurface?.surfaceId
+  );
+}
+
+/**
  * Extract surface IDs from A2UI messages
  */
 export function extractSurfaceIds(
@@ -980,16 +998,10 @@ export function extractSurfaceIds(
 ): string[] {
   const surfaceIds = new Set<string>();
   for (const msg of messages) {
-    // Check each message type for surfaceId
-    const beginRendering = msg.beginRendering as { surfaceId?: string } | undefined;
-    const surfaceUpdate = msg.surfaceUpdate as { surfaceId?: string } | undefined;
-    const dataModelUpdate = msg.dataModelUpdate as { surfaceId?: string } | undefined;
-    const deleteSurface = msg.deleteSurface as { surfaceId?: string } | undefined;
-
-    if (beginRendering?.surfaceId) surfaceIds.add(beginRendering.surfaceId);
-    if (surfaceUpdate?.surfaceId) surfaceIds.add(surfaceUpdate.surfaceId);
-    if (dataModelUpdate?.surfaceId) surfaceIds.add(dataModelUpdate.surfaceId);
-    if (deleteSurface?.surfaceId) surfaceIds.add(deleteSurface.surfaceId);
+    const surfaceId = getOperationSurfaceId(msg);
+    if (surfaceId) {
+      surfaceIds.add(surfaceId);
+    }
   }
   return Array.from(surfaceIds);
 }

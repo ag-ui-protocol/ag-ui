@@ -400,7 +400,7 @@ const agentFilesMapper: Record<
   "a2a-basic": () => ({}),
   "a2a": () => ({}),
   // Built-in agent with A2UI middleware - uses dedicated API route
-  "builtin-a2ui": () => ({}),
+  "builtin": () => ({}),
 };
 
 async function runGenerateContent() {
