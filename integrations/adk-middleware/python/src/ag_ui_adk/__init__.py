@@ -16,6 +16,7 @@ from .event_translator import EventTranslator, adk_events_to_messages
 from .session_manager import SessionManager, CONTEXT_STATE_KEY
 from .endpoint import add_adk_fastapi_endpoint, create_adk_app
 from .config import PredictStateMapping, normalize_predict_state
+from .agui_toolset import AGUIToolset
 
 __all__ = [
     'ADKAgent',
@@ -27,6 +28,7 @@ __all__ = [
     'PredictStateMapping',
     'normalize_predict_state',
     'adk_events_to_messages',
+    'AGUIToolset',
 ]
 
 __version__ = "0.1.0"

@@ -23,7 +23,7 @@ load_dotenv()
 
 from typing import Dict, Optional
 from fastapi import FastAPI
-from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, PredictStateMapping
+from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, PredictStateMapping, AGUIToolset
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
@@ -139,7 +139,10 @@ predictive_state_updates_agent = LlmAgent(
 
     Always provide complete, well-formatted documents that users can read and use.
     """,
-    tools=[write_document_local],
+    tools=[
+        AGUIToolset(), # Add the tools provided by the AG-UI client,
+        write_document_local
+    ],
     before_agent_callback=on_before_agent,
     before_model_callback=before_model_modifier,
 )
