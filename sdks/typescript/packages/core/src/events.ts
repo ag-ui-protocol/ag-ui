@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { MessageSchema, StateSchema, RunAgentInputSchema } from "./types";
 
 // Text messages can have any role except "tool"
