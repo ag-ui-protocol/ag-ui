@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2025-01-22
+
 ### Added
 - **NEW**: Native support for `RunAgentInput.context` in ADK agents (#959)
   - Context from AG-UI is automatically stored in session state under `_ag_ui_context` key
