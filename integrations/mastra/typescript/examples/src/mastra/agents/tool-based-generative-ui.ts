@@ -3,7 +3,7 @@ import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { LibSQLStore } from "@mastra/libsql";
 import { createTool } from "@mastra/core";
-import z from "zod";
+import z from "zod/v3";
 
 export const toolBasedGenerativeUIAgent = new Agent({
   name: "Haiku Agent",
