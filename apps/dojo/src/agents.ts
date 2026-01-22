@@ -26,6 +26,8 @@ import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
 import { LangGraphAgent as CpkLangGraphAgent } from "@copilotkit/runtime/langgraph";
+import { BuiltInAgent } from "@copilotkit/runtime/v2";
+import { A2UIMiddleware, A2UI_PROMPT } from "@ag-ui/a2ui-middleware";
 
 const envVars = getEnvVars();
 
@@ -344,9 +346,22 @@ export const agentsIntegrations = {
     human_in_the_loop: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/human-in-the-loop`, debug: true }),
   }),
 
-  // Built-in Agent - uses dedicated API routes for different features
-  // The actual agents are created in API routes, this is a placeholder for type satisfaction
-  builtin: async () => ({
-    a2ui_chat: null as unknown as AbstractAgent,
-  }),
+  // Built-in Agent with A2UI support
+  builtin: async () => {
+    const systemPrompt = `You are a helpful assistant that can render rich UI surfaces using the A2UI protocol.
+
+When the user asks for visual content (cards, forms, lists, buttons, etc.), use the send_a2ui_json_to_client tool to render A2UI surfaces.
+
+${A2UI_PROMPT}`;
+
+    const builtInAgent = new BuiltInAgent({
+      model: "openai/gpt-4o",
+      prompt: systemPrompt,
+    });
+    builtInAgent.use(new A2UIMiddleware({ systemInstructionsAdded: true }));
+
+    return {
+      a2ui_chat: builtInAgent as unknown as AbstractAgent,
+    };
+  },
 } satisfies AgentsMap;

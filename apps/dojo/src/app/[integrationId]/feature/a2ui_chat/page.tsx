@@ -85,7 +85,7 @@ export default function Page({ params }: PageProps) {
 
   return (
     <CopilotKitProvider
-      runtimeUrl={`/api/copilotkita2ui/${integrationId}`}
+      runtimeUrl={`/api/copilotkitnext/${integrationId}`}
       showDevConsole="auto"
       renderActivityMessages={activityRenderers}
     >

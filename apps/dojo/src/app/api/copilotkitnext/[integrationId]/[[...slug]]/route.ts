@@ -7,6 +7,8 @@ import {
 import { handle } from "hono/vercel";
 import type { NextRequest } from "next/server";
 import type { AbstractAgent } from "@ag-ui/client";
+import { agentsIntegrations } from "@/agents";
+import type { IntegrationId } from "@/menu";
 
 type RouteParams = {
   params: Promise<{
@@ -15,17 +17,39 @@ type RouteParams = {
   }>;
 };
 
-const handlerCache = new Map<string, ReturnType<typeof handle>>();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const handlerPromiseCache = new Map<string, Promise<any>>();
 
-function getHandler(integrationId: string) {
-  const cached = handlerCache.get(integrationId);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getHandler(integrationId: string): Promise<any> {
+  const cached = handlerPromiseCache.get(integrationId);
   if (cached) {
     return cached;
   }
 
-  const defaultAgent = new BuiltInAgent({
-    model: "openai/gpt-4o",
-  }) as unknown as AbstractAgent; // Cast until upstream marks run() public.
+  const promise = createHandler(integrationId);
+  handlerPromiseCache.set(integrationId, promise);
+  return promise;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function createHandler(integrationId: string): Promise<any> {
+  let defaultAgent: AbstractAgent | undefined;
+
+  // Look up agent from agents.ts
+  const getAgents = agentsIntegrations[integrationId as IntegrationId];
+  if (getAgents) {
+    const agents = await getAgents();
+    const agentKeys = Object.keys(agents);
+    if (agentKeys.length > 0) {
+      defaultAgent = agents[agentKeys[0] as keyof typeof agents];
+    }
+  }
+
+  // Fallback to basic BuiltInAgent
+  if (!defaultAgent) {
+    defaultAgent = new BuiltInAgent({ model: "openai/gpt-4o" }) as unknown as AbstractAgent;
+  }
 
   const runtime = new CopilotRuntime({
     agents: {
@@ -39,19 +63,18 @@ function getHandler(integrationId: string) {
     basePath: `/api/copilotkitnext/${integrationId}`,
   });
 
-  const handler = handle(app);
-  handlerCache.set(integrationId, handler);
-  return handler;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (handle as any)(app);
 }
 
 export async function GET(request: NextRequest, context: RouteParams) {
   const { integrationId } = await context.params;
-  const handler = getHandler(integrationId);
+  const handler = await getHandler(integrationId);
   return handler(request);
 }
 
 export async function POST(request: NextRequest, context: RouteParams) {
   const { integrationId } = await context.params;
-  const handler = getHandler(integrationId);
+  const handler = await getHandler(integrationId);
   return handler(request);
 }
