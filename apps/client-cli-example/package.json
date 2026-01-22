@@ -17,7 +17,7 @@
     "@mastra/core": "0.12.1",
     "@mastra/libsql": "0.12.0",
     "@mastra/loggers": "0.10.5",
-    "@mastra/memory": "0.12.0",
+    "@mastra/memory": "1.0.0",
     "open": "^10.1.2",
     "zod": "^3.22.4"
   },
