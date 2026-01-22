@@ -2,6 +2,7 @@
 
 import React from "react";
 import "@copilotkit/react-core/v2/styles.css";
+import "./style.css";
 import { CopilotChat, CopilotKitProvider } from "@copilotkit/react-core/v2";
 import { createA2UIMessageRenderer } from "@copilotkit/a2ui-renderer";
 import { theme } from "./theme";
@@ -25,12 +26,9 @@ export default function Page({ params }: PageProps) {
       showDevConsole="auto"
       renderActivityMessages={activityRenderers}
     >
-      <main
-        className="flex min-h-screen flex-1 flex-col overflow-hidden"
-        style={{ minHeight: "100dvh" }}
-      >
-        <CopilotChat style={{ flex: 1, minHeight: "100%" }} />
-      </main>
+      <div className="a2ui-chat-container flex flex-col h-full overflow-hidden">
+        <CopilotChat className="flex-1 overflow-hidden" />
+      </div>
     </CopilotKitProvider>
   );
 }
