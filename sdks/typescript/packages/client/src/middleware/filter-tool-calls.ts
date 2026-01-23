@@ -1,15 +1,15 @@
 import { Middleware } from "./middleware";
-import { AbstractAgent } from "@/agent";
+import type { AbstractAgent } from "@/agent";
 import {
-  RunAgentInput,
-  BaseEvent,
+  type RunAgentInput,
+  type BaseEvent,
+  type ToolCallStartEvent,
+  type ToolCallArgsEvent,
+  type ToolCallEndEvent,
+  type ToolCallResultEvent,
   EventType,
-  ToolCallStartEvent,
-  ToolCallArgsEvent,
-  ToolCallEndEvent,
-  ToolCallResultEvent,
 } from "@ag-ui/core";
-import { Observable } from "rxjs";
+import type { Observable } from "rxjs";
 import { filter } from "rxjs/operators";
 
 type FilterToolCallsConfig =

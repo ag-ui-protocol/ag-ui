@@ -87,6 +87,13 @@ export const featureConfig: FeatureConfig[] = [
     description: "Chat based on CopilotKit vnext",
     tags: ["Chat", "VNext", "Streaming"],
   }),
+  createFeatureConfig({
+    id: "secure_tools",
+    name: "Secure Tools",
+    description:
+      "Security middleware that validates and filters tool calls from agents",
+    tags: ["Security", "Middleware", "Tools", "Enterprise"],
+  }),
 ];
 
 export default featureConfig;
