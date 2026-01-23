@@ -22,5 +22,5 @@ def create_agentic_chat_adapter(cwd: str) -> ClaudeAgentAdapter:
         model="claude-haiku-4-5",
         cwd=cwd,
         system_prompt="You are a helpful assistant with access to tools.",
-        permission_mode="default",
+        allowed_tools=[],
     )
