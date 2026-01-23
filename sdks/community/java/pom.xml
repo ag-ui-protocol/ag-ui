@@ -9,6 +9,10 @@
     <version>0.0.1</version>
     <packaging>pom</packaging>
 
+    <name>AG-UI Java SDK</name>
+    <description>Java SDK for AG-UI protocol - an open standard for agent-user interaction</description>
+    <url>https://github.com/ag-ui-protocol/ag-ui</url>
+
     <modules>
         <module>packages/core</module>
         <module>packages/client</module>
