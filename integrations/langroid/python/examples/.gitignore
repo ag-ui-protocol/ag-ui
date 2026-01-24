@@ -1,10 +1,13 @@
 .env
 *.env
 
+__pycache__/
+*.py[codz]
+*$py.class
+
 dist/
 build/
 .venv/
 venv/
 ENV/
 env/
-
