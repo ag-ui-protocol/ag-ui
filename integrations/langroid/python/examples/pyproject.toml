@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "ag-ui-langroid-examples"
+version = "0.1.0"
+description = "Example server for Langroid AG-UI integration"
+authors = ["AG-UI Contributors"]
+readme = "README.md"
+packages = [{ include = "server" }]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.14"
+ag-ui-protocol = "^0.1.10"
+fastapi = "^0.115.12"
+uvicorn = "^0.34.0"
+python-dotenv = "^1.0.0"
+langroid = "^0.2.0"
+ag_ui_langroid = { path = "../", develop = true }
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+dev = "server:main"
+
