@@ -1,13 +1,13 @@
 [versions]
 core-ktx = "1.16.0"
-kotlin = "2.2.20"
+kotlin = "2.1.20"
 kotlin-json-patch = "1.0.0"
 #Downgrading to avoid an R8 error
 ktor = "3.1.3"
 kotlinx-serialization = "1.8.1"
 kotlinx-coroutines = "1.10.2"
 kotlinx-datetime = "0.6.2"
-android-gradle = "8.10.1"
+android-gradle = "8.12.0"
 kermit = "2.0.6"
 jreleaser = "1.20.0"
 # Compose Multiplatform

@@ -25,6 +25,7 @@ import { AWSStrandsAgent } from "@ag-ui/aws-strands";
 import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
+import { LangGraphAgent as CpkLangGraphAgent } from "@copilotkit/runtime/langgraph";
 
 const envVars = getEnvVars();
 
@@ -109,7 +110,12 @@ export const agentsIntegrations = {
 
   langgraph: async () => ({
     ...mapAgents(
-      (graphId) => new LangGraphAgent({ deploymentUrl: envVars.langgraphPythonUrl, graphId }),
+      (graphId) => {
+        if (graphId === 'agentic_chat') {
+          return new CpkLangGraphAgent({ deploymentUrl: envVars.langgraphPythonUrl, graphId })
+        }
+        return new LangGraphAgent({ deploymentUrl: envVars.langgraphPythonUrl, graphId })
+      },
       {
         agentic_chat: "agentic_chat",
         backend_tool_rendering: "backend_tool_rendering",
@@ -145,7 +151,12 @@ export const agentsIntegrations = {
 
   "langgraph-typescript": async () =>
     mapAgents(
-      (graphId) => new LangGraphAgent({ deploymentUrl: envVars.langgraphTypescriptUrl, graphId }),
+      (graphId) => {
+        if (graphId === 'agentic_chat') {
+          return new CpkLangGraphAgent({ deploymentUrl: envVars.langgraphTypescriptUrl, graphId })
+        }
+        return new LangGraphAgent({ deploymentUrl: envVars.langgraphTypescriptUrl, graphId })
+      },
       {
         agentic_chat: "agentic_chat",
         // TODO: Add agent for backend_tool_rendering

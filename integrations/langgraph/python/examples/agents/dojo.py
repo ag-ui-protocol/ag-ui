@@ -18,12 +18,13 @@ from .agentic_generative_ui.agent import graph as agentic_generative_ui_graph
 from .agentic_chat_reasoning.agent import graph as agentic_chat_reasoning_graph
 from .backend_tool_rendering.agent import graph as backend_tool_rendering_graph
 from .subgraphs.agent import graph as subgraphs_graph
+from copilotkit import LangGraphAGUIAgent
 
 app = FastAPI(title="LangGraph Dojo Example Server")
 
 agents = {
     # Register the LangGraph agent using the LangGraphAgent class
-    "agentic_chat": LangGraphAgent(
+    "agentic_chat": LangGraphAGUIAgent(
         name="agentic_chat",
         description="An example for an agentic chat flow using LangGraph.",
         graph=agentic_chat_graph,

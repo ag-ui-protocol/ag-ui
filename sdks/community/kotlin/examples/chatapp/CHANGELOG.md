@@ -62,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Build tool integration** - ensured proper Java/Gradle integration in Xcode environment
 
 ### Dependencies
-- **a2ui-4k** (`com.contextable:a2ui-4k:0.8.0`) - A2UI rendering engine for Compose Multiplatform
+- **a2ui-4k** (`com.contextable:a2ui-4k:0.8.1`) - A2UI rendering engine for Compose Multiplatform
 
 ### Technical Details
 - **Kotlin Multiplatform**: All three platforms (Android, Desktop, iOS) now share common business logic

@@ -15,7 +15,9 @@ from ag_ui.core import (
     ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent,
     ToolCallResultEvent, StateSnapshotEvent, StateDeltaEvent,
     CustomEvent, Message, UserMessage, AssistantMessage, ToolMessage,
-    ToolCall, FunctionCall
+    ToolCall, FunctionCall,
+    ThinkingStartEvent, ThinkingEndEvent,
+    ThinkingTextMessageStartEvent, ThinkingTextMessageContentEvent, ThinkingTextMessageEndEvent,
 )
 import json
 from google.adk.events import Event as ADKEvent
@@ -24,6 +26,38 @@ from .config import PredictStateMapping, normalize_predict_state
 
 import logging
 logger = logging.getLogger(__name__)
+
+# Backwards-compatible thought support detection
+# The part.thought attribute may not exist in older versions of google-genai
+_THOUGHT_SUPPORT_CHECKED = False
+_HAS_THOUGHT_SUPPORT = False
+
+def _check_thought_support() -> bool:
+    """Check if the google-genai SDK supports the part.thought attribute.
+
+    Returns:
+        True if thought support is available, False otherwise.
+    """
+    global _THOUGHT_SUPPORT_CHECKED, _HAS_THOUGHT_SUPPORT
+    if not _THOUGHT_SUPPORT_CHECKED:
+        try:
+            # Check if Part class has 'thought' in its model fields (Pydantic)
+            # or as a regular attribute
+            if hasattr(types.Part, 'model_fields'):
+                _HAS_THOUGHT_SUPPORT = 'thought' in types.Part.model_fields
+            else:
+                # Fallback: check if thought is a known attribute
+                _HAS_THOUGHT_SUPPORT = hasattr(types.Part, 'thought')
+
+            if _HAS_THOUGHT_SUPPORT:
+                logger.info("Thought support detected in google-genai SDK; thoughts will be emitted as THINKING events")
+            else:
+                logger.info("Thought support not available in google-genai SDK; thoughts will be treated as regular text")
+        except Exception as e:
+            logger.warning(f"Error checking thought support: {e}; assuming no support")
+            _HAS_THOUGHT_SUPPORT = False
+        _THOUGHT_SUPPORT_CHECKED = True
+    return _HAS_THOUGHT_SUPPORT
 
 def _coerce_tool_response(value: Any, _visited: Optional[set[int]] = None) -> Any:
     """Recursively convert arbitrary tool responses into JSON-serializable structures."""
@@ -152,6 +186,11 @@ class EventTranslator:
         self._last_streamed_run_id: Optional[str] = None  # Run identifier for the last streamed text
         self.long_running_tool_ids: List[str] = []  # Track the long running tool IDs
 
+        # Track thinking message streaming state (for thought parts)
+        self._is_thinking: bool = False  # Whether we're currently in a thinking block
+        self._is_streaming_thinking: bool = False  # Whether we're streaming thinking content
+        self._current_thinking_text: str = ""  # Accumulates thinking text for the active stream
+
         # Predictive state configuration
         self._predict_state_mappings = normalize_predict_state(predict_state)
         self._predict_state_by_tool: Dict[str, List[PredictStateMapping]] = {}
@@ -237,7 +276,11 @@ class EventTranslator:
                     yield event
             
             # call _translate_function_calls function to yield Tool Events
-            if hasattr(adk_event, 'get_function_calls'):               
+            # Skip function calls from partial events - these are streaming previews in
+            # PROGRESSIVE_SSE_STREAMING mode (enabled by default in google-adk >= 1.22.0).
+            # Only process confirmed function calls (partial=False or partial not set).
+            # See: https://github.com/ag-ui-protocol/ag-ui/issues/968
+            if hasattr(adk_event, 'get_function_calls') and not is_partial:
                 function_calls = adk_event.get_function_calls()
                 if function_calls:
                     # Filter out long-running tool calls; those are handled by translate_lro_function_calls
@@ -345,16 +388,39 @@ class EventTranslator:
         elif hasattr(adk_event, 'is_final_response'):
             is_final_response = adk_event.is_final_response
         
-        # Extract text from all parts
+        # Extract text from all parts, separating thought parts from regular text
         text_parts = []
+        thought_parts = []
+        has_thought_support = _check_thought_support()
+
         # The check for adk_event.content.parts happens in the main translate method
         for part in adk_event.content.parts:
-            if part.text: # Note: part.text == "" is False
+            if not part.text:  # Note: part.text == "" is False
+                continue
+
+            # Check if this is a thought part (backwards-compatible)
+            # Use `is True` to handle Mock objects in tests and ensure we only
+            # treat parts as thoughts when thought is explicitly set to True
+            is_thought = False
+            if has_thought_support:
+                thought_value = getattr(part, 'thought', None)
+                is_thought = thought_value is True
+
+            if is_thought:
+                thought_parts.append(part.text)
+            else:
                 text_parts.append(part.text)
-        
+
+        # Handle thought parts first (emit THINKING events)
+        if thought_parts:
+            async for event in self._translate_thinking_content(thought_parts):
+                yield event
+
         # If no text AND it's not a final response, we can safely skip.
         # Otherwise, we must continue to process the final_response signal.
         if not text_parts and not is_final_response:
+            # If we only had thought parts and this is not final, close any active thinking
+            # but don't return yet if we need to handle final response
             return
 
         combined_text = "".join(text_parts)
@@ -365,7 +431,11 @@ class EventTranslator:
         if is_final_response:
             # This is the final, complete message event.
 
-            # Case 1: A stream is actively running. We must close it.
+            # Close any active thinking stream first
+            async for event in self._close_thinking_stream():
+                yield event
+
+            # Case 1: A text stream is actively running. We must close it.
             if self._is_streaming and self._streaming_message_id:
                 logger.info("⏭️ Final response event received. Closing active stream.")
 
@@ -443,6 +513,11 @@ class EventTranslator:
 
         # Handle streaming logic (if not is_final_response)
         if not self._is_streaming:
+            # Close any active thinking stream before starting regular text
+            # (transition from thinking to response)
+            async for event in self._close_thinking_stream():
+                yield event
+
             # Start of new message - emit START event
             self._streaming_message_id = str(uuid.uuid4())
             self._is_streaming = True
@@ -493,7 +568,79 @@ class EventTranslator:
             self._streaming_message_id = None
             self._is_streaming = False
             logger.info("🏁 Streaming completed, state reset")
-    
+
+    async def _translate_thinking_content(
+        self,
+        thought_parts: List[str]
+    ) -> AsyncGenerator[BaseEvent, None]:
+        """Translate thought parts to AG-UI THINKING events.
+
+        This method emits THINKING_START, THINKING_TEXT_MESSAGE_START/CONTENT/END,
+        and tracks thinking state for proper stream management.
+
+        Args:
+            thought_parts: List of thought text strings to emit
+
+        Yields:
+            Thinking events (THINKING_START, THINKING_TEXT_MESSAGE_START/CONTENT/END)
+        """
+        if not thought_parts:
+            return
+
+        combined_thought = "".join(thought_parts)
+        if not combined_thought:
+            return
+
+        # Start thinking block if not already in one
+        if not self._is_thinking:
+            self._is_thinking = True
+            yield ThinkingStartEvent(
+                type=EventType.THINKING_START,
+                title="Model Thinking"
+            )
+            logger.debug("🧠 Started thinking block")
+
+        # Start thinking text message if not already streaming
+        if not self._is_streaming_thinking:
+            self._is_streaming_thinking = True
+            self._current_thinking_text = ""
+            yield ThinkingTextMessageStartEvent(
+                type=EventType.THINKING_TEXT_MESSAGE_START
+            )
+            logger.debug("🧠 Started thinking text message")
+
+        # Emit thinking content
+        self._current_thinking_text += combined_thought
+        yield ThinkingTextMessageContentEvent(
+            type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
+            delta=combined_thought
+        )
+        logger.debug(f"🧠 Emitted thinking content: {len(combined_thought)} chars")
+
+    async def _close_thinking_stream(self) -> AsyncGenerator[BaseEvent, None]:
+        """Close any active thinking stream.
+
+        This should be called when transitioning from thinking to regular output,
+        or when the response is finalized.
+
+        Yields:
+            THINKING_TEXT_MESSAGE_END and THINKING_END events if needed
+        """
+        if self._is_streaming_thinking:
+            yield ThinkingTextMessageEndEvent(
+                type=EventType.THINKING_TEXT_MESSAGE_END
+            )
+            self._is_streaming_thinking = False
+            self._current_thinking_text = ""
+            logger.debug("🧠 Closed thinking text message")
+
+        if self._is_thinking:
+            yield ThinkingEndEvent(
+                type=EventType.THINKING_END
+            )
+            self._is_thinking = False
+            logger.debug("🧠 Closed thinking block")
+
     async def translate_lro_function_calls(self,adk_event: ADKEvent)-> AsyncGenerator[BaseEvent, None]:
         """Translate long running function calls from ADK event to AG-UI tool call events.
 
@@ -779,7 +926,11 @@ class EventTranslator:
         self._emitted_confirm_for_tools.clear()
         self._predictive_state_tool_call_ids.clear()
         self._deferred_confirm_events.clear()
-        logger.debug("Reset EventTranslator state (including streaming state)")
+        # Reset thinking state
+        self._is_thinking = False
+        self._is_streaming_thinking = False
+        self._current_thinking_text = ""
+        logger.debug("Reset EventTranslator state (including streaming and thinking state)")
 
 
 def _translate_function_calls_to_tool_calls(function_calls: List[Any]) -> List[ToolCall]:

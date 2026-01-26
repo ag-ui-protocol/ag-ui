@@ -9,9 +9,9 @@ project(":shared").projectDir = File(rootDir, "shared")
 // Include local library for development (using local modules with new Activity types)
 includeBuild("../../library") {
     dependencySubstitution {
-        substitute(module("com.agui:kotlin-core")).using(project(":kotlin-core"))
-        substitute(module("com.agui:kotlin-client")).using(project(":kotlin-client"))
-        substitute(module("com.agui:kotlin-tools")).using(project(":kotlin-tools"))
+        substitute(module("com.ag-ui.community:kotlin-core")).using(project(":kotlin-core"))
+        substitute(module("com.ag-ui.community:kotlin-client")).using(project(":kotlin-client"))
+        substitute(module("com.ag-ui.community:kotlin-tools")).using(project(":kotlin-tools"))
         substitute(module("com.ag-ui.community:kotlin-a2ui")).using(project(":kotlin-a2ui"))
     }
 }
@@ -26,7 +26,7 @@ pluginManagement {
     }
 
     plugins {
-        val kotlinVersion = "2.2.20"
+        val kotlinVersion = "2.1.20"
         val composeVersion = "1.9.0-rc02"
         val agpVersion = "8.12.0"
 

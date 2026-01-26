@@ -275,6 +275,115 @@ The `state` field:
 - Syncs/merges with existing state on subsequent requests
 - Is accessible to ADK agent tools via `context.session.state`
 
+### Using Context
+
+The `context` field from `RunAgentInput` is automatically passed through to ADK agents.
+Context is useful for providing metadata about the current request (user info, preferences,
+environment details) that the agent can use for personalization.
+
+Context is accessible in two ways:
+
+#### 1. In Tools via Session State
+
+```python
+from google.adk.tools import ToolContext
+from ag_ui_adk import CONTEXT_STATE_KEY
+
+def personalized_tool(tool_context: ToolContext) -> str:
+    """Access context in a tool via session state."""
+    context_items = tool_context.state.get(CONTEXT_STATE_KEY, [])
+
+    user_role = None
+    for item in context_items:
+        if item["description"] == "user_role":
+            user_role = item["value"]
+            break
+
+    if user_role == "admin":
+        return "Welcome, administrator! You have full access."
+    return "Welcome! You have standard access."
+
+# Create agent with the tool
+my_agent = Agent(
+    name="assistant",
+    tools=[personalized_tool]
+)
+```
+
+#### 2. In Instruction Providers via Session State
+
+```python
+from google.adk.agents import LlmAgent
+from google.adk.agents.readonly_context import ReadonlyContext
+from ag_ui_adk import CONTEXT_STATE_KEY
+
+def context_aware_instructions(ctx: ReadonlyContext) -> str:
+    """Dynamic instructions based on context."""
+    instructions = "You are a helpful assistant."
+
+    # Access context from session state
+    context_items = ctx.state.get(CONTEXT_STATE_KEY, [])
+
+    # Find user's preferred language
+    for item in context_items:
+        if item["description"] == "preferred_language":
+            instructions += f"\nRespond in {item['value']}."
+            break
+
+    return instructions
+
+# Create agent with dynamic instructions
+my_agent = LlmAgent(
+    name="assistant",
+    model="gemini-2.0-flash",
+    instruction=context_aware_instructions,  # Callable, not string
+)
+```
+
+#### Example Request with Context
+
+```python
+input = RunAgentInput(
+    thread_id="session_001",
+    run_id="run_001",
+    messages=[
+        UserMessage(id="1", role="user", content="Hello!")
+    ],
+    context=[
+        Context(description="user_role", value="admin"),
+        Context(description="preferred_language", value="Spanish"),
+        Context(description="timezone", value="America/New_York"),
+    ],
+    state={},
+    tools=[],
+    forwarded_props={}
+)
+
+async for event in agent.run(input):
+    print(f"Event: {event.type}")
+```
+
+#### Alternative: Via RunConfig custom_metadata (ADK 1.22.0+)
+
+For users on ADK 1.22.0 or later, context is also available via `RunConfig.custom_metadata`:
+
+```python
+def dynamic_instructions(ctx: ReadonlyContext) -> str:
+    instructions = "You are a helpful assistant."
+
+    # Alternative access via custom_metadata (ADK 1.22.0+)
+    if ctx.run_config and ctx.run_config.custom_metadata:
+        context_items = ctx.run_config.custom_metadata.get('ag_ui_context', [])
+        for item in context_items:
+            instructions += f"\n- {item['description']}: {item['value']}"
+
+    return instructions
+```
+
+**Note:** Session state (`ctx.state.get(CONTEXT_STATE_KEY, [])`) is the recommended approach as it works with all ADK versions and provides a unified access pattern for both tools and instruction providers.
+
+See `examples/other/context_usage.py` for a complete working example.
+
 ### Multi-Agent Setup
 
 ```python

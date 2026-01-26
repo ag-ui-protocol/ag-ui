@@ -1,10 +1,10 @@
-# AG-UI-4J Spring-AI
+# AG-UI Spring-AI
 
 ![Java](https://img.shields.io/badge/Java-17-orange?logo=openjdk&logoColor=white)
 ![Maven](https://img.shields.io/badge/Maven-1.0.1-C71A36?logo=apachemaven&logoColor=white)
 ---
 
-This package contains a [Spring AI Agent](./src/main/java/com/agui/spring/ai/SpringAiAgent.java) with Builder.
+This package contains a [Spring AI Agent](./src/main/java/com/agui/spring/ai/SpringAIAgent.java) with Builder.
 
 ### Usage
 ```java
@@ -39,7 +39,7 @@ var agent = SpringAIAgent.builder()
 
 ```xml
 <dependency>
-    <groupId>com.ag-ui</groupId>
+    <groupId>com.ag-ui.community</groupId>
     <artifactId>spring-ai</artifactId>
     <version>1.0.1</version>
 </dependency>

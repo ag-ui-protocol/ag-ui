@@ -6,7 +6,7 @@ import {
   MCPClientConfig,
   ProxiedMCPRequest,
   MCPAppsActivityType,
-  getServerId,
+  getServerHash,
 } from "../src/index";
 import {
   MockAgent,
@@ -26,7 +26,6 @@ import {
   createAGUITool,
   collectEvents,
   createMCPToolCallResult,
-  createMCPResourceResult,
 } from "./test-utils";
 
 // Create mock functions that will be referenced in the mock factory
@@ -655,9 +654,6 @@ describe("MCPAppsMiddleware", () => {
       mockCallTool.mockResolvedValue(
         createMCPToolCallResult([{ type: "text", text: "Weather result" }])
       );
-      mockReadResource.mockResolvedValue(
-        createMCPResourceResult("ui://weather/dashboard", "text/html+mcp", "<html>Dashboard</html>")
-      );
 
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
 
@@ -753,9 +749,6 @@ describe("MCPAppsMiddleware", () => {
       mockCallTool.mockResolvedValue(
         createMCPToolCallResult([{ type: "text", text: "Result" }])
       );
-      mockReadResource.mockResolvedValue(
-        createMCPResourceResult("ui://test", "text/html+mcp", "<html></html>")
-      );
 
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
 
@@ -786,9 +779,6 @@ describe("MCPAppsMiddleware", () => {
       mockCallTool.mockResolvedValue(
         createMCPToolCallResult([{ type: "text", text: "Sunny" }])
       );
-      mockReadResource.mockResolvedValue(
-        createMCPResourceResult("ui://weather/dashboard", "text/html+mcp", "<html></html>")
-      );
 
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
 
@@ -816,9 +806,6 @@ describe("MCPAppsMiddleware", () => {
         { type: "text", text: "Second" },
       ]);
       mockCallTool.mockResolvedValue(mcpResult);
-      mockReadResource.mockResolvedValue(
-        createMCPResourceResult("ui://server/tool", "text/html+mcp", "<html></html>")
-      );
 
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
 
@@ -867,9 +854,6 @@ describe("MCPAppsMiddleware", () => {
       mockCallTool.mockResolvedValue(
         createMCPToolCallResult([{ type: "text", text: "Result" }])
       );
-      mockReadResource.mockResolvedValue(
-        createMCPResourceResult("ui://server/tool", "text/html+mcp", "<html></html>")
-      );
 
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
 
@@ -882,61 +866,23 @@ describe("MCPAppsMiddleware", () => {
 
       await collectEvents(middleware.run(input, agent));
 
-      // close should be called multiple times (once for listTools, once for callTool, once for readResource)
+      // close should be called multiple times (once for listTools, once for callTool)
       expect(mockClose).toHaveBeenCalled();
     });
   });
 
   // =============================================================================
-  // 8. Resource Reading Tests
+  // 8. Activity Snapshot ResourceUri Tests
   // =============================================================================
-  describe("Resource Reading", () => {
+  describe("Activity Snapshot ResourceUri", () => {
     const httpServerConfig: MCPClientConfig = { type: "http", url: "http://localhost:3000" };
 
-    it("reads resource by URI", async () => {
+    it("includes resourceUri in activity snapshot instead of resource content", async () => {
       const uiTool = createMCPToolWithUI("ui-tool", "ui://server/dashboard");
       mockListTools.mockResolvedValue({ tools: [uiTool] });
       mockCallTool.mockResolvedValue(
         createMCPToolCallResult([{ type: "text", text: "Result" }])
       );
-      mockReadResource.mockResolvedValue(
-        createMCPResourceResult("ui://server/dashboard", "text/html+mcp", "<html>Dashboard</html>")
-      );
-
-      const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
-
-      const assistantMsg = createAssistantMessageWithToolCalls([
-        { name: "ui-tool", args: {}, id: "tc-1" },
-      ]);
-
-      const agent = new MockAgent([createRunStartedEvent(), createRunFinishedEvent()]);
-      const input = createRunAgentInput({ messages: [assistantMsg] });
-
-      await collectEvents(middleware.run(input, agent));
-
-      expect(mockReadResource).toHaveBeenCalledWith({
-        uri: "ui://server/dashboard",
-      });
-    });
-
-    it("returns first content item", async () => {
-      const uiTool = createMCPToolWithUI("ui-tool", "ui://server/tool");
-      mockListTools.mockResolvedValue({ tools: [uiTool] });
-      mockCallTool.mockResolvedValue(
-        createMCPToolCallResult([{ type: "text", text: "Result" }])
-      );
-
-      const resourceContent = {
-        uri: "ui://server/tool",
-        mimeType: "text/html+mcp",
-        text: "<html><body>First</body></html>",
-      };
-      mockReadResource.mockResolvedValue({
-        contents: [
-          resourceContent,
-          { uri: "ui://server/tool2", mimeType: "text/html+mcp", text: "Second" },
-        ],
-      });
 
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
 
@@ -950,17 +896,18 @@ describe("MCPAppsMiddleware", () => {
       const events = await collectEvents(middleware.run(input, agent));
 
       const activityEvent = events.find((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
-      expect((activityEvent as any).content.resource).toEqual(resourceContent);
+      expect(activityEvent).toBeDefined();
+      expect((activityEvent as any).content.resourceUri).toBe("ui://server/dashboard");
+      // Should NOT have resource content (frontend fetches it)
+      expect((activityEvent as any).content.resource).toBeUndefined();
     });
 
-    it("handles read errors", async () => {
-      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    it("does not call readResource during tool execution", async () => {
       const uiTool = createMCPToolWithUI("ui-tool", "ui://server/tool");
       mockListTools.mockResolvedValue({ tools: [uiTool] });
       mockCallTool.mockResolvedValue(
         createMCPToolCallResult([{ type: "text", text: "Result" }])
       );
-      mockReadResource.mockRejectedValue(new Error("Resource not found"));
 
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
 
@@ -971,14 +918,11 @@ describe("MCPAppsMiddleware", () => {
       const agent = new MockAgent([createRunStartedEvent(), createRunFinishedEvent()]);
       const input = createRunAgentInput({ messages: [assistantMsg] });
 
-      const events = await collectEvents(middleware.run(input, agent));
+      await collectEvents(middleware.run(input, agent));
 
-      // Should emit error result
-      const toolResultEvents = events.filter((e) => e.type === EventType.TOOL_CALL_RESULT);
-      expect(toolResultEvents.length).toBe(1);
-      expect((toolResultEvents[0] as any).content).toContain("error");
-
-      consoleErrorSpy.mockRestore();
+      // readResource should NOT be called during tool execution
+      // (frontend will fetch via proxied request)
+      expect(mockReadResource).not.toHaveBeenCalled();
     });
   });
 
@@ -993,9 +937,6 @@ describe("MCPAppsMiddleware", () => {
       mockListTools.mockResolvedValue({ tools: [uiTool] });
       mockCallTool.mockResolvedValue(
         createMCPToolCallResult([{ type: "text", text: "Result" }])
-      );
-      mockReadResource.mockResolvedValue(
-        createMCPResourceResult("ui://server/tool", "text/html+mcp", "<html></html>")
       );
 
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
@@ -1022,9 +963,6 @@ describe("MCPAppsMiddleware", () => {
           { type: "text", text: "Line 2" },
         ])
       );
-      mockReadResource.mockResolvedValue(
-        createMCPResourceResult("ui://server/tool", "text/html+mcp", "<html></html>")
-      );
 
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
 
@@ -1047,9 +985,6 @@ describe("MCPAppsMiddleware", () => {
       mockCallTool.mockResolvedValue(
         createMCPToolCallResult([{ type: "image", data: "base64data" }])
       );
-      mockReadResource.mockResolvedValue(
-        createMCPResourceResult("ui://server/tool", "text/html+mcp", "<html></html>")
-      );
 
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
 
@@ -1067,19 +1002,12 @@ describe("MCPAppsMiddleware", () => {
       expect((toolResultEvent as any).content).toContain("base64data");
     });
 
-    it("emits ACTIVITY_SNAPSHOT with MCP result and resource", async () => {
+    it("emits ACTIVITY_SNAPSHOT with MCP result and resourceUri", async () => {
       const uiTool = createMCPToolWithUI("ui-tool", "ui://server/tool");
       mockListTools.mockResolvedValue({ tools: [uiTool] });
 
       const mcpResult = createMCPToolCallResult([{ type: "text", text: "Result" }]);
-      const resourceContent = {
-        uri: "ui://server/tool",
-        mimeType: "text/html+mcp",
-        text: "<html></html>",
-      };
-
       mockCallTool.mockResolvedValue(mcpResult);
-      mockReadResource.mockResolvedValue({ contents: [resourceContent] });
 
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
 
@@ -1095,7 +1023,9 @@ describe("MCPAppsMiddleware", () => {
       const activityEvent = events.find((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
       expect(activityEvent).toBeDefined();
       expect((activityEvent as any).content.result).toEqual(mcpResult);
-      expect((activityEvent as any).content.resource).toEqual(resourceContent);
+      expect((activityEvent as any).content.resourceUri).toBe("ui://server/tool");
+      // Should NOT have resource content
+      expect((activityEvent as any).content.resource).toBeUndefined();
     });
 
     it("sets activityType to mcp-apps", async () => {
@@ -1103,9 +1033,6 @@ describe("MCPAppsMiddleware", () => {
       mockListTools.mockResolvedValue({ tools: [uiTool] });
       mockCallTool.mockResolvedValue(
         createMCPToolCallResult([{ type: "text", text: "Result" }])
-      );
-      mockReadResource.mockResolvedValue(
-        createMCPResourceResult("ui://server/tool", "text/html+mcp", "<html></html>")
       );
 
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
@@ -1129,9 +1056,6 @@ describe("MCPAppsMiddleware", () => {
       mockListTools.mockResolvedValue({ tools: [uiTool] });
       mockCallTool.mockResolvedValue(
         createMCPToolCallResult([{ type: "text", text: "Result" }])
-      );
-      mockReadResource.mockResolvedValue(
-        createMCPResourceResult("ui://server/tool", "text/html+mcp", "<html></html>")
       );
 
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
@@ -1171,7 +1095,7 @@ describe("MCPAppsMiddleware", () => {
       const agent = new MockAgent([createRunStartedEvent(), createRunFinishedEvent()]);
 
       const proxiedRequest: ProxiedMCPRequest = {
-        serverId: getServerId(httpServerConfig),
+        serverHash: getServerHash(httpServerConfig),
         method: "ping",
       };
 
@@ -1193,7 +1117,7 @@ describe("MCPAppsMiddleware", () => {
       const agent = new MockAgent([]);
 
       const proxiedRequest: ProxiedMCPRequest = {
-        serverId: getServerId(httpServerConfig),
+        serverHash: getServerHash(httpServerConfig),
         method: "ping",
       };
 
@@ -1216,7 +1140,7 @@ describe("MCPAppsMiddleware", () => {
       const agent = new MockAgent([]);
 
       const proxiedRequest: ProxiedMCPRequest = {
-        serverId: getServerId(httpServerConfig),
+        serverHash: getServerHash(httpServerConfig),
         method: "ping",
       };
 
@@ -1238,7 +1162,7 @@ describe("MCPAppsMiddleware", () => {
       const agent = new MockAgent([]);
 
       const proxiedRequest: ProxiedMCPRequest = {
-        serverId: getServerId(httpServerConfig),
+        serverHash: getServerHash(httpServerConfig),
         method: "ping",
       };
 
@@ -1252,12 +1176,12 @@ describe("MCPAppsMiddleware", () => {
       expect((finishedEvent as any).result.error).toContain("Connection refused");
     });
 
-    it("emits error for unknown serverId", async () => {
+    it("emits error for unknown serverHash", async () => {
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
       const agent = new MockAgent([]);
 
       const proxiedRequest: ProxiedMCPRequest = {
-        serverId: "unknown-server-id",
+        serverHash: "unknown-server-hash",
         method: "ping",
       };
 
@@ -1268,7 +1192,7 @@ describe("MCPAppsMiddleware", () => {
       const events = await collectEvents(middleware.run(input, agent));
 
       const finishedEvent = events.find((e) => e.type === EventType.RUN_FINISHED);
-      expect((finishedEvent as any).result.error).toContain("Unknown server ID");
+      expect((finishedEvent as any).result.error).toContain("Unknown server");
     });
 
     it("bypasses normal agent flow", async () => {
@@ -1280,7 +1204,7 @@ describe("MCPAppsMiddleware", () => {
       const agent = new MockAgent([createRunStartedEvent(), createRunFinishedEvent()]);
 
       const proxiedRequest: ProxiedMCPRequest = {
-        serverId: getServerId({ type: "http", url: "http://localhost:3001" }),
+        serverHash: getServerHash({ type: "http", url: "http://localhost:3001" }),
         method: "ping",
       };
 
@@ -1296,43 +1220,40 @@ describe("MCPAppsMiddleware", () => {
   });
 
   // =============================================================================
-  // 12. Server ID Tests
+  // 12. Server Hash Tests
   // =============================================================================
-  describe("Server ID", () => {
-    it("generates consistent serverId for same config", () => {
+  describe("Server Hash", () => {
+    it("generates consistent serverHash for same config", () => {
       const config: MCPClientConfig = { type: "http", url: "http://localhost:3000" };
-      const id1 = getServerId(config);
-      const id2 = getServerId(config);
+      const id1 = getServerHash(config);
+      const id2 = getServerHash(config);
       expect(id1).toBe(id2);
     });
 
-    it("generates different serverIds for different URLs", () => {
+    it("generates different serverHashes for different URLs", () => {
       const config1: MCPClientConfig = { type: "http", url: "http://localhost:3000" };
       const config2: MCPClientConfig = { type: "http", url: "http://localhost:3001" };
-      expect(getServerId(config1)).not.toBe(getServerId(config2));
+      expect(getServerHash(config1)).not.toBe(getServerHash(config2));
     });
 
-    it("generates different serverIds for different types", () => {
+    it("generates different serverHashes for different types", () => {
       const config1: MCPClientConfig = { type: "http", url: "http://localhost:3000" };
       const config2: MCPClientConfig = { type: "sse", url: "http://localhost:3000" };
-      expect(getServerId(config1)).not.toBe(getServerId(config2));
+      expect(getServerHash(config1)).not.toBe(getServerHash(config2));
     });
 
-    it("generates different serverIds for SSE configs with different headers", () => {
+    it("generates different serverHashes for SSE configs with different headers", () => {
       const config1: MCPClientConfig = { type: "sse", url: "http://localhost:3000", headers: { Authorization: "token1" } };
       const config2: MCPClientConfig = { type: "sse", url: "http://localhost:3000", headers: { Authorization: "token2" } };
-      expect(getServerId(config1)).not.toBe(getServerId(config2));
+      expect(getServerHash(config1)).not.toBe(getServerHash(config2));
     });
 
-    it("includes serverId in ACTIVITY_SNAPSHOT content", async () => {
+    it("includes serverHash in ACTIVITY_SNAPSHOT content", async () => {
       const httpServerConfig: MCPClientConfig = { type: "http", url: "http://localhost:3000" };
       const uiTool = createMCPToolWithUI("ui-tool", "ui://server/tool");
       mockListTools.mockResolvedValue({ tools: [uiTool] });
       mockCallTool.mockResolvedValue(
         createMCPToolCallResult([{ type: "text", text: "Result" }])
-      );
-      mockReadResource.mockResolvedValue(
-        createMCPResourceResult("ui://server/tool", "text/html+mcp", "<html></html>")
       );
 
       const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
@@ -1348,10 +1269,149 @@ describe("MCPAppsMiddleware", () => {
 
       const activityEvent = events.find((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
       expect(activityEvent).toBeDefined();
-      expect((activityEvent as any).content.serverId).toBe(getServerId(httpServerConfig));
-      // Should NOT have serverUrl or serverType
+      expect((activityEvent as any).content.serverHash).toBe(getServerHash(httpServerConfig));
+      // Should NOT have serverUrl or serverType or old serverId
       expect((activityEvent as any).content.serverUrl).toBeUndefined();
       expect((activityEvent as any).content.serverType).toBeUndefined();
+      expect((activityEvent as any).content.serverId).toBeUndefined();
+    });
+  });
+
+  // =============================================================================
+  // 13. Server ID Tests
+  // =============================================================================
+  describe("Server ID", () => {
+    it("includes serverId in ACTIVITY_SNAPSHOT when configured", async () => {
+      const httpServerConfig: MCPClientConfig = {
+        type: "http",
+        url: "http://localhost:3000",
+        serverId: "my-weather-server"
+      };
+      const uiTool = createMCPToolWithUI("ui-tool", "ui://server/tool");
+      mockListTools.mockResolvedValue({ tools: [uiTool] });
+      mockCallTool.mockResolvedValue(
+        createMCPToolCallResult([{ type: "text", text: "Result" }])
+      );
+
+      const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
+
+      const assistantMsg = createAssistantMessageWithToolCalls([
+        { name: "ui-tool", args: {}, id: "tc-1" },
+      ]);
+
+      const agent = new MockAgent([createRunStartedEvent(), createRunFinishedEvent()]);
+      const input = createRunAgentInput({ messages: [assistantMsg] });
+
+      const events = await collectEvents(middleware.run(input, agent));
+
+      const activityEvent = events.find((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+      expect(activityEvent).toBeDefined();
+      expect((activityEvent as any).content.serverId).toBe("my-weather-server");
+    });
+
+    it("serverId is undefined in ACTIVITY_SNAPSHOT when not configured", async () => {
+      const httpServerConfig: MCPClientConfig = { type: "http", url: "http://localhost:3000" };
+      const uiTool = createMCPToolWithUI("ui-tool", "ui://server/tool");
+      mockListTools.mockResolvedValue({ tools: [uiTool] });
+      mockCallTool.mockResolvedValue(
+        createMCPToolCallResult([{ type: "text", text: "Result" }])
+      );
+
+      const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
+
+      const assistantMsg = createAssistantMessageWithToolCalls([
+        { name: "ui-tool", args: {}, id: "tc-1" },
+      ]);
+
+      const agent = new MockAgent([createRunStartedEvent(), createRunFinishedEvent()]);
+      const input = createRunAgentInput({ messages: [assistantMsg] });
+
+      const events = await collectEvents(middleware.run(input, agent));
+
+      const activityEvent = events.find((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+      expect(activityEvent).toBeDefined();
+      expect((activityEvent as any).content.serverId).toBeUndefined();
+    });
+
+    it("looks up server by serverId in proxied requests", async () => {
+      mockPing.mockResolvedValue({});
+
+      const httpServerConfig: MCPClientConfig = {
+        type: "http",
+        url: "http://localhost:3000",
+        serverId: "my-server"
+      };
+      const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
+      const agent = new MockAgent([]);
+
+      const proxiedRequest: ProxiedMCPRequest = {
+        serverHash: "wrong-hash", // Wrong hash, but serverId should work
+        serverId: "my-server",
+        method: "ping",
+      };
+
+      const input = createRunAgentInput({
+        forwardedProps: { __proxiedMCPRequest: proxiedRequest },
+      });
+
+      const events = await collectEvents(middleware.run(input, agent));
+
+      const finishedEvent = events.find((e) => e.type === EventType.RUN_FINISHED);
+      // Should succeed because serverId lookup worked
+      expect((finishedEvent as any).result.error).toBeUndefined();
+    });
+
+    it("falls back to serverHash when serverId not found", async () => {
+      mockPing.mockResolvedValue({});
+
+      const httpServerConfig: MCPClientConfig = {
+        type: "http",
+        url: "http://localhost:3000",
+        serverId: "my-server"
+      };
+      const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
+      const agent = new MockAgent([]);
+
+      const proxiedRequest: ProxiedMCPRequest = {
+        serverHash: getServerHash(httpServerConfig),
+        serverId: "non-existent-server", // Wrong name, should fall back to hash
+        method: "ping",
+      };
+
+      const input = createRunAgentInput({
+        forwardedProps: { __proxiedMCPRequest: proxiedRequest },
+      });
+
+      const events = await collectEvents(middleware.run(input, agent));
+
+      const finishedEvent = events.find((e) => e.type === EventType.RUN_FINISHED);
+      // Should succeed because serverHash fallback worked
+      expect((finishedEvent as any).result.error).toBeUndefined();
+    });
+
+    it("returns error when neither serverId nor serverHash match", async () => {
+      const httpServerConfig: MCPClientConfig = {
+        type: "http",
+        url: "http://localhost:3000",
+        serverId: "my-server"
+      };
+      const middleware = new MCPAppsMiddleware({ mcpServers: [httpServerConfig] });
+      const agent = new MockAgent([]);
+
+      const proxiedRequest: ProxiedMCPRequest = {
+        serverHash: "wrong-hash",
+        serverId: "wrong-name",
+        method: "ping",
+      };
+
+      const input = createRunAgentInput({
+        forwardedProps: { __proxiedMCPRequest: proxiedRequest },
+      });
+
+      const events = await collectEvents(middleware.run(input, agent));
+
+      const finishedEvent = events.find((e) => e.type === EventType.RUN_FINISHED);
+      expect((finishedEvent as any).result.error).toContain("Unknown server");
     });
   });
 });

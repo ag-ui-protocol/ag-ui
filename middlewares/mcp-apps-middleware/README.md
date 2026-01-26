@@ -18,7 +18,7 @@ import { MCPAppsMiddleware } from "@ag-ui/mcp-apps-middleware";
 const agent = new YourAgent().use(
   new MCPAppsMiddleware({
     mcpServers: [
-      { type: "http", url: "http://localhost:3001/mcp" }
+      { type: "http", url: "http://localhost:3001/mcp", serverId: "weather-server" }
     ],
   })
 );
@@ -28,8 +28,8 @@ const agent = new YourAgent().use(
 
 - Discovers UI-enabled tools from MCP servers
 - Injects tools into the agent's tool list
-- Executes tool calls and fetches UI resources
-- Emits activity snapshots for rendering MCP Apps UI
+- Executes tool calls and emits activity snapshots with resource URIs
+- Supports proxied MCP requests for frontend resource fetching
 
 ## Configuration
 
@@ -39,18 +39,62 @@ interface MCPAppsMiddlewareConfig {
 }
 
 type MCPClientConfig =
-  | { type: "http"; url: string }
-  | { type: "sse"; url: string; headers?: Record<string, string> };
+  | { type: "http"; url: string; serverId?: string }
+  | { type: "sse"; url: string; headers?: Record<string, string>; serverId?: string };
 ```
 
-## Activity Type
+### Server ID
 
-The middleware emits activity snapshots with type `"mcp-apps"`. You can use the exported constant:
+The optional `serverId` field provides a stable identifier for the server. This is useful when:
+- Server URLs may change (e.g., different environments)
+- You want human-readable server identification
+- Frontend code needs to reference servers by name
+
+If `serverId` is not provided, the server is identified by an MD5 hash of its configuration.
+
+## Activity Snapshot
+
+The middleware emits activity snapshots with the following structure:
 
 ```typescript
-import { MCPAppsActivityType } from "@ag-ui/mcp-apps-middleware";
+{
+  type: "ACTIVITY_SNAPSHOT",
+  activityType: "mcp-apps",
+  content: {
+    result: MCPToolCallResult,     // Result from the tool execution
+    resourceUri: string,           // URI of the UI resource to fetch
+    serverHash: string,            // MD5 hash of server config
+    serverId?: string,           // Server ID (if configured)
+    toolInput: Record<string, unknown>  // Arguments passed to the tool
+  },
+  replace: true
+}
+```
 
-// MCPAppsActivityType === "mcp-apps"
+The frontend should fetch the resource content via proxied MCP request using `resourceUri` and either `serverHash` or `serverId`.
+
+## Proxied MCP Requests
+
+The middleware supports proxied MCP requests from the frontend. Pass a `ProxiedMCPRequest` in `forwardedProps.__proxiedMCPRequest`:
+
+```typescript
+interface ProxiedMCPRequest {
+  serverHash: string;      // MD5 hash of server config
+  serverId?: string;     // Optional server ID for lookup
+  method: string;          // MCP method (e.g., "resources/read", "tools/call")
+  params?: Record<string, unknown>;
+}
+```
+
+Server lookup prefers `serverId` if provided, falling back to `serverHash`.
+
+## Exported Utilities
+
+```typescript
+import {
+  MCPAppsActivityType,  // "mcp-apps" constant
+  getServerHash         // Generate server hash from config
+} from "@ag-ui/mcp-apps-middleware";
 ```
 
 ## License
