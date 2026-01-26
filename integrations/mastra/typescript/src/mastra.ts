@@ -339,13 +339,12 @@ export class MastraAgent extends AbstractAgent {
     } else {
       // Remote agent - use the remote agent's stream method
       try {
-        const response = await this.agent.stream({
+        const response = await this.agent.stream(convertedMessages, {
           memory: {
             thread: threadId,
             resource: resourceId,
           },
           runId,
-          messages: convertedMessages,
           clientTools,
           requestContext,
         });

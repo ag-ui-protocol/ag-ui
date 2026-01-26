@@ -54,7 +54,7 @@ export function registerCopilotKit<
         MastraAgent.getLocalAgents({
           resourceId,
           mastra,
-          requestContext,
+          requestContext: requestContext as RequestContext,
         });
 
       const runtime = new CopilotRuntime({
@@ -67,7 +67,7 @@ export function registerCopilotKit<
         serviceAdapter,
       });
 
-      return (handler as any).handle(c.req.raw, {});
+      return handler(c.req.raw);
     },
   });
 }

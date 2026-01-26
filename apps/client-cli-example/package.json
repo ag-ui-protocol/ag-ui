@@ -12,13 +12,13 @@
     "@ag-ui/client": "workspace:*",
     "@ag-ui/core": "workspace:*",
     "@ag-ui/mastra": "workspace:*",
-    "@mastra/client-js": "1.0.0-beta.19",
-    "@mastra/core": "1.0.0-beta.19",
-    "@mastra/libsql": "1.0.0-beta.10",
-    "@mastra/loggers": "1.0.0-beta.3",
-    "@mastra/memory": "1.0.0-beta.10",
+    "@mastra/client-js": "^1.0.1",
+    "@mastra/core": "^1.0.4",
+    "@mastra/libsql": "^1.0.0",
+    "@mastra/loggers": "^1.0.0",
+    "@mastra/memory": "^1.0.0",
     "open": "^10.1.2",
-    "zod": "^4.1.12"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^20",
