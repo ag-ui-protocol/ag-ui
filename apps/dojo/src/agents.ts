@@ -129,10 +129,16 @@ export const agentsIntegrations = {
     agentic_chat_reasoning: new LangGraphHttpAgent({
       url: `${envVars.langgraphPythonUrl}/agent/agentic_chat_reasoning`,
     }),
+    // A2UI Chat with middleware
+    a2ui_chat: (() => {
+      const agent = new LangGraphAgent({ deploymentUrl: envVars.langgraphPythonUrl, graphId: "a2ui_chat" });
+      agent.use(new A2UIMiddleware({ systemInstructionsAdded: true }));
+      return agent;
+    })(),
   }),
 
-  "langgraph-fastapi": async () =>
-    mapAgents(
+  "langgraph-fastapi": async () => ({
+    ...mapAgents(
       (path) => new LangGraphHttpAgent({ url: `${envVars.langgraphFastApiUrl}/agent/${path}` }),
       {
         agentic_chat: "agentic_chat",
@@ -146,6 +152,13 @@ export const agentsIntegrations = {
         subgraphs: "subgraphs",
       }
     ),
+    // A2UI Chat with middleware
+    a2ui_chat: (() => {
+      const agent = new LangGraphHttpAgent({ url: `${envVars.langgraphFastApiUrl}/agent/a2ui_chat` });
+      agent.use(new A2UIMiddleware({ systemInstructionsAdded: true }));
+      return agent;
+    })(),
+  }),
 
   "langgraph-typescript": async () =>
     mapAgents(

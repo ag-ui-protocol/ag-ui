@@ -34,27 +34,27 @@ function getHandler(integrationId: string): Promise<any> {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function createHandler(integrationId: string): Promise<any> {
-  let defaultAgent: AbstractAgent | undefined;
+  let agents: Record<string, AbstractAgent> = {};
 
-  // Look up agent from agents.ts
+  // Look up agents from agents.ts
   const getAgents = agentsIntegrations[integrationId as IntegrationId];
   if (getAgents) {
-    const agents = await getAgents();
-    const agentKeys = Object.keys(agents);
-    if (agentKeys.length > 0) {
-      defaultAgent = agents[agentKeys[0] as keyof typeof agents];
-    }
+    agents = await getAgents() as Record<string, AbstractAgent>;
   }
 
-  // Fallback to basic BuiltInAgent
-  if (!defaultAgent) {
-    defaultAgent = new BuiltInAgent({ model: "openai/gpt-4o" }) as unknown as AbstractAgent;
+  // Fallback to basic BuiltInAgent if no agents found
+  if (Object.keys(agents).length === 0) {
+    agents = {
+      default: new BuiltInAgent({ model: "openai/gpt-4o" }) as unknown as AbstractAgent,
+    };
+  } else {
+    // Also set the first agent as "default" for backwards compatibility
+    const firstAgentKey = Object.keys(agents)[0];
+    agents.default = agents[firstAgentKey];
   }
 
   const runtime = new CopilotRuntime({
-    agents: {
-      default: defaultAgent,
-    },
+    agents,
     runner: new InMemoryAgentRunner(),
   });
 

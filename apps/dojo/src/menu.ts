@@ -44,6 +44,7 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
+      "a2ui_chat",
     ],
   },
   {
@@ -59,6 +60,7 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
+      "a2ui_chat",
     ],
   },
   {

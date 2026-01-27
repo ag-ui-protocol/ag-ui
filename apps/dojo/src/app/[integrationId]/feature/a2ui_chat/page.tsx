@@ -77,7 +77,7 @@ function Chat() {
     []
   );
 
-  return <CopilotChat className="flex-1 overflow-hidden" />;
+  return <CopilotChat className="flex-1 overflow-hidden" agentId="a2ui_chat" />;
 }
 
 export default function Page({ params }: PageProps) {
