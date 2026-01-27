@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI
-from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, AGUIToolset
 from google.adk.agents import LlmAgent
 from google.adk import tools as adk_tools
 import httpx
@@ -117,7 +117,11 @@ sample_agent = LlmAgent(
 
       Use the get_weather tool to fetch current weather data.
       """,
-    tools=[adk_tools.preload_memory_tool.PreloadMemoryTool(), get_weather],
+    tools=[
+        AGUIToolset(), # Add the tools provided by the AG-UI client
+        adk_tools.preload_memory_tool.PreloadMemoryTool(), 
+        get_weather,
+    ],
 )
 
 # Create ADK middleware agent instance

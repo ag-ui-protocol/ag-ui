@@ -276,7 +276,11 @@ class EventTranslator:
                     yield event
             
             # call _translate_function_calls function to yield Tool Events
-            if hasattr(adk_event, 'get_function_calls'):               
+            # Skip function calls from partial events - these are streaming previews in
+            # PROGRESSIVE_SSE_STREAMING mode (enabled by default in google-adk >= 1.22.0).
+            # Only process confirmed function calls (partial=False or partial not set).
+            # See: https://github.com/ag-ui-protocol/ag-ui/issues/968
+            if hasattr(adk_event, 'get_function_calls') and not is_partial:
                 function_calls = adk_event.get_function_calls()
                 if function_calls:
                     # Filter out long-running tool calls; those are handled by translate_lro_function_calls

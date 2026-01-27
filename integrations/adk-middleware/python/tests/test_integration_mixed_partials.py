@@ -44,10 +44,19 @@ async def test_mixed_partials_non_lro_then_lro(adk_agent_instance):
     # First partial text only
     evt1 = mk_partial("Hello")
 
-    # Second partial: text + non-LRO function call
+    # Second event: text + non-LRO function call (partial=False since this is a confirmed call)
+    # Note: With PROGRESSIVE_SSE_STREAMING (google-adk >= 1.22.0), function calls in partial=True
+    # events are just previews and should be skipped. Only partial=False events with function
+    # calls represent confirmed calls that should be processed.
     normal_id = "normal-999"
     normal_func = MagicMock(); normal_func.id = normal_id; normal_func.name = "regular_tool"; normal_func.args = {"b": 2}
-    evt2 = mk_partial(" world")
+    evt2 = MagicMock()
+    evt2.author = "assistant"
+    evt2.content = MagicMock(); evt2.content.parts = [MagicMock(text=" world")]
+    evt2.partial = False  # Confirmed function call, not a preview
+    evt2.turn_complete = False
+    evt2.is_final_response = lambda: False
+    evt2.get_function_responses = lambda: []
     evt2.get_function_calls = lambda: [normal_func]
     evt2.long_running_tool_ids = []
 
@@ -87,9 +96,11 @@ async def test_mixed_partials_non_lro_then_lro(adk_agent_instance):
 
     types = [str(ev.type).split(".")[-1] for ev in events]
 
-    # Expect at least one START and 2 CONTENTs from streaming
+    # Expect at least one START and at least 1 CONTENT from streaming
+    # Note: With partial=False on evt2 (confirmed function call), text deduplication may
+    # reduce the content count since partial and non-partial text are handled differently.
     assert types.count("TEXT_MESSAGE_START") == 1
-    assert types.count("TEXT_MESSAGE_CONTENT") >= 2
+    assert types.count("TEXT_MESSAGE_CONTENT") >= 1
 
     # Non-LRO tool call should appear exactly once
     normal_starts = [i for i, ev in enumerate(events) if str(ev.type).endswith("TOOL_CALL_START") and getattr(ev, "tool_call_id", None) == normal_id]

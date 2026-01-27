@@ -119,6 +119,9 @@ from google.adk.agents import Agent
 my_agent = Agent(
     name="assistant",
     instruction="You are a helpful assistant."
+    tools=[
+        AGUIToolset(), # Add the tools provided by the AG-UI client
+    ]
 )
 
 # 2. Create the middleware with direct agent embedding
@@ -144,6 +147,9 @@ from google.adk.agents import Agent
 my_agent = Agent(
     name="assistant",
     instruction="You are a helpful assistant."
+    tools=[
+        AGUIToolset(), # Add the tools provided by the AG-UI client
+    ]
 )
 
 # 2. Create the middleware with direct agent embedding
@@ -188,7 +194,13 @@ from ag_ui.core import RunAgentInput, UserMessage
 
 async def main():
     # Setup
-    my_agent = Agent(name="assistant", instruction="You are a helpful assistant.")
+    my_agent = Agent(
+        name="assistant", 
+        instruction="You are a helpful assistant.", 
+        tools=[
+            AGUIToolset(), # Add the tools provided by the AG-UI client
+        ]
+    )
 
     agent = ADKAgent(
         adk_agent=my_agent,
@@ -218,10 +230,10 @@ async def main():
 asyncio.run(main())
 ```
 
-### Multi-Agent Setup
+### Multiple AG-UI Endpoints
 
 ```python
-# Create multiple agent instances with different ADK agents
+# Create multiple ADKAgent instances with different ADK agents
 general_agent_wrapper = ADKAgent(
     adk_agent=general_agent,
     app_name="demo_app",
@@ -250,9 +262,115 @@ add_adk_fastapi_endpoint(app, technical_agent_wrapper, path="/agents/technical")
 add_adk_fastapi_endpoint(app, creative_agent_wrapper, path="/agents/creative")
 ```
 
+## Context Support
+
+The middleware automatically passes `context` from `RunAgentInput` to your ADK agents, following the pattern established by LangGraph. Context is stored in session state under the `_ag_ui_context` key and is accessible in both tools and instruction providers.
+
+### In Tools via Session State
+
+```python
+from google.adk.tools import ToolContext
+from ag_ui_adk import CONTEXT_STATE_KEY
+
+def my_tool(tool_context: ToolContext) -> str:
+    context_items = tool_context.state.get(CONTEXT_STATE_KEY, [])
+    for item in context_items:
+        print(f"{item['description']}: {item['value']}")
+    return "Done"
+```
+
+### In Instruction Providers via Session State
+
+```python
+from google.adk.agents.readonly_context import ReadonlyContext
+from ag_ui_adk import CONTEXT_STATE_KEY
+
+def dynamic_instructions(ctx: ReadonlyContext) -> str:
+    instructions = "You are a helpful assistant."
+
+    context_items = ctx.state.get(CONTEXT_STATE_KEY, [])
+    for item in context_items:
+        instructions += f"\n- {item['description']}: {item['value']}"
+
+    return instructions
+
+agent = LlmAgent(
+    name="assistant",
+    instruction=dynamic_instructions,  # Callable instruction provider
+)
+```
+
+### Alternative: Via RunConfig custom_metadata (ADK 1.22.0+)
+
+For users on ADK 1.22.0 or later, context is also available via `RunConfig.custom_metadata`:
+
+```python
+def dynamic_instructions(ctx: ReadonlyContext) -> str:
+    # Alternative access via custom_metadata (ADK 1.22.0+)
+    if ctx.run_config and ctx.run_config.custom_metadata:
+        context_items = ctx.run_config.custom_metadata.get('ag_ui_context', [])
+```
+
+**Note:** Session state is the recommended approach as it works with all ADK versions.
+
+See `examples/other/context_usage.py` for a complete demonstration.
+
 ## Tool Support
 
 The middleware provides complete bidirectional tool support, enabling AG-UI Protocol tools to execute within Google ADK agents. All tools supplied by the client are currently implemented as long-running tools that emit events to the client for execution and can be combined with backend tools provided by the agent to create a hybrid combined toolset.
+
+### Adk Agent Agui Tool Support
+
+Use the AGUIToolset to expose tools from the AG-UI client to the ADK agent. By default all agui client tools are added to the context. You can filter which tools to expose using the `tool_filter` parameter and fix name conflicts with the `tool_name_prefix` parameter. In google adk tools with the same name override previously defined tools of the same name. You can order the tools array to control which tool takes precedence.
+
+```python
+from ag_ui_adk import ADKAgent, AGUIToolset
+from google.adk.agents import Agent
+
+hello_agent = LlmAgent(
+    name='HelloAgent',
+    model='gemini-2.5-flash',
+    description="An agent that greets users",
+    instruction="""
+    You are a friendly assistant that greets users.
+    Use the sayHello tool to greet the user.
+    """,
+    tools=[
+        AGUIToolset(tool_filter=['sayHello']) # Add only the sayHello tool exposed by the AG-UI client
+    ],
+)
+
+goodbye_agent = LlmAgent(
+    name='GoodbyeAgent',
+    model='gemini-2.5-flash',
+    description="An agent that says goodbye",
+    instruction="""
+    You are a friendly assistant that says goodbye to users.
+    Use the sayGoodbye tool to say goodbye to the user.
+    """,
+        tools=[
+        AGUIToolset(tool_filter=lambda tool, readonly_context=None: tool.name.endswith('Goodbye') ) # Add tools ending with Goodbye exposed by the AG-UI client
+    ],
+)
+
+# create an agent
+agent = LlmAgent(
+    name='QaAgent',
+    model='gemini-2.5-flash',
+    description="The QaAgent helps users by answering their questions.",
+    instruction="""
+    You are a helpful assistant. Help users by answering their questions and assisting with their needs.
+    """,
+    tools=[
+        # This agent doesn't see any tools provided by the AG-UI client
+    ],
+    sub_agents=[
+        hello_agent, 
+        goodbye_agent,
+    ],
+)
+```
+
 
 For detailed information about tool support, see [TOOLS.md](./TOOLS.md).
 
@@ -262,3 +380,27 @@ For detailed information about tool support, see [TOOLS.md](./TOOLS.md).
 - **[TOOLS.md](./TOOLS.md)** - Tool support documentation
 - **[USAGE.md](./USAGE.md)** - Usage examples and patterns
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Technical architecture and design details
+
+## Migration Guide
+
+### Migrating from v0.4.x 
+
+If you are upgrading from version 0.4.x, please note the following changes:
+
+- Agui tools are no longer automatically included in the root agent's toolset. You must explicitly add the `AGUIToolset` to your agent's tools list to access AG-UI client tools.
+
+- Agui tools with names that conflict with existing agent tools will no longer be automatically removed. Use the `tool_name_prefix` and `tool_filter` parameters of `AGUIToolset` to manage tool name conflicts and filter which tools to include.
+
+- If you want to maintain the previous behavior of only the root agent having access to AG-UI tools, and ensure no name conflicts, you can add the `AGUIToolset` with a custom filter as the first tool in the root agent like this:
+
+    ```python
+    tools=[
+        AGUIToolset(
+            tool_filter=lambda tool, readonly_context=None: tool.name not in [
+                "transfer_to_agent", 
+                "any other tools provided to this agent that overlap with agui tools...",
+            ],
+        ),
+        ...other tools...
+    ]
+    ```

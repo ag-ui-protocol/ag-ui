@@ -39,17 +39,6 @@ public abstract class LocalAgent implements Agent {
      */
     protected State state;
 
-    /**
-     * Static system message content used when no system message provider is specified.
-     */
-    protected String systemMessage;
-
-    /**
-     * Function that dynamically generates system messages based on the current agent state.
-     * Takes precedence over the static system message if both are provided.
-     */
-    protected Function<LocalAgent, String> systemMessageProvider;
-
     protected List<BaseMessage> messages;
 
     /**
@@ -57,27 +46,16 @@ public abstract class LocalAgent implements Agent {
      *
      * @param agentId unique identifier for this agent instance
      * @param state initial state for the agent
-     * @param systemMessageProvider function to dynamically generate system messages (can be null)
-     * @param systemMessage static system message content (can be null if systemMessageProvider is provided)
      * @throws AGUIException if both systemMessage and systemMessageProvider are null
      */
     public LocalAgent(
-        final String agentId,
-        final State state,
-        final Function<LocalAgent, String> systemMessageProvider,
-        final String systemMessage,
-        final List<BaseMessage> messages
+            final String agentId,
+            final State state,
+            final List<BaseMessage> messages
     ) throws AGUIException {
         this.agentId = agentId;
 
         this.state = state;
-
-        if (Objects.isNull(systemMessage) && Objects.isNull(systemMessageProvider)) {
-            throw new AGUIException("Either SystemMessage or SystemMessageProvider should be set.");
-        }
-
-        this.systemMessage = systemMessage;
-        this.systemMessageProvider = systemMessageProvider;
 
         this.messages = messages;
     }
@@ -120,17 +98,17 @@ public abstract class LocalAgent implements Agent {
         CompletableFuture<Void> future = new CompletableFuture<>();
 
         var input = new RunAgentInput(
-            parameters.getThreadId(),
-            Objects.isNull(parameters.getRunId())
-                ? UUID.randomUUID().toString()
-                : parameters.getRunId(),
-            Objects.nonNull(parameters.getState())
-                ? parameters.getState()
-                : this.state,
-            parameters.getMessages(),
-            parameters.getTools(),
-            parameters.getContext(),
-            parameters.getForwardedProps()
+                parameters.getThreadId(),
+                Objects.isNull(parameters.getRunId())
+                        ? UUID.randomUUID().toString()
+                        : parameters.getRunId(),
+                Objects.nonNull(parameters.getState())
+                        ? parameters.getState()
+                        : this.state,
+                parameters.getMessages(),
+                parameters.getTools(),
+                parameters.getContext(),
+                parameters.getForwardedProps()
         );
 
         CompletableFuture.runAsync(() -> this.run(input, subscriber));
@@ -201,7 +179,7 @@ public abstract class LocalAgent implements Agent {
      * @param context list of context objects to include in the system message
      * @return a new SystemMessage containing the formatted system prompt
      */
-    protected SystemMessage createSystemMessage(final State state, final List<Context> context) {
+    protected SystemMessage createSystemMessage(final State state, final List<Context> context, final String systemMessageContent) {
         var message = """
 %s
 
@@ -211,17 +189,14 @@ State:
 Context:
 %s
 """
-            .formatted(
-                (Objects.nonNull(this.systemMessageProvider)
-                    ? this.systemMessageProvider.apply(this)
-                    : this.systemMessage
-                ),
-                state,
-                String.join("\n",
-                    context.stream().map(Context::toString)
-                    .toList()
-                )
-            );
+                .formatted(
+                        systemMessageContent,
+                        state,
+                        String.join("\n",
+                                context.stream().map(Context::toString)
+                                        .toList()
+                        )
+                );
 
         var systemMessage = new SystemMessage();
 
@@ -243,9 +218,17 @@ Context:
      */
     protected UserMessage getLatestUserMessage(List<BaseMessage> messages) throws AGUIException {
         return (UserMessage)messages.stream()
-            .filter(m -> m.getRole().equals(Role.user))
-            .reduce((a, b) -> b)
-            .orElseThrow(() -> new AGUIException("No User Message found."));
+                .filter(m -> m.getRole().equals(Role.user))
+                .reduce((a, b) -> b)
+                .orElseThrow(() -> new AGUIException("No User Message found."));
+    }
+
+    protected void combineMessages(RunAgentInput input) {
+        input.messages().forEach((message) -> {
+            if (this.messages.stream().filter((m) -> m.getId().equals(message.getId())).findAny().isEmpty()) {
+                this.messages.add(message);
+            }
+        });
     }
 
 }

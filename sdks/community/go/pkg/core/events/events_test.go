@@ -308,7 +308,7 @@ func TestStateEvents(t *testing.T) {
 			{
 				ID:      "msg-1",
 				Role:    "user",
-				Content: strPtr("Hello"),
+				Content: "Hello",
 			},
 			{
 				ID:   "msg-2",
@@ -328,7 +328,7 @@ func TestStateEvents(t *testing.T) {
 				ID:           "activity-1",
 				Role:         RoleActivity,
 				ActivityType: "PLAN",
-				ActivityContent: map[string]any{
+				Content: map[string]any{
 					"status": "draft",
 				},
 			},
@@ -370,7 +370,7 @@ func TestStateEvents(t *testing.T) {
 				ID:   "activity-1",
 				Role: RoleActivity,
 				// Missing activityType
-				ActivityContent: map[string]any{
+				Content: map[string]any{
 					"status": "draft",
 				},
 			},
@@ -478,7 +478,7 @@ func TestMessageSerialization(t *testing.T) {
 		msg := Message{
 			ID:      "msg-1",
 			Role:    "user",
-			Content: strPtr("hello"),
+			Content: "hello",
 		}
 
 		data, err := json.Marshal(msg)
@@ -488,18 +488,20 @@ func TestMessageSerialization(t *testing.T) {
 		require.NoError(t, json.Unmarshal(data, &decoded))
 
 		assert.Equal(t, "msg-1", decoded.ID)
-		assert.Equal(t, "user", decoded.Role)
-		require.NotNil(t, decoded.Content)
-		assert.Equal(t, "hello", *decoded.Content)
-		assert.Nil(t, decoded.ActivityContent)
+		assert.Equal(t, "user", string(decoded.Role))
+		content, ok := decoded.ContentString()
+		require.True(t, ok)
+		assert.Equal(t, "hello", content)
+		_, ok = decoded.ContentActivity()
+		assert.False(t, ok)
 	})
 
 	t.Run("MarshalAndUnmarshal_ActivityMessage", func(t *testing.T) {
 		msg := Message{
-			ID:              "activity-1",
-			Role:            "activity",
-			ActivityType:    "PLAN",
-			ActivityContent: map[string]any{"status": "draft"},
+			ID:           "activity-1",
+			Role:         "activity",
+			ActivityType: "PLAN",
+			Content:      map[string]any{"status": "draft"},
 		}
 
 		data, err := json.Marshal(msg)
@@ -509,11 +511,14 @@ func TestMessageSerialization(t *testing.T) {
 		require.NoError(t, json.Unmarshal(data, &decoded))
 
 		assert.Equal(t, "activity-1", decoded.ID)
-		assert.Equal(t, "activity", decoded.Role)
+		assert.Equal(t, "activity", string(decoded.Role))
 		assert.Equal(t, "PLAN", decoded.ActivityType)
-		require.Nil(t, decoded.Content)
-		require.NotNil(t, decoded.ActivityContent)
-		assert.Equal(t, "draft", decoded.ActivityContent["status"])
+		_, ok := decoded.ContentString()
+		assert.False(t, ok)
+
+		content, ok := decoded.ContentActivity()
+		require.True(t, ok)
+		assert.Equal(t, "draft", content["status"])
 	})
 }
 

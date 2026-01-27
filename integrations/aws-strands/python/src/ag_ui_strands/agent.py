@@ -289,6 +289,19 @@ class StrandsAgent:
                             delta=text_chunk,
                         )
 
+                    # Handle tool streaming events for real-time state updates
+                    # Strands tools can yield intermediate results as tool_stream_event
+                    elif "tool_stream_event" in event:
+                        tool_stream = event["tool_stream_event"]
+                        stream_data = tool_stream.get("data", {})
+
+                        # Emit state snapshot if tool yielded state
+                        if isinstance(stream_data, dict) and "state" in stream_data:
+                            yield StateSnapshotEvent(
+                                type=EventType.STATE_SNAPSHOT,
+                                snapshot=stream_data["state"],
+                            )
+
                     # Handle tool results from Strands for backend tool rendering
                     elif "message" in event and event["message"].get("role") == "user":
                         message_content = event["message"].get("content", [])

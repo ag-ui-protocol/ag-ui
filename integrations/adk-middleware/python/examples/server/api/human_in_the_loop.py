@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI
-from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, AGUIToolset
 from google.adk.agents import Agent
 from google.genai import types
 
@@ -94,6 +94,9 @@ Tool reference: {DEFINE_TASK_TOOL}
         top_p=0.9,
         top_k=40
     ),
+    tools=[
+        AGUIToolset(), # Add the tools provided by the AG-UI client
+    ]
 )
 
 # Create ADK middleware agent instance
