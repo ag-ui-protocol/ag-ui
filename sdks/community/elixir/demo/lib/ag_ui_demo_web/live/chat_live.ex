@@ -176,18 +176,18 @@ defmodule AgUiDemoWeb.ChatLive do
                 <button
                   id="run-scenario"
                   phx-click="run_scenario"
-                  disabled={agui_running?(@socket)}
+                  disabled={agui_running?(assigns)}
                   class={"w-full py-2 px-4 rounded-lg font-medium transition-colors " <>
-                  if agui_running?(@socket) do
+                  if agui_running?(assigns) do
                     "bg-gray-300 text-gray-500 cursor-not-allowed"
                   else
                     "bg-blue-600 text-white hover:bg-blue-700"
                   end}
                 >
-                  {if agui_running?(@socket), do: "Running...", else: "Run Scenario"}
+                  {if agui_running?(assigns), do: "Running...", else: "Run Scenario"}
                 </button>
 
-                <%= if agui_running?(@socket) do %>
+                <%= if agui_running?(assigns) do %>
                   <button
                     id="abort-run"
                     phx-click="abort"

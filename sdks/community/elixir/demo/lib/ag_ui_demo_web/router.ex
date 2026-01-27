@@ -14,6 +14,10 @@ defmodule AgUiDemoWeb.Router do
     plug :accepts, ["json"]
   end
 
+  pipeline :sse do
+    plug :accepts, ["event-stream", "json"]
+  end
+
   scope "/", AgUiDemoWeb do
     pipe_through :browser
 
@@ -21,9 +25,9 @@ defmodule AgUiDemoWeb.Router do
     live "/chat", ChatLive, :index
   end
 
-  # API endpoints for mock agent
+  # API endpoints for mock agent (SSE streaming)
   scope "/api", AgUiDemoWeb do
-    pipe_through :api
+    pipe_through :sse
 
     post "/agent", AgentController, :run
     # Also support GET for easier testing
