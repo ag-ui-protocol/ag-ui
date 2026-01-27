@@ -235,7 +235,7 @@ defmodule AgUI.NormalizeTest do
       assert %Events.ToolCallArgs{delta: "}"} = hd(events2)
     end
 
-    test "first chunk without tool_call_name is skipped" do
+    test "first chunk without tool_call_name raises" do
       chunk = %Events.ToolCallChunk{
         type: :tool_call_chunk,
         tool_call_id: "call-1",
@@ -243,10 +243,38 @@ defmodule AgUI.NormalizeTest do
       }
 
       pending = Normalize.new()
-      {events, pending} = Normalize.expand(chunk, pending)
+      assert_raise ArgumentError, ~r/toolCallName/, fn ->
+        Normalize.expand(chunk, pending)
+      end
+    end
 
-      assert events == []
-      assert not Map.has_key?(pending.tool, "call-1")
+    test "text chunk without message_id raises" do
+      chunk = %Events.TextMessageChunk{
+        type: :text_message_chunk,
+        message_id: nil,
+        delta: "Hello"
+      }
+
+      pending = Normalize.new()
+
+      assert_raise ArgumentError, ~r/messageId/, fn ->
+        Normalize.expand(chunk, pending)
+      end
+    end
+
+    test "tool chunk without tool_call_id raises" do
+      chunk = %Events.ToolCallChunk{
+        type: :tool_call_chunk,
+        tool_call_id: nil,
+        tool_call_name: "test",
+        delta: "{}"
+      }
+
+      pending = Normalize.new()
+
+      assert_raise ArgumentError, ~r/toolCallId/, fn ->
+        Normalize.expand(chunk, pending)
+      end
     end
 
     test "no ARGS event if delta is nil" do

@@ -92,7 +92,7 @@ defmodule AgUI.Events.TextMessageContent do
   def from_map(
         %{"type" => "TEXT_MESSAGE_CONTENT", "messageId" => message_id, "delta" => delta} = map
       )
-      when is_binary(message_id) and is_binary(delta) do
+      when is_binary(message_id) and is_binary(delta) and byte_size(delta) > 0 do
     {:ok,
      %__MODULE__{
        type: :text_message_content,
@@ -103,6 +103,7 @@ defmodule AgUI.Events.TextMessageContent do
      }}
   end
 
+  def from_map(%{"type" => "TEXT_MESSAGE_CONTENT", "delta" => ""}), do: {:error, :empty_delta}
   def from_map(%{"type" => "TEXT_MESSAGE_CONTENT"}), do: {:error, :missing_required_fields}
   def from_map(_), do: {:error, :invalid_event}
 

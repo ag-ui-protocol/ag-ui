@@ -48,6 +48,7 @@ defmodule AgUiDemoWeb.AgentController do
   # Generate a UUID v4
   defp uuid4 do
     <<u0::48, _::4, u1::12, _::2, u2::62>> = :crypto.strong_rand_bytes(16)
+
     <<u0::48, 4::4, u1::12, 2::2, u2::62>>
     |> Base.encode16(case: :lower)
     |> String.replace(~r/(.{8})(.{4})(.{4})(.{4})(.{12})/, "\\1-\\2-\\3-\\4-\\5")

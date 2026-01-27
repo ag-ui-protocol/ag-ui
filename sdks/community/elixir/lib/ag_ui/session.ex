@@ -60,7 +60,7 @@ defmodule AgUI.Session do
           run_id: String.t() | nil,
           status: status(),
           messages: [Message.t()],
-          state: map(),
+          state: term(),
           steps: [step()],
           text_buffers: %{String.t() => text_buffer()},
           tool_buffers: %{String.t() => tool_buffer()},

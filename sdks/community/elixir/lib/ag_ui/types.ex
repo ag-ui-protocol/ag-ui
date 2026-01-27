@@ -7,7 +7,7 @@ defmodule AgUI.Types do
   """
 
   @doc """
-  Converts a camelCase string to snake_case atom.
+  Converts a camelCase string to snake_case atom using existing atoms only.
 
   ## Examples
 
@@ -20,9 +20,8 @@ defmodule AgUI.Types do
   """
   @spec to_snake_atom(String.t()) :: atom()
   def to_snake_atom(camel_string) when is_binary(camel_string) do
-    camel_string
-    |> Macro.underscore()
-    |> String.to_atom()
+    snake = Macro.underscore(camel_string)
+    String.to_existing_atom(snake)
   end
 
   @doc """

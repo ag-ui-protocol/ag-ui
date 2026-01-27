@@ -40,7 +40,7 @@ defmodule AgUI.Types.RunAgentInput do
           thread_id: String.t(),
           run_id: String.t(),
           parent_run_id: String.t() | nil,
-          state: map(),
+          state: term(),
           messages: [Message.t()],
           tools: [Tool.t()],
           context: [Context.t()],
@@ -91,7 +91,7 @@ defmodule AgUI.Types.RunAgentInput do
          thread_id: thread_id,
          run_id: run_id,
          parent_run_id: map["parentRunId"],
-         state: map["state"] || %{},
+         state: Map.get(map, "state", %{}),
          messages: messages,
          tools: tools,
          context: context,
@@ -192,11 +192,11 @@ defmodule AgUI.Types.RunAgentInput do
       thread_id: thread_id,
       run_id: run_id,
       parent_run_id: opts[:parent_run_id],
-      state: opts[:state] || %{},
-      messages: opts[:messages] || [],
-      tools: opts[:tools] || [],
-      context: opts[:context] || [],
-      forwarded_props: opts[:forwarded_props] || %{}
+      state: Keyword.get(opts, :state, %{}),
+      messages: Keyword.get(opts, :messages, []),
+      tools: Keyword.get(opts, :tools, []),
+      context: Keyword.get(opts, :context, []),
+      forwarded_props: Keyword.get(opts, :forwarded_props, %{})
     }
   end
 
@@ -219,8 +219,8 @@ defmodule AgUI.Types.RunAgentInput do
   @doc """
   Updates the state.
   """
-  @spec put_state(t(), map()) :: t()
-  def put_state(%__MODULE__{} = input, state) when is_map(state) do
+  @spec put_state(t(), term()) :: t()
+  def put_state(%__MODULE__{} = input, state) do
     %{input | state: state}
   end
 

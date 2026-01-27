@@ -109,6 +109,9 @@ defmodule AgUI.Normalize do
   # TEXT_MESSAGE_CHUNK expansion
   def expand(%Events.TextMessageChunk{} = chunk, pending) do
     message_id = chunk.message_id
+    if is_nil(message_id) do
+      raise ArgumentError, "TEXT_MESSAGE_CHUNK missing required messageId"
+    end
 
     # First, close any pending tool call when switching to text
     {tool_close_events, pending} =
@@ -171,6 +174,9 @@ defmodule AgUI.Normalize do
   # TOOL_CALL_CHUNK expansion
   def expand(%Events.ToolCallChunk{} = chunk, pending) do
     tool_call_id = chunk.tool_call_id
+    if is_nil(tool_call_id) do
+      raise ArgumentError, "TOOL_CALL_CHUNK missing required toolCallId"
+    end
 
     # First, close any pending text message when switching to tool
     {text_close_events, pending} =
@@ -189,12 +195,11 @@ defmodule AgUI.Normalize do
       end
 
     # Check if this is a new tool call (not yet started)
-    {start_events, pending, skip_args} =
+    {start_events, pending} =
       if not Map.has_key?(pending.tool, tool_call_id) do
         # First chunk must have tool_call_name
         if is_nil(chunk.tool_call_name) do
-          # Error: first chunk must have toolCallName - skip entire chunk
-          {[], pending, true}
+          raise ArgumentError, "TOOL_CALL_CHUNK missing required toolCallName for new tool call"
         else
           start_event = %Events.ToolCallStart{
             type: :tool_call_start,
@@ -214,15 +219,15 @@ defmodule AgUI.Normalize do
             })
             |> Map.put(:current_tool_id, tool_call_id)
 
-          {[start_event], new_pending, false}
+          {[start_event], new_pending}
         end
       else
-        {[], %{pending | current_tool_id: tool_call_id}, false}
+        {[], %{pending | current_tool_id: tool_call_id}}
       end
 
     # Emit args if delta is present and we didn't skip
     args_events =
-      if (not skip_args and chunk.delta) && chunk.delta != "" do
+      if chunk.delta && chunk.delta != "" do
         [
           %Events.ToolCallArgs{
             type: :tool_call_args,

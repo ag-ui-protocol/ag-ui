@@ -14,7 +14,7 @@ defmodule AgUI.Events.StateSnapshot do
 
   @type t :: %__MODULE__{
           type: :state_snapshot,
-          snapshot: map(),
+          snapshot: term(),
           timestamp: integer() | nil,
           raw_event: map() | nil
         }
@@ -27,8 +27,7 @@ defmodule AgUI.Events.StateSnapshot do
   ]
 
   @spec from_map(map()) :: {:ok, t()} | {:error, term()}
-  def from_map(%{"type" => "STATE_SNAPSHOT", "snapshot" => snapshot} = map)
-      when is_map(snapshot) do
+  def from_map(%{"type" => "STATE_SNAPSHOT", "snapshot" => snapshot} = map) do
     {:ok,
      %__MODULE__{
        type: :state_snapshot,
@@ -185,7 +184,7 @@ defmodule AgUI.Events.ActivitySnapshot do
           type: :activity_snapshot,
           message_id: String.t(),
           activity_type: String.t(),
-          content: map(),
+          content: term(),
           replace: boolean(),
           timestamp: integer() | nil,
           raw_event: map() | nil
@@ -210,7 +209,7 @@ defmodule AgUI.Events.ActivitySnapshot do
           "content" => content
         } = map
       )
-      when is_binary(message_id) and is_binary(activity_type) and is_map(content) do
+      when is_binary(message_id) and is_binary(activity_type) do
     {:ok,
      %__MODULE__{
        type: :activity_snapshot,

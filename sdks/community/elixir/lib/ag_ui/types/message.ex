@@ -243,7 +243,7 @@ defmodule AgUI.Types.Message.Tool do
           role: :tool,
           content: String.t(),
           tool_call_id: String.t(),
-          error: boolean() | nil
+          error: String.t() | nil
         }
 
   @enforce_keys [:id, :content, :tool_call_id]
@@ -290,7 +290,7 @@ defmodule AgUI.Types.Message.Activity do
           id: String.t(),
           role: :activity,
           activity_type: String.t(),
-          content: map()
+          content: term()
         }
 
   @enforce_keys [:id, :activity_type, :content]
@@ -298,7 +298,7 @@ defmodule AgUI.Types.Message.Activity do
 
   @spec from_map(map()) :: {:ok, t()} | {:error, term()}
   def from_map(%{"id" => id, "activityType" => activity_type, "content" => content} = _map)
-      when is_binary(id) and is_binary(activity_type) and is_map(content) do
+      when is_binary(id) and is_binary(activity_type) do
     {:ok,
      %__MODULE__{
        id: id,

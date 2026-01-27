@@ -56,12 +56,12 @@ defmodule AgUI.JSONPatch do
       {:error, {:patch_failed, _}}
 
   """
-  @spec apply(map(), [operation()]) :: {:ok, map()} | {:error, term()}
-  def apply(document, []) when is_map(document) do
+  @spec apply(term(), [operation()]) :: {:ok, term()} | {:error, term()}
+  def apply(document, []) do
     {:ok, document}
   end
 
-  def apply(document, operations) when is_map(document) and is_list(operations) do
+  def apply(document, operations) when is_list(operations) do
     # Convert operations to Jsonpatch structs
     patches = Enum.map(operations, &operation_to_patch/1)
 
@@ -79,10 +79,6 @@ defmodule AgUI.JSONPatch do
     e -> {:error, {:patch_exception, e}}
   end
 
-  def apply(document, _operations) when not is_map(document) do
-    {:error, :invalid_document}
-  end
-
   def apply(_document, operations) when not is_list(operations) do
     {:error, :invalid_operations}
   end
@@ -96,7 +92,7 @@ defmodule AgUI.JSONPatch do
       %{"a" => 1, "b" => 2}
 
   """
-  @spec apply!(map(), [operation()]) :: map()
+  @spec apply!(term(), [operation()]) :: term()
   def apply!(document, operations) do
     case __MODULE__.apply(document, operations) do
       {:ok, result} -> result

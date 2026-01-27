@@ -106,8 +106,9 @@ defmodule AgUI.JSONPatchTest do
       assert {:error, {:patch_failed, _}} = JSONPatch.apply(doc, ops)
     end
 
-    test "returns error for invalid document" do
-      assert {:error, :invalid_document} = JSONPatch.apply("not a map", [])
+    test "accepts non-map documents" do
+      doc = ["a", "b"]
+      assert {:ok, ^doc} = JSONPatch.apply(doc, [])
     end
 
     test "returns error for invalid operations" do

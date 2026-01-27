@@ -248,28 +248,29 @@ defmodule AgUI.Client.HttpAgent do
 
     Stream.resource(
       fn -> {ref, SSE.new()} end,
-      fn {ref, parser} ->
-        receive do
-          {^ref, {:data, chunk}} ->
-            {events, parser} = SSE.feed(parser, chunk)
-            {events, {ref, parser}}
-
-          {^ref, :done} ->
-            {final_events, _parser} = SSE.finalize(parser)
-            {:halt, {final_events, nil}}
-
-          {^ref, {:error, reason}} ->
-            throw({:stream_error, reason})
-        after
-          # Use a long timeout since we're waiting for streaming data
-          300_000 ->
-            throw(:stream_timeout)
-        end
-      end,
       fn
-        {_events, nil} -> :ok
-        {_ref, _parser} -> :ok
-      end
+        {ref, :done} ->
+          {:halt, {ref, :done}}
+
+        {ref, parser} ->
+          receive do
+            {^ref, {:data, chunk}} ->
+              {events, parser} = SSE.feed(parser, chunk)
+              {events, {ref, parser}}
+
+            {^ref, :done} ->
+              {final_events, _parser} = SSE.finalize(parser)
+              {final_events, {ref, :done}}
+
+            {^ref, {:error, reason}} ->
+              throw({:stream_error, reason})
+          after
+            # Use a long timeout since we're waiting for streaming data
+            300_000 ->
+              throw(:stream_timeout)
+          end
+      end,
+      fn _ -> :ok end
     )
   end
 

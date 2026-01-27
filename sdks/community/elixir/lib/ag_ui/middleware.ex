@@ -187,49 +187,42 @@ defmodule AgUI.Middleware do
   @spec with_error_handling(next()) :: next()
   def with_error_handling(runner) do
     fn input ->
-      Stream.resource(
-        fn ->
-          try do
-            {:ok, runner.(input)}
-          rescue
-            e -> {:error, Exception.message(e)}
-          catch
-            :exit, reason -> {:error, "Process exited: #{inspect(reason)}"}
-            :throw, value -> {:error, "Uncaught throw: #{inspect(value)}"}
-          end
-        end,
-        fn
-          {:ok, stream} ->
-            case Enum.take(stream, 1) do
-              [first] ->
-                # Create a stream that yields the first element, then the rest
-                remaining = Stream.drop(stream, 1)
-                {[first], {:streaming, remaining}}
+      try do
+        runner.(input)
+      rescue
+        e ->
+          Stream.concat([
+            [
+              %AgUI.Events.RunError{
+                type: :run_error,
+                message: Exception.message(e),
+                timestamp: System.system_time(:millisecond)
+              }
+            ]
+          ])
+      catch
+        :exit, reason ->
+          Stream.concat([
+            [
+              %AgUI.Events.RunError{
+                type: :run_error,
+                message: "Process exited: #{inspect(reason)}",
+                timestamp: System.system_time(:millisecond)
+              }
+            ]
+          ])
 
-              [] ->
-                {:halt, :done}
-            end
-
-          {:streaming, stream} ->
-            case Enum.take(stream, 1) do
-              [event] -> {[event], {:streaming, Stream.drop(stream, 1)}}
-              [] -> {:halt, :done}
-            end
-
-          {:error, message} ->
-            error_event = %AgUI.Events.RunError{
-              type: :run_error,
-              message: message,
-              timestamp: DateTime.utc_now() |> DateTime.to_iso8601()
-            }
-
-            {[error_event], :done}
-
-          :done ->
-            {:halt, :done}
-        end,
-        fn _ -> :ok end
-      )
+        :throw, value ->
+          Stream.concat([
+            [
+              %AgUI.Events.RunError{
+                type: :run_error,
+                message: "Uncaught throw: #{inspect(value)}",
+                timestamp: System.system_time(:millisecond)
+              }
+            ]
+          ])
+      end
     end
   end
 end

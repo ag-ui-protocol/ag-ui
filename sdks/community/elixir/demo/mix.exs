@@ -42,7 +42,6 @@ defmodule AgUiDemo.MixProject do
     [
       # AG-UI SDK (path dependency to parent)
       {:ag_ui, path: ".."},
-
       {:phoenix, "~> 1.8.3"},
       {:phoenix_html, "~> 4.1"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},

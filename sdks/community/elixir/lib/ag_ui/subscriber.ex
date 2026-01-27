@@ -339,7 +339,7 @@ defmodule AgUI.Subscriber do
           new_session = apply_mutation(session, mutation)
 
           if mutation[:stop_propagation] do
-            {:halt, {:mutate, %{stop_propagation: true}}}
+            {:halt, {:mutate, mutation}}
           else
             {:cont, {:ok, new_session}}
           end

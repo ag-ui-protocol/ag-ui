@@ -241,6 +241,15 @@ defmodule AgUI.EventsTest do
       assert event.delta == "Hello, "
     end
 
+    test "from_map/1 returns error for empty delta" do
+      assert {:error, :empty_delta} =
+               TextMessageContent.from_map(%{
+                 "type" => "TEXT_MESSAGE_CONTENT",
+                 "messageId" => "msg-1",
+                 "delta" => ""
+               })
+    end
+
     test "from_map/1 returns error for missing fields" do
       assert {:error, :missing_required_fields} =
                TextMessageContent.from_map(%{"type" => "TEXT_MESSAGE_CONTENT"})
@@ -458,6 +467,12 @@ defmodule AgUI.EventsTest do
       assert event.snapshot == %{"counter" => 5, "items" => []}
     end
 
+    test "from_map/1 accepts non-map snapshots" do
+      map = %{"type" => "STATE_SNAPSHOT", "snapshot" => ["a", "b"]}
+      assert {:ok, event} = Events.decode(map)
+      assert event.snapshot == ["a", "b"]
+    end
+
     test "from_map/1 returns error for missing snapshot" do
       assert {:error, :missing_snapshot} = StateSnapshot.from_map(%{"type" => "STATE_SNAPSHOT"})
     end
@@ -642,6 +657,14 @@ defmodule AgUI.EventsTest do
       assert {:ok, event} = Events.decode(map)
       assert %ThinkingTextMessageContent{} = event
       assert event.delta == "Let me think..."
+    end
+
+    test "from_map/1 returns error for empty delta" do
+      assert {:error, :empty_delta} =
+               ThinkingTextMessageContent.from_map(%{
+                 "type" => "THINKING_TEXT_MESSAGE_CONTENT",
+                 "delta" => ""
+               })
     end
 
     test "from_map/1 returns error for missing delta" do

@@ -182,7 +182,7 @@ defmodule AgUI.Events.ThinkingTextMessageContent do
 
   @spec from_map(map()) :: {:ok, t()} | {:error, term()}
   def from_map(%{"type" => "THINKING_TEXT_MESSAGE_CONTENT", "delta" => delta} = map)
-      when is_binary(delta) do
+      when is_binary(delta) and byte_size(delta) > 0 do
     {:ok,
      %__MODULE__{
        type: :thinking_text_message_content,
@@ -191,6 +191,9 @@ defmodule AgUI.Events.ThinkingTextMessageContent do
        raw_event: map
      }}
   end
+
+  def from_map(%{"type" => "THINKING_TEXT_MESSAGE_CONTENT", "delta" => ""}),
+    do: {:error, :empty_delta}
 
   def from_map(%{"type" => "THINKING_TEXT_MESSAGE_CONTENT"}), do: {:error, :missing_delta}
   def from_map(_), do: {:error, :invalid_event}

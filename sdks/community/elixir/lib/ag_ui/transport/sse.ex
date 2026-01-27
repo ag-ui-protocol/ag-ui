@@ -85,14 +85,11 @@ defmodule AgUI.Transport.SSE do
   @spec feed(Parser.t(), String.t()) :: {[event()], Parser.t()}
   def feed(%Parser{} = parser, chunk) when is_binary(chunk) do
     buffer = parser.buffer <> chunk
+    {lines, remaining} = split_lines(buffer)
 
-    # Split on double newlines (CRLF or LF variants)
-    {complete_blocks, remaining} = split_complete_blocks(buffer)
-
-    # Parse each complete block
     {events, parser} =
-      Enum.reduce(complete_blocks, {[], parser}, fn block, {events, p} ->
-        {new_events, new_parser} = parse_block(block, p)
+      Enum.reduce(lines, {[], parser}, fn line, {events, p} ->
+        {new_events, new_parser} = parse_line(line, p)
         {events ++ new_events, new_parser}
       end)
 
@@ -107,9 +104,12 @@ defmodule AgUI.Transport.SSE do
   @spec finalize(Parser.t()) :: {[event()], Parser.t()}
   def finalize(%Parser{} = parser) do
     if parser.buffer != "" or parser.data_lines != [] do
-      # Try to parse remaining buffer as a block
-      {events, parser} = parse_block(parser.buffer, parser)
-      # Dispatch any pending event
+      {events, parser} =
+        case parser.buffer do
+          "" -> {[], parser}
+          buffer -> parse_line(buffer, parser)
+        end
+
       {final_events, parser} = dispatch_event(parser)
       {events ++ final_events, %{parser | buffer: ""}}
     else
@@ -167,66 +167,57 @@ defmodule AgUI.Transport.SSE do
     events ++ final_events
   end
 
-  # Split buffer into complete event blocks and remaining incomplete data
-  defp split_complete_blocks(buffer) do
-    # Split on double newline (handling CRLF and LF)
-    # Pattern: \r\n\r\n or \n\n or \r\n\n or \n\r\n
-    parts = String.split(buffer, ~r/\r?\n\r?\n/, trim: false)
-
-    case parts do
-      [] ->
-        {[], ""}
-
-      [single] ->
-        # No complete block yet
-        {[], single}
-
-      parts ->
-        # Last part is incomplete (or empty if buffer ended with double newline)
-        {complete, [remaining]} = Enum.split(parts, -1)
-        # Filter out empty blocks
-        {Enum.reject(complete, &(&1 == "")), remaining}
-    end
+  defp split_lines(buffer) do
+    do_split_lines(buffer, [])
   end
 
-  # Parse a complete event block (text between double newlines)
-  defp parse_block(block, parser) do
-    lines = String.split(block, ~r/\r?\n/)
+  defp do_split_lines(buffer, acc) do
+    case :binary.match(buffer, "\n") do
+      {idx, 1} ->
+        line = :binary.part(buffer, 0, idx)
+        rest = :binary.part(buffer, idx + 1, byte_size(buffer) - idx - 1)
 
-    parser =
-      Enum.reduce(lines, parser, fn line, p ->
-        parse_line(line, p)
-      end)
+        line =
+          case line do
+            <<>> -> line
+            _ ->
+              if :binary.last(line) == ?\r do
+                :binary.part(line, 0, byte_size(line) - 1)
+              else
+                line
+              end
+          end
 
-    # After processing all lines in a block, dispatch the event
-    dispatch_event(parser)
+        do_split_lines(rest, [line | acc])
+
+      :nomatch ->
+        {Enum.reverse(acc), buffer}
+    end
   end
 
   # Parse a single line according to SSE spec
-  defp parse_line("", parser) do
-    # Empty line - should not happen within a block, but handle gracefully
-    parser
+  defp parse_line(<<>>, parser) do
+    dispatch_event(parser)
   end
 
-  defp parse_line(":" <> _rest, parser) do
-    # Comment line, ignore
-    parser
+  defp parse_line(<<?:, _rest::binary>>, parser) do
+    {[], parser}
   end
 
   defp parse_line(line, parser) do
-    case String.split(line, ":", parts: 2) do
-      [field, value] ->
-        # Remove single leading space from value if present
+    case :binary.match(line, ":") do
+      {idx, 1} ->
+        field = :binary.part(line, 0, idx)
+        value = :binary.part(line, idx + 1, byte_size(line) - idx - 1)
         value = remove_leading_space(value)
-        process_field(field, value, parser)
+        {[], process_field(field, value, parser)}
 
-      [field] ->
-        # Field with no value
-        process_field(field, "", parser)
+      :nomatch ->
+        {[], process_field(line, "", parser)}
     end
   end
 
-  defp remove_leading_space(" " <> rest), do: rest
+  defp remove_leading_space(<<" ", rest::binary>>), do: rest
   defp remove_leading_space(value), do: value
 
   defp process_field("event", value, parser) do
@@ -238,8 +229,7 @@ defmodule AgUI.Transport.SSE do
   end
 
   defp process_field("id", value, parser) do
-    # Per spec, ignore id fields containing U+0000 NULL
-    if String.contains?(value, <<0>>) do
+    if :binary.match(value, <<0>>) != :nomatch do
       parser
     else
       %{parser | last_event_id: value}
@@ -252,20 +242,17 @@ defmodule AgUI.Transport.SSE do
         %{parser | retry: ms}
 
       _ ->
-        # Ignore invalid retry values
         parser
     end
   end
 
   defp process_field(_field, _value, parser) do
-    # Unknown field, ignore
     parser
   end
 
   # Dispatch a complete event and reset event-specific state
   defp dispatch_event(parser) do
     if parser.data_lines == [] do
-      # No data, no event to dispatch
       {[], reset_event_state(parser)}
     else
       event = %{

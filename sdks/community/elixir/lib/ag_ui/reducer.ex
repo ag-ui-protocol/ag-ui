@@ -130,68 +130,59 @@ defmodule AgUI.Reducer do
   # ============================================================================
 
   def apply(%Session{} = session, %Events.TextMessageStart{message_id: id, role: role}) do
-    role_atom =
-      case role do
-        r when is_atom(r) -> r
-        r when is_binary(r) -> String.to_atom(r)
-        _ -> :assistant
-      end
-
+    role_atom = normalize_role(role)
+    session = ensure_text_message(session, id, role_atom, "")
     buffer = %{content: "", role: role_atom}
     %{session | text_buffers: Map.put(session.text_buffers, id, buffer)}
   end
 
   def apply(%Session{} = session, %Events.TextMessageContent{message_id: id, delta: delta}) do
-    case Map.get(session.text_buffers, id) do
-      nil ->
-        # No buffer exists - create one with default role
-        buffer = %{content: delta, role: :assistant}
-        %{session | text_buffers: Map.put(session.text_buffers, id, buffer)}
+    {session, buffer} =
+      case Map.get(session.text_buffers, id) do
+        nil ->
+          role_atom = message_role_for_id(session, id) || :assistant
+          buffer = %{content: "", role: role_atom}
+          session = ensure_text_message(session, id, role_atom, "")
+          {%{session | text_buffers: Map.put(session.text_buffers, id, buffer)}, buffer}
 
-      %{content: content} = buffer ->
-        updated_buffer = %{buffer | content: content <> delta}
-        %{session | text_buffers: Map.put(session.text_buffers, id, updated_buffer)}
-    end
+        buffer ->
+          {session, buffer}
+      end
+
+    updated_buffer = %{buffer | content: buffer.content <> delta}
+
+    session =
+      session
+      |> put_in([Access.key(:text_buffers), id], updated_buffer)
+      |> update_message_content(id, fn content -> (content || "") <> delta end)
+
+    session
   end
 
   def apply(%Session{} = session, %Events.TextMessageEnd{message_id: id}) do
-    case Map.get(session.text_buffers, id) do
-      nil ->
-        session
-
-      %{content: content, role: role} ->
-        message = %Types.Message.Assistant{
-          id: id,
-          role: role,
-          content: content
-        }
-
-        %{
-          session
-          | messages: session.messages ++ [message],
-            text_buffers: Map.delete(session.text_buffers, id)
-        }
-    end
+    %{session | text_buffers: Map.delete(session.text_buffers, id)}
   end
 
   # TEXT_MESSAGE_CHUNK is a convenience event - normally expanded by Normalize
   # But we handle it here for direct usage
   def apply(%Session{} = session, %Events.TextMessageChunk{} = chunk) do
-    # Simulate START if buffer doesn't exist
     session =
       if not Map.has_key?(session.text_buffers, chunk.message_id) do
-        role = chunk.role || "assistant"
-        buffer = %{content: "", role: String.to_atom(role)}
+        role_atom = normalize_role(chunk.role || "assistant")
+        session = ensure_text_message(session, chunk.message_id, role_atom, "")
+        buffer = %{content: "", role: role_atom}
         %{session | text_buffers: Map.put(session.text_buffers, chunk.message_id, buffer)}
       else
         session
       end
 
-    # Apply content
     if chunk.delta && chunk.delta != "" do
       buffer = session.text_buffers[chunk.message_id]
       updated_buffer = %{buffer | content: buffer.content <> chunk.delta}
-      %{session | text_buffers: Map.put(session.text_buffers, chunk.message_id, updated_buffer)}
+
+      session
+      |> put_in([Access.key(:text_buffers), chunk.message_id], updated_buffer)
+      |> update_message_content(chunk.message_id, fn content -> (content || "") <> chunk.delta end)
     else
       session
     end
@@ -207,6 +198,13 @@ defmodule AgUI.Reducer do
       args: "",
       parent_message_id: event.parent_message_id
     }
+
+    session =
+      if event.parent_message_id do
+        ensure_assistant_message(session, event.parent_message_id)
+      else
+        session
+      end
 
     %{session | tool_buffers: Map.put(session.tool_buffers, event.tool_call_id, buffer)}
   end
@@ -234,12 +232,8 @@ defmodule AgUI.Reducer do
           function: %{name: buffer.name, arguments: buffer.args}
         }
 
-        session =
-          if buffer.parent_message_id do
-            update_message_tool_calls(session, buffer.parent_message_id, tool_call)
-          else
-            session
-          end
+        target_id = buffer.parent_message_id || last_assistant_message_id(session)
+        session = maybe_attach_tool_call(session, target_id, tool_call)
 
         %{session | tool_buffers: Map.delete(session.tool_buffers, id)}
     end
@@ -266,6 +260,13 @@ defmodule AgUI.Reducer do
           args: "",
           parent_message_id: chunk.parent_message_id
         }
+
+        session =
+          if chunk.parent_message_id do
+            ensure_assistant_message(session, chunk.parent_message_id)
+          else
+            session
+          end
 
         %{session | tool_buffers: Map.put(session.tool_buffers, chunk.tool_call_id, buffer)}
       else
@@ -394,7 +395,9 @@ defmodule AgUI.Reducer do
   # ============================================================================
 
   # Attach a tool call to a parent message
-  defp update_message_tool_calls(session, parent_id, tool_call) do
+  defp maybe_attach_tool_call(session, nil, _tool_call), do: session
+
+  defp maybe_attach_tool_call(session, parent_id, tool_call) do
     messages =
       Enum.map(session.messages, fn
         %Types.Message.Assistant{id: ^parent_id} = msg ->
@@ -409,20 +412,103 @@ defmodule AgUI.Reducer do
 
   # Finalize any pending text or tool buffers
   defp finalize_pending_buffers(session) do
-    # Finalize text buffers
-    session =
-      Enum.reduce(session.text_buffers, session, fn {id, buffer}, session ->
-        message = %Types.Message.Assistant{
-          id: id,
-          role: buffer.role,
-          content: buffer.content
-        }
+    %{session | text_buffers: %{}, tool_buffers: %{}}
+  end
 
+  defp normalize_role(role) when is_atom(role) do
+    role
+  end
+
+  defp normalize_role(role) when is_binary(role) do
+    case Types.Message.role_from_wire(role) do
+      {:ok, atom} -> atom
+      {:error, _} -> :assistant
+    end
+  end
+
+  defp normalize_role(_), do: :assistant
+
+  defp ensure_text_message(session, id, role, content) do
+    case find_message(session.messages, id) do
+      nil ->
+        message = build_text_message(id, role, content)
         %{session | messages: session.messages ++ [message]}
+
+      msg ->
+        updated = Map.put(msg, :content, content)
+        session |> upsert_message(updated)
+    end
+  end
+
+  defp ensure_assistant_message(session, id) do
+    case find_message(session.messages, id) do
+      %Types.Message.Assistant{} -> session
+      _ -> upsert_message(session, %Types.Message.Assistant{id: id, content: "", tool_calls: []})
+    end
+  end
+
+  defp build_text_message(id, :assistant, content) do
+    %Types.Message.Assistant{id: id, content: content, tool_calls: []}
+  end
+
+  defp build_text_message(id, :user, content) do
+    %Types.Message.User{id: id, content: content}
+  end
+
+  defp build_text_message(id, :system, content) do
+    %Types.Message.System{id: id, content: content}
+  end
+
+  defp build_text_message(id, :developer, content) do
+    %Types.Message.Developer{id: id, content: content}
+  end
+
+  defp build_text_message(id, _role, content) do
+    %Types.Message.Assistant{id: id, content: content, tool_calls: []}
+  end
+
+  defp upsert_message(session, message) do
+    case find_message_index(session.messages, message.id) do
+      nil -> %{session | messages: session.messages ++ [message]}
+      index -> %{session | messages: List.replace_at(session.messages, index, message)}
+    end
+  end
+
+  defp update_message_content(session, message_id, fun) do
+    messages =
+      Enum.map(session.messages, fn
+        %{id: ^message_id, content: content} = msg ->
+          %{msg | content: fun.(content)}
+
+        msg ->
+          msg
       end)
 
-    # Clear buffers
-    %{session | text_buffers: %{}, tool_buffers: %{}}
+    %{session | messages: messages}
+  end
+
+  defp find_message(messages, message_id) do
+    Enum.find(messages, &(&1.id == message_id))
+  end
+
+  defp find_message_index(messages, message_id) do
+    Enum.find_index(messages, &(&1.id == message_id))
+  end
+
+  defp message_role_for_id(session, message_id) do
+    case find_message(session.messages, message_id) do
+      %{role: role} -> role
+      _ -> nil
+    end
+  end
+
+  defp last_assistant_message_id(session) do
+    session.messages
+    |> Enum.reverse()
+    |> Enum.find_value(fn
+      %Types.Message.Assistant{id: id} -> id
+      _ -> nil
+    end)
   end
 
   @doc """

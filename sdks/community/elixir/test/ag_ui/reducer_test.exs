@@ -65,7 +65,7 @@ defmodule AgUI.ReducerTest do
       assert session.status == :finished
     end
 
-    test "RunFinished finalizes pending text buffers" do
+    test "RunFinished clears pending buffers" do
       session = %Session{
         status: :running,
         text_buffers: %{"msg-1" => %{content: "Hello", role: :assistant}}
@@ -75,8 +75,7 @@ defmodule AgUI.ReducerTest do
       session = Reducer.apply(session, event)
 
       assert session.text_buffers == %{}
-      assert length(session.messages) == 1
-      assert hd(session.messages).content == "Hello"
+      assert session.messages == []
     end
 
     test "RunError sets error status" do
@@ -141,11 +140,13 @@ defmodule AgUI.ReducerTest do
       assert Map.has_key?(session.text_buffers, "msg-1")
       assert session.text_buffers["msg-1"].content == ""
       assert session.text_buffers["msg-1"].role == :assistant
+      assert [%AgUI.Types.Message.Assistant{id: "msg-1", content: ""}] = session.messages
     end
 
     test "TextMessageContent appends to buffer" do
       session = %Session{
-        text_buffers: %{"msg-1" => %{content: "Hello", role: :assistant}}
+        text_buffers: %{"msg-1" => %{content: "Hello", role: :assistant}},
+        messages: [%AgUI.Types.Message.Assistant{id: "msg-1", content: "Hello"}]
       }
 
       event = %Events.TextMessageContent{
@@ -156,6 +157,7 @@ defmodule AgUI.ReducerTest do
 
       session = Reducer.apply(session, event)
       assert session.text_buffers["msg-1"].content == "Hello world!"
+      assert [%AgUI.Types.Message.Assistant{content: "Hello world!"}] = session.messages
     end
 
     test "TextMessageContent creates buffer if missing" do
@@ -169,12 +171,15 @@ defmodule AgUI.ReducerTest do
 
       session = Reducer.apply(session, event)
       assert session.text_buffers["msg-1"].content == "Hello"
+      assert [%AgUI.Types.Message.Assistant{content: "Hello"}] = session.messages
       assert session.text_buffers["msg-1"].role == :assistant
+      assert [%AgUI.Types.Message.Assistant{id: "msg-1", content: "Hello"}] = session.messages
     end
 
-    test "TextMessageEnd finalizes message" do
+    test "TextMessageEnd clears buffer and preserves message" do
       session = %Session{
-        text_buffers: %{"msg-1" => %{content: "Hello world!", role: :assistant}}
+        text_buffers: %{"msg-1" => %{content: "Hello world!", role: :assistant}},
+        messages: [%AgUI.Types.Message.Assistant{id: "msg-1", content: "Hello world!"}]
       }
 
       event = %Events.TextMessageEnd{
@@ -184,12 +189,8 @@ defmodule AgUI.ReducerTest do
 
       session = Reducer.apply(session, event)
       assert session.text_buffers == %{}
-      assert length(session.messages) == 1
-
-      message = hd(session.messages)
-      assert message.id == "msg-1"
-      assert message.content == "Hello world!"
-      assert message.role == :assistant
+      assert [%AgUI.Types.Message.Assistant{id: "msg-1", content: "Hello world!"}] =
+               session.messages
     end
 
     test "TextMessageEnd is no-op for missing buffer" do
@@ -226,6 +227,7 @@ defmodule AgUI.ReducerTest do
 
       session = Reducer.apply(session, event2)
       assert session.text_buffers["msg-1"].content == "Hello world!"
+      assert [%AgUI.Types.Message.Assistant{content: "Hello world!"}] = session.messages
     end
   end
 
@@ -245,6 +247,7 @@ defmodule AgUI.ReducerTest do
       assert session.tool_buffers["call-1"].name == "get_weather"
       assert session.tool_buffers["call-1"].args == ""
       assert session.tool_buffers["call-1"].parent_message_id == "msg-1"
+      assert [%Message.Assistant{id: "msg-1"}] = session.messages
     end
 
     test "ToolCallArgs appends to buffer" do
