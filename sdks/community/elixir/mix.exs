@@ -29,6 +29,7 @@ defmodule AgUI.MixProject do
       # Core
       {:jason, "~> 1.4"},
       {:req, "~> 0.5"},
+      {:jsonpatch, "~> 2.3"},
 
       # Dev/test
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
