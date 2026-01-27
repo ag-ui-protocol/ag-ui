@@ -79,6 +79,10 @@ defmodule AgUI.Client.HttpAgent do
 
   For decoded AG-UI events, use `stream/2` instead.
 
+  ## Options
+
+  - `:last_event_id` - Value for the `Last-Event-ID` header (SSE resume)
+
   ## Examples
 
       {:ok, stream} = AgUI.Client.HttpAgent.stream_raw(agent, input)
@@ -89,13 +93,21 @@ defmodule AgUI.Client.HttpAgent do
   """
   @spec stream_raw(t(), RunAgentInput.t()) :: {:ok, Enumerable.t()} | {:error, term()}
   def stream_raw(%__MODULE__{} = agent, %RunAgentInput{} = input) do
+    stream_raw(agent, input, [])
+  end
+
+  @spec stream_raw(t(), RunAgentInput.t(), keyword()) :: {:ok, Enumerable.t()} | {:error, term()}
+  def stream_raw(%__MODULE__{} = agent, %RunAgentInput{} = input, opts) do
+    last_event_id = Keyword.get(opts, :last_event_id)
     body = RunAgentInput.to_map(input) |> Jason.encode!()
 
     headers =
       [
         {"content-type", "application/json"},
         {"accept", "text/event-stream"}
-      ] ++ agent.headers
+      ]
+      |> maybe_add_last_event_id(last_event_id)
+      |> Kernel.++(agent.headers)
 
     req =
       Req.new(
@@ -136,6 +148,10 @@ defmodule AgUI.Client.HttpAgent do
 
   Unknown or malformed events are silently skipped.
 
+  ## Options
+
+  - `:last_event_id` - Value for the `Last-Event-ID` header (SSE resume)
+
   ## Examples
 
       {:ok, stream} = AgUI.Client.HttpAgent.stream(agent, input)
@@ -153,7 +169,12 @@ defmodule AgUI.Client.HttpAgent do
   """
   @spec stream(t(), RunAgentInput.t()) :: {:ok, Enumerable.t()} | {:error, term()}
   def stream(%__MODULE__{} = agent, %RunAgentInput{} = input) do
-    case stream_raw(agent, input) do
+    stream(agent, input, [])
+  end
+
+  @spec stream(t(), RunAgentInput.t(), keyword()) :: {:ok, Enumerable.t()} | {:error, term()}
+  def stream(%__MODULE__{} = agent, %RunAgentInput{} = input, opts) do
+    case stream_raw(agent, input, opts) do
       {:ok, sse_stream} ->
         event_stream =
           sse_stream
@@ -175,6 +196,11 @@ defmodule AgUI.Client.HttpAgent do
 
   This is the recommended function for UI rendering, as it provides a consistent
   event structure.
+
+  ## Options
+
+  - `:last_event_id` - Value for the `Last-Event-ID` header (SSE resume)
+  - `:on_error` - `:raise` (default) or `:run_error`
 
   ## Examples
 
@@ -198,7 +224,7 @@ defmodule AgUI.Client.HttpAgent do
   def stream_canonical(%__MODULE__{} = agent, %RunAgentInput{} = input, opts) do
     on_error = Keyword.get(opts, :on_error, :raise)
 
-    case stream(agent, input) do
+    case stream(agent, input, opts) do
       {:ok, event_stream} ->
         canonical_stream =
           case on_error do
@@ -294,5 +320,11 @@ defmodule AgUI.Client.HttpAgent do
     else
       _ -> []
     end
+  end
+
+  defp maybe_add_last_event_id(headers, nil), do: headers
+  defp maybe_add_last_event_id(headers, ""), do: headers
+  defp maybe_add_last_event_id(headers, last_event_id) when is_binary(last_event_id) do
+    headers ++ [{"last-event-id", last_event_id}]
   end
 end

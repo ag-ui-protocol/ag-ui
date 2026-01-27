@@ -63,6 +63,30 @@ defmodule AgUI.Client.HttpAgentTest do
       end)
     end
 
+    defp stream_scenario(conn, "resume", _input) do
+      last_event_id = get_req_header(conn, "last-event-id") |> List.first()
+
+      if is_nil(last_event_id) do
+        conn
+        |> send_resp(400, "missing last-event-id")
+      else
+        events = [
+          {%{"type" => "RUN_STARTED", "threadId" => "t", "runId" => "r"}, last_event_id}
+        ]
+
+        Enum.reduce_while(events, conn, fn {event, id}, conn ->
+          data = Jason.encode!(event)
+
+          chunk_data = "id: #{id}\n" <> "data: #{data}\n\n"
+
+          case chunk(conn, chunk_data) do
+            {:ok, conn} -> {:cont, conn}
+            {:error, _} -> {:halt, conn}
+          end
+        end)
+      end
+    end
+
     defp stream_scenario(conn, "tool_call", input) do
       events = [
         %{
@@ -359,6 +383,18 @@ defmodule AgUI.Client.HttpAgentTest do
       assert is_binary(hd(events).data)
       {:ok, parsed} = Jason.decode(hd(events).data)
       assert parsed["type"] == "RUN_STARTED"
+    end
+  end
+
+  describe "Last-Event-ID resume" do
+    test "sends last-event-id header and parses id" do
+      agent = HttpAgent.new(url: "http://127.0.0.1:4111/?scenario=resume")
+      input = RunAgentInput.new("thread-1", "run-1")
+
+      {:ok, stream} = HttpAgent.stream_raw(agent, input, last_event_id: "evt-123")
+      events = Enum.to_list(stream)
+
+      assert [%{id: "evt-123"}] = events
     end
   end
 
