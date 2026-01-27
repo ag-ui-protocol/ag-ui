@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **BREAKING**: AG-UI client tools are no longer automatically included in the root agent's toolset (#903)
+  - You must now explicitly add `AGUIToolset` to your agent's tools list to access AG-UI client tools
+  - Tool name conflicts are no longer automatically resolved by removing AG-UI tools
+  - New `AGUIToolset` class provides explicit control over tool inclusion with `tool_filter` and `tool_name_prefix` parameters
+  - This change enables proper support for Orchestrator-style ADK agents where sub-agents need access to client tools
+  - **See the [Migration Guide](./README.md#migrating-from-v04x) in README.md for upgrade instructions**
+  - Huge thanks to **@jplikesbikes** for this contribution!
+
 ## [0.4.2] - 2025-01-22
 
 ### Added
