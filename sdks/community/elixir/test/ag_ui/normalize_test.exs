@@ -69,8 +69,8 @@ defmodule AgUI.NormalizeTest do
       assert %Events.TextMessageStart{role: "assistant"} = hd(events)
     end
 
-    test "supports all role types" do
-      roles = ["developer", "system", "assistant", "user", "tool"]
+    test "supports allowed role types" do
+      roles = ["developer", "system", "assistant", "user"]
 
       for role <- roles do
         chunk = %Events.TextMessageChunk{
@@ -258,6 +258,21 @@ defmodule AgUI.NormalizeTest do
       pending = Normalize.new()
 
       assert_raise ArgumentError, ~r/messageId/, fn ->
+        Normalize.expand(chunk, pending)
+      end
+    end
+
+    test "text chunk with invalid role raises" do
+      chunk = %Events.TextMessageChunk{
+        type: :text_message_chunk,
+        message_id: "msg-1",
+        role: "tool",
+        delta: "Hello"
+      }
+
+      pending = Normalize.new()
+
+      assert_raise ArgumentError, ~r/invalid role/, fn ->
         Normalize.expand(chunk, pending)
       end
     end

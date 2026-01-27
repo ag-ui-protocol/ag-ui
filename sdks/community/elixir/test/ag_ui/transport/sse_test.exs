@@ -171,6 +171,23 @@ defmodule AgUI.Transport.SSETest do
       assert hd(events4).data == "hello"
     end
 
+    test "handles UTF-8 boundary splits" do
+      payload = ~s(data: {"text":"é"}\n\n)
+      bytes = :erlang.iolist_to_binary(payload)
+
+      {idx, 2} = :binary.match(bytes, "é")
+      chunk1 = :binary.part(bytes, 0, idx + 1)
+      chunk2 = :binary.part(bytes, idx + 1, byte_size(bytes) - idx - 1)
+
+      parser = SSE.new()
+      {events1, parser} = SSE.feed(parser, chunk1)
+      assert events1 == []
+
+      {events2, _parser} = SSE.feed(parser, chunk2)
+      assert length(events2) == 1
+      assert hd(events2).data == "{\"text\":\"é\"}"
+    end
+
     test "preserves last_event_id across events" do
       parser = SSE.new()
       {_events1, parser} = SSE.feed(parser, "id: 1\ndata: first\n\n")

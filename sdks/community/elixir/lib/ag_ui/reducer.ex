@@ -199,9 +199,17 @@ defmodule AgUI.Reducer do
       parent_message_id: event.parent_message_id
     }
 
+    target_id = event.parent_message_id || last_assistant_message_id(session)
+
     session =
-      if event.parent_message_id do
-        ensure_assistant_message(session, event.parent_message_id)
+      if target_id do
+        session
+        |> ensure_assistant_message(target_id)
+        |> upsert_tool_call(target_id, %Types.ToolCall{
+          id: event.tool_call_id,
+          type: :function,
+          function: %{name: event.tool_call_name, arguments: ""}
+        })
       else
         session
       end
@@ -210,14 +218,17 @@ defmodule AgUI.Reducer do
   end
 
   def apply(%Session{} = session, %Events.ToolCallArgs{tool_call_id: id, delta: delta}) do
-    case Map.get(session.tool_buffers, id) do
-      nil ->
-        session
+    session =
+      case Map.get(session.tool_buffers, id) do
+        nil ->
+          session
 
-      %{args: args} = buffer ->
-        updated_buffer = %{buffer | args: args <> delta}
-        %{session | tool_buffers: Map.put(session.tool_buffers, id, updated_buffer)}
-    end
+        %{args: args} = buffer ->
+          updated_buffer = %{buffer | args: args <> delta}
+          %{session | tool_buffers: Map.put(session.tool_buffers, id, updated_buffer)}
+      end
+
+    update_tool_call_args(session, id, delta)
   end
 
   def apply(%Session{} = session, %Events.ToolCallEnd{tool_call_id: id}) do
@@ -261,9 +272,17 @@ defmodule AgUI.Reducer do
           parent_message_id: chunk.parent_message_id
         }
 
+        target_id = chunk.parent_message_id || last_assistant_message_id(session)
+
         session =
-          if chunk.parent_message_id do
-            ensure_assistant_message(session, chunk.parent_message_id)
+          if target_id do
+            session
+            |> ensure_assistant_message(target_id)
+            |> upsert_tool_call(target_id, %Types.ToolCall{
+              id: chunk.tool_call_id,
+              type: :function,
+              function: %{name: chunk.tool_call_name, arguments: ""}
+            })
           else
             session
           end
@@ -277,7 +296,8 @@ defmodule AgUI.Reducer do
     if chunk.delta && chunk.delta != "" && Map.has_key?(session.tool_buffers, chunk.tool_call_id) do
       buffer = session.tool_buffers[chunk.tool_call_id]
       updated_buffer = %{buffer | args: buffer.args <> chunk.delta}
-      %{session | tool_buffers: Map.put(session.tool_buffers, chunk.tool_call_id, updated_buffer)}
+      session = %{session | tool_buffers: Map.put(session.tool_buffers, chunk.tool_call_id, updated_buffer)}
+      update_tool_call_args(session, chunk.tool_call_id, chunk.delta)
     else
       session
     end
@@ -401,13 +421,48 @@ defmodule AgUI.Reducer do
     messages =
       Enum.map(session.messages, fn
         %Types.Message.Assistant{id: ^parent_id} = msg ->
-          %{msg | tool_calls: msg.tool_calls ++ [tool_call]}
+          updated_calls = upsert_tool_call_in_list(msg.tool_calls, tool_call)
+          %{msg | tool_calls: updated_calls}
 
         msg ->
           msg
       end)
 
     %{session | messages: messages}
+  end
+
+  defp upsert_tool_call(session, parent_id, tool_call) do
+    maybe_attach_tool_call(session, parent_id, tool_call)
+  end
+
+  defp update_tool_call_args(session, tool_call_id, delta) do
+    messages =
+      Enum.map(session.messages, fn
+        %Types.Message.Assistant{} = msg ->
+          updated_calls =
+            Enum.map(msg.tool_calls, fn
+              %Types.ToolCall{id: ^tool_call_id, function: function} = call ->
+                args = Map.get(function, :arguments, "") <> delta
+                %{call | function: %{function | arguments: args}}
+
+              call ->
+                call
+            end)
+
+          %{msg | tool_calls: updated_calls}
+
+        msg ->
+          msg
+      end)
+
+    %{session | messages: messages}
+  end
+
+  defp upsert_tool_call_in_list(tool_calls, tool_call) do
+    case Enum.find_index(tool_calls, &(&1.id == tool_call.id)) do
+      nil -> tool_calls ++ [tool_call]
+      index -> List.replace_at(tool_calls, index, tool_call)
+    end
   end
 
   # Finalize any pending text or tool buffers

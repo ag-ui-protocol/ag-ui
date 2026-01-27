@@ -118,9 +118,11 @@ defmodule AgUI.Events.MessagesSnapshot do
 
   """
 
+  alias AgUI.Types.Message
+
   @type t :: %__MODULE__{
           type: :messages_snapshot,
-          messages: [map()],
+          messages: [Message.t()],
           timestamp: integer() | nil,
           raw_event: map() | nil
         }
@@ -135,13 +137,15 @@ defmodule AgUI.Events.MessagesSnapshot do
   @spec from_map(map()) :: {:ok, t()} | {:error, term()}
   def from_map(%{"type" => "MESSAGES_SNAPSHOT", "messages" => messages} = map)
       when is_list(messages) do
-    {:ok,
-     %__MODULE__{
-       type: :messages_snapshot,
-       messages: messages,
-       timestamp: map["timestamp"],
-       raw_event: map
-     }}
+    with {:ok, decoded} <- parse_messages(messages) do
+      {:ok,
+       %__MODULE__{
+         type: :messages_snapshot,
+         messages: decoded,
+         timestamp: map["timestamp"],
+         raw_event: map
+       }}
+    end
   end
 
   def from_map(%{"type" => "MESSAGES_SNAPSHOT"}), do: {:error, :missing_messages}
@@ -151,10 +155,27 @@ defmodule AgUI.Events.MessagesSnapshot do
   def to_map(%__MODULE__{} = event) do
     %{
       "type" => "MESSAGES_SNAPSHOT",
-      "messages" => event.messages,
+      "messages" => Enum.map(event.messages, &encode_message/1),
       "timestamp" => event.timestamp
     }
     |> AgUI.Types.compact_map()
+  end
+
+  defp parse_messages(messages) do
+    results = Enum.map(messages, &Message.from_map/1)
+
+    case Enum.find(results, &match?({:error, _}, &1)) do
+      nil -> {:ok, Enum.map(results, fn {:ok, m} -> m end)}
+      error -> error
+    end
+  end
+
+  defp encode_message(msg) do
+    try do
+      Message.to_map(msg)
+    rescue
+      FunctionClauseError -> msg
+    end
   end
 end
 

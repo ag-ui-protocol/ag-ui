@@ -32,14 +32,20 @@ defmodule AgUI.Events.TextMessageStart do
   @spec from_map(map()) :: {:ok, t()} | {:error, term()}
   def from_map(%{"type" => "TEXT_MESSAGE_START", "messageId" => message_id} = map)
       when is_binary(message_id) do
-    {:ok,
-     %__MODULE__{
-       type: :text_message_start,
-       message_id: message_id,
-       role: map["role"] || "assistant",
-       timestamp: map["timestamp"],
-       raw_event: map
-     }}
+    role = map["role"] || "assistant"
+
+    if valid_text_role?(role) do
+      {:ok,
+       %__MODULE__{
+         type: :text_message_start,
+         message_id: message_id,
+         role: role,
+         timestamp: map["timestamp"],
+         raw_event: map
+       }}
+    else
+      {:error, {:invalid_role, role}}
+    end
   end
 
   def from_map(%{"type" => "TEXT_MESSAGE_START"}), do: {:error, :missing_message_id}
@@ -55,6 +61,9 @@ defmodule AgUI.Events.TextMessageStart do
     }
     |> AgUI.Types.compact_map()
   end
+
+  defp valid_text_role?(role) when role in ["developer", "system", "user", "assistant"], do: true
+  defp valid_text_role?(_), do: false
 end
 
 defmodule AgUI.Events.TextMessageContent do
@@ -213,15 +222,21 @@ defmodule AgUI.Events.TextMessageChunk do
 
   @spec from_map(map()) :: {:ok, t()} | {:error, term()}
   def from_map(%{"type" => "TEXT_MESSAGE_CHUNK"} = map) do
-    {:ok,
-     %__MODULE__{
-       type: :text_message_chunk,
-       message_id: map["messageId"],
-       role: map["role"],
-       delta: map["delta"],
-       timestamp: map["timestamp"],
-       raw_event: map
-     }}
+    role = map["role"]
+
+    if is_nil(role) or valid_text_role?(role) do
+      {:ok,
+       %__MODULE__{
+         type: :text_message_chunk,
+         message_id: map["messageId"],
+         role: role,
+         delta: map["delta"],
+         timestamp: map["timestamp"],
+         raw_event: map
+       }}
+    else
+      {:error, {:invalid_role, role}}
+    end
   end
 
   def from_map(_), do: {:error, :invalid_event}
@@ -237,4 +252,7 @@ defmodule AgUI.Events.TextMessageChunk do
     }
     |> AgUI.Types.compact_map()
   end
+
+  defp valid_text_role?(role) when role in ["developer", "system", "user", "assistant"], do: true
+  defp valid_text_role?(_), do: false
 end

@@ -39,6 +39,7 @@ defmodule AgUI.Normalize do
   """
 
   alias AgUI.Events
+  alias AgUI.Types
 
   @type pending :: %{
           text: %{String.t() => %{role: String.t(), started: boolean()}},
@@ -111,6 +112,22 @@ defmodule AgUI.Normalize do
     message_id = chunk.message_id
     if is_nil(message_id) do
       raise ArgumentError, "TEXT_MESSAGE_CHUNK missing required messageId"
+    end
+    role =
+      case chunk.role do
+        r when is_atom(r) ->
+          try do
+            Types.Message.role_to_wire(r)
+          rescue
+            _ -> r
+          end
+
+        r ->
+          r
+      end
+
+    if role && role not in ["developer", "system", "user", "assistant"] do
+      raise ArgumentError, "TEXT_MESSAGE_CHUNK has invalid role #{inspect(chunk.role)}"
     end
 
     # First, close any pending tool call when switching to text

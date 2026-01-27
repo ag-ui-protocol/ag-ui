@@ -216,6 +216,11 @@ defmodule AgUI.EventsTest do
       assert event.role == "assistant"
     end
 
+    test "from_map/1 rejects tool role" do
+      map = %{"type" => "TEXT_MESSAGE_START", "messageId" => "msg-1", "role" => "tool"}
+      assert {:error, {:invalid_role, "tool"}} = Events.decode(map)
+    end
+
     test "round-trip encoding" do
       original = %{
         "type" => "TEXT_MESSAGE_START",
@@ -296,6 +301,17 @@ defmodule AgUI.EventsTest do
       assert event.message_id == "msg-1"
       assert event.role == "assistant"
       assert event.delta == "Hello"
+    end
+
+    test "from_map/1 rejects tool role" do
+      map = %{
+        "type" => "TEXT_MESSAGE_CHUNK",
+        "messageId" => "msg-1",
+        "role" => "tool",
+        "delta" => "Hello"
+      }
+
+      assert {:error, {:invalid_role, "tool"}} = Events.decode(map)
     end
 
     test "from_map/1 parses event with no optional fields" do
@@ -521,6 +537,7 @@ defmodule AgUI.EventsTest do
       assert {:ok, event} = Events.decode(map)
       assert %MessagesSnapshot{} = event
       assert length(event.messages) == 1
+      assert %AgUI.Types.Message.User{content: "Hi"} = hd(event.messages)
     end
 
     test "round-trip encoding" do

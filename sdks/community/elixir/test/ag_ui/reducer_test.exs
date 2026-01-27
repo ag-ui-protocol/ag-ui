@@ -247,12 +247,26 @@ defmodule AgUI.ReducerTest do
       assert session.tool_buffers["call-1"].name == "get_weather"
       assert session.tool_buffers["call-1"].args == ""
       assert session.tool_buffers["call-1"].parent_message_id == "msg-1"
-      assert [%Message.Assistant{id: "msg-1"}] = session.messages
+      assert [%Message.Assistant{id: "msg-1", tool_calls: tool_calls}] = session.messages
+      assert [%AgUI.Types.ToolCall{id: "call-1"}] = tool_calls
     end
 
     test "ToolCallArgs appends to buffer" do
       session = %Session{
-        tool_buffers: %{"call-1" => %{name: "search", args: "{\"q\":", parent_message_id: nil}}
+        tool_buffers: %{"call-1" => %{name: "search", args: "{\"q\":", parent_message_id: "msg-1"}},
+        messages: [
+          %Message.Assistant{
+            id: "msg-1",
+            content: "",
+            tool_calls: [
+              %AgUI.Types.ToolCall{
+                id: "call-1",
+                type: :function,
+                function: %{name: "search", arguments: "{\"q\":"}
+              }
+            ]
+          }
+        ]
       }
 
       event = %Events.ToolCallArgs{
@@ -263,6 +277,8 @@ defmodule AgUI.ReducerTest do
 
       session = Reducer.apply(session, event)
       assert session.tool_buffers["call-1"].args == "{\"q\":\"test\"}"
+      msg = hd(session.messages)
+      assert hd(msg.tool_calls).function.arguments == "{\"q\":\"test\"}"
     end
 
     test "ToolCallEnd removes buffer (no parent)" do
