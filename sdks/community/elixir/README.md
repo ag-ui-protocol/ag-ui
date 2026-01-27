@@ -1,11 +1,19 @@
-# AgUi
+# AgUI
 
-Elixir SDK for the AG-UI protocol (SSE v1) with optional Phoenix LiveView integration.
+Elixir SDK for the AG‑UI protocol (SSE v1) with optional Phoenix LiveView integration.
+
+## Features
+
+- Typed protocol events and message/tool structs
+- SSE client with chunk normalization and compaction helpers
+- Protocol reducer and LiveView‑friendly renderer
+- Optional LiveView component kit and runner
+- Safe normalization option (`RUN_ERROR` on malformed chunks)
+- SSE resume via `Last-Event-ID`
 
 ## Installation
 
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `ag_ui` to your list of dependencies in `mix.exs`:
+Add `ag_ui` to your dependencies:
 
 ```elixir
 def deps do
@@ -15,13 +23,76 @@ def deps do
 end
 ```
 
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/ag_ui>.
+## Basic usage
 
-## Deferred Features (not yet implemented)
+```elixir
+alias AgUI.Client.HttpAgent
+alias AgUI.Types.RunAgentInput
+
+agent = HttpAgent.new(url: "https://api.example.com/agent")
+input = RunAgentInput.new("thread-1", "run-1")
+
+{:ok, stream} = HttpAgent.stream_canonical(agent, input, on_error: :run_error)
+Enum.each(stream, &IO.inspect/1)
+```
+
+### SSE resume
+
+Pass `last_event_id` to resume from a previous event id:
+
+```elixir
+{:ok, stream} =
+  HttpAgent.stream_canonical(agent, input,
+    last_event_id: "evt-123",
+    on_error: :run_error
+  )
+```
+
+## LiveView integration (optional)
+
+LiveView support is fully optional. Use the pure renderer and runner to
+drive a LiveView without forcing Phoenix deps on non‑Phoenix users.
+
+```elixir
+alias AgUI.LiveView.Runner
+alias AgUI.LiveView.Renderer
+
+ui_state = Renderer.init()
+{:ok, pid} =
+  Runner.start_link(
+    liveview: self(),
+    agent: agent,
+    run_params: input,
+    tag: :agui
+  )
+```
+
+You can also inject the component kit via:
+
+```elixir
+defmodule MyAppWeb.AGUIComponents do
+  use Phoenix.Component
+  use AgUI.LiveView.Components
+end
+```
+
+## Demo app
+
+The `demo/` directory contains a Phoenix LiveView app that exercises the SDK
+via a local mock agent endpoint.
+
+```bash
+cd demo
+mix deps.get
+mix phx.server
+```
+
+## Deferred features (not yet implemented)
 
 - Binary protocol transport (`application/vnd.ag-ui.event+proto`)
 - WebSocket transport
-- SSE resume via `Last-Event-ID`
 - CI Dialyzer/Credo gates
+
+## License
+
+Apache-2.0
