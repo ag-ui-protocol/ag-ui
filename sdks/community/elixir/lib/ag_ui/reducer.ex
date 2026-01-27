@@ -199,7 +199,7 @@ defmodule AgUI.Reducer do
       parent_message_id: event.parent_message_id
     }
 
-    target_id = event.parent_message_id || last_assistant_message_id(session)
+    target_id = event.parent_message_id || event.tool_call_id
 
     session =
       if target_id do
@@ -243,8 +243,15 @@ defmodule AgUI.Reducer do
           function: %{name: buffer.name, arguments: buffer.args}
         }
 
-        target_id = buffer.parent_message_id || last_assistant_message_id(session)
-        session = maybe_attach_tool_call(session, target_id, tool_call)
+        target_id = buffer.parent_message_id || id
+        session =
+          if target_id do
+            session
+            |> ensure_assistant_message(target_id)
+            |> maybe_attach_tool_call(target_id, tool_call)
+          else
+            session
+          end
 
         %{session | tool_buffers: Map.delete(session.tool_buffers, id)}
     end
@@ -272,7 +279,7 @@ defmodule AgUI.Reducer do
           parent_message_id: chunk.parent_message_id
         }
 
-        target_id = chunk.parent_message_id || last_assistant_message_id(session)
+        target_id = chunk.parent_message_id || chunk.tool_call_id
 
         session =
           if target_id do
@@ -557,14 +564,6 @@ defmodule AgUI.Reducer do
     end
   end
 
-  defp last_assistant_message_id(session) do
-    session.messages
-    |> Enum.reverse()
-    |> Enum.find_value(fn
-      %Types.Message.Assistant{id: id} -> id
-      _ -> nil
-    end)
-  end
 
   @doc """
   Applies a list of events to a session in order.

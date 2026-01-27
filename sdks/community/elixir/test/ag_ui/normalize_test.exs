@@ -262,6 +262,27 @@ defmodule AgUI.NormalizeTest do
       end
     end
 
+    test "text chunk can omit message_id after start" do
+      chunk1 = %Events.TextMessageChunk{
+        type: :text_message_chunk,
+        message_id: "msg-1",
+        role: "assistant",
+        delta: "Hello"
+      }
+
+      chunk2 = %Events.TextMessageChunk{
+        type: :text_message_chunk,
+        message_id: nil,
+        delta: " world"
+      }
+
+      pending = Normalize.new()
+      {_events1, pending} = Normalize.expand(chunk1, pending)
+      {events2, _pending} = Normalize.expand(chunk2, pending)
+
+      assert [%Events.TextMessageContent{message_id: "msg-1"}] = events2
+    end
+
     test "text chunk with invalid role raises" do
       chunk = %Events.TextMessageChunk{
         type: :text_message_chunk,
@@ -303,6 +324,27 @@ defmodule AgUI.NormalizeTest do
       assert_raise ArgumentError, ~r/toolCallId/, fn ->
         Normalize.expand(chunk, pending)
       end
+    end
+
+    test "tool chunk can omit tool_call_id after start" do
+      chunk1 = %Events.ToolCallChunk{
+        type: :tool_call_chunk,
+        tool_call_id: "call-1",
+        tool_call_name: "search",
+        delta: "{"
+      }
+
+      chunk2 = %Events.ToolCallChunk{
+        type: :tool_call_chunk,
+        tool_call_id: nil,
+        delta: "}"
+      }
+
+      pending = Normalize.new()
+      {_events1, pending} = Normalize.expand(chunk1, pending)
+      {events2, _pending} = Normalize.expand(chunk2, pending)
+
+      assert [%Events.ToolCallArgs{tool_call_id: "call-1"}] = events2
     end
 
     test "no ARGS event if delta is nil" do

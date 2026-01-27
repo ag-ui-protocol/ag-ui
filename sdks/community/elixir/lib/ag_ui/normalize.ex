@@ -150,7 +150,13 @@ defmodule AgUI.Normalize do
 
   # TEXT_MESSAGE_CHUNK expansion
   def expand(%Events.TextMessageChunk{} = chunk, pending) do
-    message_id = chunk.message_id
+    message_id =
+      cond do
+        chunk.message_id -> chunk.message_id
+        pending.current_text_id -> pending.current_text_id
+        true -> nil
+      end
+
     if is_nil(message_id) do
       raise ArgumentError, "TEXT_MESSAGE_CHUNK missing required messageId"
     end
@@ -231,7 +237,13 @@ defmodule AgUI.Normalize do
 
   # TOOL_CALL_CHUNK expansion
   def expand(%Events.ToolCallChunk{} = chunk, pending) do
-    tool_call_id = chunk.tool_call_id
+    tool_call_id =
+      cond do
+        chunk.tool_call_id -> chunk.tool_call_id
+        pending.current_tool_id -> pending.current_tool_id
+        true -> nil
+      end
+
     if is_nil(tool_call_id) do
       raise ArgumentError, "TOOL_CALL_CHUNK missing required toolCallId"
     end

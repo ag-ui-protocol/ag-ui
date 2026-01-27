@@ -281,7 +281,7 @@ defmodule AgUI.ReducerTest do
       assert hd(msg.tool_calls).function.arguments == "{\"q\":\"test\"}"
     end
 
-    test "ToolCallEnd removes buffer (no parent)" do
+    test "ToolCallEnd attaches to tool_call_id when no parent" do
       session = %Session{
         tool_buffers: %{
           "call-1" => %{name: "search", args: "{}", parent_message_id: nil}
@@ -295,6 +295,8 @@ defmodule AgUI.ReducerTest do
 
       session = Reducer.apply(session, event)
       assert session.tool_buffers == %{}
+      assert [%Message.Assistant{id: "call-1", tool_calls: tool_calls}] = session.messages
+      assert [%AgUI.Types.ToolCall{id: "call-1"}] = tool_calls
     end
 
     test "ToolCallEnd attaches to parent message" do
