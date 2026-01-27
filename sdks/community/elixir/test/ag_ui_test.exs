@@ -1,8 +1,8 @@
-defmodule AgUiTest do
+defmodule AgUITest do
   use ExUnit.Case
-  doctest AgUi
+  doctest AgUI
 
-  test "greets the world" do
-    assert AgUi.hello() == :world
+  test "version/0 returns version string" do
+    assert AgUI.version() == "0.1.0"
   end
 end
