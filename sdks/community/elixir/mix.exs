@@ -31,10 +31,15 @@ defmodule AgUI.MixProject do
       {:req, "~> 0.5"},
       {:jsonpatch, "~> 2.3"},
 
+      # Optional Phoenix / LiveView integration
+      {:phoenix, "~> 1.7", optional: true},
+      {:phoenix_live_view, "~> 1.0", optional: true},
+      {:phoenix_html, "~> 4.0", optional: true},
+
       # Dev/test
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:bandit, "~> 1.5", only: :test},
-      {:plug, "~> 1.16", only: :test}
+      {:plug, "~> 1.16", optional: true}
     ]
   end
 
