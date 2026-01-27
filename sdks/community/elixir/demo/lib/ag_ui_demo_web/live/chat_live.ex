@@ -20,6 +20,7 @@ defmodule AgUiDemoWeb.ChatLive do
       |> assign(:custom_url, "")
       |> assign(:use_custom_url, false)
       |> assign(:thread_id, "demo-thread-#{:rand.uniform(10000)}")
+      |> assign(:current_scope, nil)
 
     {:ok, socket}
   end
@@ -117,15 +118,16 @@ defmodule AgUiDemoWeb.ChatLive do
             </p>
           </header>
 
-          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div id="agui-chat" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <%!-- Controls Panel --%>
             <div class="lg:col-span-1 space-y-4">
               <div class="bg-white rounded-lg shadow p-4">
                 <h2 class="text-lg font-semibold mb-4">Scenarios</h2>
 
-                <div class="space-y-2">
+                <div id="scenarios-list" class="space-y-2">
                   <%= for {id, name, desc} <- @scenarios do %>
                     <button
+                      id={"scenario-#{id}"}
                       phx-click="select_scenario"
                       phx-value-scenario={id}
                       class={"w-full text-left p-3 rounded-lg border transition-colors " <>
@@ -172,6 +174,7 @@ defmodule AgUiDemoWeb.ChatLive do
 
               <div class="bg-white rounded-lg shadow p-4 space-y-3">
                 <button
+                  id="run-scenario"
                   phx-click="run_scenario"
                   disabled={agui_running?(@socket)}
                   class={"w-full py-2 px-4 rounded-lg font-medium transition-colors " <>
@@ -186,6 +189,7 @@ defmodule AgUiDemoWeb.ChatLive do
 
                 <%= if agui_running?(@socket) do %>
                   <button
+                    id="abort-run"
                     phx-click="abort"
                     class="w-full py-2 px-4 rounded-lg font-medium bg-red-100 text-red-700 hover:bg-red-200"
                   >
@@ -194,6 +198,7 @@ defmodule AgUiDemoWeb.ChatLive do
                 <% end %>
 
                 <button
+                  id="reset-session"
                   phx-click="reset"
                   class="w-full py-2 px-4 rounded-lg font-medium bg-gray-100 text-gray-700 hover:bg-gray-200"
                 >
@@ -205,15 +210,15 @@ defmodule AgUiDemoWeb.ChatLive do
             <%!-- Chat Display --%>
             <div class="lg:col-span-2 space-y-4">
               <%!-- Run Status --%>
-              <div class="bg-white rounded-lg shadow p-4">
+              <div id="run-status" class="bg-white rounded-lg shadow p-4">
                 <.agui_run_status status={@agui.run_status} steps={@agui.steps} />
               </div>
 
               <%!-- Messages --%>
-              <div class="bg-white rounded-lg shadow p-4 min-h-[400px]">
+              <div id="messages-panel" class="bg-white rounded-lg shadow p-4 min-h-[400px]">
                 <h2 class="text-lg font-semibold mb-4">Messages</h2>
 
-                <div class="space-y-4">
+                <div id="messages-list" class="space-y-4">
                   <%= if @agui.session.messages == [] and map_size(@agui.streaming_messages) == 0 do %>
                     <p class="text-gray-400 text-center py-8">
                       No messages yet. Run a scenario to see AG-UI in action!
