@@ -310,8 +310,8 @@ if Code.ensure_loaded?(Phoenix.Component) do
     def agui_tool_call(assigns) do
       ~H"""
       <div class="agui-tool-call">
-        <div class="agui-tool-name"><%= @tool_call.name %></div>
-        <pre class="agui-tool-args"><%= format_json(@tool_call.args) %></pre>
+        <div class="agui-tool-name"><%= @tool_call.function.name %></div>
+        <pre class="agui-tool-args"><%= format_json(@tool_call.function.arguments) %></pre>
       </div>
       """
     end
