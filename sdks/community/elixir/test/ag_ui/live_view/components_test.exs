@@ -285,5 +285,90 @@ if Code.ensure_loaded?(Phoenix.Component) do
         assert %Phoenix.LiveView.Rendered{} = result
       end
     end
+
+    describe "__using__ macro" do
+      test "macro is defined" do
+        assert Kernel.macro_exported?(Components, :__using__, 1)
+      end
+    end
+
+    describe "registry-based rendering" do
+      test "render_agui_message falls back to default when no custom renderer" do
+        result =
+          Components.render_agui_message(%{
+            message: %{id: "1", role: :user, content: "Hello"},
+            message_registry: %{},
+            activity_registry: %{}
+          })
+
+        assert %Phoenix.LiveView.Rendered{} = result
+        rendered = Phoenix.HTML.Safe.to_iodata(result) |> IO.iodata_to_binary()
+        assert rendered =~ "agui-user-content"
+      end
+
+      test "render_agui_message falls back to default activity render" do
+        result =
+          Components.render_agui_message(%{
+            message: %{
+              id: "1",
+              role: :activity,
+              activity_type: "unknown_type",
+              content: %{"data" => 1}
+            },
+            message_registry: %{},
+            activity_registry: %{}
+          })
+
+        assert %Phoenix.LiveView.Rendered{} = result
+        rendered = Phoenix.HTML.Safe.to_iodata(result) |> IO.iodata_to_binary()
+        assert rendered =~ "agui-activity"
+      end
+
+      test "render_agui_message uses message registry with custom renderer" do
+        # Custom renderer returns a simple rendered struct
+        custom_renderer = fn msg ->
+          %Phoenix.LiveView.Rendered{
+            static: ["<div class=\"custom-user\">", "</div>"],
+            dynamic: fn _ -> [msg.content] end,
+            fingerprint: 123,
+            root: true
+          }
+        end
+
+        result =
+          Components.render_agui_message(%{
+            message: %{id: "1", role: :user, content: "Hello"},
+            message_registry: %{user: custom_renderer},
+            activity_registry: %{}
+          })
+
+        assert %Phoenix.LiveView.Rendered{} = result
+        rendered = Phoenix.HTML.Safe.to_iodata(result) |> IO.iodata_to_binary()
+        assert rendered =~ "custom-user"
+        assert rendered =~ "Hello"
+      end
+
+      test "render_agui_message uses activity registry with custom renderer" do
+        custom_activity_renderer = fn msg ->
+          %Phoenix.LiveView.Rendered{
+            static: ["<div class=\"custom-chart\">", "</div>"],
+            dynamic: fn _ -> [inspect(msg.content)] end,
+            fingerprint: 456,
+            root: true
+          }
+        end
+
+        result =
+          Components.render_agui_message(%{
+            message: %{id: "1", role: :activity, activity_type: "chart", content: %{"x" => 1}},
+            message_registry: %{},
+            activity_registry: %{"chart" => custom_activity_renderer}
+          })
+
+        assert %Phoenix.LiveView.Rendered{} = result
+        rendered = Phoenix.HTML.Safe.to_iodata(result) |> IO.iodata_to_binary()
+        assert rendered =~ "custom-chart"
+      end
+    end
   end
 end
