@@ -18,12 +18,17 @@ defmodule AgUiDemoWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
+    live "/chat", ChatLive, :index
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", AgUiDemoWeb do
-  #   pipe_through :api
-  # end
+  # API endpoints for mock agent
+  scope "/api", AgUiDemoWeb do
+    pipe_through :api
+
+    post "/agent", AgentController, :run
+    # Also support GET for easier testing
+    get "/agent", AgentController, :run
+  end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:ag_ui_demo, :dev_routes) do
