@@ -284,7 +284,7 @@ defmodule AgUiDemoWeb.ChatLive do
         </div>
         <div class="flex-1 min-w-0">
           <div class="font-medium text-gray-900 mb-1">{role_label(@message.role)}</div>
-          <div class="text-gray-700 whitespace-pre-wrap">{@message.content}</div>
+          <div class="text-gray-700 whitespace-pre-wrap">{format_content(@message.content)}</div>
 
           <% tool_calls = Map.get(@message, :tool_calls, []) %>
           <%= if tool_calls != [] do %>
@@ -323,6 +323,11 @@ defmodule AgUiDemoWeb.ChatLive do
   defp role_label(:tool), do: "Tool Result"
   defp role_label(:system), do: "System"
   defp role_label(other), do: to_string(other)
+
+  # Format message content - handles both strings and maps (for activity messages)
+  defp format_content(content) when is_binary(content), do: content
+  defp format_content(content) when is_map(content), do: Jason.encode!(content, pretty: true)
+  defp format_content(content), do: inspect(content)
 
   # Generate a UUID v4
   defp uuid4 do

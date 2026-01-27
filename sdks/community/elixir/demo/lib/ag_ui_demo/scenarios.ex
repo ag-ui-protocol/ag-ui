@@ -224,6 +224,29 @@ defmodule AgUiDemo.Scenarios do
     {events, delay}
   end
 
+  def get("tool_chunk", opts) do
+    thread_id = Keyword.get(opts, :thread_id, "demo-thread")
+    run_id = Keyword.get(opts, :run_id, uuid4())
+    delay = Keyword.get(opts, :delay, 80)
+
+    events = [
+      %{type: "RUN_STARTED", threadId: thread_id, runId: run_id},
+      %{type: "TEXT_MESSAGE_START", messageId: "msg-1", role: "assistant"},
+      %{
+        type: "TEXT_MESSAGE_CONTENT",
+        messageId: "msg-1",
+        delta: "Calling a tool via chunked args..."
+      },
+      %{type: "TEXT_MESSAGE_END", messageId: "msg-1"},
+      %{type: "TOOL_CALL_CHUNK", toolCallId: "tc-1", toolCallName: "search", delta: "{\"q\":"},
+      %{type: "TOOL_CALL_CHUNK", toolCallId: nil, delta: " \"AG-UI\""},
+      %{type: "TOOL_CALL_CHUNK", toolCallId: nil, delta: "}"},
+      %{type: "RUN_FINISHED", threadId: thread_id, runId: run_id}
+    ]
+
+    {events, delay}
+  end
+
   def get("multiple_runs", opts) do
     thread_id = Keyword.get(opts, :thread_id, "demo-thread")
     delay = Keyword.get(opts, :delay, 100)
@@ -255,6 +278,111 @@ defmodule AgUiDemo.Scenarios do
     {events, delay}
   end
 
+  def get("activity", opts) do
+    thread_id = Keyword.get(opts, :thread_id, "demo-thread")
+    run_id = Keyword.get(opts, :run_id, uuid4())
+    delay = Keyword.get(opts, :delay, 120)
+
+    events = [
+      %{type: "RUN_STARTED", threadId: thread_id, runId: run_id},
+      %{
+        type: "ACTIVITY_SNAPSHOT",
+        messageId: "act-1",
+        activityType: "search_results",
+        content: %{results: [%{title: "AG-UI", url: "https://docs.ag-ui.com"}]},
+        replace: true
+      },
+      %{
+        type: "ACTIVITY_DELTA",
+        messageId: "act-1",
+        activityType: "search_results",
+        patch: [
+          %{
+            op: "add",
+            path: "/results/-",
+            value: %{title: "Specs", url: "https://docs.ag-ui.com/sdk"}
+          }
+        ]
+      },
+      %{type: "RUN_FINISHED", threadId: thread_id, runId: run_id}
+    ]
+
+    {events, delay}
+  end
+
+  def get("messages_snapshot", opts) do
+    thread_id = Keyword.get(opts, :thread_id, "demo-thread")
+    run_id = Keyword.get(opts, :run_id, uuid4())
+    delay = Keyword.get(opts, :delay, 80)
+
+    events = [
+      %{type: "RUN_STARTED", threadId: thread_id, runId: run_id},
+      %{
+        type: "MESSAGES_SNAPSHOT",
+        messages: [
+          %{id: "u-1", role: "user", content: "Hello"},
+          %{id: "a-1", role: "assistant", content: "Hi! This transcript was replaced."}
+        ]
+      },
+      %{type: "RUN_FINISHED", threadId: thread_id, runId: run_id}
+    ]
+
+    {events, delay}
+  end
+
+  def get("state_any", opts) do
+    thread_id = Keyword.get(opts, :thread_id, "demo-thread")
+    run_id = Keyword.get(opts, :run_id, uuid4())
+    delay = Keyword.get(opts, :delay, 80)
+
+    events = [
+      %{type: "RUN_STARTED", threadId: thread_id, runId: run_id},
+      %{type: "STATE_SNAPSHOT", snapshot: ["alpha", "beta"]},
+      %{type: "TEXT_MESSAGE_START", messageId: "msg-1", role: "assistant"},
+      %{
+        type: "TEXT_MESSAGE_CONTENT",
+        messageId: "msg-1",
+        delta: "State snapshot can be any JSON value."
+      },
+      %{type: "TEXT_MESSAGE_END", messageId: "msg-1"},
+      %{type: "RUN_FINISHED", threadId: thread_id, runId: run_id}
+    ]
+
+    {events, delay}
+  end
+
+  def get("parent_run", opts) do
+    thread_id = Keyword.get(opts, :thread_id, "demo-thread")
+    run_id = Keyword.get(opts, :run_id, uuid4())
+    parent_run_id = Keyword.get(opts, :parent_run_id, uuid4())
+    delay = Keyword.get(opts, :delay, 80)
+
+    events = [
+      %{type: "RUN_STARTED", threadId: thread_id, runId: run_id, parentRunId: parent_run_id},
+      %{type: "TEXT_MESSAGE_START", messageId: "msg-1", role: "assistant"},
+      %{type: "TEXT_MESSAGE_CONTENT", messageId: "msg-1", delta: "This run has a parentRunId."},
+      %{type: "TEXT_MESSAGE_END", messageId: "msg-1"},
+      %{type: "RUN_FINISHED", threadId: thread_id, runId: run_id}
+    ]
+
+    {events, delay}
+  end
+
+  def get("raw_custom", opts) do
+    thread_id = Keyword.get(opts, :thread_id, "demo-thread")
+    run_id = Keyword.get(opts, :run_id, uuid4())
+    delay = Keyword.get(opts, :delay, 80)
+
+    events = [
+      %{type: "RUN_STARTED", threadId: thread_id, runId: run_id},
+      %{type: "RAW", data: %{"note" => "raw passthrough"}},
+      %{type: "CUSTOM", name: "demo_event", value: %{"ok" => true}},
+      %{type: "RUN_FINISHED", threadId: thread_id, runId: run_id}
+    ]
+
+    {events, delay}
+  end
+
   @doc """
   Returns a list of available scenario names.
   """
@@ -267,6 +395,12 @@ defmodule AgUiDemo.Scenarios do
       {"thinking", "Thinking Mode", "THINKING_* events demonstration"},
       {"error", "Error Handling", "RUN_ERROR display"},
       {"chunk_mode", "Chunk Normalization", "TEXT_MESSAGE_CHUNK auto-expansion"},
+      {"tool_chunk", "Tool Chunk Normalization", "TOOL_CALL_CHUNK auto-expansion"},
+      {"activity", "Activity Messages", "ACTIVITY_SNAPSHOT and ACTIVITY_DELTA demo"},
+      {"messages_snapshot", "Messages Snapshot", "MESSAGES_SNAPSHOT replaces transcript"},
+      {"state_any", "State Any", "STATE_SNAPSHOT with non-map data"},
+      {"parent_run", "Parent Run", "RUN_STARTED with parentRunId"},
+      {"raw_custom", "Raw & Custom", "RAW and CUSTOM passthrough events"},
       {"multiple_runs", "Multiple Runs", "Sequential runs in same session"}
     ]
   end
