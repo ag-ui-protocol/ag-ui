@@ -435,7 +435,7 @@ pub enum Event<StateT: AgentState = JsonValue> {
     StepFinished(StepFinishedEvent),
 }
 
-impl Event {
+impl<StateT: AgentState> Event<StateT> {
     /// Get the event type
     pub fn event_type(&self) -> EventType {
         match self {
