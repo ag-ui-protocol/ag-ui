@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **See the [Migration Guide](./README.md#migrating-from-v04x) in README.md for upgrade instructions**
   - Huge thanks to **@jplikesbikes** for this contribution!
 
+### Security
+
+- Upgrade vulnerable transitive dependencies: aiohttp (3.13.3), urllib3 (2.6.3), authlib (1.6.6), pyasn1 (0.6.2), mcp (1.25.0), fastapi (0.128.0), starlette (0.49.3)
+
 ## [0.4.2] - 2025-01-22
 
 ### Added
