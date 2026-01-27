@@ -23,10 +23,8 @@ packages = ["ag_ui_agentspec"]
 allow-direct-references = true
 
 [tool.uv.sources]
-#wayflowcore = { git = "https://github.com/oracle/wayflow.git ", rev = "main", subdirectory = "wayflowcore" }
-#pyagentspec = { git = "https://github.com/oracle/agent-spec.git ", rev = "main", subdirectory = "pyagentspec" }
-wayflowcore = { path = "/Users/trale/Projects/wayflow/wayflowcore", editable = true }
-pyagentspec = { path = "/Users/trale/Projects/agent-spec/pyagentspec", editable = true }
+wayflowcore = { git = "https://github.com/oracle/wayflow.git ", rev = "main", subdirectory = "wayflowcore" }
+pyagentspec = { git = "https://github.com/oracle/agent-spec.git ", rev = "main", subdirectory = "pyagentspec" }
 
 [project.optional-dependencies]
 langgraph = ["pyagentspec[langgraph]"]
