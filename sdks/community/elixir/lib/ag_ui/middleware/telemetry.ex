@@ -30,12 +30,33 @@ defmodule AgUI.Middleware.Telemetry do
   Measurements: `%{duration: integer}` (in native time units)
   Metadata: `%{thread_id: string, run_id: string, message: string, event_count: integer}`
 
-  ### `[:ag_ui, :event]` (optional)
+  ### `[:ag_ui, :event, :received]` (optional)
 
   Emitted for each event when `emit_events: true`.
 
   Measurements: `%{system_time: integer}`
   Metadata: `%{thread_id: string, run_id: string, event_type: atom, event: struct}`
+
+  ### `[:ag_ui, :stream, :start]`
+
+  Emitted when the event stream starts.
+
+  Measurements: `%{system_time: integer}`
+  Metadata: `%{thread_id: string, run_id: string}`
+
+  ### `[:ag_ui, :stream, :stop]`
+
+  Emitted when the event stream stops (normal completion).
+
+  Measurements: `%{duration: integer}` (in native time units)
+  Metadata: `%{thread_id: string, run_id: string, event_count: integer}`
+
+  ### `[:ag_ui, :stream, :error]`
+
+  Emitted when a `RUN_ERROR` event is observed.
+
+  Measurements: `%{duration: integer}` (in native time units)
+  Metadata: `%{thread_id: string, run_id: string, message: string, event_count: integer}`
 
   ## Options
 
@@ -108,53 +129,77 @@ defmodule AgUI.Middleware.Telemetry do
     stream = next.(input)
 
     stream
-    |> Stream.transform(0, fn event, count ->
-      # Optionally emit per-event telemetry
-      if emit_events? do
-        event_metadata = %{
-          thread_id: input.thread_id,
-          run_id: input.run_id,
-          event_type: event.type,
-          event: event
-        }
+    |> Stream.transform(
+      fn ->
+        execute_telemetry(
+          prefix ++ [:stream, :start],
+          %{system_time: System.system_time()},
+          %{thread_id: input.thread_id, run_id: input.run_id}
+        )
+
+        0
+      end,
+      fn event, count ->
+        # Optionally emit per-event telemetry
+        if emit_events? do
+          event_metadata = %{
+            thread_id: input.thread_id,
+            run_id: input.run_id,
+            event_type: event.type,
+            event: event
+          }
+
+          execute_telemetry(
+            prefix ++ [:event, :received],
+            %{system_time: System.system_time()},
+            event_metadata
+          )
+        end
+
+        case event do
+          %AgUI.Events.RunFinished{} ->
+            duration = System.monotonic_time() - start_time
+
+            stop_metadata = %{
+              thread_id: input.thread_id,
+              run_id: input.run_id,
+              event_count: count + 1
+            }
+
+            execute_telemetry(prefix ++ [:run, :stop], %{duration: duration}, stop_metadata)
+            {[event], count + 1}
+
+          %AgUI.Events.RunError{message: msg} ->
+            duration = System.monotonic_time() - start_time
+
+            error_metadata = %{
+              thread_id: input.thread_id,
+              run_id: input.run_id,
+              message: msg,
+              event_count: count + 1
+            }
+
+            execute_telemetry(prefix ++ [:run, :error], %{duration: duration}, error_metadata)
+            execute_telemetry(prefix ++ [:stream, :error], %{duration: duration}, error_metadata)
+            {[event], count + 1}
+
+          _ ->
+            {[event], count + 1}
+        end
+      end,
+      fn count ->
+        duration = System.monotonic_time() - start_time
 
         execute_telemetry(
-          prefix ++ [:event],
-          %{system_time: System.system_time()},
-          event_metadata
+          prefix ++ [:stream, :stop],
+          %{duration: duration},
+          %{thread_id: input.thread_id, run_id: input.run_id, event_count: count}
         )
-      end
 
-      case event do
-        %AgUI.Events.RunFinished{} ->
-          duration = System.monotonic_time() - start_time
-
-          stop_metadata = %{
-            thread_id: input.thread_id,
-            run_id: input.run_id,
-            event_count: count + 1
-          }
-
-          execute_telemetry(prefix ++ [:run, :stop], %{duration: duration}, stop_metadata)
-          {[event], count + 1}
-
-        %AgUI.Events.RunError{message: msg} ->
-          duration = System.monotonic_time() - start_time
-
-          error_metadata = %{
-            thread_id: input.thread_id,
-            run_id: input.run_id,
-            message: msg,
-            event_count: count + 1
-          }
-
-          execute_telemetry(prefix ++ [:run, :error], %{duration: duration}, error_metadata)
-          {[event], count + 1}
-
-        _ ->
-          {[event], count + 1}
-      end
-    end)
+        {[], count}
+      end,
+      fn _ -> :ok end
+    )
   end
 
   # Helper to safely execute telemetry (handles case when :telemetry is not available)
