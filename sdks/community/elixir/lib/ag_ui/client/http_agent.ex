@@ -191,9 +191,21 @@ defmodule AgUI.Client.HttpAgent do
   """
   @spec stream_canonical(t(), RunAgentInput.t()) :: {:ok, Enumerable.t()} | {:error, term()}
   def stream_canonical(%__MODULE__{} = agent, %RunAgentInput{} = input) do
+    stream_canonical(agent, input, [])
+  end
+
+  @spec stream_canonical(t(), RunAgentInput.t(), keyword()) :: {:ok, Enumerable.t()} | {:error, term()}
+  def stream_canonical(%__MODULE__{} = agent, %RunAgentInput{} = input, opts) do
+    on_error = Keyword.get(opts, :on_error, :raise)
+
     case stream(agent, input) do
       {:ok, event_stream} ->
-        canonical_stream = AgUI.Normalize.expand_stream(event_stream)
+        canonical_stream =
+          case on_error do
+            :run_error -> AgUI.Normalize.expand_stream_safe(event_stream)
+            _ -> AgUI.Normalize.expand_stream(event_stream)
+          end
+
         {:ok, canonical_stream}
 
       error ->

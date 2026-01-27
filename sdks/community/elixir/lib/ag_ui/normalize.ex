@@ -94,6 +94,47 @@ defmodule AgUI.Normalize do
   end
 
   @doc """
+  Expands a stream of events like `expand_stream/1`, but converts malformed
+  chunk errors into a single RUN_ERROR event and halts the stream.
+  """
+  @spec expand_stream_safe(Enumerable.t()) :: Enumerable.t()
+  def expand_stream_safe(stream) do
+    Stream.transform(
+      stream,
+      fn -> {:ok, new()} end,
+      fn event, {:ok, pending} ->
+        try do
+          {events, new_pending} = expand(event, pending)
+          {events, {:ok, new_pending}}
+        rescue
+          e ->
+            error = %Events.RunError{
+              type: :run_error,
+              message: Exception.message(e),
+              timestamp: System.system_time(:millisecond)
+            }
+
+            {[error], {:halt, pending}}
+        catch
+          :exit, reason ->
+            error = %Events.RunError{
+              type: :run_error,
+              message: "Normalize exit: #{inspect(reason)}",
+              timestamp: System.system_time(:millisecond)
+            }
+
+            {[error], {:halt, pending}}
+        end
+      end,
+      fn
+        {:ok, pending} -> {finalize(pending), nil}
+        {:halt, _pending} -> {[], nil}
+      end,
+      fn _ -> :ok end
+    )
+  end
+
+  @doc """
   Expands a single event, returning emitted events and updated pending state.
 
   ## Parameters

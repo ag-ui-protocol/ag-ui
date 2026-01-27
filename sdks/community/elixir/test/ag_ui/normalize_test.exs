@@ -277,6 +277,19 @@ defmodule AgUI.NormalizeTest do
       end
     end
 
+    test "safe stream emits RUN_ERROR on invalid chunk" do
+      stream = [
+        %Events.TextMessageChunk{
+          type: :text_message_chunk,
+          message_id: nil,
+          delta: "Hello"
+        }
+      ]
+
+      events = stream |> Normalize.expand_stream_safe() |> Enum.to_list()
+      assert [%Events.RunError{}] = events
+    end
+
     test "tool chunk without tool_call_id raises" do
       chunk = %Events.ToolCallChunk{
         type: :tool_call_chunk,

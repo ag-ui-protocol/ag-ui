@@ -219,7 +219,7 @@ defmodule AgUI.LiveView.Runner do
   defp stream_and_send(agent, input, lv_pid, tag, normalize?) do
     stream_result =
       if normalize? do
-        HttpAgent.stream_canonical(agent, input)
+        HttpAgent.stream_canonical(agent, input, on_error: :run_error)
       else
         HttpAgent.stream(agent, input)
       end

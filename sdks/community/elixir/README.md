@@ -1,6 +1,6 @@
 # AgUi
 
-**TODO: Add description**
+Elixir SDK for the AG-UI protocol (SSE v1) with optional Phoenix LiveView integration.
 
 ## Installation
 
@@ -19,3 +19,9 @@ Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_do
 and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
 be found at <https://hexdocs.pm/ag_ui>.
 
+## Deferred Features (not yet implemented)
+
+- Binary protocol transport (`application/vnd.ag-ui.event+proto`)
+- WebSocket transport
+- SSE resume via `Last-Event-ID`
+- CI Dialyzer/Credo gates
