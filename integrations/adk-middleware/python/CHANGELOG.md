@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade vulnerable transitive dependencies: aiohttp (3.13.3), urllib3 (2.6.3), authlib (1.6.6), pyasn1 (0.6.2), mcp (1.25.0), fastapi (0.128.0), starlette (0.49.3)
 
+### Fixed
+
+- **FIXED**: Relax Python version constraint to allow Python 3.14 (#973)
+  - Changed `requires-python` from `>=3.9, <3.14` to `>=3.10, <3.15`
+  - Fixed `asyncio.get_event_loop()` deprecation in tests for Python 3.14 compatibility
+  - Added `asyncio.timeout` compatibility shim for Python 3.10 in tests
+
 ## [0.4.2] - 2025-01-22
 
 ### Added

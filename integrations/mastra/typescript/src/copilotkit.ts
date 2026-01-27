@@ -55,7 +55,7 @@ export function registerCopilotKit<
         serviceAdapter,
       });
 
-      return (handler as any).handle(c.req.raw, {});
+      return (handler as any)(c.req.raw);
     },
   });
 }

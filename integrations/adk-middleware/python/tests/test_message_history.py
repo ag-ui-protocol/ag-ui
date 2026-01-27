@@ -805,7 +805,7 @@ class TestLiveServerIntegration:
                 app_name="live_test_app",
                 user_id="live_test_user"
             )
-        asyncio.get_event_loop().run_until_complete(create_session())
+        asyncio.run(create_session())
 
         response = httpx.post(
             f"{live_server.base_url}/agents/state",
@@ -870,7 +870,7 @@ class TestLiveServerIntegration:
                 app_name="live_test_app",
                 user_id="live_test_user"
             )
-        asyncio.get_event_loop().run_until_complete(create_session())
+        asyncio.run(create_session())
 
         # First request - session should exist
         response1 = httpx.post(
@@ -906,7 +906,7 @@ class TestLiveServerIntegration:
                     app_name="live_test_app",
                     user_id="live_test_user"
                 )
-        asyncio.get_event_loop().run_until_complete(create_sessions())
+        asyncio.run(create_sessions())
 
         responses = []
         for thread_id in threads:
