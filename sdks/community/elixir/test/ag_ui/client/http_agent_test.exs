@@ -105,6 +105,42 @@ defmodule AgUI.Client.HttpAgentTest do
       conn
     end
 
+    defp stream_scenario(conn, "chunks", input) do
+      # Uses TEXT_MESSAGE_CHUNK events that need expansion
+      events = [
+        %{
+          "type" => "RUN_STARTED",
+          "threadId" => input["threadId"],
+          "runId" => input["runId"]
+        },
+        %{
+          "type" => "TEXT_MESSAGE_CHUNK",
+          "messageId" => "msg-1",
+          "role" => "assistant",
+          "delta" => "Hello "
+        },
+        %{
+          "type" => "TEXT_MESSAGE_CHUNK",
+          "messageId" => "msg-1",
+          "delta" => "world!"
+        },
+        %{
+          "type" => "RUN_FINISHED",
+          "threadId" => input["threadId"],
+          "runId" => input["runId"]
+        }
+      ]
+
+      Enum.reduce_while(events, conn, fn event, conn ->
+        data = Jason.encode!(event)
+
+        case chunk(conn, "data: #{data}\n\n") do
+          {:ok, conn} -> {:cont, conn}
+          {:error, _} -> {:halt, conn}
+        end
+      end)
+    end
+
     defp stream_scenario(conn, "error", _input) do
       events = [
         %{
@@ -339,6 +375,42 @@ defmodule AgUI.Client.HttpAgentTest do
 
       {:ok, events} = HttpAgent.run(agent, input)
       assert length(events) == 5
+    end
+  end
+
+  describe "stream_canonical/2" do
+    test "expands chunk events to canonical form" do
+      agent = HttpAgent.new(url: "http://127.0.0.1:4111/?scenario=chunks")
+      input = RunAgentInput.new("thread-1", "run-1")
+
+      {:ok, stream} = HttpAgent.stream_canonical(agent, input)
+      events = Enum.to_list(stream)
+
+      # Chunks expand to START, CONTENT, CONTENT, END
+      # Plus RUN_STARTED closes the pending text at the start, and RUN_FINISHED closes at end
+      types = Enum.map(events, & &1.type)
+
+      assert types == [
+               :run_started,
+               :text_message_start,
+               :text_message_content,
+               :text_message_content,
+               :text_message_end,
+               :run_finished
+             ]
+
+      # Verify content deltas
+      content_events = Enum.filter(events, &(&1.type == :text_message_content))
+      assert length(content_events) == 2
+      assert Enum.at(content_events, 0).delta == "Hello "
+      assert Enum.at(content_events, 1).delta == "world!"
+    end
+
+    test "returns error for connection failure" do
+      agent = HttpAgent.new(url: "http://127.0.0.1:59999/nonexistent")
+      input = RunAgentInput.new("thread-1", "run-1")
+
+      assert {:error, _reason} = HttpAgent.stream_canonical(agent, input)
     end
   end
 end

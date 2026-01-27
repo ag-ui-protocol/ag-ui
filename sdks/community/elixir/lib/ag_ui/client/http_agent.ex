@@ -167,6 +167,41 @@ defmodule AgUI.Client.HttpAgent do
   end
 
   @doc """
+  Streams canonical AG-UI events from the agent.
+
+  This is similar to `stream/2` but expands any chunk events (TEXT_MESSAGE_CHUNK,
+  TOOL_CALL_CHUNK) into their canonical start/content/end triads using
+  `AgUI.Normalize.expand_stream/1`.
+
+  This is the recommended function for UI rendering, as it provides a consistent
+  event structure.
+
+  ## Examples
+
+      {:ok, stream} = AgUI.Client.HttpAgent.stream_canonical(agent, input)
+      Enum.each(stream, fn event ->
+        case event do
+          %AgUI.Events.TextMessageStart{} -> IO.puts("Message started")
+          %AgUI.Events.TextMessageContent{delta: delta} -> IO.write(delta)
+          %AgUI.Events.TextMessageEnd{} -> IO.puts("")
+          _ -> :ok
+        end
+      end)
+
+  """
+  @spec stream_canonical(t(), RunAgentInput.t()) :: {:ok, Enumerable.t()} | {:error, term()}
+  def stream_canonical(%__MODULE__{} = agent, %RunAgentInput{} = input) do
+    case stream(agent, input) do
+      {:ok, event_stream} ->
+        canonical_stream = AgUI.Normalize.expand_stream(event_stream)
+        {:ok, canonical_stream}
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
   Streams decoded AG-UI events, raising on connection error.
 
   ## Examples
