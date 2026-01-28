@@ -18,11 +18,19 @@ defmodule AgUI.Client.HttpAgentTest do
 
       scenario = conn.query_params["scenario"] || "basic"
 
-      conn
-      |> put_resp_content_type("text/event-stream")
-      |> put_resp_header("cache-control", "no-cache")
-      |> send_chunked(200)
-      |> stream_scenario(scenario, input)
+      case scenario do
+        "proto" ->
+          conn
+          |> put_resp_content_type("application/vnd.ag-ui.event+proto")
+          |> send_resp(200, <<0, 1, 2>>)
+
+        _ ->
+          conn
+          |> put_resp_content_type("text/event-stream")
+          |> put_resp_header("cache-control", "no-cache")
+          |> send_chunked(200)
+          |> stream_scenario(scenario, input)
+      end
     end
 
     defp stream_scenario(conn, "basic", input) do
@@ -383,6 +391,14 @@ defmodule AgUI.Client.HttpAgentTest do
       assert is_binary(hd(events).data)
       {:ok, parsed} = Jason.decode(hd(events).data)
       assert parsed["type"] == "RUN_STARTED"
+    end
+
+    test "returns error for unsupported proto transport" do
+      agent = HttpAgent.new(url: "http://127.0.0.1:4111/?scenario=proto")
+      input = RunAgentInput.new("thread-1", "run-1")
+
+      assert {:error, {:unsupported_transport, :proto, _}} =
+               HttpAgent.stream_raw(agent, input)
     end
   end
 

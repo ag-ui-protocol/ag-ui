@@ -82,6 +82,7 @@ defmodule AgUI.Client.HttpAgent do
   ## Options
 
   - `:last_event_id` - Value for the `Last-Event-ID` header (SSE resume)
+  - `:accept` - Override Accept header (default: "text/event-stream")
 
   ## Examples
 
@@ -99,12 +100,13 @@ defmodule AgUI.Client.HttpAgent do
   @spec stream_raw(t(), RunAgentInput.t(), keyword()) :: {:ok, Enumerable.t()} | {:error, term()}
   def stream_raw(%__MODULE__{} = agent, %RunAgentInput{} = input, opts) do
     last_event_id = Keyword.get(opts, :last_event_id)
+    accept = Keyword.get(opts, :accept, "text/event-stream")
     body = RunAgentInput.to_map(input) |> Jason.encode!()
 
     headers =
       [
         {"content-type", "application/json"},
-        {"accept", "text/event-stream"}
+        {"accept", accept}
       ]
       |> maybe_add_last_event_id(last_event_id)
       |> Kernel.++(agent.headers)
@@ -122,12 +124,25 @@ defmodule AgUI.Client.HttpAgent do
     case Req.request(req) do
       {:ok, %Req.Response{status: status, body: %Req.Response.Async{}} = resp}
       when status in 200..299 ->
-        {:ok, build_sse_stream(resp)}
+        case ensure_sse_content_type(resp) do
+          :ok ->
+            {:ok, build_sse_stream(resp)}
+
+          {:error, reason} ->
+            Req.cancel_async_response(resp)
+            {:error, reason}
+        end
 
       {:ok, %Req.Response{status: status, body: %Req.Response.Async{}} = resp} ->
         # Cancel the async stream before returning error
         Req.cancel_async_response(resp)
         {:error, {:http_error, status, nil}}
+
+      {:ok, %Req.Response{status: status} = resp} when status in 200..299 ->
+        case ensure_sse_content_type(resp) do
+          :ok -> {:error, {:unexpected_body, resp.body}}
+          {:error, reason} -> {:error, reason}
+        end
 
       {:ok, %Req.Response{status: status, body: body}} ->
         {:error, {:http_error, status, body}}
@@ -326,5 +341,27 @@ defmodule AgUI.Client.HttpAgent do
   defp maybe_add_last_event_id(headers, ""), do: headers
   defp maybe_add_last_event_id(headers, last_event_id) when is_binary(last_event_id) do
     headers ++ [{"last-event-id", last_event_id}]
+  end
+
+  defp ensure_sse_content_type(%Req.Response{headers: headers}) do
+    content_type =
+      headers
+      |> Enum.find_value(fn {k, v} ->
+        if String.downcase(k) == "content-type", do: v, else: nil
+      end)
+
+    cond do
+      is_nil(content_type) ->
+        {:error, :missing_content_type}
+
+      String.contains?(String.downcase(content_type), "text/event-stream") ->
+        :ok
+
+      String.contains?(String.downcase(content_type), "application/vnd.ag-ui.event+proto") ->
+        {:error, {:unsupported_transport, :proto, content_type}}
+
+      true ->
+        {:error, {:unsupported_content_type, content_type}}
+    end
   end
 end
