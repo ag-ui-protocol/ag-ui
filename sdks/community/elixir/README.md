@@ -36,6 +36,46 @@ input = RunAgentInput.new("thread-1", "run-1")
 Enum.each(stream, &IO.inspect/1)
 ```
 
+## Server-side SSE encoding
+
+```elixir
+alias AgUI.Events.RunStarted
+alias AgUI.Transport.SSE.Writer
+
+event = %RunStarted{thread_id: "t1", run_id: "r1"}
+{:ok, conn} = Writer.write_event(conn, event)
+```
+
+### Plug controller streaming example
+
+```elixir
+defmodule MyAppWeb.AgentController do
+  use MyAppWeb, :controller
+
+  alias AgUI.Events
+  alias AgUI.Transport.SSE.Writer
+
+  def run(conn, _params) do
+    conn = Writer.prepare_conn(conn)
+
+    {:ok, conn} =
+      Writer.write_event(conn, %Events.RunStarted{thread_id: "t1", run_id: "r1"})
+
+    {:ok, conn} =
+      Writer.write_event(conn, %Events.TextMessageContent{
+        message_id: "m1",
+        delta: "Hello from Elixir",
+        role: :assistant
+      })
+
+    {:ok, conn} =
+      Writer.write_event(conn, %Events.RunFinished{thread_id: "t1", run_id: "r1"})
+
+    conn
+  end
+end
+```
+
 ### SSE resume
 
 Pass `last_event_id` to resume from a previous event id:

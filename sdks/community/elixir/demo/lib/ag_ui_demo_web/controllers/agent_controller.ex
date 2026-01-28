@@ -1,6 +1,7 @@
 defmodule AgUiDemoWeb.AgentController do
   use AgUiDemoWeb, :controller
 
+  alias AgUI.Transport.SSE.Writer
   alias AgUiDemo.Scenarios
 
   @doc """
@@ -23,11 +24,7 @@ defmodule AgUiDemoWeb.AgentController do
     {events, delay} = Scenarios.get(scenario, opts)
 
     conn
-    |> put_resp_content_type("text/event-stream")
-    |> put_resp_header("cache-control", "no-cache")
-    |> put_resp_header("connection", "keep-alive")
-    |> put_resp_header("access-control-allow-origin", "*")
-    |> send_chunked(200)
+    |> Writer.prepare_conn(headers: [{"access-control-allow-origin", "*"}])
     |> stream_events(events, delay)
   end
 
@@ -36,9 +33,7 @@ defmodule AgUiDemoWeb.AgentController do
       # Add small delay between events for realistic streaming
       Process.sleep(delay)
 
-      data = "data: #{Jason.encode!(event)}\n\n"
-
-      case chunk(conn, data) do
+      case Writer.write_event(conn, event, auto_prepare: false) do
         {:ok, conn} -> {:cont, conn}
         {:error, _reason} -> {:halt, conn}
       end
