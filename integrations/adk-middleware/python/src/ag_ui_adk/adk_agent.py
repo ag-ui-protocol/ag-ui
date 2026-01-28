@@ -1,8 +1,9 @@
 # src/adk_agent.py
 
 """Main ADKAgent implementation for bridging AG-UI Protocol with Google ADK."""
+from ag_ui_adk.agui_toolset import AGUIToolset
 
-from typing import Optional, Dict, Callable, Any, AsyncGenerator, List, Iterable, TYPE_CHECKING, Tuple
+from typing import Optional, Dict, Callable, Any, AsyncGenerator, List, Iterable, TYPE_CHECKING, Tuple, Union
 
 if TYPE_CHECKING:
     from google.adk.apps import App
@@ -20,8 +21,9 @@ from ag_ui.core import (
 )
 
 from google.adk import Runner
-from google.adk.agents import BaseAgent, RunConfig as ADKRunConfig
+from google.adk.agents import BaseAgent, LlmAgent, RunConfig as ADKRunConfig
 from google.adk.agents.run_config import StreamingMode
+from google.adk.agents.llm_agent import InstructionProvider, ToolUnion
 from google.adk.sessions import BaseSessionService, InMemorySessionService
 from google.adk.artifacts import BaseArtifactService, InMemoryArtifactService
 from google.adk.memory import BaseMemoryService, InMemoryMemoryService
@@ -1272,17 +1274,14 @@ class ADKAgent:
         user_id = self._get_user_id(input)
         app_name = self._get_app_name(input)
         
-        # Use the ADK agent directly
-        adk_agent = self._adk_agent
-        
-        # Prepare agent modifications (SystemMessage and tools)
-        agent_updates = {}
-        
+        # Use a deep copy of the ADK agent so we can modify it per-execution
+        adk_agent = self._adk_agent.model_copy(deep=True)
+
         # Handle SystemMessage if it's the first message - append to agent instructions
         if input.messages and isinstance(input.messages[0], SystemMessage):
             system_content = input.messages[0].content
-            if system_content:
-                current_instruction = getattr(adk_agent, 'instruction', '') or ''
+            if system_content and isinstance(adk_agent, LlmAgent):
+                current_instruction = adk_agent.instruction
 
                 if callable(current_instruction):
                     # Handle instructions provider
@@ -1315,40 +1314,39 @@ class ADKAgent:
                         new_instruction = system_content
                     logger.debug(f"Will append SystemMessage to string instructions: '{system_content[:100]}...'")
 
-                agent_updates['instruction'] = new_instruction
+                adk_agent.instruction = new_instruction
 
-        # Create dynamic toolset if tools provided and prepare tool updates
-        toolset = None
-        if input.tools:
-            # Get existing tools from the agent
-            existing_tools = []
-            if hasattr(adk_agent, 'tools') and adk_agent.tools:
-                existing_tools = list(adk_agent.tools) if isinstance(adk_agent.tools, (list, tuple)) else [adk_agent.tools]
-            
-            # if same tool is defined in frontend and backend then agent will only use the backend tool
-            input_tools = []
-            for input_tool in input.tools:
-                # Check if this input tool's name matches any existing tool
-                # Also exclude this specific tool call "transfer_to_agent" which is used internally by the adk to handoff to other agents
-                if (not any(hasattr(existing_tool, '__name__') and input_tool.name == existing_tool.__name__
-                        for existing_tool in existing_tools) and input_tool.name != 'transfer_to_agent'):
-                    input_tools.append(input_tool)
-                        
-            toolset = ClientProxyToolset(
-                ag_ui_tools=input_tools,
-                event_queue=event_queue
-            )
+        def _update_agent_tools_recursive(agent: Any) -> None:
+            """
+            Recursively replace AGUIToolset with ClientProxyToolset for an agent and its sub-agents.
+            Args:
+                agent: Agent instance to process
+            """
+            if isinstance(agent, LlmAgent) and hasattr(agent, "tools"):
+                new_tools: list[ToolUnion] = []
+                for tool in agent.tools:
+                    if isinstance(tool, AGUIToolset):
+                        tool = ClientProxyToolset(
+                            ag_ui_tools=input.tools,
+                            event_queue=event_queue,
+                            tool_filter=tool.tool_filter,
+                            tool_name_prefix=tool.tool_name_prefix,
+                        )
+                        logger.debug(
+                            f"Replaced AGUIToolset with ClientProxyToolset for agent {agent.name}"
+                        )
+                    new_tools.append(tool)
 
-            # Combine existing tools with our proxy toolset
-            combined_tools = existing_tools + [toolset]
-            agent_updates['tools'] = combined_tools
-            logger.debug(f"Will combine {len(existing_tools)} existing tools with proxy toolset")
-        
-        # Create a single copy of the agent with all updates if any modifications needed
-        if agent_updates:
-            adk_agent = adk_agent.model_copy(update=agent_updates)
-            logger.debug(f"Created modified agent copy with updates: {list(agent_updates.keys())}")
-        
+                agent.tools = new_tools
+
+                # Recursively process sub-agents if they exist
+                if hasattr(agent, "sub_agents") and agent.sub_agents:
+                    for sub_agent in agent.sub_agents:
+                        if isinstance(sub_agent, LlmAgent):
+                            _update_agent_tools_recursive(sub_agent)
+
+        _update_agent_tools_recursive(adk_agent)
+
         # Create background task
         logger.debug(f"Creating background task for thread {input.thread_id}")
         run_kwargs = {

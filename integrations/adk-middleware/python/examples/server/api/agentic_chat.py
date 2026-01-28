@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI
-from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+from ag_ui_adk import ADKAgent, AGUIToolset, add_adk_fastapi_endpoint
 from google.adk.agents import LlmAgent
 from google.adk import tools as adk_tools
 
@@ -20,7 +20,10 @@ sample_agent = LlmAgent(
     - If the user asks you a question, if possible you can answer it using previous context without telling them that you cannot look it up.
       Only tell the user that you cannot search if you do not have enough information already to answer.
     """,
-    tools=[adk_tools.preload_memory_tool.PreloadMemoryTool()]
+    tools=[
+      AGUIToolset(), # Add the tools provided by the AG-UI client
+      adk_tools.preload_memory_tool.PreloadMemoryTool(),
+    ]
 )
 
 # Create ADK middleware agent instance
