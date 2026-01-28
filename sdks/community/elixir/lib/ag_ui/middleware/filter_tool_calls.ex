@@ -29,7 +29,7 @@ defmodule AgUI.Middleware.FilterToolCalls do
       runner = AgUI.Middleware.chain([middleware], final_runner)
       runner.(input) |> Enum.to_list()
   """
-  @spec new([option()]) :: module()
+  @spec new([option()]) :: AgUI.Middleware.middleware()
   def new(opts \\ []) do
     allow = Keyword.get(opts, :allow)
     block = Keyword.get(opts, :block)

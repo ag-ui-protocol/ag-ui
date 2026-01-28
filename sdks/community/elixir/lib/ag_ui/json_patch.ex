@@ -71,9 +71,6 @@ defmodule AgUI.JSONPatch do
 
       {:error, %Jsonpatch.Error{} = error} ->
         {:error, {:patch_failed, error}}
-
-      {:error, reason} ->
-        {:error, {:patch_failed, reason}}
     end
   rescue
     e -> {:error, {:patch_exception, e}}

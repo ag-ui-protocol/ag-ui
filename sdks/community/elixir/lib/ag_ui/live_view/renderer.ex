@@ -254,7 +254,14 @@ defmodule AgUI.LiveView.Renderer do
   @spec reset(t()) :: t()
   def reset(%__MODULE__{session: session}) do
     %__MODULE__{
-      session: %{session | run_id: nil, status: :idle, steps: [], text_buffers: %{}, tool_buffers: %{}},
+      session: %{
+        session
+        | run_id: nil,
+          status: :idle,
+          steps: [],
+          text_buffers: %{},
+          tool_buffers: %{}
+      },
       streaming_messages: %{},
       streaming_tools: %{},
       run_status: :idle,

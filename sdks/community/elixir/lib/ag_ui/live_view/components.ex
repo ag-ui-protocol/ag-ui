@@ -185,7 +185,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
     def render_agui_message(assigns) do
       ~H"""
       <div class={"agui-message agui-message--" <> to_string(@message.role)}>
-        <%= render_message_with_registry(@message, @message_registry, @activity_registry) %>
+        {render_message_with_registry(@message, @message_registry, @activity_registry)}
       </div>
       """
     end
@@ -291,7 +291,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
     def agui_streaming_text(assigns) do
       ~H"""
       <div class={"agui-streaming-text agui-streaming-text--" <> to_string(@role)} id={@id}>
-        <span class="agui-streaming-content"><%= @content %></span>
+        <span class="agui-streaming-content">{@content}</span>
         <span class="agui-cursor">|</span>
       </div>
       """
@@ -310,7 +310,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
     def agui_tool_call(assigns) do
       ~H"""
       <div class="agui-tool-call">
-        <div class="agui-tool-name"><%= @tool_call.function.name %></div>
+        <div class="agui-tool-name">{@tool_call.function.name}</div>
         <pre class="agui-tool-args"><%= format_json(@tool_call.function.arguments) %></pre>
       </div>
       """
@@ -332,12 +332,12 @@ if Code.ensure_loaded?(Phoenix.Component) do
       ~H"""
       <div class={"agui-run-status agui-run-status--" <> status_class(@status)}>
         <span class="agui-status-indicator"></span>
-        <span class="agui-status-label"><%= status_label(@status) %></span>
+        <span class="agui-status-label">{status_label(@status)}</span>
         <%= if @steps != [] do %>
           <div class="agui-steps">
             <%= for step <- @steps do %>
               <span class={"agui-step agui-step--" <> to_string(step.status)}>
-                <%= step.name %>
+                {step.name}
               </span>
             <% end %>
           </div>
@@ -361,9 +361,9 @@ if Code.ensure_loaded?(Phoenix.Component) do
     def agui_thinking(assigns) do
       ~H"""
       <div class="agui-thinking">
-        <div class="agui-thinking-label"><%= @label %></div>
+        <div class="agui-thinking-label">{@label}</div>
         <%= if @content != "" do %>
-          <div class="agui-thinking-content"><%= @content %></div>
+          <div class="agui-thinking-content">{@content}</div>
         <% end %>
       </div>
       """
@@ -405,7 +405,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
       <div class="agui-streaming-tools">
         <%= for {id, tool} <- @tools do %>
           <div class="agui-streaming-tool" id={id}>
-            <div class="agui-tool-name"><%= tool.name %></div>
+            <div class="agui-tool-name">{tool.name}</div>
             <pre class="agui-tool-args"><%= tool.args %></pre>
           </div>
         <% end %>
@@ -417,7 +417,11 @@ if Code.ensure_loaded?(Phoenix.Component) do
     # Registry-based rendering helpers
     # ========================================
 
-    defp render_message_with_registry(%{role: :activity} = msg, _message_registry, activity_registry) do
+    defp render_message_with_registry(
+           %{role: :activity} = msg,
+           _message_registry,
+           activity_registry
+         ) do
       render_activity_with_registry(msg, activity_registry)
     end
 
@@ -443,7 +447,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
       assigns = %{content: content}
 
       ~H"""
-      <div class="agui-user-content"><%= @content %></div>
+      <div class="agui-user-content">{@content}</div>
       """
     end
 
@@ -453,7 +457,9 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
       ~H"""
       <div class="agui-assistant-content">
-        <%= if @content do %><%= @content %><% end %>
+        <%= if @content do %>
+          {@content}
+        <% end %>
         <%= for tc <- @tool_calls do %>
           <.agui_tool_call tool_call={tc} />
         <% end %>
@@ -465,7 +471,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
       assigns = %{content: content}
 
       ~H"""
-      <div class="agui-assistant-content"><%= @content %></div>
+      <div class="agui-assistant-content">{@content}</div>
       """
     end
 
@@ -481,7 +487,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
       assigns = %{content: content}
 
       ~H"""
-      <div class="agui-system-content"><%= @content %></div>
+      <div class="agui-system-content">{@content}</div>
       """
     end
 
@@ -489,7 +495,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
       assigns = %{content: content}
 
       ~H"""
-      <div class="agui-developer-content"><%= @content %></div>
+      <div class="agui-developer-content">{@content}</div>
       """
     end
 
@@ -497,7 +503,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
       assigns = %{msg: msg}
 
       ~H"""
-      <div class="agui-unknown-content"><%= inspect(@msg) %></div>
+      <div class="agui-unknown-content">{inspect(@msg)}</div>
       """
     end
 
@@ -506,7 +512,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
       ~H"""
       <div class="agui-activity">
-        <div class="agui-activity-type"><%= @type %></div>
+        <div class="agui-activity-type">{@type}</div>
         <pre class="agui-activity-content"><%= format_json(@content) %></pre>
       </div>
       """
@@ -530,17 +536,17 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
     defp render_message_content(%{message: %{role: :user}} = assigns) do
       ~H"""
-      <div class="agui-user-content"><%= @message.content %></div>
+      <div class="agui-user-content">{@message.content}</div>
       """
     end
 
-    defp render_message_content(
-           %{message: %{role: :assistant, tool_calls: tool_calls}} = assigns
-         )
+    defp render_message_content(%{message: %{role: :assistant, tool_calls: tool_calls}} = assigns)
          when is_list(tool_calls) and tool_calls != [] do
       ~H"""
       <div class="agui-assistant-content">
-        <%= if @message.content do %><%= @message.content %><% end %>
+        <%= if @message.content do %>
+          {@message.content}
+        <% end %>
         <%= for tc <- @message.tool_calls do %>
           <.agui_tool_call tool_call={tc} />
         <% end %>
@@ -550,7 +556,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
     defp render_message_content(%{message: %{role: :assistant}} = assigns) do
       ~H"""
-      <div class="agui-assistant-content"><%= @message.content %></div>
+      <div class="agui-assistant-content">{@message.content}</div>
       """
     end
 
@@ -562,20 +568,20 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
     defp render_message_content(%{message: %{role: :system}} = assigns) do
       ~H"""
-      <div class="agui-system-content"><%= @message.content %></div>
+      <div class="agui-system-content">{@message.content}</div>
       """
     end
 
     defp render_message_content(%{message: %{role: :developer}} = assigns) do
       ~H"""
-      <div class="agui-developer-content"><%= @message.content %></div>
+      <div class="agui-developer-content">{@message.content}</div>
       """
     end
 
     defp render_message_content(%{message: %{role: :activity}} = assigns) do
       ~H"""
       <div class="agui-activity">
-        <div class="agui-activity-type"><%= @message[:activity_type] %></div>
+        <div class="agui-activity-type">{@message[:activity_type]}</div>
         <pre class="agui-activity-content"><%= format_json(@message[:content]) %></pre>
       </div>
       """
@@ -583,7 +589,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
     defp render_message_content(assigns) do
       ~H"""
-      <div class="agui-unknown-content"><%= inspect(@message) %></div>
+      <div class="agui-unknown-content">{inspect(@message)}</div>
       """
     end
 

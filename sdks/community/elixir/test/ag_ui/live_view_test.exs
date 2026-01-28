@@ -56,11 +56,13 @@ defmodule AgUI.LiveViewTest do
       idle_state = LiveView.init()
       assert LiveView.running?(idle_state) == false
 
-      running_state = LiveView.apply_event(idle_state, %Events.RunStarted{
-        type: :RUN_STARTED,
-        thread_id: "t1",
-        run_id: "r1"
-      })
+      running_state =
+        LiveView.apply_event(idle_state, %Events.RunStarted{
+          type: :RUN_STARTED,
+          thread_id: "t1",
+          run_id: "r1"
+        })
+
       assert LiveView.running?(running_state) == true
     end
 
@@ -68,10 +70,12 @@ defmodule AgUI.LiveViewTest do
       state = LiveView.init()
       assert LiveView.finished?(state) == false
 
-      state = LiveView.apply_all(state, [
-        %Events.RunStarted{type: :RUN_STARTED, thread_id: "t1", run_id: "r1"},
-        %Events.RunFinished{type: :RUN_FINISHED, thread_id: "t1", run_id: "r1"}
-      ])
+      state =
+        LiveView.apply_all(state, [
+          %Events.RunStarted{type: :RUN_STARTED, thread_id: "t1", run_id: "r1"},
+          %Events.RunFinished{type: :RUN_FINISHED, thread_id: "t1", run_id: "r1"}
+        ])
+
       assert LiveView.finished?(state) == true
     end
 
@@ -79,10 +83,12 @@ defmodule AgUI.LiveViewTest do
       state = LiveView.init()
       assert LiveView.error?(state) == false
 
-      state = LiveView.apply_all(state, [
-        %Events.RunStarted{type: :RUN_STARTED, thread_id: "t1", run_id: "r1"},
-        %Events.RunError{type: :RUN_ERROR, message: "Failed"}
-      ])
+      state =
+        LiveView.apply_all(state, [
+          %Events.RunStarted{type: :RUN_STARTED, thread_id: "t1", run_id: "r1"},
+          %Events.RunError{type: :RUN_ERROR, message: "Failed"}
+        ])
+
       assert LiveView.error?(state) == true
     end
 
@@ -90,12 +96,13 @@ defmodule AgUI.LiveViewTest do
       state = LiveView.init()
       assert LiveView.messages(state) == []
 
-      state = LiveView.apply_all(state, [
-        %Events.RunStarted{type: :RUN_STARTED, thread_id: "t1", run_id: "r1"},
-        %Events.TextMessageStart{type: :TEXT_MESSAGE_START, message_id: "m1", role: :assistant},
-        %Events.TextMessageContent{type: :TEXT_MESSAGE_CONTENT, message_id: "m1", delta: "Hi"},
-        %Events.TextMessageEnd{type: :TEXT_MESSAGE_END, message_id: "m1"}
-      ])
+      state =
+        LiveView.apply_all(state, [
+          %Events.RunStarted{type: :RUN_STARTED, thread_id: "t1", run_id: "r1"},
+          %Events.TextMessageStart{type: :TEXT_MESSAGE_START, message_id: "m1", role: :assistant},
+          %Events.TextMessageContent{type: :TEXT_MESSAGE_CONTENT, message_id: "m1", delta: "Hi"},
+          %Events.TextMessageEnd{type: :TEXT_MESSAGE_END, message_id: "m1"}
+        ])
 
       messages = LiveView.messages(state)
       assert length(messages) == 1
@@ -105,10 +112,11 @@ defmodule AgUI.LiveViewTest do
       state = LiveView.init()
       assert LiveView.state(state) == %{}
 
-      state = LiveView.apply_event(state, %Events.StateSnapshot{
-        type: :STATE_SNAPSHOT,
-        snapshot: %{"key" => "value"}
-      })
+      state =
+        LiveView.apply_event(state, %Events.StateSnapshot{
+          type: :STATE_SNAPSHOT,
+          snapshot: %{"key" => "value"}
+        })
 
       assert LiveView.state(state) == %{"key" => "value"}
     end
@@ -116,11 +124,12 @@ defmodule AgUI.LiveViewTest do
     test "reset/1 clears run state" do
       state = LiveView.init(thread_id: "t1")
 
-      state = LiveView.apply_all(state, [
-        %Events.RunStarted{type: :RUN_STARTED, thread_id: "t1", run_id: "r1"},
-        %Events.TextMessageStart{type: :TEXT_MESSAGE_START, message_id: "m1", role: :assistant},
-        %Events.TextMessageContent{type: :TEXT_MESSAGE_CONTENT, message_id: "m1", delta: "Hi"}
-      ])
+      state =
+        LiveView.apply_all(state, [
+          %Events.RunStarted{type: :RUN_STARTED, thread_id: "t1", run_id: "r1"},
+          %Events.TextMessageStart{type: :TEXT_MESSAGE_START, message_id: "m1", role: :assistant},
+          %Events.TextMessageContent{type: :TEXT_MESSAGE_CONTENT, message_id: "m1", delta: "Hi"}
+        ])
 
       reset_state = LiveView.reset(state)
 

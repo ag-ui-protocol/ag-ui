@@ -31,10 +31,11 @@ defmodule AgUI.LiveView.HelpersTest do
     test "accepts custom assign keys" do
       socket = %MockSocket{assigns: %{}}
 
-      socket = Helpers.init_agui(socket,
-        assign_key: :my_agui,
-        runner_key: :my_runner
-      )
+      socket =
+        Helpers.init_agui(socket,
+          assign_key: :my_agui,
+          runner_key: :my_runner
+        )
 
       assert %Renderer{} = socket.assigns.my_agui
       assert socket.assigns.my_runner == nil
@@ -106,11 +107,12 @@ defmodule AgUI.LiveView.HelpersTest do
         put_in(socket.assigns[:error_reason], reason)
       end
 
-      {:ok, socket} = Helpers.handle_agui_message(
-        {:agui, {:error, "test error"}},
-        socket,
-        on_error: on_error
-      )
+      {:ok, socket} =
+        Helpers.handle_agui_message(
+          {:agui, {:error, "test error"}},
+          socket,
+          on_error: on_error
+        )
 
       assert socket.assigns.error_reason == "test error"
     end
@@ -124,11 +126,12 @@ defmodule AgUI.LiveView.HelpersTest do
         put_in(socket.assigns[:completed], true)
       end
 
-      {:ok, socket} = Helpers.handle_agui_message(
-        {:agui, :done},
-        socket,
-        on_done: on_done
-      )
+      {:ok, socket} =
+        Helpers.handle_agui_message(
+          {:agui, :done},
+          socket,
+          on_done: on_done
+        )
 
       assert socket.assigns.completed == true
     end
@@ -143,11 +146,12 @@ defmodule AgUI.LiveView.HelpersTest do
         run_id: "r1"
       }
 
-      {:ok, socket} = Helpers.handle_agui_message(
-        {:custom_tag, event},
-        socket,
-        tag: :custom_tag
-      )
+      {:ok, socket} =
+        Helpers.handle_agui_message(
+          {:custom_tag, event},
+          socket,
+          tag: :custom_tag
+        )
 
       assert socket.assigns.agui.run_status == :running
     end
@@ -228,14 +232,19 @@ defmodule AgUI.LiveView.HelpersTest do
 
   describe "multiple concurrent runs" do
     test "can track multiple independent runs" do
-      socket1 = Helpers.init_agui(%MockSocket{assigns: %{}}, assign_key: :agui1, runner_key: :runner1)
+      socket1 =
+        Helpers.init_agui(%MockSocket{assigns: %{}}, assign_key: :agui1, runner_key: :runner1)
+
       socket2 = Helpers.init_agui(socket1, assign_key: :agui2, runner_key: :runner2)
 
       event1 = %Events.RunStarted{type: :RUN_STARTED, thread_id: "t1", run_id: "r1"}
       event2 = %Events.RunStarted{type: :RUN_STARTED, thread_id: "t2", run_id: "r2"}
 
-      {:ok, socket} = Helpers.handle_agui_message({:tag1, event1}, socket2, tag: :tag1, assign_key: :agui1)
-      {:ok, socket} = Helpers.handle_agui_message({:tag2, event2}, socket, tag: :tag2, assign_key: :agui2)
+      {:ok, socket} =
+        Helpers.handle_agui_message({:tag1, event1}, socket2, tag: :tag1, assign_key: :agui1)
+
+      {:ok, socket} =
+        Helpers.handle_agui_message({:tag2, event2}, socket, tag: :tag2, assign_key: :agui2)
 
       assert socket.assigns.agui1.session.run_id == "r1"
       assert socket.assigns.agui2.session.run_id == "r2"

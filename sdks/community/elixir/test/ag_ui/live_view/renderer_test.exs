@@ -368,7 +368,10 @@ defmodule AgUI.LiveView.RendererTest do
         %Events.RunStarted{type: :RUN_STARTED, thread_id: "t1", run_id: "r1"},
         %Events.ThinkingStart{type: :THINKING_START},
         %Events.ThinkingTextMessageStart{type: :THINKING_TEXT_MESSAGE_START},
-        %Events.ThinkingTextMessageContent{type: :THINKING_TEXT_MESSAGE_CONTENT, delta: "Let me think..."}
+        %Events.ThinkingTextMessageContent{
+          type: :THINKING_TEXT_MESSAGE_CONTENT,
+          delta: "Let me think..."
+        }
       ]
 
       state = Renderer.apply_all(state, events)

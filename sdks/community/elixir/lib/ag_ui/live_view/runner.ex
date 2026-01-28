@@ -64,6 +64,7 @@ defmodule AgUI.LiveView.Runner do
   use GenServer
 
   alias AgUI.Client.HttpAgent
+  alias AgUI.Types.RunAgentInput
 
   @typedoc """
   Runner state.

@@ -243,6 +243,7 @@ defmodule AgUI.NormalizeTest do
       }
 
       pending = Normalize.new()
+
       assert_raise ArgumentError, ~r/toolCallName/, fn ->
         Normalize.expand(chunk, pending)
       end

@@ -92,12 +92,13 @@ defmodule AgUI.LiveView.RunnerTest do
         tools: []
       }
 
-      {:ok, runner} = Runner.start_link(
-        liveview: self(),
-        agent: agent,
-        input: input,
-        tag: :test_agui
-      )
+      {:ok, runner} =
+        Runner.start_link(
+          liveview: self(),
+          agent: agent,
+          input: input,
+          tag: :test_agui
+        )
 
       assert is_pid(runner)
       assert Process.alive?(runner)
@@ -121,11 +122,12 @@ defmodule AgUI.LiveView.RunnerTest do
         tools: []
       }
 
-      {:ok, _runner} = Runner.start_link(
-        liveview: self(),
-        agent: agent,
-        input: input
-      )
+      {:ok, _runner} =
+        Runner.start_link(
+          liveview: self(),
+          agent: agent,
+          input: input
+        )
 
       assert_receive {:agui, %Events.RunStarted{}}, 5000
     end
@@ -141,12 +143,13 @@ defmodule AgUI.LiveView.RunnerTest do
         tools: []
       }
 
-      {:ok, _runner} = Runner.start_link(
-        liveview: self(),
-        agent: agent,
-        input: input,
-        tag: :test_agui
-      )
+      {:ok, _runner} =
+        Runner.start_link(
+          liveview: self(),
+          agent: agent,
+          input: input,
+          tag: :test_agui
+        )
 
       # Should receive an error (either connection refused or task crashed)
       assert_receive {:test_agui, {:error, _reason}}, 5000
@@ -164,12 +167,13 @@ defmodule AgUI.LiveView.RunnerTest do
         tools: []
       }
 
-      {:ok, runner} = Runner.start_link(
-        liveview: self(),
-        agent: agent,
-        input: input,
-        tag: :test_agui
-      )
+      {:ok, runner} =
+        Runner.start_link(
+          liveview: self(),
+          agent: agent,
+          input: input,
+          tag: :test_agui
+        )
 
       # Abort immediately
       :ok = Runner.abort(runner)
@@ -190,12 +194,13 @@ defmodule AgUI.LiveView.RunnerTest do
         tools: []
       }
 
-      {:ok, runner} = Runner.start_link(
-        liveview: self(),
-        agent: agent,
-        input: input,
-        tag: :test_agui
-      )
+      {:ok, runner} =
+        Runner.start_link(
+          liveview: self(),
+          agent: agent,
+          input: input,
+          tag: :test_agui
+        )
 
       # Should be streaming initially
       assert Runner.streaming?(runner) == true
@@ -225,12 +230,13 @@ defmodule AgUI.LiveView.RunnerTest do
           end
         end)
 
-      {:ok, runner} = Runner.start_link(
-        liveview: fake_lv,
-        agent: agent,
-        input: input,
-        tag: :test_agui
-      )
+      {:ok, runner} =
+        Runner.start_link(
+          liveview: fake_lv,
+          agent: agent,
+          input: input,
+          tag: :test_agui
+        )
 
       assert Process.alive?(runner)
 
@@ -254,13 +260,14 @@ defmodule AgUI.LiveView.RunnerTest do
         tools: []
       }
 
-      {:ok, _runner} = Runner.start_link(
-        liveview: self(),
-        agent: agent,
-        input: input,
-        tag: :test_agui,
-        normalize: true
-      )
+      {:ok, _runner} =
+        Runner.start_link(
+          liveview: self(),
+          agent: agent,
+          input: input,
+          tag: :test_agui,
+          normalize: true
+        )
 
       # Should receive normalized events
       assert_receive {:test_agui, event}, 5000
@@ -277,13 +284,14 @@ defmodule AgUI.LiveView.RunnerTest do
         tools: []
       }
 
-      {:ok, _runner} = Runner.start_link(
-        liveview: self(),
-        agent: agent,
-        input: input,
-        tag: :test_agui,
-        normalize: false
-      )
+      {:ok, _runner} =
+        Runner.start_link(
+          liveview: self(),
+          agent: agent,
+          input: input,
+          tag: :test_agui,
+          normalize: false
+        )
 
       # Should still receive events (raw)
       assert_receive {:test_agui, _event}, 5000

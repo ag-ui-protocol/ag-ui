@@ -199,7 +199,8 @@ defmodule AgUI.Verify do
     end
   end
 
-  def verify_event(%Events.TextMessageContent{} = event, state), do: verify_text_content(event, state)
+  def verify_event(%Events.TextMessageContent{} = event, state),
+    do: verify_text_content(event, state)
 
   def verify_event(%Events.TextMessageEnd{} = event, state), do: verify_text_end(event, state)
 

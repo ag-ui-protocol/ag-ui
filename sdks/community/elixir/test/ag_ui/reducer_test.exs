@@ -189,6 +189,7 @@ defmodule AgUI.ReducerTest do
 
       session = Reducer.apply(session, event)
       assert session.text_buffers == %{}
+
       assert [%AgUI.Types.Message.Assistant{id: "msg-1", content: "Hello world!"}] =
                session.messages
     end
@@ -253,7 +254,9 @@ defmodule AgUI.ReducerTest do
 
     test "ToolCallArgs appends to buffer" do
       session = %Session{
-        tool_buffers: %{"call-1" => %{name: "search", args: "{\"q\":", parent_message_id: "msg-1"}},
+        tool_buffers: %{
+          "call-1" => %{name: "search", args: "{\"q\":", parent_message_id: "msg-1"}
+        },
         messages: [
           %Message.Assistant{
             id: "msg-1",

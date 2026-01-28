@@ -154,7 +154,9 @@ if Code.ensure_loaded?(Phoenix.Component) do
 
       test "renders tool message" do
         result =
-          Components.agui_message(%{message: %{id: "1", role: :tool, content: "{\"result\": 42}"}})
+          Components.agui_message(%{
+            message: %{id: "1", role: :tool, content: "{\"result\": 42}"}
+          })
 
         assert %Phoenix.LiveView.Rendered{} = result
       end
@@ -230,7 +232,9 @@ if Code.ensure_loaded?(Phoenix.Component) do
       end
 
       test "renders error status" do
-        result = Components.agui_run_status(%{status: {:error, "Something went wrong"}, steps: []})
+        result =
+          Components.agui_run_status(%{status: {:error, "Something went wrong"}, steps: []})
+
         assert %Phoenix.LiveView.Rendered{} = result
       end
 

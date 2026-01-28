@@ -420,6 +420,7 @@ defmodule AgUI.Client.HttpAgentTest do
   describe "run_agent/3" do
     test "returns result with new messages and session" do
       agent = HttpAgent.new(url: "http://127.0.0.1:4111/?scenario=basic")
+
       input =
         RunAgentInput.new("thread-1", "run-1",
           messages: [%AgUI.Types.Message.User{id: "user-1", role: :user, content: "Hi"}]

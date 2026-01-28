@@ -238,7 +238,8 @@ defmodule AgUI.Client.HttpAgent do
     stream_canonical(agent, input, [])
   end
 
-  @spec stream_canonical(t(), RunAgentInput.t(), keyword()) :: {:ok, Enumerable.t()} | {:error, term()}
+  @spec stream_canonical(t(), RunAgentInput.t(), keyword()) ::
+          {:ok, Enumerable.t()} | {:error, term()}
   def stream_canonical(%__MODULE__{} = agent, %RunAgentInput{} = input, opts) do
     on_error = Keyword.get(opts, :on_error, :raise)
 
@@ -404,6 +405,7 @@ defmodule AgUI.Client.HttpAgent do
 
   defp maybe_add_last_event_id(headers, nil), do: headers
   defp maybe_add_last_event_id(headers, ""), do: headers
+
   defp maybe_add_last_event_id(headers, last_event_id) when is_binary(last_event_id) do
     headers ++ [{"last-event-id", last_event_id}]
   end

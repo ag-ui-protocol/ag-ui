@@ -244,6 +244,7 @@ defmodule AgUI.Reducer do
         }
 
         target_id = buffer.parent_message_id || id
+
         session =
           if target_id do
             session
@@ -303,7 +304,12 @@ defmodule AgUI.Reducer do
     if chunk.delta && chunk.delta != "" && Map.has_key?(session.tool_buffers, chunk.tool_call_id) do
       buffer = session.tool_buffers[chunk.tool_call_id]
       updated_buffer = %{buffer | args: buffer.args <> chunk.delta}
-      session = %{session | tool_buffers: Map.put(session.tool_buffers, chunk.tool_call_id, updated_buffer)}
+
+      session = %{
+        session
+        | tool_buffers: Map.put(session.tool_buffers, chunk.tool_call_id, updated_buffer)
+      }
+
       update_tool_call_args(session, chunk.tool_call_id, chunk.delta)
     else
       session
@@ -563,7 +569,6 @@ defmodule AgUI.Reducer do
       _ -> nil
     end
   end
-
 
   @doc """
   Applies a list of events to a session in order.

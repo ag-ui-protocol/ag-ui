@@ -164,6 +164,7 @@ defmodule AgUI.Normalize do
     if is_nil(message_id) do
       raise ArgumentError, "TEXT_MESSAGE_CHUNK missing required messageId"
     end
+
     role =
       case chunk.role do
         r when is_atom(r) ->

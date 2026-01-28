@@ -179,7 +179,9 @@ defmodule AgUI.Transport.SSE do
 
         line =
           case line do
-            <<>> -> line
+            <<>> ->
+              line
+
             _ ->
               if :binary.last(line) == ?\r do
                 :binary.part(line, 0, byte_size(line) - 1)

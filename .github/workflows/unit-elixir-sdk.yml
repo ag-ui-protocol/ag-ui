@@ -44,6 +44,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-elixir-${{ matrix.elixir }}-${{ matrix.otp }}-
 
+      - name: Restore dialyzer PLT cache
+        uses: actions/cache@v4
+        with:
+          path: sdks/community/elixir/priv/plts
+          key: ${{ runner.os }}-elixir-${{ matrix.elixir }}-${{ matrix.otp }}-plt-${{ hashFiles('sdks/community/elixir/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-elixir-${{ matrix.elixir }}-${{ matrix.otp }}-plt-
+
       - name: Install dependencies
         working-directory: sdks/community/elixir
         run: mix deps.get
@@ -63,3 +71,7 @@ jobs:
       - name: Run tests
         working-directory: sdks/community/elixir
         run: mix test
+
+      - name: Run dialyzer
+        working-directory: sdks/community/elixir
+        run: mix dialyzer
