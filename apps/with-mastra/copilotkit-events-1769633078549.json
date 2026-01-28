@@ -1,0 +1,399 @@
+[
+  {
+    "id": "weatherAgent:24",
+    "agentId": "weatherAgent",
+    "type": "RUN_FINISHED",
+    "timestamp": 1769633040993,
+    "payload": {
+      "event": {
+        "type": "RUN_FINISHED",
+        "threadId": "fddc453e-a36d-4109-8890-3becfcebc02f",
+        "runId": "92ffe30a-8dd1-4c09-b616-24fc7e69713b"
+      },
+      "result": "[undefined]"
+    }
+  },
+  {
+    "id": "weatherAgent:23",
+    "agentId": "weatherAgent",
+    "type": "STATE_SNAPSHOT",
+    "timestamp": 1769633040992,
+    "payload": {
+      "type": "STATE_SNAPSHOT",
+      "snapshot": {
+        "proverbs": []
+      }
+    }
+  },
+  {
+    "id": "weatherAgent:22",
+    "agentId": "weatherAgent",
+    "type": "TEXT_MESSAGE_END",
+    "timestamp": 1769633040989,
+    "payload": {
+      "event": {
+        "type": "TEXT_MESSAGE_END",
+        "messageId": "d0b45a7f-d877-4a59-a6db-e11365066393"
+      },
+      "textMessageBuffer": "NYC weather: **Weather data for NYC**"
+    }
+  },
+  {
+    "id": "weatherAgent:21",
+    "agentId": "weatherAgent",
+    "type": "TEXT_MESSAGE_CONTENT",
+    "timestamp": 1769633040951,
+    "payload": {
+      "event": {
+        "type": "TEXT_MESSAGE_CONTENT",
+        "messageId": "d0b45a7f-d877-4a59-a6db-e11365066393",
+        "delta": "**"
+      },
+      "textMessageBuffer": "NYC weather: **Weather data for NYC"
+    }
+  },
+  {
+    "id": "weatherAgent:20",
+    "agentId": "weatherAgent",
+    "type": "TEXT_MESSAGE_CONTENT",
+    "timestamp": 1769633040948,
+    "payload": {
+      "event": {
+        "type": "TEXT_MESSAGE_CONTENT",
+        "messageId": "d0b45a7f-d877-4a59-a6db-e11365066393",
+        "delta": " NYC"
+      },
+      "textMessageBuffer": "NYC weather: **Weather data for"
+    }
+  },
+  {
+    "id": "weatherAgent:19",
+    "agentId": "weatherAgent",
+    "type": "TEXT_MESSAGE_CONTENT",
+    "timestamp": 1769633040912,
+    "payload": {
+      "event": {
+        "type": "TEXT_MESSAGE_CONTENT",
+        "messageId": "d0b45a7f-d877-4a59-a6db-e11365066393",
+        "delta": " for"
+      },
+      "textMessageBuffer": "NYC weather: **Weather data"
+    }
+  },
+  {
+    "id": "weatherAgent:18",
+    "agentId": "weatherAgent",
+    "type": "TEXT_MESSAGE_CONTENT",
+    "timestamp": 1769633040909,
+    "payload": {
+      "event": {
+        "type": "TEXT_MESSAGE_CONTENT",
+        "messageId": "d0b45a7f-d877-4a59-a6db-e11365066393",
+        "delta": " data"
+      },
+      "textMessageBuffer": "NYC weather: **Weather"
+    }
+  },
+  {
+    "id": "weatherAgent:17",
+    "agentId": "weatherAgent",
+    "type": "TEXT_MESSAGE_CONTENT",
+    "timestamp": 1769633040906,
+    "payload": {
+      "event": {
+        "type": "TEXT_MESSAGE_CONTENT",
+        "messageId": "d0b45a7f-d877-4a59-a6db-e11365066393",
+        "delta": "Weather"
+      },
+      "textMessageBuffer": "NYC weather: **"
+    }
+  },
+  {
+    "id": "weatherAgent:16",
+    "agentId": "weatherAgent",
+    "type": "TEXT_MESSAGE_CONTENT",
+    "timestamp": 1769633040903,
+    "payload": {
+      "event": {
+        "type": "TEXT_MESSAGE_CONTENT",
+        "messageId": "d0b45a7f-d877-4a59-a6db-e11365066393",
+        "delta": " **"
+      },
+      "textMessageBuffer": "NYC weather:"
+    }
+  },
+  {
+    "id": "weatherAgent:15",
+    "agentId": "weatherAgent",
+    "type": "TEXT_MESSAGE_CONTENT",
+    "timestamp": 1769633040859,
+    "payload": {
+      "event": {
+        "type": "TEXT_MESSAGE_CONTENT",
+        "messageId": "d0b45a7f-d877-4a59-a6db-e11365066393",
+        "delta": ":"
+      },
+      "textMessageBuffer": "NYC weather"
+    }
+  },
+  {
+    "id": "weatherAgent:14",
+    "agentId": "weatherAgent",
+    "type": "TEXT_MESSAGE_CONTENT",
+    "timestamp": 1769633040856,
+    "payload": {
+      "event": {
+        "type": "TEXT_MESSAGE_CONTENT",
+        "messageId": "d0b45a7f-d877-4a59-a6db-e11365066393",
+        "delta": " weather"
+      },
+      "textMessageBuffer": "NYC"
+    }
+  },
+  {
+    "id": "weatherAgent:13",
+    "agentId": "weatherAgent",
+    "type": "TEXT_MESSAGE_CONTENT",
+    "timestamp": 1769633040805,
+    "payload": {
+      "event": {
+        "type": "TEXT_MESSAGE_CONTENT",
+        "messageId": "d0b45a7f-d877-4a59-a6db-e11365066393",
+        "delta": "C"
+      },
+      "textMessageBuffer": "NY"
+    }
+  },
+  {
+    "id": "weatherAgent:12",
+    "agentId": "weatherAgent",
+    "type": "TEXT_MESSAGE_CONTENT",
+    "timestamp": 1769633040799,
+    "payload": {
+      "event": {
+        "type": "TEXT_MESSAGE_CONTENT",
+        "messageId": "d0b45a7f-d877-4a59-a6db-e11365066393",
+        "delta": "NY"
+      },
+      "textMessageBuffer": ""
+    }
+  },
+  {
+    "id": "weatherAgent:11",
+    "agentId": "weatherAgent",
+    "type": "TEXT_MESSAGE_START",
+    "timestamp": 1769633040791,
+    "payload": {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "d0b45a7f-d877-4a59-a6db-e11365066393",
+      "role": "assistant"
+    }
+  },
+  {
+    "id": "weatherAgent:10",
+    "agentId": "weatherAgent",
+    "type": "TOOL_CALL_RESULT",
+    "timestamp": 1769633039781,
+    "payload": {
+      "type": "TOOL_CALL_RESULT",
+      "messageId": "1c9075b2-78e9-4f73-918f-6a17f6faadf9",
+      "toolCallId": "call_Xhb3SpnszQZWfX7jPUxzasZz",
+      "content": "{\"success\":true}",
+      "role": "tool"
+    }
+  },
+  {
+    "id": "weatherAgent:9",
+    "agentId": "weatherAgent",
+    "type": "TOOL_CALL_END",
+    "timestamp": 1769633039763,
+    "payload": {
+      "event": {
+        "type": "TOOL_CALL_END",
+        "toolCallId": "call_Xhb3SpnszQZWfX7jPUxzasZz"
+      },
+      "toolCallArgs": {
+        "memory": {
+          "proverbs": []
+        }
+      },
+      "toolCallName": "updateWorkingMemory"
+    }
+  },
+  {
+    "id": "weatherAgent:8",
+    "agentId": "weatherAgent",
+    "type": "TOOL_CALL_ARGS",
+    "timestamp": 1769633039762,
+    "payload": {
+      "event": {
+        "type": "TOOL_CALL_ARGS",
+        "toolCallId": "call_Xhb3SpnszQZWfX7jPUxzasZz",
+        "delta": "{\"memory\":{\"proverbs\":[]}}"
+      },
+      "toolCallBuffer": "",
+      "toolCallName": "updateWorkingMemory",
+      "partialToolCallArgs": ""
+    }
+  },
+  {
+    "id": "weatherAgent:7",
+    "agentId": "weatherAgent",
+    "type": "TOOL_CALL_START",
+    "timestamp": 1769633039760,
+    "payload": {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "call_Xhb3SpnszQZWfX7jPUxzasZz",
+      "toolCallName": "updateWorkingMemory",
+      "parentMessageId": "d0b45a7f-d877-4a59-a6db-e11365066393"
+    }
+  },
+  {
+    "id": "weatherAgent:6",
+    "agentId": "weatherAgent",
+    "type": "RUN_STARTED",
+    "timestamp": 1769633038865,
+    "payload": {
+      "type": "RUN_STARTED",
+      "threadId": "fddc453e-a36d-4109-8890-3becfcebc02f",
+      "runId": "92ffe30a-8dd1-4c09-b616-24fc7e69713b",
+      "input": {
+        "threadId": "fddc453e-a36d-4109-8890-3becfcebc02f",
+        "runId": "92ffe30a-8dd1-4c09-b616-24fc7e69713b",
+        "state": {},
+        "messages": [
+          {
+            "id": "e5c39bbb-0143-4c85-9d03-eb8f371715d0",
+            "role": "assistant",
+            "toolCalls": "[Truncated depth]"
+          },
+          {
+            "id": "6195a42a-33f7-4535-aa77-6571dd94b12c",
+            "content": "Weather data for NYC",
+            "role": "tool",
+            "toolCallId": "call_w1zWGf6BmkacFeP07nHlutOA"
+          }
+        ],
+        "tools": [
+          {
+            "name": "weatherTool",
+            "description": "Get the weather for a given location.",
+            "parameters": "[Truncated depth]"
+          },
+          {
+            "name": "go_to_moon",
+            "description": "Go to the moon on request.",
+            "parameters": "[Truncated depth]"
+          },
+          {
+            "name": "setThemeColor",
+            "description": "Set the theme color. Make sure to pick nice colors.",
+            "parameters": "[Truncated depth]"
+          }
+        ],
+        "context": [],
+        "forwardedProps": {}
+      }
+    }
+  },
+  {
+    "id": "weatherAgent:5",
+    "agentId": "weatherAgent",
+    "type": "RUN_FINISHED",
+    "timestamp": 1769633038841,
+    "payload": {
+      "event": {
+        "type": "RUN_FINISHED",
+        "threadId": "fddc453e-a36d-4109-8890-3becfcebc02f",
+        "runId": "31c8210d-b4e4-4aa2-ba1c-bd137fd38416"
+      },
+      "result": "[undefined]"
+    }
+  },
+  {
+    "id": "weatherAgent:4",
+    "agentId": "weatherAgent",
+    "type": "TOOL_CALL_END",
+    "timestamp": 1769633038798,
+    "payload": {
+      "event": {
+        "type": "TOOL_CALL_END",
+        "toolCallId": "call_w1zWGf6BmkacFeP07nHlutOA"
+      },
+      "toolCallArgs": {
+        "location": "NYC"
+      },
+      "toolCallName": "weatherTool"
+    }
+  },
+  {
+    "id": "weatherAgent:3",
+    "agentId": "weatherAgent",
+    "type": "TOOL_CALL_ARGS",
+    "timestamp": 1769633038797,
+    "payload": {
+      "event": {
+        "type": "TOOL_CALL_ARGS",
+        "toolCallId": "call_w1zWGf6BmkacFeP07nHlutOA",
+        "delta": "{\"location\":\"NYC\"}"
+      },
+      "toolCallBuffer": "",
+      "toolCallName": "weatherTool",
+      "partialToolCallArgs": ""
+    }
+  },
+  {
+    "id": "weatherAgent:2",
+    "agentId": "weatherAgent",
+    "type": "TOOL_CALL_START",
+    "timestamp": 1769633038795,
+    "payload": {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "call_w1zWGf6BmkacFeP07nHlutOA",
+      "toolCallName": "weatherTool",
+      "parentMessageId": "e5c39bbb-0143-4c85-9d03-eb8f371715d0"
+    }
+  },
+  {
+    "id": "weatherAgent:1",
+    "agentId": "weatherAgent",
+    "type": "RUN_STARTED",
+    "timestamp": 1769633037512,
+    "payload": {
+      "type": "RUN_STARTED",
+      "threadId": "fddc453e-a36d-4109-8890-3becfcebc02f",
+      "runId": "31c8210d-b4e4-4aa2-ba1c-bd137fd38416",
+      "input": {
+        "threadId": "fddc453e-a36d-4109-8890-3becfcebc02f",
+        "runId": "31c8210d-b4e4-4aa2-ba1c-bd137fd38416",
+        "state": {},
+        "messages": [
+          {
+            "id": "0ff32eec-343c-4939-8266-b686890b6c45",
+            "role": "user",
+            "content": "What is the weather in nyc"
+          }
+        ],
+        "tools": [
+          {
+            "name": "weatherTool",
+            "description": "Get the weather for a given location.",
+            "parameters": "[Truncated depth]"
+          },
+          {
+            "name": "go_to_moon",
+            "description": "Go to the moon on request.",
+            "parameters": "[Truncated depth]"
+          },
+          {
+            "name": "setThemeColor",
+            "description": "Set the theme color. Make sure to pick nice colors.",
+            "parameters": "[Truncated depth]"
+          }
+        ],
+        "context": [],
+        "forwardedProps": {}
+      }
+    }
+  }
+]

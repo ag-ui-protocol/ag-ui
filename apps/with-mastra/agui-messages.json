@@ -1,0 +1,53 @@
+"[
+  {
+    \"id\": \"0ff32eec-343c-4939-8266-b686890b6c45\",
+    \"role\": \"user\",
+    \"content\": \"What is the weather in nyc\"
+  },
+  {
+    \"id\": \"e5c39bbb-0143-4c85-9d03-eb8f371715d0\",
+    \"role\": \"assistant\",
+    \"toolCalls\": [
+      {
+        \"id\": \"call_w1zWGf6BmkacFeP07nHlutOA\",
+        \"type\": \"function\",
+        \"function\": {
+          \"name\": \"weatherTool\",
+          \"arguments\": \"{\\\"location\\\":\\\"NYC\\\"}\"
+        }
+      }
+    ]
+  },
+  {
+    \"id\": \"6195a42a-33f7-4535-aa77-6571dd94b12c\",
+    \"role\": \"tool\",
+    \"toolCallId\": \"call_w1zWGf6BmkacFeP07nHlutOA\",
+    \"content\": \"Weather data for NYC\"
+  },
+  {
+    \"id\": \"d0b45a7f-d877-4a59-a6db-e11365066393\",
+    \"role\": \"assistant\",
+    \"toolCalls\": [
+      {
+        \"id\": \"call_Xhb3SpnszQZWfX7jPUxzasZz\",
+        \"type\": \"function\",
+        \"function\": {
+          \"name\": \"updateWorkingMemory\",
+          \"arguments\": \"{\\\"memory\\\":{\\\"proverbs\\\":[]}}\"
+        }
+      }
+    ],
+    \"content\": \"NYC weather: **Weather data for NYC**\"
+  },
+  {
+    \"id\": \"1c9075b2-78e9-4f73-918f-6a17f6faadf9\",
+    \"toolCallId\": \"call_Xhb3SpnszQZWfX7jPUxzasZz\",
+    \"role\": \"tool\",
+    \"content\": \"{\\\"success\\\":true}\"
+  },
+  {
+    \"id\": \"d0b45a7f-d877-4a59-a6db-e11365066393\",
+    \"role\": \"assistant\",
+    \"content\": \"\"
+  }
+]"
