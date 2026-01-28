@@ -58,7 +58,90 @@ result = HttpAgent.run_agent!(agent, input)
 IO.inspect(result.new_messages)
 ```
 
-## Server-side SSE encoding
+## API overview
+
+- Core protocol types: `AgUI.Types.*`
+- Event decoding/encoding: `AgUI.Events`, `AgUI.Encoder`
+- HTTP client: `AgUI.Client.HttpAgent`
+- State reducer: `AgUI.Session`, `AgUI.Reducer`
+- LiveView renderer/runner: `AgUI.LiveView.*` (optional)
+
+## Reducer/session example
+
+```elixir
+alias AgUI.Session
+alias AgUI.Reducer
+alias AgUI.Events
+
+session = Session.new("thread-1", "run-1")
+
+session =
+  session
+  |> Reducer.apply(%Events.RunStarted{thread_id: "thread-1", run_id: "run-1"})
+  |> Reducer.apply(%Events.TextMessageStart{message_id: "m1", role: "assistant"})
+  |> Reducer.apply(%Events.TextMessageContent{message_id: "m1", delta: "Hello"})
+  |> Reducer.apply(%Events.TextMessageEnd{message_id: "m1"})
+
+IO.inspect(session.messages)
+```
+
+## Middleware and subscriber example
+
+```elixir
+alias AgUI.Middleware
+alias AgUI.Subscriber
+
+logger =
+  Middleware.from_function(fn input, next ->
+    IO.puts("Run: #{input.run_id}")
+    next.(input)
+  end)
+
+subscriber =
+  Subscriber.from_handlers(%{
+    text_message_content: fn event, _session ->
+      IO.write(event.delta)
+      :ok
+    end
+  })
+
+runner = Middleware.chain([logger], fn input -> HttpAgent.stream(agent, input) end)
+stream = runner.(input)
+Subscriber.observe(stream, subscriber, AgUI.Session.new()) |> Enum.to_list()
+```
+
+## Tool-call streaming example
+
+```elixir
+{:ok, stream} = HttpAgent.stream_canonical(agent, input)
+
+Enum.each(stream, fn
+  %AgUI.Events.ToolCallStart{tool_call_name: name} ->
+    IO.puts("Tool: #{name}")
+
+  %AgUI.Events.ToolCallArgs{delta: delta} ->
+    IO.write(delta)
+
+  %AgUI.Events.ToolCallEnd{} ->
+    IO.puts("")
+
+  _ ->
+    :ok
+end)
+```
+
+## Error handling patterns
+
+```elixir
+{:ok, stream} = HttpAgent.stream_canonical(agent, input, on_error: :run_error)
+
+Enum.each(stream, fn
+  %AgUI.Events.RunError{message: msg} -> IO.puts("Run error: #{msg}")
+  _ -> :ok
+end)
+```
+
+## Server-side usage
 
 ```elixir
 alias AgUI.Events.RunStarted
@@ -160,6 +243,16 @@ mix test
 - Binary protocol transport (`application/vnd.ag-ui.event+proto`)
 - WebSocket transport
 - CI Dialyzer/Credo gates
+
+## Compatibility matrix
+
+| Area | Status |
+| --- | --- |
+| Protocol events (core) | ✅ |
+| SSE transport | ✅ |
+| Proto/binary transport | ❌ |
+| LiveView integration | ✅ (optional) |
+| WebSocket transport | ❌ |
 
 ## License
 

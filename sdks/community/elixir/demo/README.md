@@ -1,18 +1,48 @@
-# AgUiDemo
+# AG-UI Elixir Demo
 
-To start your Phoenix server:
+Phoenix LiveView demo app that exercises the Elixir AG-UI SDK with a mock agent
+endpoint that streams AG-UI events over SSE.
 
-* Run `mix setup` to install and setup dependencies
-* Start Phoenix endpoint with `mix phx.server` or inside IEx with `iex -S mix phx.server`
+## Run the demo
 
-Now you can visit [`localhost:4000`](http://localhost:4000) from your browser.
+```bash
+mix setup
+mix phx.server
+```
 
-Ready to run in production? Please [check our deployment guides](https://hexdocs.pm/phoenix/deployment.html).
+Open the LiveView UI:
 
-## Learn more
+- http://localhost:4000/chat
 
-* Official website: https://www.phoenixframework.org/
-* Guides: https://hexdocs.pm/phoenix/overview.html
-* Docs: https://hexdocs.pm/phoenix
-* Forum: https://elixirforum.com/c/phoenix-forum
-* Source: https://github.com/phoenixframework/phoenix
+## Mock agent endpoint
+
+The demo exposes a simple SSE endpoint:
+
+- `POST /agent`
+- `GET /agent` (for quick manual testing)
+
+Request body accepts:
+
+- `scenario` (string)
+- `threadId` (string, optional)
+- `runId` (string, optional)
+
+Example:
+
+```bash
+curl -N -H "content-type: application/json" \
+  -d '{"scenario":"text_streaming"}' \
+  http://localhost:4000/agent
+```
+
+## Scenarios
+
+Scenarios are implemented in `AgUiDemo.Scenarios` and cover common flows:
+
+- `text_streaming` (default)
+- `tool_call`
+- `chunks`
+- `delayed`
+- `error`
+
+Use these to validate client behavior (normalization, reducer updates, and UI rendering).
