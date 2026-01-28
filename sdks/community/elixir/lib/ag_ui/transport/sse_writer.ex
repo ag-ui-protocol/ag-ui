@@ -51,6 +51,7 @@ defmodule AgUI.Transport.SSE.Writer do
     ]
   end
 
+  # Plug.Conn-specific functions (only compiled when Plug is available)
   if Code.ensure_loaded?(Plug.Conn) do
     @default_headers [
       {"content-type", "text/event-stream"},
@@ -79,29 +80,18 @@ defmodule AgUI.Transport.SSE.Writer do
       |> Plug.Conn.send_chunked(status)
     end
 
-    defp put_headers(conn, headers) do
-      Enum.reduce(headers, conn, fn {k, v}, acc ->
-        Plug.Conn.put_resp_header(acc, k, v)
-      end)
-    end
-  end
+    @doc """
+    Writes an SSE frame to a Plug.Conn.
 
-  @doc """
-  Writes an SSE frame to an IO device or Plug.Conn.
+    Auto-prepares the connection unless `auto_prepare: false` is provided.
 
-  For Plug.Conn targets, this will auto-prepare the connection unless
-  `auto_prepare: false` is provided.
+    ## Examples
 
-  ## Examples
-
-      event = %AgUI.Events.RunStarted{thread_id: "t1", run_id: "r1"}
-      AgUI.Transport.SSE.Writer.write_event(conn, event)
-  """
-  @spec write_event(IO.device() | Plug.Conn.t(), Events.t(), sse_opts()) ::
-          :ok | {:error, term()} | {:ok, Plug.Conn.t()}
-  def write_event(target, event, opts \\ []) do
-    if Code.ensure_loaded?(Plug.Conn) and match?(%Plug.Conn{}, target) do
-      conn = target
+        event = %AgUI.Events.RunStarted{thread_id: "t1", run_id: "r1"}
+        {:ok, conn} = AgUI.Transport.SSE.Writer.write_event(conn, event)
+    """
+    @spec write_event(Plug.Conn.t(), Events.t(), sse_opts()) :: {:ok, Plug.Conn.t()} | {:error, term()}
+    def write_event(%Plug.Conn{} = conn, event, opts \\ []) do
       auto_prepare? = Keyword.get(opts, :auto_prepare, true)
 
       conn =
@@ -113,11 +103,30 @@ defmodule AgUI.Transport.SSE.Writer do
 
       frame = encode_event(event, opts)
       Plug.Conn.chunk(conn, frame)
-    else
-      frame = encode_event(event, opts)
-      IO.binwrite(target, frame)
-      :ok
+    rescue
+      e -> {:error, e}
     end
+
+    defp put_headers(conn, headers) do
+      Enum.reduce(headers, conn, fn {k, v}, acc ->
+        Plug.Conn.put_resp_header(acc, k, v)
+      end)
+    end
+  end
+
+  @doc """
+  Writes an SSE frame to an IO device.
+
+  ## Examples
+
+      event = %AgUI.Events.RunStarted{thread_id: "t1", run_id: "r1"}
+      :ok = AgUI.Transport.SSE.Writer.write_event_io(device, event)
+  """
+  @spec write_event_io(IO.device(), Events.t(), sse_opts()) :: :ok | {:error, term()}
+  def write_event_io(device, event, opts \\ []) do
+    frame = encode_event(event, opts)
+    IO.binwrite(device, frame)
+    :ok
   rescue
     e -> {:error, e}
   end

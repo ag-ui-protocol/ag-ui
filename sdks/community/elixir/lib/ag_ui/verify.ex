@@ -136,12 +136,17 @@ defmodule AgUI.Verify do
     {:error, {:run_already_errored, event}}
   end
 
+  # After a run finishes, a new run can start (multiple sequential runs are supported)
+  def verify_event(%Events.RunStarted{}, %{run_status: :finished} = _state) do
+    {:ok, %{new() | run_status: :running, first_event: true}}
+  end
+
+  def verify_event(%Events.RunError{}, %{run_status: :finished} = _state) do
+    {:ok, %{new() | run_status: :errored, first_event: true}}
+  end
+
   def verify_event(event, %{run_status: :finished} = _state) do
-    if match?(%Events.RunError{}, event) do
-      {:ok, %{new() | run_status: :errored, first_event: true}}
-    else
-      {:error, {:run_already_finished, event}}
-    end
+    {:error, {:run_already_finished, event}}
   end
 
   def verify_event(%Events.RunStarted{} = event, %{first_event: true}) do

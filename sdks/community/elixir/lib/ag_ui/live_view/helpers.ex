@@ -238,9 +238,11 @@ defmodule AgUI.LiveView.Helpers do
     Map.get(map, key)
   end
 
-  # Use Phoenix.Component.assign for proper LiveView change tracking
-  defp put_assign(%Phoenix.LiveView.Socket{} = socket, key, value) do
-    Phoenix.Component.assign(socket, key, value)
+  # Use Phoenix.Component.assign for proper LiveView change tracking when available
+  if Code.ensure_loaded?(Phoenix.LiveView.Socket) and Code.ensure_loaded?(Phoenix.Component) do
+    defp put_assign(%Phoenix.LiveView.Socket{} = socket, key, value) do
+      Phoenix.Component.assign(socket, key, value)
+    end
   end
 
   # For testing with mock sockets or structs with assigns field
