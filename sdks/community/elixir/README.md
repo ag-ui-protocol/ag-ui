@@ -11,6 +11,11 @@ Elixir SDK for the AG‑UI protocol (SSE v1) with optional Phoenix LiveView inte
 - Safe normalization option (`RUN_ERROR` on malformed chunks)
 - SSE resume via `Last-Event-ID`
 
+## Requirements
+
+- Elixir ~> 1.15
+- Erlang/OTP compatible with your Elixir version
+
 ## Installation
 
 Add `ag_ui` to your dependencies:
@@ -21,6 +26,19 @@ def deps do
     {:ag_ui, "~> 0.1.0"}
   ]
 end
+```
+
+## Quick start
+
+```elixir
+alias AgUI.Client.HttpAgent
+alias AgUI.Types.RunAgentInput
+
+agent = HttpAgent.new(url: "https://api.example.com/agent")
+input = RunAgentInput.new("thread-1", "run-1")
+
+{:ok, result} = HttpAgent.run_agent(agent, input)
+IO.inspect(result.new_messages)
 ```
 
 ## Basic usage
@@ -90,6 +108,7 @@ IO.inspect(session.messages)
 ```elixir
 alias AgUI.Middleware
 alias AgUI.Subscriber
+alias AgUI.Middleware.FilterToolCalls
 
 logger =
   Middleware.from_function(fn input, next ->
@@ -108,6 +127,37 @@ subscriber =
 runner = Middleware.chain([logger], fn input -> HttpAgent.stream(agent, input) end)
 stream = runner.(input)
 Subscriber.observe(stream, subscriber, AgUI.Session.new()) |> Enum.to_list()
+```
+
+### Specialized subscriber callbacks
+
+```elixir
+defmodule MyApp.Subscriber do
+  @behaviour AgUI.Subscriber
+
+  @impl true
+  def on_text_message_content(_event, buffer, _session) do
+    IO.write(buffer)
+    :ok
+  end
+
+  @impl true
+  def on_tool_call_args(_event, buffer, _session) do
+    IO.write(buffer)
+    :ok
+  end
+
+  @impl true
+  def on_event(_event, _session), do: :ok
+end
+```
+
+### Filter tool calls middleware
+
+```elixir
+middleware = FilterToolCalls.new(allow: ["weather", "search"])
+runner = Middleware.chain([middleware], fn input -> HttpAgent.stream(agent, input) end)
+runner.(input) |> Enum.to_list()
 ```
 
 ## Tool-call streaming example
@@ -146,6 +196,16 @@ end)
 ```elixir
 events = HttpAgent.stream_canonical(agent, input) |> Enum.to_list()
 AgUI.Verify.verify_events(events)
+```
+
+### Stream validation (verify_stream/1)
+
+```elixir
+{:ok, stream} = HttpAgent.stream_canonical(agent, input)
+
+stream
+|> AgUI.Verify.verify_stream()
+|> Enum.each(&IO.inspect/1)
 ```
 
 ## Server-side usage
@@ -245,6 +305,17 @@ mix phx.server
 mix test
 ```
 
+## API documentation
+
+- HexDocs (coming soon)
+
+## Contributing
+
+```bash
+mix deps.get
+mix test
+```
+
 ## Deferred features (not yet implemented)
 
 - Binary protocol transport (`application/vnd.ag-ui.event+proto`)
@@ -263,4 +334,4 @@ mix test
 
 ## License
 
-Apache-2.0
+MIT
