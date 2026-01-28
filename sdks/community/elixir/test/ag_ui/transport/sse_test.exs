@@ -188,6 +188,16 @@ defmodule AgUI.Transport.SSETest do
       assert hd(events2).data == "{\"text\":\"é\"}"
     end
 
+    test "handles large data payloads" do
+      large = String.duplicate("a", 200_000)
+      parser = SSE.new()
+
+      {events, _parser} = SSE.feed(parser, "data: #{large}\n\n")
+
+      assert length(events) == 1
+      assert hd(events).data == large
+    end
+
     test "preserves last_event_id across events" do
       parser = SSE.new()
       {_events1, parser} = SSE.feed(parser, "id: 1\ndata: first\n\n")

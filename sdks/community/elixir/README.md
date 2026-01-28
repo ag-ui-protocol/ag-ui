@@ -141,6 +141,13 @@ Enum.each(stream, fn
 end)
 ```
 
+## Event sequencing validation
+
+```elixir
+events = HttpAgent.stream_canonical(agent, input) |> Enum.to_list()
+AgUI.Verify.verify_events(events)
+```
+
 ## Server-side usage
 
 ```elixir

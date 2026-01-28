@@ -255,6 +255,15 @@ defmodule AgUI.EventsTest do
                })
     end
 
+    test "from_map/1 returns error for invalid delta type" do
+      assert {:error, :missing_required_fields} =
+               TextMessageContent.from_map(%{
+                 "type" => "TEXT_MESSAGE_CONTENT",
+                 "messageId" => "msg-1",
+                 "delta" => 123
+               })
+    end
+
     test "from_map/1 returns error for missing fields" do
       assert {:error, :missing_required_fields} =
                TextMessageContent.from_map(%{"type" => "TEXT_MESSAGE_CONTENT"})
@@ -269,6 +278,19 @@ defmodule AgUI.EventsTest do
 
       {:ok, event} = Events.decode(original)
       assert Events.encode(event) == original
+    end
+
+    test "round-trip encoding preserves unicode" do
+      delta = "こんにちは 🌍"
+
+      event = %TextMessageContent{message_id: "m1", delta: delta}
+      encoded = Events.encode(event)
+      json = Jason.encode!(encoded)
+
+      {:ok, decoded} = Jason.decode(json)
+      {:ok, parsed} = Events.decode(decoded)
+
+      assert %TextMessageContent{delta: ^delta} = parsed
     end
   end
 

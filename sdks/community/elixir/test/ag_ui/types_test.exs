@@ -392,6 +392,15 @@ defmodule AgUI.TypesTest do
       assert {:error, :missing_run_id} = RunAgentInput.from_map(%{"threadId" => "t1"})
     end
 
+    test "from_map/1 returns error for invalid messages type" do
+      assert {:error, :invalid_messages} =
+               RunAgentInput.from_map(%{
+                 "threadId" => "t1",
+                 "runId" => "r1",
+                 "messages" => "not-a-list"
+               })
+    end
+
     test "to_map/1 converts back to wire format" do
       input = RunAgentInput.new("t1", "r1", state: %{"x" => 1})
       result = RunAgentInput.to_map(input)
@@ -449,6 +458,16 @@ defmodule AgUI.TypesTest do
 
       {:ok, input} = RunAgentInput.from_map(original)
       assert RunAgentInput.to_map(input) == original
+    end
+  end
+
+  describe "Message.User unicode content" do
+    test "to_map/from_map preserves unicode text" do
+      msg = %Message.User{id: "u1", role: :user, content: "Zażółć 🦊"}
+      map = Message.to_map(msg)
+      {:ok, parsed} = Message.from_map(map)
+
+      assert %Message.User{content: "Zażółć 🦊"} = parsed
     end
   end
 end
