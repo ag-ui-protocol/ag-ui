@@ -29,6 +29,27 @@ const toMastraTextContent = (content: Message["content"]): string => {
   return textParts.join("\n");
 };
 
+
+type FileInput = Extract<InputContent, { type: "binary" }>;
+
+const toMastraFileContent = (content: Message["content"]): FileInput[] => {
+  if (!content) {
+    return [];
+  }
+
+  if (typeof content === "string") {
+    return [];
+  }
+
+  if (!Array.isArray(content)) {
+    return [];
+  }
+
+  return content
+    .filter((part): part is FileInput => part.type === "binary")
+    .filter((part: FileInput) => part.data != null);
+};
+
 export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] {
   const result: CoreMessage[] = [];
 
@@ -53,10 +74,29 @@ export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] 
       });
     } else if (message.role === "user") {
       const userContent = toMastraTextContent(message.content);
-      result.push({
-        role: "user",
-        content: userContent,
-      });
+      const fileParts = toMastraFileContent(message.content);
+      const hasFiles = fileParts.length > 0;
+      if (hasFiles) {
+        result.push({
+          role: "user",
+          content: [
+            { type: "text", text: userContent },
+            ...fileParts.map((filePart) => {
+                return {
+                  type: "file" as const,
+                  data: filePart.data!,
+                  mimeType: filePart.mimeType,
+                  filename: filePart.filename,
+                }
+              })
+          ],
+        });
+      } else {
+        result.push({
+          role: "user",
+          content: userContent,
+        });
+      }
     } else if (message.role === "tool") {
       let toolName = "unknown";
       for (const msg of messages) {
