@@ -36,7 +36,8 @@ from .utils import (
     resolve_message_content,
     camel_to_snake,
     json_safe_stringify,
-    make_json_safe
+    make_json_safe,
+    normalize_tool_content
 )
 
 from ag_ui.core import (
@@ -726,7 +727,7 @@ class LangGraphAgent:
                             type=EventType.TOOL_CALL_RESULT,
                             tool_call_id=tool_msg.tool_call_id,
                             message_id=str(uuid.uuid4()),
-                            content=tool_msg.content,
+                            content=normalize_tool_content(tool_msg.content),
                             role="tool"
                         )
                     )
@@ -763,7 +764,7 @@ class LangGraphAgent:
                     type=EventType.TOOL_CALL_RESULT,
                     tool_call_id=tool_call_output.tool_call_id,
                     message_id=str(uuid.uuid4()),
-                    content=dump_json_safe(tool_call_output.content),
+                    content=normalize_tool_content(tool_call_output.content),
                     role="tool"
                 )
             )
