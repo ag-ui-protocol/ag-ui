@@ -36,6 +36,28 @@ input = RunAgentInput.new("thread-1", "run-1")
 Enum.each(stream, &IO.inspect/1)
 ```
 
+### High-level run helper
+
+```elixir
+{:ok, result} = HttpAgent.run_agent(agent, input)
+IO.inspect(result.new_messages)
+IO.inspect(result.session.state)
+```
+
+### High-level run helper via AgUI
+
+```elixir
+{:ok, result} = AgUI.run_agent(agent, input)
+IO.inspect(result.new_messages)
+```
+
+### High-level run helper (bang)
+
+```elixir
+result = HttpAgent.run_agent!(agent, input)
+IO.inspect(result.new_messages)
+```
+
 ## Server-side SSE encoding
 
 ```elixir

@@ -52,4 +52,20 @@ defmodule AgUI do
   def version do
     "0.1.0"
   end
+
+  @doc """
+  High-level helper to run an agent and return a result.
+
+  This is a convenience wrapper around `AgUI.Client.HttpAgent.run_agent/3`.
+  """
+  @spec run_agent(AgUI.Client.HttpAgent.t(), AgUI.Types.RunAgentInput.t(), keyword()) ::
+          {:ok, AgUI.Client.RunResult.t()} | {:error, term()}
+  defdelegate run_agent(agent, input, opts \\ []), to: AgUI.Client.HttpAgent
+
+  @doc """
+  High-level helper to run an agent and return a result, raising on error.
+  """
+  @spec run_agent!(AgUI.Client.HttpAgent.t(), AgUI.Types.RunAgentInput.t(), keyword()) ::
+          AgUI.Client.RunResult.t()
+  defdelegate run_agent!(agent, input, opts \\ []), to: AgUI.Client.HttpAgent
 end

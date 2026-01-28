@@ -377,6 +377,27 @@ defmodule AgUI.Client.HttpAgentTest do
     end
   end
 
+  describe "run_agent/3" do
+    test "returns result with new messages and session" do
+      agent = HttpAgent.new(url: "http://127.0.0.1:4111/?scenario=basic")
+      input =
+        RunAgentInput.new("thread-1", "run-1",
+          messages: [%AgUI.Types.Message.User{id: "user-1", role: :user, content: "Hi"}]
+        )
+
+      {:ok, result} = HttpAgent.run_agent(agent, input)
+
+      assert %AgUI.Client.RunResult{} = result
+      assert result.result == nil
+      assert result.session.thread_id == "thread-1"
+      assert result.session.run_id == "run-1"
+      # Excludes input message by ID
+      refute Enum.any?(result.new_messages, &(&1.id == "user-1"))
+      # Includes assistant message from stream
+      assert Enum.any?(result.new_messages, &(&1.id == "msg-1"))
+    end
+  end
+
   describe "stream_raw/2" do
     test "returns raw SSE events" do
       agent = HttpAgent.new(url: "http://127.0.0.1:4111/?scenario=basic")

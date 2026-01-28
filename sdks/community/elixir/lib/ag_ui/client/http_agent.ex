@@ -32,6 +32,9 @@ defmodule AgUI.Client.HttpAgent do
   alias AgUI.Types.RunAgentInput
   alias AgUI.Transport.SSE
   alias AgUI.Events
+  alias AgUI.Client.RunResult
+  alias AgUI.Session
+  alias AgUI.Reducer
 
   @type t :: %__MODULE__{
           url: String.t(),
@@ -295,6 +298,68 @@ defmodule AgUI.Client.HttpAgent do
     end
   end
 
+  @doc """
+  Runs an agent and returns a high-level result.
+
+  The result includes the final session, and `new_messages` that were added
+  during the run (excluding any input messages by ID).
+
+  ## Options
+
+  - `:last_event_id` - Value for the `Last-Event-ID` header (SSE resume)
+  - `:on_error` - `:raise` (default) or `:run_error` for chunk normalization
+  - `:accept` - Override Accept header (default: "text/event-stream")
+
+  ## Examples
+
+      {:ok, result} = AgUI.Client.HttpAgent.run_agent(agent, input)
+      IO.inspect(result.new_messages)
+  """
+  @spec run_agent(t(), RunAgentInput.t(), keyword()) :: {:ok, RunResult.t()} | {:error, term()}
+  def run_agent(%__MODULE__{} = agent, %RunAgentInput{} = input, opts \\ []) do
+    initial_session = seed_session(input)
+    initial_ids = MapSet.new(Enum.map(input.messages, & &1.id))
+
+    case stream_canonical(agent, input, opts) do
+      {:ok, stream} ->
+        {session, result} =
+          Enum.reduce(stream, {initial_session, nil}, fn event, {session, result} ->
+            result =
+              case event do
+                %Events.RunFinished{result: res} -> res
+                _ -> result
+              end
+
+            {Reducer.apply(session, event), result}
+          end)
+
+        new_messages =
+          session.messages
+          |> Enum.filter(fn msg -> not MapSet.member?(initial_ids, msg.id) end)
+
+        {:ok, %RunResult{result: result, new_messages: new_messages, session: session}}
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
+  Runs an agent and returns a high-level result, raising on error.
+
+  ## Examples
+
+      result = AgUI.Client.HttpAgent.run_agent!(agent, input)
+      IO.inspect(result.new_messages)
+  """
+  @spec run_agent!(t(), RunAgentInput.t(), keyword()) :: RunResult.t()
+  def run_agent!(%__MODULE__{} = agent, %RunAgentInput{} = input, opts \\ []) do
+    case run_agent(agent, input, opts) do
+      {:ok, result} -> result
+      {:error, reason} -> raise "Failed to run agent: #{inspect(reason)}"
+    end
+  end
+
   # Build a stream from Req's async response
   defp build_sse_stream(%Req.Response{body: %Req.Response.Async{} = async}) do
     ref = async.ref
@@ -341,6 +406,14 @@ defmodule AgUI.Client.HttpAgent do
   defp maybe_add_last_event_id(headers, ""), do: headers
   defp maybe_add_last_event_id(headers, last_event_id) when is_binary(last_event_id) do
     headers ++ [{"last-event-id", last_event_id}]
+  end
+
+  defp seed_session(%RunAgentInput{} = input) do
+    %Session{
+      Session.new(input.thread_id, input.run_id)
+      | messages: input.messages,
+        state: input.state
+    }
   end
 
   defp ensure_sse_content_type(%Req.Response{headers: headers}) do
