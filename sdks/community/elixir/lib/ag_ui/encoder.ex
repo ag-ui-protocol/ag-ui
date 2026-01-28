@@ -13,6 +13,11 @@ defmodule AgUI.Encoder do
   Encodes an AG-UI event for transport.
 
   Currently supports JSON encoding only.
+
+  ## Examples
+
+      event = %AgUI.Events.RunStarted{thread_id: "t1", run_id: "r1"}
+      AgUI.Encoder.encode_event(event)
   """
   @spec encode_event(Events.t(), content_type()) :: binary()
   def encode_event(event, content_type \\ "application/json")

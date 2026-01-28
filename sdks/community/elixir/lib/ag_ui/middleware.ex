@@ -51,6 +51,12 @@ defmodule AgUI.Middleware do
       runner = AgUI.Middleware.chain(middlewares, final_runner)
       stream = runner.(input)
 
+  ## Filtering tool calls
+
+      middleware = AgUI.Middleware.FilterToolCalls.new(allow: ["weather", "search"])
+      runner = AgUI.Middleware.chain([middleware], final_runner)
+      runner.(input) |> Enum.to_list()
+
   """
 
   alias AgUI.Types.RunAgentInput

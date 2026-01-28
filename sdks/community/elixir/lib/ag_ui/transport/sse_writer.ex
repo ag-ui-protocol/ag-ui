@@ -62,6 +62,10 @@ defmodule AgUI.Transport.SSE.Writer do
     Prepares a Plug.Conn for SSE streaming.
 
     Sets content-type and common SSE headers, then sends a chunked response.
+
+    ## Examples
+
+        conn = AgUI.Transport.SSE.Writer.prepare_conn(conn)
     """
     @spec prepare_conn(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
     def prepare_conn(%Plug.Conn{} = conn, opts \\ []) do
@@ -87,6 +91,11 @@ defmodule AgUI.Transport.SSE.Writer do
 
   For Plug.Conn targets, this will auto-prepare the connection unless
   `auto_prepare: false` is provided.
+
+  ## Examples
+
+      event = %AgUI.Events.RunStarted{thread_id: "t1", run_id: "r1"}
+      AgUI.Transport.SSE.Writer.write_event(conn, event)
   """
   @spec write_event(IO.device() | Plug.Conn.t(), Events.t(), sse_opts()) ::
           :ok | {:error, term()} | {:ok, Plug.Conn.t()}

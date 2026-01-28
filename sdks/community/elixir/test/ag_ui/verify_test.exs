@@ -142,4 +142,23 @@ defmodule AgUI.VerifyTest do
 
     assert {:error, {:tool_not_ended, _}} = Verify.verify_events(events)
   end
+
+  test "verify_stream passes valid sequences" do
+    events = [
+      %Events.RunStarted{thread_id: "t1", run_id: "r1"},
+      %Events.TextMessageStart{message_id: "m1", role: "assistant"},
+      %Events.TextMessageEnd{message_id: "m1"},
+      %Events.RunFinished{thread_id: "t1", run_id: "r1"}
+    ]
+
+    assert Enum.to_list(Verify.verify_stream(events)) == events
+  end
+
+  test "verify_stream raises on invalid sequence" do
+    events = [%Events.RunFinished{thread_id: "t1", run_id: "r1"}]
+
+    assert_raise ArgumentError, ~r/Invalid event sequence/, fn ->
+      Verify.verify_stream(events) |> Enum.to_list()
+    end
+  end
 end

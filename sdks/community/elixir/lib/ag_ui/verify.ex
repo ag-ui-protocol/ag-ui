@@ -70,6 +70,15 @@ defmodule AgUI.Verify do
 
   @doc """
   Verifies a full event list, returning :ok or an error tuple.
+
+  ## Examples
+
+      events = [
+        %AgUI.Events.RunStarted{thread_id: "t1", run_id: "r1"},
+        %AgUI.Events.RunFinished{thread_id: "t1", run_id: "r1"}
+      ]
+
+      AgUI.Verify.verify_events(events)
   """
   @spec verify_events([Events.t()]) :: :ok | {:error, error()}
   def verify_events(events) when is_list(events) do
@@ -83,6 +92,40 @@ defmodule AgUI.Verify do
       {:ok, final_state} -> finalize(final_state)
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  @doc """
+  Verifies an event stream, raising on invalid sequences.
+
+  This mirrors TypeScript's `verifyEvents` operator but for Elixir streams.
+
+  ## Examples
+
+      {:ok, stream} = AgUI.Client.HttpAgent.stream_canonical(agent, input)
+      stream |> AgUI.Verify.verify_stream() |> Enum.to_list()
+  """
+  @spec verify_stream(Enumerable.t()) :: Enumerable.t()
+  def verify_stream(stream) do
+    Stream.transform(
+      stream,
+      fn -> new() end,
+      fn event, state ->
+        case verify_event(event, state) do
+          {:ok, new_state} ->
+            {[event], new_state}
+
+          {:error, reason} ->
+            raise ArgumentError, "Invalid event sequence: #{inspect(reason)}"
+        end
+      end,
+      fn state ->
+        case finalize(state) do
+          :ok -> {[], nil}
+          {:error, reason} -> raise ArgumentError, "Invalid event sequence: #{inspect(reason)}"
+        end
+      end,
+      fn _ -> :ok end
+    )
   end
 
   @doc """
