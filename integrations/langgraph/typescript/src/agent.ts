@@ -891,10 +891,21 @@ export class LangGraphAgent extends AbstractAgent {
             rawEvent: event,
           });
         }
+
+        const content: string = Array.isArray(toolCallOutput.content)
+          ? toolCallOutput.content
+              .map((block: any) => {
+                if (typeof block === "string") return block;
+                if (block.type === "text") return block.text;
+                return JSON.stringify(block);
+              })
+              .join("")
+          : toolCallOutput.content;
+
         this.dispatchEvent({
           type: EventType.TOOL_CALL_RESULT,
           toolCallId: toolCallOutput.tool_call_id,
-          content: toolCallOutput?.content,
+          content,
           messageId: randomUUID(),
           role: "tool",
           rawEvent: event,
