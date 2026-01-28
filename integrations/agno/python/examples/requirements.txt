@@ -4,3 +4,4 @@ yfinance>=0.2.63
 fastapi>=0.115.13
 uvicorn>=0.34.3
 ag-ui-protocol>=0.1.5
+urllib3>=2.6.3 # not directly required, pinned by Snyk to avoid a vulnerability
