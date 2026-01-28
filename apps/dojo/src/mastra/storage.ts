@@ -6,10 +6,14 @@ export function getStorage(): LibSQLStore | DynamoDBStore {
     return new DynamoDBStore({
       name: "dynamodb",
       config: {
+        id: 'storage-dynamodb',
         tableName: process.env.DYNAMODB_TABLE_NAME,
       },
     });
   } else {
-    return new LibSQLStore({ url: "file::memory:" });
+    return new LibSQLStore({
+      id: 'storage-memory',
+      url: ":memory:"
+    });
   }
 }
