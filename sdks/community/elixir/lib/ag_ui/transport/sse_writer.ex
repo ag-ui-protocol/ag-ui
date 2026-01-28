@@ -51,18 +51,6 @@ defmodule AgUI.Transport.SSE.Writer do
     ]
   end
 
-  @doc """
-  Writes an SSE frame to an IO device.
-  """
-  @spec write_event(IO.device(), Events.t(), sse_opts()) :: :ok | {:error, term()}
-  def write_event(device, event, opts \\ []) do
-    frame = encode_event(event, opts)
-    IO.binwrite(device, frame)
-    :ok
-  rescue
-    e -> {:error, e}
-  end
-
   if Code.ensure_loaded?(Plug.Conn) do
     @default_headers [
       {"content-type", "text/event-stream"},
@@ -83,19 +71,28 @@ defmodule AgUI.Transport.SSE.Writer do
       headers = @default_headers ++ extra_headers
 
       conn
-      |> Plug.Conn.put_resp_headers(headers)
+      |> put_headers(headers)
       |> Plug.Conn.send_chunked(status)
     end
 
-    @doc """
-    Writes an SSE frame to a Plug.Conn (chunked).
+    defp put_headers(conn, headers) do
+      Enum.reduce(headers, conn, fn {k, v}, acc ->
+        Plug.Conn.put_resp_header(acc, k, v)
+      end)
+    end
+  end
 
-    By default, this will auto-prepare the connection if it is not already
-    in chunked mode. Disable with `auto_prepare: false`.
-    """
-    @spec write_event(Plug.Conn.t(), Events.t(), sse_opts()) ::
-            {:ok, Plug.Conn.t()} | {:error, term()}
-    def write_event(%Plug.Conn{} = conn, event, opts) do
+  @doc """
+  Writes an SSE frame to an IO device or Plug.Conn.
+
+  For Plug.Conn targets, this will auto-prepare the connection unless
+  `auto_prepare: false` is provided.
+  """
+  @spec write_event(IO.device() | Plug.Conn.t(), Events.t(), sse_opts()) ::
+          :ok | {:error, term()} | {:ok, Plug.Conn.t()}
+  def write_event(target, event, opts \\ []) do
+    if Code.ensure_loaded?(Plug.Conn) and match?(%Plug.Conn{}, target) do
+      conn = target
       auto_prepare? = Keyword.get(opts, :auto_prepare, true)
 
       conn =
@@ -107,7 +104,13 @@ defmodule AgUI.Transport.SSE.Writer do
 
       frame = encode_event(event, opts)
       Plug.Conn.chunk(conn, frame)
+    else
+      frame = encode_event(event, opts)
+      IO.binwrite(target, frame)
+      :ok
     end
+  rescue
+    e -> {:error, e}
   end
 
   defp maybe_field(_name, nil), do: []

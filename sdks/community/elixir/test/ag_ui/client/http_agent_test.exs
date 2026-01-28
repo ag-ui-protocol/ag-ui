@@ -95,6 +95,28 @@ defmodule AgUI.Client.HttpAgentTest do
       end
     end
 
+    defp stream_scenario(conn, "id_propagation", _input) do
+      events = [
+        {"evt-1", %{"type" => "RUN_STARTED", "threadId" => "t", "runId" => "r"}},
+        {nil, %{"type" => "RUN_FINISHED", "threadId" => "t", "runId" => "r"}}
+      ]
+
+      Enum.reduce_while(events, conn, fn {id, event}, conn ->
+        data = Jason.encode!(event)
+
+        chunk_data =
+          case id do
+            nil -> "data: #{data}\n\n"
+            _ -> "id: #{id}\n" <> "data: #{data}\n\n"
+          end
+
+        case chunk(conn, chunk_data) do
+          {:ok, conn} -> {:cont, conn}
+          {:error, _} -> {:halt, conn}
+        end
+      end)
+    end
+
     defp stream_scenario(conn, "tool_call", input) do
       events = [
         %{
@@ -120,6 +142,24 @@ defmodule AgUI.Client.HttpAgentTest do
           "type" => "RUN_FINISHED",
           "threadId" => input["threadId"],
           "runId" => input["runId"]
+        }
+      ]
+
+      Enum.reduce_while(events, conn, fn event, conn ->
+        data = Jason.encode!(event)
+
+        case chunk(conn, "data: #{data}\n\n") do
+          {:ok, conn} -> {:cont, conn}
+          {:error, _} -> {:halt, conn}
+        end
+      end)
+    end
+
+    defp stream_scenario(conn, "bad_chunk", _input) do
+      events = [
+        %{
+          "type" => "TEXT_MESSAGE_CHUNK",
+          "delta" => "oops"
         }
       ]
 
@@ -421,6 +461,16 @@ defmodule AgUI.Client.HttpAgentTest do
       assert {:error, {:unsupported_transport, :proto, _}} =
                HttpAgent.stream_raw(agent, input)
     end
+
+    test "propagates SSE id across events" do
+      agent = HttpAgent.new(url: "http://127.0.0.1:4111/?scenario=id_propagation")
+      input = RunAgentInput.new("thread-1", "run-1")
+
+      {:ok, stream} = HttpAgent.stream_raw(agent, input)
+      events = Enum.to_list(stream)
+
+      assert [%{id: "evt-1"}, %{id: "evt-1"}] = events
+    end
   end
 
   describe "Last-Event-ID resume" do
@@ -484,6 +534,28 @@ defmodule AgUI.Client.HttpAgentTest do
       input = RunAgentInput.new("thread-1", "run-1")
 
       assert {:error, _reason} = HttpAgent.stream_canonical(agent, input)
+    end
+
+    test "default on_error raises on malformed chunk" do
+      agent = HttpAgent.new(url: "http://127.0.0.1:4111/?scenario=bad_chunk")
+      input = RunAgentInput.new("thread-1", "run-1")
+
+      {:ok, stream} = HttpAgent.stream_canonical(agent, input)
+
+      assert_raise ArgumentError, ~r/missing required messageId/, fn ->
+        Enum.to_list(stream)
+      end
+    end
+
+    test "on_error: :run_error emits RunError for malformed chunk" do
+      agent = HttpAgent.new(url: "http://127.0.0.1:4111/?scenario=bad_chunk")
+      input = RunAgentInput.new("thread-1", "run-1")
+
+      {:ok, stream} = HttpAgent.stream_canonical(agent, input, on_error: :run_error)
+      events = Enum.to_list(stream)
+
+      assert [%Events.RunError{message: message}] = events
+      assert message =~ "missing required messageId"
     end
   end
 end

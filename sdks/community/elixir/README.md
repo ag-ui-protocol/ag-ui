@@ -149,6 +149,12 @@ mix deps.get
 mix phx.server
 ```
 
+## Testing
+
+```bash
+mix test
+```
+
 ## Deferred features (not yet implemented)
 
 - Binary protocol transport (`application/vnd.ag-ui.event+proto`)

@@ -388,6 +388,24 @@ defmodule AgUI.NormalizeTest do
     end
   end
 
+  describe "expand_stream_safe/1" do
+    test "emits RunError and halts on malformed chunk" do
+      bad_chunk = %Events.TextMessageChunk{
+        type: :text_message_chunk,
+        message_id: nil,
+        delta: "oops"
+      }
+
+      events =
+        [bad_chunk, %Events.RunFinished{type: :run_finished, thread_id: "t1", run_id: "r1"}]
+        |> Normalize.expand_stream_safe()
+        |> Enum.to_list()
+
+      assert [%Events.RunError{message: message}] = events
+      assert message =~ "missing required messageId"
+    end
+  end
+
   describe "expand/2 - passthrough events" do
     test "RAW events pass through without closing pending streams" do
       chunk = %Events.TextMessageChunk{

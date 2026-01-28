@@ -420,7 +420,15 @@ defmodule AgUI.Client.HttpAgent do
     content_type =
       headers
       |> Enum.find_value(fn {k, v} ->
-        if String.downcase(k) == "content-type", do: v, else: nil
+        if String.downcase(k) == "content-type" do
+          case v do
+            [h | _] -> h
+            h when is_binary(h) -> h
+            _ -> nil
+          end
+        else
+          nil
+        end
       end)
 
     cond do

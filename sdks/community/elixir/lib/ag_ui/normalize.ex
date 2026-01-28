@@ -102,29 +102,33 @@ defmodule AgUI.Normalize do
     Stream.transform(
       stream,
       fn -> {:ok, new()} end,
-      fn event, {:ok, pending} ->
-        try do
-          {events, new_pending} = expand(event, pending)
-          {events, {:ok, new_pending}}
-        rescue
-          e ->
-            error = %Events.RunError{
-              type: :run_error,
-              message: Exception.message(e),
-              timestamp: System.system_time(:millisecond)
-            }
+      fn
+        _event, {:halt, pending} ->
+          {[], {:halt, pending}}
 
-            {[error], {:halt, pending}}
-        catch
-          :exit, reason ->
-            error = %Events.RunError{
-              type: :run_error,
-              message: "Normalize exit: #{inspect(reason)}",
-              timestamp: System.system_time(:millisecond)
-            }
+        event, {:ok, pending} ->
+          try do
+            {events, new_pending} = expand(event, pending)
+            {events, {:ok, new_pending}}
+          rescue
+            e ->
+              error = %Events.RunError{
+                type: :run_error,
+                message: Exception.format(:error, e, __STACKTRACE__),
+                timestamp: System.system_time(:millisecond)
+              }
 
-            {[error], {:halt, pending}}
-        end
+              {[error], {:halt, pending}}
+          catch
+            kind, reason ->
+              error = %Events.RunError{
+                type: :run_error,
+                message: Exception.format(kind, reason, __STACKTRACE__),
+                timestamp: System.system_time(:millisecond)
+              }
+
+              {[error], {:halt, pending}}
+          end
       end,
       fn
         {:ok, pending} -> {finalize(pending), nil}

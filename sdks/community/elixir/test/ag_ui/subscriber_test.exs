@@ -116,6 +116,40 @@ defmodule AgUI.SubscriberTest do
     end
   end
 
+  defmodule MutatingSubscriber do
+    @behaviour AgUI.Subscriber
+
+    @impl true
+    def on_event(%Events.RunStarted{}, _session) do
+      {:mutate, %{state: %{"mutated" => true}}}
+    end
+
+    def on_event(_event, _session), do: :ok
+  end
+
+  defmodule ObservingSubscriber do
+    @behaviour AgUI.Subscriber
+
+    @impl true
+    def on_event(%Events.RunStarted{}, session) do
+      send(self(), {:state_seen, session.state})
+      :ok
+    end
+
+    def on_event(_event, _session), do: :ok
+  end
+
+  defmodule StopSubscriber do
+    @behaviour AgUI.Subscriber
+
+    @impl true
+    def on_event(%Events.RunStarted{}, _session) do
+      {:mutate, %{stop_propagation: true}}
+    end
+
+    def on_event(_event, _session), do: :ok
+  end
+
   describe "observe/3" do
     test "passes events through subscriber" do
       events = [
@@ -511,6 +545,31 @@ defmodule AgUI.SubscriberTest do
       # Nothing should change
       assert new_session.messages == session.messages
       assert new_session.state == session.state
+    end
+  end
+
+  describe "subscriber chaining semantics" do
+    test "mutations from earlier subscribers are visible to later ones" do
+      events = [%Events.RunStarted{type: :run_started, thread_id: "t1", run_id: "r1"}]
+
+      session = Session.new()
+      chained = Subscriber.chain([MutatingSubscriber, ObservingSubscriber])
+
+      Subscriber.observe(events, chained, session) |> Enum.to_list()
+
+      assert_received {:state_seen, %{"mutated" => true}}
+    end
+
+    test "stop_propagation halts later subscribers and event emission" do
+      events = [%Events.RunStarted{type: :run_started, thread_id: "t1", run_id: "r1"}]
+
+      session = Session.new()
+      chained = Subscriber.chain([StopSubscriber, ObservingSubscriber])
+
+      result = Subscriber.observe(events, chained, session) |> Enum.to_list()
+
+      assert result == []
+      refute_received {:state_seen, _}
     end
   end
 end
