@@ -28,5 +28,11 @@
   "engines": {
     "node": ">=18"
   },
-  "version": "0.0.1"
+  "version": "0.0.1",
+  "pnpm": {
+    "overrides": {
+      "@ag-ui/client": "workspace:*",
+      "@ag-ui/core": "workspace:*"
+    }
+  }
 }
