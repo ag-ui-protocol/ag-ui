@@ -1822,21 +1822,21 @@ class ADKAgent:
                         await event_queue.put(end_event)
                         logger.debug(f"Event queued (forced close): {type(end_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
 
-                    # When using ADK's native resumability, skip translate_lro_function_calls
-                    # because client_proxy_tool will emit TOOL_CALL events when ADK
-                    # executes the tool. This prevents duplicate event emission.
-                    if not self._is_adk_resumable():
-                        async for ag_ui_event in event_translator.translate_lro_function_calls(
-                            adk_event
-                        ):
-                            await event_queue.put(ag_ui_event)
-                            if ag_ui_event.type == EventType.TOOL_CALL_END:
-                                is_long_running_tool = True
-                            logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
-                        # Hard stop the execution if we find any long running tool.
-                        # This is the legacy behavior for non-resumable agents.
-                        if is_long_running_tool:
-                            return
+                    # Always emit TOOL_CALL events for LRO function calls so the
+                    # frontend knows a tool was called.  This works on all ADK versions.
+                    async for ag_ui_event in event_translator.translate_lro_function_calls(
+                        adk_event
+                    ):
+                        await event_queue.put(ag_ui_event)
+                        if ag_ui_event.type == EventType.TOOL_CALL_END:
+                            is_long_running_tool = True
+                        logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
+                    # Hard stop the execution if we find any long running tool
+                    # AND the agent is NOT using ADK's native resumability.
+                    # With ResumabilityConfig, ADK handles the pause/resume flow
+                    # natively — we don't need to stop the loop early.
+                    if is_long_running_tool and not self._is_adk_resumable():
+                        return
 
             # Force close any streaming messages
             async for ag_ui_event in event_translator.force_close_streaming_message():

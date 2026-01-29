@@ -56,6 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Replaced permanent `_completed_streaming_fc_names` set with single-use `_last_completed_streaming_fc_name`
   - Calling the same tool twice in one session now works correctly
   - TOOL_CALL_RESULT suppression uses the same single-use mechanism with `None` guards
+- **FIXED**: `ToolCallResultEvent` now uses the same `tool_call_id` as the streamed `TOOL_CALL_START`/`TOOL_CALL_END` (#990)
+  - With `PROGRESSIVE_SSE_STREAMING` (default in ADK >= 1.22.0), partial and confirmed events carry different IDs for the same function call
+  - EventTranslator now maps confirmed IDs back to the streaming ID so `ToolCallResultEvent` references the correct tool call
+  - Fixes backend tool result tracking in `_start_new_execution` (previously `mark_messages_processed` never matched)
+- **FIXED**: LRO tool call events now emitted for resumable agents on all ADK versions (#990)
+  - Previously, `_is_adk_resumable()` skipped `translate_lro_function_calls` entirely, expecting client_proxy_tool to emit events — this didn't work on ADK < 1.22.0
+  - Now always emits TOOL_CALL_START/ARGS/END for LRO tools; only the early loop exit is gated on non-resumable agents
 
 ## [0.4.2] - 2026-01-22
 

@@ -229,6 +229,14 @@ class EventTranslator:
         # aggregated non-partial event that follows).  Cleared after use so that
         # a second invocation of the same tool is not suppressed.
         self._last_completed_streaming_fc_name: Optional[str] = None
+        # The streaming tool_call_id that corresponds to _last_completed_streaming_fc_name.
+        # Used to build the confirmed→streaming id mapping below.
+        self._last_completed_streaming_fc_id: Optional[str] = None
+        # Maps confirmed (non-partial) FC id → streaming FC id so that
+        # ToolCallResultEvent uses the same id we emitted in TOOL_CALL_START/END.
+        # With PROGRESSIVE_SSE_STREAMING, ADK assigns different ids to the partial
+        # and confirmed events for the same function call.
+        self._confirmed_to_streaming_id: Dict[str, str] = {}
 
     def get_and_clear_deferred_confirm_events(self) -> List[BaseEvent]:
         """Get and clear any deferred confirm_changes events.
@@ -368,16 +376,31 @@ class EventTranslator:
                         and not (self._last_completed_streaming_fc_name is not None and getattr(fc, 'name', None) == self._last_completed_streaming_fc_name)
                     ]
 
-                    # Clear last completed name after filtering (single-use)
+                    # Record confirmed→streaming id mapping for filtered FCs, then clear.
+                    # With PROGRESSIVE_SSE_STREAMING, the confirmed event carries a
+                    # different id than the partial event we already emitted.  The
+                    # function response will use the confirmed id, so we remap it in
+                    # _translate_function_response to keep ids consistent.
                     if self._last_completed_streaming_fc_name is not None:
-                        filtered_by_name = any(
-                            getattr(fc, 'name', None) == self._last_completed_streaming_fc_name
-                            for fc in function_calls
-                            if getattr(fc, 'id', None) not in lro_ids
-                            and getattr(fc, 'id', None) not in self._completed_streaming_function_calls
-                        )
-                        if filtered_by_name:
-                            self._last_completed_streaming_fc_name = None
+                        for fc in function_calls:
+                            fc_id = getattr(fc, 'id', None)
+                            fc_name = getattr(fc, 'name', None)
+                            if (
+                                fc_name == self._last_completed_streaming_fc_name
+                                and fc_id is not None
+                                and fc_id not in lro_ids
+                                and fc_id not in self._completed_streaming_function_calls
+                                and self._last_completed_streaming_fc_id is not None
+                                and fc_id != self._last_completed_streaming_fc_id
+                            ):
+                                self._confirmed_to_streaming_id[fc_id] = self._last_completed_streaming_fc_id
+                                logger.debug(
+                                    f"Mapped confirmed FC id {fc_id} → streaming id "
+                                    f"{self._last_completed_streaming_fc_id} for tool '{fc_name}'"
+                                )
+                                break
+                        self._last_completed_streaming_fc_name = None
+                        self._last_completed_streaming_fc_id = None
 
                     if non_lro_calls:
                         logger.debug(f"ADK function calls detected (non-LRO, non-streamed): {len(non_lro_calls)} of {len(function_calls)} total")
@@ -1048,6 +1071,7 @@ class EventTranslator:
             self._completed_streaming_function_calls.add(tool_call_id)
             if resolved_name:
                 self._last_completed_streaming_fc_name = resolved_name
+                self._last_completed_streaming_fc_id = tool_call_id
 
             # Clean up streaming state
             del self._streaming_function_calls[tool_call_id]
@@ -1101,6 +1125,16 @@ class EventTranslator:
         for func_response in function_response:
 
             tool_call_id = getattr(func_response, 'id', str(uuid.uuid4()))
+
+            # Remap confirmed id → streaming id so the ToolCallResultEvent uses
+            # the same id we emitted in TOOL_CALL_START/END.  With
+            # PROGRESSIVE_SSE_STREAMING, ADK assigns different ids to the partial
+            # and confirmed events for the same function call.
+            if tool_call_id in self._confirmed_to_streaming_id:
+                original_id = tool_call_id
+                tool_call_id = self._confirmed_to_streaming_id.pop(original_id)
+                logger.debug(f"Remapped ToolCallResult id {original_id} → {tool_call_id}")
+
             # Skip TOOL_CALL_RESULT for long-running tools (handled by frontend)
             if tool_call_id in self.long_running_tool_ids:
                 logger.debug(f"Skipping ToolCallResultEvent for long-running tool: {tool_call_id}")
