@@ -253,4 +253,9 @@ export const menuIntegrations = [
       "human_in_the_loop",
     ],
   },
+  {
+    id: "openresponses",
+    name: "OpenResponses",
+    features: ["agentic_chat"],
+  },
 ] as const satisfies MenuIntegrationConfig[];

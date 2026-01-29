@@ -343,4 +343,8 @@ export const agentsIntegrations = {
     ),
     human_in_the_loop: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/human-in-the-loop`, debug: true }),
   }),
+
+  openresponses: async () => ({
+    agentic_chat: new HttpAgent({ url: `${envVars.openresponsesUrl}/agentic_chat/` }),
+  }),
 } satisfies AgentsMap;
