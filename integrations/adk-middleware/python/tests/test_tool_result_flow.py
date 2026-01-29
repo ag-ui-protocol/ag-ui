@@ -1182,6 +1182,7 @@ class TestClientToolResultPersistence:
                 user_id="test_user",
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=tool_results,
                 message_batch=message_batch
             )
@@ -1362,6 +1363,7 @@ class TestClientToolResultPersistence:
                 user_id="test_user",
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=None,  # No client-side tool results
                 message_batch=None
             )
@@ -1590,6 +1592,7 @@ class TestDatabaseSessionServiceCompatibility:
                 user_id="test_user",
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=tool_results,
                 message_batch=message_batch
             )
@@ -1688,6 +1691,7 @@ class TestDatabaseSessionServiceCompatibility:
                 user_id="test_user",
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=tool_results,
                 message_batch=None  # No trailing user message.
             )
@@ -1778,6 +1782,7 @@ class TestDatabaseSessionServiceCompatibility:
                 user_id=user_id,
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=None,
                 message_batch=None
             )
