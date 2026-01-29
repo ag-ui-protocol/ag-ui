@@ -58,7 +58,7 @@ export function registerCopilotKit<
         });
 
       const runtime = new CopilotRuntime({
-        agents: await aguiAgents as any,
+        agents: aguiAgents as any,
       });
 
       const handler = copilotRuntimeNodeHttpEndpoint({
