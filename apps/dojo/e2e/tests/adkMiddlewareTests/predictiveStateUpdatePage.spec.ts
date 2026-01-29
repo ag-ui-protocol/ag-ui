@@ -5,7 +5,11 @@ import {
 } from "../../test-isolation-helper";
 import { PredictiveStateUpdatesPage } from "../../pages/adkMiddlewarePages/PredictiveStateUpdatesPage";
 
-// TODO: Re-enable when ADK middleware agent is uncommented in agents.ts and menu.ts
+// TODO: Re-enable when CI environment is configured for this demo.
+// The demo falls back to Gemini 2.5 Flash without Vertex AI credentials, so
+// these tests will pass even without streaming function call arguments enabled.
+// Full streaming requires: GOOGLE_GENAI_USE_VERTEXAI=TRUE, GOOGLE_CLOUD_PROJECT,
+// GOOGLE_CLOUD_LOCATION=global (selects Gemini 3 Pro Preview with stream_function_call_arguments).
 test.describe.skip("Predictive State Updates Feature", () => {
   test("[ADK Middleware] should interact with agent and approve asked changes", async ({
     page,
