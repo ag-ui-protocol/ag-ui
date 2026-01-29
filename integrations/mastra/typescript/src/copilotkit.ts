@@ -46,7 +46,7 @@ export function registerCopilotKit<
         });
 
       const runtime = new CopilotRuntime({
-        agents: Promise.resolve(aguiAgents) as any,
+        agents: aguiAgents as any,
       });
 
       const handler = copilotRuntimeNodeHttpEndpoint({
@@ -55,7 +55,7 @@ export function registerCopilotKit<
         serviceAdapter,
       });
 
-      return (handler as any)(c.req.raw);
+      return handler(c.req.raw);
     },
   });
 }
