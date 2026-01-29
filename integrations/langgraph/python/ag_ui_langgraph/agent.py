@@ -402,6 +402,9 @@ class LangGraphAgent:
     def get_message_in_progress(self, run_id: str) -> Optional[MessageInProgress]:
         return self.messages_in_process.get(run_id)
 
+    def delete_message_in_progress(self, run_id: str):
+        self.messages_in_process.pop(run_id, None)
+
     def set_message_in_progress(self, run_id: str, data: MessageInProgress):
         current_message_in_progress = self.messages_in_process.get(run_id, {})
         self.messages_in_process[run_id] = {
@@ -552,7 +555,7 @@ class LangGraphAgent:
                 yield self._dispatch_event(
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=current_stream["tool_call_id"], raw_event=event)
                 )
-                self.messages_in_process[self.active_run["id"]] = None
+                self.delete_message_in_progress(self.active_run["id"])
                 return
 
 
@@ -560,7 +563,7 @@ class LangGraphAgent:
                 yield self._dispatch_event(
                     TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=current_stream["id"], raw_event=event)
                 )
-                self.messages_in_process[self.active_run["id"]] = None
+                self.delete_message_in_progress(self.active_run["id"])
                 return
 
             if is_tool_call_start_event and should_emit_tool_calls:
@@ -626,14 +629,14 @@ class LangGraphAgent:
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=self.get_message_in_progress(self.active_run["id"])["tool_call_id"], raw_event=event)
                 )
                 if resolved:
-                    self.messages_in_process[self.active_run["id"]] = None
+                    self.delete_message_in_progress(self.active_run["id"])
                 yield resolved
             elif self.get_message_in_progress(self.active_run["id"]) and self.get_message_in_progress(self.active_run["id"]).get("id"):
                 resolved = self._dispatch_event(
                     TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=self.get_message_in_progress(self.active_run["id"])["id"], raw_event=event)
                 )
                 if resolved:
-                    self.messages_in_process[self.active_run["id"]] = None
+                    self.delete_message_in_progress(self.active_run["id"])
                 yield resolved
 
         elif event_type == LangGraphEventTypes.OnCustomEvent:
