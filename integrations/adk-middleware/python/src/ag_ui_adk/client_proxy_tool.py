@@ -6,7 +6,7 @@ import asyncio
 import json
 import uuid
 import inspect
-from typing import Any, Optional, List, Dict
+from typing import Any, Optional, List, Dict, Set
 import logging
 
 from google.adk.tools import BaseTool, LongRunningFunctionTool
@@ -15,8 +15,11 @@ from ag_ui.core import Tool as AGUITool, EventType
 from ag_ui.core import (
     ToolCallStartEvent,
     ToolCallArgsEvent,
-    ToolCallEndEvent
+    ToolCallEndEvent,
+    CustomEvent,
 )
+
+from .config import PredictStateMapping
 
 logger = logging.getLogger(__name__)
 
@@ -35,13 +38,23 @@ class ClientProxyTool(BaseTool):
     def __init__(
         self,
         ag_ui_tool: AGUITool,
-        event_queue: asyncio.Queue
+        event_queue: asyncio.Queue,
+        predict_state_mappings: Optional[List[PredictStateMapping]] = None,
+        emitted_predict_state: Optional[Set[str]] = None,
+        accumulated_predict_state: Optional[Dict[str, Any]] = None,
     ):
         """Initialize the client proxy tool.
 
         Args:
             ag_ui_tool: The AG-UI tool definition
             event_queue: Queue to emit AG-UI events
+            predict_state_mappings: Configuration for predictive state updates.
+                When provided and this tool has a matching mapping, a PredictState
+                CustomEvent will be emitted before TOOL_CALL_START.
+            emitted_predict_state: Shared set tracking which tools have had
+                PredictState emitted. Typically owned by ClientProxyToolset.
+            accumulated_predict_state: Shared dict for accumulating predictive state
+                values from tool args. Merged into final STATE_SNAPSHOT.
         """
         # Initialize BaseTool with name and description
         # All client-side tools are long-running for architectural simplicity
@@ -53,6 +66,9 @@ class ClientProxyTool(BaseTool):
 
         self.ag_ui_tool = ag_ui_tool
         self.event_queue = event_queue
+        self.predict_state_mappings = predict_state_mappings or []
+        self._emitted_predict_state = emitted_predict_state if emitted_predict_state is not None else set()
+        self._accumulated_predict_state = accumulated_predict_state if accumulated_predict_state is not None else {}
 
         # Create dynamic function with proper parameter signatures for ADK inspection
         # This allows ADK to extract parameters from user requests correctly
@@ -166,6 +182,21 @@ class ClientProxyTool(BaseTool):
             logger.warning(f"ADK function_call_id not available, generated: {tool_call_id}")
 
         try:
+            # Check if this tool has predictive state configuration
+            # Emit PredictState CustomEvent BEFORE TOOL_CALL_START (once per tool name)
+            mappings_for_tool = [m for m in self.predict_state_mappings if m.tool == self.name]
+            logger.debug(f"PredictState check for '{self.name}': mappings_count={len(self.predict_state_mappings)}, matches={len(mappings_for_tool)}, already_emitted={self.name in self._emitted_predict_state}")
+            if mappings_for_tool and self.name not in self._emitted_predict_state:
+                predict_state_payload = [m.to_payload() for m in mappings_for_tool]
+                predict_event = CustomEvent(
+                    type=EventType.CUSTOM,
+                    name="PredictState",
+                    value=predict_state_payload
+                )
+                await self.event_queue.put(predict_event)
+                self._emitted_predict_state.add(self.name)
+                logger.debug(f"Emitted PredictState CustomEvent for tool '{self.name}': {predict_state_payload}")
+
             # Emit TOOL_CALL_START event
             start_event = ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
@@ -184,6 +215,18 @@ class ClientProxyTool(BaseTool):
             )
             await self.event_queue.put(args_event)
             logger.debug(f"Emitted TOOL_CALL_ARGS for {tool_call_id}")
+
+            # Accumulate predictive state values from tool args
+            # These are merged into the final STATE_SNAPSHOT to ensure they survive
+            # (otherwise the final STATE_SNAPSHOT would overwrite all state)
+            if mappings_for_tool:
+                for mapping in mappings_for_tool:
+                    if mapping.tool_argument and mapping.tool_argument in args:
+                        self._accumulated_predict_state[mapping.state_key] = args[mapping.tool_argument]
+                        logger.debug(f"Accumulated predict_state: {mapping.state_key}={type(args[mapping.tool_argument]).__name__}")
+                    elif not mapping.tool_argument:
+                        self._accumulated_predict_state[mapping.state_key] = args
+                        logger.debug(f"Accumulated predict_state: {mapping.state_key}=<entire args>")
 
             # Emit TOOL_CALL_END event
             end_event = ToolCallEndEvent(

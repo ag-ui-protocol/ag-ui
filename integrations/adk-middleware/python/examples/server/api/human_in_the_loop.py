@@ -1,10 +1,19 @@
-"""Human in the Loop feature."""
+"""Human in the Loop feature.
+
+This example demonstrates HITL (Human-in-the-Loop) workflows using ADK's
+native ResumabilityConfig for proper session state persistence.
+
+When using ResumabilityConfig(is_resumable=True), ADK automatically persists
+FunctionCall events before pausing, allowing seamless resumption when the
+user provides tool results (approvals/rejections).
+"""
 
 from __future__ import annotations
 
 from fastapi import FastAPI
 from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, AGUIToolset
 from google.adk.agents import Agent
+from google.adk.apps import App, ResumabilityConfig
 from google.genai import types
 
 DEFINE_TASK_TOOL = {
@@ -99,13 +108,21 @@ Tool reference: {DEFINE_TASK_TOOL}
     ]
 )
 
-# Create ADK middleware agent instance
-adk_human_in_loop_agent = ADKAgent(
-    adk_agent=human_in_loop_agent,
-    app_name="demo_app",
+# Create ADK App with ResumabilityConfig for proper HITL support
+# ResumabilityConfig ensures FunctionCall events are persisted before pausing,
+# which is required for matching FunctionResponses when the user approves/rejects
+adk_app = App(
+    name="demo_app",
+    root_agent=human_in_loop_agent,
+    resumability_config=ResumabilityConfig(is_resumable=True),
+)
+
+# Create ADK middleware agent instance using from_app()
+adk_human_in_loop_agent = ADKAgent.from_app(
+    adk_app,
     user_id="demo_user",
     session_timeout_seconds=3600,
-    use_in_memory_services=True
+    use_in_memory_services=True,
 )
 
 # Create FastAPI app

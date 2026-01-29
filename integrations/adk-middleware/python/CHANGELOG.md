@@ -21,6 +21,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade vulnerable transitive dependencies: aiohttp (3.13.3), urllib3 (2.6.3), authlib (1.6.6), pyasn1 (0.6.2), mcp (1.25.0), fastapi (0.128.0), starlette (0.49.3)
 
+### Added
+
+- **NEW**: Streaming tool call arguments support for real-time UI updates (#990)
+  - Processes ADK partial events with `partial_args` to emit incremental `TOOL_CALL_ARGS` events
+  - Enables predictive state updates to show document content as it streams in
+  - Requires `google-adk >= 1.20.0` with `PROGRESSIVE_SSE_STREAMING` enabled (default in >= 1.22.0)
+  - Backwards compatible: falls back gracefully on older ADK versions
+- **NEW**: `streaming_function_call_arguments` parameter on `EventTranslator` and `ADKAgent` (#990)
+  - Opt-in flag that enables Mode A streaming (Gemini 3+ with `stream_function_call_arguments=True`)
+  - When `False` (default), partial events with `will_continue=True` but no accumulated args are skipped
+  - When `True`, these events are recognised as the first chunk of a streaming function call
+  - The predictive state updates example auto-detects Vertex AI capability and sets the flag accordingly
+- **NEW**: Predictive state updates example includes workarounds for ADK aggregator bugs
+  - Monkey-patch for `StreamingResponseAggregator._process_function_call_part` first-chunk misrouting
+  - Thought-signature repair callback for Gemini 3 session history
+  - Filed upstream as [google/adk-python#4311](https://github.com/google/adk-python/issues/4311); workarounds can be removed when the fix is released
+
 ### Fixed
 
 - **FIXED**: Reload session on cache miss to populate events (#1021)
@@ -31,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Changed `requires-python` from `>=3.9, <3.14` to `>=3.10, <3.15`
   - Fixed `asyncio.get_event_loop()` deprecation in tests for Python 3.14 compatibility
   - Added `asyncio.timeout` compatibility shim for Python 3.10 in tests
+- **FIXED**: Streaming function call dispatch no longer matches partial events without args (#990)
+  - `is_streaming_fc` condition previously matched `func_call.name and will_continue` which was too broad
+  - Now split into Mode A (explicit opt-in via `streaming_function_call_arguments`) and Mode B (accumulated args)
+  - Fixes `test_translate_skips_function_calls_from_partial_events_without_streaming_args`
+- **FIXED**: Name-based dedup for streaming function calls no longer suppresses repeat invocations (#990)
+  - Replaced permanent `_completed_streaming_fc_names` set with single-use `_last_completed_streaming_fc_name`
+  - Calling the same tool twice in one session now works correctly
+  - TOOL_CALL_RESULT suppression uses the same single-use mechanism with `None` guards
 
 ## [0.4.2] - 2026-01-22
 

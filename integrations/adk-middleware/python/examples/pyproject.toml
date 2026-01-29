@@ -15,6 +15,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
     "ag_ui_adk",
+    "google-adk>=1.23.0",
 ]
 
 [project.scripts]
@@ -31,4 +32,4 @@ packages = ["server"]
 allow-direct-references = true
 
 [tool.uv.sources]
-ag_ui_adk = { path = "../" }
+ag_ui_adk = { path = "../", editable = true }
