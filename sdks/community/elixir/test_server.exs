@@ -56,7 +56,22 @@ defmodule AgUITestServer do
     |> send_resp(200, Jason.encode!(%{status: "ok"}))
   end
 
+  get "/" do
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, Jason.encode!(%{message: "AG-UI Elixir Test Server is running!"}))
+  end
+
+  # Support both /agent and /agentic endpoints for Go SDK compatibility
+  post "/agentic" do
+    handle_agent_request(conn)
+  end
+
   post "/agent" do
+    handle_agent_request(conn)
+  end
+
+  defp handle_agent_request(conn) do
     Logger.info("Received agent request")
 
     input = conn.body_params

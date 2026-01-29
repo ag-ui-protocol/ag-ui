@@ -18,8 +18,6 @@ defmodule AgUI.Verify do
           first_event: boolean(),
           text_open: MapSet.t(),
           tool_open: MapSet.t(),
-          active_message_id: String.t() | nil,
-          active_tool_call_id: String.t() | nil,
           active_steps: MapSet.t(),
           thinking_active: boolean(),
           thinking_message_active: boolean()
@@ -38,17 +36,12 @@ defmodule AgUI.Verify do
           | {:tool_not_started, Events.t()}
           | {:tool_already_started, Events.t()}
           | {:tool_not_ended, Events.t()}
-          | {:message_id_mismatch, Events.t()}
-          | {:tool_call_id_mismatch, Events.t()}
           | {:step_not_started, Events.t()}
           | {:step_not_finished, Events.t()}
           | {:thinking_not_started, Events.t()}
           | {:thinking_already_started, Events.t()}
           | {:thinking_message_not_started, Events.t()}
           | {:thinking_message_already_started, Events.t()}
-          | {:event_not_allowed_during_message, Events.t()}
-          | {:event_not_allowed_during_tool_call, Events.t()}
-          | {:event_not_allowed_during_thinking, Events.t()}
 
   @doc """
   Creates a new verification state.
@@ -60,8 +53,6 @@ defmodule AgUI.Verify do
       first_event: false,
       text_open: MapSet.new(),
       tool_open: MapSet.new(),
-      active_message_id: nil,
-      active_tool_call_id: nil,
       active_steps: MapSet.new(),
       thinking_active: false,
       thinking_message_active: false
@@ -132,6 +123,11 @@ defmodule AgUI.Verify do
   Verifies a single event against the current state.
   """
   @spec verify_event(Events.t(), state()) :: {:ok, state()} | {:error, error()}
+  # After an error, a new run can start (error recovery pattern)
+  def verify_event(%Events.RunStarted{}, %{run_status: :errored} = _state) do
+    {:ok, %{new() | run_status: :running, first_event: true}}
+  end
+
   def verify_event(event, %{run_status: :errored} = _state) do
     {:error, {:run_already_errored, event}}
   end
@@ -173,34 +169,15 @@ defmodule AgUI.Verify do
     {:ok, %{state | run_status: :errored, first_event: true}}
   end
 
-  def verify_event(event, %{active_message_id: msg_id} = state) when not is_nil(msg_id) do
-    case event do
-      %Events.TextMessageContent{} -> verify_text_content(event, state)
-      %Events.TextMessageEnd{} -> verify_text_end(event, state)
-      %Events.Raw{} -> {:ok, state}
-      _ -> {:error, {:event_not_allowed_during_message, event}}
-    end
-  end
-
-  def verify_event(event, %{active_tool_call_id: tool_id} = state) when not is_nil(tool_id) do
-    case event do
-      %Events.ToolCallArgs{} -> verify_tool_args(event, state)
-      %Events.ToolCallEnd{} -> verify_tool_end(event, state)
-      %Events.Raw{} -> {:ok, state}
-      _ -> {:error, {:event_not_allowed_during_tool_call, event}}
-    end
-  end
+  # Note: Unlike the older strict mode, we now allow concurrent operations
+  # (multiple text messages or tool calls streaming in parallel with different IDs).
+  # This matches the TypeScript SDK behavior which explicitly tests concurrent scenarios.
 
   def verify_event(%Events.TextMessageStart{message_id: id} = event, state) do
     if MapSet.member?(state.text_open, id) do
       {:error, {:text_already_started, event}}
     else
-      {:ok,
-       %{
-         state
-         | text_open: MapSet.put(state.text_open, id),
-           active_message_id: id
-       }}
+      {:ok, %{state | text_open: MapSet.put(state.text_open, id)}}
     end
   end
 
@@ -213,12 +190,7 @@ defmodule AgUI.Verify do
     if MapSet.member?(state.tool_open, id) do
       {:error, {:tool_already_started, event}}
     else
-      {:ok,
-       %{
-         state
-         | tool_open: MapSet.put(state.tool_open, id),
-           active_tool_call_id: id
-       }}
+      {:ok, %{state | tool_open: MapSet.put(state.tool_open, id)}}
     end
   end
 
@@ -281,64 +253,34 @@ defmodule AgUI.Verify do
   def verify_event(_event, state), do: {:ok, state}
 
   defp verify_text_content(%Events.TextMessageContent{message_id: id} = event, state) do
-    cond do
-      not is_nil(state.active_message_id) and state.active_message_id != id ->
-        {:error, {:message_id_mismatch, event}}
-
-      MapSet.member?(state.text_open, id) ->
-        {:ok, state}
-
-      true ->
-        {:error, {:text_not_started, event}}
+    if MapSet.member?(state.text_open, id) do
+      {:ok, state}
+    else
+      {:error, {:text_not_started, event}}
     end
   end
 
   defp verify_text_end(%Events.TextMessageEnd{message_id: id} = event, state) do
-    cond do
-      not is_nil(state.active_message_id) and state.active_message_id != id ->
-        {:error, {:message_id_mismatch, event}}
-
-      MapSet.member?(state.text_open, id) ->
-        {:ok,
-         %{
-           state
-           | text_open: MapSet.delete(state.text_open, id),
-             active_message_id: nil
-         }}
-
-      true ->
-        {:error, {:text_not_started, event}}
+    if MapSet.member?(state.text_open, id) do
+      {:ok, %{state | text_open: MapSet.delete(state.text_open, id)}}
+    else
+      {:error, {:text_not_started, event}}
     end
   end
 
   defp verify_tool_args(%Events.ToolCallArgs{tool_call_id: id} = event, state) do
-    cond do
-      not is_nil(state.active_tool_call_id) and state.active_tool_call_id != id ->
-        {:error, {:tool_call_id_mismatch, event}}
-
-      MapSet.member?(state.tool_open, id) ->
-        {:ok, state}
-
-      true ->
-        {:error, {:tool_not_started, event}}
+    if MapSet.member?(state.tool_open, id) do
+      {:ok, state}
+    else
+      {:error, {:tool_not_started, event}}
     end
   end
 
   defp verify_tool_end(%Events.ToolCallEnd{tool_call_id: id} = event, state) do
-    cond do
-      not is_nil(state.active_tool_call_id) and state.active_tool_call_id != id ->
-        {:error, {:tool_call_id_mismatch, event}}
-
-      MapSet.member?(state.tool_open, id) ->
-        {:ok,
-         %{
-           state
-           | tool_open: MapSet.delete(state.tool_open, id),
-             active_tool_call_id: nil
-         }}
-
-      true ->
-        {:error, {:tool_not_started, event}}
+    if MapSet.member?(state.tool_open, id) do
+      {:ok, %{state | tool_open: MapSet.delete(state.tool_open, id)}}
+    else
+      {:error, {:tool_not_started, event}}
     end
   end
 

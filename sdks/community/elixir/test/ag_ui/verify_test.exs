@@ -60,24 +60,28 @@ defmodule AgUI.VerifyTest do
     assert {:error, {:tool_not_started, _}} = Verify.verify_events(events)
   end
 
-  test "text events require matching message id while active" do
+  test "text content requires message to be started (concurrent mode)" do
+    # With concurrent message support, content for an unstarted message fails
     events = [
       %Events.RunStarted{thread_id: "t1", run_id: "r1"},
       %Events.TextMessageStart{message_id: "m1", role: "assistant"},
       %Events.TextMessageContent{message_id: "m2", delta: "hi"}
     ]
 
-    assert {:error, {:message_id_mismatch, _}} = Verify.verify_events(events)
+    # m2 was never started, so this is a text_not_started error
+    assert {:error, {:text_not_started, _}} = Verify.verify_events(events)
   end
 
-  test "tool events require matching tool_call_id while active" do
+  test "tool args require tool to be started (concurrent mode)" do
+    # With concurrent tool support, args for an unstarted tool fails
     events = [
       %Events.RunStarted{thread_id: "t1", run_id: "r1"},
       %Events.ToolCallStart{tool_call_id: "c1", tool_call_name: "tool"},
       %Events.ToolCallArgs{tool_call_id: "c2", delta: "{}"}
     ]
 
-    assert {:error, {:tool_call_id_mismatch, _}} = Verify.verify_events(events)
+    # c2 was never started, so this is a tool_not_started error
+    assert {:error, {:tool_not_started, _}} = Verify.verify_events(events)
   end
 
   test "run must be finished" do
@@ -85,14 +89,60 @@ defmodule AgUI.VerifyTest do
     assert {:error, {:run_not_finished, _}} = Verify.verify_events(events)
   end
 
-  test "no new run after run_finished" do
+  test "multiple sequential runs are allowed" do
+    # AG-UI supports multiple sequential runs in a single stream
     events = [
       %Events.RunStarted{thread_id: "t1", run_id: "r1"},
       %Events.RunFinished{thread_id: "t1", run_id: "r1"},
-      %Events.RunStarted{thread_id: "t1", run_id: "r2"}
+      %Events.RunStarted{thread_id: "t1", run_id: "r2"},
+      %Events.RunFinished{thread_id: "t1", run_id: "r2"}
     ]
 
-    assert {:error, {:run_already_finished, _}} = Verify.verify_events(events)
+    assert :ok = Verify.verify_events(events)
+  end
+
+  test "concurrent text messages are allowed" do
+    # Multiple text messages can stream in parallel with different IDs
+    events = [
+      %Events.RunStarted{thread_id: "t1", run_id: "r1"},
+      %Events.TextMessageStart{message_id: "m1", role: "assistant"},
+      %Events.TextMessageStart{message_id: "m2", role: "assistant"},
+      %Events.TextMessageContent{message_id: "m1", delta: "hello"},
+      %Events.TextMessageContent{message_id: "m2", delta: "world"},
+      %Events.TextMessageEnd{message_id: "m1"},
+      %Events.TextMessageEnd{message_id: "m2"},
+      %Events.RunFinished{thread_id: "t1", run_id: "r1"}
+    ]
+
+    assert :ok = Verify.verify_events(events)
+  end
+
+  test "concurrent tool calls are allowed" do
+    # Multiple tool calls can stream in parallel with different IDs
+    events = [
+      %Events.RunStarted{thread_id: "t1", run_id: "r1"},
+      %Events.ToolCallStart{tool_call_id: "c1", tool_call_name: "tool_a"},
+      %Events.ToolCallStart{tool_call_id: "c2", tool_call_name: "tool_b"},
+      %Events.ToolCallArgs{tool_call_id: "c1", delta: "{}"},
+      %Events.ToolCallArgs{tool_call_id: "c2", delta: "{}"},
+      %Events.ToolCallEnd{tool_call_id: "c1"},
+      %Events.ToolCallEnd{tool_call_id: "c2"},
+      %Events.RunFinished{thread_id: "t1", run_id: "r1"}
+    ]
+
+    assert :ok = Verify.verify_events(events)
+  end
+
+  test "error recovery - new run after error" do
+    # A new run can start after an error (error recovery pattern)
+    events = [
+      %Events.RunStarted{thread_id: "t1", run_id: "r1"},
+      %Events.RunError{message: "failed"},
+      %Events.RunStarted{thread_id: "t1", run_id: "r2"},
+      %Events.RunFinished{thread_id: "t1", run_id: "r2"}
+    ]
+
+    assert :ok = Verify.verify_events(events)
   end
 
   test "text must be ended" do
