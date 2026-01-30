@@ -37,6 +37,7 @@ from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
 from .config import PredictStateMapping
 from .utils.converters import convert_message_content_to_parts
+from .workarounds import apply_aggregator_patch, repair_thought_signatures
 
 import logging
 logger = logging.getLogger(__name__)
@@ -1304,6 +1305,18 @@ class ADKAgent:
         
         # Use a deep copy of the ADK agent so we can modify it per-execution
         adk_agent = self._adk_agent.model_copy(deep=True)
+
+        # Inject thought-signature repair callback when streaming FC args are enabled
+        # (needed for Gemini 3 models that drop thought_signature on session history)
+        if self._streaming_function_call_arguments and isinstance(adk_agent, LlmAgent):
+            existing = adk_agent.before_model_callback
+            if existing is None:
+                adk_agent.before_model_callback = repair_thought_signatures
+            elif isinstance(existing, list):
+                if repair_thought_signatures not in existing:
+                    existing.append(repair_thought_signatures)
+            elif existing is not repair_thought_signatures:
+                adk_agent.before_model_callback = [existing, repair_thought_signatures]
 
         # Handle SystemMessage if it's the first message - append to agent instructions
         if input.messages and isinstance(input.messages[0], SystemMessage):

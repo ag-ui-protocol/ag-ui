@@ -17,9 +17,11 @@ the frontend's write_document action that handles the confirmation UI.
 
 Streaming Function Call Arguments
 ---------------------------------
-When Vertex AI credentials are available, this demo uses Gemini 3 Pro Preview with
+When Vertex AI credentials are available, this demo uses Gemini 3 Flash Preview with
 ``stream_function_call_arguments=True``.  TOOL_CALL_ARGS events then arrive
 incrementally as the model generates function arguments, giving real-time UI updates.
+Gemini 3 models are required because ``stream_function_call_arguments`` is only
+supported by the Gemini 3 family.
 
 Prerequisites for streaming:
 1. Vertex AI credentials (GOOGLE_APPLICATION_CREDENTIALS or gcloud ADC)
@@ -32,171 +34,37 @@ Prerequisites for streaming:
 Fallback:
 - Without Vertex AI credentials falls back to Gemini 2.5 Flash (single TOOL_CALL_ARGS).
 
-ADK workarounds (google-adk 1.23.0)
-------------------------------------
-Two ADK bugs prevent streaming function call args from working out of the box:
+ADK workarounds for Gemini 3 (google-adk 1.23.0):
 
-1. **Aggregator first-chunk bug** – ``StreamingResponseAggregator._process_function_call_part``
-   treats the first streaming chunk (which carries the function name and
-   ``will_continue=True`` but no ``partial_args``) as a *non-streaming* call and
-   appends it to the parts sequence with empty args.  Subsequent chunks that carry
-   ``partial_args`` accumulate into ``_current_fc_args`` but are never flushed
-   because ``_current_fc_name`` was never set.  We monkey-patch the method to
-   recognise ``will_continue`` on the first chunk and route it to the streaming path.
+1. **Aggregator patch** – Applied explicitly in this example via
+   ``apply_aggregator_patch()`` from ``ag_ui_adk.workarounds``.  This fixes
+   the StreamingResponseAggregator first-chunk bug so that session history
+   contains valid function call parts.  It is NOT auto-applied by the
+   middleware because it conflicts with the event translator's Mode A streaming.
 
-2. **Thought-signature loss** – Gemini 3 requires a ``thought_signature`` on
-   ``function_call`` Parts in conversation history.  The aggregator captures it but
-   ADK may drop it when reconstructing session history.  A ``before_model_callback``
-   re-injects the real signature (or the ``skip_thought_signature_validator``
-   sentinel) before each LLM call.
+2. **Thought-signature repair** – Automatically injected by the middleware as a
+   ``before_model_callback`` when ``streaming_function_call_arguments=True``.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI
 from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, PredictStateMapping, AGUIToolset
+from ag_ui_adk.workarounds import apply_aggregator_patch
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
-from google.adk.models.llm_request import LlmRequest
 from google.adk.tools import ToolContext
 from google.genai import types
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Workaround 1 – Monkey-patch StreamingResponseAggregator
-# ---------------------------------------------------------------------------
-# Upstream bug: https://github.com/google/adk-python/issues/4311
-# Remove this workaround if/when the upstream fix is released.
-#
-# The original _process_function_call_part dispatches on whether partial_args
-# is present.  The FIRST streaming chunk carries the function name and
-# will_continue=True but *no* partial_args, so it falls into the non-streaming
-# branch and gets appended with empty args.  The fix: also check will_continue
-# to decide whether this is the start of a streaming function call.
-
-def _apply_aggregator_patch() -> None:
-    """Monkey-patch StreamingResponseAggregator to handle streaming FC first chunk."""
-    try:
-        from google.adk.utils.streaming_utils import StreamingResponseAggregator
-    except ImportError:
-        logger.warning("Could not import StreamingResponseAggregator; skipping patch")
-        return
-
-    _original = StreamingResponseAggregator._process_function_call_part
-
-    def _patched_process_function_call_part(self: Any, part: types.Part) -> None:
-        fc = part.function_call
-
-        has_partial_args = hasattr(fc, "partial_args") and fc.partial_args
-        will_continue = getattr(fc, "will_continue", None)
-
-        # Streaming first chunk: has name + will_continue but no partial_args yet.
-        # Route it to the streaming path so _current_fc_name is set properly.
-        # We must set partial_args to [] to avoid TypeError in _process_streaming_function_call
-        # since partial_args may be None (attribute exists but value is None).
-        if not has_partial_args and will_continue and fc.name:
-            # Save thought_signature from the part (same as original code)
-            if getattr(part, "thought_signature", None) and not self._current_thought_signature:
-                self._current_thought_signature = part.thought_signature
-            # Ensure partial_args is iterable before calling _process_streaming_function_call
-            if getattr(fc, "partial_args", None) is None:
-                fc.partial_args = []
-            self._process_streaming_function_call(fc)
-            return
-
-        # End-of-stream marker: no partial_args, no name, will_continue is None/False.
-        # If we have accumulated streaming state, flush it.
-        if (
-            not has_partial_args
-            and not fc.name
-            and not will_continue
-            and self._current_fc_name
-        ):
-            self._flush_text_buffer_to_sequence()
-            self._flush_function_call_to_sequence()
-            return
-
-        # Default: delegate to original implementation
-        _original(self, part)
-
-    StreamingResponseAggregator._process_function_call_part = _patched_process_function_call_part
-    logger.info("Applied StreamingResponseAggregator monkey-patch for streaming FC first-chunk bug")
-
-
-# ---------------------------------------------------------------------------
-# Workaround 2 – Thought-signature repair callback
-# ---------------------------------------------------------------------------
-# Related to https://github.com/google/adk-python/issues/4311
-# Remove this workaround if/when the upstream fix is released.
-
-_SKIP_SENTINEL = b"skip_thought_signature_validator"
-
-
-def _repair_thought_signatures(
-    callback_context: CallbackContext,
-    llm_request: LlmRequest,
-) -> None:
-    """Ensure every function_call Part has a thought_signature before the LLM call.
-
-    Strategy:
-    1. Harvest real signatures already present in contents or session events.
-    2. Inject cached real signature or skip sentinel for any missing ones.
-    """
-    session_id = getattr(callback_context.session, "id", "unknown")
-
-    # Collect real signatures from contents and session events
-    sig_cache: Dict[str, bytes] = {}
-
-    def _harvest(parts: list) -> None:
-        for part in parts:
-            fc = getattr(part, "function_call", None)
-            if not fc:
-                continue
-            sig = getattr(part, "thought_signature", None)
-            if sig and sig != _SKIP_SENTINEL:
-                fc_id = getattr(fc, "id", None)
-                fc_name = getattr(fc, "name", None)
-                key = f"{session_id}:{fc_id or fc_name}"
-                sig_cache[key] = sig
-
-    for content in llm_request.contents:
-        _harvest(getattr(content, "parts", None) or [])
-
-    if hasattr(callback_context.session, "events"):
-        for event in callback_context.session.events:
-            if hasattr(event, "content") and event.content:
-                _harvest(getattr(event.content, "parts", None) or [])
-
-    # Inject missing signatures
-    repaired = 0
-    for content in llm_request.contents:
-        for part in getattr(content, "parts", None) or []:
-            fc = getattr(part, "function_call", None)
-            if not fc:
-                continue
-            if getattr(part, "thought_signature", None):
-                continue
-
-            fc_id = getattr(fc, "id", None)
-            fc_name = getattr(fc, "name", None)
-            key = f"{session_id}:{fc_id or fc_name}"
-            cached = sig_cache.get(key)
-            part.thought_signature = cached if cached else _SKIP_SENTINEL
-            repaired += 1
-
-    if repaired:
-        logger.info("Repaired %d function_call part(s) with missing thought_signature", repaired)
-
-    return None  # continue to LLM
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +105,7 @@ def _get_model_config() -> Tuple[str, bool]:
     """
     can_stream = _has_vertex_ai_credentials() and _has_streaming_function_call_support()
     if can_stream:
-        return ("gemini-3-pro-preview", True)
+        return ("gemini-3-flash-preview", True)
     else:
         return ("gemini-2.5-flash", False)
 
@@ -304,23 +172,13 @@ _model_name, _can_stream_args = _get_model_config()
 _generate_config = _get_generate_content_config(_can_stream_args)
 
 if _can_stream_args:
-    # Apply ADK monkey-patches only when streaming is active
-    _apply_aggregator_patch()
-    logger.info(
-        "Predictive State Demo: Using %s with Vertex AI "
-        "(streaming function call arguments ENABLED)", _model_name
-    )
-else:
-    logger.info(
-        "Predictive State Demo: Using %s "
-        "(streaming function call arguments DISABLED - "
-        "missing Vertex AI credentials or ADK support)", _model_name
-    )
+    apply_aggregator_patch()
 
-# Build callback list
-_before_model_callbacks = []
-if _can_stream_args:
-    _before_model_callbacks.append(_repair_thought_signatures)
+logger.info(
+    "Predictive State Demo: Using %s (streaming function call arguments %s)",
+    _model_name,
+    "ENABLED" if _can_stream_args else "DISABLED",
+)
 
 predictive_state_updates_agent = LlmAgent(
     name="DocumentAgent",
@@ -352,7 +210,6 @@ predictive_state_updates_agent = LlmAgent(
         write_document_local
     ],
     before_agent_callback=on_before_agent,
-    before_model_callback=_before_model_callbacks if _before_model_callbacks else None,
     generate_content_config=_generate_config,
 )
 
