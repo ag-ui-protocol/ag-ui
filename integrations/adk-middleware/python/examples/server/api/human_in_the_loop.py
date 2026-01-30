@@ -61,7 +61,7 @@ human_in_loop_agent = Agent(
 - Execute only human-approved steps
 
 **When a user requests a task:**
-1. ALWAYS call the `generate_task_steps` function to create a step breakdown (use the number of steps the user requests, or default to 10)
+1. Call the `generate_task_steps` function to create a step breakdown (use the number of steps the user requests, or default to 10). Only call this when the user actually requests a task — do NOT call it for greetings or general conversation.
 2. Each step must be:
    - Written in imperative form (e.g., "Open file", "Check settings", "Send email")
    - Concise (2-4 words maximum)
