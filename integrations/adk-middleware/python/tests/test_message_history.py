@@ -512,6 +512,69 @@ class TestAgentsStateEndpoint:
             assert data["threadExists"] is False
             assert data["threadId"] == "nonexistent-thread"
 
+    def test_agents_state_cache_miss_loads_events(self, app, mock_agent):
+        """Should load events via get_session() on cache miss.
+
+        This tests the fix for the bug where _find_session_by_thread_id()
+        uses list_sessions() which returns session metadata only, not events.
+        The endpoint must call get_session() after cache miss to populate events.
+        """
+        # Create a session with events that will be returned by get_session
+        mock_session_with_events = MagicMock()
+        mock_session_with_events.id = "backend-session-id"
+        mock_session_with_events.events = [
+            create_mock_adk_event(author="user", text="Hello from cache miss"),
+            create_mock_adk_event(author="model", text="Response after reload"),
+        ]
+
+        # Create a session without events (as returned by list_sessions)
+        mock_session_metadata_only = MagicMock()
+        mock_session_metadata_only.id = "backend-session-id"
+        mock_session_metadata_only.events = None  # list_sessions doesn't populate events
+
+        # Mock cache miss: _get_session_metadata returns None
+        mock_agent._get_session_metadata = MagicMock(return_value=None)
+
+        # Mock _find_session_by_thread_id returning session metadata (no events)
+        mock_agent._session_manager._find_session_by_thread_id = AsyncMock(
+            return_value=mock_session_metadata_only
+        )
+
+        # Initialize empty cache to simulate cache miss path
+        mock_agent._session_lookup_cache = {}
+
+        # Mock get_session to return the full session WITH events
+        mock_session_service = MagicMock()
+        mock_session_service.get_session = AsyncMock(return_value=mock_session_with_events)
+        mock_agent._session_manager._session_service = mock_session_service
+        mock_agent._session_manager.get_session_state = AsyncMock(return_value={"key": "value"})
+
+        add_adk_fastapi_endpoint(app, mock_agent, path="/")
+
+        with TestClient(self.get_test_app(app)) as client:
+            response = client.post(
+                "/agents/state",
+                json={"threadId": "cache-miss-thread"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["threadId"] == "cache-miss-thread"
+            assert data["threadExists"] is True
+
+            # Verify messages are populated from the reloaded session
+            messages = json.loads(data["messages"])
+            assert len(messages) == 2
+            assert messages[0]["content"] == "Hello from cache miss"
+            assert messages[1]["content"] == "Response after reload"
+
+            # Verify get_session was called to reload the session with events
+            mock_session_service.get_session.assert_called_once_with(
+                session_id="backend-session-id",
+                app_name="test_app",
+                user_id="test_user"
+            )
+
     def test_agents_state_handles_empty_events(self, app, mock_agent):
         """Should return empty messages list for session with no events."""
         mock_session = MagicMock()
