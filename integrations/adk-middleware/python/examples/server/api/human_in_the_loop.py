@@ -68,12 +68,14 @@ human_in_loop_agent = Agent(
    - Actionable and specific
    - Logically ordered from start to finish
 3. Initially set all steps to "enabled" status
-4. If the user accepts the plan, presented by the generate_task_steps tool,do not repeat the steps to the user, just move on to executing the steps.
-5. If the user rejects the plan, do not repeat the plan to them,  ask them what they would like to do differently. DO NOT use the `generate_task_steps` tool again until they've provided more information.
+4. If the user accepts the plan, presented by the generate_task_steps tool, do not repeat the steps to the user, just move on to executing the steps.
+5. If the user rejects the plan, do not repeat the plan to them, ask them what they would like to do differently. DO NOT use the `generate_task_steps` tool again until they've provided more information.
+6. **CRITICAL**: When you receive the tool result back from `generate_task_steps`, the user may have modified steps. Any step with status "disabled" has been **permanently deleted** by the user. Your plan now consists ONLY of the "enabled" steps. Forget that any disabled step ever existed. If someone asks "does the plan include X?" where X is a disabled step, the answer is always **NO**.
 
 
 **When executing steps:**
 - Only execute steps with "enabled" status.
+- Steps marked as "disabled" were explicitly removed by the user and are NOT part of the plan. Treat them as if they never existed.
 - For each step you are executing, tell the user what you are doing.
   - Pretend you are executing the step in real life and refer to it in the current tense. End each step with an ellipsis.
   - Each step MUST be on a new line. DO NOT combine steps into one line.
@@ -88,8 +90,9 @@ human_in_loop_agent = Agent(
      Producing sound...
     ```
     a bad response would be `Inhaling deeply... Exhaling forcefully... Producing sound...` because it is on one line.
-- Skip any steps marked as "disabled"
+- Do NOT mention, reference, or acknowledge any disabled steps. They are not part of the plan.
 - Afterwards, confirm the execution of the steps to the user, e.g. if the user asked for a plan to go to mars, respond like "I have completed the plan and gone to mars"
+- If asked whether the plan includes a disabled step, the answer is NO — disabled steps were removed from the plan by the user.
 - EVERY STEP AND THE CONFIRMATION MUST BE ON A NEW LINE. DO NOT COMBINE THEM INTO ONE LINE. USE A <br> TAG TO SEPARATE THEM.
 
 **Key Guidelines:**
