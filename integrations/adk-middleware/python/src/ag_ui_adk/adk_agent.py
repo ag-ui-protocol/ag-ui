@@ -1683,11 +1683,18 @@ class ADKAgent:
             for toolset in client_proxy_toolsets:
                 toolset._emitted_tool_call_ids = client_emitted_ids
 
-            # Collect client-side tool names from proxy toolsets
+            # Collect client-side tool names and argument schemas from proxy toolsets
             client_tool_names: set[str] = set()
+            client_tool_schemas: dict[str, set[str]] = {}
             for toolset in client_proxy_toolsets:
                 for tool in toolset.ag_ui_tools:
                     client_tool_names.add(tool.name)
+                    # Extract argument names from JSON Schema parameters
+                    params = getattr(tool, 'parameters', None)
+                    if isinstance(params, dict):
+                        props = params.get('properties', {})
+                        if props:
+                            client_tool_schemas[tool.name] = set(props.keys())
 
             # Create event translator with predictive state configuration
             event_translator = EventTranslator(
@@ -1695,6 +1702,7 @@ class ADKAgent:
                 streaming_function_call_arguments=self._streaming_function_call_arguments,
                 client_emitted_tool_call_ids=client_emitted_ids,
                 client_tool_names=client_tool_names,
+                client_tool_schemas=client_tool_schemas,
             )
 
             # Share the translator's emitted IDs set with proxy toolsets so

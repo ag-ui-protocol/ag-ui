@@ -1194,15 +1194,17 @@ async def test_has_lro_function_call_sets_is_long_running_tool_even_when_transla
     )
 
 
-async def test_streaming_fc_args_nameless_chunks_deferred_flush():
-    """Nameless streaming FC chunks are buffered and flushed on complete event.
+async def test_streaming_fc_args_nameless_chunks_stream_immediately():
+    """Nameless streaming FC chunks emit events in real time, not batched.
 
     ADK's populate_client_function_call_id assigns a fresh adk-<uuid> to every
-    partial chunk (since raw Gemini chunks have id=None) and never propagates
-    the tool name to partial events. The translator must:
-    1. Detect the nameless first chunk and start tracking (deferred)
-    2. Buffer ARGS events from middle chunks
-    3. Flush START + buffered ARGS + END when the complete event supplies the name
+    partial chunk and never propagates the tool name to partial events. The
+    translator must:
+    1. Detect the nameless first chunk and start tracking (no data to emit)
+    2. On first partial_args: infer tool name, emit START + ARGS immediately
+    3. Stream subsequent ARGS as they arrive
+    4. Emit END when will_continue=None
+    5. Complete event is suppressed (already streamed)
     """
     translator = EventTranslator(
         streaming_function_call_arguments=True,
@@ -1230,14 +1232,14 @@ async def test_streaming_fc_args_nameless_chunks_deferred_flush():
     async for e in translator.translate(adk_event1, "thread", "run"):
         events1.append(e)
 
-    # No tool call events yet — name unknown, START deferred
+    # No tool call events — first chunk has no data, START deferred until partial_args
     tc_events1 = [e for e in events1 if "TOOL_CALL" in str(e.type)]
     assert len(tc_events1) == 0, (
-        f"Nameless first chunk should defer tool call events, got "
+        f"Nameless first chunk (no partial_args) should not emit tool call events, got "
         f"{[str(e.type).split('.')[-1] for e in tc_events1]}"
     )
 
-    # Middle chunk: partial_args with content, different id
+    # Second chunk: partial_args with content, different id
     partial_arg = MagicMock()
     partial_arg.string_value = "Hello world"
     partial_arg.json_path = "$.content"
@@ -1262,14 +1264,27 @@ async def test_streaming_fc_args_nameless_chunks_deferred_flush():
     async for e in translator.translate(adk_event2, "thread", "run"):
         events2.append(e)
 
-    # Still no tool call events — buffered
+    # START + ARGS emitted immediately — name inferred from single client tool
     tc_events2 = [e for e in events2 if "TOOL_CALL" in str(e.type)]
-    assert len(tc_events2) == 0, (
-        f"Middle chunk should buffer tool call events, got "
-        f"{[str(e.type).split('.')[-1] for e in tc_events2]}"
+    tc_types2 = [str(e.type).split('.')[-1] for e in tc_events2]
+    assert "TOOL_CALL_START" in tc_types2, (
+        f"First partial_args chunk should emit TOOL_CALL_START, got {tc_types2}"
+    )
+    assert "TOOL_CALL_ARGS" in tc_types2, (
+        f"First partial_args chunk should emit TOOL_CALL_ARGS, got {tc_types2}"
     )
 
-    # End chunk: will_continue=None
+    # Verify inferred tool name
+    start_events = [e for e in tc_events2 if str(e.type).split('.')[-1] == "TOOL_CALL_START"]
+    assert start_events[0].tool_call_name == "publish_final_report", (
+        f"TOOL_CALL_START should have inferred name, got {start_events[0].tool_call_name}"
+    )
+
+    # Third chunk: more partial_args
+    partial_arg2 = MagicMock()
+    partial_arg2.string_value = " — more content"
+    partial_arg2.json_path = "$.content"
+
     adk_event3 = MagicMock()
     adk_event3.author = "assistant"
     adk_event3.partial = True
@@ -1280,8 +1295,8 @@ async def test_streaming_fc_args_nameless_chunks_deferred_flush():
     func_call3.id = "adk-uuid-chunk-3"
     func_call3.name = None
     func_call3.args = None
-    func_call3.partial_args = None
-    func_call3.will_continue = None  # End marker
+    func_call3.partial_args = [partial_arg2]
+    func_call3.will_continue = True
 
     adk_event3.get_function_calls = lambda: [func_call3]
     adk_event3.long_running_tool_ids = []
@@ -1290,24 +1305,26 @@ async def test_streaming_fc_args_nameless_chunks_deferred_flush():
     async for e in translator.translate(adk_event3, "thread", "run"):
         events3.append(e)
 
-    # Still no tool call events — END buffered, awaiting name
+    # Only ARGS — streaming in real time
     tc_events3 = [e for e in events3 if "TOOL_CALL" in str(e.type)]
-    assert len(tc_events3) == 0, (
-        f"End chunk should buffer tool call events, got "
-        f"{[str(e.type).split('.')[-1] for e in tc_events3]}"
+    tc_types3 = [str(e.type).split('.')[-1] for e in tc_events3]
+    assert tc_types3 == ["TOOL_CALL_ARGS"], (
+        f"Subsequent chunk should only emit TOOL_CALL_ARGS, got {tc_types3}"
     )
 
-    # Complete (non-partial) event arrives with the real name
+    # End chunk: will_continue=None
     adk_event4 = MagicMock()
     adk_event4.author = "assistant"
-    adk_event4.partial = False
+    adk_event4.partial = True
     adk_event4.content = MagicMock()
     adk_event4.content.parts = []
 
     func_call4 = MagicMock()
-    func_call4.id = "adk-uuid-confirmed"
-    func_call4.name = "publish_final_report"
-    func_call4.args = {"content": "Hello world"}
+    func_call4.id = "adk-uuid-chunk-4"
+    func_call4.name = None
+    func_call4.args = None
+    func_call4.partial_args = None
+    func_call4.will_continue = None  # End marker
 
     adk_event4.get_function_calls = lambda: [func_call4]
     adk_event4.long_running_tool_ids = []
@@ -1316,35 +1333,104 @@ async def test_streaming_fc_args_nameless_chunks_deferred_flush():
     async for e in translator.translate(adk_event4, "thread", "run"):
         events4.append(e)
 
-    # NOW all events should flush: START + ARGS + END
-    event_types4 = [str(ev.type).split('.')[-1] for ev in events4]
-    assert "TOOL_CALL_START" in event_types4, (
-        f"Complete event should flush deferred TOOL_CALL_START, got {event_types4}"
-    )
-    assert "TOOL_CALL_ARGS" in event_types4, (
-        f"Complete event should flush buffered TOOL_CALL_ARGS, got {event_types4}"
-    )
-    assert "TOOL_CALL_END" in event_types4, (
-        f"Complete event should flush buffered TOOL_CALL_END, got {event_types4}"
+    # END emitted immediately
+    tc_events4 = [e for e in events4 if "TOOL_CALL" in str(e.type)]
+    tc_types4 = [str(e.type).split('.')[-1] for e in tc_events4]
+    assert "TOOL_CALL_END" in tc_types4, (
+        f"End chunk should emit TOOL_CALL_END, got {tc_types4}"
     )
 
-    # Verify the START event has the correct tool name
-    start_events = [e for e in events4 if str(e.type).split('.')[-1] == "TOOL_CALL_START"]
-    assert start_events[0].tool_call_name == "publish_final_report", (
-        f"TOOL_CALL_START should have real name, got {start_events[0].tool_call_name}"
+    # Complete (non-partial) event should be suppressed (already streamed)
+    adk_event5 = MagicMock()
+    adk_event5.author = "assistant"
+    adk_event5.partial = False
+    adk_event5.content = MagicMock()
+    adk_event5.content.parts = []
+
+    func_call5 = MagicMock()
+    func_call5.id = "adk-uuid-confirmed"
+    func_call5.name = "publish_final_report"
+    func_call5.args = {"content": "Hello world — more content"}
+
+    adk_event5.get_function_calls = lambda: [func_call5]
+    adk_event5.long_running_tool_ids = []
+
+    events5 = []
+    async for e in translator.translate(adk_event5, "thread", "run"):
+        events5.append(e)
+
+    # Complete event should NOT re-emit tool call events
+    tc_events5 = [e for e in events5 if "TOOL_CALL" in str(e.type)]
+    assert len(tc_events5) == 0, (
+        f"Complete event should be suppressed (already streamed), got "
+        f"{[str(e.type).split('.')[-1] for e in tc_events5]}"
     )
 
-    # Verify START comes before ARGS which comes before END
-    start_idx = event_types4.index("TOOL_CALL_START")
-    args_idx = event_types4.index("TOOL_CALL_ARGS")
-    end_idx = event_types4.index("TOOL_CALL_END")
-    assert start_idx < args_idx < end_idx, (
-        f"Events should be ordered START < ARGS < END, got indices {start_idx}, {args_idx}, {end_idx}"
+
+async def test_streaming_fc_args_multi_tool_disambiguation():
+    """With multiple client tools, json_path matching disambiguates the tool name.
+
+    When client_tool_schemas maps tool names to their argument sets, the
+    translator matches partial_args json_paths to infer the correct tool.
+    """
+    translator = EventTranslator(
+        streaming_function_call_arguments=True,
+        client_tool_names={"publish_report", "update_dashboard"},
+        client_tool_schemas={
+            "publish_report": {"content", "title", "sources"},
+            "update_dashboard": {"metrics", "timeframe"},
+        },
     )
 
-    # Verify confirmed id → streaming id mapping exists
-    assert "adk-uuid-confirmed" in translator._confirmed_to_streaming_id, (
-        "Confirmed FC id should be mapped to the streaming tool_call_id"
+    # First chunk: nameless, no partial_args
+    adk_event1 = MagicMock()
+    adk_event1.author = "assistant"
+    adk_event1.partial = True
+    adk_event1.content = MagicMock()
+    adk_event1.content.parts = []
+
+    func_call1 = MagicMock()
+    func_call1.id = "adk-multi-1"
+    func_call1.name = None
+    func_call1.args = None
+    func_call1.partial_args = None
+    func_call1.will_continue = True
+
+    adk_event1.get_function_calls = lambda: [func_call1]
+    adk_event1.long_running_tool_ids = []
+
+    async for _ in translator.translate(adk_event1, "thread", "run"):
+        pass
+
+    # Second chunk: partial_args with $.content — matches publish_report
+    partial_arg = MagicMock()
+    partial_arg.string_value = "Report content"
+    partial_arg.json_path = "$.content"
+
+    adk_event2 = MagicMock()
+    adk_event2.author = "assistant"
+    adk_event2.partial = True
+    adk_event2.content = MagicMock()
+    adk_event2.content.parts = []
+
+    func_call2 = MagicMock()
+    func_call2.id = "adk-multi-2"
+    func_call2.name = None
+    func_call2.args = None
+    func_call2.partial_args = [partial_arg]
+    func_call2.will_continue = True
+
+    adk_event2.get_function_calls = lambda: [func_call2]
+    adk_event2.long_running_tool_ids = []
+
+    events2 = []
+    async for e in translator.translate(adk_event2, "thread", "run"):
+        events2.append(e)
+
+    start_events = [e for e in events2 if str(e.type).split('.')[-1] == "TOOL_CALL_START"]
+    assert len(start_events) == 1, f"Expected 1 TOOL_CALL_START, got {len(start_events)}"
+    assert start_events[0].tool_call_name == "publish_report", (
+        f"Should disambiguate to publish_report via $.content, got {start_events[0].tool_call_name}"
     )
 
 
@@ -1409,7 +1495,8 @@ if __name__ == "__main__":
     asyncio.run(test_translator_records_emitted_tool_call_ids())
     asyncio.run(test_full_resumable_hitl_flow_no_duplicates())
     asyncio.run(test_has_lro_function_call_sets_is_long_running_tool_even_when_translator_skips())
-    asyncio.run(test_streaming_fc_args_nameless_chunks_deferred_flush())
+    asyncio.run(test_streaming_fc_args_nameless_chunks_stream_immediately())
+    asyncio.run(test_streaming_fc_args_multi_tool_disambiguation())
     asyncio.run(test_client_tool_names_still_filtered_without_streaming_fc_args())
     print("\n✅ LRO and partial filtering tests ran to completion")
 

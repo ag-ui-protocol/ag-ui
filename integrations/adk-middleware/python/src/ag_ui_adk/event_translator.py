@@ -170,6 +170,7 @@ class EventTranslator:
         streaming_function_call_arguments: bool = False,
         client_emitted_tool_call_ids: Optional[set] = None,
         client_tool_names: Optional[set] = None,
+        client_tool_schemas: Optional[Dict[str, set]] = None,
     ):
         """Initialize the event translator.
 
@@ -191,12 +192,17 @@ class EventTranslator:
                 TOOL_CALL events for these tool names, since the proxy tool will
                 emit its own events during execution. This prevents duplicate
                 emissions when ADK assigns different IDs across LRO and confirmed events.
+            client_tool_schemas: Optional mapping of tool name → set of argument
+                names.  Used to disambiguate which client tool is being called
+                when streaming FC chunks arrive without a tool name.
         """
         self._streaming_fc_args_enabled = streaming_function_call_arguments
         # Shared set of tool call IDs already emitted by ClientProxyTool
         self._client_emitted_tool_call_ids = client_emitted_tool_call_ids if client_emitted_tool_call_ids is not None else set()
         # Set of tool names handled by ClientProxyTool — translator skips these entirely
         self._client_tool_names = client_tool_names if client_tool_names is not None else set()
+        # Mapping tool_name → set of argument names for json_path disambiguation
+        self._client_tool_schemas = client_tool_schemas if client_tool_schemas is not None else {}
         # Set of tool call IDs that this translator has already emitted events for.
         # Shared with ClientProxyTool so it can skip duplicate emissions.
         self.emitted_tool_call_ids: set[str] = set()
@@ -249,11 +255,6 @@ class EventTranslator:
         # The streaming tool_call_id that corresponds to _last_completed_streaming_fc_name.
         # Used to build the confirmed→streaming id mapping below.
         self._last_completed_streaming_fc_id: Optional[str] = None
-        # Buffered TOOL_CALL_ARGS events for streaming FCs that started without
-        # a tool name (stream_function_call_arguments mode where ADK doesn't
-        # propagate the name to partial events).  Keyed by tool_call_id.
-        # Flushed when the complete (non-partial) event supplies the name.
-        self._deferred_streaming_events: Dict[str, List[BaseEvent]] = {}
         # Maps confirmed (non-partial) FC id → streaming FC id so that
         # ToolCallResultEvent uses the same id we emitted in TOOL_CALL_START/END.
         # With PROGRESSIVE_SSE_STREAMING, ADK assigns different ids to the partial
@@ -394,32 +395,6 @@ class EventTranslator:
             # Skip function calls that were already fully streamed via partial events
             if hasattr(adk_event, 'get_function_calls') and not is_partial:
                 function_calls = adk_event.get_function_calls()
-
-                # Flush deferred streaming events now that we have tool names.
-                # Match each deferred streaming session to a function call by
-                # position (one deferred session per FC, in order).
-                if function_calls and self._deferred_streaming_events:
-                    deferred_ids = list(self._deferred_streaming_events.keys())
-                    flushed_fc_ids: set[str] = set()
-                    for fc in function_calls:
-                        fc_name = getattr(fc, 'name', None)
-                        fc_id = getattr(fc, 'id', None)
-                        if not fc_name or not deferred_ids:
-                            continue
-                        deferred_tool_call_id = deferred_ids.pop(0)
-                        async for event in self._flush_deferred_streaming_events(
-                            fc_name, deferred_tool_call_id
-                        ):
-                            yield event
-                        # Map confirmed id → streaming id for function responses
-                        if fc_id and fc_id != deferred_tool_call_id:
-                            self._confirmed_to_streaming_id[fc_id] = deferred_tool_call_id
-                        # Track so the FC is filtered out below
-                        if fc_id:
-                            flushed_fc_ids.add(fc_id)
-                else:
-                    flushed_fc_ids = set()
-
                 if function_calls:
                     # Filter out long-running tool calls; those are handled by translate_lro_function_calls
                     try:
@@ -444,7 +419,6 @@ class EventTranslator:
                         and getattr(fc, 'id', None) not in self._client_emitted_tool_call_ids
                         and getattr(fc, 'name', None) not in self._client_tool_names
                         and getattr(fc, 'id', None) not in self._completed_streaming_function_calls
-                        and getattr(fc, 'id', None) not in flushed_fc_ids
                         and not (self._last_completed_streaming_fc_name is not None and getattr(fc, 'name', None) == self._last_completed_streaming_fc_name)
                     ]
 
@@ -988,6 +962,80 @@ class EventTranslator:
 
                     self._emitted_confirm_for_tools.add(tool_name)
 
+    def _infer_tool_name_from_json_paths(self, json_paths: set[str]) -> Optional[str]:
+        """Infer the client tool name from partial_args json_paths.
+
+        Matches the json_path argument names (e.g. ``$.content`` → ``content``)
+        against ``_client_tool_schemas`` to find the best match.
+
+        Falls back to the single entry in ``_client_tool_names`` when there's
+        only one client tool, regardless of schema availability.
+
+        Returns:
+            The inferred tool name, or None if ambiguous/unknown.
+        """
+        if len(self._client_tool_names) == 1:
+            return next(iter(self._client_tool_names))
+
+        if not self._client_tool_schemas or not json_paths:
+            return None
+
+        # Extract argument names from json_paths (e.g. "$.content" → "content")
+        arg_names = {p.lstrip('$.') for p in json_paths if p.startswith('$.')}
+        if not arg_names:
+            return None
+
+        # Find tools whose argument set contains all observed arg names
+        candidates = [
+            name for name, schema_args in self._client_tool_schemas.items()
+            if arg_names <= schema_args  # subset check
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+
+        return None
+
+    async def _emit_streaming_fc_start(
+        self,
+        tool_call_id: str,
+        tool_name: str,
+    ) -> AsyncGenerator[BaseEvent, None]:
+        """Emit TOOL_CALL_START and mark the streaming state as started.
+
+        Also emits PredictState CustomEvent if configured for this tool.
+        """
+        streaming_state = self._streaming_function_calls.get(tool_call_id)
+        if streaming_state and streaming_state.get('start_emitted'):
+            return  # Already emitted
+
+        if streaming_state:
+            streaming_state['start_emitted'] = True
+            streaming_state['tool_name'] = tool_name
+
+        # Emit PredictState CustomEvent before tool call events
+        if tool_name in self._predict_state_by_tool:
+            self._predictive_state_tool_call_ids.add(tool_call_id)
+            if tool_name not in self._emitted_predict_state_for_tools:
+                mappings = self._predict_state_by_tool[tool_name]
+                predict_state_payload = [mapping.to_payload() for mapping in mappings]
+                yield CustomEvent(
+                    type=EventType.CUSTOM,
+                    name="PredictState",
+                    value=predict_state_payload,
+                )
+                self._emitted_predict_state_for_tools.add(tool_name)
+
+        async for event in self.force_close_streaming_message():
+            yield event
+
+        yield ToolCallStartEvent(
+            type=EventType.TOOL_CALL_START,
+            tool_call_id=tool_call_id,
+            tool_call_name=tool_name,
+            parent_message_id=None,
+        )
+        logger.debug(f"Emitted TOOL_CALL_START for streaming FC: {tool_name} (id: {tool_call_id})")
+
     async def _translate_streaming_function_call(
         self,
         func_call: types.FunctionCall,
@@ -1033,59 +1081,40 @@ class EventTranslator:
                 # Stray chunk without a name and no active streaming FC — skip
                 return
 
-            logger.debug(f"Starting streaming function call: {tool_name or '<deferred>'} (id: {tool_call_id})")
+            logger.debug(f"Starting streaming function call: {tool_name or '<pending>'} (id: {tool_call_id})")
 
             self._streaming_function_calls[tool_call_id] = {
-                'tool_name': tool_name,  # May be None — filled on complete event
+                'tool_name': tool_name,  # May be None; resolved on first partial_args
                 'previous_json': '',
+                'start_emitted': False,  # Defer START until we have a name
             }
             self._active_streaming_fc_id = tool_call_id
             self._active_tool_calls[tool_call_id] = tool_call_id
 
             if tool_name:
-                # Emit PredictState CustomEvent before tool call events
-                if tool_name in self._predict_state_by_tool:
-                    self._predictive_state_tool_call_ids.add(tool_call_id)
-                    if tool_name not in self._emitted_predict_state_for_tools:
-                        mappings = self._predict_state_by_tool[tool_name]
-                        predict_state_payload = [mapping.to_payload() for mapping in mappings]
-                        yield CustomEvent(
-                            type=EventType.CUSTOM,
-                            name="PredictState",
-                            value=predict_state_payload,
-                        )
-                        self._emitted_predict_state_for_tools.add(tool_name)
-
-                async for event in self.force_close_streaming_message():
+                # Name known — emit START immediately
+                async for event in self._emit_streaming_fc_start(tool_call_id, tool_name):
                     yield event
-
-                yield ToolCallStartEvent(
-                    type=EventType.TOOL_CALL_START,
-                    tool_call_id=tool_call_id,
-                    tool_call_name=tool_name,
-                    parent_message_id=None
-                )
-            else:
-                # Name unknown — defer TOOL_CALL_START until the complete event
-                # supplies the name.  Buffer ARGS events in the meantime.
-                self._deferred_streaming_events[tool_call_id] = []
-                logger.debug(f"Deferring TOOL_CALL_START for {tool_call_id} — name not yet known")
 
         streaming_state = self._streaming_function_calls[tool_call_id]
 
-        # When the name is deferred, buffer events instead of yielding them.
-        # They will be flushed by flush_deferred_streaming_events() when the
-        # complete (non-partial) event supplies the tool name.
-        is_deferred = tool_call_id in self._deferred_streaming_events
+        # ----- Emit deferred START if name was pending -----
+        # When the first chunk had no name (ADK stream_function_call_arguments),
+        # START was deferred. Emit it now using json_path disambiguation or
+        # single-tool inference before the first ARGS event.
+        if not streaming_state.get('start_emitted') and (partial_args or accumulated_args is not None):
+            # Collect json_paths from partial_args for disambiguation
+            json_paths: set[str] = set()
+            if partial_args:
+                for pa in partial_args:
+                    jp = getattr(pa, 'json_path', None)
+                    if jp:
+                        json_paths.add(jp)
 
-        def _emit_or_buffer(event: BaseEvent) -> None:
-            """Append to deferred buffer if name is pending, otherwise collect for yield."""
-            if is_deferred:
-                self._deferred_streaming_events[tool_call_id].append(event)
-            else:
-                pending_events.append(event)
-
-        pending_events: list[BaseEvent] = []
+            inferred_name = self._infer_tool_name_from_json_paths(json_paths)
+            effective_name = inferred_name or ""
+            async for event in self._emit_streaming_fc_start(tool_call_id, effective_name):
+                yield event
 
         # ----- Emit TOOL_CALL_ARGS from partial_args (stream_function_call_arguments mode) -----
         if partial_args:
@@ -1117,11 +1146,11 @@ class EventTranslator:
                     continue
 
                 if delta:
-                    _emit_or_buffer(ToolCallArgsEvent(
+                    yield ToolCallArgsEvent(
                         type=EventType.TOOL_CALL_ARGS,
                         tool_call_id=tool_call_id,
                         delta=delta
-                    ))
+                    )
 
         # ----- Emit TOOL_CALL_ARGS from accumulated args (aggregator delta mode) -----
         elif accumulated_args is not None:
@@ -1138,11 +1167,11 @@ class EventTranslator:
                     delta = current_json
 
                 if delta:
-                    _emit_or_buffer(ToolCallArgsEvent(
+                    yield ToolCallArgsEvent(
                         type=EventType.TOOL_CALL_ARGS,
                         tool_call_id=tool_call_id,
                         delta=delta
-                    ))
+                    )
                 streaming_state['previous_json'] = current_json
 
         # ----- End of stream -----
@@ -1150,47 +1179,43 @@ class EventTranslator:
             resolved_name = tool_name or streaming_state.get('tool_name')
             logger.debug(f"Completing streaming function call: {resolved_name} (id: {tool_call_id})")
 
+            # If START was never emitted (no partial_args arrived at all),
+            # emit it now so the event sequence is valid.
+            if not streaming_state.get('start_emitted'):
+                inferred = self._infer_tool_name_from_json_paths(set()) or ""
+                async for event in self._emit_streaming_fc_start(tool_call_id, inferred):
+                    yield event
+
             # Close any open JSON paths from partial_args streaming
             open_paths = streaming_state.get('_open_paths', [])
             if open_paths:
                 # Close the JSON: closing quote + closing brace
                 closing_delta = '"}'
-                _emit_or_buffer(ToolCallArgsEvent(
+                yield ToolCallArgsEvent(
                     type=EventType.TOOL_CALL_ARGS,
                     tool_call_id=tool_call_id,
                     delta=closing_delta
-                ))
+                )
 
-            _emit_or_buffer(ToolCallEndEvent(
+            yield ToolCallEndEvent(
                 type=EventType.TOOL_CALL_END,
                 tool_call_id=tool_call_id
-            ))
+            )
 
-            if is_deferred:
-                # Streaming finished but name still unknown. Keep buffered
-                # events — they'll be flushed by the complete event path.
-                # Clean up streaming tracking but don't mark as completed
-                # (we still need the complete event for the name).
-                del self._streaming_function_calls[tool_call_id]
-                self._active_tool_calls.pop(tool_call_id, None)
-                if self._active_streaming_fc_id == tool_call_id:
-                    self._active_streaming_fc_id = None
-                logger.debug(f"Deferred streaming complete for {tool_call_id} — awaiting name from complete event")
-            else:
-                # Record so ClientProxyTool can skip duplicate emission
-                self.emitted_tool_call_ids.add(tool_call_id)
+            # Record so ClientProxyTool can skip duplicate emission
+            self.emitted_tool_call_ids.add(tool_call_id)
 
-                # Mark as completed to skip the final complete event
-                self._completed_streaming_function_calls.add(tool_call_id)
-                if resolved_name:
-                    self._last_completed_streaming_fc_name = resolved_name
-                    self._last_completed_streaming_fc_id = tool_call_id
+            # Mark as completed to skip the final complete event
+            self._completed_streaming_function_calls.add(tool_call_id)
+            if resolved_name:
+                self._last_completed_streaming_fc_name = resolved_name
+                self._last_completed_streaming_fc_id = tool_call_id
 
-                # Clean up streaming state
-                del self._streaming_function_calls[tool_call_id]
-                self._active_tool_calls.pop(tool_call_id, None)
-                if self._active_streaming_fc_id == tool_call_id:
-                    self._active_streaming_fc_id = None
+            # Clean up streaming state
+            del self._streaming_function_calls[tool_call_id]
+            self._active_tool_calls.pop(tool_call_id, None)
+            if self._active_streaming_fc_id == tool_call_id:
+                self._active_streaming_fc_id = None
 
             # Check if we should emit confirm_changes tool call after this tool
             if resolved_name in self._predict_state_by_tool and resolved_name not in self._emitted_confirm_for_tools:
@@ -1219,63 +1244,6 @@ class EventTranslator:
                     ))
 
                     self._emitted_confirm_for_tools.add(resolved_name)
-
-        # Yield any non-deferred events collected during this call
-        for event in pending_events:
-            yield event
-
-    async def _flush_deferred_streaming_events(
-        self,
-        tool_name: str,
-        tool_call_id: str,
-    ) -> AsyncGenerator[BaseEvent, None]:
-        """Flush buffered streaming events now that the tool name is known.
-
-        Called from the complete (non-partial) event path when it finds a
-        function call whose streaming tool_call_id has deferred events.
-
-        Emits: TOOL_CALL_START, buffered TOOL_CALL_ARGS..., TOOL_CALL_END
-        """
-        buffered = self._deferred_streaming_events.pop(tool_call_id, [])
-        if not buffered:
-            return
-
-        logger.debug(
-            f"Flushing {len(buffered)} deferred streaming events for "
-            f"{tool_name} (id: {tool_call_id})"
-        )
-
-        # PredictState CustomEvent before tool call events
-        if tool_name in self._predict_state_by_tool:
-            self._predictive_state_tool_call_ids.add(tool_call_id)
-            if tool_name not in self._emitted_predict_state_for_tools:
-                mappings = self._predict_state_by_tool[tool_name]
-                predict_state_payload = [mapping.to_payload() for mapping in mappings]
-                yield CustomEvent(
-                    type=EventType.CUSTOM,
-                    name="PredictState",
-                    value=predict_state_payload,
-                )
-                self._emitted_predict_state_for_tools.add(tool_name)
-
-        async for event in self.force_close_streaming_message():
-            yield event
-
-        yield ToolCallStartEvent(
-            type=EventType.TOOL_CALL_START,
-            tool_call_id=tool_call_id,
-            tool_call_name=tool_name,
-            parent_message_id=None,
-        )
-
-        for event in buffered:
-            yield event
-
-        # Record and mark completed
-        self.emitted_tool_call_ids.add(tool_call_id)
-        self._completed_streaming_function_calls.add(tool_call_id)
-        self._last_completed_streaming_fc_name = tool_name
-        self._last_completed_streaming_fc_id = tool_call_id
 
     async def _translate_function_response(
         self,
