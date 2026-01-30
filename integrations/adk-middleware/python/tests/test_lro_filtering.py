@@ -1366,6 +1366,12 @@ async def test_streaming_fc_args_nameless_chunks_stream_immediately():
         f"{[str(e.type).split('.')[-1] for e in tc_events5]}"
     )
 
+    # Confirmed ID must be in emitted_tool_call_ids so ClientProxyTool
+    # (which receives the confirmed ID, not the streaming ID) skips emission
+    assert "adk-uuid-confirmed" in translator.emitted_tool_call_ids, (
+        "Confirmed FC id must be in emitted_tool_call_ids for ClientProxyTool dedup"
+    )
+
 
 async def test_streaming_fc_args_multi_tool_disambiguation():
     """With multiple client tools, json_path matching disambiguates the tool name.

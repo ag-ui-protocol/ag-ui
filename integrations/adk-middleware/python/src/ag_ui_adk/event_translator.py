@@ -440,6 +440,10 @@ class EventTranslator:
                                 and fc_id != self._last_completed_streaming_fc_id
                             ):
                                 self._confirmed_to_streaming_id[fc_id] = self._last_completed_streaming_fc_id
+                                # Also mark the confirmed ID as emitted so
+                                # ClientProxyTool (which receives the confirmed
+                                # ID) knows to skip duplicate emission.
+                                self.emitted_tool_call_ids.add(fc_id)
                                 logger.debug(
                                     f"Mapped confirmed FC id {fc_id} → streaming id "
                                     f"{self._last_completed_streaming_fc_id} for tool '{fc_name}'"
