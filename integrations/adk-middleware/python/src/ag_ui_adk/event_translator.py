@@ -245,6 +245,10 @@ class EventTranslator:
         self._streaming_function_calls: Dict[str, Dict[str, Any]] = {}
         # Track function call IDs that have been fully streamed (to skip final complete event)
         self._completed_streaming_function_calls: set[str] = set()
+        # Set when a streaming FC completes — the next non-partial event's
+        # matching FC should be suppressed (its ID differs from the streaming ID).
+        # Stores the streaming tool_call_id for the confirmed→streaming ID mapping.
+        self._pending_streaming_completion_id: Optional[str] = None
         # The tool_call_id of the currently active streaming function call (used to
         # correlate chunks that lack an id, e.g. with stream_function_call_arguments)
         self._active_streaming_fc_id: Optional[str] = None
@@ -413,6 +417,27 @@ class EventTranslator:
                     #   (with ResumabilityConfig, the proxy tool emits its own events and
                     #   ADK may replay the same call as a confirmed event with a different ID)
                     all_lro_ids = lro_ids | set(self.long_running_tool_ids)
+                    # If a streaming FC just completed, suppress the first
+                    # matching FC from the confirmed event regardless of name
+                    # (the confirmed event may carry a different ID and the
+                    # resolved name may have been empty/falsy).
+                    pending_suppress_id: Optional[str] = None
+                    if self._pending_streaming_completion_id is not None:
+                        streaming_id = self._pending_streaming_completion_id
+                        self._pending_streaming_completion_id = None
+                        # Find the first non-LRO FC to suppress and map
+                        for fc in function_calls:
+                            fc_id = getattr(fc, 'id', None)
+                            if fc_id is not None and fc_id not in all_lro_ids:
+                                pending_suppress_id = fc_id
+                                self._confirmed_to_streaming_id[fc_id] = streaming_id
+                                self.emitted_tool_call_ids.add(fc_id)
+                                logger.debug(
+                                    f"Pending streaming completion: mapped confirmed FC id "
+                                    f"{fc_id} → streaming id {streaming_id}"
+                                )
+                                break
+
                     non_lro_calls = [
                         fc for fc in function_calls
                         if getattr(fc, 'id', None) not in all_lro_ids
@@ -420,6 +445,7 @@ class EventTranslator:
                         and getattr(fc, 'name', None) not in self._client_tool_names
                         and getattr(fc, 'id', None) not in self._completed_streaming_function_calls
                         and not (self._last_completed_streaming_fc_name is not None and getattr(fc, 'name', None) == self._last_completed_streaming_fc_name)
+                        and getattr(fc, 'id', None) != pending_suppress_id
                     ]
 
                     # Record confirmed→streaming id mapping for filtered FCs, then clear.
@@ -1214,6 +1240,9 @@ class EventTranslator:
             if resolved_name:
                 self._last_completed_streaming_fc_name = resolved_name
                 self._last_completed_streaming_fc_id = tool_call_id
+            # Signal that the next complete event should suppress the
+            # corresponding FC (its ID will differ from the streaming ID).
+            self._pending_streaming_completion_id = tool_call_id
 
             # Clean up streaming state
             del self._streaming_function_calls[tool_call_id]

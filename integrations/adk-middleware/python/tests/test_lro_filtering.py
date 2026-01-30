@@ -1476,6 +1476,56 @@ async def test_client_tool_names_still_filtered_without_streaming_fc_args():
     )
 
 
+async def test_pending_streaming_completion_suppresses_confirmed_event():
+    """When resolved_name is empty (tool not in client_tool_names), the
+    _pending_streaming_completion_id flag should still suppress the confirmed
+    event's FC and map its ID to the streaming ID."""
+
+    streaming_id = "streaming-fc-001"
+    confirmed_id = "confirmed-fc-999"
+
+    translator = EventTranslator(streaming_function_call_arguments=True)
+
+    # Simulate streaming completion: set the pending flag and mark as completed
+    translator._pending_streaming_completion_id = streaming_id
+    translator._completed_streaming_function_calls.add(streaming_id)
+
+    # Build a confirmed (non-partial) event with a different FC id
+    fc = MagicMock()
+    fc.id = confirmed_id
+    fc.name = "some_tool"
+    fc.args = {"key": "value"}
+
+    adk_event = MagicMock()
+    adk_event.author = "assistant"
+    adk_event.partial = False
+    adk_event.content = MagicMock()
+    adk_event.content.parts = []
+    adk_event.get_function_calls.return_value = [fc]
+    adk_event.long_running_tool_ids = []
+
+    events = []
+    async for e in translator.translate(adk_event, "thread", "run"):
+        events.append(e)
+
+    # The confirmed FC should be suppressed — no TOOL_CALL events emitted
+    event_types = [str(ev.type).split('.')[-1] for ev in events]
+    assert "TOOL_CALL_START" not in event_types, (
+        f"Confirmed FC should be suppressed by pending_streaming_completion_id, got {event_types}"
+    )
+
+    # Confirmed ID should be mapped to the streaming ID
+    assert translator._confirmed_to_streaming_id.get(confirmed_id) == streaming_id, (
+        f"Expected confirmed→streaming mapping, got {translator._confirmed_to_streaming_id}"
+    )
+
+    # Confirmed ID should be in emitted_tool_call_ids for ClientProxyTool dedup
+    assert confirmed_id in translator.emitted_tool_call_ids
+
+    # Flag should be cleared
+    assert translator._pending_streaming_completion_id is None
+
+
 if __name__ == "__main__":
     asyncio.run(test_translate_skips_lro_function_calls())
     asyncio.run(test_translate_lro_function_calls_only_emits_lro())
@@ -1504,5 +1554,6 @@ if __name__ == "__main__":
     asyncio.run(test_streaming_fc_args_nameless_chunks_stream_immediately())
     asyncio.run(test_streaming_fc_args_multi_tool_disambiguation())
     asyncio.run(test_client_tool_names_still_filtered_without_streaming_fc_args())
+    asyncio.run(test_pending_streaming_completion_suppresses_confirmed_event())
     print("\n✅ LRO and partial filtering tests ran to completion")
 
