@@ -240,6 +240,13 @@ class EventTranslator:
         # to ensure the frontend shows the confirmation dialog with buttons enabled
         self._deferred_confirm_events: List[BaseEvent] = []
 
+        # Streaming LRO: tool names that opted in via stream_tool_call=True
+        self._streaming_lro_tool_names: set[str] = {
+            m.tool for m in self._predict_state_mappings if m.stream_tool_call
+        }
+        # Streaming FCs whose TOOL_CALL_END is deferred until LRO confirm
+        self._streaming_awaiting_end: set[str] = set()
+
         # Track streaming function calls for incremental TOOL_CALL_ARGS emission
         # Maps tool_call_id -> dict with streaming state (started, accumulated_args, etc.)
         self._streaming_function_calls: Dict[str, Dict[str, Any]] = {}
@@ -1227,10 +1234,25 @@ class EventTranslator:
                     delta=closing_delta
                 )
 
-            yield ToolCallEndEvent(
-                type=EventType.TOOL_CALL_END,
-                tool_call_id=tool_call_id
+            # Determine whether to defer TOOL_CALL_END for streaming LRO tools.
+            # If the tool opted in via stream_tool_call=True, we defer END until
+            # the confirmed LRO event arrives in adk_agent.py.
+            should_defer_end = (
+                self._streaming_lro_tool_names
+                and (
+                    resolved_name in self._streaming_lro_tool_names
+                    or (not resolved_name and len(self._streaming_lro_tool_names) > 0)
+                )
             )
+
+            if should_defer_end:
+                logger.debug(f"Deferring TOOL_CALL_END for streaming LRO tool: {resolved_name} (id: {tool_call_id})")
+                self._streaming_awaiting_end.add(tool_call_id)
+            else:
+                yield ToolCallEndEvent(
+                    type=EventType.TOOL_CALL_END,
+                    tool_call_id=tool_call_id
+                )
 
             # Record so ClientProxyTool can skip duplicate emission
             self.emitted_tool_call_ids.add(tool_call_id)
@@ -1251,7 +1273,8 @@ class EventTranslator:
                 self._active_streaming_fc_id = None
 
             # Check if we should emit confirm_changes tool call after this tool
-            if resolved_name in self._predict_state_by_tool and resolved_name not in self._emitted_confirm_for_tools:
+            # Skip if END was deferred — confirm will be emitted after the deferred END
+            if not should_defer_end and resolved_name in self._predict_state_by_tool and resolved_name not in self._emitted_confirm_for_tools:
                 mappings = self._predict_state_by_tool[resolved_name]
                 should_emit_confirm = any(m.emit_confirm_tool for m in mappings)
                 if should_emit_confirm:
@@ -1277,6 +1300,95 @@ class EventTranslator:
                     ))
 
                     self._emitted_confirm_for_tools.add(resolved_name)
+
+    def get_streamed_id_for_lro(self, adk_event: ADKEvent) -> Optional[str]:
+        """Return a streaming tool_call_id whose END was deferred, if any.
+
+        Called from adk_agent.py when a confirmed LRO event arrives.
+        If there is a pending streaming FC awaiting its END, return its id
+        so the caller can map the confirmed id → streaming id and emit
+        the deferred END.
+
+        Returns:
+            The streaming tool_call_id, or None if nothing is awaiting.
+        """
+        if not self._streaming_awaiting_end:
+            return None
+        # Return the first (and typically only) awaiting id
+        return next(iter(self._streaming_awaiting_end))
+
+    def map_confirmed_to_streaming(self, confirmed_id: str, streaming_id: str) -> None:
+        """Map a confirmed LRO FC id to the streaming id we already emitted.
+
+        Also marks both ids as emitted and removes the streaming id from
+        the awaiting-end set.
+        """
+        self._confirmed_to_streaming_id[confirmed_id] = streaming_id
+        self.emitted_tool_call_ids.add(confirmed_id)
+        self._streaming_awaiting_end.discard(streaming_id)
+        self.long_running_tool_ids.append(confirmed_id)
+        logger.debug(
+            f"Mapped confirmed LRO id {confirmed_id} → streaming id {streaming_id}"
+        )
+
+    async def emit_deferred_lro_end(
+        self,
+        streaming_id: str,
+        tool_name: str,
+    ) -> AsyncGenerator[BaseEvent, None]:
+        """Emit the deferred TOOL_CALL_END and PredictState for a streaming LRO tool.
+
+        Called from adk_agent.py after mapping confirmed → streaming id.
+
+        Args:
+            streaming_id: The streaming tool_call_id to close.
+            tool_name: The confirmed tool name (now known).
+
+        Yields:
+            PredictState CustomEvent (if configured) then TOOL_CALL_END.
+        """
+        # Emit PredictState now that we know the tool name
+        if tool_name in self._predict_state_by_tool:
+            self._predictive_state_tool_call_ids.add(streaming_id)
+            if tool_name not in self._emitted_predict_state_for_tools:
+                mappings = self._predict_state_by_tool[tool_name]
+                predict_state_payload = [m.to_payload() for m in mappings]
+                logger.debug(f"Emitting deferred PredictState for streaming LRO tool '{tool_name}'")
+                yield CustomEvent(
+                    type=EventType.CUSTOM,
+                    name="PredictState",
+                    value=predict_state_payload,
+                )
+                self._emitted_predict_state_for_tools.add(tool_name)
+
+        yield ToolCallEndEvent(
+            type=EventType.TOOL_CALL_END,
+            tool_call_id=streaming_id,
+        )
+
+        # Emit deferred confirm_changes if configured
+        if tool_name in self._predict_state_by_tool and tool_name not in self._emitted_confirm_for_tools:
+            mappings = self._predict_state_by_tool[tool_name]
+            should_emit_confirm = any(m.emit_confirm_tool for m in mappings)
+            if should_emit_confirm:
+                confirm_tool_call_id = str(uuid.uuid4())
+                logger.debug(f"Deferring confirm_changes after deferred LRO END for '{tool_name}'")
+                self._deferred_confirm_events.append(ToolCallStartEvent(
+                    type=EventType.TOOL_CALL_START,
+                    tool_call_id=confirm_tool_call_id,
+                    tool_call_name="confirm_changes",
+                    parent_message_id=None,
+                ))
+                self._deferred_confirm_events.append(ToolCallArgsEvent(
+                    type=EventType.TOOL_CALL_ARGS,
+                    tool_call_id=confirm_tool_call_id,
+                    delta="{}",
+                ))
+                self._deferred_confirm_events.append(ToolCallEndEvent(
+                    type=EventType.TOOL_CALL_END,
+                    tool_call_id=confirm_tool_call_id,
+                ))
+                self._emitted_confirm_for_tools.add(tool_name)
 
     async def _translate_function_response(
         self,

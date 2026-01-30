@@ -1526,6 +1526,196 @@ async def test_pending_streaming_completion_suppresses_confirmed_event():
     assert translator._pending_streaming_completion_id is None
 
 
+async def test_streaming_lro_tool_defers_end_event():
+    """When a tool opts in via stream_tool_call=True, streaming END is deferred."""
+    from ag_ui_adk.config import PredictStateMapping
+
+    translator = EventTranslator(
+        predict_state=[PredictStateMapping(
+            state_key="document",
+            tool="write_document",
+            tool_argument="content",
+            stream_tool_call=True,
+        )],
+        streaming_function_call_arguments=True,
+        client_tool_names=set(),
+    )
+
+    # Simulate first streaming chunk (START)
+    fc1 = MagicMock()
+    fc1.id = "stream-id-1"
+    fc1.name = "write_document"
+    fc1.args = {"content": "Hello"}
+    fc1.partial_args = None
+    fc1.will_continue = True
+
+    adk_event1 = MagicMock()
+    adk_event1.author = "assistant"
+    adk_event1.partial = True
+    adk_event1.content = MagicMock()
+    adk_event1.content.parts = []
+    adk_event1.get_function_calls = lambda: [fc1]
+    adk_event1.long_running_tool_ids = []
+
+    events1 = []
+    async for e in translator.translate(adk_event1, "thread", "run"):
+        events1.append(e)
+
+    types1 = [e.type for e in events1]
+    assert EventType.TOOL_CALL_START in types1
+
+    # Simulate end-of-stream chunk (will_continue=False)
+    fc2 = MagicMock()
+    fc2.id = "stream-id-1"
+    fc2.name = None
+    fc2.args = {"content": "Hello world"}
+    fc2.partial_args = None
+    fc2.will_continue = False
+
+    adk_event2 = MagicMock()
+    adk_event2.author = "assistant"
+    adk_event2.partial = True
+    adk_event2.content = MagicMock()
+    adk_event2.content.parts = []
+    adk_event2.get_function_calls = lambda: [fc2]
+    adk_event2.long_running_tool_ids = []
+
+    events2 = []
+    async for e in translator.translate(adk_event2, "thread", "run"):
+        events2.append(e)
+
+    types2 = [e.type for e in events2]
+    # END should be deferred, not emitted
+    assert EventType.TOOL_CALL_END not in types2, f"END should be deferred, got {types2}"
+    # ARGS should still be emitted
+    assert EventType.TOOL_CALL_ARGS in types2
+
+    # The id should be in _streaming_awaiting_end
+    assert "stream-id-1" in translator._streaming_awaiting_end
+
+
+async def test_lro_complete_event_emits_deferred_end():
+    """When confirmed LRO arrives and a streaming FC is awaiting END, emit deferred END + PredictState."""
+    from ag_ui_adk.config import PredictStateMapping
+
+    translator = EventTranslator(
+        predict_state=[PredictStateMapping(
+            state_key="document",
+            tool="write_document",
+            tool_argument="content",
+            stream_tool_call=True,
+        )],
+        streaming_function_call_arguments=True,
+        client_tool_names=set(),
+    )
+
+    # Put a streaming id into awaiting set directly
+    translator._streaming_awaiting_end.add("stream-id-1")
+    translator.emitted_tool_call_ids.add("stream-id-1")
+
+    # Simulate confirmed LRO event
+    adk_event = MagicMock()
+    adk_event.long_running_tool_ids = ["confirmed-id-1"]
+    adk_event.content = MagicMock()
+    part = MagicMock()
+    part.function_call = MagicMock()
+    part.function_call.id = "confirmed-id-1"
+    part.function_call.name = "write_document"
+    adk_event.content.parts = [part]
+
+    # get_streamed_id_for_lro should return the streaming id
+    streamed_id = translator.get_streamed_id_for_lro(adk_event)
+    assert streamed_id == "stream-id-1"
+
+    # Map confirmed → streaming
+    translator.map_confirmed_to_streaming("confirmed-id-1", "stream-id-1")
+    assert translator._confirmed_to_streaming_id["confirmed-id-1"] == "stream-id-1"
+    assert "stream-id-1" not in translator._streaming_awaiting_end
+
+    # Emit deferred END
+    events = []
+    async for e in translator.emit_deferred_lro_end("stream-id-1", "write_document"):
+        events.append(e)
+
+    types = [e.type for e in events]
+    # Should have PredictState CustomEvent + TOOL_CALL_END
+    assert EventType.CUSTOM in types, f"Expected PredictState CustomEvent, got {types}"
+    assert EventType.TOOL_CALL_END in types, f"Expected TOOL_CALL_END, got {types}"
+
+    # PredictState should come before END
+    custom_idx = types.index(EventType.CUSTOM)
+    end_idx = types.index(EventType.TOOL_CALL_END)
+    assert custom_idx < end_idx
+
+    # TOOL_CALL_END should use the streaming id
+    end_event = [e for e in events if e.type == EventType.TOOL_CALL_END][0]
+    assert end_event.tool_call_id == "stream-id-1"
+
+    # confirm_changes should be deferred
+    assert translator.has_deferred_confirm_events()
+
+
+async def test_non_opted_in_lro_unchanged():
+    """Tools without stream_tool_call=True should emit END normally during streaming."""
+    from ag_ui_adk.config import PredictStateMapping
+
+    translator = EventTranslator(
+        predict_state=[PredictStateMapping(
+            state_key="report",
+            tool="publish_report",
+            tool_argument="content",
+            stream_tool_call=False,  # NOT opted in
+        )],
+    )
+
+    # Simulate a streaming FC that completes
+    fc = MagicMock()
+    fc.id = "normal-stream-1"
+    fc.name = "publish_report"
+    fc.args = {"content": "Report text"}
+    fc.partial_args = None
+    fc.will_continue = False
+
+    adk_event = MagicMock()
+    adk_event.author = "assistant"
+    adk_event.partial = True
+    adk_event.content = MagicMock()
+    adk_event.content.parts = []
+    adk_event.get_function_calls = lambda: [fc]
+    adk_event.long_running_tool_ids = []
+
+    events = []
+    async for e in translator.translate(adk_event, "thread", "run"):
+        events.append(e)
+
+    types = [e.type for e in events]
+    # END should be emitted normally (not deferred)
+    assert EventType.TOOL_CALL_END in types, f"Expected TOOL_CALL_END, got {types}"
+    assert len(translator._streaming_awaiting_end) == 0
+
+
+async def test_streaming_lro_confirmed_id_mapping():
+    """Verify that confirmed→streaming ID mapping works for tool result routing."""
+    from ag_ui_adk.config import PredictStateMapping
+
+    translator = EventTranslator(
+        predict_state=[PredictStateMapping(
+            state_key="document",
+            tool="write_document",
+            tool_argument="content",
+            stream_tool_call=True,
+        )],
+    )
+
+    # Simulate the mapping
+    translator.map_confirmed_to_streaming("confirmed-42", "streaming-42")
+
+    # Verify mapping
+    assert translator._confirmed_to_streaming_id["confirmed-42"] == "streaming-42"
+    assert "confirmed-42" in translator.emitted_tool_call_ids
+    assert "confirmed-42" in translator.long_running_tool_ids
+
+
 if __name__ == "__main__":
     asyncio.run(test_translate_skips_lro_function_calls())
     asyncio.run(test_translate_lro_function_calls_only_emits_lro())
@@ -1555,5 +1745,9 @@ if __name__ == "__main__":
     asyncio.run(test_streaming_fc_args_multi_tool_disambiguation())
     asyncio.run(test_client_tool_names_still_filtered_without_streaming_fc_args())
     asyncio.run(test_pending_streaming_completion_suppresses_confirmed_event())
+    asyncio.run(test_streaming_lro_tool_defers_end_event())
+    asyncio.run(test_lro_complete_event_emits_deferred_end())
+    asyncio.run(test_non_opted_in_lro_unchanged())
+    asyncio.run(test_streaming_lro_confirmed_id_mapping())
     print("\n✅ LRO and partial filtering tests ran to completion")
 

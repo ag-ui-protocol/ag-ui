@@ -1876,15 +1876,41 @@ class ADKAgent:
                     if has_lro_function_call:
                         is_long_running_tool = True
 
-                    # Always emit TOOL_CALL events for LRO function calls so the
-                    # frontend knows a tool was called.  This works on all ADK versions.
-                    async for ag_ui_event in event_translator.translate_lro_function_calls(
-                        adk_event
-                    ):
-                        await event_queue.put(ag_ui_event)
-                        if ag_ui_event.type == EventType.TOOL_CALL_END:
+                    # Check if a streaming FC already emitted START+ARGS for this LRO
+                    streamed_tc_id = event_translator.get_streamed_id_for_lro(adk_event)
+                    if streamed_tc_id:
+                        # Find the confirmed LRO FC in the event
+                        lro_fc = None
+                        if adk_event.content and getattr(adk_event.content, 'parts', None):
+                            for part in adk_event.content.parts:
+                                fc = getattr(part, 'function_call', None)
+                                fc_id = getattr(fc, 'id', None) if fc else None
+                                if fc_id and fc_id in lro_ids:
+                                    lro_fc = fc
+                                    break
+
+                        if lro_fc:
+                            event_translator.map_confirmed_to_streaming(lro_fc.id, streamed_tc_id)
+                            async for ev in event_translator.emit_deferred_lro_end(streamed_tc_id, lro_fc.name):
+                                await event_queue.put(ev)
+                                logger.debug(f"Event queued (deferred LRO): {type(ev).__name__} (thread {input.thread_id})")
                             is_long_running_tool = True
-                        logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
+                        else:
+                            # Fallback: no matching FC found, use normal path
+                            async for ag_ui_event in event_translator.translate_lro_function_calls(adk_event):
+                                await event_queue.put(ag_ui_event)
+                                if ag_ui_event.type == EventType.TOOL_CALL_END:
+                                    is_long_running_tool = True
+                                logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
+                    else:
+                        # Normal LRO path — no pre-streamed FC
+                        async for ag_ui_event in event_translator.translate_lro_function_calls(
+                            adk_event
+                        ):
+                            await event_queue.put(ag_ui_event)
+                            if ag_ui_event.type == EventType.TOOL_CALL_END:
+                                is_long_running_tool = True
+                            logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
                     # Hard stop the execution if we find any long running tool
                     # AND the agent is NOT using ADK's native resumability.
                     # With ResumabilityConfig, ADK handles the pause/resume flow
