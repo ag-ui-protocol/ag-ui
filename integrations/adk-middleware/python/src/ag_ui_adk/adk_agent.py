@@ -1862,6 +1862,12 @@ class ADKAgent:
                         await event_queue.put(end_event)
                         logger.debug(f"Event queued (forced close): {type(end_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
 
+                    # Set flag based on LRO detection directly — the translator may
+                    # skip client tools to avoid duplicate emission, but we still
+                    # need to know an LRO pause happened for invocation_id management.
+                    if has_lro_function_call:
+                        is_long_running_tool = True
+
                     # Always emit TOOL_CALL events for LRO function calls so the
                     # frontend knows a tool was called.  This works on all ADK versions.
                     async for ag_ui_event in event_translator.translate_lro_function_calls(

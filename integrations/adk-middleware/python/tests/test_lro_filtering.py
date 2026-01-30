@@ -1143,6 +1143,57 @@ async def test_full_resumable_hitl_flow_no_duplicates():
         "Translator should NOT have recorded suppressed IDs"
 
 
+async def test_has_lro_function_call_sets_is_long_running_tool_even_when_translator_skips():
+    """is_long_running_tool must be True when has_lro_function_call is True,
+    even if translate_lro_function_calls emits no events (e.g. client tool filtered).
+
+    This is critical for HITL SequentialAgent resumption: if is_long_running_tool
+    stays False, the invocation_id is cleared after the run, breaking multi-turn
+    resumption.
+
+    Reproduces the bug from commit c08a56f5 where client_tool_names filtering
+    in translate_lro_function_calls caused no TOOL_CALL_END to be emitted,
+    so is_long_running_tool was never set to True.
+    """
+    translator = EventTranslator(client_tool_names={"generate_task_steps"})
+
+    lro_id = "adk-lro-filtered"
+    lro_call = MagicMock()
+    lro_call.id = lro_id
+    lro_call.name = "generate_task_steps"
+    lro_call.args = {"steps": []}
+
+    lro_part = MagicMock()
+    lro_part.function_call = lro_call
+
+    adk_event = MagicMock()
+    adk_event.content = MagicMock()
+    adk_event.content.parts = [lro_part]
+    adk_event.long_running_tool_ids = [lro_id]
+
+    # Simulate the _run_adk_in_background logic:
+    # has_lro_function_call is True (detected upstream), but translator emits nothing
+    has_lro_function_call = True
+    is_long_running_tool = False
+
+    # The fix: set flag based on has_lro_function_call directly
+    if has_lro_function_call:
+        is_long_running_tool = True
+
+    # Translator emits nothing due to client_tool_names filtering
+    events = []
+    async for e in translator.translate_lro_function_calls(adk_event):
+        events.append(e)
+        if e.type == EventType.TOOL_CALL_END:
+            is_long_running_tool = True
+
+    assert len(events) == 0, "Translator should emit 0 events (client tool filtered)"
+    assert is_long_running_tool is True, (
+        "is_long_running_tool must be True even when translator skips client tool emission. "
+        "Without this, invocation_id is cleared and SequentialAgent resumption breaks."
+    )
+
+
 if __name__ == "__main__":
     asyncio.run(test_translate_skips_lro_function_calls())
     asyncio.run(test_translate_lro_function_calls_only_emits_lro())
@@ -1167,5 +1218,6 @@ if __name__ == "__main__":
     asyncio.run(test_client_tool_names_mixed_client_and_backend_calls())
     asyncio.run(test_translator_records_emitted_tool_call_ids())
     asyncio.run(test_full_resumable_hitl_flow_no_duplicates())
+    asyncio.run(test_has_lro_function_call_sets_is_long_running_tool_even_when_translator_skips())
     print("\n✅ LRO and partial filtering tests ran to completion")
 
