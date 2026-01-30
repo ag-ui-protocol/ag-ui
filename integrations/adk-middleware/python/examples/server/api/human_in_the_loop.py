@@ -20,7 +20,7 @@ DEFINE_TASK_TOOL = {
     "type": "function",
     "function": {
         "name": "generate_task_steps",
-        "description": "Make up 10 steps (only a couple of words per step) that are required for a task. The step should be in imperative form (i.e. Dig hole, Open door, ...)",
+        "description": "Generate steps (only a couple of words per step) that are required for a task. The number of steps should match what the user requests, or default to 10 if not specified. Each step should be in imperative form (i.e. Dig hole, Open door, ...)",
         "parameters": {
             "type": "object",
             "properties": {
@@ -41,7 +41,7 @@ DEFINE_TASK_TOOL = {
                         },
                         "required": ["description", "status"]
                     },
-                    "description": "An array of 10 step objects, each containing text and status"
+                    "description": "An array of step objects, each containing text and status"
                 }
             },
             "required": ["steps"]
@@ -61,7 +61,7 @@ human_in_loop_agent = Agent(
 - Execute only human-approved steps
 
 **When a user requests a task:**
-1. ALWAYS call the `generate_task_steps` function to create 10 step breakdown
+1. ALWAYS call the `generate_task_steps` function to create a step breakdown (use the number of steps the user requests, or default to 10)
 2. Each step must be:
    - Written in imperative form (e.g., "Open file", "Check settings", "Send email")
    - Concise (2-4 words maximum)
@@ -93,7 +93,7 @@ human_in_loop_agent = Agent(
 - EVERY STEP AND THE CONFIRMATION MUST BE ON A NEW LINE. DO NOT COMBINE THEM INTO ONE LINE. USE A <br> TAG TO SEPARATE THEM.
 
 **Key Guidelines:**
-- Always generate exactly 10 steps
+- Generate the number of steps the user requests, defaulting to 10 if not specified
 - Make steps granular enough to be independently enabled/disabled
 
 Tool reference: {DEFINE_TASK_TOOL}

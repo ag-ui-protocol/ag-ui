@@ -1864,6 +1864,23 @@ class ADKAgent:
             # Force close any streaming messages
             async for ag_ui_event in event_translator.force_close_streaming_message():
                 await event_queue.put(ag_ui_event)
+
+            # Clear stored invocation_id after a completed run so subsequent
+            # new runs don't erroneously attempt HITL resumption with a stale ID.
+            # Only clear when NOT paused on an LRO tool — if we're pausing for
+            # HITL, the invocation_id is needed for the resume.
+            if self._is_adk_resumable() and stored_invocation_id and not is_long_running_tool:
+                try:
+                    await self._session_manager.update_session_state(
+                        backend_session_id, app_name, user_id,
+                        {INVOCATION_ID_STATE_KEY: None}
+                    )
+                    logger.debug(
+                        f"Cleared stored invocation_id after completed run: {stored_invocation_id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to clear stored invocation_id: {e}")
+
             # moving states snapshot events after the text event clousure to avoid this error https://github.com/Contextable/ag-ui/issues/28
             final_state = await self._session_manager.get_session_state(backend_session_id, app_name, user_id)
 
