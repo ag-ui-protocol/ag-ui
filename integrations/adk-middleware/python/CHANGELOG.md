@@ -43,7 +43,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **FIXED**: Reload session on cache miss to populate events (#1021)
   - `_find_session_by_thread_id()` uses `list_sessions()` which returns metadata only; now reloads via `get_session()` after a cache miss so that session events are available
   - Thanks to **@lakshminarasimmanv** for this fix!
-
+- **FIXED**: Duplicate TOOL_CALL event emission for client-side tools with ResumabilityConfig
+  - With `ResumabilityConfig(is_resumable=True)`, ADK emits the same function call from up to
+    three sources (LRO event, confirmed event with a different ID, and ClientProxyTool execution),
+    causing the frontend to render tool call results (e.g., HITL task lists) multiple times
+  - EventTranslator now accepts `client_tool_names` to skip emission for tools owned by
+    `ClientProxyTool`, letting the proxy be the sole emitter for client-side tools
+  - Bidirectional ID tracking between EventTranslator and ClientProxyTool prevents duplicates
+    regardless of execution order
+  - Added 12 regression tests covering LRO, confirmed, partial, and mixed tool call scenarios
 - **FIXED**: Relax Python version constraint to allow Python 3.14 (#973)
   - Changed `requires-python` from `>=3.9, <3.14` to `>=3.10, <3.15`
   - Fixed `asyncio.get_event_loop()` deprecation in tests for Python 3.14 compatibility

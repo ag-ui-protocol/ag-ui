@@ -42,6 +42,8 @@ class ClientProxyTool(BaseTool):
         predict_state_mappings: Optional[List[PredictStateMapping]] = None,
         emitted_predict_state: Optional[Set[str]] = None,
         accumulated_predict_state: Optional[Dict[str, Any]] = None,
+        emitted_tool_call_ids: Optional[Set[str]] = None,
+        translator_emitted_tool_call_ids: Optional[Set[str]] = None,
     ):
         """Initialize the client proxy tool.
 
@@ -55,6 +57,11 @@ class ClientProxyTool(BaseTool):
                 PredictState emitted. Typically owned by ClientProxyToolset.
             accumulated_predict_state: Shared dict for accumulating predictive state
                 values from tool args. Merged into final STATE_SNAPSHOT.
+            emitted_tool_call_ids: Shared set tracking tool call IDs that this proxy
+                has already emitted TOOL_CALL events for. Used by EventTranslator to
+                suppress duplicate emissions from ADK confirmed/LRO events.
+            translator_emitted_tool_call_ids: Shared set of tool call IDs already
+                emitted by EventTranslator. Checked before emitting to avoid duplicates.
         """
         # Initialize BaseTool with name and description
         # All client-side tools are long-running for architectural simplicity
@@ -69,6 +76,8 @@ class ClientProxyTool(BaseTool):
         self.predict_state_mappings = predict_state_mappings or []
         self._emitted_predict_state = emitted_predict_state if emitted_predict_state is not None else set()
         self._accumulated_predict_state = accumulated_predict_state if accumulated_predict_state is not None else {}
+        self._emitted_tool_call_ids = emitted_tool_call_ids if emitted_tool_call_ids is not None else set()
+        self._translator_emitted_tool_call_ids = translator_emitted_tool_call_ids if translator_emitted_tool_call_ids is not None else set()
 
         # Create dynamic function with proper parameter signatures for ADK inspection
         # This allows ADK to extract parameters from user requests correctly
@@ -182,6 +191,13 @@ class ClientProxyTool(BaseTool):
             logger.warning(f"ADK function_call_id not available, generated: {tool_call_id}")
 
         try:
+            # Skip emission if EventTranslator already emitted events for this tool call ID.
+            # This happens when ADK emits the function call event before executing the tool —
+            # the translator processes the event first, then ADK runs this proxy tool.
+            if tool_call_id in self._translator_emitted_tool_call_ids:
+                logger.debug(f"Skipping TOOL_CALL emission for {tool_call_id} — already emitted by EventTranslator")
+                return None
+
             # Check if this tool has predictive state configuration
             # Emit PredictState CustomEvent BEFORE TOOL_CALL_START (once per tool name)
             mappings_for_tool = [m for m in self.predict_state_mappings if m.tool == self.name]
@@ -235,6 +251,10 @@ class ClientProxyTool(BaseTool):
             )
             await self.event_queue.put(end_event)
             logger.debug(f"Emitted TOOL_CALL_END for {tool_call_id}")
+
+            # Record this ID so EventTranslator can suppress duplicate emissions
+            # from ADK's confirmed/LRO events for the same function call
+            self._emitted_tool_call_ids.add(tool_call_id)
 
             # Return None for long-running tools - client handles the actual execution
             logger.debug(f"Returning None for long-running tool {tool_call_id}")

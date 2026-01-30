@@ -52,6 +52,13 @@ class ClientProxyToolset(BaseToolset):
         # Accumulated predictive state values from tool args - merged into final STATE_SNAPSHOT
         # This ensures predictive state survives the final STATE_SNAPSHOT that replaces all state
         self._accumulated_predict_state: dict = {}
+        # Track tool call IDs that ClientProxyTool has already emitted events for.
+        # Shared with EventTranslator to prevent duplicate TOOL_CALL emissions.
+        self._emitted_tool_call_ids: set[str] = set()
+        # Set of tool call IDs already emitted by EventTranslator.
+        # Assigned externally after EventTranslator is created. Checked by
+        # ClientProxyTool before emitting to avoid duplicates.
+        self._translator_emitted_tool_call_ids: set[str] = set()
 
         logger.info(f"Initialized ClientProxyToolset with {len(ag_ui_tools)} tools (all long-running)")
 
@@ -84,6 +91,8 @@ class ClientProxyToolset(BaseToolset):
                     predict_state_mappings=self.predict_state,
                     emitted_predict_state=self._emitted_predict_state,
                     accumulated_predict_state=self._accumulated_predict_state,
+                    emitted_tool_call_ids=self._emitted_tool_call_ids,
+                    translator_emitted_tool_call_ids=self._translator_emitted_tool_call_ids,
                 )
                 proxy_tools.append(proxy_tool)
                 logger.info(f"[GET_TOOLS] Created proxy tool for '{ag_ui_tool.name}' (long-running)")

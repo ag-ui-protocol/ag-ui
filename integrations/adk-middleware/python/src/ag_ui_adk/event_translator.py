@@ -168,6 +168,8 @@ class EventTranslator:
         self,
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
         streaming_function_call_arguments: bool = False,
+        client_emitted_tool_call_ids: Optional[set] = None,
+        client_tool_names: Optional[set] = None,
     ):
         """Initialize the event translator.
 
@@ -181,8 +183,23 @@ class EventTranslator:
                 args are treated as the first chunk of a streaming function call
                 (Gemini 3+ with ``stream_function_call_arguments=True``).
                 When False (default), such events are skipped.
+            client_emitted_tool_call_ids: Optional shared set of tool call IDs that
+                ClientProxyTool has already emitted TOOL_CALL events for. When provided,
+                the translator will skip emitting duplicate events for these IDs.
+            client_tool_names: Optional set of tool names that are handled by
+                ClientProxyTool. When provided, the translator will skip emitting
+                TOOL_CALL events for these tool names, since the proxy tool will
+                emit its own events during execution. This prevents duplicate
+                emissions when ADK assigns different IDs across LRO and confirmed events.
         """
         self._streaming_fc_args_enabled = streaming_function_call_arguments
+        # Shared set of tool call IDs already emitted by ClientProxyTool
+        self._client_emitted_tool_call_ids = client_emitted_tool_call_ids if client_emitted_tool_call_ids is not None else set()
+        # Set of tool names handled by ClientProxyTool — translator skips these entirely
+        self._client_tool_names = client_tool_names if client_tool_names is not None else set()
+        # Set of tool call IDs that this translator has already emitted events for.
+        # Shared with ClientProxyTool so it can skip duplicate emissions.
+        self.emitted_tool_call_ids: set[str] = set()
         # Track tool call IDs for consistency
         self._active_tool_calls: Dict[str, str] = {}  # Tool call ID -> Tool call ID (for consistency)
         # Track streaming message state
@@ -321,7 +338,12 @@ class EventTranslator:
                     except Exception:
                         lro_ids = set()
 
-                    non_lro_calls = [fc for fc in function_calls if getattr(fc, 'id', None) not in lro_ids]
+                    non_lro_calls = [
+                        fc for fc in function_calls
+                        if getattr(fc, 'id', None) not in lro_ids
+                        and getattr(fc, 'id', None) not in self._client_emitted_tool_call_ids
+                        and getattr(fc, 'name', None) not in self._client_tool_names
+                    ]
 
                     for func_call in non_lro_calls:
                         has_partial_args = getattr(func_call, 'partial_args', None)
@@ -369,9 +391,19 @@ class EventTranslator:
                     # Filter out LRO calls and calls already handled via streaming.
                     # With stream_function_call_arguments the aggregated FC has id=None,
                     # so we also check by name against the last completed streaming tool name.
+                    # Also exclude:
+                    # - tool calls already emitted via translate_lro_function_calls
+                    #   (self.long_running_tool_ids tracks IDs across events, while lro_ids
+                    #   is per-event and may be empty on the confirmed/non-partial replay)
+                    # - tool calls already emitted by ClientProxyTool
+                    #   (with ResumabilityConfig, the proxy tool emits its own events and
+                    #   ADK may replay the same call as a confirmed event with a different ID)
+                    all_lro_ids = lro_ids | set(self.long_running_tool_ids)
                     non_lro_calls = [
                         fc for fc in function_calls
-                        if getattr(fc, 'id', None) not in lro_ids
+                        if getattr(fc, 'id', None) not in all_lro_ids
+                        and getattr(fc, 'id', None) not in self._client_emitted_tool_call_ids
+                        and getattr(fc, 'name', None) not in self._client_tool_names
                         and getattr(fc, 'id', None) not in self._completed_streaming_function_calls
                         and not (self._last_completed_streaming_fc_name is not None and getattr(fc, 'name', None) == self._last_completed_streaming_fc_name)
                     ]
@@ -768,7 +800,8 @@ class EventTranslator:
                 if part.function_call:
                     if not long_running_function_call and part.function_call.id in (
                         adk_event.long_running_tool_ids or []
-                    ):
+                    ) and part.function_call.id not in self._client_emitted_tool_call_ids \
+                      and getattr(part.function_call, 'name', None) not in self._client_tool_names:
                         long_running_function_call = part.function_call
                         self.long_running_tool_ids.append(long_running_function_call.id)
                         yield ToolCallStartEvent(
@@ -792,6 +825,9 @@ class EventTranslator:
                             type=EventType.TOOL_CALL_END,
                             tool_call_id=long_running_function_call.id
                         )
+
+                        # Record so ClientProxyTool can skip duplicate emission
+                        self.emitted_tool_call_ids.add(long_running_function_call.id)
 
                         # Clean up tracking
                         self._active_tool_calls.pop(long_running_function_call.id, None)
@@ -867,6 +903,9 @@ class EventTranslator:
                 type=EventType.TOOL_CALL_END,
                 tool_call_id=tool_call_id
             )
+
+            # Record so ClientProxyTool can skip duplicate emission
+            self.emitted_tool_call_ids.add(tool_call_id)
 
             # Clean up tracking
             self._active_tool_calls.pop(tool_call_id, None)
@@ -1066,6 +1105,9 @@ class EventTranslator:
                 type=EventType.TOOL_CALL_END,
                 tool_call_id=tool_call_id
             )
+
+            # Record so ClientProxyTool can skip duplicate emission
+            self.emitted_tool_call_ids.add(tool_call_id)
 
             # Mark as completed to skip the final complete event
             self._completed_streaming_function_calls.add(tool_call_id)

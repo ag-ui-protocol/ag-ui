@@ -1659,8 +1659,31 @@ class ADKAgent:
                     user_message = await self._convert_latest_message(input, input.messages)
                 new_message = user_message
 
+            # Create a single shared set for tracking tool call IDs emitted by ClientProxyTool.
+            # All ClientProxyToolsets in this run reference this set so the EventTranslator
+            # sees IDs added by any proxy tool during execution (the set is mutated in-place).
+            client_emitted_ids: set[str] = set()
+            for toolset in client_proxy_toolsets:
+                toolset._emitted_tool_call_ids = client_emitted_ids
+
+            # Collect client-side tool names from proxy toolsets
+            client_tool_names: set[str] = set()
+            for toolset in client_proxy_toolsets:
+                for tool in toolset.ag_ui_tools:
+                    client_tool_names.add(tool.name)
+
             # Create event translator with predictive state configuration
-            event_translator = EventTranslator(predict_state=self._predict_state, streaming_function_call_arguments=self._streaming_function_call_arguments)
+            event_translator = EventTranslator(
+                predict_state=self._predict_state,
+                streaming_function_call_arguments=self._streaming_function_call_arguments,
+                client_emitted_tool_call_ids=client_emitted_ids,
+                client_tool_names=client_tool_names,
+            )
+
+            # Share the translator's emitted IDs set with proxy toolsets so
+            # ClientProxyTool can skip emission when the translator already handled it.
+            for toolset in client_proxy_toolsets:
+                toolset._translator_emitted_tool_call_ids = event_translator.emitted_tool_call_ids
 
             try:
                 # Session was already obtained from _ensure_session_exists above
