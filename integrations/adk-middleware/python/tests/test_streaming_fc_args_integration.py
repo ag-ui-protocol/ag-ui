@@ -104,7 +104,7 @@ class TestStreamingFCArgsIntegration:
 
         adk_agent = LlmAgent(
             name="streaming_fc_test_agent",
-            model="gemini-3-pro-preview",
+            model="gemini-3-flash-preview",
             instruction=(
                 "You are a document writer. You MUST ALWAYS call the "
                 "write_document_local tool. NEVER respond with plain text. "

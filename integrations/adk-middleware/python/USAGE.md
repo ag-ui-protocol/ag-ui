@@ -476,7 +476,7 @@ generate_config = types.GenerateContentConfig(
 
 agent = LlmAgent(
     name="writer",
-    model="gemini-3-pro-preview",
+    model="gemini-3-flash-preview",
     tools=[write_document, AGUIToolset()],
     generate_content_config=generate_config,
 )
