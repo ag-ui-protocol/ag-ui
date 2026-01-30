@@ -34,16 +34,14 @@ Prerequisites for streaming:
 Fallback:
 - Without Vertex AI credentials falls back to Gemini 2.5 Flash (single TOOL_CALL_ARGS).
 
-ADK workarounds for Gemini 3 (google-adk 1.23.0):
+ADK workarounds for Gemini 3 (google-adk 1.23.0) – both are automatically
+applied by the middleware when ``streaming_function_call_arguments=True``:
 
-1. **Aggregator patch** – Applied explicitly in this example via
-   ``apply_aggregator_patch()`` from ``ag_ui_adk.workarounds``.  This fixes
-   the StreamingResponseAggregator first-chunk bug so that session history
-   contains valid function call parts.  It is NOT auto-applied by the
-   middleware because it conflicts with the event translator's Mode A streaming.
+1. **Aggregator patch** – Fixes the StreamingResponseAggregator first-chunk bug
+   so that session history contains valid function call parts.
 
-2. **Thought-signature repair** – Automatically injected by the middleware as a
-   ``before_model_callback`` when ``streaming_function_call_arguments=True``.
+2. **Thought-signature repair** – Injected as a ``before_model_callback`` to
+   ensure function_call parts have valid thought signatures.
 """
 
 from __future__ import annotations
@@ -57,7 +55,6 @@ load_dotenv()
 
 from fastapi import FastAPI
 from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, PredictStateMapping, AGUIToolset
-from ag_ui_adk.workarounds import apply_aggregator_patch
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
@@ -170,9 +167,6 @@ def on_before_agent(callback_context: CallbackContext):
 
 _model_name, _can_stream_args = _get_model_config()
 _generate_config = _get_generate_content_config(_can_stream_args)
-
-if _can_stream_args:
-    apply_aggregator_patch()
 
 logger.info(
     "Predictive State Demo: Using %s (streaming function call arguments %s)",

@@ -263,12 +263,8 @@ class TestRepairThoughtSignatures:
 class TestADKAgentWorkaroundIntegration:
     """Test that ADKAgent auto-applies workarounds when streaming_function_call_arguments=True."""
 
-    def test_aggregator_patch_not_called_on_init(self):
-        """apply_aggregator_patch is NOT called during ADKAgent.__init__.
-
-        The aggregator patch interferes with the event translator's Mode A
-        streaming, so it must not be auto-applied.
-        """
+    def test_aggregator_patch_called_on_init_when_streaming(self):
+        """apply_aggregator_patch is called during ADKAgent.__init__ when streaming is enabled."""
         with patch("ag_ui_adk.adk_agent.apply_aggregator_patch") as mock_patch:
             from ag_ui_adk import ADKAgent
             from unittest.mock import MagicMock as MM
@@ -283,6 +279,28 @@ class TestADKAgentWorkaroundIntegration:
                     app_name="test",
                     user_id="user",
                     streaming_function_call_arguments=True,
+                )
+            except Exception:
+                pass
+
+            mock_patch.assert_called_once()
+
+    def test_aggregator_patch_not_called_when_not_streaming(self):
+        """apply_aggregator_patch is NOT called when streaming is disabled."""
+        with patch("ag_ui_adk.adk_agent.apply_aggregator_patch") as mock_patch:
+            from ag_ui_adk import ADKAgent
+            from unittest.mock import MagicMock as MM
+
+            agent = MM()
+            agent.name = "test"
+            agent.model_fields = {}
+
+            try:
+                ADKAgent(
+                    adk_agent=agent,
+                    app_name="test",
+                    user_id="user",
+                    streaming_function_call_arguments=False,
                 )
             except Exception:
                 pass

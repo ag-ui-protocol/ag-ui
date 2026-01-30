@@ -96,7 +96,6 @@ class TestStreamingFCArgsIntegration:
         generate_config = types.GenerateContentConfig(
             tool_config=types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(
-                    mode="ANY",
                     stream_function_call_arguments=True,
                 )
             )
@@ -178,14 +177,29 @@ class TestStreamingFCArgsIntegration:
             f"got {len(args_events)}. Event types: {event_types}"
         )
 
-        # All TOOL_CALL_ARGS should reference the same tool_call_id as START/END
-        start_event = next(e for e in events if str(e.type).split(".")[-1] == "TOOL_CALL_START")
-        end_event = next(e for e in events if str(e.type).split(".")[-1] == "TOOL_CALL_END")
+        # All TOOL_CALL_ARGS for write_document_local should reference the same tool_call_id
+        start_event = next(
+            e for e in events
+            if str(e.type).split(".")[-1] == "TOOL_CALL_START"
+            and getattr(e, "tool_call_name", None) == "write_document_local"
+        )
+        end_event = next(
+            e for e in events
+            if str(e.type).split(".")[-1] == "TOOL_CALL_END"
+            and e.tool_call_id == start_event.tool_call_id
+        )
         assert start_event.tool_call_id == end_event.tool_call_id, (
             f"START and END tool_call_ids don't match: "
             f"{start_event.tool_call_id} vs {end_event.tool_call_id}"
         )
-        for args_event in args_events:
+        # Filter ARGS to only the write_document_local tool call (exclude confirm_changes etc.)
+        write_args_events = [e for e in args_events if e.tool_call_id == start_event.tool_call_id]
+        assert len(write_args_events) > 1, (
+            f"Expected multiple TOOL_CALL_ARGS for write_document_local, "
+            f"got {len(write_args_events)}. All ARGS ids: "
+            f"{[e.tool_call_id for e in args_events]}"
+        )
+        for args_event in write_args_events:
             assert args_event.tool_call_id == start_event.tool_call_id, (
                 f"TOOL_CALL_ARGS tool_call_id {args_event.tool_call_id} doesn't match "
                 f"START tool_call_id {start_event.tool_call_id}"

@@ -3,13 +3,11 @@
 These workarounds address ADK bugs that affect streaming function call
 arguments with Gemini 3 models.
 
-The middleware auto-applies ``repair_thought_signatures`` as a
-``before_model_callback`` when ``streaming_function_call_arguments=True``.
+Both workarounds are auto-applied by the middleware when
+``streaming_function_call_arguments=True``:
 
-``apply_aggregator_patch`` is available for external use but is NOT
-auto-applied by the middleware — the middleware's event translator handles
-raw streaming chunks directly (Mode A) and the aggregator patch would
-interfere with that.
+- ``apply_aggregator_patch`` is called once in ``ADKAgent.__init__``.
+- ``repair_thought_signatures`` is injected as a ``before_model_callback``.
 
 Remove these workarounds when the upstream fixes are released:
 - https://github.com/google/adk-python/issues/4311

@@ -185,6 +185,8 @@ class ADKAgent:
         # Predictive state configuration for real-time state updates
         self._predict_state = predict_state
         self._streaming_function_call_arguments = streaming_function_call_arguments
+        if streaming_function_call_arguments:
+            apply_aggregator_patch()
 
         # Message snapshot configuration
         self._emit_messages_snapshot = emit_messages_snapshot
