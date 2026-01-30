@@ -171,6 +171,7 @@ class EventTranslator:
         client_emitted_tool_call_ids: Optional[set] = None,
         client_tool_names: Optional[set] = None,
         client_tool_schemas: Optional[Dict[str, set]] = None,
+        is_resumable: bool = False,
     ):
         """Initialize the event translator.
 
@@ -197,6 +198,10 @@ class EventTranslator:
                 when streaming FC chunks arrive without a tool name.
         """
         self._streaming_fc_args_enabled = streaming_function_call_arguments
+        # Whether the agent uses ADK's native resumability (ResumabilityConfig).
+        # When True, ClientProxyTool handles tool call emission and the translator
+        # must skip client tool names to avoid duplicates.
+        self._is_resumable = is_resumable
         # Shared set of tool call IDs already emitted by ClientProxyTool
         self._client_emitted_tool_call_ids = client_emitted_tool_call_ids if client_emitted_tool_call_ids is not None else set()
         # Set of tool names handled by ClientProxyTool — translator skips these entirely
@@ -239,6 +244,10 @@ class EventTranslator:
         # Deferred confirm_changes events - these must be emitted LAST, right before RUN_FINISHED
         # to ensure the frontend shows the confirmation dialog with buttons enabled
         self._deferred_confirm_events: List[BaseEvent] = []
+
+        # Track streaming FC IDs identified as backend tools (not client tools).
+        # These must be skipped entirely so ADK can execute them server-side.
+        self._backend_streaming_fc_ids: set[str] = set()
 
         # Streaming LRO: tool names that opted in via stream_tool_call=True
         self._streaming_lro_tool_names: set[str] = {
@@ -852,7 +861,8 @@ class EventTranslator:
                     if not long_running_function_call and part.function_call.id in (
                         adk_event.long_running_tool_ids or []
                     ) and part.function_call.id not in self._client_emitted_tool_call_ids \
-                      and getattr(part.function_call, 'name', None) not in self._client_tool_names:
+                      and (not self._is_resumable
+                           or getattr(part.function_call, 'name', None) not in self._client_tool_names):
                         long_running_function_call = part.function_call
                         self.long_running_tool_ids.append(long_running_function_call.id)
                         yield ToolCallStartEvent(
@@ -999,6 +1009,23 @@ class EventTranslator:
 
                     self._emitted_confirm_for_tools.add(tool_name)
 
+    def _json_paths_match_any_client_tool(self, json_paths: set[str]) -> bool:
+        """Check if any json_path argument names match a known client tool schema.
+
+        This is a strict schema check — it does NOT fall back to single-tool
+        inference.  Used to distinguish backend tools from client tools when
+        streaming FC args are enabled.
+
+        Returns:
+            True if at least one client tool schema contains all observed arg names.
+        """
+        if not self._client_tool_schemas or not json_paths:
+            return False
+        arg_names = {p.lstrip('$.') for p in json_paths if p.startswith('$.')}
+        if not arg_names:
+            return False
+        return any(arg_names <= schema_args for schema_args in self._client_tool_schemas.values())
+
     def _infer_tool_name_from_json_paths(self, json_paths: set[str]) -> Optional[str]:
         """Infer the client tool name from partial_args json_paths.
 
@@ -1112,11 +1139,48 @@ class EventTranslator:
         else:
             tool_call_id = getattr(func_call, 'id', None) or str(uuid.uuid4())
 
+        # ----- Skip continuation chunks for backend tools -----
+        if tool_call_id in self._backend_streaming_fc_ids:
+            # Already identified as a backend tool — skip silently
+            if not getattr(func_call, 'will_continue', None):
+                # End of stream for this backend tool — clean up
+                self._backend_streaming_fc_ids.discard(tool_call_id)
+                if self._active_streaming_fc_id == tool_call_id:
+                    self._active_streaming_fc_id = None
+            return
+
         # ----- First chunk: emit START -----
         if tool_call_id not in self._streaming_function_calls:
             if not tool_name and not self._streaming_fc_args_enabled:
                 # Stray chunk without a name and no active streaming FC — skip
                 return
+
+            # ----- Backend tool detection -----
+            # When streaming FC args is enabled, we must filter out backend tools
+            # (e.g. google_search) that ADK needs to execute server-side.
+            if self._streaming_fc_args_enabled and self._client_tool_names:
+                if tool_name:
+                    # Name is known — check directly
+                    if tool_name not in self._client_tool_names and tool_name not in self._predict_state_by_tool:
+                        logger.debug(f"Skipping streaming FC for backend tool: {tool_name} (id: {tool_call_id})")
+                        self._backend_streaming_fc_ids.add(tool_call_id)
+                        self._active_streaming_fc_id = tool_call_id
+                        return
+                else:
+                    # Nameless first chunk — try to infer from partial_args
+                    partial_args = getattr(func_call, 'partial_args', None)
+                    if partial_args and self._client_tool_schemas:
+                        json_paths: set[str] = set()
+                        for pa in partial_args:
+                            jp = getattr(pa, 'json_path', None)
+                            if jp:
+                                json_paths.add(jp)
+                        if json_paths and not self._json_paths_match_any_client_tool(json_paths):
+                            # json_paths don't match any client tool → backend tool
+                            logger.debug(f"Skipping streaming FC for inferred backend tool (json_paths={json_paths}, id: {tool_call_id})")
+                            self._backend_streaming_fc_ids.add(tool_call_id)
+                            self._active_streaming_fc_id = tool_call_id
+                            return
 
             logger.debug(f"Starting streaming function call: {tool_name or '<pending>'} (id: {tool_call_id})")
 
@@ -1149,6 +1213,27 @@ class EventTranslator:
                         json_paths.add(jp)
 
             inferred_name = self._infer_tool_name_from_json_paths(json_paths)
+
+            # Late backend-tool detection: the first chunk was nameless with no
+            # partial_args so we couldn't filter. Now that partial_args arrived,
+            # check if json_paths match any client tool schema. If not → backend tool.
+            if (
+                json_paths
+                and self._streaming_fc_args_enabled
+                and self._client_tool_schemas
+                and not self._json_paths_match_any_client_tool(json_paths)
+            ):
+                logger.debug(
+                    f"Late backend-tool detection: json_paths={json_paths} don't match "
+                    f"any client tool schema; reclassifying streaming FC {tool_call_id}"
+                )
+                del self._streaming_function_calls[tool_call_id]
+                self._active_tool_calls.pop(tool_call_id, None)
+                self._backend_streaming_fc_ids.add(tool_call_id)
+                # Don't clear _active_streaming_fc_id — continuation chunks
+                # will be caught by the backend skip guard above
+                return
+
             effective_name = inferred_name or ""
             async for event in self._emit_streaming_fc_start(tool_call_id, effective_name):
                 yield event

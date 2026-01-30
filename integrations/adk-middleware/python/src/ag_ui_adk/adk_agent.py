@@ -1703,6 +1703,7 @@ class ADKAgent:
                 client_emitted_tool_call_ids=client_emitted_ids,
                 client_tool_names=client_tool_names,
                 client_tool_schemas=client_tool_schemas,
+                is_resumable=self._is_adk_resumable(),
             )
 
             # Share the translator's emitted IDs set with proxy toolsets so

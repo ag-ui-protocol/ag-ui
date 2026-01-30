@@ -900,7 +900,11 @@ async def test_client_tool_names_suppress_lro_path():
     assigns different IDs to the LRO event vs the confirmed event — ID-based
     filtering can't catch it, so we filter by name instead.
     """
-    translator = EventTranslator(client_tool_names={"generate_task_steps"})
+    # Simulate a resumable agent where ClientProxyTool handles emission
+    translator = EventTranslator(
+        client_tool_names={"generate_task_steps"},
+        is_resumable=True,
+    )
 
     lro_id = "adk-lro-event-id"
     lro_call = MagicMock()
@@ -1088,6 +1092,7 @@ async def test_full_resumable_hitl_flow_no_duplicates():
     translator = EventTranslator(
         client_emitted_tool_call_ids=client_emitted_ids,
         client_tool_names={"generate_task_steps"},
+        is_resumable=True,
     )
 
     lro_id = "adk-lro-id-A"
@@ -1155,7 +1160,11 @@ async def test_has_lro_function_call_sets_is_long_running_tool_even_when_transla
     in translate_lro_function_calls caused no TOOL_CALL_END to be emitted,
     so is_long_running_tool was never set to True.
     """
-    translator = EventTranslator(client_tool_names={"generate_task_steps"})
+    # Resumable agent: ClientProxyTool handles emission, translator skips by name
+    translator = EventTranslator(
+        client_tool_names={"generate_task_steps"},
+        is_resumable=True,
+    )
 
     lro_id = "adk-lro-filtered"
     lro_call = MagicMock()
@@ -1180,14 +1189,14 @@ async def test_has_lro_function_call_sets_is_long_running_tool_even_when_transla
     if has_lro_function_call:
         is_long_running_tool = True
 
-    # Translator emits nothing due to client_tool_names filtering
+    # Translator emits nothing due to client_tool_names filtering (resumable)
     events = []
     async for e in translator.translate_lro_function_calls(adk_event):
         events.append(e)
         if e.type == EventType.TOOL_CALL_END:
             is_long_running_tool = True
 
-    assert len(events) == 0, "Translator should emit 0 events (client tool filtered)"
+    assert len(events) == 0, "Translator should emit 0 events (client tool filtered in resumable mode)"
     assert is_long_running_tool is True, (
         "is_long_running_tool must be True even when translator skips client tool emission. "
         "Without this, invocation_id is cleared and SequentialAgent resumption breaks."
@@ -1716,6 +1725,223 @@ async def test_streaming_lro_confirmed_id_mapping():
     assert "confirmed-42" in translator.long_running_tool_ids
 
 
+async def test_streaming_fc_skips_backend_tool_named_first_chunk():
+    """Backend tool with known name on first chunk is skipped entirely."""
+    translator = EventTranslator(
+        streaming_function_call_arguments=True,
+        client_tool_names={"publish_final_report"},
+        client_tool_schemas={"publish_final_report": {"content", "title"}},
+    )
+
+    # First chunk: google_search (backend tool) with name known
+    fc1 = MagicMock()
+    fc1.id = "backend-fc-1"
+    fc1.name = "google_search"
+    fc1.args = None
+    fc1.partial_args = None
+    fc1.will_continue = True
+
+    adk_event = MagicMock()
+    adk_event.author = "assistant"
+    adk_event.partial = True
+    adk_event.content = MagicMock()
+    adk_event.content.parts = []
+    adk_event.get_function_calls = lambda: [fc1]
+    adk_event.long_running_tool_ids = []
+
+    events = []
+    async for e in translator.translate(adk_event, "thread", "run"):
+        events.append(e)
+
+    # No tool call events should be emitted for backend tool
+    types = [e.type for e in events]
+    assert EventType.TOOL_CALL_START not in types, f"Backend tool should be skipped, got {types}"
+    assert EventType.TOOL_CALL_ARGS not in types
+
+    # Continuation chunk should also be skipped
+    fc2 = MagicMock()
+    fc2.id = "backend-fc-1"
+    fc2.name = None
+    fc2.args = None
+    fc2.partial_args = [MagicMock(json_path="$.query", string_value="test")]
+    fc2.will_continue = True
+
+    adk_event2 = MagicMock()
+    adk_event2.author = "assistant"
+    adk_event2.partial = True
+    adk_event2.content = MagicMock()
+    adk_event2.content.parts = []
+    adk_event2.get_function_calls = lambda: [fc2]
+    adk_event2.long_running_tool_ids = []
+
+    events2 = []
+    async for e in translator.translate(adk_event2, "thread", "run"):
+        events2.append(e)
+
+    types2 = [e.type for e in events2]
+    assert EventType.TOOL_CALL_ARGS not in types2, f"Continuation of backend tool should be skipped, got {types2}"
+
+    # End chunk cleans up
+    fc3 = MagicMock()
+    fc3.id = "backend-fc-1"
+    fc3.name = None
+    fc3.args = None
+    fc3.partial_args = None
+    fc3.will_continue = False
+
+    adk_event3 = MagicMock()
+    adk_event3.author = "assistant"
+    adk_event3.partial = True
+    adk_event3.content = MagicMock()
+    adk_event3.content.parts = []
+    adk_event3.get_function_calls = lambda: [fc3]
+    adk_event3.long_running_tool_ids = []
+
+    events3 = []
+    async for e in translator.translate(adk_event3, "thread", "run"):
+        events3.append(e)
+
+    assert "backend-fc-1" not in translator._backend_streaming_fc_ids, "Should be cleaned up after end"
+
+
+async def test_streaming_fc_skips_backend_tool_nameless_via_json_paths():
+    """Backend tool with nameless first chunk but non-matching json_paths is skipped."""
+    translator = EventTranslator(
+        streaming_function_call_arguments=True,
+        client_tool_names={"publish_final_report", "write_document"},
+        client_tool_schemas={
+            "publish_final_report": {"content", "title"},
+            "write_document": {"document"},
+        },
+    )
+
+    # Nameless first chunk with partial_args whose json_paths don't match any client tool
+    fc = MagicMock()
+    fc.id = "backend-fc-2"
+    fc.name = None
+    fc.args = None
+    fc.partial_args = [MagicMock(json_path="$.query", string_value="AI news")]
+    fc.will_continue = True
+
+    adk_event = MagicMock()
+    adk_event.author = "assistant"
+    adk_event.partial = True
+    adk_event.content = MagicMock()
+    adk_event.content.parts = []
+    adk_event.get_function_calls = lambda: [fc]
+    adk_event.long_running_tool_ids = []
+
+    events = []
+    async for e in translator.translate(adk_event, "thread", "run"):
+        events.append(e)
+
+    types = [e.type for e in events]
+    assert EventType.TOOL_CALL_START not in types, f"Backend tool should be skipped, got {types}"
+    assert EventType.TOOL_CALL_ARGS not in types
+    assert "backend-fc-2" in translator._backend_streaming_fc_ids
+
+
+async def test_streaming_fc_allows_client_tool_when_backend_also_present():
+    """Client tool partial_args are streamed even when backend tools exist."""
+    translator = EventTranslator(
+        streaming_function_call_arguments=True,
+        client_tool_names={"publish_final_report"},
+        client_tool_schemas={"publish_final_report": {"content", "title"}},
+    )
+
+    # Client tool with matching json_paths
+    fc = MagicMock()
+    fc.id = "client-fc-1"
+    fc.name = "publish_final_report"
+    fc.args = None
+    fc.partial_args = None
+    fc.will_continue = True
+
+    adk_event = MagicMock()
+    adk_event.author = "assistant"
+    adk_event.partial = True
+    adk_event.content = MagicMock()
+    adk_event.content.parts = []
+    adk_event.get_function_calls = lambda: [fc]
+    adk_event.long_running_tool_ids = []
+
+    events = []
+    async for e in translator.translate(adk_event, "thread", "run"):
+        events.append(e)
+
+    types = [e.type for e in events]
+    assert EventType.TOOL_CALL_START in types, f"Client tool should be streamed, got {types}"
+    assert "client-fc-1" not in translator._backend_streaming_fc_ids
+
+
+async def test_streaming_fc_late_backend_detection_on_deferred_start():
+    """Nameless first chunk with no partial_args starts streaming, but second chunk
+    reveals it's a backend tool via non-matching json_paths → reclassified."""
+    translator = EventTranslator(
+        streaming_function_call_arguments=True,
+        client_tool_names={"publish_final_report"},
+        client_tool_schemas={"publish_final_report": {"content", "title"}},
+    )
+
+    # Nameless first chunk with no partial_args (can't filter yet)
+    fc1 = MagicMock()
+    fc1.id = None  # Gemini sends None, ADK assigns adk-<uuid>
+    fc1.name = None
+    fc1.args = None
+    fc1.partial_args = None
+    fc1.will_continue = True
+
+    adk_event1 = MagicMock()
+    adk_event1.author = "assistant"
+    adk_event1.partial = True
+    adk_event1.content = MagicMock()
+    adk_event1.content.parts = []
+    adk_event1.get_function_calls = lambda: [fc1]
+    adk_event1.long_running_tool_ids = []
+
+    events1 = []
+    async for e in translator.translate(adk_event1, "thread", "run"):
+        events1.append(e)
+
+    # No START emitted yet (deferred — name unknown)
+    types1 = [e.type for e in events1]
+    assert EventType.TOOL_CALL_START not in types1
+
+    # The streaming session was started internally
+    assert len(translator._streaming_function_calls) == 1
+    streaming_id = translator._active_streaming_fc_id
+    assert streaming_id is not None
+
+    # Second chunk: partial_args with non-matching json_paths → backend tool
+    fc2 = MagicMock()
+    fc2.id = None
+    fc2.name = None
+    fc2.args = None
+    fc2.partial_args = [MagicMock(json_path="$.query", string_value="test query")]
+    fc2.will_continue = True
+
+    adk_event2 = MagicMock()
+    adk_event2.author = "assistant"
+    adk_event2.partial = True
+    adk_event2.content = MagicMock()
+    adk_event2.content.parts = []
+    adk_event2.get_function_calls = lambda: [fc2]
+    adk_event2.long_running_tool_ids = []
+
+    events2 = []
+    async for e in translator.translate(adk_event2, "thread", "run"):
+        events2.append(e)
+
+    # Should have been reclassified — no events emitted
+    types2 = [e.type for e in events2]
+    assert EventType.TOOL_CALL_START not in types2
+    assert EventType.TOOL_CALL_ARGS not in types2
+
+    # Streaming state cleaned up, reclassified as backend
+    assert len(translator._streaming_function_calls) == 0
+    assert streaming_id in translator._backend_streaming_fc_ids
+
+
 if __name__ == "__main__":
     asyncio.run(test_translate_skips_lro_function_calls())
     asyncio.run(test_translate_lro_function_calls_only_emits_lro())
@@ -1749,5 +1975,9 @@ if __name__ == "__main__":
     asyncio.run(test_lro_complete_event_emits_deferred_end())
     asyncio.run(test_non_opted_in_lro_unchanged())
     asyncio.run(test_streaming_lro_confirmed_id_mapping())
+    asyncio.run(test_streaming_fc_skips_backend_tool_named_first_chunk())
+    asyncio.run(test_streaming_fc_skips_backend_tool_nameless_via_json_paths())
+    asyncio.run(test_streaming_fc_allows_client_tool_when_backend_also_present())
+    asyncio.run(test_streaming_fc_late_backend_detection_on_deferred_start())
     print("\n✅ LRO and partial filtering tests ran to completion")
 
