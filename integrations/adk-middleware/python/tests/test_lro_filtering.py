@@ -1194,6 +1194,141 @@ async def test_has_lro_function_call_sets_is_long_running_tool_even_when_transla
     )
 
 
+async def test_streaming_fc_args_bypasses_client_tool_names_filter():
+    """Client tool streaming chunks must not be filtered when streaming_function_call_arguments=True.
+
+    When streaming FC args is enabled, the translator should handle incremental
+    emission for client tools (Mode A). ClientProxyTool defers via
+    _translator_emitted_tool_call_ids. Without this bypass, the first chunk
+    (which carries the tool name) is filtered out, _active_streaming_fc_id is
+    never set, and all subsequent chunks are dropped — resulting in zero
+    streaming and a single bulk emission from ClientProxyTool.
+    """
+    translator = EventTranslator(
+        streaming_function_call_arguments=True,
+        client_tool_names={"publish_final_report"},
+    )
+
+    # First chunk: name + will_continue, no args (Mode A first chunk)
+    adk_event1 = MagicMock()
+    adk_event1.author = "assistant"
+    adk_event1.partial = True
+    adk_event1.content = MagicMock()
+    adk_event1.content.parts = []
+
+    func_call1 = MagicMock()
+    func_call1.id = "mode-a-client-tool-1"
+    func_call1.name = "publish_final_report"
+    func_call1.args = None
+    func_call1.partial_args = None
+    func_call1.will_continue = True
+
+    adk_event1.get_function_calls = lambda: [func_call1]
+    adk_event1.long_running_tool_ids = []
+
+    events1 = []
+    async for e in translator.translate(adk_event1, "thread", "run"):
+        events1.append(e)
+
+    event_types1 = [str(ev.type).split('.')[-1] for ev in events1]
+    assert "TOOL_CALL_START" in event_types1, (
+        f"First chunk of client tool should emit TOOL_CALL_START when "
+        f"streaming_function_call_arguments=True, got {event_types1}"
+    )
+
+    # Middle chunk: partial_args with content, different id (ADK assigns fresh uuid)
+    partial_arg = MagicMock()
+    partial_arg.string_value = "Hello world"
+    partial_arg.json_path = "$.content"
+
+    adk_event2 = MagicMock()
+    adk_event2.author = "assistant"
+    adk_event2.partial = True
+    adk_event2.content = MagicMock()
+    adk_event2.content.parts = []
+
+    func_call2 = MagicMock()
+    func_call2.id = "mode-a-client-tool-different-id"  # Different ID!
+    func_call2.name = None  # No name on continuation chunks
+    func_call2.args = None
+    func_call2.partial_args = [partial_arg]
+    func_call2.will_continue = True
+
+    adk_event2.get_function_calls = lambda: [func_call2]
+    adk_event2.long_running_tool_ids = []
+
+    events2 = []
+    async for e in translator.translate(adk_event2, "thread", "run"):
+        events2.append(e)
+
+    event_types2 = [str(ev.type).split('.')[-1] for ev in events2]
+    assert "TOOL_CALL_ARGS" in event_types2, (
+        f"Middle chunk should emit TOOL_CALL_ARGS, got {event_types2}"
+    )
+
+    # End chunk: will_continue=None
+    adk_event3 = MagicMock()
+    adk_event3.author = "assistant"
+    adk_event3.partial = True
+    adk_event3.content = MagicMock()
+    adk_event3.content.parts = []
+
+    func_call3 = MagicMock()
+    func_call3.id = "mode-a-client-tool-yet-another-id"
+    func_call3.name = None
+    func_call3.args = None
+    func_call3.partial_args = None
+    func_call3.will_continue = None
+
+    adk_event3.get_function_calls = lambda: [func_call3]
+    adk_event3.long_running_tool_ids = []
+
+    events3 = []
+    async for e in translator.translate(adk_event3, "thread", "run"):
+        events3.append(e)
+
+    event_types3 = [str(ev.type).split('.')[-1] for ev in events3]
+    assert "TOOL_CALL_END" in event_types3, (
+        f"End chunk should emit TOOL_CALL_END, got {event_types3}"
+    )
+
+
+async def test_client_tool_names_still_filtered_without_streaming_fc_args():
+    """Without streaming_function_call_arguments, client_tool_names filter stays active on partials.
+
+    This ensures the bypass only applies when streaming FC args is explicitly enabled.
+    """
+    translator = EventTranslator(
+        streaming_function_call_arguments=False,
+        client_tool_names={"publish_final_report"},
+    )
+
+    adk_event = MagicMock()
+    adk_event.author = "assistant"
+    adk_event.partial = True
+    adk_event.content = MagicMock()
+    adk_event.content.parts = []
+
+    func_call = MagicMock()
+    func_call.id = "should-be-filtered"
+    func_call.name = "publish_final_report"
+    func_call.args = {"content": "test"}
+    func_call.partial_args = None
+    func_call.will_continue = True
+
+    adk_event.get_function_calls = lambda: [func_call]
+    adk_event.long_running_tool_ids = []
+
+    events = []
+    async for e in translator.translate(adk_event, "thread", "run"):
+        events.append(e)
+
+    event_types = [str(ev.type).split('.')[-1] for ev in events]
+    assert "TOOL_CALL_START" not in event_types, (
+        f"Client tool should still be filtered without streaming FC args, got {event_types}"
+    )
+
+
 if __name__ == "__main__":
     asyncio.run(test_translate_skips_lro_function_calls())
     asyncio.run(test_translate_lro_function_calls_only_emits_lro())
@@ -1219,5 +1354,7 @@ if __name__ == "__main__":
     asyncio.run(test_translator_records_emitted_tool_call_ids())
     asyncio.run(test_full_resumable_hitl_flow_no_duplicates())
     asyncio.run(test_has_lro_function_call_sets_is_long_running_tool_even_when_translator_skips())
+    asyncio.run(test_streaming_fc_args_bypasses_client_tool_names_filter())
+    asyncio.run(test_client_tool_names_still_filtered_without_streaming_fc_args())
     print("\n✅ LRO and partial filtering tests ran to completion")
 

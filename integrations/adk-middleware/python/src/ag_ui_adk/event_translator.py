@@ -338,11 +338,17 @@ class EventTranslator:
                     except Exception:
                         lro_ids = set()
 
+                    # When streaming FC args is enabled, allow client tools
+                    # through so the translator can stream their args
+                    # incrementally.  ClientProxyTool will skip duplicate
+                    # emission via _translator_emitted_tool_call_ids.
+                    filter_by_client_name = not self._streaming_fc_args_enabled
+
                     non_lro_calls = [
                         fc for fc in function_calls
                         if getattr(fc, 'id', None) not in lro_ids
                         and getattr(fc, 'id', None) not in self._client_emitted_tool_call_ids
-                        and getattr(fc, 'name', None) not in self._client_tool_names
+                        and (not filter_by_client_name or getattr(fc, 'name', None) not in self._client_tool_names)
                     ]
 
                     for func_call in non_lro_calls:
