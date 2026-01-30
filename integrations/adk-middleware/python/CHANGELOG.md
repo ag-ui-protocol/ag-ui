@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIXED**: Reload session on cache miss to populate events (#1021)
+  - `_find_session_by_thread_id()` uses `list_sessions()` which returns metadata only; now reloads via `get_session()` after a cache miss so that session events are available
+  - Thanks to **@lakshminarasimmanv** for this fix!
+
 - **FIXED**: Relax Python version constraint to allow Python 3.14 (#973)
   - Changed `requires-python` from `>=3.9, <3.14` to `>=3.10, <3.15`
   - Fixed `asyncio.get_event_loop()` deprecation in tests for Python 3.14 compatibility
