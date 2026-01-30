@@ -248,6 +248,13 @@ def add_adk_fastapi_endpoint(
                     session_id = session.id
                     agent._session_lookup_cache[thread_id] = (session_id, app_name, user_id)
 
+                    # Reload session to populate events (list_sessions returns metadata only)
+                    session = await agent._session_manager._session_service.get_session(
+                        session_id=session_id,
+                        app_name=app_name,
+                        user_id=user_id
+                    )
+
             thread_exists = session is not None
 
             # Get state
