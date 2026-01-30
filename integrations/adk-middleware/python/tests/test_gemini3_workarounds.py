@@ -306,3 +306,28 @@ class TestADKAgentWorkaroundIntegration:
                 pass
 
             mock_patch.assert_not_called()
+
+    def test_aggregator_patch_called_via_from_app(self):
+        """apply_aggregator_patch is called when from_app() passes streaming_function_call_arguments=True."""
+        with patch("ag_ui_adk.adk_agent.apply_aggregator_patch") as mock_patch:
+            from ag_ui_adk import ADKAgent
+            from unittest.mock import MagicMock as MM
+
+            app = MM()
+            app.name = "test_app"
+            app.root_agent = MM()
+            app.root_agent.name = "test"
+            app.root_agent.model_fields = {}
+
+            # Patch isinstance check so our mock passes the App type validation
+            with patch("google.adk.apps.App", type(app)):
+                try:
+                    ADKAgent.from_app(
+                        app,
+                        user_id="user",
+                        streaming_function_call_arguments=True,
+                    )
+                except Exception:
+                    pass
+
+            mock_patch.assert_called_once()

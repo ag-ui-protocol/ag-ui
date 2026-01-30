@@ -247,6 +247,7 @@ class ADKAgent:
         # AG-UI specific
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
         emit_messages_snapshot: bool = False,
+        streaming_function_call_arguments: bool = False,
     ) -> "ADKAgent":
         """Create ADKAgent from an ADK App instance.
 
@@ -320,6 +321,7 @@ class ADKAgent:
             save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
             predict_state=predict_state,
             emit_messages_snapshot=emit_messages_snapshot,
+            streaming_function_call_arguments=streaming_function_call_arguments,
         )
         # Store App for per-request App creation with modified agents
         instance._app = app
