@@ -37,6 +37,7 @@ from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
 from .config import PredictStateMapping
 from .utils.converters import convert_message_content_to_parts
+from .heartbeat import set_event_queue, reset_event_queue
 
 import logging
 logger = logging.getLogger(__name__)
@@ -1394,7 +1395,11 @@ class ADKAgent:
         runner: Optional[Runner] = None
         logger.debug(f"[BG_EXEC] _run_adk_in_background called for thread={input.thread_id}")
         logger.debug(f"[BG_EXEC]   tool_results={len(tool_results) if tool_results else 0}, message_batch={len(message_batch) if message_batch else 0}")
+        event_queue_token = None
         try:
+            # Set event queue in ContextVar for HeartbeatPlugin access
+            event_queue_token = set_event_queue(event_queue)
+
             # Agent is already prepared with tools and SystemMessage instructions (if any)
             # from _start_background_execution, so no additional agent copying needed here
 
@@ -1751,6 +1756,10 @@ class ADKAgent:
             )
             await event_queue.put(None)
         finally:
+            # Restore event queue to previous value in ContextVar
+            if event_queue_token is not None:
+                reset_event_queue(event_queue_token)
+
             # Background task cleanup completed
             # Ensure the ADK runner releases any resources (e.g. toolsets)
             if runner is not None:
