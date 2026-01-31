@@ -556,6 +556,59 @@ async def get_thread_history(thread_id: str, app_name: str, user_id: str):
         return [], {}
 ```
 
+## Migrating to Resumable HITL
+
+> **Deprecated:** The non-resumable (fire-and-forget) HITL flow triggered by `ADKAgent(adk_agent=...)` with client-side tools is deprecated and will be removed in a future version. Migrate to `ADKAgent.from_app()` with `ResumabilityConfig` for human-in-the-loop workflows.
+
+### Why migrate?
+
+The old-style HITL flow has limitations:
+- **No SequentialAgent position restore** — sub-agent position is lost on resume
+- **Manual FunctionCall persistence** — the middleware must manually persist partial events
+- **Manual pending tool call tracking** — state management is handled by the middleware instead of ADK
+
+With `ResumabilityConfig`, ADK handles all of this natively.
+
+### Before (deprecated for HITL)
+
+```python
+from ag_ui_adk import ADKAgent
+
+agent = ADKAgent(
+    adk_agent=my_agent,  # Works fine for non-HITL agents
+    app_name="my_app",
+    user_id="user123",
+)
+```
+
+> **Note:** `ADKAgent(adk_agent=...)` is still the recommended constructor for agents **without** client-side tools (chat-only, backend-tool-only). Only the HITL path is deprecated.
+
+### After (recommended for HITL)
+
+```python
+from google.adk.apps import App, ResumabilityConfig
+from ag_ui_adk import ADKAgent
+
+app = App(
+    name="my_app",
+    root_agent=my_agent,
+    resumability_config=ResumabilityConfig(is_resumable=True),
+)
+
+agent = ADKAgent.from_app(
+    app,
+    user_id="user123",
+)
+```
+
+### What triggers the deprecation warning?
+
+A `DeprecationWarning` is emitted at runtime when:
+1. The agent encounters a long-running (client-side) tool call, **and**
+2. The agent was created with the direct constructor (`ADKAgent(adk_agent=...)`) rather than `ADKAgent.from_app()`
+
+The warning does not fire for agents without client-side tools.
+
 ## Additional Resources
 
 - For configuration options, see [CONFIGURATION.md](./CONFIGURATION.md)

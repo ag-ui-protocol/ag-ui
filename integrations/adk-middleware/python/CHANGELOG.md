@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Deprecated
+
+- **DEPRECATED**: Non-resumable (fire-and-forget) HITL flow via `ADKAgent(adk_agent=...)` with client-side tools
+  - A `DeprecationWarning` is now emitted at runtime when the old-style HITL early-return path is triggered
+  - Use `ADKAgent.from_app()` with `ResumabilityConfig(is_resumable=True)` for human-in-the-loop workflows
+  - The direct constructor remains fully supported for agents without client-side tools (chat-only, backend-tool-only)
+  - See [USAGE.md](./USAGE.md#migrating-to-resumable-hitl) for migration instructions
+
 ### Breaking Changes
 
 - **BREAKING**: AG-UI client tools are no longer automatically included in the root agent's toolset (#903)

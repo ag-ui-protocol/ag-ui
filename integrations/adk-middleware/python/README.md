@@ -224,10 +224,12 @@ add_adk_fastapi_endpoint(app, agent, path="/chat")
 
 | Feature | `ADKAgent(adk_agent=...)` | `ADKAgent.from_app(app)` |
 |---|---|---|
-| Basic HITL | Yes (fire-and-forget) | Yes (native resumability) |
+| Basic HITL | ~~Yes (fire-and-forget)~~ **Deprecated** | Yes (native resumability) |
 | Session persistence across pause/resume | Manual | Automatic |
 | SequentialAgent sub-agent position restore | No | Yes |
 | Requires `google-adk` | Any version | >= 1.16.0 |
+
+> **Deprecation notice:** The fire-and-forget HITL flow via `ADKAgent(adk_agent=...)` is deprecated and will be removed in a future version. For human-in-the-loop workflows, use `ADKAgent.from_app()` with `ResumabilityConfig(is_resumable=True)`. The direct constructor remains fully supported for agents without client-side tools. See [USAGE.md](./USAGE.md#migrating-to-resumable-hitl) for migration instructions.
 
 See `examples/server/api/human_in_the_loop.py` for a complete working example.
 

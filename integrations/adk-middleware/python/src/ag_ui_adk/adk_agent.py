@@ -1870,6 +1870,15 @@ class ADKAgent:
                     # With ResumabilityConfig, ADK handles the pause/resume flow
                     # natively — we don't need to stop the loop early.
                     if is_long_running_tool and not self._is_adk_resumable():
+                        import warnings
+                        warnings.warn(
+                            "Non-resumable HITL (fire-and-forget) is deprecated and will be removed "
+                            "in a future version. Use ADKAgent.from_app() with "
+                            "ResumabilityConfig(is_resumable=True) for human-in-the-loop workflows. "
+                            "See USAGE.md for migration instructions.",
+                            DeprecationWarning,
+                            stacklevel=2,
+                        )
                         # With PROGRESSIVE_SSE_STREAMING (ADK >= 1.22.0), the
                         # FunctionCall may arrive as a partial event that ADK
                         # hasn't persisted to the session.  We must persist it
