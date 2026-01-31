@@ -1874,6 +1874,154 @@ async def test_streaming_fc_allows_client_tool_when_backend_also_present():
     assert "client-fc-1" not in translator._backend_streaming_fc_ids
 
 
+async def test_non_resumable_agent_tool_round_trip():
+    """Non-resumable agent: first run emits tool call, second run with tool result gets text.
+
+    Regression test ensuring that the is_resumable/client_tool_names filter
+    does NOT block LRO tool call emission for non-resumable agents. On the
+    feature branch, non-resumable agents must behave identically to main:
+    - translate_lro_function_calls emits TOOL_CALL_START/ARGS/END
+    - The client_tool_names filter is bypassed (is_resumable=False)
+
+    This covers the multi-turn round trip: first run produces tool calls,
+    second run (with tool results) produces a text response.
+    """
+    # Non-resumable agent: is_resumable=False, but client_tool_names is populated
+    # (from ClientProxyToolset). The filter must be bypassed.
+    translator = EventTranslator(
+        client_tool_names={"lookup_weather"},
+        is_resumable=False,  # Non-resumable (no ResumabilityConfig)
+    )
+
+    lro_id = "tool-call-weather-1"
+    lro_call = MagicMock()
+    lro_call.id = lro_id
+    lro_call.name = "lookup_weather"
+    lro_call.args = {"city": "San Francisco"}
+
+    lro_part = MagicMock()
+    lro_part.function_call = lro_call
+
+    adk_event = MagicMock()
+    adk_event.content = MagicMock()
+    adk_event.content.parts = [lro_part]
+    adk_event.long_running_tool_ids = [lro_id]
+
+    # First run: translate_lro_function_calls should emit events
+    events = []
+    async for e in translator.translate_lro_function_calls(adk_event):
+        events.append(e)
+
+    event_types = [str(ev.type).split('.')[-1] for ev in events]
+    assert event_types == ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END"], (
+        f"Non-resumable agent must emit tool call events (filter bypassed), got {event_types}"
+    )
+    for ev in events:
+        assert getattr(ev, 'tool_call_id', None) == lro_id
+
+    # Second run: simulate text response after tool result submission
+    # (translator is per-run, so create a fresh one for the second run)
+    translator2 = EventTranslator(
+        client_tool_names={"lookup_weather"},
+        is_resumable=False,
+    )
+
+    text_event = MagicMock()
+    text_event.author = "assistant"
+    text_event.partial = False
+    text_event.content = MagicMock()
+
+    text_part = MagicMock()
+    text_part.text = "The weather in San Francisco is 65°F and sunny."
+    text_part.function_call = None
+    text_event.content.parts = [text_part]
+    text_event.get_function_calls = lambda: []
+    text_event.long_running_tool_ids = []
+
+    text_events = []
+    async for e in translator2.translate(text_event, "thread-1", "run-2"):
+        text_events.append(e)
+
+    # Should have text message events
+    text_types = [str(ev.type).split('.')[-1] for ev in text_events]
+    assert any("TEXT_MESSAGE" in t for t in text_types), (
+        f"Second run should produce text message events, got {text_types}"
+    )
+
+
+async def test_resumable_agent_no_duplicate_emission():
+    """Resumable agent: LRO tool calls emitted exactly once (by ClientProxyTool, not translator).
+
+    When is_resumable=True, the translate_lro_function_calls must filter out
+    client tool names to prevent duplicates — ClientProxyTool handles emission.
+
+    After ClientProxyTool runs, the confirmed event from ADK must also be
+    suppressed by the translator (via client_emitted_tool_call_ids or client_tool_names).
+    """
+    client_emitted_ids: set[str] = set()
+    translator = EventTranslator(
+        client_emitted_tool_call_ids=client_emitted_ids,
+        client_tool_names={"generate_task_steps"},
+        is_resumable=True,
+    )
+
+    lro_id = "adk-lro-hitl-1"
+
+    # Step 1: LRO event — translator should suppress (client tool, resumable)
+    lro_call = MagicMock()
+    lro_call.id = lro_id
+    lro_call.name = "generate_task_steps"
+    lro_call.args = {"steps": [{"description": "Plan project", "status": "pending"}]}
+
+    lro_part = MagicMock()
+    lro_part.function_call = lro_call
+
+    lro_event = MagicMock()
+    lro_event.content = MagicMock()
+    lro_event.content.parts = [lro_part]
+    lro_event.long_running_tool_ids = [lro_id]
+
+    lro_events = []
+    async for e in translator.translate_lro_function_calls(lro_event):
+        lro_events.append(e)
+
+    assert len(lro_events) == 0, (
+        f"Resumable agent: translator must suppress client tool LRO, got {len(lro_events)} events"
+    )
+
+    # Step 2: ClientProxyTool emits (simulated by adding to shared set)
+    confirmed_id = "adk-confirmed-hitl-2"
+    client_emitted_ids.add(confirmed_id)
+
+    # Step 3: Confirmed event with different ID — must also be suppressed
+    confirmed_event = MagicMock()
+    confirmed_event.author = "assistant"
+    confirmed_event.partial = False
+    confirmed_event.content = MagicMock()
+    confirmed_event.content.parts = []
+
+    confirmed_call = MagicMock()
+    confirmed_call.id = confirmed_id
+    confirmed_call.name = "generate_task_steps"
+    confirmed_call.args = {"steps": [{"description": "Plan project", "status": "pending"}]}
+
+    confirmed_event.get_function_calls = lambda: [confirmed_call]
+    confirmed_event.long_running_tool_ids = []
+
+    confirmed_events = []
+    async for e in translator.translate(confirmed_event, "thread-1", "run-1"):
+        confirmed_events.append(e)
+
+    tool_events = [e for e in confirmed_events if "TOOL_CALL" in str(e.type)]
+    assert len(tool_events) == 0, (
+        f"Resumable agent: confirmed event must be suppressed (already emitted by proxy), "
+        f"got {len(tool_events)} tool events"
+    )
+
+    # Total tool call emissions across all paths: 0 from translator
+    # (ClientProxyTool would emit exactly 1 set — not tested here as it's a different component)
+
+
 async def test_streaming_fc_late_backend_detection_on_deferred_start():
     """Nameless first chunk with no partial_args starts streaming, but second chunk
     reveals it's a backend tool via non-matching json_paths → reclassified."""
@@ -1978,6 +2126,8 @@ if __name__ == "__main__":
     asyncio.run(test_streaming_fc_skips_backend_tool_named_first_chunk())
     asyncio.run(test_streaming_fc_skips_backend_tool_nameless_via_json_paths())
     asyncio.run(test_streaming_fc_allows_client_tool_when_backend_also_present())
+    asyncio.run(test_non_resumable_agent_tool_round_trip())
+    asyncio.run(test_resumable_agent_no_duplicate_emission())
     asyncio.run(test_streaming_fc_late_backend_detection_on_deferred_start())
     print("\n✅ LRO and partial filtering tests ran to completion")
 

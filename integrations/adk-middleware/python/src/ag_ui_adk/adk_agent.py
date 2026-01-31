@@ -976,10 +976,22 @@ class ADKAgent:
                 return
 
             # No tool results and no trailing messages - nothing to do
-            # This is not an error; the user just approved/rejected changes without sending a follow-up
+            # This is not an error; the user just approved/rejected changes without sending a follow-up.
+            # We still need to emit RUN_STARTED/RUN_FINISHED so the client receives a
+            # valid, terminal-event-bearing stream (prevents INCOMPLETE_STREAM errors).
             logger.debug(
                 "All tool results were synthetic (confirm_changes) with no trailing messages for thread %s",
                 thread_id,
+            )
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=thread_id,
+                run_id=input.run_id,
+            )
+            yield RunFinishedEvent(
+                type=EventType.RUN_FINISHED,
+                thread_id=thread_id,
+                run_id=input.run_id,
             )
             return
 
@@ -1917,6 +1929,28 @@ class ADKAgent:
                     # With ResumabilityConfig, ADK handles the pause/resume flow
                     # natively — we don't need to stop the loop early.
                     if is_long_running_tool and not self._is_adk_resumable():
+                        # When the aggregator monkey-patch (apply_aggregator_patch) is
+                        # active, ADK may yield the FunctionCall as a partial/streaming
+                        # event that hasn't been persisted to the session yet.  We must
+                        # manually persist it so the next run can find it when submitting
+                        # the FunctionResponse.
+                        if getattr(adk_event, 'partial', False) and adk_event.content:
+                            from google.adk.sessions.session import Event as ADKSessionEvent
+                            import time as _time_mod
+                            fc_event = ADKSessionEvent(
+                                timestamp=_time_mod.time(),
+                                author=getattr(adk_event, 'author', 'assistant'),
+                                content=adk_event.content,
+                                invocation_id=getattr(adk_event, 'invocation_id', None) or input.run_id,
+                            )
+                            try:
+                                await self._session_manager._session_service.append_event(session, fc_event)
+                                logger.info(
+                                    f"Persisted FunctionCall event to session for early return "
+                                    f"(partial event, thread={input.thread_id})"
+                                )
+                            except Exception as e:
+                                logger.warning(f"Failed to persist FunctionCall event: {e}")
                         return
 
             # Force close any streaming messages
