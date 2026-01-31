@@ -27,7 +27,6 @@ class PredictStateMapping:
     tool: str
     tool_argument: str
     emit_confirm_tool: bool = True
-    stream_tool_call: bool = False
 
     def to_payload(self) -> Dict[str, str]:
         """Convert to the payload format expected by the UI."""

@@ -14,41 +14,12 @@ Key concepts:
 
 Note: We use write_document_local as the backend tool name to avoid conflicting with
 the frontend's write_document action that handles the confirmation UI.
-
-Streaming Function Call Arguments
----------------------------------
-When Vertex AI credentials are available, this demo uses Gemini 3 Flash Preview with
-``stream_function_call_arguments=True``.  TOOL_CALL_ARGS events then arrive
-incrementally as the model generates function arguments, giving real-time UI updates.
-Gemini 3 models are required because ``stream_function_call_arguments`` is only
-supported by the Gemini 3 family.
-
-Prerequisites for streaming:
-1. Vertex AI credentials (GOOGLE_APPLICATION_CREDENTIALS or gcloud ADC)
-2. Environment variables:
-   - GOOGLE_GENAI_USE_VERTEXAI=TRUE
-   - GOOGLE_CLOUD_PROJECT=<your-project-id>
-   - GOOGLE_CLOUD_LOCATION=global  (required for Gemini 3 models)
-3. ADK version with stream_function_call_arguments support
-
-Fallback:
-- Without Vertex AI credentials falls back to Gemini 2.5 Flash (single TOOL_CALL_ARGS).
-
-ADK workarounds for Gemini 3 (google-adk 1.23.0) – both are automatically
-applied by the middleware when ``streaming_function_call_arguments=True``:
-
-1. **Aggregator patch** – Fixes the StreamingResponseAggregator first-chunk bug
-   so that session history contains valid function call parts.
-
-2. **Thought-signature repair** – Injected as a ``before_model_callback`` to
-   ensure function_call parts have valid thought signatures.
 """
 
 from __future__ import annotations
 
 import logging
-import os
-from typing import Dict, Optional, Tuple
+from typing import Dict
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -59,69 +30,8 @@ from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, PredictStateMapping, A
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools import ToolContext
-from google.genai import types
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Capability detection
-# ---------------------------------------------------------------------------
-
-def _has_vertex_ai_credentials() -> bool:
-    """Check if Vertex AI credentials are available."""
-    if os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").upper() != "TRUE":
-        return False
-    if not os.getenv("GOOGLE_CLOUD_PROJECT"):
-        return False
-    try:
-        from google.auth import default
-        credentials, project = default()
-        return credentials is not None
-    except Exception:
-        return False
-
-
-def _has_streaming_function_call_support() -> bool:
-    """Check if the google-genai SDK exposes stream_function_call_arguments."""
-    try:
-        return (
-            hasattr(types, "FunctionCallingConfig")
-            and hasattr(types.FunctionCallingConfig, "model_fields")
-            and "stream_function_call_arguments" in types.FunctionCallingConfig.model_fields
-        )
-    except Exception:
-        return False
-
-
-def _get_model_config() -> Tuple[str, bool]:
-    """Determine model and streaming capability.
-
-    Returns:
-        Tuple of (model_name, can_stream_function_args)
-    """
-    can_stream = _has_vertex_ai_credentials() and _has_streaming_function_call_support()
-    if can_stream:
-        return ("gemini-3-flash-preview", True)
-    else:
-        return ("gemini-2.5-flash", False)
-
-
-def _get_generate_content_config(can_stream: bool) -> Optional[types.GenerateContentConfig]:
-    """Create GenerateContentConfig with streaming function call args if supported."""
-    if not can_stream:
-        return None
-    try:
-        return types.GenerateContentConfig(
-            tool_config=types.ToolConfig(
-                function_calling_config=types.FunctionCallingConfig(
-                    stream_function_call_arguments=True
-                )
-            )
-        )
-    except Exception as e:
-        logger.warning("Failed to create streaming config: %s", e)
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -165,18 +75,9 @@ def on_before_agent(callback_context: CallbackContext):
 # Module-level configuration
 # ---------------------------------------------------------------------------
 
-_model_name, _can_stream_args = _get_model_config()
-_generate_config = _get_generate_content_config(_can_stream_args)
-
-logger.info(
-    "Predictive State Demo: Using %s (streaming function call arguments %s)",
-    _model_name,
-    "ENABLED" if _can_stream_args else "DISABLED",
-)
-
 predictive_state_updates_agent = LlmAgent(
     name="DocumentAgent",
-    model=_model_name,
+    model="gemini-2.5-flash",
     instruction="""
     You are a helpful assistant for writing documents.
     To write the document, you MUST use the write_document_local tool.
@@ -204,7 +105,6 @@ predictive_state_updates_agent = LlmAgent(
         write_document_local
     ],
     before_agent_callback=on_before_agent,
-    generate_content_config=_generate_config,
 )
 
 # Create ADK middleware agent instance with predictive state configuration
@@ -221,7 +121,6 @@ adk_predictive_state_agent = ADKAgent(
             tool_argument="document",
         )
     ],
-    streaming_function_call_arguments=_can_stream_args,
 )
 
 # Create FastAPI app

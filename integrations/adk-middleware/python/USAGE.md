@@ -424,11 +424,9 @@ add_adk_fastapi_endpoint(app, creative_agent_wrapper, path="/agents/creative")
 
 ### Predictive State Updates
 
-Predictive state updates allow the frontend to receive real-time state changes as the model streams tool call arguments. This is particularly useful for live previews — for example, showing a document being written character-by-character before the tool call completes.
+Predictive state updates allow the frontend to receive real-time state changes derived from tool call arguments. This is particularly useful for live previews — for example, showing a document update immediately when a tool call completes.
 
-The key insight is that LLM tool calls are structurally different from text generation: the model produces a complete JSON blob of arguments, which is normally delivered all at once. Without streaming function call arguments, the frontend receives the entire tool call only after the model finishes generating it, which means no incremental UI updates during potentially long argument generation (e.g., writing a multi-paragraph document into a `document` parameter).
-
-**With streaming function call arguments enabled**, the model sends argument content incrementally as it generates, and the middleware translates each chunk into `TOOL_CALL_ARGS` events. The `predict_state` configuration then watches for a specific tool and argument, emitting `CUSTOM` events with `STATE_DELTA` patches that let the frontend render live content.
+The `predict_state` configuration watches for a specific tool and argument, emitting `CUSTOM` events with `STATE_DELTA` patches that let the frontend render content as soon as the tool call arrives.
 
 #### Basic Setup
 
@@ -457,53 +455,7 @@ adk_agent = ADKAgent(
 )
 ```
 
-Without streaming function call arguments, `predict_state` still works — it just emits a single state update when the complete tool call arrives, rather than incremental updates as the content streams in.
-
-#### Enabling Streaming Function Call Arguments (Gemini 3+)
-
-For true character-by-character streaming, enable `stream_function_call_arguments` on the model and set `streaming_function_call_arguments=True` on `ADKAgent`:
-
-```python
-from google.genai import types
-
-generate_config = types.GenerateContentConfig(
-    tool_config=types.ToolConfig(
-        function_calling_config=types.FunctionCallingConfig(
-            stream_function_call_arguments=True
-        )
-    )
-)
-
-agent = LlmAgent(
-    name="writer",
-    model="gemini-3-flash-preview",
-    tools=[write_document, AGUIToolset()],
-    generate_content_config=generate_config,
-)
-
-adk_agent = ADKAgent(
-    adk_agent=agent,
-    app_name="my_app",
-    user_id="user123",
-    streaming_function_call_arguments=True,
-    predict_state=[
-        PredictStateMapping(
-            state_key="document",
-            tool="write_document",
-            tool_argument="document",
-        )
-    ],
-)
-```
-
-Requirements for streaming function call arguments:
-- `google-adk >= 1.20.0` with `PROGRESSIVE_SSE_STREAMING` (default in >= 1.22.0)
-- Vertex AI credentials (`GOOGLE_GENAI_USE_VERTEXAI=TRUE`)
-- A Gemini 3+ model that supports `stream_function_call_arguments`
-
-Without these requirements, the middleware falls back to accumulated-args mode. With `PROGRESSIVE_SSE_STREAMING` (ADK >= 1.20.0), this still emits multiple `TOOL_CALL_ARGS` events — but each contains the full accumulated JSON so far rather than an incremental chunk, so the frontend sees the value replaced repeatedly rather than appended to. On older ADK versions, a single `TOOL_CALL_ARGS` event is emitted with the complete arguments after the model finishes generating them.
-
-See `examples/server/api/predictive_state_updates.py` for a complete working example with auto-detection and fallback.
+See `examples/server/api/predictive_state_updates.py` for a complete working example.
 
 ## Event Translation
 

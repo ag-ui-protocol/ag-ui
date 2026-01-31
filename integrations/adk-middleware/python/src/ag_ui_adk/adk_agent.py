@@ -37,7 +37,6 @@ from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
 from .config import PredictStateMapping
 from .utils.converters import convert_message_content_to_parts
-from .workarounds import apply_aggregator_patch, repair_thought_signatures
 
 import logging
 logger = logging.getLogger(__name__)
@@ -86,9 +85,6 @@ class ADKAgent:
 
         # Predictive state configuration
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
-
-        # Streaming function call arguments
-        streaming_function_call_arguments: bool = False,
 
         # Message snapshot configuration
         emit_messages_snapshot: bool = False,
@@ -184,10 +180,6 @@ class ADKAgent:
 
         # Predictive state configuration for real-time state updates
         self._predict_state = predict_state
-        self._streaming_function_call_arguments = streaming_function_call_arguments
-        if streaming_function_call_arguments:
-            apply_aggregator_patch()
-
         # Message snapshot configuration
         self._emit_messages_snapshot = emit_messages_snapshot
 
@@ -247,7 +239,6 @@ class ADKAgent:
         # AG-UI specific
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
         emit_messages_snapshot: bool = False,
-        streaming_function_call_arguments: bool = False,
     ) -> "ADKAgent":
         """Create ADKAgent from an ADK App instance.
 
@@ -321,7 +312,6 @@ class ADKAgent:
             save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
             predict_state=predict_state,
             emit_messages_snapshot=emit_messages_snapshot,
-            streaming_function_call_arguments=streaming_function_call_arguments,
         )
         # Store App for per-request App creation with modified agents
         instance._app = app
@@ -1322,18 +1312,6 @@ class ADKAgent:
         # Use a deep copy of the ADK agent so we can modify it per-execution
         adk_agent = self._adk_agent.model_copy(deep=True)
 
-        # Inject thought-signature repair callback when streaming FC args are enabled
-        # (needed for Gemini 3 models that drop thought_signature on session history)
-        if self._streaming_function_call_arguments and isinstance(adk_agent, LlmAgent):
-            existing = adk_agent.before_model_callback
-            if existing is None:
-                adk_agent.before_model_callback = repair_thought_signatures
-            elif isinstance(existing, list):
-                if repair_thought_signatures not in existing:
-                    existing.append(repair_thought_signatures)
-            elif existing is not repair_thought_signatures:
-                adk_agent.before_model_callback = [existing, repair_thought_signatures]
-
         # Handle SystemMessage if it's the first message - append to agent instructions
         if input.messages and isinstance(input.messages[0], SystemMessage):
             system_content = input.messages[0].content
@@ -1695,26 +1673,17 @@ class ADKAgent:
             for toolset in client_proxy_toolsets:
                 toolset._emitted_tool_call_ids = client_emitted_ids
 
-            # Collect client-side tool names and argument schemas from proxy toolsets
+            # Collect client-side tool names from proxy toolsets
             client_tool_names: set[str] = set()
-            client_tool_schemas: dict[str, set[str]] = {}
             for toolset in client_proxy_toolsets:
                 for tool in toolset.ag_ui_tools:
                     client_tool_names.add(tool.name)
-                    # Extract argument names from JSON Schema parameters
-                    params = getattr(tool, 'parameters', None)
-                    if isinstance(params, dict):
-                        props = params.get('properties', {})
-                        if props:
-                            client_tool_schemas[tool.name] = set(props.keys())
 
             # Create event translator with predictive state configuration
             event_translator = EventTranslator(
                 predict_state=self._predict_state,
-                streaming_function_call_arguments=self._streaming_function_call_arguments,
                 client_emitted_tool_call_ids=client_emitted_ids,
                 client_tool_names=client_tool_names,
-                client_tool_schemas=client_tool_schemas,
                 is_resumable=self._is_adk_resumable(),
             )
 
@@ -1889,51 +1858,22 @@ class ADKAgent:
                     if has_lro_function_call:
                         is_long_running_tool = True
 
-                    # Check if a streaming FC already emitted START+ARGS for this LRO
-                    streamed_tc_id = event_translator.get_streamed_id_for_lro(adk_event)
-                    if streamed_tc_id:
-                        # Find the confirmed LRO FC in the event
-                        lro_fc = None
-                        if adk_event.content and getattr(adk_event.content, 'parts', None):
-                            for part in adk_event.content.parts:
-                                fc = getattr(part, 'function_call', None)
-                                fc_id = getattr(fc, 'id', None) if fc else None
-                                if fc_id and fc_id in lro_ids:
-                                    lro_fc = fc
-                                    break
-
-                        if lro_fc:
-                            event_translator.map_confirmed_to_streaming(lro_fc.id, streamed_tc_id)
-                            async for ev in event_translator.emit_deferred_lro_end(streamed_tc_id, lro_fc.name):
-                                await event_queue.put(ev)
-                                logger.debug(f"Event queued (deferred LRO): {type(ev).__name__} (thread {input.thread_id})")
+                    async for ag_ui_event in event_translator.translate_lro_function_calls(
+                        adk_event
+                    ):
+                        await event_queue.put(ag_ui_event)
+                        if ag_ui_event.type == EventType.TOOL_CALL_END:
                             is_long_running_tool = True
-                        else:
-                            # Fallback: no matching FC found, use normal path
-                            async for ag_ui_event in event_translator.translate_lro_function_calls(adk_event):
-                                await event_queue.put(ag_ui_event)
-                                if ag_ui_event.type == EventType.TOOL_CALL_END:
-                                    is_long_running_tool = True
-                                logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
-                    else:
-                        # Normal LRO path — no pre-streamed FC
-                        async for ag_ui_event in event_translator.translate_lro_function_calls(
-                            adk_event
-                        ):
-                            await event_queue.put(ag_ui_event)
-                            if ag_ui_event.type == EventType.TOOL_CALL_END:
-                                is_long_running_tool = True
-                            logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
+                        logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
                     # Hard stop the execution if we find any long running tool
                     # AND the agent is NOT using ADK's native resumability.
                     # With ResumabilityConfig, ADK handles the pause/resume flow
                     # natively — we don't need to stop the loop early.
                     if is_long_running_tool and not self._is_adk_resumable():
-                        # When the aggregator monkey-patch (apply_aggregator_patch) is
-                        # active, ADK may yield the FunctionCall as a partial/streaming
-                        # event that hasn't been persisted to the session yet.  We must
-                        # manually persist it so the next run can find it when submitting
-                        # the FunctionResponse.
+                        # With PROGRESSIVE_SSE_STREAMING (ADK >= 1.22.0), the
+                        # FunctionCall may arrive as a partial event that ADK
+                        # hasn't persisted to the session.  We must persist it
+                        # so the next run can match the FunctionResponse.
                         if getattr(adk_event, 'partial', False) and adk_event.content:
                             from google.adk.sessions.session import Event as ADKSessionEvent
                             import time as _time_mod
@@ -1946,7 +1886,7 @@ class ADKAgent:
                             try:
                                 await self._session_manager._session_service.append_event(session, fc_event)
                                 logger.info(
-                                    f"Persisted FunctionCall event to session for early return "
+                                    f"Persisted FunctionCall event to session for LRO early return "
                                     f"(partial event, thread={input.thread_id})"
                                 )
                             except Exception as e:
