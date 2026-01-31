@@ -92,7 +92,7 @@ jobs:
           - suite: langroid
             test_path: tests/langroidTests
             services: ["dojo", "langroid"]
-            wait_on: http://localhost:9999,tcp:localhost:8003
+            wait_on: http://localhost:9999,tcp:localhost:8018
           - suite: langgraph-python
             test_path: tests/langgraphPythonTests
             services: ["dojo", "langgraph-platform-python"]
