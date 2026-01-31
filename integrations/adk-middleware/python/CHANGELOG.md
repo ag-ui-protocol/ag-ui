@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fixed `asyncio.get_event_loop()` deprecation in tests for Python 3.14 compatibility
   - Added `asyncio.timeout` compatibility shim for Python 3.10 in tests
 
-## [0.4.2] - 2025-01-22
+## [0.4.2] - 2026-01-22
 
 ### Added
 - **NEW**: Native support for `RunAgentInput.context` in ADK agents (#959)
@@ -86,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Previous check for `author == "model"` caused assistant messages to be silently dropped
   - Now treats any non-"user" author as an assistant message
 
-## [0.4.1] - 2025-01-06
+## [0.4.1] - 2026-01-06
 
 ### Added
 - **NEW**: Multimodal message support for user messages with inline base64-encoded binary data (#864)
