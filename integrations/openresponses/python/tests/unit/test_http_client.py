@@ -21,7 +21,27 @@ class TestBuildUrl:
         )
         url = client._build_url("/responses")
         assert "api-version=2024-02-15-preview" in url
-        assert url.startswith("https://myresource.openai.azure.com/v1/responses")
+        assert url.startswith("https://myresource.openai.azure.com/openai/v1/responses")
+
+    def test_azure_base_url_with_openai_prefix(self):
+        """Don't double the /openai prefix if user already included it."""
+        client = HttpClient(
+            base_url="https://myresource.openai.azure.com/openai",
+            api_version="2024-02-15-preview",
+        )
+        url = client._build_url("/responses")
+        assert url.startswith("https://myresource.openai.azure.com/openai/v1/responses")
+        assert "/openai/openai/" not in url
+
+    def test_azure_base_url_with_openai_v1(self):
+        """Don't insert extra segments if user provides full path."""
+        client = HttpClient(
+            base_url="https://myresource.openai.azure.com/openai/v1",
+            api_version="2024-02-15-preview",
+        )
+        url = client._build_url("/responses")
+        assert url.startswith("https://myresource.openai.azure.com/openai/v1/responses")
+        assert "api-version=2024-02-15-preview" in url
 
     def test_trailing_slash_stripped(self):
         client = HttpClient(base_url="http://localhost:18789/")

@@ -123,11 +123,17 @@ class HttpClient:
         # Normalize the path
         clean_path = path if path.startswith("/") else f"/{path}"
 
-        # Check if base_url already ends with /v1
-        if self._base_url.endswith("/v1"):
-            url = f"{self._base_url}{clean_path}"
+        base = self._base_url
+
+        # Azure requires /openai prefix before /v1
+        if self._api_version and "/openai" not in base:
+            base = f"{base}/openai"
+
+        # Check if base already ends with /v1
+        if base.endswith("/v1"):
+            url = f"{base}{clean_path}"
         else:
-            url = f"{self._base_url}/v1{clean_path}"
+            url = f"{base}/v1{clean_path}"
 
         # Azure requires api-version query param
         if self._api_version:
