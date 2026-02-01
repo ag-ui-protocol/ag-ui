@@ -1,0 +1,15 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install from local source (build context = integrations/openresponses/)
+COPY python/ /tmp/python/
+RUN pip install --no-cache-dir /tmp/python uvicorn && rm -rf /tmp/python
+
+# Copy server files
+COPY python/server/configs/ ./configs/
+COPY python/server/__init__.py python/server/__main__.py ./server/
+
+EXPOSE 8080
+
+CMD ["python", "-m", "server"]

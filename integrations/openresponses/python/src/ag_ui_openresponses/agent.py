@@ -16,6 +16,7 @@ from ag_ui.core import (
     RunStartedEvent,
 )
 
+from .config_loader import load_config
 from .providers import detect_provider, get_provider_defaults
 from .request.request_builder import RequestBuilder
 from .response.event_translator import EventTranslator
@@ -24,6 +25,7 @@ from .response.tool_call_handler import ToolCallHandler
 from .types import (
     OpenResponsesAgentConfig,
     ProviderType,
+    fill_runtime_config,
     merge_runtime_config,
 )
 from .utils.http_client import HttpClient
@@ -64,15 +66,24 @@ class OpenResponsesAgent:
             print(f"Event: {event}")
     """
 
-    def __init__(self, config: OpenResponsesAgentConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: OpenResponsesAgentConfig | None = None,
+        restrict_configs: bool = False,
+    ) -> None:
         """Initialize the agent with configuration.
 
         Args:
             config: Agent configuration. All fields are optional — missing
                     values can be supplied at runtime via
                     ``forwarded_props.openresponses_config``.
+            restrict_configs: When True, a named config is required for every
+                run and caller-supplied runtime overrides can only fill gaps
+                (fields left at their default) rather than override values
+                set by the named config.
         """
         self._static_config = config or OpenResponsesAgentConfig()
+        self._restrict_configs = restrict_configs
 
         # If base_url is already known we can eagerly create the client
         if self._static_config.base_url:
@@ -181,12 +192,15 @@ class OpenResponsesAgent:
             raise
 
     def _resolve_run_config(
-        self, input_data: RunAgentInput
+        self, input_data: RunAgentInput, config_name: str | None = None,
     ) -> tuple[HttpClient, RequestBuilder]:
         """Resolve effective config for this run.
 
-        Merges any runtime overrides from
-        ``forwarded_props.openresponses_config`` into the static config.
+        Priority (highest wins):
+        1. ``forwarded_props.openresponses_config`` (per-request overrides)
+        2. Named JSON config (from *config_name* or
+           ``forwarded_props.config_name``)
+        3. Static config from ``__init__``
 
         Returns:
             Tuple of (http_client, request_builder) ready for this run.
@@ -195,33 +209,56 @@ class OpenResponsesAgent:
             ValueError: If the effective config is missing ``base_url``.
         """
         runtime_dict: dict[str, Any] | None = None
+        fp_config_name: str | None = config_name
         if input_data.forwarded_props:
             runtime_dict = input_data.forwarded_props.get("openresponses_config")
+            if not fp_config_name:
+                fp_config_name = input_data.forwarded_props.get("config_name")
 
-        if not runtime_dict:
-            # No runtime overrides — use pre-built client if available
+        # When restrict_configs is enabled, a named config is mandatory
+        if self._restrict_configs and not fp_config_name:
+            raise ValueError(
+                "A named config is required when restrict_configs is enabled. "
+                "Provide a config_name via the URL path or forwarded_props."
+            )
+
+        # Layer 1: start with static config
+        base = self._static_config
+
+        # Layer 2: merge named JSON config underneath runtime overrides
+        if fp_config_name:
+            try:
+                named_cfg = load_config(fp_config_name)
+            except FileNotFoundError as exc:
+                raise ValueError(str(exc)) from exc
+            base = merge_runtime_config(base, named_cfg)
+
+        if not runtime_dict and not fp_config_name:
+            # No runtime overrides or named config — use pre-built client
             if self._http_client and self._request_builder:
                 return self._http_client, self._request_builder
-            # Static config is incomplete and no runtime supplement
             if not self._static_config.base_url:
                 raise ValueError(
                     "OpenResponsesAgent requires a base_url. Provide it in the "
                     "static config or via forwarded_props.openresponses_config."
                 )
-            # Shouldn't reach here, but handle gracefully
             resolved = self._apply_provider_defaults(self._static_config)
             return self._create_http_client(resolved), RequestBuilder(resolved)
 
-        # Merge runtime overrides into static config
-        merged = merge_runtime_config(self._static_config, runtime_dict)
+        # Layer 3: merge runtime overrides on top
+        if runtime_dict:
+            if self._restrict_configs:
+                base = fill_runtime_config(base, runtime_dict)
+            else:
+                base = merge_runtime_config(base, runtime_dict)
 
-        if not merged.base_url:
+        if not base.base_url:
             raise ValueError(
                 "OpenResponsesAgent requires a base_url. Provide it in the "
                 "static config or via forwarded_props.openresponses_config."
             )
 
-        resolved = self._apply_provider_defaults(merged)
+        resolved = self._apply_provider_defaults(base)
         return self._create_http_client(resolved), RequestBuilder(resolved)
 
     def _apply_provider_defaults(

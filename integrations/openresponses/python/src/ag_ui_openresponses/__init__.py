@@ -6,21 +6,27 @@ Hugging Face, and OpenClaw.
 """
 
 from .agent import OpenResponsesAgent
-from .endpoint import create_openresponses_endpoint
+from .config_loader import list_configs, load_config
+from .endpoint import create_openresponses_endpoint, create_openresponses_proxy
 from .providers import detect_provider, get_provider_defaults
 from .types import (
     AzureProviderConfig,
     OpenClawProviderConfig,
     OpenResponsesAgentConfig,
     ProviderType,
+    fill_runtime_config,
     merge_runtime_config,
 )
 
 __all__ = [
     # Main class
     "OpenResponsesAgent",
-    # Endpoint factory
+    # Endpoint factories
     "create_openresponses_endpoint",
+    "create_openresponses_proxy",
+    # Config loader
+    "load_config",
+    "list_configs",
     # Configuration
     "OpenResponsesAgentConfig",
     "OpenClawProviderConfig",
@@ -29,5 +35,6 @@ __all__ = [
     # Utilities
     "detect_provider",
     "get_provider_defaults",
+    "fill_runtime_config",
     "merge_runtime_config",
 ]

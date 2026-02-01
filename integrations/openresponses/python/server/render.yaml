@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: openresponses-proxy
+    runtime: docker
+    dockerfilePath: Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8080"

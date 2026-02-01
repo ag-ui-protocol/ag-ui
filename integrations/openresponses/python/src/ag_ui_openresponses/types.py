@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import copy
+import logging
 from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import Any, Literal, TypedDict
+
+logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -118,6 +121,65 @@ def merge_runtime_config(
     for key, value in runtime.items():
         if key not in field_names:
             continue
+        if key == "openclaw" and isinstance(value, dict):
+            value = OpenClawProviderConfig(**value)
+        elif key == "azure" and isinstance(value, dict):
+            value = AzureProviderConfig(**value)
+        elif key == "provider" and isinstance(value, str):
+            value = ProviderType(value)
+        object.__setattr__(merged, key, value)
+
+    return merged
+
+
+def _is_default(config: OpenResponsesAgentConfig, field_name: str) -> bool:
+    """Return True if the field on *config* still holds its dataclass default."""
+    from dataclasses import MISSING
+
+    current = getattr(config, field_name)
+    f_meta = {f.name: f for f in fields(OpenResponsesAgentConfig)}[field_name]
+    if f_meta.default is not MISSING:
+        return current == f_meta.default
+    if f_meta.default_factory is not MISSING:  # type: ignore[misc]
+        return current == f_meta.default_factory()  # type: ignore[misc]
+    return current is None
+
+
+def fill_runtime_config(
+    base: OpenResponsesAgentConfig,
+    runtime: dict[str, Any],
+) -> OpenResponsesAgentConfig:
+    """Fill empty fields of *base* from *runtime* without overriding set values.
+
+    Unlike ``merge_runtime_config`` (which lets runtime values win),
+    this function only applies runtime values to fields that still hold
+    their dataclass default.  If a runtime value is dropped, a warning
+    is logged.
+
+    Args:
+        base: The resolved configuration (e.g. from a named config file).
+        runtime: Dictionary of caller-supplied overrides.
+
+    Returns:
+        A new ``OpenResponsesAgentConfig`` with gaps filled.
+    """
+    merged = copy.copy(base)
+    field_names = {f.name for f in fields(OpenResponsesAgentConfig)}
+
+    for key, value in runtime.items():
+        if key not in field_names:
+            continue
+
+        if not _is_default(base, key):
+            # base already has a non-default value — drop the caller's override
+            logger.warning(
+                "restrict_configs: ignoring caller override for '%s' "
+                "(already set by named config)",
+                key,
+            )
+            continue
+
+        # Field is at its default — allow the caller's value
         if key == "openclaw" and isinstance(value, dict):
             value = OpenClawProviderConfig(**value)
         elif key == "azure" and isinstance(value, dict):

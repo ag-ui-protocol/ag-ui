@@ -11,6 +11,7 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import StreamingResponse
 
 from .agent import OpenResponsesAgent
+from .config_loader import list_configs
 
 logger = logging.getLogger(__name__)
 
@@ -123,3 +124,91 @@ def create_openresponses_endpoint(
         return StreamingResponse(
             event_generator(), media_type=encoder.get_content_type()
         )
+
+
+def create_openresponses_proxy(
+    app: FastAPI | APIRouter,
+    path: str = "/",
+    config_dir: str | None = None,
+    restrict_configs: bool = False,
+) -> None:
+    """Create a zero-config proxy with named-config and generic endpoints.
+
+    Registers:
+    - ``POST {path}`` — generic endpoint (config via forwarded_props).
+      **Skipped** when *restrict_configs* is True.
+    - ``POST {path}/configs/{config_name}`` — named JSON config with
+      optional forwarded_props overrides
+    - ``GET {path}/configs`` — list available config names
+
+    Args:
+        app: FastAPI application or APIRouter instance.
+        path: Base path prefix. Defaults to ``"/"``.
+        config_dir: Directory containing JSON config files.
+        restrict_configs: When True, only named-config endpoints are
+            registered and caller overrides can only fill gaps (not
+            override values set by the named config).
+    """
+    agent = OpenResponsesAgent(restrict_configs=restrict_configs)
+
+    # Normalise path so we can build sub-paths cleanly
+    base = path.rstrip("/")
+
+    # --- generic endpoint (same as create_openresponses_endpoint) ---
+    if not restrict_configs:
+        create_openresponses_endpoint(app, agent, path=path or "/")
+
+    # --- named-config endpoint ---
+    @app.post(f"{base}/configs/{{config_name}}")
+    async def named_config_endpoint(
+        config_name: str, input_data: RunAgentInput, request: Request
+    ):
+        """Run agent using a named JSON config file."""
+        accept_header = request.headers.get("accept")
+        encoder = EventEncoder(accept=accept_header)
+
+        async def event_generator():
+            try:
+                # Inject config_name into forwarded_props
+                fp = dict(input_data.forwarded_props or {})
+                fp["config_name"] = config_name
+                patched = input_data.model_copy(update={"forwarded_props": fp})
+                async for event in agent.run(patched):
+                    try:
+                        yield encoder.encode(event)
+                    except Exception as enc_err:
+                        logger.error(f"Encoding error: {enc_err}", exc_info=True)
+                        error_event = RunErrorEvent(
+                            type=EventType.RUN_ERROR,
+                            message=f"Encoding failed: {enc_err}",
+                            code="ENCODING_ERROR",
+                        )
+                        try:
+                            yield encoder.encode(error_event)
+                        except Exception:
+                            yield 'event: error\ndata: {"error": "Encoding failed"}\n\n'
+                        break
+            except Exception as agent_err:
+                logger.error(f"Agent error: {agent_err}", exc_info=True)
+                try:
+                    yield encoder.encode(
+                        RunErrorEvent(
+                            type=EventType.RUN_ERROR,
+                            message=f"Agent execution failed: {agent_err}",
+                            code="AGENT_ERROR",
+                        )
+                    )
+                except Exception:
+                    yield 'event: error\ndata: {"error": "Agent execution failed"}\n\n'
+
+        return StreamingResponse(
+            event_generator(), media_type=encoder.get_content_type()
+        )
+
+    # --- list configs endpoint ---
+    configs_path = f"{base}/configs" if base else "/configs"
+
+    @app.get(configs_path)
+    async def list_configs_endpoint():
+        """List available named configs."""
+        return {"configs": list_configs(config_dir)}
