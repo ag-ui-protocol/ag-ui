@@ -2,14 +2,18 @@
 
 This provides a FastAPI application that demonstrates how to use the
 OpenResponses agent with the AG-UI protocol. It connects to any
-OpenResponses-compatible endpoint (OpenAI, Azure, HuggingFace, Moltbot).
+OpenResponses-compatible endpoint (OpenAI, Azure, HuggingFace, OpenClaw).
 """
 
 from __future__ import annotations
 
+import logging
 import os
 
 import uvicorn
+
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("ag_ui_openresponses").setLevel(logging.DEBUG)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

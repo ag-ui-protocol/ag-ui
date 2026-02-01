@@ -64,7 +64,7 @@ The openresponses integration provides an AG-UI agent that connects to any OpenR
 - **OpenAI** (`https://api.openai.com/v1`)
 - **Azure OpenAI** (`https://{resource}.openai.azure.com`)
 - **Hugging Face** (`https://api-inference.huggingface.co/v1`)
-- **Moltbot** (`http://localhost:18789`) - with agent routing
+- **OpenClaw** (`http://localhost:18789`) - with agent routing
 
 ### Python Package (`python/src/ag_ui_openresponses/`)
 
@@ -92,7 +92,7 @@ ag_ui_openresponses/
 - Stateful mode via `previous_response_id` (transparent to client)
 - Multimodal content support (images, files)
 - Tool call handling with proper event sequencing
-- Moltbot agent routing via model field or headers
+- OpenClaw agent routing via model field or headers
 
 ### TypeScript Package (`typescript/`)
 

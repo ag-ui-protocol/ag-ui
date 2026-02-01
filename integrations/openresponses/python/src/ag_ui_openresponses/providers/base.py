@@ -27,10 +27,10 @@ def detect_provider(base_url: str) -> ProviderType:
     if "huggingface.co" in url:
         return ProviderType.HUGGINGFACE
 
-    # Moltbot typically runs on localhost or custom domains
-    # Check for common Moltbot ports or explicit identifiers
-    if ":18789" in url or "moltbot" in url or "molty" in url:
-        return ProviderType.MOLTBOT
+    # OpenClaw typically runs on localhost or custom domains
+    # Check for common OpenClaw ports or explicit identifiers
+    if ":18789" in url or "openclaw" in url:
+        return ProviderType.OPENCLAW
 
     return ProviderType.CUSTOM
 
@@ -54,10 +54,10 @@ def get_provider_defaults(provider: ProviderType) -> dict[str, Any]:
         ProviderType.HUGGINGFACE: {
             "default_model": "meta-llama/Llama-3.3-70B-Instruct",
         },
-        ProviderType.MOLTBOT: {
-            "default_model": "moltbot:main",
-            # Moltbot uses the model field for agent routing
-            # Format: "moltbot:<agentId>"
+        ProviderType.OPENCLAW: {
+            "default_model": "openclaw",
+            # OpenClaw uses the model field for agent routing
+            # Format: "openclaw:<agentId>"
         },
         ProviderType.CUSTOM: {},
     }

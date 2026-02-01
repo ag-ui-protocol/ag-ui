@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
@@ -18,7 +19,7 @@ class HttpClient:
     def __init__(
         self,
         base_url: str,
-        api_key: str,
+        api_key: str | None = None,
         headers: dict[str, str] | None = None,
         timeout_seconds: float = 120.0,
         max_retries: int = 3,
@@ -60,6 +61,11 @@ class HttpClient:
         """
         url = self._build_url(path)
         headers = self._build_headers()
+
+        # Log equivalent curl command for debugging
+        header_args = " ".join(f'-H "{k}: {v}"' for k, v in headers.items())
+        body_json = json.dumps(body)
+        logger.info(f"curl -sS -X POST {url} {header_args} -d '{body_json}'")
 
         last_error: Exception | None = None
 
@@ -142,10 +148,12 @@ class HttpClient:
             **self._custom_headers,
         }
 
-        # Azure uses different auth header
-        if self._api_version:
-            headers["api-key"] = self._api_key
-        else:
-            headers["Authorization"] = f"Bearer {self._api_key}"
+        # Only add auth header if api_key is provided
+        if self._api_key:
+            # Azure uses different auth header
+            if self._api_version:
+                headers["api-key"] = self._api_key
+            else:
+                headers["Authorization"] = f"Bearer {self._api_key}"
 
         return headers

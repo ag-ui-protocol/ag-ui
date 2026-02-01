@@ -9,7 +9,7 @@ AG-UI agent for OpenResponses-compatible endpoints.
 | OpenAI | `https://api.openai.com/v1` | Native implementation |
 | Azure OpenAI | `https://{resource}.openai.azure.com` | Requires `api-version` param |
 | Hugging Face | `https://api-inference.huggingface.co/v1` | Open Responses initiative |
-| Moltbot | `http://localhost:18789` | Multi-agent gateway with agent routing |
+| OpenClaw | `http://localhost:18789` | Multi-agent gateway with agent routing |
 
 ## Installation
 
@@ -62,21 +62,21 @@ agent = OpenResponsesAgent(
 create_openresponses_endpoint(app, agent, path="/agent")
 ```
 
-## Moltbot with Agent Routing
+## OpenClaw with Agent Routing
 
 ```python
 from ag_ui_openresponses import (
     OpenResponsesAgent,
     OpenResponsesAgentConfig,
-    MoltbotProviderConfig,
+    OpenClawProviderConfig,
 )
 
 agent = OpenResponsesAgent(
     OpenResponsesAgentConfig(
         base_url="http://localhost:18789",
         api_key="your-token",
-        default_model="moltbot:main",
-        moltbot=MoltbotProviderConfig(
+        default_model="openclaw:main",
+        openclaw=OpenClawProviderConfig(
             agent_id="main",
             session_key="user-123",
         ),

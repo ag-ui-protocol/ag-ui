@@ -1,7 +1,7 @@
 [project]
 name = "ag_ui_openresponses"
 version = "0.1.0"
-description = "AG-UI agent for OpenResponses-compatible endpoints (OpenAI, Azure, HuggingFace, Moltbot)"
+description = "AG-UI agent for OpenResponses-compatible endpoints (OpenAI, Azure, HuggingFace, OpenClaw)"
 readme = "README.md"
 authors = [
     { name = "AG-UI Contributors" }

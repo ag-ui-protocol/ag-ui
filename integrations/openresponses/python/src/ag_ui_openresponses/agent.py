@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from ag_ui.core import (
     BaseEvent,
@@ -24,6 +24,7 @@ from .response.tool_call_handler import ToolCallHandler
 from .types import (
     OpenResponsesAgentConfig,
     ProviderType,
+    merge_runtime_config,
 )
 from .utils.http_client import HttpClient
 
@@ -33,7 +34,7 @@ logger = logging.getLogger(__name__)
 class OpenResponsesAgent:
     """AG-UI agent that connects to any OpenResponses-compatible endpoint.
 
-    Supports OpenAI, Azure OpenAI, Hugging Face, Moltbot (formerly Clawdbot),
+    Supports OpenAI, Azure OpenAI, Hugging Face, OpenClaw,
     and any other provider implementing the OpenResponses API.
 
     Examples:
@@ -45,13 +46,13 @@ class OpenResponsesAgent:
             )
         )
 
-        # Moltbot with agent routing
+        # OpenClaw with agent routing
         agent = OpenResponsesAgent(
             OpenResponsesAgentConfig(
                 base_url="http://localhost:18789",
-                api_key=os.environ["MOLTBOT_TOKEN"],
-                default_model="moltbot:main",
-                moltbot=MoltbotProviderConfig(
+                api_key=os.environ["OPENCLAW_TOKEN"],
+                default_model="openclaw:main",
+                openclaw=OpenClawProviderConfig(
                     agent_id="main",
                     session_key="user-123",
                 ),
@@ -63,40 +64,26 @@ class OpenResponsesAgent:
             print(f"Event: {event}")
     """
 
-    def __init__(self, config: OpenResponsesAgentConfig) -> None:
+    def __init__(self, config: OpenResponsesAgentConfig | None = None) -> None:
         """Initialize the agent with configuration.
 
         Args:
-            config: Agent configuration including base URL, API key, and
-                    provider-specific settings.
+            config: Agent configuration. All fields are optional — missing
+                    values can be supplied at runtime via
+                    ``forwarded_props.openresponses_config``.
         """
-        # Auto-detect provider if not specified
-        provider = config.provider or detect_provider(config.base_url)
-        defaults = get_provider_defaults(provider)
+        self._static_config = config or OpenResponsesAgentConfig()
 
-        # Merge defaults with provided config
-        self.config = OpenResponsesAgentConfig(
-            base_url=config.base_url,
-            api_key=config.api_key,
-            default_model=config.default_model or defaults.get("default_model"),
-            headers=config.headers,
-            timeout_seconds=config.timeout_seconds,
-            max_retries=config.max_retries,
-            provider=provider,
-            moltbot=config.moltbot,
-            azure=config.azure,
-        )
-
-        self._http_client = HttpClient(
-            base_url=self.config.base_url,
-            api_key=self.config.api_key,
-            headers=self._build_headers(),
-            timeout_seconds=self.config.timeout_seconds,
-            max_retries=self.config.max_retries,
-            api_version=self.config.azure.api_version if self.config.azure else None,
-        )
-
-        self._request_builder = RequestBuilder(self.config)
+        # If base_url is already known we can eagerly create the client
+        if self._static_config.base_url:
+            resolved = self._apply_provider_defaults(self._static_config)
+            self._http_client: HttpClient | None = self._create_http_client(resolved)
+            self._request_builder: RequestBuilder | None = RequestBuilder(resolved)
+            self.config = resolved
+        else:
+            self._http_client = None
+            self._request_builder = None
+            self.config = self._static_config
 
     async def run(self, input_data: RunAgentInput) -> AsyncIterator[BaseEvent]:
         """Run the agent with the given input.
@@ -112,8 +99,18 @@ class OpenResponsesAgent:
         Raises:
             Exception: If the request fails or an error occurs during streaming.
         """
+        # Resolve config (static + runtime merge) and validate
+        try:
+            http_client, request_builder = self._resolve_run_config(input_data)
+        except ValueError as e:
+            yield RunErrorEvent(
+                type=EventType.RUN_ERROR,
+                message=str(e),
+            )
+            return
+
         # Build the OpenResponses request
-        request = self._request_builder.build(input_data)
+        request = request_builder.build(input_data)
 
         # Get IDs from input
         run_id = input_data.run_id
@@ -135,7 +132,7 @@ class OpenResponsesAgent:
 
         try:
             # Make streaming request
-            async with self._http_client.post_stream("/responses", request) as response:
+            async with http_client.post_stream("/responses", request) as response:
                 if response.status >= 400:
                     error_text = await response.text()
                     logger.error(f"OpenResponses request failed: {response.status} {error_text}")
@@ -183,18 +180,95 @@ class OpenResponsesAgent:
             )
             raise
 
-    def _build_headers(self) -> dict[str, str]:
+    def _resolve_run_config(
+        self, input_data: RunAgentInput
+    ) -> tuple[HttpClient, RequestBuilder]:
+        """Resolve effective config for this run.
+
+        Merges any runtime overrides from
+        ``forwarded_props.openresponses_config`` into the static config.
+
+        Returns:
+            Tuple of (http_client, request_builder) ready for this run.
+
+        Raises:
+            ValueError: If the effective config is missing ``base_url``.
+        """
+        runtime_dict: dict[str, Any] | None = None
+        if input_data.forwarded_props:
+            runtime_dict = input_data.forwarded_props.get("openresponses_config")
+
+        if not runtime_dict:
+            # No runtime overrides — use pre-built client if available
+            if self._http_client and self._request_builder:
+                return self._http_client, self._request_builder
+            # Static config is incomplete and no runtime supplement
+            if not self._static_config.base_url:
+                raise ValueError(
+                    "OpenResponsesAgent requires a base_url. Provide it in the "
+                    "static config or via forwarded_props.openresponses_config."
+                )
+            # Shouldn't reach here, but handle gracefully
+            resolved = self._apply_provider_defaults(self._static_config)
+            return self._create_http_client(resolved), RequestBuilder(resolved)
+
+        # Merge runtime overrides into static config
+        merged = merge_runtime_config(self._static_config, runtime_dict)
+
+        if not merged.base_url:
+            raise ValueError(
+                "OpenResponsesAgent requires a base_url. Provide it in the "
+                "static config or via forwarded_props.openresponses_config."
+            )
+
+        resolved = self._apply_provider_defaults(merged)
+        return self._create_http_client(resolved), RequestBuilder(resolved)
+
+    def _apply_provider_defaults(
+        self, config: OpenResponsesAgentConfig
+    ) -> OpenResponsesAgentConfig:
+        """Apply provider detection and defaults to a config."""
+        provider = config.provider or (
+            detect_provider(config.base_url) if config.base_url else ProviderType.CUSTOM
+        )
+        defaults = get_provider_defaults(provider)
+
+        return OpenResponsesAgentConfig(
+            base_url=config.base_url,
+            api_key=config.api_key,
+            default_model=config.default_model or defaults.get("default_model"),
+            headers=config.headers,
+            timeout_seconds=config.timeout_seconds,
+            max_retries=config.max_retries,
+            provider=provider,
+            openclaw=config.openclaw,
+            azure=config.azure,
+        )
+
+    def _create_http_client(self, config: OpenResponsesAgentConfig) -> HttpClient:
+        """Create an HttpClient from a resolved config."""
+        return HttpClient(
+            base_url=config.base_url,  # type: ignore[arg-type]
+            api_key=config.api_key,
+            headers=self._build_headers(config),
+            timeout_seconds=config.timeout_seconds,
+            max_retries=config.max_retries,
+            api_version=config.azure.api_version if config.azure else None,
+        )
+
+    def _build_headers(self, config: OpenResponsesAgentConfig | None = None) -> dict[str, str]:
         """Build request headers including provider-specific ones."""
+        cfg = config or self.config
         headers: dict[str, str] = {
-            **(self.config.headers or {}),
+            **(cfg.headers or {}),
         }
 
-        # Moltbot-specific headers
-        if self.config.moltbot:
-            if self.config.moltbot.agent_id:
-                headers["x-moltbot-agent-id"] = self.config.moltbot.agent_id
-            if self.config.moltbot.session_key:
-                headers["x-moltbot-session-key"] = self.config.moltbot.session_key
+        # OpenClaw-specific headers
+        if cfg.openclaw:
+            if cfg.openclaw.agent_id:
+                headers["x-openclaw-agent-id"] = cfg.openclaw.agent_id
+            if cfg.openclaw.session_key:
+                headers["x-openclaw-session-key"] = cfg.openclaw.session_key
 
         return headers
 

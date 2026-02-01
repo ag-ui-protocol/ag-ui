@@ -93,14 +93,14 @@ class RequestBuilder:
         if forwarded and isinstance(forwarded, dict) and "model" in forwarded:
             return str(forwarded["model"])
 
-        # Check for Moltbot agent routing in forwarded_props
+        # Check for OpenClaw agent routing in forwarded_props
         if (
             forwarded
             and isinstance(forwarded, dict)
             and "agent_id" in forwarded
-            and self._config.provider == ProviderType.MOLTBOT
+            and self._config.provider == ProviderType.OPENCLAW
         ):
-            return f"moltbot:{forwarded['agent_id']}"
+            return f"openclaw:{forwarded['agent_id']}"
 
         # Use default model from config
         return self._config.default_model or "gpt-4o"
@@ -325,11 +325,12 @@ class RequestBuilder:
 
     def _translate_tools(
         self, tools: list[Tool]
-    ) -> list[FunctionToolParam] | None:
+    ) -> list[FunctionToolParam | dict[str, Any]] | None:
         """Translate AG-UI tools to OpenResponses format.
 
-        Uses FunctionToolParam from OpenAI SDK which has a flat structure:
-        {type, name, description, parameters, strict} - NOT nested under 'function'.
+        Uses FunctionToolParam from OpenAI SDK (flat structure) by default.
+        When OpenClawProviderConfig.use_nested_tool_format is True, uses the
+        Chat Completions-style nested format instead.
 
         Args:
             tools: List of AG-UI tool definitions.
@@ -340,16 +341,31 @@ class RequestBuilder:
         if not tools:
             return None
 
-        result: list[FunctionToolParam] = []
+        use_nested = (
+            self._config.openclaw is not None
+            and self._config.openclaw.use_nested_tool_format
+        )
+
+        result: list[FunctionToolParam | dict[str, Any]] = []
         for tool in tools:
-            result.append(
-                FunctionToolParam(
-                    type="function",
-                    name=tool.name,
-                    description=tool.description or "",
-                    parameters=tool.parameters or {},
+            if use_nested:
+                result.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description or "",
+                        "parameters": tool.parameters or {},
+                    },
+                })
+            else:
+                result.append(
+                    FunctionToolParam(
+                        type="function",
+                        name=tool.name,
+                        description=tool.description or "",
+                        parameters=tool.parameters or {},
+                    )
                 )
-            )
         return result
 
     def _get_max_tokens(self, input_data: RunAgentInput) -> int | None:

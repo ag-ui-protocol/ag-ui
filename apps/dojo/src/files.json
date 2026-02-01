@@ -2756,7 +2756,7 @@
     },
     {
       "name": "agentic_chat.py",
-      "content": "\"\"\"Agentic Chat feature using OpenResponses.\"\"\"\n\nfrom __future__ import annotations\n\nimport os\n\nfrom fastapi import APIRouter\n\nfrom ag_ui_openresponses import (\n    OpenResponsesAgent,\n    OpenResponsesAgentConfig,\n    create_openresponses_endpoint,\n)\n\napp = APIRouter()\n\nagent = OpenResponsesAgent(\n    OpenResponsesAgentConfig(\n        base_url=\"https://api.openai.com/v1\",\n        api_key=os.environ.get(\"OPENAI_API_KEY\", \"\"),\n        default_model=\"gpt-4o-mini\",\n    )\n)\n\ncreate_openresponses_endpoint(app, agent, path=\"/\")\n",
+      "content": "\"\"\"Agentic Chat feature using OpenResponses.\"\"\"\n\nfrom __future__ import annotations\n\nimport os\n\nfrom fastapi import APIRouter\n\nfrom ag_ui_openresponses import (\n    OpenClawProviderConfig,\n    OpenResponsesAgent,\n    OpenResponsesAgentConfig,\n    create_openresponses_endpoint,\n)\n\napp = APIRouter()\n\nagent = OpenResponsesAgent(\n    OpenResponsesAgentConfig(\n        base_url=\"http://host.docker.internal:18789\",\n        api_key=os.environ.get(\"OPENCLAW_TOKEN\", \"\"),\n        default_model=\"openclaw\",\n        openclaw=OpenClawProviderConfig(),\n    )\n)\n\ncreate_openresponses_endpoint(app, agent, path=\"/\")\n",
       "language": "python",
       "type": "file"
     }
