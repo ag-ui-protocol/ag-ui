@@ -4,3 +4,5 @@ yfinance>=0.2.63
 fastapi>=0.115.13
 uvicorn>=0.34.3
 ag-ui-protocol>=0.1.5
+protobuf>=6.33.5 # not directly required, pinned by Snyk to avoid a vulnerability
+python-multipart>=0.0.22 # not directly required, pinned by Snyk to avoid a vulnerability
