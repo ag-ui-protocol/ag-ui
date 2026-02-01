@@ -384,3 +384,4 @@ class RequestBuilder:
             if "max_output_tokens" in forwarded:
                 return int(forwarded["max_output_tokens"])
         return None
+

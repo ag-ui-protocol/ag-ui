@@ -15,6 +15,9 @@ from ag_ui.core import (
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
+    ThinkingTextMessageContentEvent,
+    ThinkingTextMessageEndEvent,
+    ThinkingTextMessageStartEvent,
     ToolCallArgsEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
@@ -38,6 +41,8 @@ class EventTranslator:
     def __init__(self) -> None:
         """Initialize the translator."""
         self._current_message_id: str | None = None
+        self._current_thinking_id: str | None = None
+        self._current_refusal_id: str | None = None
         self._message_counter: int = 0
         self._response_id: str | None = None
 
@@ -161,9 +166,76 @@ class EventTranslator:
                     )
                 )
 
+        # ── Reasoning (thinking) events ──────────────────────────────────
+
+        elif event_type == "response.reasoning_text.delta":
+            if not self._current_thinking_id:
+                self._current_thinking_id = self._generate_message_id()
+                events.append(
+                    ThinkingTextMessageStartEvent(
+                        type=EventType.THINKING_TEXT_MESSAGE_START,
+                        message_id=self._current_thinking_id,
+                    )
+                )
+            delta = event.data.get("delta", "")
+            if delta:
+                events.append(
+                    ThinkingTextMessageContentEvent(
+                        type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
+                        message_id=self._current_thinking_id,
+                        delta=delta,
+                    )
+                )
+
+        elif event_type == "response.reasoning_text.done":
+            if self._current_thinking_id:
+                events.append(
+                    ThinkingTextMessageEndEvent(
+                        type=EventType.THINKING_TEXT_MESSAGE_END,
+                        message_id=self._current_thinking_id,
+                    )
+                )
+                self._current_thinking_id = None
+
+        # ── Refusal events ───────────────────────────────────────────────
+
+        elif event_type == "response.refusal.delta":
+            if not self._current_refusal_id:
+                self._current_refusal_id = self._generate_message_id()
+                events.append(
+                    TextMessageStartEvent(
+                        type=EventType.TEXT_MESSAGE_START,
+                        message_id=self._current_refusal_id,
+                        role="assistant",
+                    )
+                )
+            delta = event.data.get("delta", "")
+            if delta:
+                events.append(
+                    TextMessageContentEvent(
+                        type=EventType.TEXT_MESSAGE_CONTENT,
+                        message_id=self._current_refusal_id,
+                        delta=delta,
+                    )
+                )
+
+        elif event_type == "response.refusal.done":
+            if self._current_refusal_id:
+                events.append(
+                    TextMessageEndEvent(
+                        type=EventType.TEXT_MESSAGE_END,
+                        message_id=self._current_refusal_id,
+                    )
+                )
+                self._current_refusal_id = None
+
+        # ── Terminal events ──────────────────────────────────────────────
+
         elif event_type == "response.completed":
             # Reset state for next run
             self._current_message_id = None
+            self._current_thinking_id = None
+            self._current_refusal_id = None
             logger.debug("Response completed")
 
         elif event_type == "response.failed":
@@ -217,6 +289,8 @@ class EventTranslator:
     def reset(self) -> None:
         """Reset translator state for a new run."""
         self._current_message_id = None
+        self._current_thinking_id = None
+        self._current_refusal_id = None
         self._message_counter = 0
         self._response_id = None
 

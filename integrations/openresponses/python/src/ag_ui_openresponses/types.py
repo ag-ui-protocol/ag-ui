@@ -223,6 +223,10 @@ class OpenResponsesEventType(str, Enum):
     RESPONSE_CONTENT_PART_DONE = "response.content_part.done"
     RESPONSE_OUTPUT_ITEM_DONE = "response.output_item.done"
     RESPONSE_FUNCTION_CALL_ARGS_DELTA = "response.function_call_arguments.delta"
+    RESPONSE_REASONING_TEXT_DELTA = "response.reasoning_text.delta"
+    RESPONSE_REASONING_TEXT_DONE = "response.reasoning_text.done"
+    RESPONSE_REFUSAL_DELTA = "response.refusal.delta"
+    RESPONSE_REFUSAL_DONE = "response.refusal.done"
     RESPONSE_COMPLETED = "response.completed"
     RESPONSE_FAILED = "response.failed"
 
