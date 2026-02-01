@@ -23,7 +23,12 @@ try:
 except ImportError:
     pass
 
-from .api import agentic_chat_app
+from .api import (
+    agentic_chat_app,
+    agentic_chat_reasoning_app,
+    human_in_the_loop_app,
+    tool_based_generative_ui_app,
+)
 
 app = FastAPI(title='OpenResponses AG-UI Server')
 
@@ -37,6 +42,9 @@ app.add_middleware(
 )
 
 app.mount('/agentic_chat', agentic_chat_app, 'Agentic Chat')
+app.mount('/human_in_the_loop', human_in_the_loop_app, 'Human in the Loop')
+app.mount('/tool_based_generative_ui', tool_based_generative_ui_app, 'Tool-Based Generative UI')
+app.mount('/agentic_chat_reasoning', agentic_chat_reasoning_app, 'Agentic Chat Reasoning')
 
 
 @app.get("/health")
@@ -47,7 +55,7 @@ async def health():
 
 def main():
     """Main function to start the FastAPI server."""
-    port = int(os.getenv("PORT", "9010"))
+    port = int(os.getenv("PORT", "8018"))
     uvicorn.run(app, host="0.0.0.0", port=port)
 
 

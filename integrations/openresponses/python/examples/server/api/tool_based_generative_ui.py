@@ -1,4 +1,4 @@
-"""Agentic Chat feature using OpenResponses."""
+"""Tool-Based Generative UI feature using OpenResponses."""
 
 from __future__ import annotations
 

@@ -153,6 +153,12 @@ const ALL_SERVICES = {
     cwd: path.join(integrationsRoot, 'microsoft-agent-framework/python/examples'),
     env: { PORT: 8015 },
   }],
+  'openresponses': [{
+    command: 'poetry run python -m server',
+    name: 'OpenResponses',
+    cwd: path.join(integrationsRoot, 'openresponses/python/examples'),
+    env: { PORT: 8018 },
+  }],
   'microsoft-agent-framework-dotnet': [{
     command: 'dotnet run --project AGUIDojoServer/AGUIDojoServer.csproj --urls "http://localhost:8889" --no-build',
     name: 'Microsoft Agent Framework (.NET)',
@@ -181,6 +187,7 @@ const ALL_SERVICES = {
       A2A_MIDDLEWARE_IT_URL: 'http://localhost:8013',
       A2A_MIDDLEWARE_ORCHESTRATOR_URL: 'http://localhost:8014',
       AWS_STRANDS_URL: 'http://localhost:8017',
+      OPENRESPONSES_URL: 'http://localhost:8018',
       NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: 'cpkdojo.local___CopilotKit Feature Viewer',
     },
   }],
@@ -206,6 +213,7 @@ const ALL_SERVICES = {
       A2A_MIDDLEWARE_IT_URL: 'http://localhost:8013',
       A2A_MIDDLEWARE_ORCHESTRATOR_URL: 'http://localhost:8014',
       AWS_STRANDS_URL: 'http://localhost:8017',
+      OPENRESPONSES_URL: 'http://localhost:8018',
       NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: 'cpkdojo.local___CopilotKit Feature Viewer',
     },
   }],

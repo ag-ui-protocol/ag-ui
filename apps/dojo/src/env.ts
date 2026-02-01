@@ -55,7 +55,7 @@ export default function getEnvVars(): envVars {
     a2aMiddlewareItUrl: process.env.A2A_MIDDLEWARE_IT_URL || 'http://localhost:9003',
     a2aMiddlewareOrchestratorUrl: process.env.A2A_MIDDLEWARE_ORCHESTRATOR_URL || 'http://localhost:9000',
     awsStrandsUrl: process.env.AWS_STRANDS_URL || 'http://localhost:8000',
-    openresponsesUrl: process.env.OPENRESPONSES_URL || 'http://localhost:9010',
+    openresponsesUrl: process.env.OPENRESPONSES_URL || 'http://localhost:9018',
     customDomainTitle: customDomainTitle,
   }
 }

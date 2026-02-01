@@ -256,6 +256,6 @@ export const menuIntegrations = [
   {
     id: "openresponses",
     name: "OpenResponses",
-    features: ["agentic_chat"],
+    features: ["agentic_chat", "human_in_the_loop", "tool_based_generative_ui", "agentic_chat_reasoning"],
   },
 ] as const satisfies MenuIntegrationConfig[];
