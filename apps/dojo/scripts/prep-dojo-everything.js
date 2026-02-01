@@ -127,6 +127,11 @@ const ALL_TARGETS = {
     name: "Microsoft Agent Framework (Python)",
     cwd: path.join(integrationsRoot, "microsoft-agent-framework/python/examples"),
   },
+  openresponses: {
+    command: "poetry install",
+    name: "OpenResponses",
+    cwd: path.join(integrationsRoot, "openresponses/python/examples"),
+  },
   "microsoft-agent-framework-dotnet": {
     command: "dotnet restore AGUIDojoServer/AGUIDojoServer.csproj && dotnet build AGUIDojoServer/AGUIDojoServer.csproj",
     name: "Microsoft Agent Framework (.NET)",
