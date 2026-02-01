@@ -4,29 +4,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Commands
 
-### TypeScript Package
-```bash
-# From integrations/openresponses/typescript/
-
-# Install dependencies (from monorepo root)
-pnpm install
-
-# Build the package
-pnpm build
-
-# Build in watch mode
-pnpm dev
-
-# Type checking
-pnpm typecheck
-
-# Run tests
-pnpm test
-
-# Clean build artifacts
-pnpm clean
-```
-
 ### Python Package
 ```bash
 # From integrations/openresponses/python/
@@ -94,12 +71,6 @@ ag_ui_openresponses/
 - Tool call handling with proper event sequencing
 - OpenClaw agent routing via model field or headers
 
-### TypeScript Package (`typescript/`)
-
-A minimal `HttpAgent` wrapper extending `@ag-ui/client`. Designed as a thin client for connecting to OpenResponses endpoints.
-
-Key file: `typescript/src/index.ts`
-
 ### Python Examples (`python/examples/`)
 
 Reference server demonstrating basic AG-UI protocol compliance with FastAPI.
@@ -117,9 +88,11 @@ Reference server demonstrating basic AG-UI protocol compliance with FastAPI.
 | `response.output_item.done` (function_call) | `TOOL_CALL_END` |
 | `response.completed` | (triggers RUN_FINISHED in agent) |
 | `response.failed` | `RUN_ERROR` |
+| `response.reasoning_text.delta` | `THINKING_TEXT_MESSAGE_START` + `THINKING_TEXT_MESSAGE_CONTENT` |
+| `response.reasoning_text.done` | `THINKING_TEXT_MESSAGE_END` |
+| `response.refusal.delta` | `TEXT_MESSAGE_START` + `TEXT_MESSAGE_CONTENT` |
+| `response.refusal.done` | `TEXT_MESSAGE_END` |
 
 ### Integration with Monorepo
 
-- TypeScript package: `integrations/*/typescript` in `pnpm-workspace.yaml`
 - Python package: standalone with `ag-ui-protocol` dependency
-- Build orchestration handled by Turborepo (TypeScript only)
