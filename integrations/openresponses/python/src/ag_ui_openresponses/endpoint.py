@@ -149,7 +149,7 @@ def create_openresponses_proxy(
             registered and caller overrides can only fill gaps (not
             override values set by the named config).
     """
-    agent = OpenResponsesAgent(restrict_configs=restrict_configs)
+    agent = OpenResponsesAgent(restrict_configs=restrict_configs, config_dir=config_dir)
 
     # Normalise path so we can build sub-paths cleanly
     base = path.rstrip("/")

@@ -70,6 +70,7 @@ class OpenResponsesAgent:
         self,
         config: OpenResponsesAgentConfig | None = None,
         restrict_configs: bool = False,
+        config_dir: str | None = None,
     ) -> None:
         """Initialize the agent with configuration.
 
@@ -81,9 +82,12 @@ class OpenResponsesAgent:
                 run and caller-supplied runtime overrides can only fill gaps
                 (fields left at their default) rather than override values
                 set by the named config.
+            config_dir: Directory containing named JSON config files.
+                Defaults to ``$OPENRESPONSES_CONFIG_DIR`` or ``./configs``.
         """
         self._static_config = config or OpenResponsesAgentConfig()
         self._restrict_configs = restrict_configs
+        self._config_dir = config_dir
 
         # If base_url is already known we can eagerly create the client
         if self._static_config.base_url:
@@ -228,7 +232,7 @@ class OpenResponsesAgent:
         # Layer 2: merge named JSON config underneath runtime overrides
         if fp_config_name:
             try:
-                named_cfg = load_config(fp_config_name)
+                named_cfg = load_config(fp_config_name, config_dir=self._config_dir)
             except FileNotFoundError as exc:
                 raise ValueError(str(exc)) from exc
             base = merge_runtime_config(base, named_cfg)

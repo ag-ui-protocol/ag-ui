@@ -348,6 +348,5 @@ export const agentsIntegrations = {
     agentic_chat: new HttpAgent({ url: `${envVars.openresponsesUrl}/agentic_chat/configs/openai` }),
     human_in_the_loop: new HttpAgent({ url: `${envVars.openresponsesUrl}/human_in_the_loop/configs/openai` }),
     tool_based_generative_ui: new HttpAgent({ url: `${envVars.openresponsesUrl}/tool_based_generative_ui/configs/openai` }),
-    agentic_chat_reasoning: new HttpAgent({ url: `${envVars.openresponsesUrl}/agentic_chat_reasoning/configs/openai` }),
   }),
 } satisfies AgentsMap;
