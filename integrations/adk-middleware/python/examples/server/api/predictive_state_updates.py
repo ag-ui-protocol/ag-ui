@@ -18,19 +18,25 @@ the frontend's write_document action that handles the confirmation UI.
 
 from __future__ import annotations
 
+import logging
+from typing import Dict
+
 from dotenv import load_dotenv
 load_dotenv()
 
-from typing import Dict, Optional
 from fastapi import FastAPI
 from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, PredictStateMapping, AGUIToolset
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools import ToolContext
-from google.adk.models import LlmResponse, LlmRequest
-from google.genai import types
 
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Tool and agent callbacks
+# ---------------------------------------------------------------------------
 
 def write_document_local(
     tool_context: ToolContext,
@@ -52,71 +58,26 @@ def write_document_local(
         Dict indicating success status and message
     """
     try:
-        # Update the session state with the new document
         tool_context.state["document"] = document
-
         return {"status": "success", "message": "Document written successfully"}
-
     except Exception as e:
         return {"status": "error", "message": f"Error writing document: {str(e)}"}
 
 
 def on_before_agent(callback_context: CallbackContext):
-    """
-    Initialize document state if it doesn't exist.
-    """
+    """Initialize document state if it doesn't exist."""
     if "document" not in callback_context.state:
-        # Initialize with empty document
         callback_context.state["document"] = None
-
     return None
 
 
-def before_model_modifier(
-    callback_context: CallbackContext, llm_request: LlmRequest
-) -> Optional[LlmResponse]:
-    """
-    Modifies the LLM request to include the current document state.
-    This enables predictive state updates by providing context about the current document.
-    """
-    agent_name = callback_context.agent_name
-    if agent_name == "DocumentAgent":
-        current_document = "No document yet"
-        if "document" in callback_context.state and callback_context.state["document"] is not None:
-            try:
-                current_document = callback_context.state["document"]
-            except Exception as e:
-                current_document = f"Error retrieving document: {str(e)}"
+# ---------------------------------------------------------------------------
+# Module-level configuration
+# ---------------------------------------------------------------------------
 
-        # Modify the system instruction to include current document state
-        original_instruction = llm_request.config.system_instruction or types.Content(role="system", parts=[])
-        prefix = f"""You are a helpful assistant for writing documents.
-        To write the document, you MUST use the write_document_local tool.
-        You MUST write the full document, even when changing only a few words.
-        When you wrote the document, DO NOT repeat it as a message.
-        Just briefly summarize the changes you made. 2 sentences max.
-        This is the current state of the document: ----
-        {current_document}
-        -----"""
-
-        # Ensure system_instruction is Content and parts list exists
-        if not isinstance(original_instruction, types.Content):
-            original_instruction = types.Content(role="system", parts=[types.Part(text=str(original_instruction))])
-        if not original_instruction.parts:
-            original_instruction.parts.append(types.Part(text=""))
-
-        # Modify the text of the first part
-        modified_text = prefix + (original_instruction.parts[0].text or "")
-        original_instruction.parts[0].text = modified_text
-        llm_request.config.system_instruction = original_instruction
-
-    return None
-
-
-# Create the predictive state updates agent
 predictive_state_updates_agent = LlmAgent(
     name="DocumentAgent",
-    model="gemini-2.5-pro",
+    model="gemini-2.5-flash",
     instruction="""
     You are a helpful assistant for writing documents.
     To write the document, you MUST use the write_document_local tool.
@@ -133,25 +94,20 @@ predictive_state_updates_agent = LlmAgent(
     6. Do not use italic or strike-through formatting
 
     Examples of when to use the tool:
-    - "Write a story about..." → Use tool with complete story in markdown
-    - "Edit the document to..." → Use tool with the full edited document
-    - "Add a paragraph about..." → Use tool with the complete updated document
+    - "Write a story about..." -> Use tool with complete story in markdown
+    - "Edit the document to..." -> Use tool with the full edited document
+    - "Add a paragraph about..." -> Use tool with the complete updated document
 
     Always provide complete, well-formatted documents that users can read and use.
     """,
     tools=[
-        AGUIToolset(), # Add the tools provided by the AG-UI client,
+        AGUIToolset(),
         write_document_local
     ],
     before_agent_callback=on_before_agent,
-    before_model_callback=before_model_modifier,
 )
 
 # Create ADK middleware agent instance with predictive state configuration
-# The PredictStateMapping tells the UI to update the "document" state key
-# with the value from the "document" argument of the "write_document_local" tool.
-# After write_document_local completes, the middleware emits a write_document tool call
-# which triggers the frontend's confirmation dialog (via emit_confirm_tool=True).
 adk_predictive_state_agent = ADKAgent(
     adk_agent=predictive_state_updates_agent,
     app_name="demo_app",

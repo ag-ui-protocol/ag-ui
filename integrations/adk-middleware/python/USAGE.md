@@ -422,6 +422,41 @@ add_adk_fastapi_endpoint(app, technical_agent_wrapper, path="/agents/technical")
 add_adk_fastapi_endpoint(app, creative_agent_wrapper, path="/agents/creative")
 ```
 
+### Predictive State Updates
+
+Predictive state updates allow the frontend to receive real-time state changes derived from tool call arguments. This is particularly useful for live previews — for example, showing a document update immediately when a tool call completes.
+
+The `predict_state` configuration watches for a specific tool and argument, emitting `CUSTOM` events with `STATE_DELTA` patches that let the frontend render content as soon as the tool call arrives.
+
+#### Basic Setup
+
+```python
+from ag_ui_adk import ADKAgent, PredictStateMapping, AGUIToolset
+from google.adk.agents import LlmAgent
+
+agent = LlmAgent(
+    name="writer",
+    model="gemini-2.0-flash",
+    instruction="Use write_document to write documents.",
+    tools=[write_document, AGUIToolset()],
+)
+
+adk_agent = ADKAgent(
+    adk_agent=agent,
+    app_name="my_app",
+    user_id="user123",
+    predict_state=[
+        PredictStateMapping(
+            state_key="document",          # Frontend state key to update
+            tool="write_document",         # Tool name to watch
+            tool_argument="document",      # Argument to extract
+        )
+    ],
+)
+```
+
+See `examples/server/api/predictive_state_updates.py` for a complete working example.
+
 ## Event Translation
 
 The middleware translates between AG-UI and ADK event formats:
@@ -520,6 +555,59 @@ async def get_thread_history(thread_id: str, app_name: str, user_id: str):
             return messages, state
         return [], {}
 ```
+
+## Migrating to Resumable HITL
+
+> **Deprecated:** The non-resumable (fire-and-forget) HITL flow triggered by `ADKAgent(adk_agent=...)` with client-side tools is deprecated and will be removed in a future version. Migrate to `ADKAgent.from_app()` with `ResumabilityConfig` for human-in-the-loop workflows.
+
+### Why migrate?
+
+The old-style HITL flow has limitations:
+- **No SequentialAgent position restore** — sub-agent position is lost on resume
+- **Manual FunctionCall persistence** — the middleware must manually persist partial events
+- **Manual pending tool call tracking** — state management is handled by the middleware instead of ADK
+
+With `ResumabilityConfig`, ADK handles all of this natively.
+
+### Before (deprecated for HITL)
+
+```python
+from ag_ui_adk import ADKAgent
+
+agent = ADKAgent(
+    adk_agent=my_agent,  # Works fine for non-HITL agents
+    app_name="my_app",
+    user_id="user123",
+)
+```
+
+> **Note:** `ADKAgent(adk_agent=...)` is still the recommended constructor for agents **without** client-side tools (chat-only, backend-tool-only). Only the HITL path is deprecated.
+
+### After (recommended for HITL)
+
+```python
+from google.adk.apps import App, ResumabilityConfig
+from ag_ui_adk import ADKAgent
+
+app = App(
+    name="my_app",
+    root_agent=my_agent,
+    resumability_config=ResumabilityConfig(is_resumable=True),
+)
+
+agent = ADKAgent.from_app(
+    app,
+    user_id="user123",
+)
+```
+
+### What triggers the deprecation warning?
+
+A `DeprecationWarning` is emitted at runtime when:
+1. The agent encounters a long-running (client-side) tool call, **and**
+2. The agent was created with the direct constructor (`ADKAgent(adk_agent=...)`) rather than `ADKAgent.from_app()`
+
+The warning does not fire for agents without client-side tools.
 
 ## Additional Resources
 

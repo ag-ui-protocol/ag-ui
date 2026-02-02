@@ -167,6 +167,9 @@ class EventTranslator:
     def __init__(
         self,
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
+        client_emitted_tool_call_ids: Optional[set] = None,
+        client_tool_names: Optional[set] = None,
+        is_resumable: bool = False,
     ):
         """Initialize the event translator.
 
@@ -175,7 +178,26 @@ class EventTranslator:
                 When provided, the translator will emit PredictState CustomEvents
                 for matching tool calls, enabling the UI to show state changes
                 in real-time as tool arguments are streamed.
+            client_emitted_tool_call_ids: Optional shared set of tool call IDs that
+                ClientProxyTool has already emitted TOOL_CALL events for. When provided,
+                the translator will skip emitting duplicate events for these IDs.
+            client_tool_names: Optional set of tool names that are handled by
+                ClientProxyTool. When provided, the translator will skip emitting
+                TOOL_CALL events for these tool names, since the proxy tool will
+                emit its own events during execution. This prevents duplicate
+                emissions when ADK assigns different IDs across LRO and confirmed events.
         """
+        # Whether the agent uses ADK's native resumability (ResumabilityConfig).
+        # When True, ClientProxyTool handles tool call emission and the translator
+        # must skip client tool names to avoid duplicates.
+        self._is_resumable = is_resumable
+        # Shared set of tool call IDs already emitted by ClientProxyTool
+        self._client_emitted_tool_call_ids = client_emitted_tool_call_ids if client_emitted_tool_call_ids is not None else set()
+        # Set of tool names handled by ClientProxyTool — translator skips these entirely
+        self._client_tool_names = client_tool_names if client_tool_names is not None else set()
+        # Set of tool call IDs that this translator has already emitted events for.
+        # Shared with ClientProxyTool so it can skip duplicate emissions.
+        self.emitted_tool_call_ids: set[str] = set()
         # Track tool call IDs for consistency
         self._active_tool_calls: Dict[str, str] = {}  # Tool call ID -> Tool call ID (for consistency)
         # Track streaming message state
@@ -209,6 +231,7 @@ class EventTranslator:
         # Deferred confirm_changes events - these must be emitted LAST, right before RUN_FINISHED
         # to ensure the frontend shows the confirmation dialog with buttons enabled
         self._deferred_confirm_events: List[BaseEvent] = []
+
 
     def get_and_clear_deferred_confirm_events(self) -> List[BaseEvent]:
         """Get and clear any deferred confirm_changes events.
@@ -266,7 +289,7 @@ class EventTranslator:
             if hasattr(adk_event, 'author') and adk_event.author == "user":
                 logger.debug("Skipping user event")
                 return
-            
+
             # Handle text content
             # --- THIS IS THE RESTORED LINE ---
             if adk_event.content and hasattr(adk_event.content, 'parts') and adk_event.content.parts:
@@ -275,11 +298,8 @@ class EventTranslator:
                 ):
                     yield event
             
-            # call _translate_function_calls function to yield Tool Events
-            # Skip function calls from partial events - these are streaming previews in
-            # PROGRESSIVE_SSE_STREAMING mode (enabled by default in google-adk >= 1.22.0).
-            # Only process confirmed function calls (partial=False or partial not set).
-            # See: https://github.com/ag-ui-protocol/ag-ui/issues/968
+            # Handle streaming function calls from partial events
+            # Handle complete (non-partial) function calls
             if hasattr(adk_event, 'get_function_calls') and not is_partial:
                 function_calls = adk_event.get_function_calls()
                 if function_calls:
@@ -289,15 +309,26 @@ class EventTranslator:
                     except Exception:
                         lro_ids = set()
 
-                    non_lro_calls = [fc for fc in function_calls if getattr(fc, 'id', None) not in lro_ids]
+                    # Also exclude tool calls already emitted via translate_lro_function_calls
+                    # (self.long_running_tool_ids tracks IDs across events, while lro_ids
+                    # is per-event and may be empty on the confirmed/non-partial replay)
+                    # and tool calls already emitted by ClientProxyTool
+                    all_lro_ids = lro_ids | set(self.long_running_tool_ids)
+
+                    non_lro_calls = [
+                        fc for fc in function_calls
+                        if getattr(fc, 'id', None) not in all_lro_ids
+                        and getattr(fc, 'id', None) not in self._client_emitted_tool_call_ids
+                        and getattr(fc, 'name', None) not in self._client_tool_names
+                    ]
 
                     if non_lro_calls:
-                        logger.debug(f"ADK function calls detected (non-LRO): {len(non_lro_calls)} of {len(function_calls)} total")
+                        logger.debug(f"ADK function calls detected (non-LRO, non-streamed): {len(non_lro_calls)} of {len(function_calls)} total")
                         # CRITICAL FIX: End any active text message stream before starting tool calls
                         # Per AG-UI protocol: TEXT_MESSAGE_END must be sent before TOOL_CALL_START
                         async for event in self.force_close_streaming_message():
                             yield event
-                        
+
                         # Yield only non-LRO function call events
                         async for event in self._translate_function_calls(non_lro_calls):
                             yield event
@@ -657,7 +688,9 @@ class EventTranslator:
                 if part.function_call:
                     if not long_running_function_call and part.function_call.id in (
                         adk_event.long_running_tool_ids or []
-                    ):
+                    ) and part.function_call.id not in self._client_emitted_tool_call_ids \
+                      and (not self._is_resumable
+                           or getattr(part.function_call, 'name', None) not in self._client_tool_names):
                         long_running_function_call = part.function_call
                         self.long_running_tool_ids.append(long_running_function_call.id)
                         yield ToolCallStartEvent(
@@ -681,6 +714,9 @@ class EventTranslator:
                             type=EventType.TOOL_CALL_END,
                             tool_call_id=long_running_function_call.id
                         )
+
+                        # Record so ClientProxyTool can skip duplicate emission
+                        self.emitted_tool_call_ids.add(long_running_function_call.id)
 
                         # Clean up tracking
                         self._active_tool_calls.pop(long_running_function_call.id, None)
@@ -757,6 +793,9 @@ class EventTranslator:
                 tool_call_id=tool_call_id
             )
 
+            # Record so ClientProxyTool can skip duplicate emission
+            self.emitted_tool_call_ids.add(tool_call_id)
+
             # Clean up tracking
             self._active_tool_calls.pop(tool_call_id, None)
 
@@ -798,8 +837,6 @@ class EventTranslator:
 
                     self._emitted_confirm_for_tools.add(tool_name)
 
-    
-
     async def _translate_function_response(
         self,
         function_response: list[types.FunctionResponse],
@@ -818,6 +855,7 @@ class EventTranslator:
         for func_response in function_response:
 
             tool_call_id = getattr(func_response, 'id', str(uuid.uuid4()))
+
             # Skip TOOL_CALL_RESULT for long-running tools (handled by frontend)
             if tool_call_id in self.long_running_tool_ids:
                 logger.debug(f"Skipping ToolCallResultEvent for long-running tool: {tool_call_id}")

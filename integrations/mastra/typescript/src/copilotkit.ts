@@ -5,9 +5,21 @@ import {
   CopilotServiceAdapter,
   ExperimentalEmptyAdapter,
 } from "@copilotkit/runtime";
-import { RuntimeContext } from "@mastra/core/runtime-context";
+import { RequestContext } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import { MastraAgent } from "./mastra";
+
+/**
+ * Registers a CopilotKit endpoint that exposes Mastra agents through the AG-UI protocol.
+ * This function creates an API route that handles CopilotKit requests and forwards them to Mastra agents, enabling seamless integration between CopilotKit's UI components and Mastra's agent framework.
+ *
+ * @example
+ * ```ts
+ * registerCopilotKit({
+ *   path: "/api/copilotkit"
+ * });
+ * ```
+ */
 export function registerCopilotKit<
   T extends Record<string, any> | unknown = unknown,
 >({
@@ -23,7 +35,7 @@ export function registerCopilotKit<
   agents?: Record<string, AbstractAgent>;
   setContext?: (
     c: any,
-    runtimeContext: RuntimeContext<T>
+    requestContext: RequestContext<T>,
   ) => void | Promise<void>;
 }) {
   return registerApiRoute(path, {
@@ -31,10 +43,10 @@ export function registerCopilotKit<
     handler: async (c) => {
       const mastra = c.get("mastra");
 
-      const runtimeContext = new RuntimeContext<T>();
+      const requestContext = new RequestContext<T>();
 
       if (setContext) {
-        await setContext(c, runtimeContext);
+        await setContext(c, requestContext);
       }
 
       const aguiAgents =
@@ -42,7 +54,7 @@ export function registerCopilotKit<
         MastraAgent.getLocalAgents({
           resourceId,
           mastra,
-          runtimeContext,
+          requestContext: requestContext as RequestContext,
         });
 
       const runtime = new CopilotRuntime({

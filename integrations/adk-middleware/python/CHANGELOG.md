@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Deprecated
+
+- **DEPRECATED**: Non-resumable (fire-and-forget) HITL flow via `ADKAgent(adk_agent=...)` with client-side tools
+  - A `DeprecationWarning` is now emitted at runtime when the old-style HITL early-return path is triggered
+  - Use `ADKAgent.from_app()` with `ResumabilityConfig(is_resumable=True)` for human-in-the-loop workflows
+  - The direct constructor remains fully supported for agents without client-side tools (chat-only, backend-tool-only)
+  - See [USAGE.md](./USAGE.md#migrating-to-resumable-hitl) for migration instructions
+
 ### Breaking Changes
 
 - **BREAKING**: AG-UI client tools are no longer automatically included in the root agent's toolset (#903)
@@ -26,11 +34,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **FIXED**: Reload session on cache miss to populate events (#1021)
   - `_find_session_by_thread_id()` uses `list_sessions()` which returns metadata only; now reloads via `get_session()` after a cache miss so that session events are available
   - Thanks to **@lakshminarasimmanv** for this fix!
-
+- **FIXED**: Duplicate TOOL_CALL event emission for client-side tools with ResumabilityConfig
+  - With `ResumabilityConfig(is_resumable=True)`, ADK emits the same function call from up to
+    three sources (LRO event, confirmed event with a different ID, and ClientProxyTool execution),
+    causing the frontend to render tool call results (e.g., HITL task lists) multiple times
+  - EventTranslator now accepts `client_tool_names` to skip emission for tools owned by
+    `ClientProxyTool`, letting the proxy be the sole emitter for client-side tools
+  - Bidirectional ID tracking between EventTranslator and ClientProxyTool prevents duplicates
+    regardless of execution order
+  - Added 12 regression tests covering LRO, confirmed, partial, and mixed tool call scenarios
 - **FIXED**: Relax Python version constraint to allow Python 3.14 (#973)
   - Changed `requires-python` from `>=3.9, <3.14` to `>=3.10, <3.15`
   - Fixed `asyncio.get_event_loop()` deprecation in tests for Python 3.14 compatibility
   - Added `asyncio.timeout` compatibility shim for Python 3.10 in tests
+- **FIXED**: LRO tool call events now emitted for resumable agents on all ADK versions
+  - Previously, `_is_adk_resumable()` skipped `translate_lro_function_calls` entirely, expecting client_proxy_tool to emit events — this didn't work on ADK < 1.22.0
+  - Now always emits TOOL_CALL_START/ARGS/END for LRO tools; only the early loop exit is gated on non-resumable agents
 
 ## [0.4.2] - 2026-01-22
 

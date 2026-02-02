@@ -32,7 +32,7 @@ from google.adk.auth.credential_service.in_memory_credential_service import InMe
 from google.genai import types
 
 from .event_translator import EventTranslator, adk_events_to_messages
-from .session_manager import SessionManager, CONTEXT_STATE_KEY
+from .session_manager import SessionManager, CONTEXT_STATE_KEY, INVOCATION_ID_STATE_KEY
 from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
 from .config import PredictStateMapping
@@ -180,7 +180,6 @@ class ADKAgent:
 
         # Predictive state configuration for real-time state updates
         self._predict_state = predict_state
-
         # Message snapshot configuration
         self._emit_messages_snapshot = emit_messages_snapshot
 
@@ -192,6 +191,24 @@ class ADKAgent:
 
         # Cleanup is managed by the session manager
         # Will start when first async operation runs
+
+    def _is_adk_resumable(self) -> bool:
+        """Check if ADK's native resumability is enabled via App.
+
+        When using ADK's ResumabilityConfig(is_resumable=True), the Runner
+        automatically persists FunctionCall events before pausing. This allows
+        us to let ADK handle the pause/resume flow naturally instead of
+        returning early at LRO tool calls.
+
+        Returns:
+            True if using from_app() with ResumabilityConfig.is_resumable=True
+        """
+        if self._app is None:
+            return False
+        resumability_config = getattr(self._app, 'resumability_config', None)
+        if resumability_config is None:
+            return False
+        return getattr(resumability_config, 'is_resumable', False)
 
     @classmethod
     def from_app(
@@ -949,10 +966,22 @@ class ADKAgent:
                 return
 
             # No tool results and no trailing messages - nothing to do
-            # This is not an error; the user just approved/rejected changes without sending a follow-up
+            # This is not an error; the user just approved/rejected changes without sending a follow-up.
+            # We still need to emit RUN_STARTED/RUN_FINISHED so the client receives a
+            # valid, terminal-event-bearing stream (prevents INCOMPLETE_STREAM errors).
             logger.debug(
                 "All tool results were synthetic (confirm_changes) with no trailing messages for thread %s",
                 thread_id,
+            )
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=thread_id,
+                run_id=input.run_id,
+            )
+            yield RunFinishedEvent(
+                type=EventType.RUN_FINISHED,
+                thread_id=thread_id,
+                run_id=input.run_id,
             )
             return
 
@@ -1146,6 +1175,12 @@ class ADKAgent:
         Yields:
             AG-UI events from the execution
         """
+        # Log execution context for debugging
+        tool_result_ids = [tr['message'].tool_call_id for tr in tool_results] if tool_results else []
+        message_batch_len = len(message_batch) if message_batch else 0
+        exec_type = "HITL_RESUME" if tool_results else "NEW_RUN"
+        logger.info(f"[EXEC] {exec_type} - thread={input.thread_id}, run={input.run_id}, tool_results={tool_result_ids}, message_batch_len={message_batch_len}")
+
         try:
             # Emit RUN_STARTED
             logger.debug(f"Emitting RUN_STARTED for thread {input.thread_id}, run {input.run_id}")
@@ -1316,34 +1351,54 @@ class ADKAgent:
 
                 adk_agent.instruction = new_instruction
 
+        # Log tools available from frontend
+        tool_names = [t.name for t in input.tools] if input.tools else []
+        logger.info(f"Tools from frontend: {tool_names}")
+
+        # Track all ClientProxyToolset instances for collecting accumulated predictive state
+        client_proxy_toolsets: list[ClientProxyToolset] = []
+
         def _update_agent_tools_recursive(agent: Any) -> None:
             """
             Recursively replace AGUIToolset with ClientProxyToolset for an agent and its sub-agents.
             Args:
                 agent: Agent instance to process
             """
+            nonlocal client_proxy_toolsets
+            logger.info(f"[TOOL_SETUP] Processing agent: {agent.name} (type: {type(agent).__name__})")
+
             if isinstance(agent, LlmAgent) and hasattr(agent, "tools"):
                 new_tools: list[ToolUnion] = []
+                original_tool_count = len(agent.tools) if agent.tools else 0
+                logger.info(f"[TOOL_SETUP] Agent {agent.name} has {original_tool_count} tools before replacement")
+
                 for tool in agent.tools:
                     if isinstance(tool, AGUIToolset):
-                        tool = ClientProxyToolset(
+                        logger.info(f"[TOOL_SETUP] Agent {agent.name}: Found AGUIToolset with filter={tool.tool_filter}")
+                        proxy_toolset = ClientProxyToolset(
                             ag_ui_tools=input.tools,
                             event_queue=event_queue,
                             tool_filter=tool.tool_filter,
                             tool_name_prefix=tool.tool_name_prefix,
+                            predict_state=self._predict_state,
                         )
-                        logger.debug(
-                            f"Replaced AGUIToolset with ClientProxyToolset for agent {agent.name}"
+                        client_proxy_toolsets.append(proxy_toolset)
+                        tool = proxy_toolset
+                        logger.info(
+                            f"[TOOL_SETUP] Replaced AGUIToolset with ClientProxyToolset for agent {agent.name}"
                         )
                     new_tools.append(tool)
 
                 agent.tools = new_tools
+                logger.info(f"[TOOL_SETUP] Agent {agent.name} now has {len(new_tools)} tools after replacement")
 
-                # Recursively process sub-agents if they exist
-                if hasattr(agent, "sub_agents") and agent.sub_agents:
-                    for sub_agent in agent.sub_agents:
-                        if isinstance(sub_agent, LlmAgent):
-                            _update_agent_tools_recursive(sub_agent)
+            # Recursively process sub-agents if they exist
+            # This handles SequentialAgent, LoopAgent, and other composite agents
+            sub_agents = getattr(agent, "sub_agents", None)
+            if sub_agents and isinstance(sub_agents, (list, tuple)):
+                logger.info(f"[TOOL_SETUP] Agent {agent.name} has {len(sub_agents)} sub-agents")
+                for sub_agent in sub_agents:
+                    _update_agent_tools_recursive(sub_agent)
 
         _update_agent_tools_recursive(adk_agent)
 
@@ -1355,6 +1410,7 @@ class ADKAgent:
             "user_id": user_id,
             "app_name": app_name,
             "event_queue": event_queue,
+            "client_proxy_toolsets": client_proxy_toolsets,
         }
 
         if tool_results is not None:
@@ -1379,6 +1435,7 @@ class ADKAgent:
         user_id: str,
         app_name: str,
         event_queue: asyncio.Queue,
+        client_proxy_toolsets: List[ClientProxyToolset],
         tool_results: Optional[List[Dict]] = None,
         message_batch: Optional[List[Any]] = None,
     ):
@@ -1438,6 +1495,23 @@ class ADKAgent:
                     f"Failed to refresh session {backend_session_id} after state update. "
                     "Continuing with potentially stale session."
                 )
+
+            # Retrieve stored invocation_id for HITL resumption
+            # When resuming after HITL pause, we must use the SAME invocation_id
+            # to restore SequentialAgent state (current_sub_agent position)
+            stored_invocation_id: Optional[str] = None
+            try:
+                current_state = await self._session_manager.get_session_state(
+                    backend_session_id, app_name, user_id
+                )
+                if current_state:
+                    stored_invocation_id = current_state.get(INVOCATION_ID_STATE_KEY)
+                    if stored_invocation_id:
+                        logger.debug(
+                            f"Retrieved stored invocation_id for resumption: {stored_invocation_id}"
+                        )
+            except Exception as e:
+                logger.warning(f"Failed to retrieve stored invocation_id: {e}")
 
             # Convert messages
             unseen_messages = message_batch if message_batch is not None else await self._get_unseen_messages(input)
@@ -1509,12 +1583,15 @@ class ADKAgent:
                 import time
 
                 function_response_content = types.Content(parts=function_response_parts, role='user')
+                # Use stored invocation_id for HITL resumption to restore SequentialAgent state
+                resume_invocation_id = stored_invocation_id or input.run_id
                 function_response_event = Event(
                     timestamp=time.time(),
                     author='user',
                     content=function_response_content,
-                    invocation_id=input.run_id,
+                    invocation_id=resume_invocation_id,
                 )
+                logger.debug(f"Creating FunctionResponse event with invocation_id={resume_invocation_id}")
 
                 await self._session_manager._session_service.append_event(session, function_response_event)
 
@@ -1568,12 +1645,15 @@ class ADKAgent:
                 import time
 
                 function_response_content = types.Content(parts=function_response_parts, role='user')
+                # Use stored invocation_id for HITL resumption to restore SequentialAgent state
+                resume_invocation_id = stored_invocation_id or input.run_id
                 function_response_event = Event(
                     timestamp=time.time(),
                     author='user',
                     content=function_response_content,
-                    invocation_id=input.run_id,
+                    invocation_id=resume_invocation_id,
                 )
+                logger.debug(f"Creating FunctionResponse event with invocation_id={resume_invocation_id}")
 
                 await self._session_manager._session_service.append_event(session, function_response_event)
 
@@ -1586,35 +1666,73 @@ class ADKAgent:
                     user_message = await self._convert_latest_message(input, input.messages)
                 new_message = user_message
 
+            # Create a single shared set for tracking tool call IDs emitted by ClientProxyTool.
+            # All ClientProxyToolsets in this run reference this set so the EventTranslator
+            # sees IDs added by any proxy tool during execution (the set is mutated in-place).
+            client_emitted_ids: set[str] = set()
+            for toolset in client_proxy_toolsets:
+                toolset._emitted_tool_call_ids = client_emitted_ids
+
+            # Collect client-side tool names from proxy toolsets
+            client_tool_names: set[str] = set()
+            for toolset in client_proxy_toolsets:
+                for tool in toolset.ag_ui_tools:
+                    client_tool_names.add(tool.name)
+
             # Create event translator with predictive state configuration
-            event_translator = EventTranslator(predict_state=self._predict_state)
+            event_translator = EventTranslator(
+                predict_state=self._predict_state,
+                client_emitted_tool_call_ids=client_emitted_ids,
+                client_tool_names=client_tool_names,
+                is_resumable=self._is_adk_resumable(),
+            )
+
+            # Share the translator's emitted IDs set with proxy toolsets so
+            # ClientProxyTool can skip emission when the translator already handled it.
+            for toolset in client_proxy_toolsets:
+                toolset._translator_emitted_tool_call_ids = event_translator.emitted_tool_call_ids
 
             try:
                 # Session was already obtained from _ensure_session_exists above
                 # Check session events (ADK stores conversation in events)
                 events = getattr(session, 'events', [])
+                logger.info(f"[SESSION_DEBUG] Session has {len(events)} events")
 
                 # If sending FunctionResponse, look for the original FunctionCall in session
                 if active_tool_results:
                     tool_call_id = active_tool_results[0]['message'].tool_call_id
+                    logger.info(f"[SESSION_DEBUG] Looking for FunctionCall with id={tool_call_id}")
+
+                    # Log all function calls in session for debugging
+                    all_function_call_ids = []
                     found_call = False
                     for evt_idx, evt in enumerate(events):
                         evt_content = getattr(evt, 'content', None)
+                        evt_author = getattr(evt, 'author', 'unknown')
+                        evt_inv_id = getattr(evt, 'invocation_id', 'none')
                         if evt_content:
                             evt_parts = getattr(evt_content, 'parts', [])
                             for part in evt_parts:
-                                if hasattr(part, 'function_call'):
+                                if hasattr(part, 'function_call') and part.function_call:
                                     fc = part.function_call
-                                    if fc and hasattr(fc, 'id') and fc.id == tool_call_id:
+                                    fc_id = getattr(fc, 'id', 'no_id')
+                                    fc_name = getattr(fc, 'name', 'no_name')
+                                    all_function_call_ids.append(f"{fc_name}:{fc_id}")
+                                    if fc_id == tool_call_id:
                                         found_call = True
-                                        break
+                                        logger.info(f"[SESSION_DEBUG] FOUND matching FunctionCall at event[{evt_idx}], author={evt_author}, invocation_id={evt_inv_id}")
                         if found_call:
                             break
+
+                    logger.info(f"[SESSION_DEBUG] All FunctionCalls in session: {all_function_call_ids}")
+                    if not found_call:
+                        logger.warning(f"[SESSION_DEBUG] FunctionCall NOT FOUND for id={tool_call_id}! ADK will fail with 'No function call event found'")
             except Exception as e:
-                pass
+                logger.error(f"[SESSION_DEBUG] Error checking session events: {e}")
 
             # Run ADK agent
             is_long_running_tool = False
+            invocation_id_stored = False  # Track if we've stored the invocation_id this run
             run_kwargs = {
                 "user_id": user_id,
                 "session_id": backend_session_id,  # Use backend session_id, not thread_id
@@ -1622,8 +1740,52 @@ class ADKAgent:
                 "run_config": run_config
             }
 
+            # Pass stored invocation_id to run_async for HITL resumption
+            # This enables SequentialAgent to restore its current_sub_agent position
+            # Only pass invocation_id if the app is resumable (has ResumabilityConfig)
+            if stored_invocation_id and self._is_adk_resumable():
+                run_kwargs["invocation_id"] = stored_invocation_id
+                logger.info(f"[RUN_ASYNC] HITL resumption with invocation_id: {stored_invocation_id}")
+            else:
+                logger.info(f"[RUN_ASYNC] New run (no invocation_id, resumable={self._is_adk_resumable()})")
+
+            logger.info(f"[RUN_ASYNC] Calling runner.run_async with session_id={backend_session_id}, has_message={new_message is not None}")
+
             async for adk_event in runner.run_async(**run_kwargs):
                 event_invocation_id = getattr(adk_event, 'invocation_id', None)
+                event_author = getattr(adk_event, 'author', 'unknown')
+                event_partial = getattr(adk_event, 'partial', False)
+                event_turn_complete = getattr(adk_event, 'turn_complete', None)
+
+                # Log which agent is producing events
+                content_preview = ""
+                if adk_event.content and hasattr(adk_event.content, 'parts') and adk_event.content.parts:
+                    for part in adk_event.content.parts:
+                        if hasattr(part, 'text') and part.text:
+                            content_preview = part.text[:100].replace('\n', ' ')
+                            break
+                        elif hasattr(part, 'function_call') and part.function_call:
+                            content_preview = f"[FunctionCall: {part.function_call.name}]"
+                            break
+                logger.info(f"[ADK_EVENT] author={event_author}, partial={event_partial}, turn_complete={event_turn_complete}, content={content_preview[:80]}...")
+
+                # Store invocation_id for HITL resumption on first event with valid ID
+                # This enables SequentialAgent to restore its current_sub_agent position
+                # Only store if the app is resumable (has ResumabilityConfig)
+                if (event_invocation_id and not invocation_id_stored and
+                        not stored_invocation_id and self._is_adk_resumable()):
+                    try:
+                        await self._session_manager.update_session_state(
+                            backend_session_id, app_name, user_id,
+                            {INVOCATION_ID_STATE_KEY: event_invocation_id}
+                        )
+                        invocation_id_stored = True
+                        logger.debug(
+                            f"Stored invocation_id for HITL resumption: {event_invocation_id}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to store invocation_id: {e}")
+
                 final_response = adk_event.is_final_response()
                 has_content = adk_event.content and hasattr(adk_event.content, 'parts') and adk_event.content.parts
 
@@ -1690,6 +1852,12 @@ class ADKAgent:
                         await event_queue.put(end_event)
                         logger.debug(f"Event queued (forced close): {type(end_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
 
+                    # Set flag based on LRO detection directly — the translator may
+                    # skip client tools to avoid duplicate emission, but we still
+                    # need to know an LRO pause happened for invocation_id management.
+                    if has_lro_function_call:
+                        is_long_running_tool = True
+
                     async for ag_ui_event in event_translator.translate_lro_function_calls(
                         adk_event
                     ):
@@ -1697,17 +1865,84 @@ class ADKAgent:
                         if ag_ui_event.type == EventType.TOOL_CALL_END:
                             is_long_running_tool = True
                         logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
-                    # hard stop the execution if we find any long running tool
-                    if is_long_running_tool:
+                    # Hard stop the execution if we find any long running tool
+                    # AND the agent is NOT using ADK's native resumability.
+                    # With ResumabilityConfig, ADK handles the pause/resume flow
+                    # natively — we don't need to stop the loop early.
+                    if is_long_running_tool and not self._is_adk_resumable():
+                        import warnings
+                        warnings.warn(
+                            "Non-resumable HITL (fire-and-forget) is deprecated and will be removed "
+                            "in a future version. Use ADKAgent.from_app() with "
+                            "ResumabilityConfig(is_resumable=True) for human-in-the-loop workflows. "
+                            "See USAGE.md for migration instructions.",
+                            DeprecationWarning,
+                            stacklevel=2,
+                        )
+                        # With PROGRESSIVE_SSE_STREAMING (ADK >= 1.22.0), the
+                        # FunctionCall may arrive as a partial event that ADK
+                        # hasn't persisted to the session.  We must persist it
+                        # so the next run can match the FunctionResponse.
+                        if getattr(adk_event, 'partial', False) and adk_event.content:
+                            from google.adk.sessions.session import Event as ADKSessionEvent
+                            import time as _time_mod
+                            fc_event = ADKSessionEvent(
+                                timestamp=_time_mod.time(),
+                                author=getattr(adk_event, 'author', 'assistant'),
+                                content=adk_event.content,
+                                invocation_id=getattr(adk_event, 'invocation_id', None) or input.run_id,
+                            )
+                            try:
+                                await self._session_manager._session_service.append_event(session, fc_event)
+                                logger.info(
+                                    f"Persisted FunctionCall event to session for LRO early return "
+                                    f"(partial event, thread={input.thread_id})"
+                                )
+                            except Exception as e:
+                                logger.warning(f"Failed to persist FunctionCall event: {e}")
                         return
 
             # Force close any streaming messages
             async for ag_ui_event in event_translator.force_close_streaming_message():
                 await event_queue.put(ag_ui_event)
+
+            # Clear stored invocation_id after a completed run so subsequent
+            # new runs don't erroneously attempt HITL resumption with a stale ID.
+            # Only clear when NOT paused on an LRO tool — if we're pausing for
+            # HITL, the invocation_id is needed for the resume.
+            if self._is_adk_resumable() and (stored_invocation_id or invocation_id_stored) and not is_long_running_tool:
+                try:
+                    await self._session_manager.update_session_state(
+                        backend_session_id, app_name, user_id,
+                        {INVOCATION_ID_STATE_KEY: None}
+                    )
+                    logger.debug(
+                        f"Cleared stored invocation_id after completed run: {stored_invocation_id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to clear stored invocation_id: {e}")
+
             # moving states snapshot events after the text event clousure to avoid this error https://github.com/Contextable/ag-ui/issues/28
             final_state = await self._session_manager.get_session_state(backend_session_id, app_name, user_id)
-            if final_state:
-                ag_ui_event =  event_translator._create_state_snapshot_event(final_state)
+
+            # Merge accumulated predictive state from all ClientProxyToolset instances
+            # This ensures values set during HITL tool calls survive the final STATE_SNAPSHOT
+            accumulated_predict_state = {}
+            for toolset in client_proxy_toolsets:
+                accumulated_predict_state.update(toolset.get_accumulated_predict_state())
+
+            if accumulated_predict_state:
+                logger.debug(f"Merging accumulated predict_state into final state: {list(accumulated_predict_state.keys())}")
+                # Merge: accumulated predict_state values take priority over session state
+                # (the session state may use different keys like 'approved_plan' vs 'plan')
+                if final_state:
+                    merged_state = {**final_state, **accumulated_predict_state}
+                else:
+                    merged_state = accumulated_predict_state
+                ag_ui_event = event_translator._create_state_snapshot_event(merged_state)
+                await event_queue.put(ag_ui_event)
+            elif final_state:
+                ag_ui_event = event_translator._create_state_snapshot_event(final_state)
                 await event_queue.put(ag_ui_event)
 
             # Emit MESSAGES_SNAPSHOT if configured

@@ -469,7 +469,7 @@ class TestADKAgent:
         captured_agent = None
         original_run_background = adk_agent._run_adk_in_background
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             # Just put a completion event in the queue and return
@@ -524,7 +524,7 @@ class TestADKAgent:
         captured_agent = None
         original_run_background = adk_agent._run_adk_in_background
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             # Just put a completion event in the queue and return
@@ -581,7 +581,7 @@ class TestADKAgent:
         captured_agent = None
         original_run_background = adk_agent._run_adk_in_background
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             # Just put a completion event in the queue and return
@@ -640,7 +640,7 @@ class TestADKAgent:
         captured_agent = None
         original_run_background = adk_agent._run_adk_in_background
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             # Just put a completion event in the queue and return
@@ -691,7 +691,7 @@ class TestADKAgent:
         # Mock the background execution to capture the agent
         captured_agent = None
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             await event_queue.put(None)
@@ -724,7 +724,7 @@ class TestADKAgent:
 
         captured_agent = None
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             await event_queue.put(None)
@@ -1179,7 +1179,8 @@ class TestThreadIdSessionIdMapping:
 
         # Verify update_session_state was called with the state
         # Note: session_id is the backend-generated ID, which may differ from thread_id
-        assert len(update_state_calls) == 1
+        # There may be 2 calls: one for state sync, one for invocation_id storage
+        assert len(update_state_calls) >= 1
         assert update_state_calls[0]["session_id"] is not None  # Backend generates session_id
         assert update_state_calls[0]["state"] == state_to_sync
 
