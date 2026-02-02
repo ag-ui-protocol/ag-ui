@@ -8,7 +8,7 @@ Hugging Face, and OpenClaw.
 from .agent import OpenResponsesAgent
 from .config_loader import list_configs, load_config
 from .endpoint import create_openresponses_endpoint, create_openresponses_proxy
-from .providers import detect_provider, get_provider_defaults
+from .providers import Provider, detect_provider, get_provider, get_provider_defaults
 from .types import (
     AzureProviderConfig,
     OpenClawProviderConfig,
@@ -33,7 +33,9 @@ __all__ = [
     "AzureProviderConfig",
     "ProviderType",
     # Utilities
+    "Provider",
     "detect_provider",
+    "get_provider",
     "get_provider_defaults",
     "fill_runtime_config",
     "merge_runtime_config",

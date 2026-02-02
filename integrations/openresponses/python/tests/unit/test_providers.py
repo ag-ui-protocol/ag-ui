@@ -1,8 +1,17 @@
-"""Tests for provider detection and defaults."""
+"""Tests for provider detection, defaults, and class-based API."""
+
+import os
+from unittest.mock import MagicMock
 
 import pytest
 
-from ag_ui_openresponses.providers.base import detect_provider, get_provider_defaults
+from ag_ui_openresponses.providers.base import (
+    Provider,
+    detect_provider,
+    get_provider,
+    get_provider_defaults,
+)
+from ag_ui_openresponses.providers.openclaw import OpenClawProvider
 from ag_ui_openresponses.types import ProviderType
 
 
@@ -46,3 +55,38 @@ class TestGetProviderDefaults:
     def test_custom_empty(self):
         defaults = get_provider_defaults(ProviderType.CUSTOM)
         assert defaults == {}
+
+
+class TestGetProvider:
+    def test_returns_provider_instance(self):
+        p = get_provider(ProviderType.OPENAI)
+        assert isinstance(p, Provider)
+        assert p.default_model == "gpt-4o"
+
+    def test_openclaw_provider(self):
+        p = get_provider(ProviderType.OPENCLAW)
+        assert isinstance(p, OpenClawProvider)
+        assert p.default_model == "openclaw"
+
+    def test_custom_returns_base(self):
+        p = get_provider(ProviderType.CUSTOM)
+        assert type(p) is Provider
+
+
+class TestOpenClawProviderDefaultUserId:
+    def test_returns_user_env_var(self, monkeypatch):
+        monkeypatch.setenv("USER", "alice")
+        p = OpenClawProvider()
+        inp = MagicMock()
+        assert p.default_user_id(inp) == "alice"
+
+    def test_falls_back_to_user_string(self, monkeypatch):
+        monkeypatch.delenv("USER", raising=False)
+        p = OpenClawProvider()
+        inp = MagicMock()
+        assert p.default_user_id(inp) == "user"
+
+    def test_base_provider_returns_none(self):
+        p = Provider()
+        inp = MagicMock()
+        assert p.default_user_id(inp) is None

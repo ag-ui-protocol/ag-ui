@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 from ag_ui.core import (
     BaseEvent,
@@ -17,7 +18,7 @@ from ag_ui.core import (
 )
 
 from .config_loader import load_config
-from .providers import detect_provider, get_provider_defaults
+from .providers import Provider, detect_provider, get_provider
 from .request.request_builder import RequestBuilder
 from .response.event_translator import EventTranslator
 from .response.sse_parser import SSEParser
@@ -71,6 +72,8 @@ class OpenResponsesAgent:
         config: OpenResponsesAgentConfig | None = None,
         restrict_configs: bool = False,
         config_dir: str | None = None,
+        user_id: str | None = None,
+        user_id_extractor: Callable[[RunAgentInput], str | None] | None = None,
     ) -> None:
         """Initialize the agent with configuration.
 
@@ -84,18 +87,34 @@ class OpenResponsesAgent:
                 set by the named config.
             config_dir: Directory containing named JSON config files.
                 Defaults to ``$OPENRESPONSES_CONFIG_DIR`` or ``./configs``.
+            user_id: Static user identifier sent in the ``user`` field of
+                OpenResponses requests. Mutually exclusive with
+                *user_id_extractor*.
+            user_id_extractor: Callable that receives the ``RunAgentInput``
+                and returns a user identifier (or None). Mutually exclusive
+                with *user_id*.
         """
+        if user_id is not None and user_id_extractor is not None:
+            raise ValueError(
+                "user_id and user_id_extractor are mutually exclusive. "
+                "Provide one or the other, not both."
+            )
+
         self._static_config = config or OpenResponsesAgentConfig()
         self._restrict_configs = restrict_configs
         self._config_dir = config_dir
+        self._user_id = user_id
+        self._user_id_extractor = user_id_extractor
 
         # If base_url is already known we can eagerly create the client
         if self._static_config.base_url:
             resolved = self._apply_provider_defaults(self._static_config)
+            self._provider = self._resolve_provider(resolved)
             self._http_client: HttpClient | None = self._create_http_client(resolved)
-            self._request_builder: RequestBuilder | None = RequestBuilder(resolved)
+            self._request_builder: RequestBuilder | None = RequestBuilder(resolved, self._provider)
             self.config = resolved
         else:
+            self._provider = Provider()
             self._http_client = None
             self._request_builder = None
             self.config = self._static_config
@@ -124,8 +143,9 @@ class OpenResponsesAgent:
             )
             return
 
-        # Build the OpenResponses request
-        request = request_builder.build(input_data)
+        # Resolve user_id and build the OpenResponses request
+        user = self._resolve_user_id(input_data)
+        request = request_builder.build(input_data, user=user)
 
         # Get IDs from input
         run_id = input_data.run_id
@@ -195,6 +215,26 @@ class OpenResponsesAgent:
             )
             raise
 
+    def _resolve_user_id(self, input_data: RunAgentInput) -> str | None:
+        """Resolve the ``user`` value for the OpenResponses request.
+
+        Resolution order (highest priority wins):
+        1. ``user_id_extractor(input_data)`` — operator callback
+        2. Static ``user_id`` from __init__
+        3. Provider-specific default (e.g. OpenClaw → ``$USER`` / ``"user"``)
+        4. Otherwise: ``None`` (no ``user`` field sent)
+        """
+        if self._user_id_extractor is not None:
+            return self._user_id_extractor(input_data)
+        if self._user_id is not None:
+            return self._user_id
+        return self._provider.default_user_id(input_data)
+
+    def _resolve_provider(self, config: OpenResponsesAgentConfig) -> Provider:
+        """Return the Provider instance for a resolved config."""
+        provider_type = config.provider or ProviderType.CUSTOM
+        return get_provider(provider_type)
+
     def _resolve_run_config(
         self, input_data: RunAgentInput, config_name: str | None = None,
     ) -> tuple[HttpClient, RequestBuilder]:
@@ -247,7 +287,8 @@ class OpenResponsesAgent:
                     "static config or via forwarded_props.openresponses_config."
                 )
             resolved = self._apply_provider_defaults(self._static_config)
-            return self._create_http_client(resolved), RequestBuilder(resolved)
+            self._provider = self._resolve_provider(resolved)
+            return self._create_http_client(resolved), RequestBuilder(resolved, self._provider)
 
         # Layer 3: merge runtime overrides on top
         if runtime_dict:
@@ -263,7 +304,8 @@ class OpenResponsesAgent:
             )
 
         resolved = self._apply_provider_defaults(base)
-        return self._create_http_client(resolved), RequestBuilder(resolved)
+        self._provider = self._resolve_provider(resolved)
+        return self._create_http_client(resolved), RequestBuilder(resolved, self._provider)
 
     def _apply_provider_defaults(
         self, config: OpenResponsesAgentConfig
@@ -272,12 +314,12 @@ class OpenResponsesAgent:
         provider = config.provider or (
             detect_provider(config.base_url) if config.base_url else ProviderType.CUSTOM
         )
-        defaults = get_provider_defaults(provider)
+        provider_obj = get_provider(provider)
 
         return OpenResponsesAgentConfig(
             base_url=config.base_url,
             api_key=config.api_key,
-            default_model=config.default_model or defaults.get("default_model"),
+            default_model=config.default_model or provider_obj.default_model,
             headers=config.headers,
             timeout_seconds=config.timeout_seconds,
             max_retries=config.max_retries,
@@ -291,7 +333,7 @@ class OpenResponsesAgent:
         return HttpClient(
             base_url=config.base_url,  # type: ignore[arg-type]
             api_key=config.api_key,
-            headers=self._build_headers(config),
+            headers=self._provider.build_headers(config),
             timeout_seconds=config.timeout_seconds,
             max_retries=config.max_retries,
             api_version=config.azure.api_version if config.azure else None,
@@ -300,18 +342,7 @@ class OpenResponsesAgent:
     def _build_headers(self, config: OpenResponsesAgentConfig | None = None) -> dict[str, str]:
         """Build request headers including provider-specific ones."""
         cfg = config or self.config
-        headers: dict[str, str] = {
-            **(cfg.headers or {}),
-        }
-
-        # OpenClaw-specific headers
-        if cfg.openclaw:
-            if cfg.openclaw.agent_id:
-                headers["x-openclaw-agent-id"] = cfg.openclaw.agent_id
-            if cfg.openclaw.session_key:
-                headers["x-openclaw-session-key"] = cfg.openclaw.session_key
-
-        return headers
+        return self._provider.build_headers(cfg)
 
     @staticmethod
     def _generate_id(prefix: str) -> str:

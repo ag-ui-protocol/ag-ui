@@ -131,6 +131,8 @@ def create_openresponses_proxy(
     path: str = "/",
     config_dir: str | None = None,
     restrict_configs: bool = False,
+    user_id: str | None = None,
+    user_id_extractor: Callable[[Any], str | None] | None = None,
 ) -> None:
     """Create a zero-config proxy with named-config and generic endpoints.
 
@@ -149,7 +151,12 @@ def create_openresponses_proxy(
             registered and caller overrides can only fill gaps (not
             override values set by the named config).
     """
-    agent = OpenResponsesAgent(restrict_configs=restrict_configs, config_dir=config_dir)
+    agent = OpenResponsesAgent(
+        restrict_configs=restrict_configs,
+        config_dir=config_dir,
+        user_id=user_id,
+        user_id_extractor=user_id_extractor,
+    )
 
     # Normalise path so we can build sub-paths cleanly
     base = path.rstrip("/")

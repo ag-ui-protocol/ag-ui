@@ -9,6 +9,7 @@ from typing import Any
 from ag_ui.core import Message, RunAgentInput, Tool
 from openai.types.responses import FunctionToolParam, ResponseCreateParams
 
+from ..providers.base import Provider
 from ..types import (
     OpenResponsesAgentConfig,
     ProviderType,
@@ -20,19 +21,22 @@ logger = logging.getLogger(__name__)
 class RequestBuilder:
     """Builds OpenResponses API requests from AG-UI RunAgentInput."""
 
-    def __init__(self, config: OpenResponsesAgentConfig) -> None:
+    def __init__(self, config: OpenResponsesAgentConfig, provider: Provider | None = None) -> None:
         """Initialize with configuration.
 
         Args:
             config: Agent configuration.
+            provider: Provider instance for delegating model/tool logic.
         """
         self._config = config
+        self._provider = provider or Provider()
 
-    def build(self, input_data: RunAgentInput) -> dict[str, Any]:
+    def build(self, input_data: RunAgentInput, *, user: str | None = None) -> dict[str, Any]:
         """Build an OpenResponses request from AG-UI input.
 
         Args:
             input_data: The AG-UI input data.
+            user: Optional user identifier to include in the request.
 
         Returns:
             OpenResponses request body as dict (compatible with ResponseCreateParams).
@@ -48,7 +52,7 @@ class RequestBuilder:
         previous_response_id = openresponses_state.get("response_id")
 
         request: dict[str, Any] = {
-            "model": self._resolve_model(input_data),
+            "model": self._provider.resolve_model(input_data, self._config),
             "stream": True,
         }
 
@@ -68,7 +72,7 @@ class RequestBuilder:
         if instructions:
             request["instructions"] = instructions
 
-        translated_tools = self._translate_tools(tools)
+        translated_tools = self._provider.translate_tools(tools, self._config)
         if translated_tools:
             request["tools"] = translated_tools
 
@@ -77,33 +81,10 @@ class RequestBuilder:
         if max_tokens:
             request["max_output_tokens"] = max_tokens
 
+        if user is not None:
+            request["user"] = user
+
         return request
-
-    def _resolve_model(self, input_data: RunAgentInput) -> str:
-        """Resolve the model to use for this request.
-
-        Args:
-            input_data: The AG-UI input data.
-
-        Returns:
-            Model identifier string.
-        """
-        # Check for model in forwarded_props
-        forwarded = input_data.forwarded_props if hasattr(input_data, "forwarded_props") else None
-        if forwarded and isinstance(forwarded, dict) and "model" in forwarded:
-            return str(forwarded["model"])
-
-        # Check for OpenClaw agent routing in forwarded_props
-        if (
-            forwarded
-            and isinstance(forwarded, dict)
-            and "agent_id" in forwarded
-            and self._config.provider == ProviderType.OPENCLAW
-        ):
-            return f"openclaw:{forwarded['agent_id']}"
-
-        # Use default model from config
-        return self._config.default_model or "gpt-4o"
 
     def _get_new_messages(self, messages: list[Message]) -> list[Message]:
         """Get only new messages for stateful mode.
@@ -323,51 +304,6 @@ class RequestBuilder:
             return f"{system_text}\n\n{context_instructions}"
         return system_text or context_instructions or None
 
-    def _translate_tools(
-        self, tools: list[Tool]
-    ) -> list[FunctionToolParam | dict[str, Any]] | None:
-        """Translate AG-UI tools to OpenResponses format.
-
-        Uses FunctionToolParam from OpenAI SDK (flat structure) by default.
-        When OpenClawProviderConfig.use_nested_tool_format is True, uses the
-        Chat Completions-style nested format instead.
-
-        Args:
-            tools: List of AG-UI tool definitions.
-
-        Returns:
-            List of OpenResponses tool definitions, or None.
-        """
-        if not tools:
-            return None
-
-        use_nested = (
-            self._config.openclaw is not None
-            and self._config.openclaw.use_nested_tool_format
-        )
-
-        result: list[FunctionToolParam | dict[str, Any]] = []
-        for tool in tools:
-            if use_nested:
-                result.append({
-                    "type": "function",
-                    "function": {
-                        "name": tool.name,
-                        "description": tool.description or "",
-                        "parameters": tool.parameters or {},
-                    },
-                })
-            else:
-                result.append(
-                    FunctionToolParam(
-                        type="function",
-                        name=tool.name,
-                        description=tool.description or "",
-                        parameters=tool.parameters or {},
-                    )
-                )
-        return result
-
     def _get_max_tokens(self, input_data: RunAgentInput) -> int | None:
         """Get max tokens from input data.
 
@@ -384,4 +320,3 @@ class RequestBuilder:
             if "max_output_tokens" in forwarded:
                 return int(forwarded["max_output_tokens"])
         return None
-

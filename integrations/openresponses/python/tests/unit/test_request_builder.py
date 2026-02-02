@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import MagicMock
 
+from ag_ui_openresponses.providers.base import get_provider
 from ag_ui_openresponses.request.request_builder import RequestBuilder
 from ag_ui_openresponses.types import (
     OpenClawProviderConfig,
@@ -31,6 +32,11 @@ def _make_tool(name="my_tool", description="A tool", parameters=None):
     return t
 
 
+def _builder(config):
+    provider = get_provider(config.provider or ProviderType.CUSTOM)
+    return RequestBuilder(config, provider)
+
+
 class TestResolveModel:
     def test_openclaw_agent_id_routing(self):
         config = OpenResponsesAgentConfig(
@@ -38,7 +44,7 @@ class TestResolveModel:
             provider=ProviderType.OPENCLAW,
             default_model="openclaw",
         )
-        builder = RequestBuilder(config)
+        builder = _builder(config)
         inp = _make_input(forwarded_props={"agent_id": "beta"})
         request = builder.build(inp)
         assert request["model"] == "openclaw:beta"
@@ -49,7 +55,7 @@ class TestResolveModel:
             provider=ProviderType.OPENAI,
             default_model="gpt-4o",
         )
-        builder = RequestBuilder(config)
+        builder = _builder(config)
         inp = _make_input(forwarded_props={"agent_id": "beta"})
         request = builder.build(inp)
         assert request["model"] == "gpt-4o"
@@ -60,7 +66,7 @@ class TestResolveModel:
             provider=ProviderType.OPENCLAW,
             default_model="openclaw",
         )
-        builder = RequestBuilder(config)
+        builder = _builder(config)
         inp = _make_input(forwarded_props={"model": "agent:foo", "agent_id": "beta"})
         request = builder.build(inp)
         assert request["model"] == "agent:foo"
@@ -73,7 +79,7 @@ class TestTranslateTools:
             provider=ProviderType.OPENCLAW,
             openclaw=OpenClawProviderConfig(use_nested_tool_format=True),
         )
-        builder = RequestBuilder(config)
+        builder = _builder(config)
         tool = _make_tool()
         inp = _make_input(tools=[tool])
         request = builder.build(inp)
@@ -88,7 +94,7 @@ class TestTranslateTools:
             provider=ProviderType.OPENCLAW,
             openclaw=OpenClawProviderConfig(use_nested_tool_format=False),
         )
-        builder = RequestBuilder(config)
+        builder = _builder(config)
         tool = _make_tool()
         inp = _make_input(tools=[tool])
         request = builder.build(inp)
@@ -103,7 +109,7 @@ class TestTranslateTools:
             base_url="https://api.openai.com/v1",
             provider=ProviderType.OPENAI,
         )
-        builder = RequestBuilder(config)
+        builder = _builder(config)
         tool = _make_tool()
         inp = _make_input(tools=[tool])
         request = builder.build(inp)
@@ -111,3 +117,25 @@ class TestTranslateTools:
         assert t["type"] == "function"
         assert t["name"] == "my_tool"
         assert "function" not in t
+
+
+class TestUserField:
+    def test_user_included_when_provided(self):
+        config = OpenResponsesAgentConfig(
+            base_url="https://api.openai.com/v1",
+            provider=ProviderType.OPENAI,
+        )
+        builder = _builder(config)
+        inp = _make_input()
+        request = builder.build(inp, user="alice")
+        assert request["user"] == "alice"
+
+    def test_user_omitted_when_none(self):
+        config = OpenResponsesAgentConfig(
+            base_url="https://api.openai.com/v1",
+            provider=ProviderType.OPENAI,
+        )
+        builder = _builder(config)
+        inp = _make_input()
+        request = builder.build(inp)
+        assert "user" not in request
