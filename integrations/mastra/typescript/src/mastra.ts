@@ -277,11 +277,19 @@ export class MastraAgent extends AbstractAgent {
       // Local agent - use the agent's stream method directly
       try {
         const response = await this.agent.stream(convertedMessages, {
-          threadId,
-          resourceId,
           runId,
           clientTools,
           runtimeContext,
+          memory: {
+            resource: resourceId,
+            thread: {
+              id: threadId
+            }
+          },
+          
+          // Deprecated but still set for compatability
+          threadId,
+          resourceId
         });
 
         // For local agents, the response should already be a stream
@@ -332,11 +340,19 @@ export class MastraAgent extends AbstractAgent {
       // Remote agent - use the remote agent's stream method
       try {
         const response = await this.agent.stream({
-          threadId,
-          resourceId,
           runId,
           messages: convertedMessages,
           clientTools,
+          memory: {
+            resource: resourceId,
+            thread: {
+              id: threadId
+            }
+          },
+          
+          // Deprecated but still set for compatability
+          threadId,
+          resourceId
         });
 
         // Remote agents should have a processDataStream method
