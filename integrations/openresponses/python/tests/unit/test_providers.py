@@ -73,6 +73,40 @@ class TestGetProvider:
         assert type(p) is Provider
 
 
+class TestResolveBaseUrl:
+    def test_base_provider_adds_v1(self):
+        p = Provider()
+        assert p.resolve_base_url("https://api.openai.com") == "https://api.openai.com/v1"
+
+    def test_base_provider_keeps_v1(self):
+        p = Provider()
+        assert p.resolve_base_url("https://api.openai.com/v1") == "https://api.openai.com/v1"
+
+    def test_base_provider_strips_trailing_slash(self):
+        p = Provider()
+        assert p.resolve_base_url("https://api.openai.com/v1/") == "https://api.openai.com/v1"
+
+    def test_azure_adds_openai_prefix(self):
+        from ag_ui_openresponses.providers.azure import AzureProvider
+        p = AzureProvider()
+        assert p.resolve_base_url("https://myresource.openai.azure.com") == "https://myresource.openai.azure.com/openai"
+
+    def test_azure_no_double_openai(self):
+        from ag_ui_openresponses.providers.azure import AzureProvider
+        p = AzureProvider()
+        assert p.resolve_base_url("https://myresource.openai.azure.com/openai") == "https://myresource.openai.azure.com/openai"
+
+    def test_azure_strips_trailing_slash(self):
+        from ag_ui_openresponses.providers.azure import AzureProvider
+        p = AzureProvider()
+        assert p.resolve_base_url("https://myresource.openai.azure.com/") == "https://myresource.openai.azure.com/openai"
+
+    def test_huggingface_adds_v1(self):
+        from ag_ui_openresponses.providers.huggingface import HuggingFaceProvider
+        p = HuggingFaceProvider()
+        assert p.resolve_base_url("https://router.huggingface.co") == "https://router.huggingface.co/v1"
+
+
 class TestOpenClawProviderDefaultUserId:
     def test_returns_user_env_var(self, monkeypatch):
         monkeypatch.setenv("USER", "alice")

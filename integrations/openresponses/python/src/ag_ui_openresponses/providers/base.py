@@ -47,6 +47,17 @@ class Provider:
     default_model: str | None = None
     supports_stateful: bool = True
 
+    def resolve_base_url(self, base_url: str) -> str:
+        """Normalize the base URL for this provider.
+
+        Ensures the URL ends with the correct path prefix (e.g. ``/v1``).
+        Subclasses may override for provider-specific URL schemes.
+        """
+        base_url = base_url.rstrip("/")
+        if not base_url.endswith("/v1"):
+            base_url = f"{base_url}/v1"
+        return base_url
+
     def build_headers(self, config: OpenResponsesAgentConfig) -> dict[str, str]:
         """Build request headers for this provider."""
         return dict(config.headers or {})

@@ -7,44 +7,25 @@ from ag_ui_openresponses.utils.http_client import HttpClient
 
 class TestBuildUrl:
     def test_standard_url(self):
-        client = HttpClient(base_url="http://localhost:18789")
+        """HttpClient concatenates base_url + path directly."""
+        client = HttpClient(base_url="http://localhost:18789/v1")
         assert client._build_url("/responses") == "http://localhost:18789/v1/responses"
 
     def test_base_url_ending_with_v1(self):
         client = HttpClient(base_url="https://api.openai.com/v1")
         assert client._build_url("/responses") == "https://api.openai.com/v1/responses"
 
-    def test_azure_api_version(self):
-        client = HttpClient(
-            base_url="https://myresource.openai.azure.com",
-            api_version="2024-02-15-preview",
-        )
-        url = client._build_url("/responses")
-        assert "api-version=2024-02-15-preview" in url
-        assert url.startswith("https://myresource.openai.azure.com/openai/v1/responses")
-
-    def test_azure_base_url_with_openai_prefix(self):
-        """Don't double the /openai prefix if user already included it."""
+    def test_azure_api_version_appended(self):
+        """Azure: api-version query param is appended."""
         client = HttpClient(
             base_url="https://myresource.openai.azure.com/openai",
             api_version="2024-02-15-preview",
         )
         url = client._build_url("/responses")
-        assert url.startswith("https://myresource.openai.azure.com/openai/v1/responses")
-        assert "/openai/openai/" not in url
-
-    def test_azure_base_url_with_openai_v1(self):
-        """Don't insert extra segments if user provides full path."""
-        client = HttpClient(
-            base_url="https://myresource.openai.azure.com/openai/v1",
-            api_version="2024-02-15-preview",
-        )
-        url = client._build_url("/responses")
-        assert url.startswith("https://myresource.openai.azure.com/openai/v1/responses")
-        assert "api-version=2024-02-15-preview" in url
+        assert url == "https://myresource.openai.azure.com/openai/responses?api-version=2024-02-15-preview"
 
     def test_trailing_slash_stripped(self):
-        client = HttpClient(base_url="http://localhost:18789/")
+        client = HttpClient(base_url="http://localhost:18789/v1/")
         assert client._build_url("/responses") == "http://localhost:18789/v1/responses"
 
 

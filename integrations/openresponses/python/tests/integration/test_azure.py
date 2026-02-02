@@ -32,7 +32,7 @@ def azure_agent() -> OpenResponsesAgent:
             api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
             default_model=os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o"),
             azure=AzureProviderConfig(
-                api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2025-04-01-preview"),
+                api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2025-03-01-preview"),
             ),
         )
     )
@@ -113,7 +113,7 @@ class TestAzureErrorHandling:
                 api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
                 default_model="nonexistent-deployment-xyz",
                 azure=AzureProviderConfig(
-                    api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2025-04-01-preview"),
+                    api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2025-03-01-preview"),
                 ),
             )
         )

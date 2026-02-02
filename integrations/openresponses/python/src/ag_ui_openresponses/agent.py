@@ -330,8 +330,9 @@ class OpenResponsesAgent:
 
     def _create_http_client(self, config: OpenResponsesAgentConfig) -> HttpClient:
         """Create an HttpClient from a resolved config."""
+        base_url = self._provider.resolve_base_url(config.base_url)  # type: ignore[arg-type]
         return HttpClient(
-            base_url=config.base_url,  # type: ignore[arg-type]
+            base_url=base_url,
             api_key=config.api_key,
             headers=self._provider.build_headers(config),
             timeout_seconds=config.timeout_seconds,
