@@ -51,15 +51,19 @@ class SSEParser:
 
                 elif line == "":
                     # Empty line signals end of event
-                    if event_type and event_data:
+                    if event_data:
                         try:
                             data_str = "\n".join(event_data)
                             parsed = json.loads(data_str) if data_str else {}
-                            logger.debug(f"Parsed SSE event: {event_type}")
-                            yield OpenResponsesSSEEvent(
-                                type=event_type,
-                                data=parsed,
-                            )
+                            # Use explicit event: field if present,
+                            # otherwise extract type from JSON payload
+                            resolved_type = event_type or parsed.get("type")
+                            if resolved_type:
+                                logger.debug(f"Parsed SSE event: {resolved_type}")
+                                yield OpenResponsesSSEEvent(
+                                    type=resolved_type,
+                                    data=parsed,
+                                )
                         except json.JSONDecodeError as e:
                             logger.warning(
                                 f"Failed to parse SSE event data: {e}"
@@ -69,13 +73,15 @@ class SSEParser:
                     event_data = []
 
         # Handle any remaining data in buffer (shouldn't happen with proper SSE)
-        if event_type and event_data:
+        if event_data:
             try:
                 data_str = "\n".join(event_data)
                 parsed = json.loads(data_str) if data_str else {}
-                yield OpenResponsesSSEEvent(
-                    type=event_type,
-                    data=parsed,
-                )
+                resolved_type = event_type or parsed.get("type")
+                if resolved_type:
+                    yield OpenResponsesSSEEvent(
+                        type=resolved_type,
+                        data=parsed,
+                    )
             except json.JSONDecodeError:
                 pass

@@ -45,6 +45,7 @@ class Provider:
     """Base provider with sensible defaults."""
 
     default_model: str | None = None
+    supports_stateful: bool = True
 
     def build_headers(self, config: OpenResponsesAgentConfig) -> dict[str, str]:
         """Build request headers for this provider."""

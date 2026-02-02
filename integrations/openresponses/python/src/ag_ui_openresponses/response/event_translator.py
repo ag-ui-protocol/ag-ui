@@ -15,6 +15,8 @@ from ag_ui.core import (
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
+    ThinkingEndEvent,
+    ThinkingStartEvent,
     ThinkingTextMessageContentEvent,
     ThinkingTextMessageEndEvent,
     ThinkingTextMessageStartEvent,
@@ -172,6 +174,11 @@ class EventTranslator:
             if not self._current_thinking_id:
                 self._current_thinking_id = self._generate_message_id()
                 events.append(
+                    ThinkingStartEvent(
+                        type=EventType.THINKING_START,
+                    )
+                )
+                events.append(
                     ThinkingTextMessageStartEvent(
                         type=EventType.THINKING_TEXT_MESSAGE_START,
                         message_id=self._current_thinking_id,
@@ -193,6 +200,11 @@ class EventTranslator:
                     ThinkingTextMessageEndEvent(
                         type=EventType.THINKING_TEXT_MESSAGE_END,
                         message_id=self._current_thinking_id,
+                    )
+                )
+                events.append(
+                    ThinkingEndEvent(
+                        type=EventType.THINKING_END,
                     )
                 )
                 self._current_thinking_id = None

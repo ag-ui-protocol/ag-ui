@@ -119,6 +119,161 @@ class TestTranslateTools:
         assert "function" not in t
 
 
+class TestAssistantToolCalls:
+    """Tests for assistant messages with tool_calls → function_call items."""
+
+    def _make_assistant_msg(self, content="None", tool_calls=None):
+        msg = MagicMock()
+        msg.role = "assistant"
+        msg.content = content
+        msg.tool_calls = tool_calls
+        return msg
+
+    def _make_tool_call(self, call_id="call_1", name="my_tool", arguments='{"x": 1}'):
+        tc = MagicMock()
+        tc.id = call_id
+        tc.function = MagicMock()
+        tc.function.name = name
+        tc.function.arguments = arguments
+        return tc
+
+    def _make_tool_result_msg(self, tool_call_id="call_1", content='{"status": "ok"}'):
+        msg = MagicMock()
+        msg.role = "tool"
+        msg.tool_call_id = tool_call_id
+        msg.content = content
+        return msg
+
+    def _make_user_msg(self, content="Hello"):
+        msg = MagicMock()
+        msg.role = "user"
+        msg.content = content
+        return msg
+
+    def test_assistant_with_tool_calls_emits_function_call_items(self):
+        config = OpenResponsesAgentConfig(
+            base_url="https://api.openai.com/v1",
+            provider=ProviderType.OPENAI,
+        )
+        builder = _builder(config)
+        tc = self._make_tool_call(call_id="call_abc", name="change_bg", arguments='{"color": "red"}')
+        assistant_msg = self._make_assistant_msg(tool_calls=[tc])
+        inp = _make_input(messages=[assistant_msg])
+        request = builder.build(inp)
+
+        items = request["input"]
+        assert len(items) == 1
+        assert items[0]["type"] == "function_call"
+        assert items[0]["call_id"] == "call_abc"
+        assert items[0]["name"] == "change_bg"
+        assert items[0]["arguments"] == '{"color": "red"}'
+
+    def test_assistant_without_tool_calls_emits_message(self):
+        config = OpenResponsesAgentConfig(
+            base_url="https://api.openai.com/v1",
+            provider=ProviderType.OPENAI,
+        )
+        builder = _builder(config)
+        assistant_msg = self._make_assistant_msg(content="Hello there")
+        inp = _make_input(messages=[assistant_msg])
+        request = builder.build(inp)
+
+        items = request["input"]
+        assert len(items) == 1
+        assert items[0]["type"] == "message"
+        assert items[0]["role"] == "assistant"
+        assert items[0]["content"] == "Hello there"
+
+    def test_full_tool_call_roundtrip_openai(self):
+        """OpenAI: User → Assistant(tool_call) → Tool(result) → User produces correct sequence."""
+        config = OpenResponsesAgentConfig(
+            base_url="https://api.openai.com/v1",
+            provider=ProviderType.OPENAI,
+        )
+        builder = _builder(config)
+
+        user1 = self._make_user_msg("Change background to blue")
+        tc = self._make_tool_call(call_id="call_1", name="change_bg", arguments='{"bg": "blue"}')
+        assistant1 = self._make_assistant_msg(tool_calls=[tc])
+        tool_result = self._make_tool_result_msg(tool_call_id="call_1", content='{"status": "success"}')
+        user2 = self._make_user_msg("Thanks!")
+
+        inp = _make_input(messages=[user1, assistant1, tool_result, user2])
+        request = builder.build(inp)
+
+        items = request["input"]
+        assert len(items) == 4
+        assert items[0]["type"] == "message"
+        assert items[0]["role"] == "user"
+        assert items[1]["type"] == "function_call"
+        assert items[1]["call_id"] == "call_1"
+        assert items[2]["type"] == "function_call_output"
+        assert items[2]["call_id"] == "call_1"
+        assert items[3]["type"] == "message"
+        assert items[3]["role"] == "user"
+
+    def test_full_tool_call_roundtrip_huggingface_collapses_tool_items(self):
+        """HF: function_call + output become a synthetic assistant message."""
+        config = OpenResponsesAgentConfig(
+            base_url="https://router.huggingface.co/v1",
+            provider=ProviderType.HUGGINGFACE,
+        )
+        builder = _builder(config)
+
+        user1 = self._make_user_msg("Change background to blue")
+        tc = self._make_tool_call(call_id="call_1", name="change_bg", arguments='{"bg": "blue"}')
+        assistant1 = self._make_assistant_msg(tool_calls=[tc])
+        tool_result = self._make_tool_result_msg(tool_call_id="call_1", content='{"status": "success"}')
+        user2 = self._make_user_msg("Thanks!")
+
+        inp = _make_input(messages=[user1, assistant1, tool_result, user2])
+        request = builder.build(inp)
+
+        items = request["input"]
+        assert len(items) == 3
+        assert items[0]["type"] == "message"
+        assert items[0]["role"] == "user"
+        assert items[1]["type"] == "message"
+        assert items[1]["role"] == "assistant"
+        assert "change_bg" in items[1]["content"]
+        assert items[2]["type"] == "message"
+        assert items[2]["role"] == "user"
+
+    def test_no_previous_response_id_for_huggingface(self):
+        """HF provider should not send previous_response_id."""
+        config = OpenResponsesAgentConfig(
+            base_url="https://router.huggingface.co/v1",
+            provider=ProviderType.HUGGINGFACE,
+        )
+        builder = _builder(config)
+        inp = _make_input(messages=[self._make_user_msg("Hi")])
+        inp.state = {"openresponses_state": {"response_id": "resp_123"}}
+        request = builder.build(inp)
+
+        assert "previous_response_id" not in request
+        # Should send full message history instead
+        assert len(request["input"]) == 1
+
+    def test_multiple_tool_calls_on_single_assistant_message(self):
+        config = OpenResponsesAgentConfig(
+            base_url="https://api.openai.com/v1",
+            provider=ProviderType.OPENAI,
+        )
+        builder = _builder(config)
+        tc1 = self._make_tool_call(call_id="call_1", name="tool_a", arguments='{}')
+        tc2 = self._make_tool_call(call_id="call_2", name="tool_b", arguments='{"x": 1}')
+        assistant_msg = self._make_assistant_msg(tool_calls=[tc1, tc2])
+        inp = _make_input(messages=[assistant_msg])
+        request = builder.build(inp)
+
+        items = request["input"]
+        assert len(items) == 2
+        assert items[0]["type"] == "function_call"
+        assert items[0]["name"] == "tool_a"
+        assert items[1]["type"] == "function_call"
+        assert items[1]["name"] == "tool_b"
+
+
 class TestUserField:
     def test_user_included_when_provided(self):
         config = OpenResponsesAgentConfig(

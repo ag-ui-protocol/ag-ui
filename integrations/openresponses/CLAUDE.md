@@ -93,6 +93,15 @@ Reference server demonstrating basic AG-UI protocol compliance with FastAPI.
 | `response.refusal.delta` | `TEXT_MESSAGE_START` + `TEXT_MESSAGE_CONTENT` |
 | `response.refusal.done` | `TEXT_MESSAGE_END` |
 
+### HF Router Model Notes
+
+When demoing via the Hugging Face router (`https://router.huggingface.co/v1`):
+
+- **Recommended: `Qwen/Qwen3-235B-A22B-Instruct-2507`** — handles tool calls reliably, no looping, good quality responses.
+- `deepseek-ai/DeepSeek-V3.1` — also works well with tool history.
+- `meta-llama/Llama-3.3-70B-Instruct` — accepts tool history format but tends to loop on tool calls.
+- `openai/gpt-oss-120b` and `openai/gpt-oss-20b` — fail with "Tools should have a name!" when function_call items appear in history. Do not use with tool-calling demos.
+
 ### Integration with Monorepo
 
 - Python package: standalone with `ag-ui-protocol` dependency

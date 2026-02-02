@@ -56,8 +56,8 @@ class RequestBuilder:
             "stream": True,
         }
 
-        # Build input - if we have previous_response_id, only send new messages
-        if previous_response_id:
+        # Build input - if we have previous_response_id and provider supports it, only send new messages
+        if previous_response_id and self._provider.supports_stateful:
             request["previous_response_id"] = previous_response_id
             # Only send the latest user message when using stateful mode
             new_messages = self._get_new_messages(messages)
@@ -142,8 +142,28 @@ class RequestBuilder:
                     "call_id": tool_call_id,
                     "output": output,
                 })
+            elif role == "assistant":
+                # Check for tool calls on assistant messages
+                tool_calls = getattr(message, "tool_calls", None)
+                if tool_calls:
+                    # Emit function_call items for each tool call
+                    for tc in tool_calls:
+                        func = tc.function
+                        items.append({
+                            "type": "function_call",
+                            "id": tc.id,
+                            "call_id": tc.id,
+                            "name": func.name,
+                            "arguments": func.arguments or "",
+                        })
+                else:
+                    items.append({
+                        "type": "message",
+                        "role": "assistant",
+                        "content": self._translate_content(message.content),
+                    })
             else:
-                # Regular messages (user, assistant)
+                # Regular messages (user)
                 items.append({
                     "type": "message",
                     "role": self._map_role(role),

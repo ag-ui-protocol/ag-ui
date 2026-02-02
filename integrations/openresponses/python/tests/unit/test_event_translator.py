@@ -34,10 +34,11 @@ class TestReasoningTextEvents:
             _sse("response.reasoning_text.delta", {"delta": "Let me think"}),
             tool_handler,
         )
-        assert len(events) == 2
-        assert events[0].type == EventType.THINKING_TEXT_MESSAGE_START
-        assert events[1].type == EventType.THINKING_TEXT_MESSAGE_CONTENT
-        assert events[1].delta == "Let me think"
+        assert len(events) == 3
+        assert events[0].type == EventType.THINKING_START
+        assert events[1].type == EventType.THINKING_TEXT_MESSAGE_START
+        assert events[2].type == EventType.THINKING_TEXT_MESSAGE_CONTENT
+        assert events[2].delta == "Let me think"
 
     def test_reasoning_subsequent_deltas_no_extra_start(self, translator, tool_handler):
         translator.translate(
@@ -61,8 +62,9 @@ class TestReasoningTextEvents:
             _sse("response.reasoning_text.done"),
             tool_handler,
         )
-        assert len(events) == 1
+        assert len(events) == 2
         assert events[0].type == EventType.THINKING_TEXT_MESSAGE_END
+        assert events[1].type == EventType.THINKING_END
 
     def test_reasoning_done_without_start_is_noop(self, translator, tool_handler):
         events = translator.translate(
@@ -84,8 +86,8 @@ class TestReasoningTextEvents:
             _sse("response.reasoning_text.done"),
             tool_handler,
         )
-        msg_id = events1[0].message_id  # START event
-        assert events1[1].message_id == msg_id
+        msg_id = events1[1].message_id  # THINKING_TEXT_MESSAGE_START event
+        assert events1[2].message_id == msg_id
         assert events2[0].message_id == msg_id
         assert events3[0].message_id == msg_id
 
@@ -192,12 +194,13 @@ class TestStateCleanup:
         )
         translator.translate(_sse("response.completed"), tool_handler)
 
-        # Next reasoning delta should emit a fresh START
+        # Next reasoning delta should emit fresh THINKING_START + THINKING_TEXT_MESSAGE_START
         events = translator.translate(
             _sse("response.reasoning_text.delta", {"delta": "new"}),
             tool_handler,
         )
-        assert events[0].type == EventType.THINKING_TEXT_MESSAGE_START
+        assert events[0].type == EventType.THINKING_START
+        assert events[1].type == EventType.THINKING_TEXT_MESSAGE_START
 
     def test_reset_clears_all_state(self, translator, tool_handler):
         translator.translate(
@@ -215,7 +218,8 @@ class TestStateCleanup:
             _sse("response.reasoning_text.delta", {"delta": "x"}),
             tool_handler,
         )
-        assert reasoning[0].type == EventType.THINKING_TEXT_MESSAGE_START
+        assert reasoning[0].type == EventType.THINKING_START
+        assert reasoning[1].type == EventType.THINKING_TEXT_MESSAGE_START
 
         refusal = translator.translate(
             _sse("response.refusal.delta", {"delta": "y"}),

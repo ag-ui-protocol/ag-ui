@@ -1,0 +1,5 @@
+{
+  "base_url": "https://router.huggingface.co/v1",
+  "api_key": "${HF_API_KEY}",
+  "default_model": "Qwen/Qwen3-235B-A22B-Instruct-2507"
+}
