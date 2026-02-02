@@ -6,10 +6,21 @@ Connects Mastra agents (local and remote) to frontend applications via the AG-UI
 
 ## Installation
 
+Install the `@ag-ui/mastra` package:
+
 ```bash
+# npm
 npm install @ag-ui/mastra
+# pnpm
 pnpm add @ag-ui/mastra
+# yarn
 yarn add @ag-ui/mastra
+```
+
+Install the required peer dependencies:
+
+```bash
+npm install @mastra/client-js @mastra/core @ag-ui/core @ag-ui/client @copilotkit/runtime
 ```
 
 ## Usage
