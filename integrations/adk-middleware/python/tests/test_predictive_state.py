@@ -107,6 +107,7 @@ class TestEventTranslatorPredictState:
             events.append(event)
 
         # Should have: PredictState, ToolCallStart, ToolCallArgs, ToolCallEnd
+        # Note: No StateSnapshot - frontend handles state from TOOL_CALL_ARGS via PredictState
         assert len(events) == 4
 
         # First event should be PredictState CustomEvent
@@ -121,6 +122,11 @@ class TestEventTranslatorPredictState:
                 "tool_argument": "document",
             }
         ]
+
+        # Fourth event should be ToolCallEnd
+        from ag_ui.core import ToolCallEndEvent
+        tool_call_end_event = events[3]
+        assert isinstance(tool_call_end_event, ToolCallEndEvent)
 
     @pytest.mark.asyncio
     async def test_no_predict_state_event_for_non_matching_tool(

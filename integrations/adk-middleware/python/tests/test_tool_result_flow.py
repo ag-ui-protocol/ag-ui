@@ -940,8 +940,10 @@ class TestConfirmChangesFiltering:
         ):
             events.append(event)
 
-        # Should NOT emit any events (no error, no new execution)
-        assert len(events) == 0
+        # Should emit RUN_STARTED + RUN_FINISHED (valid terminal stream, no error)
+        assert len(events) == 2
+        assert events[0].type == EventType.RUN_STARTED
+        assert events[1].type == EventType.RUN_FINISHED
 
         # Confirm_changes tool message should be marked as processed
         processed_ids = ag_ui_adk._session_manager.get_processed_message_ids(app_name, input_data.thread_id)
@@ -1182,6 +1184,7 @@ class TestClientToolResultPersistence:
                 user_id="test_user",
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=tool_results,
                 message_batch=message_batch
             )
@@ -1362,6 +1365,7 @@ class TestClientToolResultPersistence:
                 user_id="test_user",
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=None,  # No client-side tool results
                 message_batch=None
             )
@@ -1590,6 +1594,7 @@ class TestDatabaseSessionServiceCompatibility:
                 user_id="test_user",
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=tool_results,
                 message_batch=message_batch
             )
@@ -1688,6 +1693,7 @@ class TestDatabaseSessionServiceCompatibility:
                 user_id="test_user",
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=tool_results,
                 message_batch=None  # No trailing user message.
             )
@@ -1778,6 +1784,7 @@ class TestDatabaseSessionServiceCompatibility:
                 user_id=user_id,
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=None,
                 message_batch=None
             )

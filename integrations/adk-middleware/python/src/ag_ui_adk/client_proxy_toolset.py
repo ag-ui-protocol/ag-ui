@@ -3,7 +3,7 @@
 """Dynamic toolset creation for client-side tools."""
 
 import asyncio
-from typing import List, Optional, Union
+from typing import Iterable, List, Optional, Union
 import logging
 
 from google.adk.tools import BaseTool
@@ -12,6 +12,7 @@ from google.adk.agents.readonly_context import ReadonlyContext
 from ag_ui.core import Tool as AGUITool
 
 from .client_proxy_tool import ClientProxyTool
+from .config import PredictStateMapping
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ class ClientProxyToolset(BaseToolset):
         event_queue: asyncio.Queue,
         tool_filter: Optional[Union[ToolPredicate, List[str]]] = None,
         tool_name_prefix: Optional[str] = None,
+        predict_state: Optional[Iterable[PredictStateMapping]] = None,
     ):
         """Initialize the client proxy toolset.
 
@@ -37,10 +39,26 @@ class ClientProxyToolset(BaseToolset):
             event_queue: Queue to emit AG-UI events
             tool_filter: Filter to apply to tools.
             tool_name_prefix: The prefix to prepend to the names of the tools returned by the toolset.
+            predict_state: Configuration for predictive state updates. When provided,
+                tools will emit PredictState CustomEvents before TOOL_CALL_START.
         """
         super().__init__(tool_filter=tool_filter, tool_name_prefix=tool_name_prefix)
         self.ag_ui_tools = ag_ui_tools
         self.event_queue = event_queue
+        self.predict_state = list(predict_state) if predict_state else []
+        # Tracking set for PredictState emissions - shared by all tools in this toolset
+        # Since toolsets are created per-run, this naturally resets for each run
+        self._emitted_predict_state: set[str] = set()
+        # Accumulated predictive state values from tool args - merged into final STATE_SNAPSHOT
+        # This ensures predictive state survives the final STATE_SNAPSHOT that replaces all state
+        self._accumulated_predict_state: dict = {}
+        # Track tool call IDs that ClientProxyTool has already emitted events for.
+        # Shared with EventTranslator to prevent duplicate TOOL_CALL emissions.
+        self._emitted_tool_call_ids: set[str] = set()
+        # Set of tool call IDs already emitted by EventTranslator.
+        # Assigned externally after EventTranslator is created. Checked by
+        # ClientProxyTool before emitting to avoid duplicates.
+        self._translator_emitted_tool_call_ids: set[str] = set()
 
         logger.info(f"Initialized ClientProxyToolset with {len(ag_ui_tools)} tools (all long-running)")
 
@@ -59,6 +77,9 @@ class ClientProxyToolset(BaseToolset):
         Returns:
             List of ClientProxyTool instances
         """
+        logger.info(f"[GET_TOOLS] get_tools called with filter={self.tool_filter}")
+        logger.info(f"[GET_TOOLS] Available AG-UI tools: {[t.name for t in self.ag_ui_tools]}")
+
         # Create fresh proxy tools each time to avoid stale queue references
         proxy_tools = []
 
@@ -66,10 +87,15 @@ class ClientProxyToolset(BaseToolset):
             try:
                 proxy_tool = ClientProxyTool(
                     ag_ui_tool=ag_ui_tool,
-                    event_queue=self.event_queue
+                    event_queue=self.event_queue,
+                    predict_state_mappings=self.predict_state,
+                    emitted_predict_state=self._emitted_predict_state,
+                    accumulated_predict_state=self._accumulated_predict_state,
+                    emitted_tool_call_ids=self._emitted_tool_call_ids,
+                    translator_emitted_tool_call_ids=self._translator_emitted_tool_call_ids,
                 )
                 proxy_tools.append(proxy_tool)
-                logger.debug(f"Created proxy tool for '{ag_ui_tool.name}' (long-running)")
+                logger.info(f"[GET_TOOLS] Created proxy tool for '{ag_ui_tool.name}' (long-running)")
 
             except Exception as e:
                 logger.error(f"Failed to create proxy tool for '{ag_ui_tool.name}': {e}")
@@ -77,17 +103,33 @@ class ClientProxyToolset(BaseToolset):
 
         # Apply tool filtering if configured
         if self.tool_filter is not None:
+            logger.info(f"[GET_TOOLS] Applying tool filter: {self.tool_filter}")
             if callable(self.tool_filter):
                 # ToolPredicate - function that takes BaseTool and returns bool
                 proxy_tools = [tool for tool in proxy_tools if self.tool_filter(tool)]
             elif isinstance(self.tool_filter, list):
                 # List of allowed tool names
                 allowed_names = set(self.tool_filter)
+                before_filter = [t.name for t in proxy_tools]
                 proxy_tools = [
                     tool for tool in proxy_tools if tool.name in allowed_names
                 ]
+                after_filter = [t.name for t in proxy_tools]
+                logger.info(f"[GET_TOOLS] Filter result: {before_filter} -> {after_filter}")
 
+        logger.info(f"[GET_TOOLS] Returning {len(proxy_tools)} tools: {[t.name for t in proxy_tools]}")
         return proxy_tools
+
+    def get_accumulated_predict_state(self) -> dict:
+        """Get accumulated predictive state values from tool calls.
+
+        These values are extracted from tool arguments based on predict_state mappings
+        and should be merged into the final STATE_SNAPSHOT.
+
+        Returns:
+            Dictionary of accumulated state key-value pairs
+        """
+        return self._accumulated_predict_state.copy()
 
     async def close(self) -> None:
         """Clean up resources held by the toolset."""

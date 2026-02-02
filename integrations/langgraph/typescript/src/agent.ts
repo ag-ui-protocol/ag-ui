@@ -151,7 +151,23 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   public clone() {
-    return new LangGraphAgent(this.config);
+    return Object.assign(super.clone(), {
+      config: this.config,
+      messagesInProcess: structuredClone(this.messagesInProcess),
+      agentName: this.agentName,
+      graphId: this.graphId,
+      assistantConfig: this.assistantConfig,
+      thinkingProcess: this.thinkingProcess
+        ? structuredClone(this.thinkingProcess)
+        : null,
+      constantSchemaKeys: [...this.constantSchemaKeys],
+      client: this.client,
+
+      assistant: this.assistant,
+      activeRun: this.activeRun ? structuredClone(this.activeRun) : undefined,
+      cancelRequested: this.cancelRequested,
+      cancelSent: this.cancelSent,
+    });
   }
 
   dispatchEvent(event: ProcessedEvents) {

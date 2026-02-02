@@ -171,6 +171,67 @@ add_adk_fastapi_endpoint(
 
 For detailed configuration options, see [CONFIGURATION.md](./CONFIGURATION.md)
 
+### Option 3: Using ADK App with ResumabilityConfig (HITL)
+
+> **Requires `google-adk >= 1.16.0`**
+
+For human-in-the-loop (HITL) workflows where the agent pauses for user approval and resumes afterward, use `ADKAgent.from_app()` with ADK's `ResumabilityConfig`. This enables ADK to persist `FunctionCall` events before pausing, allowing seamless resumption when the user provides tool results.
+
+```python
+from fastapi import FastAPI
+from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, AGUIToolset
+from google.adk.agents import Agent
+from google.adk.apps import App, ResumabilityConfig
+
+# 1. Create your ADK agent with client-side tools
+my_agent = Agent(
+    name="assistant",
+    instruction="You are a helpful assistant.",
+    tools=[
+        AGUIToolset(),  # Client-side tools for HITL workflows
+    ]
+)
+
+# 2. Wrap in an ADK App with ResumabilityConfig
+adk_app = App(
+    name="my_app",
+    root_agent=my_agent,
+    resumability_config=ResumabilityConfig(is_resumable=True),
+)
+
+# 3. Create the middleware using from_app()
+agent = ADKAgent.from_app(
+    adk_app,
+    user_id="user123",
+    session_timeout_seconds=3600,
+    use_in_memory_services=True,
+)
+
+# 4. Add FastAPI endpoint
+app = FastAPI()
+add_adk_fastapi_endpoint(app, agent, path="/chat")
+```
+
+**How it works:**
+
+1. The agent calls a client-side tool (e.g., `generate_task_steps`) — ADK persists the `FunctionCall` event and pauses execution
+2. The middleware emits `TOOL_CALL_START`, `TOOL_CALL_ARGS`, and `TOOL_CALL_END` events to the frontend
+3. The user reviews and responds (approve/reject) — the frontend sends a `ToolMessage` with the result
+4. The middleware resumes ADK execution with the stored `invocation_id`, restoring the agent's position
+5. The agent continues from where it left off with the user's response
+
+**When to use `from_app()` vs direct `ADKAgent()`:**
+
+| Feature | `ADKAgent(adk_agent=...)` | `ADKAgent.from_app(app)` |
+|---|---|---|
+| Basic HITL | ~~Yes (fire-and-forget)~~ **Deprecated** | Yes (native resumability) |
+| Session persistence across pause/resume | Manual | Automatic |
+| SequentialAgent sub-agent position restore | No | Yes |
+| Requires `google-adk` | Any version | >= 1.16.0 |
+
+> **Deprecation notice:** The fire-and-forget HITL flow via `ADKAgent(adk_agent=...)` is deprecated and will be removed in a future version. For human-in-the-loop workflows, use `ADKAgent.from_app()` with `ResumabilityConfig(is_resumable=True)`. The direct constructor remains fully supported for agents without client-side tools. See [USAGE.md](./USAGE.md#migrating-to-resumable-hitl) for migration instructions.
+
+See `examples/server/api/human_in_the_loop.py` for a complete working example.
 
 ## Running the ADK Backend Server for Dojo App
 

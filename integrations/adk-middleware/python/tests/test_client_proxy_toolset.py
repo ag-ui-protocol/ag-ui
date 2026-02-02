@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from ag_ui.core import Tool as AGUITool
 from ag_ui_adk.client_proxy_toolset import ClientProxyToolset
 from ag_ui_adk.client_proxy_tool import ClientProxyTool
+from ag_ui_adk.config import PredictStateMapping
 from google.adk.tools import FunctionTool, LongRunningFunctionTool
 
 
@@ -334,3 +335,167 @@ class TestClientProxyToolset:
 
         # Should return an empty list
         assert tools == []
+
+
+class TestClientProxyToolsetPredictStateTracking:
+    """Test cases for PredictState tracking in ClientProxyToolset."""
+
+    @pytest.fixture
+    def tool_with_predict_state(self):
+        """Create a tool definition that has a predict_state mapping."""
+        return AGUITool(
+            name="write_document",
+            description="Writes a document",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "document": {"type": "string"},
+                }
+            }
+        )
+
+    @pytest.fixture
+    def predict_state_mappings(self):
+        """Create predict_state mappings for the tool."""
+        return [
+            PredictStateMapping(
+                state_key="document",
+                tool="write_document",
+                tool_argument="document"
+            )
+        ]
+
+    def test_toolset_creates_tracking_set(self, tool_with_predict_state, predict_state_mappings):
+        """Test that toolset creates its own tracking set."""
+        mock_queue = AsyncMock()
+
+        toolset = ClientProxyToolset(
+            ag_ui_tools=[tool_with_predict_state],
+            event_queue=mock_queue,
+            predict_state=predict_state_mappings,
+        )
+
+        # Toolset should have its own tracking set
+        assert hasattr(toolset, '_emitted_predict_state')
+        assert isinstance(toolset._emitted_predict_state, set)
+        assert len(toolset._emitted_predict_state) == 0
+
+    @pytest.mark.asyncio
+    async def test_tools_share_toolset_tracking_set(self, tool_with_predict_state, predict_state_mappings):
+        """Test that all tools from a toolset share the same tracking set."""
+        mock_queue = AsyncMock()
+
+        # Add a second tool
+        second_tool = AGUITool(
+            name="approve_document",
+            description="Approves a document",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "approved": {"type": "boolean"},
+                }
+            }
+        )
+
+        toolset = ClientProxyToolset(
+            ag_ui_tools=[tool_with_predict_state, second_tool],
+            event_queue=mock_queue,
+            predict_state=predict_state_mappings,
+        )
+
+        tools = await toolset.get_tools()
+
+        # All tools should share the same tracking set reference
+        for tool in tools:
+            assert tool._emitted_predict_state is toolset._emitted_predict_state
+
+    @pytest.mark.asyncio
+    async def test_separate_toolsets_have_isolated_tracking(self, tool_with_predict_state, predict_state_mappings):
+        """Test that separate toolsets have isolated tracking sets."""
+        mock_queue = AsyncMock()
+
+        toolset1 = ClientProxyToolset(
+            ag_ui_tools=[tool_with_predict_state],
+            event_queue=mock_queue,
+            predict_state=predict_state_mappings,
+        )
+
+        toolset2 = ClientProxyToolset(
+            ag_ui_tools=[tool_with_predict_state],
+            event_queue=mock_queue,
+            predict_state=predict_state_mappings,
+        )
+
+        # Tracking sets should be different instances
+        assert toolset1._emitted_predict_state is not toolset2._emitted_predict_state
+
+        tools1 = await toolset1.get_tools()
+        tools2 = await toolset2.get_tools()
+
+        # Tools from different toolsets should have different tracking sets
+        assert tools1[0]._emitted_predict_state is not tools2[0]._emitted_predict_state
+
+    @pytest.mark.asyncio
+    async def test_toolset_tracking_persists_across_get_tools_calls(self, tool_with_predict_state, predict_state_mappings):
+        """Test that tracking set persists across multiple get_tools() calls."""
+        mock_queue = AsyncMock()
+
+        toolset = ClientProxyToolset(
+            ag_ui_tools=[tool_with_predict_state],
+            event_queue=mock_queue,
+            predict_state=predict_state_mappings,
+        )
+
+        # First get_tools call
+        tools1 = await toolset.get_tools()
+
+        # Simulate tool execution that adds to tracking
+        toolset._emitted_predict_state.add("write_document")
+
+        # Second get_tools call
+        tools2 = await toolset.get_tools()
+
+        # New tools should still see the previously tracked tool
+        assert "write_document" in tools2[0]._emitted_predict_state
+
+    @pytest.mark.asyncio
+    async def test_new_toolset_has_fresh_tracking(self, tool_with_predict_state, predict_state_mappings):
+        """Test that creating a new toolset gives fresh tracking (simulating new run)."""
+        mock_queue = AsyncMock()
+
+        # First toolset (first run)
+        toolset1 = ClientProxyToolset(
+            ag_ui_tools=[tool_with_predict_state],
+            event_queue=mock_queue,
+            predict_state=predict_state_mappings,
+        )
+        tools1 = await toolset1.get_tools()
+
+        # Simulate tool execution
+        mock_context = MagicMock()
+        mock_context.function_call_id = "test_call_id"
+        await tools1[0].run_async(args={"document": "test1"}, tool_context=mock_context)
+
+        # Tracking should be updated
+        assert "write_document" in toolset1._emitted_predict_state
+
+        # Second toolset (new run) - should have fresh tracking
+        toolset2 = ClientProxyToolset(
+            ag_ui_tools=[tool_with_predict_state],
+            event_queue=mock_queue,
+            predict_state=predict_state_mappings,
+        )
+
+        # New toolset should have empty tracking
+        assert len(toolset2._emitted_predict_state) == 0
+
+        tools2 = await toolset2.get_tools()
+
+        mock_queue.reset_mock()
+        await tools2[0].run_async(args={"document": "test2"}, tool_context=mock_context)
+
+        # Should emit PredictState again since it's a fresh toolset
+        from ag_ui.core import CustomEvent
+        first_event = mock_queue.put.call_args_list[0][0][0]
+        assert isinstance(first_event, CustomEvent)
+        assert first_event.name == "PredictState"
