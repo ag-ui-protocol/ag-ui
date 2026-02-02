@@ -212,8 +212,8 @@ class TestAssistantToolCalls:
         assert items[3]["type"] == "message"
         assert items[3]["role"] == "user"
 
-    def test_full_tool_call_roundtrip_huggingface_collapses_tool_items(self):
-        """HF: function_call + output become a synthetic assistant message."""
+    def test_full_tool_call_roundtrip_huggingface_preserves_tool_items(self):
+        """HF router supports Responses API format, so tool items are preserved."""
         config = OpenResponsesAgentConfig(
             base_url="https://router.huggingface.co/v1",
             provider=ProviderType.HUGGINGFACE,
@@ -230,14 +230,14 @@ class TestAssistantToolCalls:
         request = builder.build(inp)
 
         items = request["input"]
-        assert len(items) == 3
+        assert len(items) == 4
         assert items[0]["type"] == "message"
         assert items[0]["role"] == "user"
-        assert items[1]["type"] == "message"
-        assert items[1]["role"] == "assistant"
-        assert "change_bg" in items[1]["content"]
-        assert items[2]["type"] == "message"
-        assert items[2]["role"] == "user"
+        assert items[1]["type"] == "function_call"
+        assert items[1]["name"] == "change_bg"
+        assert items[2]["type"] == "function_call_output"
+        assert items[3]["type"] == "message"
+        assert items[3]["role"] == "user"
 
     def test_no_previous_response_id_for_huggingface(self):
         """HF provider should not send previous_response_id."""
