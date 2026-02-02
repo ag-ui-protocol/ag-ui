@@ -24,6 +24,7 @@ def create_openresponses_endpoint(
         [Request, RunAgentInput], Coroutine[Any, Any, dict[str, Any]]
     ]
     | None = None,
+    system_prompt: str | None = None,
 ) -> None:
     """Add OpenResponses agent endpoint to FastAPI app.
 
@@ -34,6 +35,9 @@ def create_openresponses_endpoint(
         extract_state_from_request: Optional async function to extract values
             from the request into state. State values returned from this
             function will be merged with existing state values.
+        system_prompt: Optional system prompt to prepend as a system message
+            to every request. Useful for feature-specific instructions (e.g.
+            human-in-the-loop behavior).
 
     Example:
         ```python
@@ -60,6 +64,15 @@ def create_openresponses_endpoint(
     @app.post(path)
     async def openresponses_endpoint(input_data: RunAgentInput, request: Request):
         """OpenResponses agent endpoint."""
+
+        # Prepend system prompt if configured
+        if system_prompt:
+            import uuid
+            from ag_ui.core import SystemMessage
+
+            system_message = SystemMessage(id=f"sys-{uuid.uuid4().hex[:8]}", role="system", content=system_prompt)
+            messages = [system_message] + list(input_data.messages or [])
+            input_data = input_data.model_copy(update={"messages": messages})
 
         # Extract additional state from request if extractor provided
         if extract_state_from_request:
@@ -133,6 +146,7 @@ def create_openresponses_proxy(
     restrict_configs: bool = False,
     user_id: str | None = None,
     user_id_extractor: Callable[[Any], str | None] | None = None,
+    system_prompt: str | None = None,
 ) -> None:
     """Create a zero-config proxy with named-config and generic endpoints.
 
@@ -150,6 +164,8 @@ def create_openresponses_proxy(
         restrict_configs: When True, only named-config endpoints are
             registered and caller overrides can only fill gaps (not
             override values set by the named config).
+        system_prompt: Optional system prompt to prepend as a system message
+            to every request.
     """
     agent = OpenResponsesAgent(
         restrict_configs=restrict_configs,
@@ -163,7 +179,9 @@ def create_openresponses_proxy(
 
     # --- generic endpoint (same as create_openresponses_endpoint) ---
     if not restrict_configs:
-        create_openresponses_endpoint(app, agent, path=path or "/")
+        create_openresponses_endpoint(
+            app, agent, path=path or "/", system_prompt=system_prompt
+        )
 
     # --- named-config endpoint ---
     @app.post(f"{base}/configs/{{config_name}}")
@@ -176,10 +194,20 @@ def create_openresponses_proxy(
 
         async def event_generator():
             try:
+                patched = input_data
+                # Prepend system prompt if configured
+                if system_prompt:
+                    from ag_ui.core import SystemMessage
+
+                    import uuid
+                    system_message = SystemMessage(id=f"sys-{uuid.uuid4().hex[:8]}", role="system", content=system_prompt)
+                    messages = [system_message] + list(patched.messages or [])
+                    patched = patched.model_copy(update={"messages": messages})
+
                 # Inject config_name into forwarded_props
-                fp = dict(input_data.forwarded_props or {})
+                fp = dict(patched.forwarded_props or {})
                 fp["config_name"] = config_name
-                patched = input_data.model_copy(update={"forwarded_props": fp})
+                patched = patched.model_copy(update={"forwarded_props": fp})
                 async for event in agent.run(patched):
                     try:
                         yield encoder.encode(event)
