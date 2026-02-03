@@ -1,14 +1,14 @@
-import { openai } from "@ai-sdk/openai";
 import { Agent } from "@mastra/core/agent";
-import { createTool } from "@mastra/core";
+import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 
 export const toolBasedGenerativeUIAgent = new Agent({
+  id: 'tool_based_generative_ui',
   name: "tool_based_generative_ui",
   instructions: `
     You are a helpful assistant for creating haikus.
   `,
-  model: openai("gpt-4o"),
+  model: "openai/gpt-4o",
   tools: {
     generate_haiku: createTool({
       id: "generate_haiku",
@@ -23,7 +23,7 @@ export const toolBasedGenerativeUIAgent = new Agent({
           .describe("An array of three lines of the haiku in English"),
       }),
       outputSchema: z.string(),
-      execute: async ({ context }) => {
+      execute: async () => {
         return "Haiku generated.";
       },
     }),

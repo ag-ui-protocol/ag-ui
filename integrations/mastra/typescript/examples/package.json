@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"no tests to run\" && exit 0",
     "dev": "mastra dev",
     "build": "mastra build"
   },
@@ -13,20 +12,19 @@
   "description": "",
   "type": "module",
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=22.13.0"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^2.0.23",
-    "@mastra/client-js": "^0.15.2",
-    "@mastra/core": "^0.20.2",
-    "@mastra/libsql": "^0.15.1",
-    "@mastra/loggers": "^0.10.15",
-    "@mastra/memory": "^0.15.6",
-    "zod": "^3.25.48"
+    "@mastra/client-js": "^1.0.1",
+    "@mastra/core": "^1.0.4",
+    "@mastra/libsql": "^1.0.0",
+    "@mastra/loggers": "^1.0.0",
+    "@mastra/memory": "^1.0.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/node": "^22.15.29",
-    "mastra": "^0.15.1",
-    "typescript": "^5.8.3"
+    "@types/node": "^20",
+    "mastra": "^1.0.1",
+    "typescript": "^5.9.3"
   }
 }

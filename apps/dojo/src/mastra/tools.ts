@@ -16,8 +16,8 @@ export const weatherTool = createTool({
     conditions: z.string(),
     city: z.string(),
   }),
-  execute: async ({ context }) => {
-    return await getWeather(context.location);
+  execute: async (inputData) => {
+    return await getWeather(inputData.location);
   },
 });
 

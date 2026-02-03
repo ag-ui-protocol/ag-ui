@@ -1,11 +1,11 @@
-import { openai } from "@ai-sdk/openai";
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { LibSQLStore } from "@mastra/libsql";
 import { weatherTool } from "../tools/weather-tool";
 
 export const backendToolRenderingAgent = new Agent({
-  name: "Weather Agent",
+  id: "backend_tool_rendering",
+  name: "Backend Tool Rendering",
   instructions: `
       You are a helpful weather assistant that provides accurate weather information.
 
@@ -18,10 +18,11 @@ export const backendToolRenderingAgent = new Agent({
 
       Use the get_weather tool to fetch current weather data.
 `,
-  model: openai("gpt-4o-mini"),
+  model: "openai/gpt-4o-mini",
   tools: { get_weather: weatherTool },
   memory: new Memory({
     storage: new LibSQLStore({
+      id: 'backend-tool-rendering-memory',
       url: "file:../mastra.db", // path is relative to the .mastra/output directory
     }),
   }),

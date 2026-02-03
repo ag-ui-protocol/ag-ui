@@ -14,6 +14,7 @@ THREAD_ID_STATE_KEY = "_ag_ui_thread_id"
 APP_NAME_STATE_KEY = "_ag_ui_app_name"
 USER_ID_STATE_KEY = "_ag_ui_user_id"
 CONTEXT_STATE_KEY = "_ag_ui_context"
+INVOCATION_ID_STATE_KEY = "_ag_ui_invocation_id"
 
 
 class SessionManager:

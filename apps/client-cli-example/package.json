@@ -12,14 +12,13 @@
     "@ag-ui/client": "workspace:*",
     "@ag-ui/core": "workspace:*",
     "@ag-ui/mastra": "workspace:*",
-    "@ai-sdk/openai": "1.3.22",
-    "@mastra/client-js": "0.17.2 ",
-    "@mastra/core": "0.12.1",
-    "@mastra/libsql": "0.12.0",
-    "@mastra/loggers": "0.10.5",
-    "@mastra/memory": "0.12.0",
+    "@mastra/client-js": "^1.0.1",
+    "@mastra/core": "^1.0.4",
+    "@mastra/libsql": "^1.0.0",
+    "@mastra/loggers": "^1.0.0",
+    "@mastra/memory": "^1.0.0",
     "open": "^10.1.2",
-    "zod": "^3.22.4"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^20",
