@@ -167,3 +167,15 @@ export class AGUIConnectNotImplementedError extends AGUIError {
     super("Connect not implemented. This method is not supported by the current agent.");
   }
 }
+
+export const GENERATE_UI_TOOL_NAME = "generateUserInterface";
+
+export const GenerateUserInterfaceToolArgumentsSchema = z.object({
+  description: z.string(),
+  data: z.any().optional(),
+  output: z.any().optional(), // JSON Schema for the expected output
+});
+
+export type GenerateUserInterfaceToolArguments = z.infer<
+  typeof GenerateUserInterfaceToolArgumentsSchema
+>;

@@ -23,6 +23,8 @@ import {
   BackwardCompatibility_0_0_39,
 } from "@/middleware";
 import packageJson from "../../package.json";
+import { UiGenerator, DefaultUiGenerator } from "./generative-ui";
+import { GENERATE_UI_TOOL_NAME, GenerateUserInterfaceToolArgumentsSchema } from "@ag-ui/core";
 
 export interface RunAgentResult {
   result: any;
@@ -39,6 +41,7 @@ export abstract class AbstractAgent {
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
   private middlewares: Middleware[] = [];
+  private uiGenerator: UiGenerator = new DefaultUiGenerator();
   // Emits to immediately detach from the active run (stop processing its stream)
   private activeRunDetach$?: Subject<void>;
   private activeRunCompletionPromise?: Promise<void>;
@@ -84,6 +87,10 @@ export abstract class AbstractAgent {
     );
     this.middlewares.push(...normalizedMiddlewares);
     return this;
+  }
+
+  public registerUiGenerator(generator: UiGenerator) {
+    this.uiGenerator = generator;
   }
 
   public async runAgent(
@@ -231,7 +238,7 @@ export abstract class AbstractAgent {
     }
   }
 
-  public abortRun() {}
+  public abortRun() { }
 
   public async detachActiveRun(): Promise<void> {
     if (!this.activeRunDetach$) {
@@ -459,6 +466,27 @@ export abstract class AbstractAgent {
       // Fire onNewToolCall if the message is from assistant and contains tool calls
       if (message.role === "assistant" && message.toolCalls) {
         for (const toolCall of message.toolCalls) {
+          // Intercept Generate UI tool calls
+          if (toolCall.function.name === GENERATE_UI_TOOL_NAME) {
+            try {
+              const args = JSON.parse(toolCall.function.arguments);
+              const parsedArgs = GenerateUserInterfaceToolArgumentsSchema.parse(args);
+
+              // Execute UI generation in background
+              this.uiGenerator.generate(parsedArgs).then((result) => {
+                // Here we would ideally send a tool output back to the agent
+                // For now, we just log or could emit a custom event if needed
+                if (this.debug) {
+                  console.debug("[GenerativeUI] Generated UI:", result);
+                }
+              }).catch(err => {
+                console.error("[GenerativeUI] Error generating UI:", err);
+              });
+            } catch (e) {
+              console.error("[GenerativeUI] Invalid arguments for UI generation:", e);
+            }
+          }
+
           for (const subscriber of this.subscribers) {
             await subscriber.onNewToolCall?.({
               toolCall,
@@ -502,6 +530,25 @@ export abstract class AbstractAgent {
         // Fire onNewToolCall if the message is from assistant and contains tool calls
         if (message.role === "assistant" && message.toolCalls) {
           for (const toolCall of message.toolCalls) {
+            // Intercept Generate UI tool calls
+            if (toolCall.function.name === GENERATE_UI_TOOL_NAME) {
+              try {
+                const args = JSON.parse(toolCall.function.arguments);
+                const parsedArgs = GenerateUserInterfaceToolArgumentsSchema.parse(args);
+
+                // Execute UI generation in background
+                this.uiGenerator.generate(parsedArgs).then((result) => {
+                  if (this.debug) {
+                    console.debug("[GenerativeUI] Generated UI:", result);
+                  }
+                }).catch(err => {
+                  console.error("[GenerativeUI] Error generating UI:", err);
+                });
+              } catch (e) {
+                console.error("[GenerativeUI] Invalid arguments for UI generation:", e);
+              }
+            }
+
             for (const subscriber of this.subscribers) {
               await subscriber.onNewToolCall?.({
                 toolCall,
