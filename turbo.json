@@ -67,6 +67,12 @@
     },
     "test": {
       "dependsOn": [
+        "^build"
+      ],
+      "outputs": []
+    },
+    "test:exports": {
+      "dependsOn": [
         "build"
       ],
       "outputs": []

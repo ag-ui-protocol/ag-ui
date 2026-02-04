@@ -19,7 +19,8 @@
     "bump:alpha": "pnpm --filter './sdks/typescript/packages/*' exec -- pnpm version --preid alpha",
     "publish": "pnpm -r clean && pnpm install && turbo run build && pnpm publish -r --filter='./sdks/typescript/packages/*'",
     "publish:integrations": "pnpm -r clean && pnpm install && turbo run build && pnpm publish -r --filter='./integrations/*'",
-    "publish:alpha": "pnpm -r clean && pnpm install && turbo run build && pnpm publish -r --no-git-checks --filter='./sdks/typescript/packages/*' --tag alpha"
+    "publish:alpha": "pnpm -r clean && pnpm install && turbo run build && pnpm publish -r --no-git-checks --filter='./sdks/typescript/packages/*' --tag alpha",
+    "test:exports": "turbo run test:exports"
   },
   "devDependencies": {
     "prettier": "^3.5.3",
