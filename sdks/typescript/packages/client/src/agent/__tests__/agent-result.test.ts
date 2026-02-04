@@ -15,15 +15,16 @@ import {
   TextMessageEndEvent,
 } from "@ag-ui/core";
 import { Observable, of, Subject } from "rxjs";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock uuid module
-jest.mock("uuid", () => ({
-  v4: jest.fn().mockReturnValue("mock-uuid"),
+vi.mock("uuid", () => ({
+  v4: vi.fn().mockReturnValue("mock-uuid"),
 }));
 
 // Mock utils
-jest.mock("@/utils", () => {
-  const actual = jest.requireActual<typeof import("@/utils")>("@/utils");
+vi.mock("@/utils", async () => {
+  const actual = await vi.importActual<typeof import("@/utils")>("@/utils");
   return {
     ...actual,
     structuredClone_: (obj: any) => {
@@ -36,12 +37,12 @@ jest.mock("@/utils", () => {
 });
 
 // Mock the verify and chunks modules
-jest.mock("@/verify", () => ({
-  verifyEvents: jest.fn(() => (source$: Observable<any>) => source$),
+vi.mock("@/verify", () => ({
+  verifyEvents: vi.fn(() => (source$: Observable<any>) => source$),
 }));
 
-jest.mock("@/chunks", () => ({
-  transformChunks: jest.fn(() => (source$: Observable<any>) => source$),
+vi.mock("@/chunks", () => ({
+  transformChunks: vi.fn(() => (source$: Observable<any>) => source$),
 }));
 
 // Helper function to wait for async notifications to complete
@@ -81,7 +82,7 @@ describe("Agent Result", () => {
   let agent: TestAgent;
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
     agent = new TestAgent({
       threadId: "test-thread",
@@ -446,9 +447,9 @@ describe("Agent Result", () => {
   describe("subscriber notifications integration", () => {
     it("should track newMessages without interfering with existing event processing", async () => {
       const mockSubscriber: AgentSubscriber = {
-        onNewMessage: jest.fn(),
-        onMessagesChanged: jest.fn(),
-        onNewToolCall: jest.fn(),
+        onNewMessage: vi.fn(),
+        onMessagesChanged: vi.fn(),
+        onNewToolCall: vi.fn(),
       };
 
       agent.subscribe(mockSubscriber);
@@ -492,9 +493,9 @@ describe("Agent Result", () => {
 
     it("should return empty newMessages when no messages are added", async () => {
       const mockSubscriber: AgentSubscriber = {
-        onNewMessage: jest.fn(),
-        onMessagesChanged: jest.fn(),
-        onNewToolCall: jest.fn(),
+        onNewMessage: vi.fn(),
+        onMessagesChanged: vi.fn(),
+        onNewToolCall: vi.fn(),
       };
 
       agent.subscribe(mockSubscriber);
@@ -611,7 +612,7 @@ describe("Agent Result", () => {
     it("finalizes immediately when detached", async () => {
       const subject = new Subject<BaseEvent>();
       streamingAgent.setEventSubject(subject);
-      const onRunFinalized = jest.fn();
+      const onRunFinalized = vi.fn();
 
       const runPromise = streamingAgent.runAgent({}, { onRunFinalized });
       await waitForAsyncNotifications();
@@ -632,7 +633,7 @@ describe("Agent Result", () => {
     it("ignores events emitted after detaching", async () => {
       const subject = new Subject<BaseEvent>();
       streamingAgent.setEventSubject(subject);
-      const onMessagesChanged = jest.fn();
+      const onMessagesChanged = vi.fn();
 
       const runPromise = streamingAgent.runAgent({}, { onMessagesChanged });
       await waitForAsyncNotifications();
@@ -729,7 +730,14 @@ describe("Agent Result", () => {
       streamingAgent.setEventSubject(subject);
       const order: string[] = [];
 
-      const runPromise = streamingAgent.runAgent({}, { onRunFinalized: () => order.push("finalized") });
+      const runPromise = streamingAgent.runAgent(
+        {},
+        {
+          onRunFinalized: () => {
+            order.push("finalized");
+          },
+        },
+      );
       await waitForAsyncNotifications();
 
       subject.next({

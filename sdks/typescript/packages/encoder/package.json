@@ -13,8 +13,10 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "lint": "eslint \"src/**/*.ts*\"",
-    "clean": "rm -rf dist .turbo node_modules",
-    "test": "jest",
+    "clean": "rm -rf dist .turbo node_modules coverage",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
     "link:global": "pnpm link --global",
     "unlink:global": "pnpm unlink --global"
   },
@@ -23,10 +25,9 @@
     "@ag-ui/proto": "workspace:*"
   },
   "devDependencies": {
-    "@types/jest": "^29.5.12",
-    "jest": "^29.7.0",
-    "ts-jest": "^29.1.2",
+    "@vitest/coverage-istanbul": "^4.0.18",
     "tsup": "^8.0.2",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "vitest": "^4.0.18"
   }
 }

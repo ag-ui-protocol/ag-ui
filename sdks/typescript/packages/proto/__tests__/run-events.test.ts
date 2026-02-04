@@ -8,7 +8,7 @@ import {
   RawEvent,
   CustomEvent,
 } from "@ag-ui/core";
-import { expect, describe, it } from "@jest/globals";
+import { describe, it, expect } from "vitest";
 import { encode, decode } from "../src/proto";
 import { expectRoundTripEquality } from "./test-utils";
 
