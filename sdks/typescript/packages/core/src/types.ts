@@ -167,3 +167,17 @@ export class AGUIConnectNotImplementedError extends AGUIError {
     super("Connect not implemented. This method is not supported by the current agent.");
   }
 }
+
+// Run history types for fetching external state
+export interface RunHistory {
+  runId: string;
+  messages: Message[];
+}
+
+export interface FetchRunHistoryResult {
+  runs: RunHistory[];
+}
+
+export interface FetchRunHistoryOptions {
+  threadId: string;
+}

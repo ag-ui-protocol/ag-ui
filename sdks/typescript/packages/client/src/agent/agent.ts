@@ -1,5 +1,5 @@
 import { defaultApplyEvents } from "@/apply/default";
-import { Message, State, RunAgentInput, BaseEvent, ToolCall, AssistantMessage } from "@ag-ui/core";
+import { Message, State, RunAgentInput, BaseEvent, ToolCall, AssistantMessage, FetchRunHistoryOptions, FetchRunHistoryResult } from "@ag-ui/core";
 
 import { AgentConfig, RunAgentParameters } from "./types";
 import { v4 as uuidv4 } from "uuid";
@@ -165,6 +165,10 @@ export abstract class AbstractAgent {
 
   protected connect(input: RunAgentInput): Observable<BaseEvent> {
     throw new AGUIConnectNotImplementedError();
+  }
+
+  protected fetchRunHistory(options: FetchRunHistoryOptions): Promise<FetchRunHistoryResult | undefined> {
+    return Promise.resolve(undefined);
   }
   public async connectAgent(
     parameters?: RunAgentParameters,

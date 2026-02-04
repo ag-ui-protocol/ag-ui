@@ -30,7 +30,13 @@
   },
   "peerDependencies": {
     "@ag-ui/core": ">=0.0.42",
-    "@ag-ui/client": ">=0.0.42"
+    "@ag-ui/client": ">=0.0.42",
+    "@langchain/langgraph": "^0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@langchain/langgraph": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@ag-ui/core": "workspace:*",

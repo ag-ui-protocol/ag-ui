@@ -54,6 +54,8 @@ import {
   ThinkingTextMessageEndEvent,
   ThinkingStartEvent,
   ThinkingEndEvent,
+  FetchRunHistoryOptions,
+  FetchRunHistoryResult,
 } from "@ag-ui/client";
 import { RunsStreamPayload } from "@langchain/langgraph-sdk/dist/types";
 import {
@@ -1225,6 +1227,38 @@ export class LangGraphAgent extends AbstractAgent {
       type: EventType.STEP_FINISHED,
       stepName: this.activeRun!.nodeName!,
     });
+  }
+
+  protected async fetchRunHistory(
+    options: FetchRunHistoryOptions
+  ): Promise<FetchRunHistoryResult | undefined> {
+    try {
+      const { threadId } = options;
+
+      // Get thread history from LangGraph Platform
+      const history = await this.client.threads.getHistory(threadId);
+
+      if (!history || history.length === 0) {
+        return { runs: [] };
+      }
+
+      // LangGraph stores checkpoints, not separate runs
+      // Extract messages from the latest state
+      const latestState = history[0];
+      const messages = (latestState.values as State).messages || [];
+      const aguiMessages = langchainMessagesToAgui(messages);
+
+      // Return as a single run with all messages
+      return {
+        runs: [{
+          runId: latestState.checkpoint?.thread_id || threadId,
+          messages: aguiMessages,
+        }]
+      };
+    } catch (error) {
+      console.error("Failed to fetch run history:", error);
+      return undefined;
+    }
   }
 
   async getCheckpointByMessage(
