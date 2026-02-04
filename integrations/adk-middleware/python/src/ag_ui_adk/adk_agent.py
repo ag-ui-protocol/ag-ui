@@ -1755,6 +1755,8 @@ class ADKAgent:
             # Run ADK agent
             is_long_running_tool = False
             invocation_id_stored = False  # Track if we've stored the invocation_id this run
+            # Flag for LRO persistence fix: when True, we continue draining events until non-partial
+            lro_draining_for_persistence = False
             run_kwargs = {
                 "user_id": user_id,
                 "session_id": backend_session_id,  # Use backend session_id, not thread_id
@@ -1790,6 +1792,36 @@ class ADKAgent:
                             content_preview = f"[FunctionCall: {part.function_call.name}]"
                             break
                 logger.info(f"[ADK_EVENT] author={event_author}, partial={event_partial}, turn_complete={event_turn_complete}, content={content_preview[:80]}...")
+
+                # LRO persistence fix: if we're draining events after LRO detection,
+                # only translate text content and wait for non-partial event
+                if lro_draining_for_persistence:
+                    # Translate any text content so the frontend receives it
+                    has_remaining_content = (
+                        adk_event.content and
+                        hasattr(adk_event.content, 'parts') and
+                        adk_event.content.parts
+                    )
+                    if has_remaining_content:
+                        async for ag_ui_event in event_translator.translate_text_only(
+                            adk_event, input.thread_id, input.run_id
+                        ):
+                            await event_queue.put(ag_ui_event)
+                            logger.debug(
+                                f"Event queued (LRO drain): {type(ag_ui_event).__name__} "
+                                f"(thread {input.thread_id})"
+                            )
+                    
+                    # Check if we got a non-partial event (persistence complete)
+                    if not event_partial:
+                        logger.info(
+                            f"Received non-partial event during LRO drain, persistence complete "
+                            f"(thread={input.thread_id})"
+                        )
+                        return
+                    else:
+                        # Still partial, keep draining
+                        continue
 
                 # Store invocation_id for HITL resumption on first event with valid ID
                 # This enables SequentialAgent to restore its current_sub_agent position
@@ -1901,28 +1933,37 @@ class ADKAgent:
                             DeprecationWarning,
                             stacklevel=2,
                         )
-                        # With PROGRESSIVE_SSE_STREAMING (ADK >= 1.22.0), the
-                        # FunctionCall may arrive as a partial event that ADK
-                        # hasn't persisted to the session.  We must persist it
-                        # so the next run can match the FunctionResponse.
-                        if getattr(adk_event, 'partial', False) and adk_event.content:
-                            from google.adk.sessions.session import Event as ADKSessionEvent
-                            import time as _time_mod
-                            fc_event = ADKSessionEvent(
-                                timestamp=_time_mod.time(),
-                                author=getattr(adk_event, 'author', 'assistant'),
-                                content=adk_event.content,
-                                invocation_id=getattr(adk_event, 'invocation_id', None) or input.run_id,
+                        # FIX for GitHub issue: LRO events not persisted with SSE streaming.
+                        #
+                        # With SSE streaming enabled (default), ADK yields events in two phases:
+                        # 1. partial=True events (streaming chunks) - NOT persisted by ADK
+                        # 2. partial=False event (final aggregated) - IS persisted by ADK
+                        #
+                        # ADK's persistence happens BEFORE yielding the non-partial event.
+                        # Previously, we returned immediately after detecting the LRO tool,
+                        # which abandoned the runner's async generator before the final
+                        # non-partial event was consumed. This meant ADK never persisted
+                        # the agent's response, causing lost session history.
+                        #
+                        # Fix: If the current event is partial, set a flag to drain the
+                        # remaining events until we receive a non-partial event. The flag
+                        # is checked at the START of each loop iteration.
+                        current_partial = getattr(adk_event, 'partial', False)
+                        if current_partial:
+                            logger.info(
+                                f"LRO detected with partial=True, will drain until persistence completes "
+                                f"(thread={input.thread_id})"
                             )
-                            try:
-                                await self._session_manager._session_service.append_event(session, fc_event)
-                                logger.info(
-                                    f"Persisted FunctionCall event to session for LRO early return "
-                                    f"(partial event, thread={input.thread_id})"
-                                )
-                            except Exception as e:
-                                logger.warning(f"Failed to persist FunctionCall event: {e}")
-                        return
+                            # Set flag to continue draining - checked at loop start
+                            lro_draining_for_persistence = True
+                            continue  # Continue the OUTER loop to get more events
+                        else:
+                            # Already non-partial, ADK has already persisted
+                            logger.info(
+                                f"LRO detected with partial=False, persistence already complete "
+                                f"(thread={input.thread_id})"
+                            )
+                            return
 
             # Force close any streaming messages
             async for ag_ui_event in event_translator.force_close_streaming_message():
