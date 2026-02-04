@@ -820,6 +820,28 @@ class ADKAgent:
             # Cache the mapping as tuple: (session_id, app_name, user_id)
             self._session_lookup_cache[thread_id] = (backend_session_id, app_name, user_id)
 
+            # Clear stale pending_tool_calls on session resumption.
+            # Cache miss + existing session = middleware restart.
+            existing_pending = await self._session_manager.get_state_value(
+                session_id=backend_session_id,
+                app_name=app_name,
+                user_id=user_id,
+                key="pending_tool_calls",
+                default=[],
+            )
+            if existing_pending:
+                logger.info(
+                    f"Cleared {len(existing_pending)} stale pending tool calls "
+                    f"for thread {thread_id} (session {backend_session_id})"
+                )
+                await self._session_manager.set_state_value(
+                    session_id=backend_session_id,
+                    app_name=app_name,
+                    user_id=user_id,
+                    key="pending_tool_calls",
+                    value=[],
+                )
+
             logger.debug(f"Session ready for thread {thread_id}: {backend_session_id}")
             return session, backend_session_id
         except Exception as e:
