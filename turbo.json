@@ -5,36 +5,76 @@
   "concurrency": "30",
   "tasks": {
     "generate": {
-      "outputs": ["src/generated/**"]
+      "outputs": [
+        "src/generated/**"
+      ]
     },
     "build": {
-      "dependsOn": ["^build", "generate"],
-      "inputs": ["$TURBO_DEFAULT$", ".env*"],
-      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+      "dependsOn": [
+        "^build",
+        "generate"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".env*"
+      ],
+      "outputs": [
+        "dist/**",
+        ".next/**",
+        "!.next/cache/**"
+      ]
     },
     "demo-viewer#build": {
-      "dependsOn": ["^build", "generate"],
-      "inputs": ["$TURBO_DEFAULT$", ".env*"],
-      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+      "dependsOn": [
+        "^build",
+        "generate"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".env*"
+      ],
+      "outputs": [
+        "dist/**",
+        ".next/**",
+        "!.next/cache/**"
+      ]
     },
     "lint": {
-      "dependsOn": ["^lint"]
+      "dependsOn": [
+        "^lint"
+      ]
     },
     "check-types": {
-      "dependsOn": ["^check-types"]
+      "dependsOn": [
+        "^check-types"
+      ]
     },
     "dev": {
-      "dependsOn": ["^build", "generate"],
+      "dependsOn": [
+        "^build",
+        "generate"
+      ],
       "cache": false,
       "persistent": true
     },
     "demo-viewer#dev": {
-      "dependsOn": ["^build", "generate"],
+      "dependsOn": [
+        "^build",
+        "generate"
+      ],
       "cache": false,
       "persistent": true
     },
     "test": {
-      "dependsOn": ["^build"],
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": []
+    },
+    "test:exports": {
+      "dependsOn": [
+        "build"
+      ],
       "outputs": []
     },
     "link:global": {
@@ -44,7 +84,9 @@
       "cache": false
     },
     "start": {
-      "dependsOn": ["^build"],
+      "dependsOn": [
+        "^build"
+      ],
       "cache": false,
       "persistent": true
     }
