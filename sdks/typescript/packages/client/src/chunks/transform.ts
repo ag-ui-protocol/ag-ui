@@ -1,4 +1,4 @@
-import { mergeMap, Observable, finalize } from "rxjs";
+import { mergeMap, Observable, finalize, map } from "rxjs";
 import {
   BaseEvent,
   TextMessageChunkEvent,
@@ -15,6 +15,126 @@ import {
   ReasoningMessageStartEvent,
 } from "@ag-ui/core";
 import { EventType } from "@ag-ui/core";
+
+// Legacy event type strings for backwards compatibility conversion
+const LEGACY_THINKING_START = "THINKING_START";
+const LEGACY_THINKING_END = "THINKING_END";
+const LEGACY_THINKING_TEXT_MESSAGE_START = "THINKING_TEXT_MESSAGE_START";
+const LEGACY_THINKING_TEXT_MESSAGE_CONTENT = "THINKING_TEXT_MESSAGE_CONTENT";
+const LEGACY_THINKING_TEXT_MESSAGE_END = "THINKING_TEXT_MESSAGE_END";
+
+/**
+ * Transforms legacy THINKING_* events to their REASONING_* equivalents.
+ * This provides backwards compatibility for clients sending old event types.
+ *
+ * Mappings:
+ * - THINKING_START → REASONING_START (generates messageId)
+ * - THINKING_END → REASONING_END (uses tracked messageId)
+ * - THINKING_TEXT_MESSAGE_START → REASONING_MESSAGE_START (generates messageId, adds role: "assistant")
+ * - THINKING_TEXT_MESSAGE_CONTENT → REASONING_MESSAGE_CONTENT (uses tracked messageId)
+ * - THINKING_TEXT_MESSAGE_END → REASONING_MESSAGE_END (uses tracked messageId)
+ */
+export const transformLegacyEvents =
+  (debug: boolean) =>
+  (events$: Observable<BaseEvent>): Observable<BaseEvent> => {
+    // Track IDs for correlating start/end events
+    let thinkingPhaseId: string | undefined;
+    let thinkingMessageId: string | undefined;
+
+    return events$.pipe(
+      map((event) => {
+        const eventType = (event as { type: string }).type;
+
+        switch (eventType) {
+          case LEGACY_THINKING_START: {
+            thinkingPhaseId = crypto.randomUUID();
+            const converted = {
+              ...event,
+              type: EventType.REASONING_START,
+              messageId: thinkingPhaseId,
+            };
+            if (debug) {
+              console.debug(
+                "[TRANSFORM_LEGACY]: THINKING_START → REASONING_START",
+                JSON.stringify(converted),
+              );
+            }
+            return converted as BaseEvent;
+          }
+
+          case LEGACY_THINKING_END: {
+            const messageId = thinkingPhaseId ?? crypto.randomUUID();
+            thinkingPhaseId = undefined;
+            const converted = {
+              ...event,
+              type: EventType.REASONING_END,
+              messageId,
+            };
+            if (debug) {
+              console.debug(
+                "[TRANSFORM_LEGACY]: THINKING_END → REASONING_END",
+                JSON.stringify(converted),
+              );
+            }
+            return converted as BaseEvent;
+          }
+
+          case LEGACY_THINKING_TEXT_MESSAGE_START: {
+            thinkingMessageId = crypto.randomUUID();
+            const converted = {
+              ...event,
+              type: EventType.REASONING_MESSAGE_START,
+              messageId: thinkingMessageId,
+              role: "assistant" as const,
+            };
+            if (debug) {
+              console.debug(
+                "[TRANSFORM_LEGACY]: THINKING_TEXT_MESSAGE_START → REASONING_MESSAGE_START",
+                JSON.stringify(converted),
+              );
+            }
+            return converted as BaseEvent;
+          }
+
+          case LEGACY_THINKING_TEXT_MESSAGE_CONTENT: {
+            const messageId = thinkingMessageId ?? crypto.randomUUID();
+            const converted = {
+              ...event,
+              type: EventType.REASONING_MESSAGE_CONTENT,
+              messageId,
+            };
+            if (debug) {
+              console.debug(
+                "[TRANSFORM_LEGACY]: THINKING_TEXT_MESSAGE_CONTENT → REASONING_MESSAGE_CONTENT",
+                JSON.stringify(converted),
+              );
+            }
+            return converted as BaseEvent;
+          }
+
+          case LEGACY_THINKING_TEXT_MESSAGE_END: {
+            const messageId = thinkingMessageId ?? crypto.randomUUID();
+            thinkingMessageId = undefined;
+            const converted = {
+              ...event,
+              type: EventType.REASONING_MESSAGE_END,
+              messageId,
+            };
+            if (debug) {
+              console.debug(
+                "[TRANSFORM_LEGACY]: THINKING_TEXT_MESSAGE_END → REASONING_MESSAGE_END",
+                JSON.stringify(converted),
+              );
+            }
+            return converted as BaseEvent;
+          }
+
+          default:
+            return event;
+        }
+      }),
+    );
+  };
 
 interface TextMessageFields {
   messageId: string;
@@ -124,11 +244,6 @@ export const transformChunks =
           case EventType.RUN_ERROR:
           case EventType.STEP_STARTED:
           case EventType.STEP_FINISHED:
-          case EventType.THINKING_START:
-          case EventType.THINKING_END:
-          case EventType.THINKING_TEXT_MESSAGE_START:
-          case EventType.THINKING_TEXT_MESSAGE_CONTENT:
-          case EventType.THINKING_TEXT_MESSAGE_END:
           case EventType.REASONING_START:
           case EventType.REASONING_MESSAGE_START:
           case EventType.REASONING_MESSAGE_CONTENT:

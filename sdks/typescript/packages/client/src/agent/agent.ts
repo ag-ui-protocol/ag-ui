@@ -13,7 +13,7 @@ import { verifyEvents } from "@/verify";
 import { convertToLegacyEvents } from "@/legacy/convert";
 import { LegacyRuntimeProtocolEvent } from "@/legacy/types";
 import { lastValueFrom } from "rxjs";
-import { transformChunks } from "@/chunks";
+import { transformChunks, transformLegacyEvents } from "@/chunks";
 import { AgentStateMutation, AgentSubscriber, runSubscribersWithMutation } from "./subscriber";
 import { AGUIConnectNotImplementedError } from "@ag-ui/core";
 import {
@@ -198,6 +198,7 @@ export abstract class AbstractAgent {
 
       const pipeline = pipe(
         () => this.connect(input),
+        transformLegacyEvents(this.debug),
         transformChunks(this.debug),
         verifyEvents(this.debug),
         // Stop processing immediately when this run is detached

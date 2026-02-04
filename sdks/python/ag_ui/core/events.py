@@ -21,16 +21,11 @@ class EventType(str, Enum):
     TEXT_MESSAGE_CONTENT = "TEXT_MESSAGE_CONTENT"
     TEXT_MESSAGE_END = "TEXT_MESSAGE_END"
     TEXT_MESSAGE_CHUNK = "TEXT_MESSAGE_CHUNK"
-    THINKING_TEXT_MESSAGE_START = "THINKING_TEXT_MESSAGE_START"
-    THINKING_TEXT_MESSAGE_CONTENT = "THINKING_TEXT_MESSAGE_CONTENT"
-    THINKING_TEXT_MESSAGE_END = "THINKING_TEXT_MESSAGE_END"
     TOOL_CALL_START = "TOOL_CALL_START"
     TOOL_CALL_ARGS = "TOOL_CALL_ARGS"
     TOOL_CALL_END = "TOOL_CALL_END"
     TOOL_CALL_CHUNK = "TOOL_CALL_CHUNK"
     TOOL_CALL_RESULT = "TOOL_CALL_RESULT"
-    THINKING_START = "THINKING_START"
-    THINKING_END = "THINKING_END"
     STATE_SNAPSHOT = "STATE_SNAPSHOT"
     STATE_DELTA = "STATE_DELTA"
     MESSAGES_SNAPSHOT = "MESSAGES_SNAPSHOT"
@@ -95,25 +90,6 @@ class TextMessageChunkEvent(BaseEvent):
     role: Optional[TextMessageRole] = None
     delta: Optional[str] = None
 
-class ThinkingTextMessageStartEvent(BaseEvent):
-    """
-    Event indicating the start of a thinking text message.
-    """
-    type: Literal[EventType.THINKING_TEXT_MESSAGE_START] = EventType.THINKING_TEXT_MESSAGE_START  # pyright: ignore[reportIncompatibleVariableOverride]
-
-class ThinkingTextMessageContentEvent(BaseEvent):
-    """
-    Event indicating a piece of a thinking text message.
-    """
-    type: Literal[EventType.THINKING_TEXT_MESSAGE_CONTENT] = EventType.THINKING_TEXT_MESSAGE_CONTENT  # pyright: ignore[reportIncompatibleVariableOverride]
-    delta: str = Field(min_length=1)
-
-class ThinkingTextMessageEndEvent(BaseEvent):
-    """
-    Event indicating the end of a thinking text message.
-    """
-    type: Literal[EventType.THINKING_TEXT_MESSAGE_END] = EventType.THINKING_TEXT_MESSAGE_END  # pyright: ignore[reportIncompatibleVariableOverride]
-
 class ToolCallStartEvent(BaseEvent):
     """
     Event indicating the start of a tool call.
@@ -159,19 +135,6 @@ class ToolCallResultEvent(BaseEvent):
     tool_call_id: str
     content: str
     role: Optional[Literal["tool"]] = None
-
-class ThinkingStartEvent(BaseEvent):
-    """
-    Event indicating the start of a thinking step event.
-    """
-    type: Literal[EventType.THINKING_START] = EventType.THINKING_START  # pyright: ignore[reportIncompatibleVariableOverride]
-    title: Optional[str] = None
-
-class ThinkingEndEvent(BaseEvent):
-    """
-    Event indicating the end of a thinking step event.
-    """
-    type: Literal[EventType.THINKING_END] = EventType.THINKING_END  # pyright: ignore[reportIncompatibleVariableOverride]
 
 class StateSnapshotEvent(BaseEvent):
     """

@@ -14,16 +14,11 @@ export enum EventType {
   TEXT_MESSAGE_CONTENT = "TEXT_MESSAGE_CONTENT",
   TEXT_MESSAGE_END = "TEXT_MESSAGE_END",
   TEXT_MESSAGE_CHUNK = "TEXT_MESSAGE_CHUNK",
-  THINKING_TEXT_MESSAGE_START = "THINKING_TEXT_MESSAGE_START",
-  THINKING_TEXT_MESSAGE_CONTENT = "THINKING_TEXT_MESSAGE_CONTENT",
-  THINKING_TEXT_MESSAGE_END = "THINKING_TEXT_MESSAGE_END",
   TOOL_CALL_START = "TOOL_CALL_START",
   TOOL_CALL_ARGS = "TOOL_CALL_ARGS",
   TOOL_CALL_END = "TOOL_CALL_END",
   TOOL_CALL_CHUNK = "TOOL_CALL_CHUNK",
   TOOL_CALL_RESULT = "TOOL_CALL_RESULT",
-  THINKING_START = "THINKING_START",
-  THINKING_END = "THINKING_END",
   STATE_SNAPSHOT = "STATE_SNAPSHOT",
   STATE_DELTA = "STATE_DELTA",
   MESSAGES_SNAPSHOT = "MESSAGES_SNAPSHOT",
@@ -77,21 +72,6 @@ export const TextMessageChunkEventSchema = BaseEventSchema.extend({
   delta: z.string().optional(),
 });
 
-export const ThinkingTextMessageStartEventSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.THINKING_TEXT_MESSAGE_START),
-});
-
-export const ThinkingTextMessageContentEventSchema = TextMessageContentEventSchema.omit({
-  messageId: true,
-  type: true,
-}).extend({
-  type: z.literal(EventType.THINKING_TEXT_MESSAGE_CONTENT),
-});
-
-export const ThinkingTextMessageEndEventSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.THINKING_TEXT_MESSAGE_END),
-});
-
 export const ToolCallStartEventSchema = BaseEventSchema.extend({
   type: z.literal(EventType.TOOL_CALL_START),
   toolCallId: z.string(),
@@ -124,15 +104,6 @@ export const ToolCallChunkEventSchema = BaseEventSchema.extend({
   toolCallName: z.string().optional(),
   parentMessageId: z.string().optional(),
   delta: z.string().optional(),
-});
-
-export const ThinkingStartEventSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.THINKING_START),
-  title: z.string().optional(),
-});
-
-export const ThinkingEndEventSchema = BaseEventSchema.extend({
-  type: z.literal(EventType.THINKING_END),
 });
 
 export const StateSnapshotEventSchema = BaseEventSchema.extend({
@@ -259,11 +230,6 @@ export const EventSchemas = z.discriminatedUnion("type", [
   TextMessageContentEventSchema,
   TextMessageEndEventSchema,
   TextMessageChunkEventSchema,
-  ThinkingStartEventSchema,
-  ThinkingEndEventSchema,
-  ThinkingTextMessageStartEventSchema,
-  ThinkingTextMessageContentEventSchema,
-  ThinkingTextMessageEndEventSchema,
   ToolCallStartEventSchema,
   ToolCallArgsEventSchema,
   ToolCallEndEventSchema,
@@ -298,16 +264,11 @@ export type AGUIEventByType = {
   [EventType.TEXT_MESSAGE_CONTENT]: TextMessageContentEvent;
   [EventType.TEXT_MESSAGE_END]: TextMessageEndEvent;
   [EventType.TEXT_MESSAGE_CHUNK]: TextMessageChunkEvent;
-  [EventType.THINKING_TEXT_MESSAGE_START]: ThinkingTextMessageStartEvent;
-  [EventType.THINKING_TEXT_MESSAGE_CONTENT]: ThinkingTextMessageContentEvent;
-  [EventType.THINKING_TEXT_MESSAGE_END]: ThinkingTextMessageEndEvent;
   [EventType.TOOL_CALL_START]: ToolCallStartEvent;
   [EventType.TOOL_CALL_ARGS]: ToolCallArgsEvent;
   [EventType.TOOL_CALL_END]: ToolCallEndEvent;
   [EventType.TOOL_CALL_CHUNK]: ToolCallChunkEvent;
   [EventType.TOOL_CALL_RESULT]: ToolCallResultEvent;
-  [EventType.THINKING_START]: ThinkingStartEvent;
-  [EventType.THINKING_END]: ThinkingEndEvent;
   [EventType.STATE_SNAPSHOT]: StateSnapshotEvent;
   [EventType.STATE_DELTA]: StateDeltaEvent;
   [EventType.MESSAGES_SNAPSHOT]: MessagesSnapshotEvent;
@@ -339,18 +300,11 @@ export type TextMessageStartEventProps = EventProps<typeof TextMessageStartEvent
 export type TextMessageContentEventProps = EventProps<typeof TextMessageContentEventSchema>;
 export type TextMessageEndEventProps = EventProps<typeof TextMessageEndEventSchema>;
 export type TextMessageChunkEventProps = EventProps<typeof TextMessageChunkEventSchema>;
-export type ThinkingTextMessageStartEventProps = EventProps<typeof ThinkingTextMessageStartEventSchema>;
-export type ThinkingTextMessageContentEventProps = EventProps<
-  typeof ThinkingTextMessageContentEventSchema
->;
-export type ThinkingTextMessageEndEventProps = EventProps<typeof ThinkingTextMessageEndEventSchema>;
 export type ToolCallStartEventProps = EventProps<typeof ToolCallStartEventSchema>;
 export type ToolCallArgsEventProps = EventProps<typeof ToolCallArgsEventSchema>;
 export type ToolCallEndEventProps = EventProps<typeof ToolCallEndEventSchema>;
 export type ToolCallChunkEventProps = EventProps<typeof ToolCallChunkEventSchema>;
 export type ToolCallResultEventProps = EventProps<typeof ToolCallResultEventSchema>;
-export type ThinkingStartEventProps = EventProps<typeof ThinkingStartEventSchema>;
-export type ThinkingEndEventProps = EventProps<typeof ThinkingEndEventSchema>;
 export type StateSnapshotEventProps = EventProps<typeof StateSnapshotEventSchema>;
 export type StateDeltaEventProps = EventProps<typeof StateDeltaEventSchema>;
 export type MessagesSnapshotEventProps = EventProps<typeof MessagesSnapshotEventSchema>;
@@ -377,16 +331,11 @@ export type TextMessageStartEvent = z.infer<typeof TextMessageStartEventSchema>;
 export type TextMessageContentEvent = z.infer<typeof TextMessageContentEventSchema>;
 export type TextMessageEndEvent = z.infer<typeof TextMessageEndEventSchema>;
 export type TextMessageChunkEvent = z.infer<typeof TextMessageChunkEventSchema>;
-export type ThinkingTextMessageStartEvent = z.infer<typeof ThinkingTextMessageStartEventSchema>;
-export type ThinkingTextMessageContentEvent = z.infer<typeof ThinkingTextMessageContentEventSchema>;
-export type ThinkingTextMessageEndEvent = z.infer<typeof ThinkingTextMessageEndEventSchema>;
 export type ToolCallStartEvent = z.infer<typeof ToolCallStartEventSchema>;
 export type ToolCallArgsEvent = z.infer<typeof ToolCallArgsEventSchema>;
 export type ToolCallEndEvent = z.infer<typeof ToolCallEndEventSchema>;
 export type ToolCallChunkEvent = z.infer<typeof ToolCallChunkEventSchema>;
 export type ToolCallResultEvent = z.infer<typeof ToolCallResultEventSchema>;
-export type ThinkingStartEvent = z.infer<typeof ThinkingStartEventSchema>;
-export type ThinkingEndEvent = z.infer<typeof ThinkingEndEventSchema>;
 export type StateSnapshotEvent = z.infer<typeof StateSnapshotEventSchema>;
 export type StateDeltaEvent = z.infer<typeof StateDeltaEventSchema>;
 export type MessagesSnapshotEvent = z.infer<typeof MessagesSnapshotEventSchema>;

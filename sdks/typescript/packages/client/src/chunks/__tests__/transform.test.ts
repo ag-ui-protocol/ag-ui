@@ -1,6 +1,6 @@
 import { of, Observable, concat, EMPTY, throwError } from "rxjs";
 import { toArray, catchError } from "rxjs/operators";
-import { transformChunks } from "../transform";
+import { transformChunks, transformLegacyEvents } from "../transform";
 import {
   BaseEvent,
   EventType,
@@ -15,6 +15,11 @@ import {
   RunStartedEvent,
   RawEvent,
   RunFinishedEvent,
+  ReasoningStartEvent,
+  ReasoningEndEvent,
+  ReasoningMessageStartEvent,
+  ReasoningMessageContentEvent,
+  ReasoningMessageEndEvent,
 } from "@ag-ui/core";
 
 describe("transformChunks", () => {
@@ -797,6 +802,318 @@ describe("transformChunks", () => {
           .length,
       ).toBe(1);
 
+      done();
+    });
+  });
+});
+
+describe("transformLegacyEvents", () => {
+  it("should convert THINKING_START to REASONING_START with generated messageId", (done) => {
+    const legacyEvent = {
+      type: "THINKING_START",
+      title: "Processing request",
+    } as unknown as BaseEvent;
+
+    const events$ = of(legacyEvent);
+    const transformed$ = transformLegacyEvents(false)(events$);
+
+    transformed$.pipe(toArray()).subscribe((events) => {
+      expect(events.length).toBe(1);
+      const event = events[0] as ReasoningStartEvent;
+      expect(event.type).toBe(EventType.REASONING_START);
+      expect(event.messageId).toBeDefined();
+      expect(typeof event.messageId).toBe("string");
+      expect(event.messageId.length).toBeGreaterThan(0);
+      // title should be preserved
+      expect((event as any).title).toBe("Processing request");
+      done();
+    });
+  });
+
+  it("should convert THINKING_END to REASONING_END using tracked messageId", (done) => {
+    const thinkingStart = {
+      type: "THINKING_START",
+    } as unknown as BaseEvent;
+
+    const thinkingEnd = {
+      type: "THINKING_END",
+    } as unknown as BaseEvent;
+
+    const events$ = concat(of(thinkingStart), of(thinkingEnd));
+    const transformed$ = transformLegacyEvents(false)(events$);
+
+    transformed$.pipe(toArray()).subscribe((events) => {
+      expect(events.length).toBe(2);
+
+      const startEvent = events[0] as ReasoningStartEvent;
+      const endEvent = events[1] as ReasoningEndEvent;
+
+      expect(startEvent.type).toBe(EventType.REASONING_START);
+      expect(endEvent.type).toBe(EventType.REASONING_END);
+      // Both should have the same messageId
+      expect(endEvent.messageId).toBe(startEvent.messageId);
+      done();
+    });
+  });
+
+  it("should convert THINKING_TEXT_MESSAGE_START to REASONING_MESSAGE_START with role assistant", (done) => {
+    const legacyEvent = {
+      type: "THINKING_TEXT_MESSAGE_START",
+    } as unknown as BaseEvent;
+
+    const events$ = of(legacyEvent);
+    const transformed$ = transformLegacyEvents(false)(events$);
+
+    transformed$.pipe(toArray()).subscribe((events) => {
+      expect(events.length).toBe(1);
+      const event = events[0] as ReasoningMessageStartEvent;
+      expect(event.type).toBe(EventType.REASONING_MESSAGE_START);
+      expect(event.messageId).toBeDefined();
+      expect(event.role).toBe("assistant");
+      done();
+    });
+  });
+
+  it("should convert THINKING_TEXT_MESSAGE_CONTENT to REASONING_MESSAGE_CONTENT with tracked messageId", (done) => {
+    const messageStart = {
+      type: "THINKING_TEXT_MESSAGE_START",
+    } as unknown as BaseEvent;
+
+    const messageContent = {
+      type: "THINKING_TEXT_MESSAGE_CONTENT",
+      delta: "Some thinking content",
+    } as unknown as BaseEvent;
+
+    const events$ = concat(of(messageStart), of(messageContent));
+    const transformed$ = transformLegacyEvents(false)(events$);
+
+    transformed$.pipe(toArray()).subscribe((events) => {
+      expect(events.length).toBe(2);
+
+      const startEvent = events[0] as ReasoningMessageStartEvent;
+      const contentEvent = events[1] as ReasoningMessageContentEvent;
+
+      expect(startEvent.type).toBe(EventType.REASONING_MESSAGE_START);
+      expect(contentEvent.type).toBe(EventType.REASONING_MESSAGE_CONTENT);
+      expect(contentEvent.messageId).toBe(startEvent.messageId);
+      expect(contentEvent.delta).toBe("Some thinking content");
+      done();
+    });
+  });
+
+  it("should convert THINKING_TEXT_MESSAGE_END to REASONING_MESSAGE_END with tracked messageId", (done) => {
+    const messageStart = {
+      type: "THINKING_TEXT_MESSAGE_START",
+    } as unknown as BaseEvent;
+
+    const messageContent = {
+      type: "THINKING_TEXT_MESSAGE_CONTENT",
+      delta: "Thinking...",
+    } as unknown as BaseEvent;
+
+    const messageEnd = {
+      type: "THINKING_TEXT_MESSAGE_END",
+    } as unknown as BaseEvent;
+
+    const events$ = concat(of(messageStart), of(messageContent), of(messageEnd));
+    const transformed$ = transformLegacyEvents(false)(events$);
+
+    transformed$.pipe(toArray()).subscribe((events) => {
+      expect(events.length).toBe(3);
+
+      const startEvent = events[0] as ReasoningMessageStartEvent;
+      const contentEvent = events[1] as ReasoningMessageContentEvent;
+      const endEvent = events[2] as ReasoningMessageEndEvent;
+
+      expect(startEvent.type).toBe(EventType.REASONING_MESSAGE_START);
+      expect(contentEvent.type).toBe(EventType.REASONING_MESSAGE_CONTENT);
+      expect(endEvent.type).toBe(EventType.REASONING_MESSAGE_END);
+
+      // All should share the same messageId
+      expect(contentEvent.messageId).toBe(startEvent.messageId);
+      expect(endEvent.messageId).toBe(startEvent.messageId);
+      done();
+    });
+  });
+
+  it("should pass through non-THINKING events unchanged", (done) => {
+    const runStarted: RunStartedEvent = {
+      type: EventType.RUN_STARTED,
+      threadId: "thread-1",
+      runId: "run-1",
+    };
+
+    const textMessageStart: TextMessageStartEvent = {
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "msg-1",
+      role: "assistant",
+    };
+
+    const events$ = concat(of(runStarted as BaseEvent), of(textMessageStart as BaseEvent));
+    const transformed$ = transformLegacyEvents(false)(events$);
+
+    transformed$.pipe(toArray()).subscribe((events) => {
+      expect(events.length).toBe(2);
+      expect(events[0]).toEqual(runStarted);
+      expect(events[1]).toEqual(textMessageStart);
+      done();
+    });
+  });
+
+  it("should handle mixed legacy and new events correctly", (done) => {
+    const runStarted: RunStartedEvent = {
+      type: EventType.RUN_STARTED,
+      threadId: "thread-1",
+      runId: "run-1",
+    };
+
+    const legacyThinkingStart = {
+      type: "THINKING_START",
+    } as unknown as BaseEvent;
+
+    const legacyThinkingEnd = {
+      type: "THINKING_END",
+    } as unknown as BaseEvent;
+
+    const reasoningStart: ReasoningStartEvent = {
+      type: EventType.REASONING_START,
+      messageId: "existing-msg-id",
+    };
+
+    const events$ = concat(
+      of(runStarted as BaseEvent),
+      of(legacyThinkingStart),
+      of(legacyThinkingEnd),
+      of(reasoningStart as BaseEvent),
+    );
+    const transformed$ = transformLegacyEvents(false)(events$);
+
+    transformed$.pipe(toArray()).subscribe((events) => {
+      expect(events.length).toBe(4);
+
+      // First event unchanged
+      expect(events[0]).toEqual(runStarted);
+
+      // Legacy events converted
+      const convertedStart = events[1] as ReasoningStartEvent;
+      const convertedEnd = events[2] as ReasoningEndEvent;
+      expect(convertedStart.type).toBe(EventType.REASONING_START);
+      expect(convertedEnd.type).toBe(EventType.REASONING_END);
+      expect(convertedEnd.messageId).toBe(convertedStart.messageId);
+
+      // New reasoning event passed through unchanged
+      expect(events[3]).toEqual(reasoningStart);
+      done();
+    });
+  });
+
+  it("should handle full THINKING sequence with phase and message events", (done) => {
+    const thinkingStart = {
+      type: "THINKING_START",
+      title: "Analyzing",
+    } as unknown as BaseEvent;
+
+    const thinkingMsgStart = {
+      type: "THINKING_TEXT_MESSAGE_START",
+    } as unknown as BaseEvent;
+
+    const thinkingMsgContent1 = {
+      type: "THINKING_TEXT_MESSAGE_CONTENT",
+      delta: "First thought",
+    } as unknown as BaseEvent;
+
+    const thinkingMsgContent2 = {
+      type: "THINKING_TEXT_MESSAGE_CONTENT",
+      delta: "Second thought",
+    } as unknown as BaseEvent;
+
+    const thinkingMsgEnd = {
+      type: "THINKING_TEXT_MESSAGE_END",
+    } as unknown as BaseEvent;
+
+    const thinkingEnd = {
+      type: "THINKING_END",
+    } as unknown as BaseEvent;
+
+    const events$ = concat(
+      of(thinkingStart),
+      of(thinkingMsgStart),
+      of(thinkingMsgContent1),
+      of(thinkingMsgContent2),
+      of(thinkingMsgEnd),
+      of(thinkingEnd),
+    );
+    const transformed$ = transformLegacyEvents(false)(events$);
+
+    transformed$.pipe(toArray()).subscribe((events) => {
+      expect(events.length).toBe(6);
+
+      const phaseStart = events[0] as ReasoningStartEvent;
+      const msgStart = events[1] as ReasoningMessageStartEvent;
+      const msgContent1 = events[2] as ReasoningMessageContentEvent;
+      const msgContent2 = events[3] as ReasoningMessageContentEvent;
+      const msgEnd = events[4] as ReasoningMessageEndEvent;
+      const phaseEnd = events[5] as ReasoningEndEvent;
+
+      // Phase events have their own tracked ID
+      expect(phaseStart.type).toBe(EventType.REASONING_START);
+      expect(phaseEnd.type).toBe(EventType.REASONING_END);
+      expect(phaseEnd.messageId).toBe(phaseStart.messageId);
+
+      // Message events have a different tracked ID
+      expect(msgStart.type).toBe(EventType.REASONING_MESSAGE_START);
+      expect(msgContent1.type).toBe(EventType.REASONING_MESSAGE_CONTENT);
+      expect(msgContent2.type).toBe(EventType.REASONING_MESSAGE_CONTENT);
+      expect(msgEnd.type).toBe(EventType.REASONING_MESSAGE_END);
+      expect(msgContent1.messageId).toBe(msgStart.messageId);
+      expect(msgContent2.messageId).toBe(msgStart.messageId);
+      expect(msgEnd.messageId).toBe(msgStart.messageId);
+
+      // Phase and message IDs should be different
+      expect(phaseStart.messageId).not.toBe(msgStart.messageId);
+
+      // Role should be set on message start
+      expect(msgStart.role).toBe("assistant");
+
+      done();
+    });
+  });
+
+  it("should generate new messageId for orphaned THINKING_END", (done) => {
+    // THINKING_END without a preceding THINKING_START
+    const thinkingEnd = {
+      type: "THINKING_END",
+    } as unknown as BaseEvent;
+
+    const events$ = of(thinkingEnd);
+    const transformed$ = transformLegacyEvents(false)(events$);
+
+    transformed$.pipe(toArray()).subscribe((events) => {
+      expect(events.length).toBe(1);
+      const event = events[0] as ReasoningEndEvent;
+      expect(event.type).toBe(EventType.REASONING_END);
+      expect(event.messageId).toBeDefined();
+      expect(typeof event.messageId).toBe("string");
+      done();
+    });
+  });
+
+  it("should generate new messageId for orphaned THINKING_TEXT_MESSAGE_CONTENT", (done) => {
+    // THINKING_TEXT_MESSAGE_CONTENT without a preceding START
+    const thinkingContent = {
+      type: "THINKING_TEXT_MESSAGE_CONTENT",
+      delta: "Orphaned content",
+    } as unknown as BaseEvent;
+
+    const events$ = of(thinkingContent);
+    const transformed$ = transformLegacyEvents(false)(events$);
+
+    transformed$.pipe(toArray()).subscribe((events) => {
+      expect(events.length).toBe(1);
+      const event = events[0] as ReasoningMessageContentEvent;
+      expect(event.type).toBe(EventType.REASONING_MESSAGE_CONTENT);
+      expect(event.messageId).toBeDefined();
+      expect(event.delta).toBe("Orphaned content");
       done();
     });
   });

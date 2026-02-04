@@ -49,21 +49,6 @@ import {
   TextMessageStartEvent,
   TextMessageStartEventProps,
   TextMessageStartEventSchema,
-  ThinkingEndEvent,
-  ThinkingEndEventProps,
-  ThinkingEndEventSchema,
-  ThinkingStartEvent,
-  ThinkingStartEventProps,
-  ThinkingStartEventSchema,
-  ThinkingTextMessageContentEvent,
-  ThinkingTextMessageContentEventProps,
-  ThinkingTextMessageContentEventSchema,
-  ThinkingTextMessageEndEvent,
-  ThinkingTextMessageEndEventProps,
-  ThinkingTextMessageEndEventSchema,
-  ThinkingTextMessageStartEvent,
-  ThinkingTextMessageStartEventProps,
-  ThinkingTextMessageStartEventSchema,
   ToolCallArgsEvent,
   ToolCallArgsEventProps,
   ToolCallArgsEventSchema,
@@ -143,30 +128,6 @@ export const createTextMessageChunkEvent = (
   buildEvent(EventType.TEXT_MESSAGE_CHUNK, TextMessageChunkEventSchema, props);
 
 /**
- * Creates a THINKING_TEXT_MESSAGE_START event.
- */
-export const createThinkingTextMessageStartEvent = (
-  props: ThinkingTextMessageStartEventProps,
-): ThinkingTextMessageStartEvent =>
-  buildEvent(EventType.THINKING_TEXT_MESSAGE_START, ThinkingTextMessageStartEventSchema, props);
-
-/**
- * Creates a THINKING_TEXT_MESSAGE_CONTENT event.
- */
-export const createThinkingTextMessageContentEvent = (
-  props: ThinkingTextMessageContentEventProps,
-): ThinkingTextMessageContentEvent =>
-  buildEvent(EventType.THINKING_TEXT_MESSAGE_CONTENT, ThinkingTextMessageContentEventSchema, props);
-
-/**
- * Creates a THINKING_TEXT_MESSAGE_END event.
- */
-export const createThinkingTextMessageEndEvent = (
-  props: ThinkingTextMessageEndEventProps,
-): ThinkingTextMessageEndEvent =>
-  buildEvent(EventType.THINKING_TEXT_MESSAGE_END, ThinkingTextMessageEndEventSchema, props);
-
-/**
  * Creates a TOOL_CALL_START event.
  */
 export const createToolCallStartEvent = (props: ToolCallStartEventProps): ToolCallStartEvent =>
@@ -195,18 +156,6 @@ export const createToolCallChunkEvent = (props: ToolCallChunkEventProps): ToolCa
  */
 export const createToolCallResultEvent = (props: ToolCallResultEventProps): ToolCallResultEvent =>
   buildEvent(EventType.TOOL_CALL_RESULT, ToolCallResultEventSchema, props);
-
-/**
- * Creates a THINKING_START event.
- */
-export const createThinkingStartEvent = (props: ThinkingStartEventProps): ThinkingStartEvent =>
-  buildEvent(EventType.THINKING_START, ThinkingStartEventSchema, props);
-
-/**
- * Creates a THINKING_END event.
- */
-export const createThinkingEndEvent = (props: ThinkingEndEventProps): ThinkingEndEvent =>
-  buildEvent(EventType.THINKING_END, ThinkingEndEventSchema, props);
 
 /**
  * Creates a STATE_SNAPSHOT event.

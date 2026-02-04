@@ -152,13 +152,15 @@ type ReasoningMessage = {
 }
 ```
 
-## Removed Events
+## Legacy Events (Removed)
 
-These events have never been publicly documented and will be removed:
+The following legacy events have been removed and are now automatically converted to their REASONING_* equivalents via `transformLegacyEvents`:
 
-- `THINKING_TEXT_MESSAGE_START`
-- `THINKING_TEXT_MESSAGE_CONTENT`
-- `THINKING_TEXT_MESSAGE_END`
+- `THINKING_START` → `REASONING_START`
+- `THINKING_END` → `REASONING_END`
+- `THINKING_TEXT_MESSAGE_START` → `REASONING_MESSAGE_START`
+- `THINKING_TEXT_MESSAGE_CONTENT` → `REASONING_MESSAGE_CONTENT`
+- `THINKING_TEXT_MESSAGE_END` → `REASONING_MESSAGE_END`
 
 ## Implementation Considerations
 
