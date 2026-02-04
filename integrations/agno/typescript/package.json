@@ -15,13 +15,14 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "clean": "rm -rf dist .turbo node_modules coverage",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
+    "test:exports": "publint --strict && attw --pack",
     "link:global": "pnpm link --global",
     "unlink:global": "pnpm unlink --global"
   },
@@ -35,7 +36,9 @@
     "@ag-ui/client": "workspace:*",
     "@types/node": "^20.11.19",
     "@vitest/coverage-istanbul": "^4.0.18",
-    "tsup": "^8.0.2",
+    "publint": "^0.3.12",
+    "@arethetypeswrong/cli": "^0.17.4",
+    "tsdown": "^0.20.1",
     "typescript": "^5.3.3",
     "vitest": "^4.0.18"
   }

@@ -7,7 +7,7 @@
 .env
 __tests__
 src
-tsup.config.ts
+tsdown.config.ts
 tsconfig.json
 jest.config.js
 example
