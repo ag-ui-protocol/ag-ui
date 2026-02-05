@@ -2,10 +2,11 @@ import { HttpAgent } from "../http";
 import { runHttpRequest, HttpEvent, HttpEventType } from "@/run/http-request";
 import { v4 as uuidv4 } from "uuid";
 import { Observable, of } from "rxjs";
+import { describe, it, expect, vi, beforeEach, Mock } from "vitest";
 
 // Mock the runHttpRequest module
-jest.mock("@/run/http-request", () => ({
-  runHttpRequest: jest.fn(),
+vi.mock("@/run/http-request", () => ({
+  runHttpRequest: vi.fn(),
   HttpEventType: {
     HEADERS: "headers",
     DATA: "data",
@@ -13,19 +14,19 @@ jest.mock("@/run/http-request", () => ({
 }));
 
 // Mock uuid module
-jest.mock("uuid", () => ({
-  v4: jest.fn().mockReturnValue("mock-run-id"),
+vi.mock("uuid", () => ({
+  v4: vi.fn().mockReturnValue("mock-run-id"),
 }));
 
 // Mock transformHttpEventStream
-jest.mock("@/transform/http", () => ({
-  transformHttpEventStream: jest.fn((source$) => source$),
+vi.mock("@/transform/http", () => ({
+  transformHttpEventStream: vi.fn((source$) => source$),
 }));
 
 describe("HttpAgent", () => {
   // Reset mocks before each test
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it("should configure and execute HTTP requests correctly", async () => {
@@ -37,7 +38,7 @@ describe("HttpAgent", () => {
     });
 
     // Mock the runHttpRequest function
-    (runHttpRequest as jest.Mock).mockReturnValue(mockObservable);
+    (runHttpRequest as Mock).mockReturnValue(mockObservable);
 
     // Configure test agent
     const agent = new HttpAgent({
@@ -86,7 +87,7 @@ describe("HttpAgent", () => {
 
   it("should abort the request when abortRun is called", () => {
     // Setup mock implementation
-    (runHttpRequest as jest.Mock).mockReturnValue(of());
+    (runHttpRequest as Mock).mockReturnValue(of());
 
     // Configure test agent
     const agent = new HttpAgent({
@@ -95,7 +96,7 @@ describe("HttpAgent", () => {
     });
 
     // Spy on the abort method of AbortController
-    const abortSpy = jest.spyOn(AbortController.prototype, "abort");
+    const abortSpy = vi.spyOn(AbortController.prototype, "abort");
 
     // Trigger runAgent without actually calling it by checking the abortController
     expect(agent.abortController).toBeInstanceOf(AbortController);
@@ -112,7 +113,7 @@ describe("HttpAgent", () => {
 
   it("should use a custom abort controller when provided", () => {
     // Setup mock implementation
-    (runHttpRequest as jest.Mock).mockReturnValue(of());
+    (runHttpRequest as Mock).mockReturnValue(of());
 
     // Configure test agent
     const agent = new HttpAgent({
@@ -122,7 +123,7 @@ describe("HttpAgent", () => {
 
     // Create a custom abort controller
     const customController = new AbortController();
-    const abortSpy = jest.spyOn(customController, "abort");
+    const abortSpy = vi.spyOn(customController, "abort");
 
     // Set the custom controller
     agent.abortController = customController;
@@ -137,9 +138,9 @@ describe("HttpAgent", () => {
     abortSpy.mockRestore();
   });
 
-  it("should handle transformHttpEventStream correctly", () => {
+  it("should handle transformHttpEventStream correctly", async () => {
     // Import the actual transformHttpEventStream function
-    const { transformHttpEventStream } = require("../../transform/http");
+    const { transformHttpEventStream } = await import("../../transform/http");
 
     // Verify transformHttpEventStream is a function
     expect(typeof transformHttpEventStream).toBe("function");
@@ -158,7 +159,7 @@ describe("HttpAgent", () => {
       headers: new Headers(),
     });
 
-    (runHttpRequest as jest.Mock).mockReturnValue(mockObservable);
+    (runHttpRequest as Mock).mockReturnValue(mockObservable);
 
     // Call run with mock input
     const input = {
@@ -201,7 +202,7 @@ describe("HttpAgent", () => {
     );
 
     // Directly mock runHttpRequest
-    (runHttpRequest as jest.Mock).mockReturnValue(mockResponseObservable);
+    (runHttpRequest as Mock).mockReturnValue(mockResponseObservable);
 
     // Configure test agent
     const agent = new HttpAgent({

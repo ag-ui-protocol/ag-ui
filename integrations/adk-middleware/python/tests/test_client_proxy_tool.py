@@ -8,9 +8,10 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from ag_ui.core import Tool as AGUITool, EventType
-from ag_ui.core import ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent
+from ag_ui.core import ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent, CustomEvent
 
 from ag_ui_adk.client_proxy_tool import ClientProxyTool
+from ag_ui_adk.config import PredictStateMapping
 
 
 class TestClientProxyTool:
@@ -220,3 +221,211 @@ class TestClientProxyTool:
             args_event = mock_event_queue.put.call_args_list[1][0][0]
             serialized_args = json.loads(args_event.delta)
             assert serialized_args == complex_args
+
+
+class TestClientProxyToolPredictState:
+    """Test cases for PredictState emission in ClientProxyTool."""
+
+    @pytest.fixture
+    def tool_with_predict_state(self):
+        """Create a tool definition that has a predict_state mapping."""
+        return AGUITool(
+            name="write_document",
+            description="Writes a document",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "document": {"type": "string"},
+                }
+            }
+        )
+
+    @pytest.fixture
+    def predict_state_mappings(self):
+        """Create predict_state mappings for the tool."""
+        return [
+            PredictStateMapping(
+                state_key="document",
+                tool="write_document",
+                tool_argument="document"
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_predict_state_emitted_before_tool_call(self, tool_with_predict_state, predict_state_mappings):
+        """Test that PredictState CustomEvent is emitted before TOOL_CALL_START."""
+        mock_queue = AsyncMock()
+        shared_tracking = set()
+
+        proxy_tool = ClientProxyTool(
+            ag_ui_tool=tool_with_predict_state,
+            event_queue=mock_queue,
+            predict_state_mappings=predict_state_mappings,
+            emitted_predict_state=shared_tracking,
+        )
+
+        mock_context = MagicMock()
+        mock_context.function_call_id = "test_call_id"
+
+        await proxy_tool.run_async(args={"document": "test"}, tool_context=mock_context)
+
+        # Should have emitted 4 events: PredictState, TOOL_CALL_START, TOOL_CALL_ARGS, TOOL_CALL_END
+        # Note: No STATE_SNAPSHOT - frontend handles state from TOOL_CALL_ARGS via PredictState mapping
+        assert mock_queue.put.call_count == 4
+
+        # First event should be PredictState CustomEvent
+        first_event = mock_queue.put.call_args_list[0][0][0]
+        assert isinstance(first_event, CustomEvent)
+        assert first_event.name == "PredictState"
+        assert first_event.value == [{"state_key": "document", "tool": "write_document", "tool_argument": "document"}]
+
+        # Second event should be TOOL_CALL_START
+        second_event = mock_queue.put.call_args_list[1][0][0]
+        assert isinstance(second_event, ToolCallStartEvent)
+
+        # Fourth event should be TOOL_CALL_END
+        fourth_event = mock_queue.put.call_args_list[3][0][0]
+        assert isinstance(fourth_event, ToolCallEndEvent)
+
+    @pytest.mark.asyncio
+    async def test_predict_state_only_emitted_once_with_shared_tracking(self, tool_with_predict_state, predict_state_mappings):
+        """Test that PredictState is only emitted once per tool when using shared tracking."""
+        mock_queue = AsyncMock()
+        shared_tracking = set()
+
+        # Create two tools with the same name, sharing tracking set
+        tool1 = ClientProxyTool(
+            ag_ui_tool=tool_with_predict_state,
+            event_queue=mock_queue,
+            predict_state_mappings=predict_state_mappings,
+            emitted_predict_state=shared_tracking,
+        )
+        tool2 = ClientProxyTool(
+            ag_ui_tool=tool_with_predict_state,
+            event_queue=mock_queue,
+            predict_state_mappings=predict_state_mappings,
+            emitted_predict_state=shared_tracking,
+        )
+
+        mock_context = MagicMock()
+        mock_context.function_call_id = "test_call_id"
+
+        # First tool execution
+        await tool1.run_async(args={"document": "doc1"}, tool_context=mock_context)
+
+        # Should have 4 events: PredictState + TOOL_CALL_START + TOOL_CALL_ARGS + TOOL_CALL_END
+        assert mock_queue.put.call_count == 4
+        first_event = mock_queue.put.call_args_list[0][0][0]
+        assert isinstance(first_event, CustomEvent)
+        assert first_event.name == "PredictState"
+
+        # Second tool execution (same tool name)
+        mock_queue.reset_mock()
+        await tool2.run_async(args={"document": "doc2"}, tool_context=mock_context)
+
+        # Should only have 3 events (no PredictState - already emitted)
+        assert mock_queue.put.call_count == 3
+        # First event should be TOOL_CALL_START, not PredictState
+        first_event = mock_queue.put.call_args_list[0][0][0]
+        assert isinstance(first_event, ToolCallStartEvent)
+
+    @pytest.mark.asyncio
+    async def test_predict_state_tracking_isolates_between_instances(self, tool_with_predict_state, predict_state_mappings):
+        """Test that separate tracking sets are isolated."""
+        mock_queue = AsyncMock()
+
+        # Two separate tracking sets (simulating two different runs/toolsets)
+        tracking1 = set()
+        tracking2 = set()
+
+        tool1 = ClientProxyTool(
+            ag_ui_tool=tool_with_predict_state,
+            event_queue=mock_queue,
+            predict_state_mappings=predict_state_mappings,
+            emitted_predict_state=tracking1,
+        )
+        tool2 = ClientProxyTool(
+            ag_ui_tool=tool_with_predict_state,
+            event_queue=mock_queue,
+            predict_state_mappings=predict_state_mappings,
+            emitted_predict_state=tracking2,
+        )
+
+        mock_context = MagicMock()
+        mock_context.function_call_id = "test_call_id"
+
+        # First tool execution
+        await tool1.run_async(args={"document": "doc1"}, tool_context=mock_context)
+        assert mock_queue.put.call_count == 4  # PredictState + TOOL_CALL_START + TOOL_CALL_ARGS + TOOL_CALL_END
+
+        # Second tool execution (different tracking set)
+        mock_queue.reset_mock()
+        await tool2.run_async(args={"document": "doc2"}, tool_context=mock_context)
+        assert mock_queue.put.call_count == 4  # PredictState AGAIN + TOOL_CALL_START + TOOL_CALL_ARGS + TOOL_CALL_END
+
+        # Both should have emitted PredictState because of isolated tracking
+        first_event = mock_queue.put.call_args_list[0][0][0]
+        assert isinstance(first_event, CustomEvent)
+        assert first_event.name == "PredictState"
+
+    @pytest.mark.asyncio
+    async def test_no_predict_state_when_no_mapping(self):
+        """Test no PredictState is emitted when tool has no mapping."""
+        mock_queue = AsyncMock()
+        shared_tracking = set()
+
+        tool = AGUITool(
+            name="unrelated_tool",
+            description="A tool without predict_state mapping",
+            parameters={"type": "object", "properties": {"x": {"type": "number"}}}
+        )
+
+        # Mapping is for different tool
+        mappings = [
+            PredictStateMapping(
+                state_key="document",
+                tool="write_document",  # Different tool name
+                tool_argument="document"
+            )
+        ]
+
+        proxy_tool = ClientProxyTool(
+            ag_ui_tool=tool,
+            event_queue=mock_queue,
+            predict_state_mappings=mappings,
+            emitted_predict_state=shared_tracking,
+        )
+
+        mock_context = MagicMock()
+        mock_context.function_call_id = "test_call_id"
+
+        await proxy_tool.run_async(args={"x": 42}, tool_context=mock_context)
+
+        # Should only have 3 events (no PredictState)
+        assert mock_queue.put.call_count == 3
+        first_event = mock_queue.put.call_args_list[0][0][0]
+        assert isinstance(first_event, ToolCallStartEvent)
+
+    @pytest.mark.asyncio
+    async def test_default_tracking_set_when_none_provided(self, tool_with_predict_state, predict_state_mappings):
+        """Test that tool creates its own tracking set when none provided."""
+        mock_queue = AsyncMock()
+
+        # No emitted_predict_state parameter - should default to empty set
+        proxy_tool = ClientProxyTool(
+            ag_ui_tool=tool_with_predict_state,
+            event_queue=mock_queue,
+            predict_state_mappings=predict_state_mappings,
+            # No emitted_predict_state provided
+        )
+
+        mock_context = MagicMock()
+        mock_context.function_call_id = "test_call_id"
+
+        await proxy_tool.run_async(args={"document": "test"}, tool_context=mock_context)
+
+        # Should still emit PredictState
+        assert mock_queue.put.call_count == 4
+        first_event = mock_queue.put.call_args_list[0][0][0]
+        assert isinstance(first_event, CustomEvent)
+        assert first_event.name == "PredictState"

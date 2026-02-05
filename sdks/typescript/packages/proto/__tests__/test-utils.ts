@@ -1,6 +1,6 @@
 import { BaseEvent } from "@ag-ui/core";
 import { encode, decode } from "../src/proto";
-import { expect, describe, it } from "@jest/globals";
+import { describe, it, expect } from "vitest";
 
 /**
  * Performs a round-trip encode-decode on an event and returns the decoded result

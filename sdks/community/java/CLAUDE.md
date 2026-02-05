@@ -10,7 +10,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Full verification**:
 - `mvn clean verify` - Runs complete build with tests and quality checks
 - **Coverage analysis**: `mvn clean test -Pcoverage` - Runs tests with JaCoCo coverage reports
-- **Code quality**: `mvn sonar:sonar` - Runs SonarCloud analysis (requires configuration)
 
 ### Testing Commands
 - **Unit tests only**: `mvn surefire:test` - Runs unit tests using Surefire plugin
@@ -23,7 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Architecture
 
-AG-UI-4J is an Agent User Interaction Protocol for Java that provides a framework for building AI agent interactions with streaming event-based communication.
+AG-UI is an Agent User Interaction Protocol for Java that provides a framework for building AI agent interactions with streaming event-based communication.
 
 ### Module Structure
 
@@ -32,7 +31,6 @@ AG-UI-4J is an Agent User Interaction Protocol for Java that provides a framewor
 - **packages/http**: HTTP utilities and communication layer
 - **packages/server**: Server-side implementation components
 - **integrations/spring-ai**: Spring AI integration with `SpringAIAgent`
-- **integrations/langchain4j**: LangChain4j integration with `Langchain4jAgent`
 - **servers/spring**: Spring Boot server implementation
 - **clients/ok-http**: OkHttp client implementation
 - **utils/json**: JSON utilities with Jackson mixins
@@ -63,7 +61,7 @@ The system uses streaming events for real-time updates:
 #### Message System
 Unified message types across all integrations:
 - `SystemMessage`, `UserMessage`, `AssistantMessage`, `DeveloperMessage`, `ToolMessage`
-- Message mappers convert between ag-ui-4j format and integration-specific formats
+- Message mappers convert between ag-ui format and integration-specific formats
 
 ### Build Profiles
 - **local** (default): Skips Javadoc and source generation for faster development

@@ -290,6 +290,33 @@ def flatten_user_content(content: Any) -> str:
 
     return str(content)
 
+
+def normalize_tool_content(content: Any) -> str:
+    """
+    Normalize tool message content to a string.
+    Handles the various content block formats from LangChain/LangGraph.
+
+    Content can be:
+    - A plain string
+    - A list of strings or content blocks (e.g., {"type": "text", "text": "..."})
+    """
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get('type') == 'text':
+                parts.append(block.get('text', ''))
+            else:
+                parts.append(json.dumps(block))
+        return ''.join(parts)
+
+    return json.dumps(content)
+
+
 def camel_to_snake(name):
     return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
 

@@ -4,14 +4,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>com.ag-ui</groupId>
-        <artifactId>ag-ui</artifactId>
+        <groupId>com.ag-ui.community</groupId>
+        <artifactId>java-ag-ui</artifactId>
         <version>0.0.1</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
-    <artifactId>server</artifactId>
-    <version>${ag-ui.version}</version>
+    <artifactId>java-server</artifactId>
+    <version>0.0.1</version>
 
     <name>AG-UI Server</name>
     <description>AG-UI Server library</description>
@@ -23,8 +23,8 @@
 
     <dependencies>
         <dependency>
-            <groupId>com.ag-ui</groupId>
-            <artifactId>core</artifactId>
+            <groupId>com.ag-ui.community</groupId>
+            <artifactId>java-core</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>
         <dependency>
@@ -45,4 +45,15 @@
         </dependency>
     </dependencies>
 
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-deploy-plugin</artifactId>
+                <configuration>
+                    <skip>false</skip>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

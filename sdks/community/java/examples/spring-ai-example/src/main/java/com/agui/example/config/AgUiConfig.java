@@ -2,7 +2,6 @@ package com.agui.example.config;
 
 import com.agui.core.exception.AGUIException;
 import com.agui.core.state.State;
-import com.agui.example.tools.AsciiTool;
 import com.agui.example.tools.WeatherRequest;
 import com.agui.example.tools.WeatherTool;
 import com.agui.spring.ai.SpringAIAgent;
@@ -29,7 +28,7 @@ public class AgUiConfig {
     }
 
     @Bean
-    public SpringAIAgent agent(@Value("${spring.ai.openai.api-key}") final String apiKey, final AsciiTool asciiTool) throws AGUIException {
+    public SpringAIAgent agent(@Value("${spring.ai.openai.api-key}") final String apiKey) throws AGUIException {
         var openai = OpenAiChatModel.builder()
             .defaultOptions(OpenAiChatOptions.builder()
                 .model("gpt-4o")
@@ -61,7 +60,6 @@ public class AgUiConfig {
             .systemMessage("You are a helpful AI assistant, called Moira.")
             .state(state)
             .toolCallback(toolCallback)
-            .tool(asciiTool)
             .build();
     }
 

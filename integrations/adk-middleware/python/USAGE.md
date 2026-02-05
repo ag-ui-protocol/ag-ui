@@ -120,6 +120,9 @@ app = App(
         name="assistant",
         model="gemini-2.5-flash",
         instruction="You are a helpful assistant.",
+        tools=[
+            AGUIToolset(), # Add the tools provided by the AG-UI client
+        ]
     ),
     plugins=[LoggingPlugin()],
     # resumability_config=ResumabilityConfig(is_resumable=True),  # Optional
@@ -181,7 +184,10 @@ my_agent = Agent(
     name="assistant",
     model="gemini-2.0-flash", 
     instruction="You are a helpful assistant.",
-    tools=[adk_tools.preload_memory_tool.PreloadMemoryTool()]  # Add memory tools here
+    tools=[
+        AGUIToolset(), # Add the tools provided by the AG-UI client
+        adk_tools.preload_memory_tool.PreloadMemoryTool(), # Add memory tools here
+    ]
 )
 
 # Create middleware with direct agent embedding
@@ -193,7 +199,7 @@ adk_agent = ADKAgent(
 )
 ```
 
-**⚠️ Important**: The `tools` parameter belongs to the ADK agent (like `Agent` or `LlmAgent`), **not** to the `ADKAgent` middleware. The middleware automatically handles any tools defined on the embedded agents.
+**⚠️ Important**: The `tools` parameter belongs to the ADK agent (like `Agent` or `LlmAgent`), **not** to the `ADKAgent` middleware. To add agui client tools, use the `AGUIToolset()` as shown above.
 
 **Testing Memory Workflow:**
 
@@ -275,6 +281,115 @@ The `state` field:
 - Syncs/merges with existing state on subsequent requests
 - Is accessible to ADK agent tools via `context.session.state`
 
+### Using Context
+
+The `context` field from `RunAgentInput` is automatically passed through to ADK agents.
+Context is useful for providing metadata about the current request (user info, preferences,
+environment details) that the agent can use for personalization.
+
+Context is accessible in two ways:
+
+#### 1. In Tools via Session State
+
+```python
+from google.adk.tools import ToolContext
+from ag_ui_adk import CONTEXT_STATE_KEY
+
+def personalized_tool(tool_context: ToolContext) -> str:
+    """Access context in a tool via session state."""
+    context_items = tool_context.state.get(CONTEXT_STATE_KEY, [])
+
+    user_role = None
+    for item in context_items:
+        if item["description"] == "user_role":
+            user_role = item["value"]
+            break
+
+    if user_role == "admin":
+        return "Welcome, administrator! You have full access."
+    return "Welcome! You have standard access."
+
+# Create agent with the tool
+my_agent = Agent(
+    name="assistant",
+    tools=[personalized_tool]
+)
+```
+
+#### 2. In Instruction Providers via Session State
+
+```python
+from google.adk.agents import LlmAgent
+from google.adk.agents.readonly_context import ReadonlyContext
+from ag_ui_adk import CONTEXT_STATE_KEY
+
+def context_aware_instructions(ctx: ReadonlyContext) -> str:
+    """Dynamic instructions based on context."""
+    instructions = "You are a helpful assistant."
+
+    # Access context from session state
+    context_items = ctx.state.get(CONTEXT_STATE_KEY, [])
+
+    # Find user's preferred language
+    for item in context_items:
+        if item["description"] == "preferred_language":
+            instructions += f"\nRespond in {item['value']}."
+            break
+
+    return instructions
+
+# Create agent with dynamic instructions
+my_agent = LlmAgent(
+    name="assistant",
+    model="gemini-2.0-flash",
+    instruction=context_aware_instructions,  # Callable, not string
+)
+```
+
+#### Example Request with Context
+
+```python
+input = RunAgentInput(
+    thread_id="session_001",
+    run_id="run_001",
+    messages=[
+        UserMessage(id="1", role="user", content="Hello!")
+    ],
+    context=[
+        Context(description="user_role", value="admin"),
+        Context(description="preferred_language", value="Spanish"),
+        Context(description="timezone", value="America/New_York"),
+    ],
+    state={},
+    tools=[],
+    forwarded_props={}
+)
+
+async for event in agent.run(input):
+    print(f"Event: {event.type}")
+```
+
+#### Alternative: Via RunConfig custom_metadata (ADK 1.22.0+)
+
+For users on ADK 1.22.0 or later, context is also available via `RunConfig.custom_metadata`:
+
+```python
+def dynamic_instructions(ctx: ReadonlyContext) -> str:
+    instructions = "You are a helpful assistant."
+
+    # Alternative access via custom_metadata (ADK 1.22.0+)
+    if ctx.run_config and ctx.run_config.custom_metadata:
+        context_items = ctx.run_config.custom_metadata.get('ag_ui_context', [])
+        for item in context_items:
+            instructions += f"\n- {item['description']}: {item['value']}"
+
+    return instructions
+```
+
+**Note:** Session state (`ctx.state.get(CONTEXT_STATE_KEY, [])`) is the recommended approach as it works with all ADK versions and provides a unified access pattern for both tools and instruction providers.
+
+See `examples/other/context_usage.py` for a complete working example.
+
 ### Multi-Agent Setup
 
 ```python
@@ -306,6 +421,41 @@ add_adk_fastapi_endpoint(app, general_agent_wrapper, path="/agents/general")
 add_adk_fastapi_endpoint(app, technical_agent_wrapper, path="/agents/technical")
 add_adk_fastapi_endpoint(app, creative_agent_wrapper, path="/agents/creative")
 ```
+
+### Predictive State Updates
+
+Predictive state updates allow the frontend to receive real-time state changes derived from tool call arguments. This is particularly useful for live previews — for example, showing a document update immediately when a tool call completes.
+
+The `predict_state` configuration watches for a specific tool and argument, emitting `CUSTOM` events with `STATE_DELTA` patches that let the frontend render content as soon as the tool call arrives.
+
+#### Basic Setup
+
+```python
+from ag_ui_adk import ADKAgent, PredictStateMapping, AGUIToolset
+from google.adk.agents import LlmAgent
+
+agent = LlmAgent(
+    name="writer",
+    model="gemini-2.0-flash",
+    instruction="Use write_document to write documents.",
+    tools=[write_document, AGUIToolset()],
+)
+
+adk_agent = ADKAgent(
+    adk_agent=agent,
+    app_name="my_app",
+    user_id="user123",
+    predict_state=[
+        PredictStateMapping(
+            state_key="document",          # Frontend state key to update
+            tool="write_document",         # Tool name to watch
+            tool_argument="document",      # Argument to extract
+        )
+    ],
+)
+```
+
+See `examples/server/api/predictive_state_updates.py` for a complete working example.
 
 ## Event Translation
 
@@ -405,6 +555,59 @@ async def get_thread_history(thread_id: str, app_name: str, user_id: str):
             return messages, state
         return [], {}
 ```
+
+## Migrating to Resumable HITL
+
+> **Deprecated:** The non-resumable (fire-and-forget) HITL flow triggered by `ADKAgent(adk_agent=...)` with client-side tools is deprecated and will be removed in a future version. Migrate to `ADKAgent.from_app()` with `ResumabilityConfig` for human-in-the-loop workflows.
+
+### Why migrate?
+
+The old-style HITL flow has limitations:
+- **No SequentialAgent position restore** — sub-agent position is lost on resume
+- **Manual FunctionCall persistence** — the middleware must manually persist partial events
+- **Manual pending tool call tracking** — state management is handled by the middleware instead of ADK
+
+With `ResumabilityConfig`, ADK handles all of this natively.
+
+### Before (deprecated for HITL)
+
+```python
+from ag_ui_adk import ADKAgent
+
+agent = ADKAgent(
+    adk_agent=my_agent,  # Works fine for non-HITL agents
+    app_name="my_app",
+    user_id="user123",
+)
+```
+
+> **Note:** `ADKAgent(adk_agent=...)` is still the recommended constructor for agents **without** client-side tools (chat-only, backend-tool-only). Only the HITL path is deprecated.
+
+### After (recommended for HITL)
+
+```python
+from google.adk.apps import App, ResumabilityConfig
+from ag_ui_adk import ADKAgent
+
+app = App(
+    name="my_app",
+    root_agent=my_agent,
+    resumability_config=ResumabilityConfig(is_resumable=True),
+)
+
+agent = ADKAgent.from_app(
+    app,
+    user_id="user123",
+)
+```
+
+### What triggers the deprecation warning?
+
+A `DeprecationWarning` is emitted at runtime when:
+1. The agent encounters a long-running (client-side) tool call, **and**
+2. The agent was created with the direct constructor (`ADKAgent(adk_agent=...)`) rather than `ADKAgent.from_app()`
+
+The warning does not fire for agents without client-side tools.
 
 ## Additional Resources
 

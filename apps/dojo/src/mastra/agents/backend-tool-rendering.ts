@@ -1,11 +1,11 @@
-import { openai } from "@ai-sdk/openai";
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { weatherTool } from "../tools";
 import { getStorage } from "../storage";
 
 export const backendToolRenderingAgent = new Agent({
-  name: "Weather Agent",
+  id: 'backend_tool_rendering',
+  name: "backend_tool_rendering",
   instructions: `
     You are a helpful weather assistant that provides accurate weather information.
 
@@ -18,7 +18,7 @@ export const backendToolRenderingAgent = new Agent({
 
     Use the weatherTool to fetch current weather data.
   `,
-  model: openai("gpt-4o-mini"),
+  model: "openai/gpt-4o-mini",
   tools: { get_weather: weatherTool },
   memory: new Memory({
     storage: getStorage(),

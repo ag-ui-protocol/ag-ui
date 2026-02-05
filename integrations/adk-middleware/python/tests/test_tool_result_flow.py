@@ -940,8 +940,10 @@ class TestConfirmChangesFiltering:
         ):
             events.append(event)
 
-        # Should NOT emit any events (no error, no new execution)
-        assert len(events) == 0
+        # Should emit RUN_STARTED + RUN_FINISHED (valid terminal stream, no error)
+        assert len(events) == 2
+        assert events[0].type == EventType.RUN_STARTED
+        assert events[1].type == EventType.RUN_FINISHED
 
         # Confirm_changes tool message should be marked as processed
         processed_ids = ag_ui_adk._session_manager.get_processed_message_ids(app_name, input_data.thread_id)
@@ -1182,6 +1184,7 @@ class TestClientToolResultPersistence:
                 user_id="test_user",
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=tool_results,
                 message_batch=message_batch
             )
@@ -1362,6 +1365,7 @@ class TestClientToolResultPersistence:
                 user_id="test_user",
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=None,  # No client-side tool results
                 message_batch=None
             )
@@ -1390,4 +1394,417 @@ class TestClientToolResultPersistence:
             f"Backend tool FunctionResponse should NOT be persisted by our code. "
             f"Found {function_response_count} FunctionResponse events for backend tool. "
             "Our append_event() fix should only apply to client-side tool results."
+        )
+
+
+class TestDatabaseSessionServiceCompatibility:
+    """Tests for DatabaseSessionService compatibility fixes.
+
+    These tests verify the fixes for PR #958:
+    1. invocation_id is set on function response events
+    2. Session is refreshed after state updates to prevent stale session errors
+
+    See: https://github.com/ag-ui-protocol/ag-ui/issues/957
+    """
+
+    @pytest.fixture
+    def mock_adk_agent(self):
+        """Create a mock ADK agent."""
+        from google.adk.agents import LlmAgent
+        return LlmAgent(
+            name="test_agent",
+            model="gemini-2.0-flash",
+            instruction="Test agent for DatabaseSessionService compatibility"
+        )
+
+    @pytest.fixture
+    def ag_ui_adk(self, mock_adk_agent):
+        """Create ADK middleware with mocked dependencies."""
+        SessionManager.reset_instance()
+        agent = ADKAgent(
+            adk_agent=mock_adk_agent,
+            app_name="test_app",
+            user_id="test_user",
+            execution_timeout_seconds=60,
+            tool_timeout_seconds=30
+        )
+        try:
+            yield agent
+        finally:
+            SessionManager.reset_instance()
+
+    async def _prepare_session_with_pending_tool_call(
+        self,
+        *,
+        ag_ui_adk,
+        input_data,
+        tool_call_id,
+        tool_name,
+        tool_args,
+        processed_message_ids,
+    ):
+        """Create session, mark processed messages, add pending tool call, and add a FunctionCall event."""
+        from google.adk.sessions.session import Event
+        from google.genai import types
+        import time
+
+        app_name = ag_ui_adk._get_app_name(input_data)
+        if processed_message_ids:
+            ag_ui_adk._session_manager.mark_messages_processed(
+                app_name, input_data.thread_id, processed_message_ids
+            )
+
+        session, backend_session_id = await ag_ui_adk._ensure_session_exists(
+            app_name=app_name,
+            user_id="test_user",
+            thread_id=input_data.thread_id,
+            initial_state={},
+        )
+        await ag_ui_adk._add_pending_tool_call_with_context(
+            input_data.thread_id, tool_call_id, app_name, "test_user"
+        )
+
+        function_call_content = types.Content(
+            parts=[
+                types.Part(
+                    function_call=types.FunctionCall(
+                        id=tool_call_id,
+                        name=tool_name,
+                        args=tool_args,
+                    )
+                )
+            ],
+            role="model",
+        )
+        function_call_event = Event(
+            timestamp=time.time(),
+            author="test_agent",
+            content=function_call_content,
+        )
+        await ag_ui_adk._session_manager._session_service.append_event(
+            session, function_call_event
+        )
+
+        return app_name, backend_session_id
+
+    def _assert_function_response_invocation_id(
+        self, session, tool_call_id, expected_run_id
+    ):
+        """Assert FunctionResponse event has the expected invocation_id."""
+        for event in session.events:
+            if event.content and hasattr(event.content, "parts"):
+                for part in event.content.parts:
+                    if hasattr(part, "function_response") and part.function_response:
+                        fr = part.function_response
+                        if hasattr(fr, "id") and fr.id == tool_call_id:
+                            assert hasattr(event, "invocation_id"), (
+                                "FunctionResponse event missing invocation_id"
+                            )
+                            assert event.invocation_id == expected_run_id, (
+                                f"Expected invocation_id={expected_run_id}, got {event.invocation_id}"
+                            )
+                            return
+
+        assert False, (
+            f"FunctionResponse event for tool_call_id={tool_call_id} not found"
+        )
+
+    @pytest.mark.asyncio
+    async def test_invocation_id_set_on_function_response_event(self, ag_ui_adk):
+        """Test that invocation_id is set on function response events.
+
+        When client-side tool results arrive, the FunctionResponse event that gets
+        appended to the ADK session should have the invocation_id set to the AG-UI
+        run_id. This is required for DatabaseSessionService to properly track events.
+
+        Regression test for PR #958.
+        """
+        thread_id = "test_thread_invocation_id"
+        tool_call_id = "tool_call_invocation_test"
+        expected_run_id = "run_id_12345"
+
+        # Create input with tool result + user message
+        input_data = RunAgentInput(
+            thread_id=thread_id,
+            run_id=expected_run_id,  # This should become the invocation_id
+            messages=[
+                UserMessage(id="user_1", role="user", content="Initial request"),
+                AssistantMessage(
+                    id="assistant_1",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id=tool_call_id,
+                            function=FunctionCall(name="test_tool", arguments='{"arg": "value"}')
+                        )
+                    ]
+                ),
+                ToolMessage(
+                    id="tool_result_1",
+                    role="tool",
+                    content='{"status": "success"}',
+                    tool_call_id=tool_call_id
+                ),
+                UserMessage(id="user_2", role="user", content="Continue")
+            ],
+            tools=[
+                AGUITool(
+                    name="test_tool",
+                    description="Test tool",
+                    parameters={"type": "object", "properties": {"arg": {"type": "string"}}}
+                )
+            ],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        # Arrange test data.
+        app_name, backend_session_id = await self._prepare_session_with_pending_tool_call(
+            ag_ui_adk=ag_ui_adk,
+            input_data=input_data,
+            tool_call_id=tool_call_id,
+            tool_name="test_tool",
+            tool_args={"arg": "value"},
+            processed_message_ids=["user_1", "assistant_1"],
+        )
+
+        # Mock runner to avoid LLM calls
+        class MockRunner:
+            async def run_async(self, **kwargs):
+                return
+                yield
+
+        # Prepare tool results
+        tool_results = [
+            {
+                'tool_name': 'test_tool',
+                'message': input_data.messages[2]
+            }
+        ]
+        message_batch = [input_data.messages[3]]
+
+        with patch.object(ag_ui_adk, '_create_runner', return_value=MockRunner()):
+            event_queue = asyncio.Queue()
+
+            await ag_ui_adk._run_adk_in_background(
+                input=input_data,
+                adk_agent=ag_ui_adk._adk_agent,
+                user_id="test_user",
+                app_name=app_name,
+                event_queue=event_queue,
+                client_proxy_toolsets=[],
+                tool_results=tool_results,
+                message_batch=message_batch
+            )
+
+        # Assert invocation_id is persisted.
+        session = await ag_ui_adk._session_manager._session_service.get_session(
+            session_id=backend_session_id,
+            app_name=app_name,
+            user_id="test_user"
+        )
+        self._assert_function_response_invocation_id(
+            session, tool_call_id, expected_run_id
+        )
+
+    @pytest.mark.asyncio
+    async def test_invocation_id_set_on_function_response_event_tool_results_only(self, ag_ui_adk):
+        """Test invocation_id is set when tool results arrive WITHOUT a user message.
+
+        This tests the tool-results-only branch in adk_agent.py (the elif active_tool_results
+        path around line 1486). In HITL workflows, clients may send back just the tool result
+        without any additional user message.
+
+        Regression test for PR #958.
+        """
+        thread_id = "test_thread_invocation_id_tool_only"
+        tool_call_id = "tool_call_tool_only_test"
+        expected_run_id = "run_id_tool_only_67890"
+
+        # Create input with tool result ONLY (no trailing user message)
+        input_data = RunAgentInput(
+            thread_id=thread_id,
+            run_id=expected_run_id,
+            messages=[
+                UserMessage(id="user_1", role="user", content="Initial request"),
+                AssistantMessage(
+                    id="assistant_1",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id=tool_call_id,
+                            function=FunctionCall(name="approve_action", arguments='{}')
+                        )
+                    ]
+                ),
+                ToolMessage(
+                    id="tool_result_1",
+                    role="tool",
+                    content='{"approved": true}',
+                    tool_call_id=tool_call_id
+                )
+                # NOTE: No trailing UserMessage - this is the tool-results-only path
+            ],
+            tools=[
+                AGUITool(
+                    name="approve_action",
+                    description="Approve an action",
+                    parameters={"type": "object", "properties": {}}
+                )
+            ],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        # Arrange test data.
+        app_name, backend_session_id = await self._prepare_session_with_pending_tool_call(
+            ag_ui_adk=ag_ui_adk,
+            input_data=input_data,
+            tool_call_id=tool_call_id,
+            tool_name="approve_action",
+            tool_args={},
+            processed_message_ids=["user_1", "assistant_1"],
+        )
+
+        # Mock runner to avoid LLM calls
+        class MockRunner:
+            async def run_async(self, **kwargs):
+                return
+                yield
+
+        # Prepare tool results WITHOUT message_batch (tool-results-only path)
+        tool_results = [
+            {
+                'tool_name': 'approve_action',
+                'message': input_data.messages[2]
+            }
+        ]
+
+        with patch.object(ag_ui_adk, '_create_runner', return_value=MockRunner()):
+            event_queue = asyncio.Queue()
+
+            await ag_ui_adk._run_adk_in_background(
+                input=input_data,
+                adk_agent=ag_ui_adk._adk_agent,
+                user_id="test_user",
+                app_name=app_name,
+                event_queue=event_queue,
+                client_proxy_toolsets=[],
+                tool_results=tool_results,
+                message_batch=None  # No trailing user message.
+            )
+
+        # Assert invocation_id is persisted.
+        session = await ag_ui_adk._session_manager._session_service.get_session(
+            session_id=backend_session_id,
+            app_name=app_name,
+            user_id="test_user"
+        )
+        self._assert_function_response_invocation_id(
+            session, tool_call_id, expected_run_id
+        )
+
+    @pytest.mark.asyncio
+    async def test_session_refreshed_after_state_update(self, ag_ui_adk):
+        """Test that session is refreshed after update_session_state.
+
+        When using DatabaseSessionService, the session's last_update_time changes
+        after any modification. If we don't refresh the session after calling
+        update_session_state, subsequent operations may fail with "stale session" errors.
+
+        This test verifies that get_session is called after update_session_state.
+
+        Regression test for PR #958, see: https://github.com/ag-ui-protocol/ag-ui/issues/957
+        """
+        thread_id = "test_thread_session_refresh"
+
+        input_data = RunAgentInput(
+            thread_id=thread_id,
+            run_id="run_refresh_test",
+            messages=[
+                UserMessage(id="user_1", role="user", content="Hello")
+            ],
+            tools=[],
+            context=[],
+            state={"key": "value"},  # State that will be updated
+            forwarded_props={}
+        )
+
+        app_name = ag_ui_adk._get_app_name(input_data)
+        user_id = ag_ui_adk._get_user_id(input_data)
+
+        # Create session first
+        session, backend_session_id = await ag_ui_adk._ensure_session_exists(
+            app_name=app_name,
+            user_id=user_id,
+            thread_id=thread_id,
+            initial_state={}
+        )
+
+        # Track calls to session manager methods
+        update_session_state_called = False
+        get_session_called_after_update = False
+        call_order = []
+
+        original_update_session_state = ag_ui_adk._session_manager.update_session_state
+        original_get_session = ag_ui_adk._session_manager.get_session
+
+        async def mock_update_session_state(*args, **kwargs):
+            nonlocal update_session_state_called
+            update_session_state_called = True
+            call_order.append('update_session_state')
+            return await original_update_session_state(*args, **kwargs)
+
+        async def mock_get_session(*args, **kwargs):
+            nonlocal get_session_called_after_update
+            call_order.append('get_session')
+            if update_session_state_called:
+                get_session_called_after_update = True
+            return await original_get_session(*args, **kwargs)
+
+        # Mock runner to avoid LLM calls
+        class MockRunner:
+            async def run_async(self, **kwargs):
+                return
+                yield
+
+        with patch.object(ag_ui_adk._session_manager, 'update_session_state', side_effect=mock_update_session_state), \
+             patch.object(ag_ui_adk._session_manager, 'get_session', side_effect=mock_get_session), \
+             patch.object(ag_ui_adk, '_create_runner', return_value=MockRunner()):
+
+            event_queue = asyncio.Queue()
+
+            await ag_ui_adk._run_adk_in_background(
+                input=input_data,
+                adk_agent=ag_ui_adk._adk_agent,
+                user_id=user_id,
+                app_name=app_name,
+                event_queue=event_queue,
+                client_proxy_toolsets=[],
+                tool_results=None,
+                message_batch=None
+            )
+
+        # Verify the call order: update_session_state should be IMMEDIATELY followed by get_session
+        assert update_session_state_called, "update_session_state should be called to sync frontend state"
+        assert get_session_called_after_update, (
+            "get_session should be called after update_session_state to refresh the session. "
+            "This prevents 'stale session' errors when using DatabaseSessionService. "
+            f"Call order was: {call_order}"
+        )
+
+        # Verify ADJACENCY: get_session must be the immediate next call after update_session_state
+        # This ensures the refresh happens right away, not at some arbitrary later point
+        update_index = call_order.index('update_session_state')
+        assert update_index + 1 < len(call_order), (
+            f"No call after update_session_state. Call order: {call_order}"
+        )
+        assert call_order[update_index + 1] == 'get_session', (
+            f"get_session must be called IMMEDIATELY after update_session_state to refresh the session. "
+            f"Expected call_order[{update_index + 1}] to be 'get_session', but got '{call_order[update_index + 1]}'. "
+            f"Full call order: {call_order}"
         )

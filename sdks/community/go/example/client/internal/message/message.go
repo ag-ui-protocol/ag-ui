@@ -156,14 +156,15 @@ func getMessageFromEvent(event events.Event) *Message {
 		}
 		var contents []string
 		for _, msg := range snapshot.Messages {
-			if msg.Content != nil && msg.Role != "user" {
-				contents = append(contents, *msg.Content)
-			}
-			if msg.ToolCalls != nil {
-				for _, toolCall := range msg.ToolCalls {
-					toolCallContent := serverStyle.Render("Tool Call: ") + toolCall.Function.Name + " - " + toolCall.Function.Arguments
-					contents = append(contents, toolCallContent)
+			if msg.Role != "user" {
+				content, ok := msg.ContentString()
+				if ok {
+					contents = append(contents, content)
 				}
+			}
+			for _, toolCall := range msg.ToolCalls {
+				toolCallContent := serverStyle.Render("Tool Call: ") + toolCall.Function.Name + " - " + toolCall.Function.Arguments
+				contents = append(contents, toolCallContent)
 			}
 		}
 

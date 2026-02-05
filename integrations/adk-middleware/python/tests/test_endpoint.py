@@ -26,9 +26,20 @@ class TestAddADKFastAPIEndpoint:
         params=[FastAPI, APIRouter]
     )
     def app(self, request):
-        """Create a FastAPI app."""
+        """Create a FastAPI app or APIRouter."""
         return request.param()
-        # return FastAPI()
+
+    def get_test_app(self, app):
+        """Return app suitable for TestClient (wrap APIRouter in FastAPI if needed).
+
+        Note: This must be called AFTER routes are added to the router,
+        since include_router copies routes at the time of inclusion.
+        """
+        if isinstance(app, APIRouter):
+            fastapi_app = FastAPI()
+            fastapi_app.include_router(app)
+            return fastapi_app
+        return app
 
     @pytest.fixture
     def sample_input(self):
@@ -87,7 +98,7 @@ class TestAddADKFastAPIEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/test")
 
-        client = TestClient(app)
+        client = TestClient(self.get_test_app(app))
         response = client.post(
             "/test",
             json=sample_input.model_dump(),
@@ -116,7 +127,7 @@ class TestAddADKFastAPIEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/agent123")
 
-        client = TestClient(app)
+        client = TestClient(self.get_test_app(app))
         response = client.post("/agent123", json=sample_input.model_dump())
 
         # Agent should be called with just the input data
@@ -141,7 +152,7 @@ class TestAddADKFastAPIEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
 
-        client = TestClient(app)
+        client = TestClient(self.get_test_app(app))
         response = client.post("/", json=sample_input.model_dump())
 
         # Agent should be called with just the input data
@@ -177,7 +188,7 @@ class TestAddADKFastAPIEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/test")
 
-        client = TestClient(app)
+        client = TestClient(self.get_test_app(app))
         response = client.post("/test", json=sample_input.model_dump())
 
         assert response.status_code == 200
@@ -213,7 +224,7 @@ class TestAddADKFastAPIEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/test")
 
-        client = TestClient(app)
+        client = TestClient(self.get_test_app(app))
         response = client.post("/test", json=sample_input.model_dump())
 
         assert response.status_code == 200
@@ -254,7 +265,7 @@ class TestAddADKFastAPIEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/test")
 
-        client = TestClient(app)
+        client = TestClient(self.get_test_app(app))
         response = client.post("/test", json=sample_input.model_dump())
 
         assert response.status_code == 200
@@ -285,7 +296,7 @@ class TestAddADKFastAPIEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/test")
 
-        client = TestClient(app)
+        client = TestClient(self.get_test_app(app))
         response = client.post("/test", json=sample_input.model_dump())
 
         assert response.status_code == 200
@@ -318,7 +329,7 @@ class TestAddADKFastAPIEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/test")
 
-        client = TestClient(app)
+        client = TestClient(self.get_test_app(app))
         response = client.post("/test", json=sample_input.model_dump())
 
         assert response.status_code == 200
@@ -354,7 +365,7 @@ class TestAddADKFastAPIEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/test")
 
-        client = TestClient(app)
+        client = TestClient(self.get_test_app(app))
         response = client.post("/test", json=sample_input.model_dump())
 
         assert response.status_code == 200
@@ -364,25 +375,13 @@ class TestAddADKFastAPIEndpoint:
         """Test that endpoint validates input as RunAgentInput."""
         add_adk_fastapi_endpoint(app, mock_agent, path="/test")
 
-        client = TestClient(app)
+        client = TestClient(self.get_test_app(app))
 
-        # FastAPI and APIRouter handle validation differently
-        if isinstance(app, FastAPI):
-            # Send invalid JSON
-            response = client.post("/test", json={"invalid": "data"})
+        # Send invalid JSON - both FastAPI and APIRouter (wrapped in FastAPI) return 422
+        response = client.post("/test", json={"invalid": "data"})
 
-            # Should return 422 for validation error
-            assert response.status_code == 422
-
-        elif isinstance(app, APIRouter):
-            # Should raise RequestValidationError
-            with pytest.raises(RequestValidationError):
-
-                # Send invalid JSON
-                response = client.post("/test", json={"invalid": "data"})
-
-        else:
-            raise TypeError("app fixture must be FastAPI or APIRouter")
+        # Should return 422 for validation error
+        assert response.status_code == 422
 
     @patch('ag_ui_adk.endpoint.EventEncoder')
     def test_endpoint_no_accept_header(self, mock_encoder_class, app, mock_agent, sample_input):
@@ -406,7 +405,7 @@ class TestAddADKFastAPIEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/test")
 
-        client = TestClient(app)
+        client = TestClient(self.get_test_app(app))
         response = client.post("/test", json=sample_input.model_dump())
 
         # EventEncoder should be created with default accept header from TestClient
