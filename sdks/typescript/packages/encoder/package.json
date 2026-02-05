@@ -1,7 +1,7 @@
 {
   "name": "@ag-ui/encoder",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.44",
+  "version": "0.0.45-alpha.0",
   "private": false,
   "publishConfig": {
     "access": "public"
