@@ -1765,12 +1765,23 @@ class ADKAgent:
                 "run_config": run_config
             }
 
-            # Pass stored invocation_id to run_async for HITL resumption
-            # This enables SequentialAgent to restore its current_sub_agent position
-            # Only pass invocation_id if the app is resumable (has ResumabilityConfig)
+            # Only pass stored invocation_id when the request has tool results (actual HITL resume)
+            # If the user sent a text message instead, clear the stale invocation_id and start fresh
+            has_tool_results = bool(active_tool_results)
             if stored_invocation_id and self._is_adk_resumable():
-                run_kwargs["invocation_id"] = stored_invocation_id
-                logger.info(f"[RUN_ASYNC] HITL resumption with invocation_id: {stored_invocation_id}")
+                if has_tool_results:
+                    run_kwargs["invocation_id"] = stored_invocation_id
+                    logger.info(f"[RUN_ASYNC] HITL resumption with invocation_id: {stored_invocation_id}")
+                else:
+                    logger.info(f"[RUN_ASYNC] Clearing stale invocation_id (text message, not tool result)")
+                    try:
+                        await self._session_manager.update_session_state(
+                            backend_session_id, app_name, user_id,
+                            {INVOCATION_ID_STATE_KEY: None}
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to clear stale invocation_id: {e}")
+                    stored_invocation_id = None
             else:
                 logger.info(f"[RUN_ASYNC] New run (no invocation_id, resumable={self._is_adk_resumable()})")
 
@@ -1825,7 +1836,7 @@ class ADKAgent:
                         continue
 
                 # Capture invocation_id locally (not via update_session_state) to avoid
-                # stale session errors. Persisted to session state after the run completes.
+                # stale session errors. Persisted to session state after the run completes
                 if (event_invocation_id and not invocation_id_stored and
                         not stored_invocation_id and self._is_adk_resumable()):
                     captured_invocation_id = event_invocation_id
@@ -1963,8 +1974,8 @@ class ADKAgent:
             async for ag_ui_event in event_translator.force_close_streaming_message():
                 await event_queue.put(ag_ui_event)
 
-            # Post-run invocation_id management (deferred from mid-run to avoid stale session).
-            # Now that ADK's runner has finished, it's safe to update session state.
+            # Post-run invocation_id management (deferred from mid-run to avoid stale session)
+            # Now that ADK's runner has finished, it's safe to update session state
             if self._is_adk_resumable():
                 if is_long_running_tool and captured_invocation_id:
                     # Paused on LRO tool: persist invocation_id for HITL resume
