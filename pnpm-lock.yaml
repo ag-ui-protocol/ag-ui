@@ -93,6 +93,9 @@ importers:
       '@ag-ui/crewai':
         specifier: workspace:*
         version: link:../../integrations/crew-ai/typescript
+      '@ag-ui/dify':
+        specifier: workspace:*
+        version: link:../../integrations/dify/typescript
       '@ag-ui/encoder':
         specifier: workspace:*
         version: 0.0.42
@@ -513,6 +516,30 @@ importers:
         version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
       typescript:
         specifier: ^5.3.3
+        version: 5.9.3
+
+  integrations/dify/typescript:
+    devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.21
+      rimraf:
+        specifier: ^5.0.0
+        version: 5.0.10
+      rxjs:
+        specifier: 7.8.1
+        version: 7.8.1
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
+      typescript:
+        specifier: ^5.0.0
         version: 5.9.3
 
   integrations/langchain/typescript:
@@ -9783,6 +9810,10 @@ packages:
     resolution: {integrity: sha512-g6QUff04oZpHs0eG5p83rFLhHeV00ug/Yf9nZM6fLeUrPguBTkTQOdpAWWspMh55TZfVQDPaN3NQJfbVRAxdIw==}
     engines: {iojs: '>=1.0.0', node: '>=0.10.0'}
 
+  rimraf@5.0.10:
+    resolution: {integrity: sha512-l0OE8wL34P4nJH/H2ffoaniAokM2qSmrtXHmlpvYr5AVVX8msAyW0l8NVJFDxlSK4u3Uh/f41cQheDVdnYijwQ==}
+    hasBin: true
+
   robust-predicates@3.0.2:
     resolution: {integrity: sha512-IXgzBWvWQwE6PrDI05OvmXUIruQTcoMDzRsOd5CDvHCVLcLHMTSYvOK5Cm46kWqlV3yAbuSpBZdJ5oP5OUoStg==}
 
@@ -18912,7 +18943,7 @@ snapshots:
       isstream: 0.1.2
       jsonwebtoken: 9.0.2
       mime-types: 2.1.35
-      retry-axios: 2.6.0(axios@1.12.2)
+      retry-axios: 2.6.0(axios@1.12.2(debug@4.4.3))
       tough-cookie: 4.1.4
     transitivePeerDependencies:
       - supports-color
@@ -21845,13 +21876,17 @@ snapshots:
       onetime: 5.1.2
       signal-exit: 3.0.7
 
-  retry-axios@2.6.0(axios@1.12.2):
+  retry-axios@2.6.0(axios@1.12.2(debug@4.4.3)):
     dependencies:
       axios: 1.12.2(debug@4.4.3)
 
   retry@0.13.1: {}
 
   reusify@1.1.0: {}
+
+  rimraf@5.0.10:
+    dependencies:
+      glob: 10.4.5
 
   robust-predicates@3.0.2: {}
 

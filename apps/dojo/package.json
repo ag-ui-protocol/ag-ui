@@ -18,6 +18,7 @@
     "@ag-ui/adk": "workspace:*",
     "@ag-ui/agno": "workspace:*",
     "@ag-ui/aws-strands": "workspace:*",
+    "@ag-ui/dify": "workspace:*",
     "@ag-ui/crewai": "workspace:*",
     "@ag-ui/langchain": "workspace:*",
     "@ag-ui/langgraph": "workspace:*",
