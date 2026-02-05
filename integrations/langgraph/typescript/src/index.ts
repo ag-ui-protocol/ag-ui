@@ -86,18 +86,25 @@ export class LangGraphHttpAgent extends HttpAgent {
       };
     }
 
-    if (role === 'assistant' && toolCalls?.length) {
+    if (role === 'assistant') {
+      if (toolCalls?.length) {
+        return {
+          ...baseMessage,
+          role: 'assistant' as const,
+          toolCalls: toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function" as const,
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.args),
+            },
+          })),
+        };
+      }
       return {
         ...baseMessage,
         role: 'assistant' as const,
-        toolCalls: toolCalls.map((tc) => ({
-          id: tc.id,
-          type: "function" as const,
-          function: {
-            name: tc.name,
-            arguments: JSON.stringify(tc.args),
-          },
-        })),
+        content: baseMessage.content,
       };
     }
 
