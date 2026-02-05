@@ -733,6 +733,46 @@ class LangGraphAgent:
                     )
                 return
 
+            if isinstance(tool_call_output, list):
+                tool_messages = [m for m in tool_call_output if isinstance(m, ToolMessage)]
+                for tool_msg in tool_messages:
+                    if not self.active_run["has_function_streaming"]:
+                        yield self._dispatch_event(
+                            ToolCallStartEvent(
+                                type=EventType.TOOL_CALL_START,
+                                tool_call_id=tool_msg.tool_call_id,
+                                tool_call_name=tool_msg.name,
+                                parent_message_id=tool_msg.id,
+                                raw_event=event,
+                            )
+                        )
+                        yield self._dispatch_event(
+                            ToolCallArgsEvent(
+                                type=EventType.TOOL_CALL_ARGS,
+                                tool_call_id=tool_msg.tool_call_id,
+                                delta=json.dumps(event["data"].get("input", {})),
+                                raw_event=event
+                            )
+                        )
+                        yield self._dispatch_event(
+                            ToolCallEndEvent(
+                                type=EventType.TOOL_CALL_END,
+                                tool_call_id=tool_msg.tool_call_id,
+                                raw_event=event
+                            )
+                        )
+
+                    yield self._dispatch_event(
+                        ToolCallResultEvent(
+                            type=EventType.TOOL_CALL_RESULT,
+                            tool_call_id=tool_msg.tool_call_id,
+                            message_id=str(uuid.uuid4()),
+                            content=normalize_tool_content(tool_msg.content),
+                            role="tool"
+                        )
+                    )
+                return
+
             if not self.active_run["has_function_streaming"]:
                 yield self._dispatch_event(
                     ToolCallStartEvent(
