@@ -99,10 +99,11 @@ class ClawgUiPairingService(
         return try {
             logger.d { "Checking if token is approved for URL: $url" }
             val client = httpClientProvider()
+            // Send a minimal valid AG-UI request to check if token is approved
             val response: HttpResponse = client.post(url) {
                 contentType(ContentType.Application.Json)
                 header("Authorization", "Bearer $bearerToken")
-                setBody("{}")
+                setBody("""{"messages":[{"role":"user","content":"Hello"}]}""")
             }
 
             when (response.status) {
