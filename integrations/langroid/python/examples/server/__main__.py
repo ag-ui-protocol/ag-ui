@@ -29,7 +29,7 @@ app.mount("/shared_state", shared_state_app)
 
 def main():
     """Run the uvicorn server."""
-    port = int(os.getenv("PORT", "8003"))
+    port = int(os.getenv("PORT", "8018"))
     # Use import string for reload to work properly
     uvicorn.run(
         "server.__main__:app",
