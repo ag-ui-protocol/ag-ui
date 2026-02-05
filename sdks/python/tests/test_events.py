@@ -1,8 +1,10 @@
 import unittest
 import json
+import typing
 from datetime import datetime
 from pydantic import ValidationError, TypeAdapter
 
+from ag_ui.core import events as events_module
 from ag_ui.core.types import Message, UserMessage, AssistantMessage, FunctionCall, ToolCall
 from ag_ui.core.events import (
     EventType,
@@ -596,6 +598,31 @@ class TestEvents(unittest.TestCase):
         # Verify Unicode and special characters are preserved
         self.assertEqual(deserialized.delta, text)
 
+    def test_all_event_subclasses_in_event_union(self):
+        """Ensure all BaseEvent subclasses are included in the Event union type"""
 
+        # Get all classes defined in the events module that are subclasses of BaseEvent
+        event_subclasses = set()
+        for name in dir(events_module):
+            obj = getattr(events_module, name)
+            if (
+                isinstance(obj, type)
+                and issubclass(obj, BaseEvent)
+                and obj is not BaseEvent
+            ):
+                event_subclasses.add(obj)
+
+        # Get all types in the Event union
+        union_types = set(typing.get_args(typing.get_args(Event)[0]))
+
+        # Check that all event subclasses are in the union
+        missing_from_union = event_subclasses - union_types
+        self.assertEqual(
+            missing_from_union,
+            set(),
+            f"The following event types are missing from the Event union: {missing_from_union}"
+        )
+
+        
 if __name__ == "__main__":
     unittest.main()
