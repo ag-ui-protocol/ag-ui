@@ -1518,9 +1518,9 @@ class ADKAgent:
                     "Continuing with potentially stale session."
                 )
 
-            # Retrieve stored invocation_id for HITL resumption
-            # When resuming after HITL pause, we must use the SAME invocation_id
-            # to restore SequentialAgent state (current_sub_agent position)
+            # Backwards compat: read invocation_id stored by older middleware versions
+            # during LRO pause. Used to tag FunctionResponse events, then cleared
+            # at line ~1770. Safe to remove once all active sessions have cycled
             stored_invocation_id: Optional[str] = None
             try:
                 current_state = await self._session_manager.get_session_state(
@@ -1605,7 +1605,8 @@ class ADKAgent:
                 import time
 
                 function_response_content = types.Content(parts=function_response_parts, role='user')
-                # Use stored invocation_id for HITL resumption to restore SequentialAgent state
+                # Tag FunctionResponse with the original invocation_id so ADK can
+                # match it to the function_call in session events
                 resume_invocation_id = stored_invocation_id or input.run_id
                 function_response_event = Event(
                     timestamp=time.time(),
@@ -1667,7 +1668,8 @@ class ADKAgent:
                 import time
 
                 function_response_content = types.Content(parts=function_response_parts, role='user')
-                # Use stored invocation_id for HITL resumption to restore SequentialAgent state
+                # Tag FunctionResponse with the original invocation_id so ADK can
+                # match it to the function_call in session events
                 resume_invocation_id = stored_invocation_id or input.run_id
                 function_response_event = Event(
                     timestamp=time.time(),
@@ -1754,8 +1756,6 @@ class ADKAgent:
 
             # Run ADK agent
             is_long_running_tool = False
-            invocation_id_stored = False  # Track if we've captured the invocation_id this run
-            captured_invocation_id: Optional[str] = None  # Deferred storage after run completes
             # Flag for LRO persistence fix: when True, we continue draining events until non-partial
             lro_draining_for_persistence = False
             run_kwargs = {
@@ -1765,25 +1765,20 @@ class ADKAgent:
                 "run_config": run_config
             }
 
-            # Only pass stored invocation_id when the request has tool results (actual HITL resume)
-            # If the user sent a text message instead, clear the stale invocation_id and start fresh
-            has_tool_results = bool(active_tool_results)
+            # Never pass invocation_id to run_async - ADK's _get_subagent_to_resume
+            # only works for SequentialAgent sub-agents, not standalone LlmAgents
+            # Tool results alone are sufficient for HITL resume without invocation_id
+            # Clear any stale invocation_id from session state
             if stored_invocation_id and self._is_adk_resumable():
-                if has_tool_results:
-                    run_kwargs["invocation_id"] = stored_invocation_id
-                    logger.info(f"[RUN_ASYNC] HITL resumption with invocation_id: {stored_invocation_id}")
-                else:
-                    logger.info(f"[RUN_ASYNC] Clearing stale invocation_id (text message, not tool result)")
-                    try:
-                        await self._session_manager.update_session_state(
-                            backend_session_id, app_name, user_id,
-                            {INVOCATION_ID_STATE_KEY: None}
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to clear stale invocation_id: {e}")
-                    stored_invocation_id = None
-            else:
-                logger.info(f"[RUN_ASYNC] New run (no invocation_id, resumable={self._is_adk_resumable()})")
+                logger.info(f"[RUN_ASYNC] Clearing stored invocation_id (not passed to run_async)")
+                try:
+                    await self._session_manager.update_session_state(
+                        backend_session_id, app_name, user_id,
+                        {INVOCATION_ID_STATE_KEY: None}
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to clear stored invocation_id: {e}")
+                stored_invocation_id = None
 
             logger.info(f"[RUN_ASYNC] Calling runner.run_async with session_id={backend_session_id}, has_message={new_message is not None}")
 
@@ -1834,16 +1829,6 @@ class ADKAgent:
                     else:
                         # Still partial, keep draining
                         continue
-
-                # Capture invocation_id locally (not via update_session_state) to avoid
-                # stale session errors. Persisted to session state after the run completes
-                if (event_invocation_id and not invocation_id_stored and
-                        not stored_invocation_id and self._is_adk_resumable()):
-                    captured_invocation_id = event_invocation_id
-                    invocation_id_stored = True
-                    logger.debug(
-                        f"Captured invocation_id for deferred storage: {event_invocation_id}"
-                    )
 
                 final_response = adk_event.is_final_response()
                 has_content = adk_event.content and hasattr(adk_event.content, 'parts') and adk_event.content.parts
@@ -1973,34 +1958,6 @@ class ADKAgent:
             # Force close any streaming messages
             async for ag_ui_event in event_translator.force_close_streaming_message():
                 await event_queue.put(ag_ui_event)
-
-            # Post-run invocation_id management (deferred from mid-run to avoid stale session)
-            # Now that ADK's runner has finished, it's safe to update session state
-            if self._is_adk_resumable():
-                if is_long_running_tool and captured_invocation_id:
-                    # Paused on LRO tool: persist invocation_id for HITL resume
-                    try:
-                        await self._session_manager.update_session_state(
-                            backend_session_id, app_name, user_id,
-                            {INVOCATION_ID_STATE_KEY: captured_invocation_id}
-                        )
-                        logger.debug(
-                            f"Stored invocation_id after LRO pause: {captured_invocation_id}"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to store invocation_id: {e}")
-                elif stored_invocation_id or invocation_id_stored:
-                    # Completed run (no LRO pause): clear stale invocation_id
-                    try:
-                        await self._session_manager.update_session_state(
-                            backend_session_id, app_name, user_id,
-                            {INVOCATION_ID_STATE_KEY: None}
-                        )
-                        logger.debug(
-                            f"Cleared stored invocation_id after completed run: {stored_invocation_id}"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to clear stored invocation_id: {e}")
 
             # moving states snapshot events after the text event clousure to avoid this error https://github.com/Contextable/ag-ui/issues/28
             final_state = await self._session_manager.get_session_state(backend_session_id, app_name, user_id)
