@@ -1,11 +1,14 @@
 package com.agui.example.chatapp.data.pairing
 
 import co.touchlab.kermit.Logger
+import com.agui.core.types.RunAgentInput
+import com.agui.core.types.SystemMessage
 import com.agui.example.chatapp.data.model.ClawgUiPairingResponse
 import io.ktor.client.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 private val logger = Logger.withTag("ClawgUiPairingService")
@@ -100,13 +103,21 @@ class ClawgUiPairingService(
             logger.d { "Checking if token is approved for URL: $url" }
             val client = httpClientProvider()
             // Send a proper AG-UI request to check if token is approved
-            // Using a system message to prompt a greeting
-            val threadId = "pairing-verify-${System.currentTimeMillis()}"
-            val runId = java.util.UUID.randomUUID().toString()
+            // Using SDK types to construct the request properly
+            val input = RunAgentInput(
+                threadId = "pairing-verify-${System.currentTimeMillis()}",
+                runId = java.util.UUID.randomUUID().toString(),
+                messages = listOf(
+                    SystemMessage(
+                        id = "sys-greeting",
+                        content = "Greet the user briefly to confirm the connection is working."
+                    )
+                )
+            )
             val response: HttpResponse = client.post(url) {
                 contentType(ContentType.Application.Json)
                 header("Authorization", "Bearer $bearerToken")
-                setBody("""{"threadId":"$threadId","runId":"$runId","messages":[{"id":"sys-1","role":"system","content":"Greet the user briefly to confirm the connection is working."}]}""")
+                setBody(json.encodeToString(input))
             }
 
             when (response.status) {
