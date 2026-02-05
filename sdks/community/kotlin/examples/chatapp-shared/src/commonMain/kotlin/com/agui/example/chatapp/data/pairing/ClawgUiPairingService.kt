@@ -2,12 +2,13 @@ package com.agui.example.chatapp.data.pairing
 
 import co.touchlab.kermit.Logger
 import com.agui.core.types.RunAgentInput
-import com.agui.core.types.SystemMessage
+import com.agui.core.types.UserMessage
 import com.agui.example.chatapp.data.model.ClawgUiPairingResponse
 import io.ktor.client.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
+import kotlinx.datetime.Clock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -104,13 +105,14 @@ class ClawgUiPairingService(
             val client = httpClientProvider()
             // Send a proper AG-UI request to check if token is approved
             // Using SDK types to construct the request properly
+            val timestamp = Clock.System.now().toEpochMilliseconds()
             val input = RunAgentInput(
-                threadId = "pairing-verify-${System.currentTimeMillis()}",
-                runId = java.util.UUID.randomUUID().toString(),
+                threadId = "pairing-verify-$timestamp",
+                runId = "run-$timestamp-${(0..999999).random()}",
                 messages = listOf(
-                    SystemMessage(
-                        id = "sys-greeting",
-                        content = "Greet the user briefly to confirm the connection is working."
+                    UserMessage(
+                        id = "msg-verify-$timestamp",
+                        content = "Hello"
                     )
                 )
             )
@@ -119,6 +121,7 @@ class ClawgUiPairingService(
 
             val response: HttpResponse = client.post(url) {
                 contentType(ContentType.Application.Json)
+                accept(ContentType.Text.EventStream)  // AG-UI expects SSE response
                 header("Authorization", "Bearer $bearerToken")
                 setBody(requestBody)
             }
