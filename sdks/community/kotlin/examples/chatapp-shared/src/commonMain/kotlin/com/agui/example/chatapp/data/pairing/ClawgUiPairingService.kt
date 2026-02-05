@@ -99,11 +99,14 @@ class ClawgUiPairingService(
         return try {
             logger.d { "Checking if token is approved for URL: $url" }
             val client = httpClientProvider()
-            // Send a minimal valid AG-UI request to check if token is approved
+            // Send a proper AG-UI request to check if token is approved
+            // Using a system message to prompt a greeting
+            val threadId = "pairing-verify-${System.currentTimeMillis()}"
+            val runId = java.util.UUID.randomUUID().toString()
             val response: HttpResponse = client.post(url) {
                 contentType(ContentType.Application.Json)
                 header("Authorization", "Bearer $bearerToken")
-                setBody("""{"messages":[{"role":"user","content":"Hello"}]}""")
+                setBody("""{"threadId":"$threadId","runId":"$runId","messages":[{"id":"sys-1","role":"system","content":"Greet the user briefly to confirm the connection is working."}]}""")
             }
 
             when (response.status) {

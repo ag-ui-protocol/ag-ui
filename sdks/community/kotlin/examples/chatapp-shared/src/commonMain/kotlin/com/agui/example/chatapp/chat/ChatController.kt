@@ -241,7 +241,7 @@ class ChatController(
 
     /**
      * Called when user acknowledges the pairing dialog.
-     * Saves the bearer token and retries connection.
+     * Saves the bearer token and verifies it's approved.
      */
     fun completePairing() {
         val currentPairingState = _state.value.clawgUiPairingState
@@ -261,7 +261,7 @@ class ChatController(
             // Brief delay for persistence
             delay(500)
 
-            // Check if token is now approved
+            // Check if token is now approved by sending a proper AG-UI request
             pairingService.isTokenApproved(updatedAgent.url, currentPairingState.bearerToken)
                 .onSuccess { approved ->
                     if (approved) {
