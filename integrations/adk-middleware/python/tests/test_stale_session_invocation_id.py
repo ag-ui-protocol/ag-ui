@@ -352,3 +352,77 @@ class TestDeferredInvocationIdStorage:
             f"No invocation_id operations should happen without ResumabilityConfig. "
             f"Calls with invocation_id: {invocation_calls}"
         )
+
+    @pytest.mark.asyncio
+    async def test_text_message_with_stored_invocation_id_starts_fresh_run(
+        self, resumable_adk_agent
+    ):
+        """Verify that a text message (no tool results) clears a stale invocation_id.
+
+        When the user types a message instead of clicking a HITL tool button,
+        the middleware should NOT attempt HITL resumption. It should clear the
+        stored invocation_id and start a fresh run.
+        """
+        adk_agent = resumable_adk_agent
+
+        update_calls = []
+        run_async_kwargs_capture = {}
+
+        async def tracking_update_state(session_id, app_name, user_id, state):
+            update_calls.append({"state": dict(state) if state else {}})
+            return True
+
+        async def mock_run_async(**kwargs):
+            run_async_kwargs_capture.update(kwargs)
+            yield self._make_mock_event(
+                text="Fresh response", partial=False, invocation_id="inv_fresh"
+            )
+
+        # Simulate state with a stored invocation_id from a previous LRO pause
+        async def mock_get_state(session_id, app_name, user_id):
+            return {INVOCATION_ID_STATE_KEY: "inv_stale_from_lro"}
+
+        # Plain text message - no tool results
+        input_data = RunAgentInput(
+            thread_id=f"test_{uuid.uuid4().hex[:8]}",
+            run_id=f"run_{uuid.uuid4().hex[:8]}",
+            messages=[UserMessage(id="msg1", content="I dont know")],
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={},
+        )
+
+        with patch.object(
+            adk_agent._session_manager,
+            "update_session_state",
+            side_effect=tracking_update_state,
+        ), patch.object(
+            adk_agent._session_manager,
+            "get_session_state",
+            side_effect=mock_get_state,
+        ), patch.object(adk_agent, "_create_runner") as mock_create_runner:
+            mock_runner = AsyncMock()
+            mock_runner.close = AsyncMock()
+            mock_runner.run_async = mock_run_async
+            mock_create_runner.return_value = mock_runner
+
+            events = [event async for event in adk_agent.run(input_data)]
+
+        # The stale invocation_id should be cleared (set to None) BEFORE the run
+        invocation_clear_calls = [
+            c
+            for c in update_calls
+            if INVOCATION_ID_STATE_KEY in c["state"]
+            and c["state"][INVOCATION_ID_STATE_KEY] is None
+        ]
+        assert len(invocation_clear_calls) >= 1, (
+            f"Stale invocation_id should be cleared when user sends text instead of tool result. "
+            f"All update_session_state calls: {update_calls}"
+        )
+
+        # run_async should NOT receive the stale invocation_id
+        assert "invocation_id" not in run_async_kwargs_capture, (
+            f"run_async should not receive invocation_id for a text message. "
+            f"Got kwargs: {run_async_kwargs_capture}"
+        )
