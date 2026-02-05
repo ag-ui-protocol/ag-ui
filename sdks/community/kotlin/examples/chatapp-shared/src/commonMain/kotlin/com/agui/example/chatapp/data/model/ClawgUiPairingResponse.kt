@@ -1,6 +1,5 @@
 package com.agui.example.chatapp.data.model
 
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
@@ -8,21 +7,34 @@ import kotlinx.serialization.Serializable
  *
  * Expected JSON structure:
  * {
- *   "pairing_code": "ABCD1234",
- *   "bearer_token": "temp_token_xxx",
- *   "instructions": "Share the pairing code with the gateway owner...",
- *   "approval_command": "openclaw pairing approve clawg-ui ABCD1234"
+ *   "error": {
+ *     "type": "pairing_pending",
+ *     "message": "Device pending approval",
+ *     "pairing": {
+ *       "pairingCode": "ABCD1234",
+ *       "token": "MmRlOTA0ODIt...b71d",
+ *       "instructions": "Save this token for use as a Bearer token..."
+ *     }
+ *   }
  * }
  */
 @Serializable
 data class ClawgUiPairingResponse(
-    @SerialName("pairing_code")
+    val error: ClawgUiError
+)
+
+@Serializable
+data class ClawgUiError(
+    val type: String,
+    val message: String? = null,
+    val pairing: ClawgUiPairingInfo? = null
+)
+
+@Serializable
+data class ClawgUiPairingInfo(
     val pairingCode: String,
-    @SerialName("bearer_token")
-    val bearerToken: String,
-    val instructions: String? = null,
-    @SerialName("approval_command")
-    val approvalCommand: String? = null
+    val token: String,
+    val instructions: String? = null
 )
 
 /**

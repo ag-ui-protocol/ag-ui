@@ -213,15 +213,15 @@ class ChatController(
 
         pairingService.initiatePairing(agentConfig.url)
             .onSuccess { response ->
+                val pairing = response.error.pairing!!
                 _state.update {
                     it.copy(
                         clawgUiPairingState = ClawgUiPairingState.PendingApproval(
-                            pairingCode = response.pairingCode,
-                            bearerToken = response.bearerToken,
-                            instructions = response.instructions
+                            pairingCode = pairing.pairingCode,
+                            bearerToken = pairing.token,
+                            instructions = pairing.instructions
                                 ?: "Share the pairing code with the gateway owner.",
-                            approvalCommand = response.approvalCommand
-                                ?: "openclaw pairing approve clawg-ui ${response.pairingCode}"
+                            approvalCommand = "openclaw pairing approve clawg-ui ${pairing.pairingCode}"
                         )
                     )
                 }

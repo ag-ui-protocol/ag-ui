@@ -48,8 +48,29 @@ class ClawgUiPairingService(
                 HttpStatusCode.Forbidden -> {
                     val body = response.bodyAsText()
                     logger.d { "Received 403 pairing response: $body" }
-                    val pairingResponse = json.decodeFromString<ClawgUiPairingResponse>(body)
-                    Result.success(pairingResponse)
+                    try {
+                        val pairingResponse = json.decodeFromString<ClawgUiPairingResponse>(body)
+                        // Validate that pairing info is present
+                        val pairingInfo = pairingResponse.error.pairing
+                        if (pairingInfo == null) {
+                            logger.e { "403 response missing pairing info. Raw body: $body" }
+                            Result.failure(PairingException(
+                                "Server returned 403 but no pairing information. " +
+                                "This may not be a clawg-ui pairing response. " +
+                                "Error type: ${pairingResponse.error.type}, " +
+                                "Message: ${pairingResponse.error.message}"
+                            ))
+                        } else {
+                            Result.success(pairingResponse)
+                        }
+                    } catch (e: Exception) {
+                        logger.e { "Failed to parse pairing response. Raw body: $body" }
+                        Result.failure(PairingException(
+                            "Server returned 403 but response format is invalid. " +
+                            "Raw response: ${body.take(500)}",
+                            e
+                        ))
+                    }
                 }
                 HttpStatusCode.OK -> {
                     Result.failure(AlreadyPairedException("Token is already approved"))
