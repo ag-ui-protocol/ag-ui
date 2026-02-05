@@ -1610,18 +1610,21 @@ class TestDatabaseSessionServiceCompatibility:
         )
 
     @pytest.mark.asyncio
-    async def test_invocation_id_set_on_function_response_event_tool_results_only(self, ag_ui_adk):
-        """Test invocation_id is set when tool results arrive WITHOUT a user message.
+    async def test_no_explicit_persist_for_tool_results_only(self, ag_ui_adk):
+        """Test that we do NOT explicitly persist function_response when no user message.
 
-        This tests the tool-results-only branch in adk_agent.py (the elif active_tool_results
-        path around line 1486). In HITL workflows, clients may send back just the tool result
-        without any additional user message.
+        When tool results arrive WITHOUT a trailing user message, ag-ui-adk should NOT
+        explicitly persist the function_response. Instead, ADK's runner will persist it
+        when processing the function_response_content as new_message.
 
-        Regression test for PR #958.
+        This prevents duplicate function_response events (one from explicit persist,
+        one from ADK's runner) when using DatabaseSessionService.
+
+        Related to PR #958 (invocation_id) and duplicate function_response bug fix.
         """
-        thread_id = "test_thread_invocation_id_tool_only"
-        tool_call_id = "tool_call_tool_only_test"
-        expected_run_id = "run_id_tool_only_67890"
+        thread_id = "test_thread_no_explicit_persist"
+        tool_call_id = "tool_call_no_persist_test"
+        expected_run_id = "run_id_no_persist_67890"
 
         # Create input with tool result ONLY (no trailing user message)
         input_data = RunAgentInput(
@@ -1670,7 +1673,7 @@ class TestDatabaseSessionServiceCompatibility:
             processed_message_ids=["user_1", "assistant_1"],
         )
 
-        # Mock runner to avoid LLM calls
+        # Mock runner to avoid LLM calls - importantly, this mock does NOT persist anything
         class MockRunner:
             async def run_async(self, **kwargs):
                 return
@@ -1698,14 +1701,30 @@ class TestDatabaseSessionServiceCompatibility:
                 message_batch=None  # No trailing user message.
             )
 
-        # Assert invocation_id is persisted.
+        # Verify: ag-ui-adk should NOT have explicitly persisted the function_response
+        # In production, ADK's runner would persist it, but our mock doesn't
         session = await ag_ui_adk._session_manager._session_service.get_session(
             session_id=backend_session_id,
             app_name=app_name,
             user_id="test_user"
         )
-        self._assert_function_response_invocation_id(
-            session, tool_call_id, expected_run_id
+
+        # Count function_response events for this tool_call_id
+        function_response_count = 0
+        for event in session.events:
+            if event.content and hasattr(event.content, "parts"):
+                for part in event.content.parts:
+                    if hasattr(part, "function_response") and part.function_response:
+                        fr = part.function_response
+                        if hasattr(fr, "id") and fr.id == tool_call_id:
+                            function_response_count += 1
+
+        # With the duplicate bug fix, ag-ui-adk does NOT explicitly persist in this path
+        # (ADK's runner would persist 1 in production, but our mock doesn't persist)
+        assert function_response_count == 0, (
+            f"Expected 0 function_response events from ag-ui-adk explicit persist "
+            f"(ADK runner would add 1 in production), but found {function_response_count}. "
+            f"This suggests the duplicate function_response bug fix may have regressed."
         )
 
     @pytest.mark.asyncio
