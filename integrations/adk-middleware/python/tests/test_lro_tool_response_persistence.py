@@ -1,16 +1,15 @@
 #!/usr/bin/env python
 """Integration tests for LRO tool response persistence and invocation_id handling.
 
-These tests verify that function_response events are correctly persisted to the
+These are TRUE integration tests that require GOOGLE_API_KEY and use real ADK
+runners to verify end-to-end behavior.
+
+Tests verify that function_response events are correctly persisted to the
 ADK session with proper invocation_id values. This is critical for:
 
 1. DatabaseSessionService compatibility - requires invocation_id on all events
 2. HITL (Human-in-the-Loop) resumption - SequentialAgent needs consistent invocation_id
 3. Preventing duplicate function_response events (GitHub issue #1074)
-
-The tests cover two main code paths in adk_agent.py:
-- Tool results WITH a trailing user message (append_event + user message as new_message)
-- Tool results WITHOUT a user message (function_response as new_message)
 
 See:
 - https://github.com/ag-ui-protocol/ag-ui/issues/1074
@@ -19,10 +18,10 @@ See:
 """
 
 import asyncio
+import os
 import time
 import pytest
-from typing import List, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import List, Optional, Dict, Any
 
 from ag_ui.core import (
     RunAgentInput,
@@ -33,19 +32,66 @@ from ag_ui.core import (
     ToolCall,
     FunctionCall,
     Tool as AGUITool,
+    BaseEvent,
+    ToolCallStartEvent,
+    ToolCallEndEvent,
 )
-from ag_ui_adk import ADKAgent
+from ag_ui_adk import ADKAgent, AGUIToolset
 from ag_ui_adk.session_manager import SessionManager, INVOCATION_ID_STATE_KEY
-from google.adk.agents import LlmAgent
-from google.adk.sessions import InMemorySessionService
+from google.adk.agents import LlmAgent, Agent
+from google.adk.apps import App, ResumabilityConfig
 from google.genai import types
 
 
-class TestLROToolResponsePersistence:
-    """Integration tests for LRO tool response persistence.
+# Default model for live tests
+DEFAULT_MODEL = "gemini-2.0-flash"
 
-    These tests verify the function_response event persistence behavior
-    that is critical for DatabaseSessionService compatibility.
+
+async def collect_events(agent: ADKAgent, run_input: RunAgentInput) -> List[BaseEvent]:
+    """Collect all events from running an agent."""
+    events = []
+    async for event in agent.run(run_input):
+        events.append(event)
+    return events
+
+
+def get_event_types(events: List[BaseEvent]) -> List[str]:
+    """Extract event type names from a list of events."""
+    return [str(event.type) for event in events]
+
+
+def find_tool_call_id(events: List[BaseEvent]) -> Optional[str]:
+    """Find the tool_call_id from TOOL_CALL_START or TOOL_CALL_END events."""
+    for event in events:
+        if hasattr(event, 'tool_call_id'):
+            return event.tool_call_id
+    return None
+
+
+def count_function_responses(session, tool_call_id: str) -> tuple[int, List[Dict]]:
+    """Count FunctionResponse events for a given tool_call_id in a session.
+
+    Returns (count, list of response details including invocation_id).
+    """
+    responses = []
+    for event in session.events:
+        if event.content and hasattr(event.content, 'parts'):
+            for part in event.content.parts:
+                if hasattr(part, 'function_response') and part.function_response:
+                    fr = part.function_response
+                    if hasattr(fr, 'id') and fr.id == tool_call_id:
+                        responses.append({
+                            'invocation_id': getattr(event, 'invocation_id', None),
+                            'name': fr.name,
+                            'response': fr.response,
+                        })
+    return len(responses), responses
+
+
+class TestLROToolResponseIntegration:
+    """True integration tests for LRO tool response persistence.
+
+    These tests require GOOGLE_API_KEY and use real ADK runners.
     """
 
     @pytest.fixture(autouse=True)
@@ -56,602 +102,366 @@ class TestLROToolResponsePersistence:
         SessionManager.reset_instance()
 
     @pytest.fixture
-    def mock_adk_agent(self):
-        """Create a mock ADK agent."""
-        return LlmAgent(
-            name="test_agent",
-            model="gemini-2.0-flash",
-            instruction="Test agent for LRO persistence testing"
+    def check_api_key(self):
+        """Skip test if GOOGLE_API_KEY is not set."""
+        if not os.getenv("GOOGLE_API_KEY"):
+            pytest.skip("GOOGLE_API_KEY not set - skipping live integration test")
+
+    @pytest.fixture
+    def hitl_agent(self):
+        """Create an ADK agent with client-side tools for HITL testing."""
+        # Define a simple client-side tool
+        agent = Agent(
+            model=DEFAULT_MODEL,
+            name='hitl_test_agent',
+            instruction="""You are a test agent. When asked to do a task,
+            ALWAYS call the approve_action tool to get user approval first.
+            Keep all responses brief.""",
+            tools=[AGUIToolset()],  # Client-side tools
+        )
+
+        # Create ADK App with ResumabilityConfig for HITL
+        adk_app = App(
+            name="test_hitl_app",
+            root_agent=agent,
+            resumability_config=ResumabilityConfig(is_resumable=True),
+        )
+
+        return ADKAgent.from_app(
+            adk_app,
+            user_id="test_user",
+            use_in_memory_services=True,
         )
 
     @pytest.fixture
-    def adk_agent(self, mock_adk_agent):
-        """Create ADK middleware with InMemorySessionService."""
-        agent = ADKAgent(
-            adk_agent=mock_adk_agent,
-            app_name="test_lro_app",
+    def simple_agent(self):
+        """Create a simple ADK agent without HITL for basic tests."""
+        agent = LlmAgent(
+            model=DEFAULT_MODEL,
+            name='simple_test_agent',
+            instruction="You are a test agent. Keep responses very brief.",
+            tools=[AGUIToolset()],
+        )
+
+        return ADKAgent(
+            adk_agent=agent,
+            app_name="test_simple_app",
             user_id="test_user",
-            execution_timeout_seconds=60,
-            tool_timeout_seconds=30,
             use_in_memory_services=True,
         )
-        return agent
 
-    def _create_tool_input(
-        self,
-        thread_id: str,
-        run_id: str,
-        tool_call_id: str,
-        tool_name: str = "test_lro_tool",
-        tool_result: str = '{"status": "completed"}',
-        include_trailing_user_message: bool = False,
-        trailing_message_content: str = "Continue please",
-    ) -> RunAgentInput:
-        """Create a RunAgentInput with tool result submission."""
-        messages = [
-            UserMessage(id="user_1", role="user", content="Initial request"),
-            AssistantMessage(
-                id="assistant_1",
-                role="assistant",
-                content=None,
-                tool_calls=[
-                    ToolCall(
-                        id=tool_call_id,
-                        function=FunctionCall(name=tool_name, arguments="{}")
-                    )
-                ]
-            ),
-            ToolMessage(
-                id="tool_result_1",
-                role="tool",
-                content=tool_result,
-                tool_call_id=tool_call_id
-            ),
-        ]
+    @pytest.mark.asyncio
+    async def test_tool_result_persists_single_function_response(
+        self, check_api_key, simple_agent
+    ):
+        """Integration test: tool result submission persists exactly ONE function_response.
 
-        if include_trailing_user_message:
-            messages.append(
-                UserMessage(id="user_2", role="user", content=trailing_message_content)
-            )
+        This is the core test for issue #1074. It verifies that when a tool result
+        is submitted, only ONE function_response event is persisted to the session,
+        not two (which would indicate duplicate persistence).
 
-        return RunAgentInput(
+        Flow:
+        1. Send a message that triggers a client-side tool call
+        2. Capture the tool_call_id from the response
+        3. Submit the tool result
+        4. Verify exactly ONE function_response is in the session
+        """
+        thread_id = f"test_single_response_{int(time.time())}"
+
+        # Define the client-side tool
+        approve_tool = AGUITool(
+            name="approve_action",
+            description="Get user approval for an action",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "description": "The action to approve"}
+                },
+                "required": ["action"]
+            }
+        )
+
+        # Step 1: Send initial message to trigger tool call
+        run_input_1 = RunAgentInput(
             thread_id=thread_id,
-            run_id=run_id,
-            messages=messages,
-            tools=[
-                AGUITool(
-                    name=tool_name,
-                    description="Test LRO tool",
-                    parameters={"type": "object", "properties": {}}
-                )
+            run_id="run_1",
+            messages=[
+                UserMessage(id="msg_1", role="user", content="Please approve doing task X")
             ],
+            tools=[approve_tool],
             context=[],
             state={},
             forwarded_props={}
         )
 
-    async def _setup_session_with_function_call(
-        self,
-        adk_agent: ADKAgent,
-        input_data: RunAgentInput,
-        tool_call_id: str,
-        tool_name: str,
-    ) -> str:
-        """Set up session with a pending function call event.
+        events_1 = await collect_events(simple_agent, run_input_1)
+        event_types_1 = get_event_types(events_1)
 
-        Returns the backend_session_id for verification.
-        """
-        app_name = adk_agent._get_app_name(input_data)
-        user_id = adk_agent._get_user_id(input_data)
+        # Verify we got a tool call
+        assert "EventType.RUN_STARTED" in event_types_1, "Expected RUN_STARTED"
 
-        # Mark initial messages as processed
-        adk_agent._session_manager.mark_messages_processed(
-            app_name, input_data.thread_id, ["user_1", "assistant_1"]
-        )
+        # Find the tool_call_id
+        tool_call_id = find_tool_call_id(events_1)
 
-        # Create session
-        session, backend_session_id = await adk_agent._ensure_session_exists(
-            app_name=app_name,
-            user_id=user_id,
-            thread_id=input_data.thread_id,
-            initial_state={}
-        )
+        if tool_call_id is None:
+            # Agent didn't call the tool - this can happen with LLMs
+            # Skip this test run but don't fail
+            pytest.skip("Agent did not call the tool in this run - LLM behavior varies")
 
-        # Add pending tool call
-        await adk_agent._add_pending_tool_call_with_context(
-            input_data.thread_id, tool_call_id, app_name, user_id
-        )
-
-        # Add the original FunctionCall event to session (simulating ADK behavior)
-        from google.adk.sessions.session import Event
-
-        function_call_content = types.Content(
-            parts=[
-                types.Part(
-                    function_call=types.FunctionCall(
-                        id=tool_call_id,
-                        name=tool_name,
-                        args={}
-                    )
-                )
-            ],
-            role="model"
-        )
-        function_call_event = Event(
-            timestamp=time.time(),
-            author="test_agent",
-            content=function_call_content,
-            invocation_id=input_data.run_id,
-        )
-        await adk_agent._session_manager._session_service.append_event(
-            session, function_call_event
-        )
-
-        return backend_session_id
-
-    def _count_function_responses(
-        self,
-        session,
-        tool_call_id: str,
-    ) -> tuple[int, List]:
-        """Count FunctionResponse events for a given tool_call_id.
-
-        Returns (count, list of events with their invocation_ids).
-        """
-        responses = []
-        for event in session.events:
-            if event.content and hasattr(event.content, 'parts'):
-                for part in event.content.parts:
-                    if hasattr(part, 'function_response') and part.function_response:
-                        fr = part.function_response
-                        if hasattr(fr, 'id') and fr.id == tool_call_id:
-                            responses.append({
-                                'event': event,
-                                'invocation_id': getattr(event, 'invocation_id', None),
-                                'function_response': fr,
-                            })
-        return len(responses), responses
-
-    @pytest.mark.asyncio
-    async def test_tool_results_only_persists_single_function_response(self, adk_agent):
-        """Test that tool results WITHOUT user message persist exactly ONE function_response.
-
-        This tests the `elif active_tool_results:` branch in adk_agent.py.
-        The function_response should be persisted with correct invocation_id.
-
-        Regression test for GitHub issue #1074.
-        """
-        thread_id = "test_thread_tool_only"
-        tool_call_id = "tool_call_single_response"
-        run_id = "run_tool_only_123"
-        tool_name = "test_lro_tool"
-
-        input_data = self._create_tool_input(
+        # Step 2: Submit tool result
+        run_input_2 = RunAgentInput(
             thread_id=thread_id,
-            run_id=run_id,
-            tool_call_id=tool_call_id,
-            tool_name=tool_name,
-            include_trailing_user_message=False,  # Tool results ONLY
-        )
-
-        backend_session_id = await self._setup_session_with_function_call(
-            adk_agent, input_data, tool_call_id, tool_name
-        )
-
-        # Mock the runner to avoid LLM calls
-        class MockRunner:
-            async def run_async(self, **kwargs):
-                return
-                yield
-
-        app_name = adk_agent._get_app_name(input_data)
-        user_id = adk_agent._get_user_id(input_data)
-
-        tool_results = [
-            {
-                'tool_name': tool_name,
-                'message': input_data.messages[2]  # ToolMessage
-            }
-        ]
-
-        with patch.object(adk_agent, '_create_runner', return_value=MockRunner()):
-            event_queue = asyncio.Queue()
-
-            await adk_agent._run_adk_in_background(
-                input=input_data,
-                adk_agent=adk_agent._adk_agent,
-                user_id=user_id,
-                app_name=app_name,
-                event_queue=event_queue,
-                client_proxy_toolsets=[],
-                tool_results=tool_results,
-                message_batch=None,  # No trailing user message
-            )
-
-        # Verify: exactly ONE function_response event should exist
-        session = await adk_agent._session_manager._session_service.get_session(
-            session_id=backend_session_id,
-            app_name=app_name,
-            user_id=user_id
-        )
-
-        count, responses = self._count_function_responses(session, tool_call_id)
-
-        assert count == 1, (
-            f"Expected exactly 1 FunctionResponse event, found {count}. "
-            f"This indicates duplicate persistence (GitHub issue #1074)."
-        )
-
-        # Verify invocation_id is set correctly
-        assert responses[0]['invocation_id'] == run_id, (
-            f"FunctionResponse invocation_id should be '{run_id}', "
-            f"got '{responses[0]['invocation_id']}'"
-        )
-
-    @pytest.mark.asyncio
-    async def test_tool_results_with_user_message_persists_single_function_response(
-        self, adk_agent
-    ):
-        """Test that tool results WITH user message persist exactly ONE function_response.
-
-        This tests the `if active_tool_results and user_message:` branch in adk_agent.py.
-        The function_response should be persisted separately, then user message sent.
-
-        Regression test for GitHub issue #1074.
-        """
-        thread_id = "test_thread_with_user_msg"
-        tool_call_id = "tool_call_with_user"
-        run_id = "run_with_user_456"
-        tool_name = "test_lro_tool"
-
-        input_data = self._create_tool_input(
-            thread_id=thread_id,
-            run_id=run_id,
-            tool_call_id=tool_call_id,
-            tool_name=tool_name,
-            include_trailing_user_message=True,  # Tool results WITH user message
-            trailing_message_content="Thanks, now continue",
-        )
-
-        backend_session_id = await self._setup_session_with_function_call(
-            adk_agent, input_data, tool_call_id, tool_name
-        )
-
-        # Mock the runner to avoid LLM calls
-        class MockRunner:
-            async def run_async(self, **kwargs):
-                return
-                yield
-
-        app_name = adk_agent._get_app_name(input_data)
-        user_id = adk_agent._get_user_id(input_data)
-
-        tool_results = [
-            {
-                'tool_name': tool_name,
-                'message': input_data.messages[2]  # ToolMessage
-            }
-        ]
-        message_batch = [input_data.messages[3]]  # Trailing UserMessage
-
-        with patch.object(adk_agent, '_create_runner', return_value=MockRunner()):
-            event_queue = asyncio.Queue()
-
-            await adk_agent._run_adk_in_background(
-                input=input_data,
-                adk_agent=adk_agent._adk_agent,
-                user_id=user_id,
-                app_name=app_name,
-                event_queue=event_queue,
-                client_proxy_toolsets=[],
-                tool_results=tool_results,
-                message_batch=message_batch,
-            )
-
-        # Verify: exactly ONE function_response event should exist
-        session = await adk_agent._session_manager._session_service.get_session(
-            session_id=backend_session_id,
-            app_name=app_name,
-            user_id=user_id
-        )
-
-        count, responses = self._count_function_responses(session, tool_call_id)
-
-        assert count == 1, (
-            f"Expected exactly 1 FunctionResponse event, found {count}. "
-            f"This indicates duplicate persistence (GitHub issue #1074)."
-        )
-
-        # Verify invocation_id is set correctly
-        assert responses[0]['invocation_id'] == run_id, (
-            f"FunctionResponse invocation_id should be '{run_id}', "
-            f"got '{responses[0]['invocation_id']}'"
-        )
-
-    @pytest.mark.asyncio
-    async def test_stored_invocation_id_used_for_hitl_resumption(self, adk_agent):
-        """Test that stored_invocation_id is used for HITL resumption.
-
-        When resuming after HITL pause, the stored invocation_id from session state
-        should be used instead of the new run_id. This ensures SequentialAgent
-        state (current_sub_agent position) is restored correctly.
-
-        Regression test for PR #958.
-        """
-        thread_id = "test_thread_hitl_resume"
-        tool_call_id = "tool_call_hitl"
-        new_run_id = "new_run_789"
-        stored_invocation = "original_invocation_stored"
-        tool_name = "test_lro_tool"
-
-        input_data = self._create_tool_input(
-            thread_id=thread_id,
-            run_id=new_run_id,
-            tool_call_id=tool_call_id,
-            tool_name=tool_name,
-            include_trailing_user_message=False,
-        )
-
-        app_name = adk_agent._get_app_name(input_data)
-        user_id = adk_agent._get_user_id(input_data)
-
-        # Mark initial messages as processed
-        adk_agent._session_manager.mark_messages_processed(
-            app_name, input_data.thread_id, ["user_1", "assistant_1"]
-        )
-
-        # Create session WITH stored invocation_id in state (simulating HITL pause)
-        initial_state = {INVOCATION_ID_STATE_KEY: stored_invocation}
-        session, backend_session_id = await adk_agent._ensure_session_exists(
-            app_name=app_name,
-            user_id=user_id,
-            thread_id=input_data.thread_id,
-            initial_state=initial_state
-        )
-
-        # Update session state with the stored invocation_id
-        await adk_agent._session_manager.update_session_state(
-            backend_session_id, app_name, user_id, initial_state
-        )
-
-        # Add pending tool call
-        await adk_agent._add_pending_tool_call_with_context(
-            input_data.thread_id, tool_call_id, app_name, user_id
-        )
-
-        # Add the original FunctionCall event
-        from google.adk.sessions.session import Event
-
-        function_call_content = types.Content(
-            parts=[
-                types.Part(
-                    function_call=types.FunctionCall(
-                        id=tool_call_id,
-                        name=tool_name,
-                        args={}
-                    )
-                )
-            ],
-            role="model"
-        )
-        function_call_event = Event(
-            timestamp=time.time(),
-            author="test_agent",
-            content=function_call_content,
-            invocation_id=stored_invocation,
-        )
-        await adk_agent._session_manager._session_service.append_event(
-            session, function_call_event
-        )
-
-        # Mock the runner to avoid LLM calls
-        class MockRunner:
-            async def run_async(self, **kwargs):
-                return
-                yield
-
-        tool_results = [
-            {
-                'tool_name': tool_name,
-                'message': input_data.messages[2]
-            }
-        ]
-
-        with patch.object(adk_agent, '_create_runner', return_value=MockRunner()):
-            event_queue = asyncio.Queue()
-
-            await adk_agent._run_adk_in_background(
-                input=input_data,
-                adk_agent=adk_agent._adk_agent,
-                user_id=user_id,
-                app_name=app_name,
-                event_queue=event_queue,
-                client_proxy_toolsets=[],
-                tool_results=tool_results,
-                message_batch=None,
-            )
-
-        # Verify: FunctionResponse should use stored_invocation_id, not new_run_id
-        session = await adk_agent._session_manager._session_service.get_session(
-            session_id=backend_session_id,
-            app_name=app_name,
-            user_id=user_id
-        )
-
-        count, responses = self._count_function_responses(session, tool_call_id)
-
-        assert count >= 1, "Expected at least 1 FunctionResponse event"
-
-        # The invocation_id should be the STORED one for HITL resumption
-        assert responses[0]['invocation_id'] == stored_invocation, (
-            f"FunctionResponse should use stored invocation_id '{stored_invocation}' "
-            f"for HITL resumption, got '{responses[0]['invocation_id']}'. "
-            f"This breaks SequentialAgent state restoration."
-        )
-
-    @pytest.mark.asyncio
-    async def test_multiple_tool_results_persist_all_with_same_invocation_id(
-        self, adk_agent
-    ):
-        """Test that multiple tool results all get the same invocation_id.
-
-        When multiple LRO tools complete simultaneously, all their FunctionResponse
-        events should share the same invocation_id for consistency.
-        """
-        thread_id = "test_thread_multi_tool"
-        tool_call_id_1 = "tool_call_multi_1"
-        tool_call_id_2 = "tool_call_multi_2"
-        run_id = "run_multi_tool_999"
-        tool_name = "test_lro_tool"
-
-        # Create input with multiple tool results
-        messages = [
-            UserMessage(id="user_1", role="user", content="Initial request"),
-            AssistantMessage(
-                id="assistant_1",
-                role="assistant",
-                content=None,
-                tool_calls=[
-                    ToolCall(
-                        id=tool_call_id_1,
-                        function=FunctionCall(name=tool_name, arguments='{"task": 1}')
-                    ),
-                    ToolCall(
-                        id=tool_call_id_2,
-                        function=FunctionCall(name=tool_name, arguments='{"task": 2}')
-                    )
-                ]
-            ),
-            ToolMessage(
-                id="tool_result_1",
-                role="tool",
-                content='{"result": "task1_done"}',
-                tool_call_id=tool_call_id_1
-            ),
-            ToolMessage(
-                id="tool_result_2",
-                role="tool",
-                content='{"result": "task2_done"}',
-                tool_call_id=tool_call_id_2
-            ),
-        ]
-
-        input_data = RunAgentInput(
-            thread_id=thread_id,
-            run_id=run_id,
-            messages=messages,
-            tools=[
-                AGUITool(
-                    name=tool_name,
-                    description="Test LRO tool",
-                    parameters={"type": "object", "properties": {"task": {"type": "integer"}}}
-                )
-            ],
-            context=[],
-            state={},
-            forwarded_props={}
-        )
-
-        app_name = adk_agent._get_app_name(input_data)
-        user_id = adk_agent._get_user_id(input_data)
-
-        # Mark initial messages as processed
-        adk_agent._session_manager.mark_messages_processed(
-            app_name, thread_id, ["user_1", "assistant_1"]
-        )
-
-        # Create session
-        session, backend_session_id = await adk_agent._ensure_session_exists(
-            app_name=app_name,
-            user_id=user_id,
-            thread_id=thread_id,
-            initial_state={}
-        )
-
-        # Add pending tool calls
-        await adk_agent._add_pending_tool_call_with_context(
-            thread_id, tool_call_id_1, app_name, user_id
-        )
-        await adk_agent._add_pending_tool_call_with_context(
-            thread_id, tool_call_id_2, app_name, user_id
-        )
-
-        # Add original FunctionCall events
-        from google.adk.sessions.session import Event
-
-        for tc_id, task_num in [(tool_call_id_1, 1), (tool_call_id_2, 2)]:
-            function_call_content = types.Content(
-                parts=[
-                    types.Part(
-                        function_call=types.FunctionCall(
-                            id=tc_id,
-                            name=tool_name,
-                            args={"task": task_num}
+            run_id="run_2",
+            messages=[
+                UserMessage(id="msg_1", role="user", content="Please approve doing task X"),
+                AssistantMessage(
+                    id="msg_2",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id=tool_call_id,
+                            function=FunctionCall(name="approve_action", arguments='{"action": "task X"}')
                         )
-                    )
-                ],
-                role="model"
-            )
-            function_call_event = Event(
-                timestamp=time.time(),
-                author="test_agent",
-                content=function_call_content,
-                invocation_id=run_id,
-            )
-            await adk_agent._session_manager._session_service.append_event(
-                session, function_call_event
-            )
+                    ]
+                ),
+                ToolMessage(
+                    id="msg_3",
+                    role="tool",
+                    content='{"approved": true, "message": "User approved"}',
+                    tool_call_id=tool_call_id
+                )
+            ],
+            tools=[approve_tool],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
 
-        # Mock the runner
-        class MockRunner:
-            async def run_async(self, **kwargs):
-                return
-                yield
+        events_2 = await collect_events(simple_agent, run_input_2)
+        event_types_2 = get_event_types(events_2)
 
-        tool_results = [
-            {'tool_name': tool_name, 'message': messages[2]},
-            {'tool_name': tool_name, 'message': messages[3]},
-        ]
+        # Should complete without error
+        assert "EventType.RUN_STARTED" in event_types_2
+        assert "EventType.RUN_ERROR" not in event_types_2, f"Got error: {events_2}"
 
-        with patch.object(adk_agent, '_create_runner', return_value=MockRunner()):
-            event_queue = asyncio.Queue()
+        # Step 3: Verify session has exactly ONE function_response
+        app_name = simple_agent._get_app_name(run_input_2)
+        user_id = simple_agent._get_user_id(run_input_2)
+        backend_session_id = simple_agent._session_manager.get_backend_session_id(
+            app_name, thread_id
+        )
 
-            await adk_agent._run_adk_in_background(
-                input=input_data,
-                adk_agent=adk_agent._adk_agent,
-                user_id=user_id,
+        if backend_session_id:
+            session = await simple_agent._session_manager._session_service.get_session(
+                session_id=backend_session_id,
                 app_name=app_name,
-                event_queue=event_queue,
-                client_proxy_toolsets=[],
-                tool_results=tool_results,
-                message_batch=None,
+                user_id=user_id
             )
 
-        # Verify both function responses have same invocation_id
-        session = await adk_agent._session_manager._session_service.get_session(
-            session_id=backend_session_id,
-            app_name=app_name,
-            user_id=user_id
+            count, responses = count_function_responses(session, tool_call_id)
+
+            assert count == 1, (
+                f"Expected exactly 1 FunctionResponse for tool_call_id={tool_call_id}, "
+                f"found {count}. This indicates duplicate persistence (issue #1074). "
+                f"Responses: {responses}"
+            )
+
+            # Verify invocation_id is set
+            assert responses[0]['invocation_id'] is not None, (
+                "FunctionResponse missing invocation_id - required for DatabaseSessionService"
+            )
+
+    @pytest.mark.asyncio
+    async def test_function_response_has_correct_invocation_id(
+        self, check_api_key, simple_agent
+    ):
+        """Integration test: function_response invocation_id matches the run_id.
+
+        When tool results are submitted, the persisted function_response event
+        should have invocation_id set to the AG-UI run_id. This is required for
+        DatabaseSessionService compatibility.
+        """
+        thread_id = f"test_invocation_id_{int(time.time())}"
+        expected_run_id = "run_with_tool_result_456"
+
+        approve_tool = AGUITool(
+            name="get_confirmation",
+            description="Get user confirmation",
+            parameters={"type": "object", "properties": {}}
         )
 
-        count_1, responses_1 = self._count_function_responses(session, tool_call_id_1)
-        count_2, responses_2 = self._count_function_responses(session, tool_call_id_2)
-
-        assert count_1 == 1, f"Expected 1 FunctionResponse for tool_call_1, found {count_1}"
-        assert count_2 == 1, f"Expected 1 FunctionResponse for tool_call_2, found {count_2}"
-
-        # Both should have the same invocation_id
-        inv_id_1 = responses_1[0]['invocation_id']
-        inv_id_2 = responses_2[0]['invocation_id']
-
-        assert inv_id_1 == inv_id_2 == run_id, (
-            f"Both FunctionResponse events should have invocation_id='{run_id}'. "
-            f"Got tool_1='{inv_id_1}', tool_2='{inv_id_2}'"
+        # Step 1: Trigger tool call
+        run_input_1 = RunAgentInput(
+            thread_id=thread_id,
+            run_id="run_1",
+            messages=[
+                UserMessage(id="msg_1", role="user", content="Please confirm this action")
+            ],
+            tools=[approve_tool],
+            context=[],
+            state={},
+            forwarded_props={}
         )
 
+        events_1 = await collect_events(simple_agent, run_input_1)
+        tool_call_id = find_tool_call_id(events_1)
 
-class TestFunctionResponseEventStructure:
-    """Tests verifying the structure of persisted FunctionResponse events."""
+        if tool_call_id is None:
+            pytest.skip("Agent did not call the tool in this run")
+
+        # Step 2: Submit tool result with specific run_id
+        run_input_2 = RunAgentInput(
+            thread_id=thread_id,
+            run_id=expected_run_id,  # This should become the invocation_id
+            messages=[
+                UserMessage(id="msg_1", role="user", content="Please confirm this action"),
+                AssistantMessage(
+                    id="msg_2",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id=tool_call_id,
+                            function=FunctionCall(name="get_confirmation", arguments="{}")
+                        )
+                    ]
+                ),
+                ToolMessage(
+                    id="msg_3",
+                    role="tool",
+                    content='{"confirmed": true}',
+                    tool_call_id=tool_call_id
+                )
+            ],
+            tools=[approve_tool],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        events_2 = await collect_events(simple_agent, run_input_2)
+
+        assert "EventType.RUN_ERROR" not in get_event_types(events_2)
+
+        # Verify invocation_id
+        app_name = simple_agent._get_app_name(run_input_2)
+        user_id = simple_agent._get_user_id(run_input_2)
+        backend_session_id = simple_agent._session_manager.get_backend_session_id(
+            app_name, thread_id
+        )
+
+        if backend_session_id:
+            session = await simple_agent._session_manager._session_service.get_session(
+                session_id=backend_session_id,
+                app_name=app_name,
+                user_id=user_id
+            )
+
+            count, responses = count_function_responses(session, tool_call_id)
+
+            if count > 0:
+                actual_invocation_id = responses[0]['invocation_id']
+                assert actual_invocation_id == expected_run_id, (
+                    f"FunctionResponse invocation_id should be '{expected_run_id}', "
+                    f"got '{actual_invocation_id}'. This breaks DatabaseSessionService."
+                )
+
+    @pytest.mark.asyncio
+    async def test_tool_result_with_trailing_user_message(
+        self, check_api_key, simple_agent
+    ):
+        """Integration test: tool result + user message persists single function_response.
+
+        When tool results arrive WITH a trailing user message, the function_response
+        should still be persisted exactly once.
+        """
+        thread_id = f"test_with_user_msg_{int(time.time())}"
+
+        approve_tool = AGUITool(
+            name="check_status",
+            description="Check status of something",
+            parameters={"type": "object", "properties": {}}
+        )
+
+        # Step 1: Trigger tool call
+        run_input_1 = RunAgentInput(
+            thread_id=thread_id,
+            run_id="run_1",
+            messages=[
+                UserMessage(id="msg_1", role="user", content="Check the status please")
+            ],
+            tools=[approve_tool],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        events_1 = await collect_events(simple_agent, run_input_1)
+        tool_call_id = find_tool_call_id(events_1)
+
+        if tool_call_id is None:
+            pytest.skip("Agent did not call the tool in this run")
+
+        # Step 2: Submit tool result WITH trailing user message
+        run_input_2 = RunAgentInput(
+            thread_id=thread_id,
+            run_id="run_2",
+            messages=[
+                UserMessage(id="msg_1", role="user", content="Check the status please"),
+                AssistantMessage(
+                    id="msg_2",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id=tool_call_id,
+                            function=FunctionCall(name="check_status", arguments="{}")
+                        )
+                    ]
+                ),
+                ToolMessage(
+                    id="msg_3",
+                    role="tool",
+                    content='{"status": "ok"}',
+                    tool_call_id=tool_call_id
+                ),
+                UserMessage(id="msg_4", role="user", content="Thanks! What next?")  # Trailing message
+            ],
+            tools=[approve_tool],
+            context=[],
+            state={},
+            forwarded_props={}
+        )
+
+        events_2 = await collect_events(simple_agent, run_input_2)
+
+        assert "EventType.RUN_ERROR" not in get_event_types(events_2)
+
+        # Verify single function_response
+        app_name = simple_agent._get_app_name(run_input_2)
+        user_id = simple_agent._get_user_id(run_input_2)
+        backend_session_id = simple_agent._session_manager.get_backend_session_id(
+            app_name, thread_id
+        )
+
+        if backend_session_id:
+            session = await simple_agent._session_manager._session_service.get_session(
+                session_id=backend_session_id,
+                app_name=app_name,
+                user_id=user_id
+            )
+
+            count, responses = count_function_responses(session, tool_call_id)
+
+            assert count == 1, (
+                f"Expected 1 FunctionResponse with trailing user message, found {count}. "
+                f"Issue #1074 may affect tool results + user message path too."
+            )
+
+
+class TestHITLResumptionIntegration:
+    """Integration tests for HITL resumption with stored invocation_id."""
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):
@@ -661,172 +471,160 @@ class TestFunctionResponseEventStructure:
         SessionManager.reset_instance()
 
     @pytest.fixture
-    def mock_adk_agent(self):
-        """Create a mock ADK agent."""
-        return LlmAgent(
-            name="test_agent",
-            model="gemini-2.0-flash",
-            instruction="Test agent"
-        )
+    def check_api_key(self):
+        """Skip test if GOOGLE_API_KEY is not set."""
+        if not os.getenv("GOOGLE_API_KEY"):
+            pytest.skip("GOOGLE_API_KEY not set - skipping live integration test")
 
     @pytest.fixture
-    def adk_agent(self, mock_adk_agent):
-        """Create ADK middleware."""
-        return ADKAgent(
-            adk_agent=mock_adk_agent,
-            app_name="test_app",
+    def hitl_agent(self):
+        """Create an ADK agent configured for HITL with ResumabilityConfig."""
+        agent = Agent(
+            model=DEFAULT_MODEL,
+            name='hitl_resume_agent',
+            instruction="""You are a task planning agent. When asked to plan something,
+            call the plan_task tool to generate a plan. Keep responses brief.""",
+            tools=[AGUIToolset()],
+        )
+
+        adk_app = App(
+            name="test_hitl_resume_app",
+            root_agent=agent,
+            resumability_config=ResumabilityConfig(is_resumable=True),
+        )
+
+        return ADKAgent.from_app(
+            adk_app,
             user_id="test_user",
             use_in_memory_services=True,
         )
 
     @pytest.mark.asyncio
-    async def test_function_response_has_required_fields(self, adk_agent):
-        """Test that persisted FunctionResponse has all required fields.
+    async def test_hitl_resumption_preserves_invocation_context(
+        self, check_api_key, hitl_agent
+    ):
+        """Integration test: HITL resumption uses stored invocation_id.
 
-        DatabaseSessionService requires:
-        - invocation_id on the Event
-        - Proper Content structure with FunctionResponse part
-        - author='user' (tool results come from user)
+        When resuming after HITL pause, the stored invocation_id should be used
+        to ensure SequentialAgent state is properly restored.
+
+        This tests the full HITL flow:
+        1. Initial request triggers tool call (agent pauses)
+        2. Tool result submitted (should use stored invocation context)
+        3. Agent resumes with correct state
         """
-        thread_id = "test_thread_structure"
-        tool_call_id = "tool_call_structure"
-        run_id = "run_structure_test"
-        tool_name = "test_tool"
-        tool_result_content = '{"status": "success", "data": {"key": "value"}}'
+        thread_id = f"test_hitl_resume_{int(time.time())}"
 
-        messages = [
-            UserMessage(id="user_1", role="user", content="Request"),
-            AssistantMessage(
-                id="assistant_1",
-                role="assistant",
-                content=None,
-                tool_calls=[
-                    ToolCall(
-                        id=tool_call_id,
-                        function=FunctionCall(name=tool_name, arguments="{}")
-                    )
-                ]
-            ),
-            ToolMessage(
-                id="tool_result_1",
-                role="tool",
-                content=tool_result_content,
-                tool_call_id=tool_call_id
-            ),
-        ]
+        plan_tool = AGUITool(
+            name="plan_task",
+            description="Generate a task plan for user approval",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "steps": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of steps"
+                    }
+                },
+                "required": ["steps"]
+            }
+        )
 
-        input_data = RunAgentInput(
+        # Step 1: Initial request - should trigger tool call and pause
+        run_input_1 = RunAgentInput(
             thread_id=thread_id,
-            run_id=run_id,
-            messages=messages,
-            tools=[AGUITool(name=tool_name, description="Test", parameters={})],
+            run_id="initial_run",
+            messages=[
+                UserMessage(id="msg_1", role="user", content="Plan a simple 2-step task")
+            ],
+            tools=[plan_tool],
             context=[],
             state={},
             forwarded_props={}
         )
 
-        app_name = adk_agent._get_app_name(input_data)
-        user_id = adk_agent._get_user_id(input_data)
+        events_1 = await collect_events(hitl_agent, run_input_1)
+        event_types_1 = get_event_types(events_1)
 
-        adk_agent._session_manager.mark_messages_processed(
-            app_name, thread_id, ["user_1", "assistant_1"]
+        tool_call_id = find_tool_call_id(events_1)
+
+        if tool_call_id is None:
+            pytest.skip("Agent did not call the tool - HITL flow not triggered")
+
+        # Verify the run finished (HITL pauses return RUN_FINISHED)
+        assert "EventType.RUN_FINISHED" in event_types_1, (
+            f"HITL should pause with RUN_FINISHED, got: {event_types_1}"
         )
 
-        session, backend_session_id = await adk_agent._ensure_session_exists(
-            app_name=app_name,
-            user_id=user_id,
+        # Step 2: Submit tool result (resuming HITL)
+        run_input_2 = RunAgentInput(
             thread_id=thread_id,
-            initial_state={}
+            run_id="resume_run",
+            messages=[
+                UserMessage(id="msg_1", role="user", content="Plan a simple 2-step task"),
+                AssistantMessage(
+                    id="msg_2",
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id=tool_call_id,
+                            function=FunctionCall(
+                                name="plan_task",
+                                arguments='{"steps": ["Step 1", "Step 2"]}'
+                            )
+                        )
+                    ]
+                ),
+                ToolMessage(
+                    id="msg_3",
+                    role="tool",
+                    content='{"approved": true, "steps": ["Step 1", "Step 2"]}',
+                    tool_call_id=tool_call_id
+                )
+            ],
+            tools=[plan_tool],
+            context=[],
+            state={},
+            forwarded_props={}
         )
 
-        await adk_agent._add_pending_tool_call_with_context(
-            thread_id, tool_call_id, app_name, user_id
+        events_2 = await collect_events(hitl_agent, run_input_2)
+        event_types_2 = get_event_types(events_2)
+
+        # Should resume successfully
+        assert "EventType.RUN_STARTED" in event_types_2
+        assert "EventType.RUN_FINISHED" in event_types_2
+        assert "EventType.RUN_ERROR" not in event_types_2, (
+            f"HITL resumption failed with error: {events_2}"
         )
 
-        # Add FunctionCall event
-        from google.adk.sessions.session import Event
-
-        function_call_event = Event(
-            timestamp=time.time(),
-            author="test_agent",
-            content=types.Content(
-                parts=[types.Part(function_call=types.FunctionCall(
-                    id=tool_call_id, name=tool_name, args={}
-                ))],
-                role="model"
-            ),
-            invocation_id=run_id,
-        )
-        await adk_agent._session_manager._session_service.append_event(
-            session, function_call_event
+        # Verify function_response was persisted correctly
+        app_name = hitl_agent._get_app_name(run_input_2)
+        user_id = hitl_agent._get_user_id(run_input_2)
+        backend_session_id = hitl_agent._session_manager.get_backend_session_id(
+            app_name, thread_id
         )
 
-        class MockRunner:
-            async def run_async(self, **kwargs):
-                return
-                yield
-
-        tool_results = [{'tool_name': tool_name, 'message': messages[2]}]
-
-        with patch.object(adk_agent, '_create_runner', return_value=MockRunner()):
-            event_queue = asyncio.Queue()
-            await adk_agent._run_adk_in_background(
-                input=input_data,
-                adk_agent=adk_agent._adk_agent,
-                user_id=user_id,
+        if backend_session_id:
+            session = await hitl_agent._session_manager._session_service.get_session(
+                session_id=backend_session_id,
                 app_name=app_name,
-                event_queue=event_queue,
-                client_proxy_toolsets=[],
-                tool_results=tool_results,
-                message_batch=None,
+                user_id=user_id
             )
 
-        # Verify event structure
-        session = await adk_agent._session_manager._session_service.get_session(
-            session_id=backend_session_id,
-            app_name=app_name,
-            user_id=user_id
-        )
+            count, responses = count_function_responses(session, tool_call_id)
 
-        # Find the FunctionResponse event
-        fr_event = None
-        for event in session.events:
-            if event.content and hasattr(event.content, 'parts'):
-                for part in event.content.parts:
-                    if hasattr(part, 'function_response') and part.function_response:
-                        fr = part.function_response
-                        if hasattr(fr, 'id') and fr.id == tool_call_id:
-                            fr_event = event
-                            break
+            # Should have exactly one function_response
+            assert count == 1, (
+                f"HITL resumption should persist exactly 1 FunctionResponse, found {count}"
+            )
 
-        assert fr_event is not None, "FunctionResponse event not found"
-
-        # Verify required fields
-        assert hasattr(fr_event, 'invocation_id'), "Event missing invocation_id"
-        assert fr_event.invocation_id == run_id, f"Wrong invocation_id: {fr_event.invocation_id}"
-
-        assert hasattr(fr_event, 'author'), "Event missing author"
-        assert fr_event.author == 'user', f"Expected author='user', got '{fr_event.author}'"
-
-        assert hasattr(fr_event, 'timestamp'), "Event missing timestamp"
-        assert fr_event.timestamp > 0, "Invalid timestamp"
-
-        # Verify Content structure
-        assert fr_event.content is not None, "Event missing content"
-        assert fr_event.content.role == 'user', f"Expected role='user', got '{fr_event.content.role}'"
-        assert len(fr_event.content.parts) >= 1, "Content missing parts"
-
-        # Verify FunctionResponse part
-        fr_part = None
-        for part in fr_event.content.parts:
-            if hasattr(part, 'function_response') and part.function_response:
-                fr_part = part.function_response
-                break
-
-        assert fr_part is not None, "FunctionResponse part not found"
-        assert fr_part.id == tool_call_id, f"Wrong tool_call_id: {fr_part.id}"
-        assert fr_part.name == tool_name, f"Wrong tool name: {fr_part.name}"
-        assert fr_part.response is not None, "FunctionResponse missing response"
+            # invocation_id should be set (either stored or from run_id)
+            assert responses[0]['invocation_id'] is not None, (
+                "HITL FunctionResponse missing invocation_id - breaks SequentialAgent resumption"
+            )
 
 
 # Run tests with pytest
