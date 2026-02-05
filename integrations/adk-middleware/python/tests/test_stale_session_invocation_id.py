@@ -1,31 +1,29 @@
-"""Tests for deferred invocation_id storage to prevent stale session errors.
+"""Tests that invocation_id is never passed to run_async.
 
-When using DatabaseSessionService with ResumabilityConfig, calling
-session_manager.update_session_state() during the ADK run loop causes a
-stale session error because it updates the DB timestamp via a fresh session
-object, while the runner's session object retains the old last_update_time.
+ADK's _get_subagent_to_resume only works for SequentialAgent sub-agents,
+not standalone LlmAgents. The non-invocation_id path (_find_agent_to_run)
+handles all agent types correctly by inspecting session events. Passing
+invocation_id is unnecessary and breaks standalone LlmAgent HITL resume.
 
-The fix defers the invocation_id storage to AFTER the run loop completes,
-when it is safe to update session state without conflicting with the runner.
+Any stored invocation_id from a previous run is cleared before run_async.
 """
 
-import asyncio
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from ag_ui.core import EventType, RunAgentInput
+from ag_ui.core import RunAgentInput
 from ag_ui.core import Tool as AGUITool
 from ag_ui.core import UserMessage
 from google.adk.agents import LlmAgent
 from google.adk.apps import App, ResumabilityConfig
 
-from ag_ui_adk import ADKAgent, AGUIToolset
+from ag_ui_adk import ADKAgent
 from ag_ui_adk.session_manager import INVOCATION_ID_STATE_KEY, SessionManager
 
 
-class TestDeferredInvocationIdStorage:
-    """Tests that invocation_id is NOT stored mid-run (avoiding stale session)."""
+class TestInvocationIdNeverPassedToRunAsync:
+    """Tests that invocation_id is never passed to run_async."""
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):
@@ -108,42 +106,20 @@ class TestDeferredInvocationIdStorage:
         return event
 
     @pytest.mark.asyncio
-    async def test_no_mid_run_update_session_state_for_invocation_id(
+    async def test_no_invocation_id_in_run_kwargs_for_normal_run(
         self, resumable_adk_agent
     ):
-        """Verify update_session_state is NOT called with INVOCATION_ID during the run loop.
-
-        This is the core regression test. Previously, update_session_state was
-        called on the first event with an invocation_id, which updated the DB
-        timestamp and made the runner's session object stale.
-        """
+        """Verify run_async never receives invocation_id for a normal run."""
         adk_agent = resumable_adk_agent
         assert adk_agent._is_adk_resumable() is True
 
-        # Track all calls to update_session_state with their arguments
-        update_calls = []
-        run_loop_active = False
+        run_async_kwargs_capture = {}
 
-        async def tracking_update_state(session_id, app_name, user_id, state):
-            update_calls.append(
-                {
-                    "state": dict(state) if state else {},
-                    "during_run_loop": run_loop_active,
-                }
-            )
-            return True
-
-        # Mock the runner to emit events with invocation_id
         async def mock_run_async(**kwargs):
-            nonlocal run_loop_active
-            run_loop_active = True
-            yield self._make_mock_event(
-                text="Hello", partial=True, invocation_id="inv_abc123"
-            )
+            run_async_kwargs_capture.update(kwargs)
             yield self._make_mock_event(
                 text="Hello world", partial=False, invocation_id="inv_abc123"
             )
-            run_loop_active = False
 
         input_data = RunAgentInput(
             thread_id=f"test_{uuid.uuid4().hex[:8]}",
@@ -158,7 +134,7 @@ class TestDeferredInvocationIdStorage:
         with patch.object(
             adk_agent._session_manager,
             "update_session_state",
-            side_effect=tracking_update_state,
+            new_callable=AsyncMock,
         ), patch.object(adk_agent, "_create_runner") as mock_create_runner:
             mock_runner = AsyncMock()
             mock_runner.close = AsyncMock()
@@ -167,44 +143,33 @@ class TestDeferredInvocationIdStorage:
 
             events = [event async for event in adk_agent.run(input_data)]
 
-        # The key assertion: NO update_session_state call with INVOCATION_ID
-        # should happen while the run loop is active
-        mid_run_invocation_calls = [
-            c
-            for c in update_calls
-            if c["during_run_loop"] and INVOCATION_ID_STATE_KEY in c["state"]
-        ]
-        assert mid_run_invocation_calls == [], (
-            f"update_session_state was called with {INVOCATION_ID_STATE_KEY} "
-            f"during the run loop, which causes stale session errors. "
-            f"Calls: {mid_run_invocation_calls}"
+        # run_async should never receive invocation_id
+        assert "invocation_id" not in run_async_kwargs_capture, (
+            f"run_async should never receive invocation_id. "
+            f"Got kwargs: {run_async_kwargs_capture}"
         )
 
     @pytest.mark.asyncio
-    async def test_invocation_id_stored_after_lro_pause(self, resumable_adk_agent):
-        """Verify invocation_id IS stored after run completes with LRO pause."""
+    async def test_no_invocation_id_in_run_kwargs_for_lro_run(
+        self, resumable_adk_agent
+    ):
+        """Verify run_async never receives invocation_id even after LRO pause."""
         adk_agent = resumable_adk_agent
 
-        update_calls = []
-
-        async def tracking_update_state(session_id, app_name, user_id, state):
-            update_calls.append({"state": dict(state) if state else {}})
-            return True
+        run_async_kwargs_capture = {}
 
         async def mock_run_async(**kwargs):
-            # First event: partial text with invocation_id
+            run_async_kwargs_capture.update(kwargs)
             yield self._make_mock_event(
                 text="Let me plan", partial=True, invocation_id="inv_lro_test"
             )
-            # Second event: LRO tool call (non-partial)
-            event = self._make_mock_event(
+            yield self._make_mock_event(
                 text="",
                 partial=False,
                 invocation_id="inv_lro_test",
                 has_lro=True,
                 lro_tool_name="approve_plan",
             )
-            yield event
 
         input_data = RunAgentInput(
             thread_id=f"test_{uuid.uuid4().hex[:8]}",
@@ -225,7 +190,7 @@ class TestDeferredInvocationIdStorage:
         with patch.object(
             adk_agent._session_manager,
             "update_session_state",
-            side_effect=tracking_update_state,
+            new_callable=AsyncMock,
         ), patch.object(adk_agent, "_create_runner") as mock_create_runner:
             mock_runner = AsyncMock()
             mock_runner.close = AsyncMock()
@@ -234,25 +199,79 @@ class TestDeferredInvocationIdStorage:
 
             events = [event async for event in adk_agent.run(input_data)]
 
-        # After LRO pause, invocation_id should be stored post-run
-        invocation_store_calls = [
-            c
-            for c in update_calls
-            if INVOCATION_ID_STATE_KEY in c["state"]
-            and c["state"][INVOCATION_ID_STATE_KEY] is not None
-        ]
-        assert len(invocation_store_calls) >= 1, (
-            f"invocation_id should be stored after LRO pause. "
-            f"All update_session_state calls: {update_calls}"
-        )
-        assert (
-            invocation_store_calls[0]["state"][INVOCATION_ID_STATE_KEY]
-            == "inv_lro_test"
+        # run_async should never receive invocation_id
+        assert "invocation_id" not in run_async_kwargs_capture, (
+            f"run_async should never receive invocation_id. "
+            f"Got kwargs: {run_async_kwargs_capture}"
         )
 
     @pytest.mark.asyncio
-    async def test_invocation_id_cleared_after_normal_run(self, resumable_adk_agent):
-        """Verify invocation_id is cleared after a normal (non-LRO) completed run."""
+    async def test_no_invocation_id_in_run_kwargs_with_stored_id_and_tool_results(
+        self, resumable_adk_agent
+    ):
+        """Verify run_async never receives invocation_id even with stored id + tool results.
+
+        This is the exact production crash scenario: LRO pause stored an
+        invocation_id, user clicks approve (tool_results), and the old code
+        passed invocation_id to run_async triggering _get_subagent_to_resume
+        which fails for standalone LlmAgents.
+        """
+        adk_agent = resumable_adk_agent
+
+        run_async_kwargs_capture = {}
+
+        async def mock_run_async(**kwargs):
+            run_async_kwargs_capture.update(kwargs)
+            yield self._make_mock_event(
+                text="Approved", partial=False, invocation_id="inv_resumed"
+            )
+
+        async def mock_get_state(session_id, app_name, user_id):
+            return {INVOCATION_ID_STATE_KEY: "inv_from_lro_pause"}
+
+        input_data = RunAgentInput(
+            thread_id=f"test_{uuid.uuid4().hex[:8]}",
+            run_id=f"run_{uuid.uuid4().hex[:8]}",
+            messages=[UserMessage(id="msg1", content="Hello")],
+            state={},
+            tools=[
+                AGUITool(
+                    name="approve_plan",
+                    description="Approve a plan",
+                    parameters={"type": "object", "properties": {}},
+                )
+            ],
+            context=[],
+            forwarded_props={},
+        )
+
+        with patch.object(
+            adk_agent._session_manager,
+            "update_session_state",
+            new_callable=AsyncMock,
+        ), patch.object(
+            adk_agent._session_manager,
+            "get_session_state",
+            side_effect=mock_get_state,
+        ), patch.object(adk_agent, "_create_runner") as mock_create_runner:
+            mock_runner = AsyncMock()
+            mock_runner.close = AsyncMock()
+            mock_runner.run_async = mock_run_async
+            mock_create_runner.return_value = mock_runner
+
+            events = [event async for event in adk_agent.run(input_data)]
+
+        # run_async must NOT receive the stored invocation_id
+        assert "invocation_id" not in run_async_kwargs_capture, (
+            f"run_async should never receive invocation_id, even with stored id "
+            f"and tool results. Got kwargs: {run_async_kwargs_capture}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_stored_invocation_id_cleared_before_run(
+        self, resumable_adk_agent
+    ):
+        """Verify stored invocation_id is cleared from session state before run."""
         adk_agent = resumable_adk_agent
 
         update_calls = []
@@ -263,11 +282,12 @@ class TestDeferredInvocationIdStorage:
 
         async def mock_run_async(**kwargs):
             yield self._make_mock_event(
-                text="Hello", partial=True, invocation_id="inv_normal"
+                text="Response", partial=False, invocation_id="inv_new"
             )
-            yield self._make_mock_event(
-                text="Hello world", partial=False, invocation_id="inv_normal"
-            )
+
+        # Simulate state with a stored invocation_id from a previous LRO pause
+        async def mock_get_state(session_id, app_name, user_id):
+            return {INVOCATION_ID_STATE_KEY: "inv_stale_from_lro"}
 
         input_data = RunAgentInput(
             thread_id=f"test_{uuid.uuid4().hex[:8]}",
@@ -283,6 +303,10 @@ class TestDeferredInvocationIdStorage:
             adk_agent._session_manager,
             "update_session_state",
             side_effect=tracking_update_state,
+        ), patch.object(
+            adk_agent._session_manager,
+            "get_session_state",
+            side_effect=mock_get_state,
         ), patch.object(adk_agent, "_create_runner") as mock_create_runner:
             mock_runner = AsyncMock()
             mock_runner.close = AsyncMock()
@@ -291,7 +315,7 @@ class TestDeferredInvocationIdStorage:
 
             events = [event async for event in adk_agent.run(input_data)]
 
-        # After a normal run, invocation_id should be cleared (set to None)
+        # The stored invocation_id should be cleared
         invocation_clear_calls = [
             c
             for c in update_calls
@@ -299,12 +323,12 @@ class TestDeferredInvocationIdStorage:
             and c["state"][INVOCATION_ID_STATE_KEY] is None
         ]
         assert len(invocation_clear_calls) >= 1, (
-            f"invocation_id should be cleared after normal (non-LRO) run. "
+            f"Stored invocation_id should be cleared before run. "
             f"All update_session_state calls: {update_calls}"
         )
 
     @pytest.mark.asyncio
-    async def test_no_invocation_id_storage_without_resumability(
+    async def test_no_invocation_id_operations_without_resumability(
         self, non_resumable_adk_agent
     ):
         """Verify no invocation_id operations happen without ResumabilityConfig."""
@@ -354,39 +378,46 @@ class TestDeferredInvocationIdStorage:
         )
 
     @pytest.mark.asyncio
-    async def test_text_message_with_stored_invocation_id_starts_fresh_run(
+    async def test_no_mid_run_update_session_state_for_invocation_id(
         self, resumable_adk_agent
     ):
-        """Verify that a text message (no tool results) clears a stale invocation_id.
+        """Verify update_session_state is NOT called with INVOCATION_ID during the run loop.
 
-        When the user types a message instead of clicking a HITL tool button,
-        the middleware should NOT attempt HITL resumption. It should clear the
-        stored invocation_id and start a fresh run.
+        This is the core regression test for the original stale session bug.
+        Previously, update_session_state was called on the first event with an
+        invocation_id, which updated the DB timestamp and made the runner's
+        session object stale.
         """
         adk_agent = resumable_adk_agent
+        assert adk_agent._is_adk_resumable() is True
 
         update_calls = []
-        run_async_kwargs_capture = {}
+        run_loop_active = False
 
         async def tracking_update_state(session_id, app_name, user_id, state):
-            update_calls.append({"state": dict(state) if state else {}})
+            update_calls.append(
+                {
+                    "state": dict(state) if state else {},
+                    "during_run_loop": run_loop_active,
+                }
+            )
             return True
 
         async def mock_run_async(**kwargs):
-            run_async_kwargs_capture.update(kwargs)
+            nonlocal run_loop_active
+            run_loop_active = True
             yield self._make_mock_event(
-                text="Fresh response", partial=False, invocation_id="inv_fresh"
+                text="Hello", partial=True, invocation_id="inv_abc123"
             )
+            yield self._make_mock_event(
+                text="Hello world", partial=False, invocation_id="inv_abc123"
+            )
+            run_loop_active = False
 
-        # Simulate state with a stored invocation_id from a previous LRO pause
-        async def mock_get_state(session_id, app_name, user_id):
-            return {INVOCATION_ID_STATE_KEY: "inv_stale_from_lro"}
-
-        # Plain text message - no tool results
         input_data = RunAgentInput(
             thread_id=f"test_{uuid.uuid4().hex[:8]}",
             run_id=f"run_{uuid.uuid4().hex[:8]}",
-            messages=[UserMessage(id="msg1", content="I dont know")],
+            messages=[UserMessage(id="msg1", content="Hello")],
             state={},
             tools=[],
             context=[],
@@ -397,10 +428,6 @@ class TestDeferredInvocationIdStorage:
             adk_agent._session_manager,
             "update_session_state",
             side_effect=tracking_update_state,
-        ), patch.object(
-            adk_agent._session_manager,
-            "get_session_state",
-            side_effect=mock_get_state,
         ), patch.object(adk_agent, "_create_runner") as mock_create_runner:
             mock_runner = AsyncMock()
             mock_runner.close = AsyncMock()
@@ -409,20 +436,15 @@ class TestDeferredInvocationIdStorage:
 
             events = [event async for event in adk_agent.run(input_data)]
 
-        # The stale invocation_id should be cleared (set to None) BEFORE the run
-        invocation_clear_calls = [
+        # NO update_session_state call with INVOCATION_ID should happen
+        # while the run loop is active
+        mid_run_invocation_calls = [
             c
             for c in update_calls
-            if INVOCATION_ID_STATE_KEY in c["state"]
-            and c["state"][INVOCATION_ID_STATE_KEY] is None
+            if c["during_run_loop"] and INVOCATION_ID_STATE_KEY in c["state"]
         ]
-        assert len(invocation_clear_calls) >= 1, (
-            f"Stale invocation_id should be cleared when user sends text instead of tool result. "
-            f"All update_session_state calls: {update_calls}"
-        )
-
-        # run_async should NOT receive the stale invocation_id
-        assert "invocation_id" not in run_async_kwargs_capture, (
-            f"run_async should not receive invocation_id for a text message. "
-            f"Got kwargs: {run_async_kwargs_capture}"
+        assert mid_run_invocation_calls == [], (
+            f"update_session_state was called with {INVOCATION_ID_STATE_KEY} "
+            f"during the run loop, which causes stale session errors. "
+            f"Calls: {mid_run_invocation_calls}"
         )
