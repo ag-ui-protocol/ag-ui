@@ -114,11 +114,16 @@ class ClawgUiPairingService(
                     )
                 )
             )
+            val requestBody = json.encodeToString(input)
+            logger.d { "Sending token verification request: $requestBody" }
+
             val response: HttpResponse = client.post(url) {
                 contentType(ContentType.Application.Json)
                 header("Authorization", "Bearer $bearerToken")
-                setBody(json.encodeToString(input))
+                setBody(requestBody)
             }
+
+            logger.d { "Token verification response status: ${response.status}" }
 
             when (response.status) {
                 HttpStatusCode.OK -> {
@@ -129,9 +134,13 @@ class ClawgUiPairingService(
                     logger.d { "Token not yet approved (still 403)" }
                     Result.success(false)
                 }
-                else -> Result.failure(PairingException(
-                    "Unexpected response: ${response.status.value}"
-                ))
+                else -> {
+                    val errorBody = response.bodyAsText()
+                    logger.e { "Unexpected response ${response.status.value}: $errorBody" }
+                    Result.failure(PairingException(
+                        "Unexpected response: ${response.status.value} - $errorBody"
+                    ))
+                }
             }
         } catch (e: Exception) {
             logger.e(e) { "Failed to check token approval" }
