@@ -71,7 +71,7 @@ function Chat() {
       description: "Sends A2UI JSON to the client to render rich UI",
       parameters: z.object({
         a2ui_json: z.string(),
-      }),
+      }) as any,
       render: ({ status }) => <A2UILoadingIndicator status={status} />,
     },
     []

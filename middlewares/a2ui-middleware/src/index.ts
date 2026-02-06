@@ -144,18 +144,17 @@ export class A2UIMiddleware extends Middleware {
   }
 
   /**
-   * Inject the send_a2ui_json_to_client tool into the input
+   * Inject the send_a2ui_json_to_client tool into the input.
+   * Always replaces the tool schema if it already exists, because frontend-registered
+   * tools may have a broken schema (e.g., Zod v4 schemas fail zod-to-json-schema v3 conversion,
+   * producing an empty { type: "object", properties: {} } with no a2ui_json property).
    */
   private injectTool(input: RunAgentInput): RunAgentInput {
-    // Check if tool already exists
-    const toolExists = input.tools.some((t) => t.name === SEND_A2UI_TOOL_NAME);
-    if (toolExists) {
-      return input;
-    }
-
+    // Replace existing tool with our well-defined schema, or add if not present
+    const filteredTools = input.tools.filter((t) => t.name !== SEND_A2UI_TOOL_NAME);
     return {
       ...input,
-      tools: [...input.tools, SEND_A2UI_JSON_TOOL],
+      tools: [...filteredTools, SEND_A2UI_JSON_TOOL],
     };
   }
 
