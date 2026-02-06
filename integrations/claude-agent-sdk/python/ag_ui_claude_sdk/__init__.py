@@ -13,6 +13,7 @@ Example:
     
     app = FastAPI()
     adapter = ClaudeAgentAdapter(
+        name="my_agent",
         model="claude-sonnet-4-20250514",
         permission_mode="acceptEdits",
     )
@@ -30,13 +31,18 @@ https://platform.claude.com/docs/en/agent-sdk/python
 """
 
 from .adapter import ClaudeAgentAdapter
-from .types import MessageHistory, ActivityState, ActivityStatus
+from .config import (
+    ALLOWED_FORWARDED_PROPS,
+    STATE_MANAGEMENT_TOOL_NAME,
+    AG_UI_MCP_SERVER_NAME,
+)
 
 __version__ = "0.1.0"
 __all__ = [
     "ClaudeAgentAdapter",
-    "MessageHistory",
-    "ActivityState",
-    "ActivityStatus",
+    # Configuration constants
+    "ALLOWED_FORWARDED_PROPS",
+    "STATE_MANAGEMENT_TOOL_NAME",
+    "AG_UI_MCP_SERVER_NAME",
 ]
 

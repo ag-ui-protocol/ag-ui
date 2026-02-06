@@ -20,6 +20,9 @@ from ag_ui_claude_sdk import ClaudeAgentAdapter
 # Import agent configurations  
 from agents.agentic_chat import create_agentic_chat_adapter
 from agents.backend_tool_rendering import create_backend_tool_adapter
+from agents.shared_state import create_shared_state_adapter
+from agents.human_in_the_loop import create_human_in_the_loop_adapter
+from agents.tool_based_generative_ui import create_tool_based_generative_ui_adapter
 
 # Simple shared working directory (agents don't have file tools enabled)
 WORK_DIR = Path(tempfile.gettempdir()) / "claude-sdk-server"
@@ -28,6 +31,9 @@ WORK_DIR.mkdir(parents=True, exist_ok=True)
 # Create adapters once at module level
 agentic_chat_adapter = create_agentic_chat_adapter(str(WORK_DIR))
 backend_tool_adapter = create_backend_tool_adapter(str(WORK_DIR))
+shared_state_adapter = create_shared_state_adapter(str(WORK_DIR))
+human_in_the_loop_adapter = create_human_in_the_loop_adapter(str(WORK_DIR))
+tool_based_generative_ui_adapter = create_tool_based_generative_ui_adapter(str(WORK_DIR))
 
 app = FastAPI(title="Claude Agent SDK Server")
 
@@ -65,17 +71,37 @@ async def run_adapter(adapter: ClaudeAgentAdapter, input_data: RunAgentInput, re
 
 @app.post("/agentic_chat")
 async def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):
+    """Basic agentic chat with general purpose assistant."""
     return await run_adapter(agentic_chat_adapter, input_data, request)
 
 
 @app.post("/backend_tool_rendering")
 async def backend_tool_rendering_endpoint(input_data: RunAgentInput, request: Request):
+    """Backend MCP tools that execute server-side (weather tool)."""
     return await run_adapter(backend_tool_adapter, input_data, request)
+
+
+@app.post("/shared_state")
+async def shared_state_endpoint(input_data: RunAgentInput, request: Request):
+    """Collaborative recipe editing with bidirectional state sync."""
+    return await run_adapter(shared_state_adapter, input_data, request)
+
+
+@app.post("/human_in_the_loop")
+async def human_in_the_loop_endpoint(input_data: RunAgentInput, request: Request):
+    """Task planning with human approval workflow and step tracking."""
+    return await run_adapter(human_in_the_loop_adapter, input_data, request)
+
+
+@app.post("/tool_based_generative_ui")
+async def tool_based_generative_ui_endpoint(input_data: RunAgentInput, request: Request):
+    """Frontend tools for generative UI components (haiku rendering, etc)."""
+    return await run_adapter(tool_based_generative_ui_adapter, input_data, request)
 
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "agents": 5}
 
 
 def main():

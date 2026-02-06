@@ -43,11 +43,16 @@ def create_backend_tool_adapter(cwd: str) -> ClaudeAgentAdapter:
         Configured ClaudeAgentAdapter with weather MCP tool.
     """
     return ClaudeAgentAdapter(
-        model="claude-haiku-4-5",
-        cwd=cwd,
-        system_prompt="You are a helpful weather assistant. When users ask about weather, use the get_weather tool.",
-        mcp_servers={"weather": weather_server},
-        allowed_tools=["mcp__weather__get_weather"],
+        name="backend_tool_rendering",
+        description="Weather assistant with backend MCP tools",
+        options={
+            "model": "claude-haiku-4-5",
+            "system_prompt": "You are a helpful weather assistant. When users ask about weather, use the get_weather tool.",
+            "mcp_servers": {"weather": weather_server},
+            "allowed_tools": ["mcp__weather__get_weather"],
+            "disallowed_tools": ['Task', 'TaskOutput', 'Bash', 'Glob', 'Grep', 'ExitPlanMode', 'Read', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'TodoWrite', 'WebSearch', 'KillShell', 'AskUserQuestion', 'Skill', 'EnterPlanMode'],
+
+        }
     )
 
 

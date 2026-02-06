@@ -19,8 +19,12 @@ def create_agentic_chat_adapter(cwd: str) -> ClaudeAgentAdapter:
         Configured ClaudeAgentAdapter for general purpose agentic chat.
     """
     return ClaudeAgentAdapter(
-        model="claude-haiku-4-5",
-        cwd=cwd,
-        system_prompt="You are a helpful assistant with access to tools.",
-        allowed_tools=[],
+        name="agentic_chat",
+        description="General purpose agentic chat assistant",
+        options={
+            "model": "claude-haiku-4-5",
+            "system_prompt": "You are a helpful assistant with access to tools.",
+            "disallowed_tools": ['Task', 'TaskOutput', 'Bash', 'Glob', 'Grep', 'ExitPlanMode', 'Read', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'TodoWrite', 'WebSearch', 'KillShell', 'AskUserQuestion', 'Skill', 'EnterPlanMode'],
+
+        }
     )

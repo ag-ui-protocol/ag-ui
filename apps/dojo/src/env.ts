@@ -21,6 +21,7 @@ type envVars = {
   a2aMiddlewareOrchestratorUrl: string;
   awsStrandsUrl: string;
   claudeAgentSdkUrl: string;
+  claudeAgentSdkTsUrl: string;
   customDomainTitle: Record<string, string>;
 }
 
@@ -56,6 +57,7 @@ export default function getEnvVars(): envVars {
     a2aMiddlewareOrchestratorUrl: process.env.A2A_MIDDLEWARE_ORCHESTRATOR_URL || 'http://localhost:9000',
     awsStrandsUrl: process.env.AWS_STRANDS_URL || 'http://localhost:8000',
     claudeAgentSdkUrl: process.env.CLAUDE_AGENT_SDK_URL || 'http://localhost:8888',
+    claudeAgentSdkTsUrl: process.env.CLAUDE_AGENT_SDK_TS_URL || 'http://localhost:8889',
     customDomainTitle: customDomainTitle,
   }
 }

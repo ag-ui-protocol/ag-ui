@@ -26,7 +26,7 @@ import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
 import { LangGraphAgent as CpkLangGraphAgent } from "@copilotkit/runtime/langgraph";
-import { ClaudeAgentAdapter } from "@ag-ui/claude-agent-sdk";
+
 
 
 const envVars = getEnvVars();
@@ -354,55 +354,23 @@ export const agentsIntegrations = {
       {
         agentic_chat: "agentic_chat",
         backend_tool_rendering: "backend_tool_rendering",
+        shared_state: "shared_state",
+        human_in_the_loop: "human_in_the_loop",
+        tool_based_generative_ui: "tool_based_generative_ui",
       }
     ),
 
-  "claude-agent-sdk-typescript": async () => {
-    const { tool, createSdkMcpServer } = await import("@anthropic-ai/claude-agent-sdk");
-    const { z } = await import("zod");
-    
-    const getWeather = tool(
-      "get_weather",
-      "Get current weather for a location",
+  // TypeScript Claude Agent SDK — connects to standalone server (like Python version).
+  // Start with: cd integrations/claude-agent-sdk/typescript && ANTHROPIC_API_KEY=xxx npx tsx examples/server.ts
+  "claude-agent-sdk-typescript": async () =>
+    mapAgents(
+      (path) => new HttpAgent({ url: `${envVars.claudeAgentSdkTsUrl}/${path}` }),
       {
-        location: z.string().describe("City or location name"),
-      },
-      async (args: { location: string }) => {
-        const weatherData = {
-          temperature: 20,
-          conditions: "sunny",
-          humidity: 50,
-          windSpeed: 10,
-          feelsLike: 25,
-        };
-    
-        return {
-          content: [{ type: "text", text: JSON.stringify(weatherData) }],
-        };
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        shared_state: "shared_state",
+        human_in_the_loop: "human_in_the_loop",
+        tool_based_generative_ui: "tool_based_generative_ui",
       }
-    );
-    
-    // Create MCP server with weather tool
-    const weatherServer = createSdkMcpServer({
-      name: "weather",
-      version: "1.0.0",
-      tools: [getWeather],
-    });
-
-    return {
-      agentic_chat: new ClaudeAgentAdapter({
-        model: "claude-haiku-4-5",
-        systemPrompt: "You are a helpful assistant with access to tools.",
-        includePartialMessages: true,
-        allowedTools: []
-      }),
-      backend_tool_rendering: new ClaudeAgentAdapter({
-        model: "claude-haiku-4-5",
-        systemPrompt: "You are a helpful weather assistant. When users ask about weather, use the get_weather tool.",
-        mcpServers: { weather: weatherServer },
-        allowedTools: ["mcp__weather__get_weather"],
-        includePartialMessages: true,
-      }),
-    };
-  },
+    ),
 } satisfies AgentsMap;

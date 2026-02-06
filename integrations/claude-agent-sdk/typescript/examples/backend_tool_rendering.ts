@@ -11,7 +11,7 @@ import { z } from "zod";
 
 /**
  * Mock weather tool that returns sample weather data.
- * 
+ *
  * Uses the Claude Agent SDK's tool() function with Zod schema.
  * See: https://platform.claude.com/docs/en/agent-sdk/typescript#tool
  */
@@ -31,7 +31,7 @@ const getWeather = tool(
     };
 
     return {
-      content: [{ type: "text", text: JSON.stringify(weatherData) }],
+      content: [{ type: "text" as const, text: JSON.stringify(weatherData) }],
     };
   }
 );
@@ -51,11 +51,32 @@ const weatherServer = createSdkMcpServer({
  */
 export function createBackendToolAdapter(): ClaudeAgentAdapter {
   return new ClaudeAgentAdapter({
+    agentId: "backend_tool_rendering",
+    description: "Weather assistant with backend MCP tools",
     model: "claude-haiku-4-5",
     systemPrompt:
       "You are a helpful weather assistant. When users ask about weather, use the get_weather tool.",
     mcpServers: { weather: weatherServer },
     allowedTools: ["mcp__weather__get_weather"],
     includePartialMessages: true,
+    disallowedTools: [
+      "Task",
+      "TaskOutput",
+      "Bash",
+      "Glob",
+      "Grep",
+      "ExitPlanMode",
+      "Read",
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "WebFetch",
+      "TodoWrite",
+      "WebSearch",
+      "KillShell",
+      "AskUserQuestion",
+      "Skill",
+      "EnterPlanMode",
+    ],
   });
 }
