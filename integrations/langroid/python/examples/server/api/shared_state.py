@@ -41,11 +41,11 @@ llm_config = OpenAIGPTConfig(
 
 class RecipeAssistantAgent(ChatAgent):
     """ChatAgent with recipe generation capabilities and shared state support."""
-    
+
     def __init__(self, config: ChatAgentConfig):
         super().__init__(config)
         self.enable_message(GenerateRecipeTool)
-    
+
     def generate_recipe(self, msg: GenerateRecipeTool) -> str:
         """Handle generate_recipe tool execution. State snapshot is emitted via state_from_args."""
         return json.dumps({"status": "success", "message": "Recipe generated successfully"})
@@ -71,13 +71,13 @@ async def recipe_state_from_args(context: ToolCallContext):
             recipe_dict = context.tool_input.recipe
             if isinstance(recipe_dict, dict):
                 return {"recipe": recipe_dict}
-        
+
         if context.args_str:
             args_data = json.loads(context.args_str)
             recipe_dict = args_data.get("recipe")
             if isinstance(recipe_dict, dict):
                 return {"recipe": recipe_dict}
-        
+
         return None
     except Exception as e:
         logger.warning(f"Error in recipe_state_from_args: {e}", exc_info=True)
@@ -94,6 +94,7 @@ agent_config = ChatAgentConfig(
 3. After calling the tool, respond to the user with a brief confirmation of what you changed (1-2 sentences)
 4. Do NOT call the tool multiple times in a row
 5. Keep existing elements that aren't being changed
+6. Do not list the ingredients and instructions in the response, use the tool to display them, unless the user asks for them.
 
 Be creative and helpful!""",
     use_tools=True,
@@ -126,4 +127,3 @@ agui_agent = LangroidAgent(
 )
 
 app = create_langroid_app(agui_agent, "/")
-
