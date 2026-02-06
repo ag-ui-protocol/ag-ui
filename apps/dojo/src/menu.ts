@@ -253,4 +253,14 @@ export const menuIntegrations = [
       "human_in_the_loop",
     ],
   },
+  {
+    id: "langroid",
+    name: "Langroid",
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "agentic_generative_ui",
+      "shared_state",
+    ],
+  },
 ] as const satisfies MenuIntegrationConfig[];
