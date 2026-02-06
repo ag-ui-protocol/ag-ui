@@ -9,6 +9,10 @@ import {
   TextMessageStartEvent,
   TextMessageContentEvent,
   TextMessageEndEvent,
+  ToolCallStartEvent,
+  ToolCallArgsEvent,
+  ToolCallEndEvent,
+  ToolCallResultEvent,
   RunAgentInput,
 } from "@ag-ui/core";
 import { defaultApplyEvents } from "../default";
@@ -194,5 +198,102 @@ describe("defaultApplyEvents with text messages", () => {
 
     // Verify no additional updates after either TEXT_MESSAGE_END
     expect(stateUpdates.length).toBe(4);
+  });
+
+  it("should not create duplicate message when TEXT_MESSAGE_START uses same ID as TOOL_CALL_START parentMessageId", async () => {
+    // This tests the scenario where:
+    // 1. TOOL_CALL_START creates a message with parentMessageId "msg1"
+    // 2. TEXT_MESSAGE_START comes with messageId "msg1" (same ID)
+    // The fix ensures TEXT_MESSAGE_START doesn't create a duplicate message
+
+    const events$ = new Subject<BaseEvent>();
+    const initialState: RunAgentInput = {
+      messages: [],
+      state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
+    };
+
+    const agent = createAgent(initialState.messages);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+
+    const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    const sharedMessageId = "d0b45a7f-d877-4a59-a6db-e11365066393";
+
+    // Send events mimicking the real-world scenario
+    events$.next({ type: EventType.RUN_STARTED } as RunStartedEvent);
+
+    // Tool call with parentMessageId creates a message with that ID
+    events$.next({
+      type: EventType.TOOL_CALL_START,
+      toolCallId: "call_123",
+      toolCallName: "updateWorkingMemory",
+      parentMessageId: sharedMessageId,
+    } as ToolCallStartEvent);
+
+    events$.next({
+      type: EventType.TOOL_CALL_ARGS,
+      toolCallId: "call_123",
+      delta: '{"memory":{}}',
+    } as ToolCallArgsEvent);
+
+    events$.next({
+      type: EventType.TOOL_CALL_END,
+      toolCallId: "call_123",
+    } as ToolCallEndEvent);
+
+    // Tool result (separate message)
+    events$.next({
+      type: EventType.TOOL_CALL_RESULT,
+      messageId: "tool-result-1",
+      toolCallId: "call_123",
+      content: '{"success":true}',
+      role: "tool",
+    } as ToolCallResultEvent);
+
+    // Text message with SAME messageId as the tool call's parentMessageId
+    // This should NOT create a duplicate message
+    events$.next({
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: sharedMessageId,
+      role: "assistant",
+    } as TextMessageStartEvent);
+
+    events$.next({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: sharedMessageId,
+      delta: "Here is the response",
+    } as TextMessageContentEvent);
+
+    events$.next({
+      type: EventType.TEXT_MESSAGE_END,
+      messageId: sharedMessageId,
+    } as TextMessageEndEvent);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    events$.complete();
+
+    const stateUpdates = await stateUpdatesPromise;
+
+    // Get the final messages state
+    const finalUpdate = stateUpdates[stateUpdates.length - 1];
+    const finalMessages = finalUpdate?.messages;
+
+    // Verify there are no duplicate messages with the same ID
+    const messagesWithSharedId = finalMessages?.filter((m) => m.id === sharedMessageId);
+    expect(messagesWithSharedId?.length).toBe(1);
+
+    // The message should have both toolCalls AND content
+    const sharedMessage = messagesWithSharedId?.[0];
+    expect(sharedMessage?.role).toBe("assistant");
+    expect((sharedMessage as any)?.toolCalls?.length).toBe(1);
+    expect((sharedMessage as any)?.toolCalls?.[0]?.function?.name).toBe("updateWorkingMemory");
+    expect(sharedMessage?.content).toBe("Here is the response");
+
+    // Total messages should be 2: the assistant message (with tool call + content) and the tool result
+    expect(finalMessages?.length).toBe(2);
   });
 });

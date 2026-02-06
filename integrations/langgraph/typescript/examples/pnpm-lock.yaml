@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@copilotkit/sdk-js':
-        specifier: ^1.51.0
-        version: 1.51.0(@copilotkit/shared@1.51.0(@ag-ui/core@0.0.42))(@langchain/community@0.0.53(openai@6.15.0(zod@3.25.76)))(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(@langchain/langgraph@1.0.7(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(langchain@1.2.8(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(openai@6.15.0(zod@3.25.76))(zod-to-json-schema@3.24.6(zod@3.25.76)))(typescript@5.8.3)(zod@3.25.76)
+        specifier: ^1.51.2
+        version: 1.51.2(@ag-ui/core@0.0.42)(@langchain/community@0.0.53(openai@6.15.0(zod@3.25.76)))(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(@langchain/langgraph@1.0.7(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(langchain@1.2.8(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(openai@6.15.0(zod@3.25.76))(zod-to-json-schema@3.24.6(zod@3.25.76)))(typescript@5.8.3)(zod@3.25.76)
       '@langchain/core':
         specifier: ^1.1.7
         version: 1.1.7(openai@6.15.0(zod@3.25.76))
@@ -48,10 +48,9 @@ packages:
   '@cfworker/json-schema@4.1.1':
     resolution: {integrity: sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og==}
 
-  '@copilotkit/sdk-js@1.51.0':
-    resolution: {integrity: sha512-DsgQdO9Z+GKJycTs6gDo+nxFBXza7tTxvaI19lySGngbpwcAwBJZKTq4P2uHAJGF/aKZVSJNq2LfTyNetbXHUA==}
+  '@copilotkit/sdk-js@1.51.2':
+    resolution: {integrity: sha512-61r2nvoFCdOLlBcf1NVPl4Szf6+1naQGzIykorWlM6Bttmgp/ojL17P25Av9HjtlIlJ8ebOnWPvUOub+3ZdzBQ==}
     peerDependencies:
-      '@copilotkit/shared': 1.51.0
       '@langchain/community': ^0.0.53
       '@langchain/core': '>=0.4.0 <2.0.0'
       '@langchain/langgraph': '>=0.4.0 <2.0.0'
@@ -59,8 +58,8 @@ packages:
       typescript: ^5.2.3
       zod: ^3.23.3 || ^3.24.0 || ^3.25.0
 
-  '@copilotkit/shared@1.51.0':
-    resolution: {integrity: sha512-rP3754gBuJqHv4bSlqHVsj3eyWhPNQwGk9Mpo3R3+eMeZtPL+W+9H78aLZ5LbeTcwl0twHcgNRXXjdMwTJuUsw==}
+  '@copilotkit/shared@1.51.2':
+    resolution: {integrity: sha512-h8Jk+w/eDAJOL5l4Sccrz+5KF9BMTzlHBW1d6MYus91Ms4DZCS4UiU90wlUJJS8kOY3jkFS650Rx9v17k56bpg==}
     peerDependencies:
       '@ag-ui/core': ^0.0.42
 
@@ -791,17 +790,20 @@ snapshots:
 
   '@cfworker/json-schema@4.1.1': {}
 
-  '@copilotkit/sdk-js@1.51.0(@copilotkit/shared@1.51.0(@ag-ui/core@0.0.42))(@langchain/community@0.0.53(openai@6.15.0(zod@3.25.76)))(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(@langchain/langgraph@1.0.7(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(langchain@1.2.8(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(openai@6.15.0(zod@3.25.76))(zod-to-json-schema@3.24.6(zod@3.25.76)))(typescript@5.8.3)(zod@3.25.76)':
+  '@copilotkit/sdk-js@1.51.2(@ag-ui/core@0.0.42)(@langchain/community@0.0.53(openai@6.15.0(zod@3.25.76)))(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(@langchain/langgraph@1.0.7(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(langchain@1.2.8(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(openai@6.15.0(zod@3.25.76))(zod-to-json-schema@3.24.6(zod@3.25.76)))(typescript@5.8.3)(zod@3.25.76)':
     dependencies:
-      '@copilotkit/shared': 1.51.0(@ag-ui/core@0.0.42)
+      '@copilotkit/shared': 1.51.2(@ag-ui/core@0.0.42)
       '@langchain/community': 0.0.53(openai@6.15.0(zod@3.25.76))
       '@langchain/core': 1.1.7(openai@6.15.0(zod@3.25.76))
       '@langchain/langgraph': 1.0.7(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76)
       langchain: 1.2.8(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(openai@6.15.0(zod@3.25.76))(zod-to-json-schema@3.24.6(zod@3.25.76))
       typescript: 5.8.3
       zod: 3.25.76
+    transitivePeerDependencies:
+      - '@ag-ui/core'
+      - encoding
 
-  '@copilotkit/shared@1.51.0(@ag-ui/core@0.0.42)':
+  '@copilotkit/shared@1.51.2(@ag-ui/core@0.0.42)':
     dependencies:
       '@ag-ui/core': 0.0.42
       '@segment/analytics-node': 2.3.0

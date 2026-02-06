@@ -107,17 +107,25 @@ export const defaultApplyEvents = (
           if (mutation.stopPropagation !== true) {
             const { messageId, role = "assistant" } = event as TextMessageStartEvent;
 
-            // Create a new message using properties from the event
-            // Text messages can be developer, system, assistant, or user (not tool)
-            const newMessage: Message = {
-              id: messageId,
-              role: role,
-              content: "",
-            };
+            // Check if a message with this ID already exists (e.g., created by TOOL_CALL_START
+            // with the same parentMessageId)
+            const existingMessage = messages.find((m) => m.id === messageId);
 
-            // Add the new message to the messages array
-            messages.push(newMessage);
-            applyMutation({ messages });
+            if (!existingMessage) {
+              // Create a new message using properties from the event
+              // Text messages can be developer, system, assistant, or user (not tool)
+              const newMessage: Message = {
+                id: messageId,
+                role: role,
+                content: "",
+              };
+
+              // Add the new message to the messages array
+              messages.push(newMessage);
+              applyMutation({ messages });
+            }
+            // If message already exists, we don't need to create a new one
+            // The TEXT_MESSAGE_CONTENT events will update the existing message's content
           }
           return emitUpdates();
         }

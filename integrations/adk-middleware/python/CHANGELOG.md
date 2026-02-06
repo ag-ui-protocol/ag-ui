@@ -7,7 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Deprecated
+
+- **DEPRECATED**: Non-resumable (fire-and-forget) HITL flow via `ADKAgent(adk_agent=...)` with client-side tools
+  - A `DeprecationWarning` is now emitted at runtime when the old-style HITL early-return path is triggered
+  - Use `ADKAgent.from_app()` with `ResumabilityConfig(is_resumable=True)` for human-in-the-loop workflows
+  - The direct constructor remains fully supported for agents without client-side tools (chat-only, backend-tool-only)
+  - See [USAGE.md](./USAGE.md#migrating-to-resumable-hitl) for migration instructions
+
+### Breaking Changes
+
+- **BREAKING**: AG-UI client tools are no longer automatically included in the root agent's toolset (#903)
+  - You must now explicitly add `AGUIToolset` to your agent's tools list to access AG-UI client tools
+  - Tool name conflicts are no longer automatically resolved by removing AG-UI tools
+  - New `AGUIToolset` class provides explicit control over tool inclusion with `tool_filter` and `tool_name_prefix` parameters
+  - This change enables proper support for Orchestrator-style ADK agents where sub-agents need access to client tools
+  - **See the [Migration Guide](./README.md#migrating-from-v04x) in README.md for upgrade instructions**
+  - Huge thanks to **@jplikesbikes** for this contribution!
+
+### Security
+
+- Upgrade vulnerable transitive dependencies: aiohttp (3.13.3), urllib3 (2.6.3), authlib (1.6.6), pyasn1 (0.6.2), mcp (1.25.0), fastapi (0.128.0), starlette (0.49.3)
+
+### Fixed
+
+- **FIXED**: Reload session on cache miss to populate events (#1021)
+  - `_find_session_by_thread_id()` uses `list_sessions()` which returns metadata only; now reloads via `get_session()` after a cache miss so that session events are available
+  - Thanks to **@lakshminarasimmanv** for this fix!
+- **FIXED**: Duplicate TOOL_CALL event emission for client-side tools with ResumabilityConfig
+  - With `ResumabilityConfig(is_resumable=True)`, ADK emits the same function call from up to
+    three sources (LRO event, confirmed event with a different ID, and ClientProxyTool execution),
+    causing the frontend to render tool call results (e.g., HITL task lists) multiple times
+  - EventTranslator now accepts `client_tool_names` to skip emission for tools owned by
+    `ClientProxyTool`, letting the proxy be the sole emitter for client-side tools
+  - Bidirectional ID tracking between EventTranslator and ClientProxyTool prevents duplicates
+    regardless of execution order
+  - Added 12 regression tests covering LRO, confirmed, partial, and mixed tool call scenarios
+- **FIXED**: Relax Python version constraint to allow Python 3.14 (#973)
+  - Changed `requires-python` from `>=3.9, <3.14` to `>=3.10, <3.15`
+  - Fixed `asyncio.get_event_loop()` deprecation in tests for Python 3.14 compatibility
+  - Added `asyncio.timeout` compatibility shim for Python 3.10 in tests
+- **FIXED**: LRO tool call events now emitted for resumable agents on all ADK versions
+  - Previously, `_is_adk_resumable()` skipped `translate_lro_function_calls` entirely, expecting client_proxy_tool to emit events — this didn't work on ADK < 1.22.0
+  - Now always emits TOOL_CALL_START/ARGS/END for LRO tools; only the early loop exit is gated on non-resumable agents
+- **FIXED**: Stale `pending_tool_calls` no longer block session cleanup after middleware restart (#1051)
+  - When a middleware instance restarts, the in-memory `_session_lookup_cache` is lost but `pending_tool_calls` persists in the database, causing sessions to accumulate indefinitely
+  - Now clears `pending_tool_calls` when resuming a session after a cache miss (indicating middleware restart or failover)
+  - **Note**: This fix assumes sticky sessions (session affinity) are configured at the load balancer level for multi-pod deployments with `DatabaseSessionService`. Without sticky sessions, cache misses are frequent and could prematurely clear valid pending tool calls from active HITL workflows.
+  - Thanks to **@lakshminarasimmanv** for identifying and fixing this issue!
+- **FIXED**: Agent events not persisted to session with `LongRunningFunctionTool` in SSE streaming mode (#1059)
+  - With SSE streaming enabled (default), ADK yields `partial=True` events (not persisted) then `partial=False` events (persisted)
+  - Previously, the middleware returned early when detecting LRO tools, abandoning the runner's async generator before the final non-partial event was consumed, causing ADK to never persist the agent's response
+  - Now continues consuming events until a non-partial event is received, allowing ADK's natural persistence mechanism to complete
+  - Thanks to **@bajayo** for reporting and fixing this issue!
+
+## [0.4.2] - 2026-01-22
+
 ### Added
+- **NEW**: Native support for `RunAgentInput.context` in ADK agents (#959)
+  - Context from AG-UI is automatically stored in session state under `_ag_ui_context` key
+  - Accessible in tools via `tool_context.state.get(CONTEXT_STATE_KEY, [])`
+  - Accessible in instruction providers via `ctx.state.get(CONTEXT_STATE_KEY, [])`
+  - For ADK 1.22.0+, context is also available via `RunConfig.custom_metadata['ag_ui_context']`
+  - Follows the pattern established by LangGraph's context handling for cross-framework consistency
+  - `CONTEXT_STATE_KEY` constant exported from package for easy access
+  - See `examples/other/context_usage.py` for usage examples
+- **NEW**: Convert Gemini thought summaries to AG-UI THINKING events (#951)
+  - When using `ThinkingConfig(include_thoughts=True)` with Gemini 2.5+ models, thought summaries are now emitted as THINKING events
+  - Backwards-compatible: gracefully degrades on older google-genai SDK versions without the `part.thought` attribute
+  - No dependency version bumps required - works with existing `google-adk>=1.14.0`
+  - Emits proper event sequence: `THINKING_START` → `THINKING_TEXT_MESSAGE_START/CONTENT/END` → `THINKING_END`
+  - Thinking streams are properly closed when transitioning to regular text output
 - **NEW**: Fine-grained session cleanup configuration via `delete_session_on_cleanup` and `save_session_to_memory_on_cleanup` parameters (#927)
   - Splits the previous `auto_cleanup` behavior into two independent controls
   - `delete_session_on_cleanup`: Controls whether sessions are deleted from ADK SessionService during cleanup (default: `True`)
@@ -27,6 +97,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Thanks to @jplikesbikes for the contribution
 
 ### Fixed
+- **FIXED**: Duplicate `TOOL_CALL_START` events with google-adk >= 1.22.0 (issue #968)
+  - google-adk 1.22.0 enables `PROGRESSIVE_SSE_STREAMING` by default, which sends function call "previews" in partial events
+  - The middleware now skips function calls from `partial=True` events, only processing confirmed calls (`partial=False`)
+  - Backwards-compatible: uses `getattr(adk_event, 'partial', False)` for older google-adk versions without the attribute
+- **FIXED**: `DatabaseSessionService` compatibility for HITL (human-in-the-loop) tool workflows (issue #957)
+  - Added `invocation_id` to FunctionResponse events - required by `DatabaseSessionService` for event tracking
+  - Session is now refreshed after `update_session_state` to prevent "stale session" errors from optimistic locking
+  - Both code paths (tool results with user message, and tool results only) now properly persist events
+  - Thanks to @lakshminarasimmanv for the contribution
 - **FIXED**: Text message events not emitted when non-streaming response includes client function call (issue #906)
   - In non-streaming mode, when an ADK event contained both text and an LRO (long-running) tool call, text was skipped entirely
   - Added `translate_text_only()` method to EventTranslator to handle text extraction for LRO events
@@ -36,7 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Previous check for `author == "model"` caused assistant messages to be silently dropped
   - Now treats any non-"user" author as an assistant message
 
-## [0.4.1] - 2025-01-06
+## [0.4.1] - 2026-01-06
 
 ### Added
 - **NEW**: Multimodal message support for user messages with inline base64-encoded binary data (#864)

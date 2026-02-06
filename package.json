@@ -12,6 +12,8 @@
     "format": "prettier --write \"**/*.{ts,tsx,md,mdx}\"",
     "check-types": "turbo run check-types",
     "test": "turbo run test",
+    "test:coverage": "turbo run test:coverage",
+    "test:watch": "turbo run test:watch",
     "create-integration": "pnpm dlx tsx create-integration.ts",
     "bump": "pnpm --filter './sdks/typescript/packages/*' exec -- pnpm version",
     "bump:alpha": "pnpm --filter './sdks/typescript/packages/*' exec -- pnpm version --preid alpha",
