@@ -10,13 +10,14 @@
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "lint": "eslint \"src/**/*.ts*\"",
     "clean": "rm -rf dist .turbo node_modules coverage",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
+    "test:exports": "publint --strict && attw --pack",
     "generate": "mkdir -p ./src/generated && npx protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto.CMD --ts_proto_out=./src/generated --ts_proto_opt=esModuleInterop=true,outputJsonMethods=false,outputClientImpl=false -I ./src/proto ./src/proto/*.proto",
     "link:global": "pnpm link --global",
     "unlink:global": "pnpm unlink --global"
@@ -28,9 +29,18 @@
   },
   "devDependencies": {
     "@vitest/coverage-istanbul": "^4.0.18",
+    "publint": "^0.3.12",
+    "@arethetypeswrong/cli": "^0.17.4",
+    "vitest": "^4.0.18",
     "ts-proto": "^2.7.0",
-    "tsup": "^8.0.2",
-    "typescript": "^5.8.2",
-    "vitest": "^4.0.18"
+    "tsdown": "^0.20.1",
+    "typescript": "^5.8.2"
+  },
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
   }
 }
