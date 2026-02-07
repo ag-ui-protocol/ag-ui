@@ -21,8 +21,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.agui.example.chatapp.data.model.ClawgUiPairingState
 import com.agui.example.chatapp.ui.screens.chat.components.ChatHeader
 import com.agui.example.chatapp.ui.screens.chat.components.ChatInput
+import com.agui.example.chatapp.ui.screens.chat.components.ClawgUiPairingDialog
 import com.agui.example.chatapp.ui.screens.chat.components.MessageList
 import com.agui.example.chatapp.ui.theme.AgentChatTheme
 import org.jetbrains.compose.resources.stringResource
@@ -83,6 +85,16 @@ fun ChatScreen(
                 }
             }
         }
+    }
+
+    // clawg-ui pairing dialog
+    if (state.clawgUiPairingState !is ClawgUiPairingState.Idle) {
+        ClawgUiPairingDialog(
+            state = state.clawgUiPairingState,
+            onComplete = { viewModel.completePairing() },
+            onRetry = { viewModel.retryAfterApproval() },
+            onDismiss = { viewModel.dismissPairing() }
+        )
     }
 }
 
