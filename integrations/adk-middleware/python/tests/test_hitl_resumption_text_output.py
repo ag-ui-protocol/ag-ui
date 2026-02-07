@@ -6,7 +6,7 @@ during a Human-in-the-Loop flow, the agent actually generates a text response
 acknowledging the result. This is the core user-facing behavior.
 
 Background:
-- PR #1075 removed explicit FunctionResponse persistence (to fix duplicate events)
+- PR #1075 would remove explicit FunctionResponse persistence (to fix duplicate events)
 - This caused a regression where runner.run_async() returned ZERO events after
   HITL resumption — the LLM was never called, so no text was generated
 - The dojo test "Human in the Loop Feature" timed out waiting for assistant messages
