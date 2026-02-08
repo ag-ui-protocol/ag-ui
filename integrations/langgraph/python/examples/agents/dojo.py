@@ -18,6 +18,7 @@ from .agentic_generative_ui.agent import graph as agentic_generative_ui_graph
 from .agentic_chat_reasoning.agent import graph as agentic_chat_reasoning_graph
 from .backend_tool_rendering.agent import graph as backend_tool_rendering_graph
 from .subgraphs.agent import graph as subgraphs_graph
+from .a2ui_chat.agent import graph as a2ui_chat_graph
 from copilotkit import LangGraphAGUIAgent
 
 app = FastAPI(title="LangGraph Dojo Example Server")
@@ -69,6 +70,11 @@ agents = {
         description="A demo of LangGraph subgraphs using a Game Character Creator.",
         graph=subgraphs_graph,
     ),
+    "a2ui_chat": LangGraphAgent(
+        name="a2ui_chat",
+        description="An agent that can render A2UI surfaces.",
+        graph=a2ui_chat_graph,
+    ),
 }
 
 add_langgraph_fastapi_endpoint(
@@ -114,6 +120,10 @@ add_langgraph_fastapi_endpoint(
 
 add_langgraph_fastapi_endpoint(
     app=app, agent=agents["subgraphs"], path="/agent/subgraphs"
+)
+
+add_langgraph_fastapi_endpoint(
+    app=app, agent=agents["a2ui_chat"], path="/agent/a2ui_chat"
 )
 
 

@@ -1,0 +1,4 @@
+/* Fix for messages being hidden behind the absolutely-positioned input */
+.a2ui-chat-container [class*="overflow-y-scroll"] {
+  padding-bottom: 120px !important;
+}
