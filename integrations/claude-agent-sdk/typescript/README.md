@@ -1,0 +1,76 @@
+# @ag-ui/claude-agent-sdk
+
+Implementation of the AG-UI protocol for the Anthropic Claude Agent SDK (TypeScript).
+
+## Installation
+
+```bash
+npm install @ag-ui/claude-agent-sdk @anthropic-ai/claude-agent-sdk zod
+```
+
+## Usage
+
+```typescript
+import { ClaudeAgentAdapter } from "@ag-ui/claude-agent-sdk";
+
+const adapter = new ClaudeAgentAdapter({
+  agentId: "my_agent",
+  description: "A helpful assistant",
+  model: "claude-haiku-4-5",
+  systemPrompt: "You are helpful",
+});
+
+const events$ = adapter.run(input);
+events$.subscribe({
+  next: (event) => console.log(event),
+  complete: () => console.log("Done"),
+});
+```
+
+## Features
+
+- **Native Claude SDK integration** - Direct support for Claude Agent SDK with streaming responses
+- **Session management** - Automatic session tracking per thread with resumption support
+- **Dynamic frontend tools** - Client-provided tools automatically added as MCP server
+- **Frontend tool halting** - Streams pause after frontend tool calls for client-side execution (human-in-the-loop)
+- **Streaming tool arguments** - Real-time TOOL_CALL_ARGS emission as JSON arguments stream in
+- **Bidirectional state sync** - Shared state management via ag_ui_update_state tool
+- **Context injection** - Context and state injected into prompts for agent awareness
+- **Observable pattern** - RxJS Observable for event streaming
+- **Custom tools via MCP** - Define custom tools using Claude SDK's tool() function
+- **Forwarded props** - Per-run option overrides with security whitelist
+
+## Examples
+
+The integration includes 5 example agents:
+
+| Route | Description | Features |
+|-------|-------------|----------|
+| `/agentic_chat` | Basic conversational assistant | Simple chat |
+| `/backend_tool_rendering` | Weather tool (backend MCP) | Backend tool execution, tool rendering |
+| `/shared_state` | Recipe collaboration | Bidirectional state sync, ag_ui_update_state |
+| `/human_in_the_loop` | Task planning with approval | Frontend tools, step tracking, approval workflow |
+| `/tool_based_generative_ui` | Frontend tool rendering | Dynamic frontend tools, generative UI |
+
+## Running the Examples
+
+```bash
+# Install dependencies
+cd integrations/claude-agent-sdk/typescript
+pnpm install
+
+# Start server (port 8889)
+ANTHROPIC_API_KEY=sk-ant-xxx npx tsx examples/server.ts
+
+# Start Dojo (in another terminal)
+cd apps/dojo
+pnpm dev
+```
+
+Visit **http://localhost:3000** and select **"Claude Agent SDK (Typescript)"**
+
+## Links
+
+- [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/typescript)
+- [AG-UI Documentation](https://docs.ag-ui.com/)
+- [AG-UI State Management](https://docs.ag-ui.com/concepts/state)
