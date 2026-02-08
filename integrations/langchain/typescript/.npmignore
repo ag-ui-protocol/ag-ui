@@ -9,5 +9,5 @@ __tests__
 src
 tsup.config.ts
 tsconfig.json
-jest.config.js
+vitest.config.ts
 example

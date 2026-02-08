@@ -28,6 +28,13 @@ import {
   ActivitySnapshotEvent,
   ActivityDeltaEvent,
   ActivityMessage,
+  ReasoningStartEvent,
+  ReasoningMessageStartEvent,
+  ReasoningMessageContentEvent,
+  ReasoningMessageEndEvent,
+  ReasoningEndEvent,
+  ReasoningEncryptedValueEvent,
+  ReasoningMessage,
 } from "@ag-ui/core";
 import { mergeMap, mergeAll, defaultIfEmpty, concatMap } from "rxjs/operators";
 import { of, EMPTY } from "rxjs";
@@ -639,12 +646,7 @@ export const defaultApplyEvents = (
             try {
               const baseContent = structuredClone_(existingActivityMessage.content ?? {});
 
-              const result = applyPatch(
-                baseContent,
-                activityEvent.patch ?? [],
-                true,
-                false,
-              );
+              const result = applyPatch(baseContent, activityEvent.patch ?? [], true, false);
               const updatedContent = result.newDocument as ActivityMessage["content"];
 
               messages[existingIndex] = {
@@ -843,6 +845,202 @@ export const defaultApplyEvents = (
         }
 
         case EventType.THINKING_TEXT_MESSAGE_END: {
+          return emitUpdates();
+        }
+
+        case EventType.REASONING_START: {
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onReasoningStartEvent?.({
+                event: event as ReasoningStartEvent,
+                messages,
+                state,
+                agent,
+                input,
+              }),
+          );
+          applyMutation(mutation);
+          return emitUpdates();
+        }
+
+        case EventType.REASONING_MESSAGE_START: {
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onReasoningMessageStartEvent?.({
+                event: event as ReasoningMessageStartEvent,
+                messages,
+                state,
+                agent,
+                input,
+              }),
+          );
+          applyMutation(mutation);
+
+          if (mutation.stopPropagation !== true) {
+            const { messageId } = event as ReasoningMessageStartEvent;
+            const existingMessage = messages.find((m) => m.id === messageId);
+
+            if (!existingMessage) {
+              const newMessage: ReasoningMessage = {
+                id: messageId,
+                role: "reasoning",
+                content: "",
+              };
+              messages.push(newMessage);
+              applyMutation({ messages });
+            }
+          }
+          return emitUpdates();
+        }
+
+        case EventType.REASONING_MESSAGE_CONTENT: {
+          const { messageId, delta } = event as ReasoningMessageContentEvent;
+
+          const targetMessage = messages.find((m) => m.id === messageId);
+          if (!targetMessage) {
+            console.warn(`REASONING_MESSAGE_CONTENT: No message found with ID '${messageId}'`);
+            return emitUpdates();
+          }
+
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onReasoningMessageContentEvent?.({
+                event: event as ReasoningMessageContentEvent,
+                messages,
+                state,
+                agent,
+                input,
+                reasoningMessageBuffer:
+                  typeof targetMessage.content === "string" ? targetMessage.content : "",
+              }),
+          );
+          applyMutation(mutation);
+
+          if (mutation.stopPropagation !== true) {
+            const existingContent =
+              typeof targetMessage.content === "string" ? targetMessage.content : "";
+            targetMessage.content = `${existingContent}${delta}`;
+            applyMutation({ messages });
+          }
+          return emitUpdates();
+        }
+
+        case EventType.REASONING_MESSAGE_END: {
+          const { messageId } = event as ReasoningMessageEndEvent;
+
+          const targetMessage = messages.find((m) => m.id === messageId);
+          if (!targetMessage) {
+            console.warn(`REASONING_MESSAGE_END: No message found with ID '${messageId}'`);
+            return emitUpdates();
+          }
+
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onReasoningMessageEndEvent?.({
+                event: event as ReasoningMessageEndEvent,
+                messages,
+                state,
+                agent,
+                input,
+                reasoningMessageBuffer:
+                  typeof targetMessage.content === "string" ? targetMessage.content : "",
+              }),
+          );
+          applyMutation(mutation);
+
+          await Promise.all(
+            subscribers.map((subscriber) => {
+              subscriber.onNewMessage?.({
+                message: targetMessage,
+                messages,
+                state,
+                agent,
+                input,
+              });
+            }),
+          );
+
+          return emitUpdates();
+        }
+
+        case EventType.REASONING_MESSAGE_CHUNK: {
+          throw new Error("REASONING_MESSAGE_CHUNK must be transformed before being applied");
+        }
+
+        case EventType.REASONING_END: {
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onReasoningEndEvent?.({
+                event: event as ReasoningEndEvent,
+                messages,
+                state,
+                agent,
+                input,
+              }),
+          );
+          applyMutation(mutation);
+          return emitUpdates();
+        }
+
+        case EventType.REASONING_ENCRYPTED_VALUE: {
+          const { subtype, entityId, encryptedValue } = event as ReasoningEncryptedValueEvent;
+          const mutation = await runSubscribersWithMutation(
+            subscribers,
+            messages,
+            state,
+            (subscriber, messages, state) =>
+              subscriber.onReasoningEncryptedValueEvent?.({
+                event: event as ReasoningEncryptedValueEvent,
+                messages,
+                state,
+                agent,
+                input,
+              }),
+          );
+          applyMutation(mutation);
+          if (mutation.stopPropagation !== true) {
+            let entityUpdated = false;
+            if (subtype === "tool-call") {
+              // Find tool call by entityId and set encryptedValue
+              for (const message of messages) {
+                if (message.role === "assistant" && message.toolCalls) {
+                  const toolCall = message.toolCalls.find((tc) => tc.id === entityId);
+                  if (toolCall) {
+                    toolCall.encryptedValue = encryptedValue;
+                    entityUpdated = true;
+                    break;
+                  }
+                }
+              }
+            } else {
+              // subtype is "message"
+              // Find message by entityId and set encryptedValue
+              const message = messages.find((m) => m.id === entityId);
+              // Activity messages do not have encryptedValue
+              if (message?.role !== "activity" && message) {
+                message.encryptedValue = encryptedValue;
+                entityUpdated = true;
+              }
+            }
+            if (entityUpdated) {
+              currentMutation.messages = messages;
+            }
+          }
           return emitUpdates();
         }
       }
