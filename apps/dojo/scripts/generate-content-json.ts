@@ -399,6 +399,15 @@ const agentFilesMapper: Record<
   // A2A integrations use runtime-configured agents without per-feature source files
   "a2a-basic": () => ({}),
   "a2a": () => ({}),
+  dify: () => ({
+    agentic_chat: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/dify/typescript/src/index.ts`,
+      ),
+    ],
+  }),
 };
 
 async function runGenerateContent() {

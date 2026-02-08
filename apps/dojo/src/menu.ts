@@ -253,4 +253,12 @@ export const menuIntegrations = [
       "human_in_the_loop",
     ],
   },
+  {
+    id: "dify",
+    name: "Dify",
+    features: [
+      "agentic_chat",
+      "tool_based_generative_ui",
+    ],
+  },
 ] as const satisfies MenuIntegrationConfig[];

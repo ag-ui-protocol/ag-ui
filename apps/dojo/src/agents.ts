@@ -12,6 +12,7 @@ import { MastraAgent } from "@ag-ui/mastra";
 // import { openai } from "@ai-sdk/openai";
 import { LangGraphAgent, LangGraphHttpAgent } from "@ag-ui/langgraph";
 import { AgnoAgent } from "@ag-ui/agno";
+import { DifyAgent } from "@ag-ui/dify";
 import { LlamaIndexAgent } from "@ag-ui/llamaindex";
 import { CrewAIAgent } from "@ag-ui/crewai";
 import getEnvVars from "./env";
@@ -345,4 +346,21 @@ export const agentsIntegrations = {
     ),
     human_in_the_loop: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/human-in-the-loop`, debug: true }),
   }),
+
+  dify: async () => {
+    // Check environment variables
+    if (!envVars.difyApiKey) {
+      throw new Error("DIFY_API_KEY environment variable is not set");
+    }
+
+    const difyAgent = new DifyAgent({
+      apiKey: envVars.difyApiKey,
+      baseUrl: envVars.difyApiBaseUrl,
+    });
+
+    return {
+      agentic_chat: difyAgent,
+      tool_based_generative_ui: difyAgent,
+    };
+  },
 } satisfies AgentsMap;

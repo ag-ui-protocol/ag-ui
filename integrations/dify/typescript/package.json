@@ -1,0 +1,36 @@
+{
+  "name": "@ag-ui/dify",
+  "version": "0.1.0",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "files": [
+    "dist/**",
+    "README.md"
+  ],
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist .turbo node_modules",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@ag-ui/core": ">=0.0.37",
+    "@ag-ui/client": ">=0.0.37",
+    "rxjs": "7.8.1"
+  },
+  "devDependencies": {
+    "@ag-ui/client": "workspace:*",
+    "@ag-ui/core": "workspace:*",
+    "@types/node": "^20.0.0",
+    "rimraf": "^5.0.0",
+    "rxjs": "7.8.1",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}
