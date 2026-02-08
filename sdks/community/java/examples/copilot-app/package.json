@@ -13,7 +13,7 @@
     "@copilotkit/react-core": "^1.51.2",
     "@copilotkit/react-ui": "^1.51.2",
     "@copilotkit/runtime": "^1.51.2",
-    "next": "15.4.6",
+    "next": "16.1.5",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },
