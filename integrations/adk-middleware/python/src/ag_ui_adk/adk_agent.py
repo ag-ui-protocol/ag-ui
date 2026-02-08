@@ -1662,22 +1662,11 @@ class ADKAgent:
                     )
                     function_response_parts.append(updated_function_response_part)
 
-                # Persist FunctionResponse event so DatabaseSessionService has invocation_id
-                from google.adk.sessions.session import Event
-                import time
-
+                # Create function_response_content to send as new_message
+                # NOTE: We do NOT explicitly persist here - ADK's runner.run_async() will persist
+                # when it processes new_message. Explicitly calling append_event here would cause
+                # duplicate function_response events in the session (GitHub issue fix).
                 function_response_content = types.Content(parts=function_response_parts, role='user')
-                # Use stored invocation_id for HITL resumption to restore SequentialAgent state
-                resume_invocation_id = stored_invocation_id or input.run_id
-                function_response_event = Event(
-                    timestamp=time.time(),
-                    author='user',
-                    content=function_response_content,
-                    invocation_id=resume_invocation_id,
-                )
-                logger.debug(f"Creating FunctionResponse event with invocation_id={resume_invocation_id}")
-
-                await self._session_manager._session_service.append_event(session, function_response_event)
 
                 new_message = function_response_content
             else:
