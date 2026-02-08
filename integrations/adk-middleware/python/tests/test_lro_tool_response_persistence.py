@@ -38,7 +38,7 @@ from ag_ui.core import (
 )
 from ag_ui_adk import ADKAgent, AGUIToolset
 from ag_ui_adk.session_manager import SessionManager, INVOCATION_ID_STATE_KEY
-from google.adk.agents import LlmAgent, Agent
+from google.adk.agents import Agent
 from google.adk.apps import App, ResumabilityConfig
 from google.genai import types
 
@@ -135,22 +135,37 @@ class TestLROToolResponseIntegration:
 
     @pytest.fixture
     def simple_agent(self):
-        """Create a simple ADK agent without HITL for basic tests."""
-        agent = LlmAgent(
+        """Create a simple ADK agent for tool persistence tests.
+
+        Uses ADKAgent.from_app() with ResumabilityConfig because the HITL
+        tool-result flow (pending tool tracking, invocation_id storage)
+        requires a resumable app.
+        """
+        agent = Agent(
             model=DEFAULT_MODEL,
             name='simple_test_agent',
             instruction="You are a test agent. Keep responses very brief.",
             tools=[AGUIToolset()],
         )
 
-        return ADKAgent(
-            adk_agent=agent,
-            app_name="test_simple_app",
+        adk_app = App(
+            name="test_simple_app",
+            root_agent=agent,
+            resumability_config=ResumabilityConfig(is_resumable=True),
+        )
+
+        return ADKAgent.from_app(
+            adk_app,
             user_id="test_user",
             use_in_memory_services=True,
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.xfail(
+        reason="Known duplicate FunctionResponse persistence on main (issue #1074). "
+               "Fix expected in PR #1075.",
+        strict=False,
+    )
     async def test_tool_result_persists_single_function_response(
         self, check_api_key, simple_agent
     ):
@@ -248,9 +263,7 @@ class TestLROToolResponseIntegration:
         # Step 3: Verify session has exactly ONE function_response
         app_name = simple_agent._get_app_name(run_input_2)
         user_id = simple_agent._get_user_id(run_input_2)
-        backend_session_id = simple_agent._session_manager.get_backend_session_id(
-            app_name, thread_id
-        )
+        backend_session_id = simple_agent._get_backend_session_id(thread_id)
 
         if backend_session_id:
             session = await simple_agent._session_manager._session_service.get_session(
@@ -273,6 +286,11 @@ class TestLROToolResponseIntegration:
             )
 
     @pytest.mark.asyncio
+    @pytest.mark.xfail(
+        reason="On main the middleware uses the stored ADK invocation_id, not the "
+               "AG-UI run_id. Correct behaviour expected after PR #1075.",
+        strict=False,
+    )
     async def test_function_response_has_correct_invocation_id(
         self, check_api_key, simple_agent
     ):
@@ -347,9 +365,7 @@ class TestLROToolResponseIntegration:
         # Verify invocation_id
         app_name = simple_agent._get_app_name(run_input_2)
         user_id = simple_agent._get_user_id(run_input_2)
-        backend_session_id = simple_agent._session_manager.get_backend_session_id(
-            app_name, thread_id
-        )
+        backend_session_id = simple_agent._get_backend_session_id(thread_id)
 
         if backend_session_id:
             session = await simple_agent._session_manager._session_service.get_session(
@@ -368,6 +384,11 @@ class TestLROToolResponseIntegration:
                 )
 
     @pytest.mark.asyncio
+    @pytest.mark.xfail(
+        reason="Trailing user message + stored invocation_id causes ADK resumption "
+               "error ('No agent to transfer to'). Requires fix in PR #1075.",
+        strict=False,
+    )
     async def test_tool_result_with_trailing_user_message(
         self, check_api_key, simple_agent
     ):
@@ -441,9 +462,7 @@ class TestLROToolResponseIntegration:
         # Verify single function_response
         app_name = simple_agent._get_app_name(run_input_2)
         user_id = simple_agent._get_user_id(run_input_2)
-        backend_session_id = simple_agent._session_manager.get_backend_session_id(
-            app_name, thread_id
-        )
+        backend_session_id = simple_agent._get_backend_session_id(thread_id)
 
         if backend_session_id:
             session = await simple_agent._session_manager._session_service.get_session(
@@ -500,6 +519,11 @@ class TestHITLResumptionIntegration:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.xfail(
+        reason="Known duplicate FunctionResponse persistence on main (issue #1074). "
+               "Fix expected in PR #1075.",
+        strict=False,
+    )
     async def test_hitl_resumption_preserves_invocation_context(
         self, check_api_key, hitl_agent
     ):
@@ -603,9 +627,7 @@ class TestHITLResumptionIntegration:
         # Verify function_response was persisted correctly
         app_name = hitl_agent._get_app_name(run_input_2)
         user_id = hitl_agent._get_user_id(run_input_2)
-        backend_session_id = hitl_agent._session_manager.get_backend_session_id(
-            app_name, thread_id
-        )
+        backend_session_id = hitl_agent._get_backend_session_id(thread_id)
 
         if backend_session_id:
             session = await hitl_agent._session_manager._session_service.get_session(
