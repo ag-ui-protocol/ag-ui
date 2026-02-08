@@ -50,6 +50,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **FIXED**: LRO tool call events now emitted for resumable agents on all ADK versions
   - Previously, `_is_adk_resumable()` skipped `translate_lro_function_calls` entirely, expecting client_proxy_tool to emit events — this didn't work on ADK < 1.22.0
   - Now always emits TOOL_CALL_START/ARGS/END for LRO tools; only the early loop exit is gated on non-resumable agents
+- **FIXED**: Stale `pending_tool_calls` no longer block session cleanup after middleware restart (#1051)
+  - When a middleware instance restarts, the in-memory `_session_lookup_cache` is lost but `pending_tool_calls` persists in the database, causing sessions to accumulate indefinitely
+  - Now clears `pending_tool_calls` when resuming a session after a cache miss (indicating middleware restart or failover)
+  - **Note**: This fix assumes sticky sessions (session affinity) are configured at the load balancer level for multi-pod deployments with `DatabaseSessionService`. Without sticky sessions, cache misses are frequent and could prematurely clear valid pending tool calls from active HITL workflows.
+  - Thanks to **@lakshminarasimmanv** for identifying and fixing this issue!
+- **FIXED**: Agent events not persisted to session with `LongRunningFunctionTool` in SSE streaming mode (#1059)
+  - With SSE streaming enabled (default), ADK yields `partial=True` events (not persisted) then `partial=False` events (persisted)
+  - Previously, the middleware returned early when detecting LRO tools, abandoning the runner's async generator before the final non-partial event was consumed, causing ADK to never persist the agent's response
+  - Now continues consuming events until a non-partial event is received, allowing ADK's natural persistence mechanism to complete
+  - Thanks to **@bajayo** for reporting and fixing this issue!
 
 ## [0.4.2] - 2026-01-22
 

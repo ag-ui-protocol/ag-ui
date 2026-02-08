@@ -6,7 +6,7 @@ import {
   ToolCallStartEvent,
   MessagesSnapshotEvent,
 } from "@ag-ui/core";
-import { describe, it, expect } from "@jest/globals";
+import { describe, it, expect } from "vitest";
 import * as protoEvents from "../src/generated/events";
 
 describe("Proto", () => {

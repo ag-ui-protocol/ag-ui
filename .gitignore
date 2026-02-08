@@ -1,5 +1,8 @@
 **/.claude/settings.local.json
 
+# Test coverage
+coverage/
+
 mastra.db*
 
 **/.DS_Store

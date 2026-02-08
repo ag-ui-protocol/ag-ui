@@ -15,9 +15,10 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "clean": "rm -rf dist",
+    "clean": "rm -rf dist coverage",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "link:global": "pnpm link --global",
     "unlink:global": "pnpm unlink --global"
@@ -32,9 +33,10 @@
   "devDependencies": {
     "@ag-ui/client": "workspace:*",
     "@types/node": "^20.11.19",
+    "@vitest/coverage-istanbul": "^4.0.18",
     "rxjs": "7.8.1",
     "tsup": "^8.0.2",
     "typescript": "^5.3.3",
-    "vitest": "^2.0.0"
+    "vitest": "^4.0.18"
   }
 }

@@ -32,6 +32,7 @@ from ag_ui.core import (
     ToolMessage,
 )
 
+from .client_proxy_tool import sync_proxy_tools
 from .config import (
     StrandsAgentConfig,
     ToolCallContext,
@@ -71,6 +72,8 @@ class StrandsAgent:
 
         # Dictionary to store agent instances per thread
         self._agents_by_thread: Dict[str, StrandsAgentCore] = {}
+        # Track proxy tool names registered per thread
+        self._proxy_tool_names_by_thread: Dict[str, set] = {}
 
     async def run(self, input_data: RunAgentInput) -> AsyncIterator[Any]:
         """Run the Strands agent and yield AG-UI events."""
@@ -86,6 +89,23 @@ class StrandsAgent:
                 **self._agent_kwargs,
             )
         strands_agent = self._agents_by_thread[thread_id]
+
+        # Sync proxy tools from client-defined tools
+        if input_data.tools:
+            proxy_names = sync_proxy_tools(
+                strands_agent.tool_registry,
+                input_data.tools,
+                self._proxy_tool_names_by_thread.get(thread_id, set()),
+            )
+            self._proxy_tool_names_by_thread[thread_id] = proxy_names
+        elif self._proxy_tool_names_by_thread.get(thread_id):
+            # Remove all stale proxy tools when no tools are sent
+            sync_proxy_tools(
+                strands_agent.tool_registry,
+                [],
+                self._proxy_tool_names_by_thread[thread_id],
+            )
+            self._proxy_tool_names_by_thread[thread_id] = set()
 
         # Start run
         yield RunStartedEvent(
@@ -351,6 +371,11 @@ class StrandsAgent:
                             logger.debug(
                                 f"Processing tool result: tool_name={tool_name}, result_tool_id={result_tool_id}, has_pending_tool_result={has_pending_tool_result}, thread_id={input_data.thread_id}"
                             )
+
+                            # Skip emitting the placeholder result for forwarded/proxy tools
+                            # – the real execution happens on the client side.
+                            if tool_name and tool_name in frontend_tool_names:
+                                continue
 
                             # Emit ToolCallResultEvent WITHOUT role field to complete the tool in UI
                             # but prevent it from being added to conversation history

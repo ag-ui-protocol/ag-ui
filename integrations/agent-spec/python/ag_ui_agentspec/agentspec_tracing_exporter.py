@@ -1,9 +1,3 @@
-# Copyright © 2025 Oracle and/or its affiliates.
-#
-# This software is under the Apache License 2.0
-# (LICENSE-APACHE or http://www.apache.org/licenses/LICENSE-2.0) or Universal Permissive License
-# (UPL) 1.0 (LICENSE-UPL or https://oss.oracle.com/licenses/upl), at your option.
-
 """
 AG-UI span processor for pyagentspec.tracing
 
@@ -27,7 +21,7 @@ import os
 import json
 import uuid
 from contextvars import ContextVar
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List
 
 # AG‑UI Python SDK (events)
 from ag_ui.core.events import (
@@ -52,7 +46,7 @@ from pyagentspec.tracing.events.tool import (
     ToolExecutionResponse,
 )
 from pyagentspec.tracing.spanprocessor import SpanProcessor
-from pyagentspec.tracing.spans import LlmGenerationSpan, NodeExecutionSpan, ToolExecutionSpan
+from pyagentspec.tracing.spans import LlmGenerationSpan, NodeExecutionSpan
 from pyagentspec.tracing.spans.span import Span
 
 
@@ -79,6 +73,10 @@ class AgUiSpanProcessor(SpanProcessor):
         # Track tool-call lifecycles seen via streaming to avoid double-emitting
         self._started_tool_calls: Dict[str, Any] = {}
         self._runtime = runtime
+        # Correlate tool results with tool calls
+        # tool_call_id is only available in the on_tool_start event
+        # and not the on_tool_end event
+        self._tool_run_id_to_tool_call_id: Dict[str, str] = {}
 
     def _emit(self, event_obj) -> None:
         queue = EVENT_QUEUE.get()
@@ -88,47 +86,78 @@ class AgUiSpanProcessor(SpanProcessor):
         if self._debug:
             print("[AGUI DEBUG]" + str(event_obj))
 
-    @staticmethod
-    def _escape_html(text: str) -> str:
-        if text is None:
-            return ""
-        return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    async def _aemit(self, event_obj) -> None:
+        queue = EVENT_QUEUE.get()
+        if queue is None:
+            raise RuntimeError("AG-UI event queue is not set")
+        await queue.put(event_obj)
+        if self._debug:
+            print("[AGUI DEBUG]" + str(event_obj))
+
+    @property
+    def _run_started_event(self):
+        return RunStartedEvent(thread_id=self._run["thread_id"], run_id=self._run["run_id"])
+
+    @property
+    def _run_finished_event(self):
+        return RunFinishedEvent(thread_id=self._run["thread_id"], run_id=self._run["run_id"])
 
     def startup(self) -> None:
-        self._emit(RunStartedEvent(thread_id=self._run["thread_id"], run_id=self._run["run_id"]))
+        self._emit(self._run_started_event)
 
     def shutdown(self) -> None:
-        self._emit(RunFinishedEvent(thread_id=self._run["thread_id"], run_id=self._run["run_id"]))
+        self._emit(self._run_finished_event)
+
+    async def startup_async(self) -> None:
+        await self._aemit(self._run_started_event)
+
+    async def shutdown_async(self) -> None:
+        await self._aemit(self._run_finished_event)
 
     def on_start(self, span: Span) -> None:
-        # Prefer span lifecycle for step/tool tracking; events fill in details
-        if isinstance(span, LlmGenerationSpan):
-            self._llm_chunks_seen[span.id] = False
-        elif isinstance(span, NodeExecutionSpan):
-            step_name = span.node.name
-            self._emit(StepStartedEvent(step_name=step_name))
-        elif isinstance(span, ToolExecutionSpan):
-            # Do not synthesize AG‑UI tool-call lifecycle here; tool-call lifecycle maps
-            # to LLM ToolCallChunkReceived/LlmGenerationResponse events instead.
-            pass
+        for ev in self._gather_start_events(span):
+            self._emit(ev)
 
-    async def on_start_async(self, span: "Span") -> None:
-        self.on_start(span)
+    def on_end(self, span: Span) -> None:
+        for ev in self._gather_end_events(span):
+            self._emit(ev)
 
-    def on_end(self, span: "Span") -> None:
-        # Cleanup / close via span lifecycle where possible
-        if isinstance(span, LlmGenerationSpan):
-            self._llm_chunks_seen.pop(span.id, None)
-        elif isinstance(span, NodeExecutionSpan):
-            step_name = span.node.name
-            self._emit(StepFinishedEvent(step_name=step_name))
-        elif isinstance(span, ToolExecutionSpan):
-            # No synthesized tool-call lifecycle on tool span end
-            pass
+    async def on_start_async(self, span: Span) -> None:
+        for ev in self._gather_start_events(span):
+            await self._aemit(ev)
+
+    async def on_end_async(self, span: Span) -> None:
+        for ev in self._gather_end_events(span):
+            await self._aemit(ev)
 
     # Event routing
     def on_event(self, event: Event, span: Span, *args: Any, **kwargs: Any) -> None:
-        # if an error is raised, then args will contain something, to fix this
+        for ev in self._gather_events_for_event(event, span):
+            self._emit(ev)
+
+    async def on_event_async(self, event: Event, span: Span) -> None:
+        for ev in self._gather_events_for_event(event, span):
+            await self._aemit(ev)
+
+    # Internal helpers to keep sync/async paths DRY
+    def _gather_start_events(self, span: Span) -> List[Any]:
+        events: List[Any] = []
+        if isinstance(span, LlmGenerationSpan):
+            self._llm_chunks_seen[span.id] = False
+        elif isinstance(span, NodeExecutionSpan):
+            events.append(StepStartedEvent(step_name=span.node.name))
+        return events
+
+    def _gather_end_events(self, span: Span) -> List[Any]:
+        events: List[Any] = []
+        if isinstance(span, LlmGenerationSpan):
+            self._llm_chunks_seen.pop(span.id, None)
+        elif isinstance(span, NodeExecutionSpan):
+            events.append(StepFinishedEvent(step_name=span.node.name))
+        return events
+
+    def _gather_events_for_event(self, event: Event, span: Span) -> List[Any]:
+        events: List[Any] = []
         match event:
             case LlmGenerationChunkReceived():
                 # WayFlow does not assign completion_id in streaming, falling back to request_id
@@ -136,11 +165,11 @@ class AgUiSpanProcessor(SpanProcessor):
                 if not message_id:
                     raise ValueError("Expected assistant message id for text chunk")
                 if event.content:
-                    self._emit(
+                    events.append(
                         TextMessageChunkEvent(
                             message_id=message_id,
                             role="assistant",
-                            delta=self._escape_html(event.content),
+                            delta=_escape_html(event.content),
                         )
                     )
                     self._llm_chunks_seen[span.id] = True
@@ -151,10 +180,8 @@ class AgUiSpanProcessor(SpanProcessor):
                     tool_name = tool_call_chunk.tool_name
                     tool_call_id = tool_call_chunk.call_id
                     if tool_call_id not in self._started_tool_calls:
-                        self._started_tool_calls[tool_call_id] = {
-                            "message_id": message_id
-                        }
-                    self._emit(
+                        self._started_tool_calls[tool_call_id] = {"message_id": message_id}
+                    events.append(
                         ToolCallChunkEvent(
                             tool_call_id=tool_call_id,
                             parent_message_id=message_id,
@@ -163,8 +190,7 @@ class AgUiSpanProcessor(SpanProcessor):
                         )
                     )
             case LlmGenerationRequest():
-                # We ignore this for now, it's not needed for AG-UI
-                return
+                return events  # not used for AG-UI
             case LlmGenerationResponse():
                 message_id = event.completion_id
                 if not message_id:
@@ -173,18 +199,18 @@ class AgUiSpanProcessor(SpanProcessor):
                 if not self._llm_chunks_seen.get(span.id, False):
                     completion_text = event.content
                     if completion_text:
-                        self._emit(
+                        events.append(
                             TextMessageChunkEvent(
                                 message_id=message_id,
                                 role="assistant",
-                                delta=self._escape_html(completion_text),
+                                delta=_escape_html(completion_text),
                             )
                         )
                     self._llm_chunks_seen[span.id] = True
                 # if a tool_call was not streamed, we emit it here
                 for tool_call in event.tool_calls:
                     if tool_call.call_id not in self._started_tool_calls:
-                        self._emit(
+                        events.append(
                             ToolCallChunkEvent(
                                 tool_call_id=tool_call.call_id,
                                 parent_message_id=message_id,
@@ -192,12 +218,10 @@ class AgUiSpanProcessor(SpanProcessor):
                                 delta=tool_call.arguments,
                             )
                         )
-                        self._started_tool_calls[tool_call.call_id] = {
-                            "message_id": message_id
-                        }
+                        self._started_tool_calls[tool_call.call_id] = {"message_id": message_id}
             case ToolExecutionRequest():
                 if self._runtime != "langgraph" and event.request_id not in self._started_tool_calls:
-                    self._emit(
+                    events.append(
                         ToolCallChunkEvent(
                             tool_call_id=event.request_id,
                             tool_call_name=event.tool.name,
@@ -207,13 +231,14 @@ class AgUiSpanProcessor(SpanProcessor):
                     self._started_tool_calls[event.request_id] = {
                         "message_id": span.id  # no need for accurate message_id here
                     }
+                if self._runtime == "langgraph":
+                    tool_call_id = span.description.replace("tcid__", "")
+                    self._tool_run_id_to_tool_call_id[event.request_id] = tool_call_id
             case ToolExecutionResponse():
-                tool_call_id = event.request_id
-                if not tool_call_id:
-                    raise ValueError("Expected tool_call_id in tool execution response")
+                tool_call_id = self._tool_run_id_to_tool_call_id[event.request_id]
                 message_id = self._started_tool_calls[tool_call_id]["message_id"]
                 content = _normalize_tool_output(event.outputs)
-                self._emit(
+                events.append(
                     ToolCallResultEvent(
                         message_id=message_id,
                         tool_call_id=tool_call_id,
@@ -222,21 +247,21 @@ class AgUiSpanProcessor(SpanProcessor):
                     )
                 )
             case ExceptionRaised():
-                raise RuntimeError("[AG-UI SpanProcessor] Exception occurred during agent execution:" + event.exception_message + f"\n\nStacktrace: {event.exception_stacktrace}")
+                raise RuntimeError(
+                    "[AG-UI SpanProcessor] Exception occurred during agent execution:"
+                    + event.exception_message
+                    + f"\n\nStacktrace: {event.exception_stacktrace}"
+                )
             case _:
-                return
+                return events
+        return events
 
-    async def on_event_async(self, event: Event, span: Span) -> None:
-        return self.on_event(self, event, span)
 
-    async def on_end_async(self, span: "Span") -> None:
-        self.on_end(span)
+def _escape_html(text: str) -> str:
+    if text is None:
+        return ""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-    async def shutdown_async(self) -> None:
-        self.shutdown()
-
-    async def startup_async(self) -> None:
-        self.startup()
 
 def _normalize_tool_output(outputs: Any) -> str:
     """Return a JSON string for AG-UI ToolCallResultEvent.content without double-encoding.
