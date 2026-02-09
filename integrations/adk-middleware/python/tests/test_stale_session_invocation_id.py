@@ -1,11 +1,14 @@
-"""Tests that invocation_id is never passed to run_async.
+"""Tests that invocation_id is not passed to run_async for standalone LlmAgents.
 
 ADK's _get_subagent_to_resume only works for SequentialAgent sub-agents,
-not standalone LlmAgents. The non-invocation_id path (_find_agent_to_run)
-handles all agent types correctly by inspecting session events. Passing
-invocation_id is unnecessary and breaks standalone LlmAgent HITL resume.
+not standalone LlmAgents. For standalone LlmAgents, the non-invocation_id
+path (_find_agent_to_run) handles HITL resume correctly by inspecting
+session events. Passing invocation_id to standalone LlmAgents triggers
+_get_subagent_to_resume which raises ValueError.
 
-Any stored invocation_id from a previous run is cleared before run_async.
+Composite agents (SequentialAgent, LoopAgent) DO need invocation_id so ADK
+can call populate_invocation_agent_states() to restore internal state.
+See test_sequential_agent_hitl_resumption.py for those tests.
 """
 
 import uuid
@@ -22,8 +25,8 @@ from ag_ui_adk import ADKAgent
 from ag_ui_adk.session_manager import INVOCATION_ID_STATE_KEY, SessionManager
 
 
-class TestInvocationIdNeverPassedToRunAsync:
-    """Tests that invocation_id is never passed to run_async."""
+class TestInvocationIdNotPassedForStandaloneLlmAgent:
+    """Tests that invocation_id is not passed to run_async for standalone LlmAgents."""
 
     @pytest.fixture(autouse=True)
     def reset_session_manager(self):
@@ -109,7 +112,7 @@ class TestInvocationIdNeverPassedToRunAsync:
     async def test_no_invocation_id_in_run_kwargs_for_normal_run(
         self, resumable_adk_agent
     ):
-        """Verify run_async never receives invocation_id for a normal run."""
+        """Verify run_async does not receive invocation_id for a standalone LlmAgent normal run."""
         adk_agent = resumable_adk_agent
         assert adk_agent._is_adk_resumable() is True
 
@@ -143,9 +146,9 @@ class TestInvocationIdNeverPassedToRunAsync:
 
             events = [event async for event in adk_agent.run(input_data)]
 
-        # run_async should never receive invocation_id
+        # run_async should not receive invocation_id for standalone LlmAgent
         assert "invocation_id" not in run_async_kwargs_capture, (
-            f"run_async should never receive invocation_id. "
+            f"run_async should not receive invocation_id for standalone LlmAgent. "
             f"Got kwargs: {run_async_kwargs_capture}"
         )
 
@@ -153,7 +156,7 @@ class TestInvocationIdNeverPassedToRunAsync:
     async def test_no_invocation_id_in_run_kwargs_for_lro_run(
         self, resumable_adk_agent
     ):
-        """Verify run_async never receives invocation_id even after LRO pause."""
+        """Verify run_async does not receive invocation_id for standalone LlmAgent after LRO pause."""
         adk_agent = resumable_adk_agent
 
         run_async_kwargs_capture = {}
@@ -199,9 +202,9 @@ class TestInvocationIdNeverPassedToRunAsync:
 
             events = [event async for event in adk_agent.run(input_data)]
 
-        # run_async should never receive invocation_id
+        # run_async should not receive invocation_id for standalone LlmAgent
         assert "invocation_id" not in run_async_kwargs_capture, (
-            f"run_async should never receive invocation_id. "
+            f"run_async should not receive invocation_id for standalone LlmAgent. "
             f"Got kwargs: {run_async_kwargs_capture}"
         )
 
@@ -209,7 +212,7 @@ class TestInvocationIdNeverPassedToRunAsync:
     async def test_no_invocation_id_in_run_kwargs_with_stored_id_and_tool_results(
         self, resumable_adk_agent
     ):
-        """Verify run_async never receives invocation_id even with stored id + tool results.
+        """Verify run_async does not receive invocation_id for standalone LlmAgent with stored id + tool results.
 
         This is the exact production crash scenario: LRO pause stored an
         invocation_id, user clicks approve (tool_results), and the old code
@@ -261,17 +264,17 @@ class TestInvocationIdNeverPassedToRunAsync:
 
             events = [event async for event in adk_agent.run(input_data)]
 
-        # run_async must NOT receive the stored invocation_id
+        # Standalone LlmAgent: run_async must NOT receive the stored invocation_id
         assert "invocation_id" not in run_async_kwargs_capture, (
-            f"run_async should never receive invocation_id, even with stored id "
-            f"and tool results. Got kwargs: {run_async_kwargs_capture}"
+            f"run_async should not receive invocation_id for standalone LlmAgent, "
+            f"even with stored id and tool results. Got kwargs: {run_async_kwargs_capture}"
         )
 
     @pytest.mark.asyncio
-    async def test_stored_invocation_id_cleared_before_run(
+    async def test_stored_invocation_id_cleared_after_completed_run(
         self, resumable_adk_agent
     ):
-        """Verify stored invocation_id is cleared from session state before run."""
+        """Verify stored invocation_id is cleared from session state after a completed run."""
         adk_agent = resumable_adk_agent
 
         update_calls = []
@@ -323,7 +326,7 @@ class TestInvocationIdNeverPassedToRunAsync:
             and c["state"][INVOCATION_ID_STATE_KEY] is None
         ]
         assert len(invocation_clear_calls) >= 1, (
-            f"Stored invocation_id should be cleared before run. "
+            f"Stored invocation_id should be cleared after completed run. "
             f"All update_session_state calls: {update_calls}"
         )
 
@@ -447,4 +450,137 @@ class TestInvocationIdNeverPassedToRunAsync:
             f"update_session_state was called with {INVOCATION_ID_STATE_KEY} "
             f"during the run loop, which causes stale session errors. "
             f"Calls: {mid_run_invocation_calls}"
+        )
+
+
+class TestInvocationIdNotPassedForLlmAgentWithTransferTargets:
+    """Tests that invocation_id is not passed for LlmAgent with sub_agents as transfer targets.
+
+    LlmAgent can have sub_agents configured as transfer targets (e.g., a router
+    agent). These are NOT composite orchestrators — they don't store internal
+    state like SequentialAgentState.current_sub_agent. Passing invocation_id
+    risks triggering _get_subagent_to_resume() ValueError in edge cases.
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset_session_manager(self):
+        """Reset session manager between tests."""
+        SessionManager.reset_instance()
+        yield
+        SessionManager.reset_instance()
+
+    @pytest.fixture
+    def llm_agent_with_transfer_targets(self):
+        target_a = LlmAgent(
+            name="agent_a",
+            model="gemini-2.0-flash",
+            instruction="You handle task A.",
+        )
+        target_b = LlmAgent(
+            name="agent_b",
+            model="gemini-2.0-flash",
+            instruction="You handle task B.",
+        )
+        return LlmAgent(
+            name="router_agent",
+            model="gemini-2.0-flash",
+            instruction="Route to the appropriate agent.",
+            sub_agents=[target_a, target_b],
+        )
+
+    @pytest.fixture
+    def resumable_transfer_adk_agent(self, llm_agent_with_transfer_targets):
+        """ADKAgent wrapping an LlmAgent with transfer targets and ResumabilityConfig."""
+        app = App(
+            name="test_transfer_app",
+            root_agent=llm_agent_with_transfer_targets,
+            resumability_config=ResumabilityConfig(is_resumable=True),
+        )
+        return ADKAgent.from_app(app, user_id="test_user")
+
+    def _make_mock_event(
+        self,
+        *,
+        author="router_agent",
+        text="Hello",
+        partial=False,
+        invocation_id="inv_123",
+    ):
+        """Create a mock ADK event with sensible defaults."""
+        event = MagicMock()
+        event.author = author
+        event.partial = partial
+        event.invocation_id = invocation_id
+        event.turn_complete = not partial
+        event.actions = None
+        event.long_running_tool_ids = []
+
+        text_part = MagicMock()
+        text_part.text = text
+        text_part.function_call = None
+        text_part.function_response = None
+
+        event.content = MagicMock()
+        event.content.parts = [text_part]
+        event.is_final_response = MagicMock(return_value=not partial)
+        event.get_function_calls = MagicMock(return_value=[])
+        event.get_function_responses = MagicMock(return_value=[])
+
+        return event
+
+    @pytest.mark.asyncio
+    async def test_no_invocation_id_for_llm_agent_with_transfer_targets(
+        self, resumable_transfer_adk_agent
+    ):
+        """LlmAgent with sub_agents (transfer targets) must not receive invocation_id."""
+        adk_agent = resumable_transfer_adk_agent
+        assert adk_agent._is_adk_resumable() is True
+        assert adk_agent._root_agent_needs_invocation_id() is False
+
+        run_async_kwargs_capture = {}
+
+        async def mock_run_async(**kwargs):
+            run_async_kwargs_capture.update(kwargs)
+            yield self._make_mock_event(
+                text="Routed to agent_a", partial=False, invocation_id="inv_transfer"
+            )
+
+        async def mock_get_state(session_id, app_name, user_id):
+            return {INVOCATION_ID_STATE_KEY: "inv_stale_from_previous"}
+
+        input_data = RunAgentInput(
+            thread_id=f"test_{uuid.uuid4().hex[:8]}",
+            run_id=f"run_{uuid.uuid4().hex[:8]}",
+            messages=[UserMessage(id="msg1", content="Hello")],
+            state={},
+            tools=[
+                AGUITool(
+                    name="approve_plan",
+                    description="Approve a plan",
+                    parameters={"type": "object", "properties": {}},
+                )
+            ],
+            context=[],
+            forwarded_props={},
+        )
+
+        with patch.object(
+            adk_agent._session_manager,
+            "update_session_state",
+            new_callable=AsyncMock,
+        ), patch.object(
+            adk_agent._session_manager,
+            "get_session_state",
+            side_effect=mock_get_state,
+        ), patch.object(adk_agent, "_create_runner") as mock_create_runner:
+            mock_runner = AsyncMock()
+            mock_runner.close = AsyncMock()
+            mock_runner.run_async = mock_run_async
+            mock_create_runner.return_value = mock_runner
+
+            events = [event async for event in adk_agent.run(input_data)]
+
+        assert "invocation_id" not in run_async_kwargs_capture, (
+            f"run_async should not receive invocation_id for LlmAgent with "
+            f"transfer targets. Got kwargs: {run_async_kwargs_capture}"
         )
