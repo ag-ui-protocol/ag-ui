@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIXED**: Invocation ID handling for HITL resumption with composite agents (#1080)
+  - Fixed "No agent to transfer to" errors when resuming after HITL pauses by conditionally passing `invocation_id` based on root agent type
+  - Composite orchestrators (SequentialAgent, LoopAgent) now correctly receive `invocation_id` in `run_async()` to restore internal state on HITL resumption
+  - Standalone LlmAgents and LlmAgents with transfer targets no longer receive `invocation_id`, preventing ValueError in `_get_subagent_to_resume()`
+  - Deferred `invocation_id` storage to post-run lifecycle to avoid stale session errors with DatabaseSessionService
+  - Tool result submissions with trailing user messages now work correctly without causing ADK resumption errors
+  - Thanks to **@lakshminarasimmanv** for this comprehensive fix!
 - **FIXED**: Reload session on cache miss to populate events (#1021)
   - `_find_session_by_thread_id()` uses `list_sessions()` which returns metadata only; now reloads via `get_session()` after a cache miss so that session events are available
   - Thanks to **@lakshminarasimmanv** for this fix!
