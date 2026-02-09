@@ -7,7 +7,9 @@ Helper functions for message processing, tool conversion, and prompt building.
 import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
-from ag_ui.core import RunAgentInput, Context
+from ag_ui.core import RunAgentInput, AssistantMessage, ToolCall, FunctionCall, ToolMessage
+
+from .config import STATE_MANAGEMENT_TOOL_NAME, STATE_MANAGEMENT_TOOL_FULL_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -132,22 +134,21 @@ def process_messages(input_data: RunAgentInput) -> Tuple[str, bool]:
     return user_message, has_pending_tool_result
 
 
-def inject_state_and_context_into_prompt(
-    user_message: str, 
-    input_data: RunAgentInput
-) -> str:
+def build_state_context_addendum(input_data: RunAgentInput) -> str:
     """
-    Inject state and context into the user message as formatted text.
+    Build state and context addendum for injection into the system prompt.
     
-    Similar to LangChain's buildSystemPrompt pattern, this provides the agent
-    with awareness of current application state and contextual information.
+    Returns the formatted text block describing current state and application
+    context, or an empty string if neither is present.
+    
+    This keeps state/context in the system prompt (where it belongs) rather
+    than polluting the user message.
     
     Args:
-        user_message: The original user message
         input_data: RunAgentInput containing state and context
         
     Returns:
-        Enhanced prompt with state and context
+        Formatted addendum string, or empty string if nothing to add
     """
     parts = []
     
@@ -172,9 +173,6 @@ def inject_state_and_context_into_prompt(
         parts.append("")
         parts.append("To update this state, use the `ag_ui_update_state` tool with your changes.")
         parts.append("")
-    
-    # Add user message
-    parts.append(user_message)
     
     return "\n".join(parts)
 
@@ -303,3 +301,113 @@ def apply_forwarded_props(
         logger.debug(f"Applied {applied_count} forwarded_props as option overrides")
     
     return merged_kwargs
+
+
+def _is_state_management_tool(name: str) -> bool:
+    """Check whether a tool name is the internal state management tool."""
+    return name in (STATE_MANAGEMENT_TOOL_NAME, STATE_MANAGEMENT_TOOL_FULL_NAME)
+
+
+def build_agui_assistant_message(
+    sdk_message: Any,
+    message_id: str,
+) -> Optional[AssistantMessage]:
+    """
+    Convert a complete Claude SDK AssistantMessage into an AG-UI AssistantMessage.
+
+    Extracts text from TextBlocks and builds ToolCall objects from ToolUseBlocks.
+    Filters out internal state management tool calls and thinking blocks since
+    they are not part of the user-visible conversation history.
+
+    Args:
+        sdk_message: Complete AssistantMessage from Claude SDK
+        message_id: ID to assign to the AG-UI message (matches streamed ID)
+
+    Returns:
+        AG-UI AssistantMessage, or None if no user-visible content.
+    """
+    content_blocks = getattr(sdk_message, "content", []) or []
+
+    text_content = ""
+    tool_calls: List[ToolCall] = []
+
+    for block in content_blocks:
+        block_type = getattr(block, "type", None)
+
+        if block_type == "text":
+            text_content += getattr(block, "text", "")
+
+        elif block_type == "tool_use":
+            raw_name = getattr(block, "name", "unknown")
+
+            # Skip internal state management tool — not conversation history
+            if _is_state_management_tool(raw_name):
+                continue
+
+            tool_id = getattr(block, "id", None) or ""
+            tool_input = getattr(block, "input", {}) or {}
+
+            tool_calls.append(
+                ToolCall(
+                    id=tool_id,
+                    type="function",
+                    function=FunctionCall(
+                        name=strip_mcp_prefix(raw_name),
+                        arguments=json.dumps(tool_input),
+                    ),
+                )
+            )
+        # ThinkingBlocks are intentionally skipped — not conversation history
+
+    # Nothing user-visible (e.g. thinking-only message)
+    if not text_content and not tool_calls:
+        return None
+
+    return AssistantMessage(
+        id=message_id,
+        role="assistant",
+        content=text_content or None,
+        tool_calls=tool_calls if tool_calls else None,
+    )
+
+
+def build_agui_tool_message(
+    tool_use_id: str,
+    content: Any,
+) -> ToolMessage:
+    """
+    Build an AG-UI ToolMessage from a Claude SDK tool result block.
+
+    Extracts the text content from the SDK's content block format and
+    normalises it into a simple string for the AG-UI message.
+
+    Args:
+        tool_use_id: ID of the tool call this result belongs to
+        content: Raw content from the ToolResultBlock
+
+    Returns:
+        AG-UI ToolMessage
+    """
+    result_str = ""
+    try:
+        if isinstance(content, list) and len(content) > 0:
+            first_block = content[0]
+            if isinstance(first_block, dict) and first_block.get("type") == "text":
+                text = first_block.get("text", "")
+                try:
+                    result_str = json.dumps(json.loads(text))
+                except (json.JSONDecodeError, ValueError):
+                    result_str = text
+            else:
+                result_str = json.dumps(content)
+        elif content is not None:
+            result_str = json.dumps(content)
+    except (TypeError, ValueError):
+        result_str = str(content or "")
+
+    return ToolMessage(
+        id=f"{tool_use_id}-result",
+        role="tool",
+        content=result_str,
+        tool_call_id=tool_use_id,
+    )

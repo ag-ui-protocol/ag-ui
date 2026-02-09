@@ -8,6 +8,7 @@
  */
 
 import { ClaudeAgentAdapter } from "@ag-ui/claude-agent-sdk";
+import { DEFAULT_DISALLOWED_TOOLS } from "./constants";
 
 const systemPrompt = `You are a helpful recipe assistant that collaborates with users to create amazing recipes.
 
@@ -40,24 +41,6 @@ export function createSharedStateAdapter(): ClaudeAgentAdapter {
       "Recipe assistant with bidirectional state synchronization",
     model: "claude-haiku-4-5",
     systemPrompt,
-    disallowedTools: [
-      "Task",
-      "TaskOutput",
-      "Bash",
-      "Glob",
-      "Grep",
-      "ExitPlanMode",
-      "Read",
-      "Edit",
-      "Write",
-      "NotebookEdit",
-      "WebFetch",
-      "TodoWrite",
-      "WebSearch",
-      "KillShell",
-      "AskUserQuestion",
-      "Skill",
-      "EnterPlanMode",
-    ],
+    disallowedTools: [...DEFAULT_DISALLOWED_TOOLS],
   });
 }

@@ -6,6 +6,7 @@ before executing tasks, using state management for step tracking.
 """
 
 from ag_ui_claude_sdk import ClaudeAgentAdapter
+from .constants import DEFAULT_DISALLOWED_TOOLS
 
 
 # No backend tools needed for this example!
@@ -86,6 +87,6 @@ def create_human_in_the_loop_adapter(cwd: str) -> ClaudeAgentAdapter:
         options={
             "model": "claude-haiku-4-5",
             "system_prompt": system_prompt,
-            "disallowed_tools": ['Task', 'TaskOutput', 'Bash', 'Glob', 'Grep', 'ExitPlanMode', 'Read', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'TodoWrite', 'WebSearch', 'KillShell', 'AskUserQuestion', 'Skill', 'EnterPlanMode'],
+            "disallowed_tools": list(DEFAULT_DISALLOWED_TOOLS),
         }
     )

@@ -6,8 +6,14 @@
 
 import { z } from "zod";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
-import type { RunAgentInput, Tool } from "@ag-ui/core";
-import { ALLOWED_FORWARDED_PROPS } from "./config";
+import type { RunAgentInput, Tool, AssistantMessage, ToolCall, Message } from "@ag-ui/core";
+import type { SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { BetaToolUseBlock } from "@anthropic-ai/sdk/resources/beta/messages/messages";
+import {
+  ALLOWED_FORWARDED_PROPS,
+  STATE_MANAGEMENT_TOOL_NAME,
+  STATE_MANAGEMENT_TOOL_FULL_NAME,
+} from "./config";
 
 /**
  * Check if a state value is meaningful (non-null, non-undefined, non-empty object).
@@ -116,15 +122,15 @@ export function processMessages(input: RunAgentInput): ProcessMessagesResult {
 }
 
 /**
- * Inject state and context into the user message as formatted text.
+ * Build state and context addendum for injection into the system prompt.
  *
- * Similar to LangChain's buildSystemPrompt pattern, this provides the agent
- * with awareness of current application state and contextual information.
+ * Returns the formatted text block describing current state and application
+ * context, or an empty string if neither is present.
+ *
+ * This keeps state/context in the system prompt (where it belongs) rather
+ * than polluting the user message.
  */
-export function injectStateAndContextIntoPrompt(
-  userMessage: string,
-  input: RunAgentInput
-): string {
+export function buildStateContextAddendum(input: RunAgentInput): string {
   const parts: string[] = [];
 
   // Add context if provided
@@ -154,9 +160,6 @@ export function injectStateAndContextIntoPrompt(
     );
     parts.push("");
   }
-
-  // Add user message
-  parts.push(userMessage);
 
   return parts.join("\n");
 }
@@ -317,4 +320,116 @@ export function applyForwardedProps(
   }
 
   return mergedOptions;
+}
+
+/**
+ * Check whether a tool name is the internal state management tool.
+ */
+function isStateManagementTool(name: string): boolean {
+  return (
+    name === STATE_MANAGEMENT_TOOL_NAME ||
+    name === STATE_MANAGEMENT_TOOL_FULL_NAME
+  );
+}
+
+/**
+ * Convert a complete Claude SDK AssistantMessage into an AG-UI AssistantMessage.
+ *
+ * Extracts text from TextBlocks and builds ToolCall objects from ToolUseBlocks.
+ * Filters out internal state management tool calls and thinking blocks since
+ * they are not part of the user-visible conversation history.
+ *
+ * @returns AG-UI AssistantMessage, or null if the message has no user-visible content.
+ */
+export function buildAguiAssistantMessage(
+  sdkMessage: SDKAssistantMessage,
+  messageId: string
+): AssistantMessage | null {
+  const contentBlocks = sdkMessage.message?.content ?? [];
+
+  let textContent = "";
+  const toolCalls: ToolCall[] = [];
+
+  for (const block of contentBlocks) {
+    if (block.type === "text") {
+      textContent += (block as { text: string }).text;
+    } else if (block.type === "tool_use") {
+      const toolBlock = block as BetaToolUseBlock;
+      const rawName = toolBlock.name ?? "unknown";
+
+      // Skip internal state management tool — not part of conversation history
+      if (isStateManagementTool(rawName)) {
+        continue;
+      }
+
+      toolCalls.push({
+        id: toolBlock.id,
+        type: "function" as const,
+        function: {
+          name: stripMcpPrefix(rawName),
+          arguments: JSON.stringify(toolBlock.input ?? {}),
+        },
+      });
+    }
+    // ThinkingBlocks are intentionally skipped — not conversation history
+  }
+
+  // Nothing user-visible (e.g. thinking-only message)
+  if (!textContent && toolCalls.length === 0) {
+    return null;
+  }
+
+  const msg: AssistantMessage = {
+    id: messageId,
+    role: "assistant" as const,
+  };
+
+  if (textContent) {
+    msg.content = textContent;
+  }
+
+  if (toolCalls.length > 0) {
+    msg.toolCalls = toolCalls;
+  }
+
+  return msg;
+}
+
+/**
+ * Build an AG-UI ToolMessage from a Claude SDK tool result block.
+ *
+ * Extracts the text content from the SDK's content block format and
+ * normalises it into a simple string for the AG-UI message.
+ */
+export function buildAguiToolMessage(
+  toolUseId: string,
+  content: unknown
+): Message {
+  let resultStr = "";
+  try {
+    if (Array.isArray(content) && content.length > 0) {
+      const firstBlock = content[0] as Record<string, unknown>;
+      if (firstBlock?.type === "text") {
+        const text = (firstBlock.text as string) ?? "";
+        try {
+          resultStr = JSON.stringify(JSON.parse(text));
+        } catch {
+          resultStr = text;
+        }
+      } else {
+        resultStr = JSON.stringify(content);
+      }
+    } else if (content != null) {
+      resultStr = JSON.stringify(content);
+    }
+  } catch {
+    resultStr = String(content ?? "");
+  }
+
+  return {
+    id: `${toolUseId}-result`,
+    role: "tool" as const,
+    content: resultStr,
+    toolCallId: toolUseId,
+  };
 }

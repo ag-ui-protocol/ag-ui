@@ -9,6 +9,7 @@ import json
 from typing import Any
 from claude_agent_sdk import tool, create_sdk_mcp_server
 from ag_ui_claude_sdk import ClaudeAgentAdapter
+from .constants import DEFAULT_DISALLOWED_TOOLS
 
 
 @tool("get_weather", "Get current weather for a location", {"location": str})
@@ -50,8 +51,7 @@ def create_backend_tool_adapter(cwd: str) -> ClaudeAgentAdapter:
             "system_prompt": "You are a helpful weather assistant. When users ask about weather, use the get_weather tool.",
             "mcp_servers": {"weather": weather_server},
             "allowed_tools": ["mcp__weather__get_weather"],
-            "disallowed_tools": ['Task', 'TaskOutput', 'Bash', 'Glob', 'Grep', 'ExitPlanMode', 'Read', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'TodoWrite', 'WebSearch', 'KillShell', 'AskUserQuestion', 'Skill', 'EnterPlanMode'],
-
+            "disallowed_tools": list(DEFAULT_DISALLOWED_TOOLS),
         }
     )
 

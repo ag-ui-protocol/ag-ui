@@ -16,7 +16,7 @@
 
 import { Observable, Subscriber } from "rxjs";
 import { AbstractAgent, EventType, randomUUID } from "@ag-ui/client";
-import type { BaseEvent, RunAgentInput } from "@ag-ui/core";
+import type { BaseEvent, RunAgentInput, Message } from "@ag-ui/core";
 
 import { query, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -27,10 +27,7 @@ import type {
   SDKAssistantMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import type {
-  BetaToolUseBlock,
-  BetaThinkingBlock,
-} from "@anthropic-ai/sdk/resources/beta/messages/messages";
+import type { BetaToolUseBlock } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 
 import type { ClaudeAgentAdapterConfig, ProcessedEvent } from "./types";
 import {
@@ -41,13 +38,15 @@ import {
 } from "./config";
 import {
   processMessages,
-  injectStateAndContextIntoPrompt,
+  buildStateContextAddendum,
   extractToolNames,
   stripMcpPrefix,
   convertAguiToolToClaudeSdk,
   createStateManagementTool,
   applyForwardedProps,
   hasState,
+  buildAguiAssistantMessage,
+  buildAguiToolMessage,
 } from "./utils";
 import {
   handleToolUseBlock,
@@ -64,8 +63,8 @@ import {
  *   - runId: Used for event correlation in AG-UI protocol
  *   - messages: All validated; last message sent to SDK (SDK manages history)
  *   - tools: Dynamically added as "ag_ui" MCP server (stub implementations for frontend tools)
- *   - context: Injected into prompt as formatted text for agent awareness
- *   - state: Injected into prompt + ag_ui_update_state tool created for bidirectional sync
+ *   - context: Appended to systemPrompt for agent awareness
+ *   - state: Appended to systemPrompt + ag_ui_update_state tool created for bidirectional sync
  *   - parentRunId: Passed through to RUN_STARTED for branching/lineage tracking
  *   - forwardedProps: Per-run option overrides (see ALLOWED_FORWARDED_PROPS for whitelist)
  *
@@ -183,7 +182,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
       });
 
       // Process all messages and extract user message
-      const { userMessage, hasPendingToolResult } = processMessages(input);
+      const { userMessage } = processMessages(input);
 
       // Extract frontend tool names for halt detection (like Strands pattern)
       const frontendToolNames = new Set(
@@ -191,21 +190,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
       );
       if (frontendToolNames.size > 0) {
         console.debug(
-          `[ClaudeAdapter] Frontend tools detected: ${[...frontendToolNames].join(", ")}`
-        );
-      }
-
-      // Inject state and context into the prompt
-      const enhancedPrompt = injectStateAndContextIntoPrompt(
-        userMessage,
-        input
-      );
-
-      // Log tools from input
-      if (input.tools?.length) {
-        const toolNames = extractToolNames(input.tools);
-        console.debug(
-          `[ClaudeAdapter] Client provided ${input.tools.length} frontend tools: [${toolNames.join(", ")}]. Creating dynamic ag_ui MCP server.`
+          `[ClaudeAdapter] Frontend tools detected (${frontendToolNames.size}): [${[...frontendToolNames].join(", ")}]. Creating dynamic ag_ui MCP server.`
         );
       }
 
@@ -238,11 +223,10 @@ export class ClaudeAgentAdapter extends AbstractAgent {
 
       // Run Claude SDK and emit events
       await this.streamClaudeSdk(
-        enhancedPrompt,
+        userMessage,
         threadId,
         runId,
         input,
-        hasPendingToolResult,
         frontendToolNames,
         subscriber
       );
@@ -276,6 +260,9 @@ export class ClaudeAgentAdapter extends AbstractAgent {
   /**
    * Build Options by merging base config + dynamic MCP server from input.tools
    * + state management tool + forwardedProps overrides + auto-granted tool permissions.
+   *
+   * State and context from RunAgentInput are appended to the systemPrompt so
+   * the agent is aware of them without polluting the user message.
    */
   private buildOptions(input: RunAgentInput): Options {
     // Start with sensible defaults
@@ -299,6 +286,16 @@ export class ClaudeAgentAdapter extends AbstractAgent {
       if (value != null) {
         merged[key] = value;
       }
+    }
+
+    // Append state and context to the system prompt (not the user message).
+    const addendum = buildStateContextAddendum(input);
+    if (addendum) {
+      const base = (merged.systemPrompt as string) ?? "";
+      merged.systemPrompt = base ? `${base}\n\n${addendum}` : addendum;
+      console.debug(
+        `[ClaudeAdapter] Appended state/context (${addendum.length} chars) to systemPrompt`
+      );
     }
 
     // Ensure ag_ui tools are always allowed (frontend tools + state management)
@@ -402,7 +399,6 @@ export class ClaudeAgentAdapter extends AbstractAgent {
     threadId: string,
     runId: string,
     input: RunAgentInput,
-    hasPendingToolResult: boolean,
     frontendToolNames: Set<string>,
     subscriber: Subscriber<ProcessedEvent>
   ): Promise<void> {
@@ -410,6 +406,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
     let currentMessageId: string | null = null;
     let inThinkingBlock = false;
     let hasStreamedText = false;
+    let accumulatedThinkingText = "";
 
     // Tool call streaming state
     let currentToolCallId: string | null = null;
@@ -422,6 +419,40 @@ export class ClaudeAgentAdapter extends AbstractAgent {
 
     // Frontend tool halt flag (like Strands pattern)
     let haltEventStream = false;
+
+    // ── MESSAGES_SNAPSHOT accumulation ──
+    // All message types go here. At the end we emit:
+    //   MESSAGES_SNAPSHOT = [...input.messages, ...runMessages]
+    const runMessages: Message[] = [];
+
+    /** Upsert a message: replace if same ID exists, otherwise append. */
+    const upsertMessage = (msg: Message) => {
+      const idx = runMessages.findIndex((m) => m.id === msg.id);
+      if (idx !== -1) {
+        runMessages[idx] = msg;
+      } else {
+        runMessages.push(msg);
+      }
+    };
+
+    // In-flight assistant message built from stream events.
+    // Flushed into runMessages at message_stop (or frontend tool halt).
+    type ToolCallEntry = { id: string; type: "function"; function: { name: string; arguments: string } };
+    let pendingMsg: { id: string; content: string; toolCalls: ToolCallEntry[] } | null = null;
+
+    /** Flush pendingMsg → runMessages (upsert so streaming version wins over fallback). */
+    const flushPendingMsg = () => {
+      if (!pendingMsg) return;
+      if (pendingMsg.content || pendingMsg.toolCalls.length > 0) {
+        upsertMessage({
+          id: pendingMsg.id,
+          role: "assistant" as const,
+          ...(pendingMsg.content ? { content: pendingMsg.content } : {}),
+          ...(pendingMsg.toolCalls.length > 0 ? { toolCalls: pendingMsg.toolCalls } : {}),
+        });
+      }
+      pendingMsg = null;
+    };
 
     if (!this.apiKey) {
       throw new Error("ANTHROPIC_API_KEY must be set");
@@ -447,41 +478,23 @@ export class ClaudeAgentAdapter extends AbstractAgent {
       },
     };
 
-    // Resume existing session if we have one
     if (existingSessionId) {
-      console.debug(
-        `[ClaudeAdapter] Resuming existing session ${existingSessionId.slice(0, 8)}... for thread ${threadId.slice(0, 8)}...`
-      );
       queryOptions.resume = existingSessionId;
-    } else {
-      console.debug(
-        `[ClaudeAdapter] Starting new session for thread ${threadId.slice(0, 8)}... (messageCount=${input.messages?.length ?? 0}, hasToolResult=${hasPendingToolResult})`
-      );
     }
 
-    // Create query
-    const queryStream = query({
-      prompt,
-      options: queryOptions,
-    });
+    console.debug(
+      `[ClaudeAdapter] ${existingSessionId ? 'Resuming' : 'Starting'} session for thread ${threadId.slice(0, 8)}...`
+    );
 
-    // Track active query for interrupt support
+    const queryStream = query({ prompt, options: queryOptions });
     this.activeQuery = queryStream;
 
     try {
-      // Process response stream
       let messageCount = 0;
 
       for await (const message of queryStream) {
         messageCount++;
-
-        // If we've halted due to frontend tool, break out of loop
-        if (haltEventStream) {
-          console.debug(
-            `[ClaudeAdapter] [Message #${messageCount}]: Halted - breaking stream loop`
-          );
-          break;
-        }
+        if (haltEventStream) break;
 
         // Handle streaming events
         if (message.type === "stream_event") {
@@ -494,10 +507,8 @@ export class ClaudeAgentAdapter extends AbstractAgent {
             // We'll emit it when we get actual text content (text_delta)
             // This prevents empty text messages when only thinking blocks appear
             currentMessageId = randomUUID();
-            hasStreamedText = false; // Reset for new message!
-            console.debug(
-              `[ClaudeAdapter] Message starting (messageId=${currentMessageId.slice(0, 8)}...), waiting for content...`
-            );
+            hasStreamedText = false;
+            pendingMsg = { id: currentMessageId, content: "", toolCalls: [] };
           } else if (eventType === "content_block_delta") {
             const delta = (event.delta as Record<string, unknown>) ?? {};
             const deltaType = delta.type as string;
@@ -505,11 +516,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
             if (deltaType === "text_delta") {
               const text = delta.text as string | undefined;
               if (text && currentMessageId) {
-                // Emit TEXT_MESSAGE_START on first text content (lazy emission)
                 if (!hasStreamedText) {
-                  console.debug(
-                    `[ClaudeAdapter] First text content - emitting TEXT_MESSAGE_START (messageId=${currentMessageId.slice(0, 8)}...)`
-                  );
                   subscriber.next({
                     type: EventType.TEXT_MESSAGE_START,
                     threadId,
@@ -519,6 +526,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
                   });
                 }
                 hasStreamedText = true;
+                if (pendingMsg) pendingMsg.content += text;
 
                 subscriber.next({
                   type: EventType.TEXT_MESSAGE_CONTENT,
@@ -531,6 +539,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
             } else if (deltaType === "thinking_delta") {
               const thinking = delta.thinking as string | undefined;
               if (thinking) {
+                accumulatedThinkingText += thinking;
                 subscriber.next({
                   type: EventType.THINKING_TEXT_MESSAGE_CONTENT,
                   delta: thinking,
@@ -559,10 +568,6 @@ export class ClaudeAgentAdapter extends AbstractAgent {
 
             if (block.type === "thinking") {
               inThinkingBlock = true;
-              console.debug(
-                "[ClaudeAdapter] Opening thinking block - emitting THINKING_START and THINKING_TEXT_MESSAGE_START"
-              );
-              // Emit THINKING_START to mark beginning of thinking session
               subscriber.next({
                 type: EventType.THINKING_START,
               });
@@ -577,21 +582,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
               accumulatedToolJson = "";
 
               if (currentToolCallId) {
-                console.debug(
-                  `[ClaudeAdapter] Tool call streaming started: ${currentToolCallName}`
-                );
-
-                // Strip MCP prefix from ALL tools for client matching
-                currentToolDisplayName = stripMcpPrefix(
-                  currentToolCallName
-                );
-                if (currentToolDisplayName !== currentToolCallName) {
-                  console.debug(
-                    `[ClaudeAdapter] Stripped MCP prefix: ${currentToolCallName} -> ${currentToolDisplayName}`
-                  );
-                }
-
-                // Mark as processed
+                currentToolDisplayName = stripMcpPrefix(currentToolCallName);
                 processedToolIds.add(currentToolCallId);
 
                 subscriber.next({
@@ -605,18 +596,20 @@ export class ClaudeAgentAdapter extends AbstractAgent {
               }
             }
           } else if (eventType === "content_block_stop") {
-            // Close thinking block if we were in one
             if (inThinkingBlock) {
               inThinkingBlock = false;
-              console.debug(
-                "[ClaudeAdapter] Closing thinking block - emitting THINKING_TEXT_MESSAGE_END and THINKING_END"
-              );
-              subscriber.next({
-                type: EventType.THINKING_TEXT_MESSAGE_END,
-              });
-              subscriber.next({
-                type: EventType.THINKING_END,
-              });
+              subscriber.next({ type: EventType.THINKING_TEXT_MESSAGE_END });
+              subscriber.next({ type: EventType.THINKING_END });
+
+              // Persist thinking content
+              if (accumulatedThinkingText) {
+                upsertMessage({
+                  id: randomUUID(),
+                  role: "developer" as const,
+                  content: accumulatedThinkingText,
+                });
+                accumulatedThinkingText = "";
+              }
             }
 
             // Close tool call if we were streaming one
@@ -653,14 +646,10 @@ export class ClaudeAgentAdapter extends AbstractAgent {
                       this.currentState = updates;
                     }
 
-                    // Emit STATE_SNAPSHOT
                     subscriber.next({
                       type: EventType.STATE_SNAPSHOT,
                       snapshot: this.currentState,
                     });
-                    console.debug(
-                      "[ClaudeAdapter] Emitted streamed STATE_SNAPSHOT"
-                    );
                   }
                 } catch {
                   console.warn(
@@ -669,12 +658,33 @@ export class ClaudeAgentAdapter extends AbstractAgent {
                 }
               }
 
+              // Push tool call onto in-flight message (skip state management)
+              if (
+                pendingMsg &&
+                currentToolCallId &&
+                currentToolDisplayName &&
+                currentToolCallName !== STATE_MANAGEMENT_TOOL_NAME &&
+                currentToolCallName !== STATE_MANAGEMENT_TOOL_FULL_NAME
+              ) {
+                pendingMsg.toolCalls.push({
+                  id: currentToolCallId,
+                  type: "function" as const,
+                  function: {
+                    name: currentToolDisplayName,
+                    arguments: accumulatedToolJson,
+                  },
+                });
+              }
+
               // Check if this is a frontend tool (using unprefixed name for comparison)
               const isFrontendTool =
                 currentToolDisplayName != null &&
                 frontendToolNames.has(currentToolDisplayName);
 
               if (isFrontendTool) {
+                // Flush before halt (message_stop won't fire after interrupt)
+                flushPendingMsg();
+
                 // Emit TOOL_CALL_END for frontend tool
                 subscriber.next({
                   type: EventType.TOOL_CALL_END,
@@ -683,8 +693,6 @@ export class ClaudeAgentAdapter extends AbstractAgent {
                   toolCallId: currentToolCallId,
                 });
 
-                // Close any active text message before interrupting
-                // ONLY if we actually emitted TEXT_MESSAGE_START
                 if (currentMessageId && hasStreamedText) {
                   subscriber.next({
                     type: EventType.TEXT_MESSAGE_END,
@@ -692,28 +700,16 @@ export class ClaudeAgentAdapter extends AbstractAgent {
                     runId,
                     messageId: currentMessageId,
                   });
-                  console.debug(
-                    `[ClaudeAdapter] Closed text message before interrupt (messageId=${currentMessageId.slice(0, 8)}...)`
-                  );
                   currentMessageId = null;
                 }
 
-                console.debug(
-                  `[ClaudeAdapter] Frontend tool completed: ${currentToolDisplayName}. INTERRUPTING Claude SDK stream for client execution.`
-                );
+                console.debug(`[ClaudeAdapter] Frontend tool halt: ${currentToolDisplayName}`);
 
-                // INTERRUPT the Claude SDK stream
                 if (this.activeQuery) {
                   try {
                     await this.activeQuery.interrupt();
-                    console.debug(
-                      "[ClaudeAdapter] Successfully interrupted Claude SDK stream"
-                    );
                   } catch (e) {
-                    console.warn(
-                      "[ClaudeAdapter] Failed to interrupt stream:",
-                      e
-                    );
+                    console.warn("[ClaudeAdapter] Failed to interrupt stream:", e);
                   }
                 }
 
@@ -732,21 +728,15 @@ export class ClaudeAgentAdapter extends AbstractAgent {
                 runId,
                 toolCallId: currentToolCallId,
               });
-              console.debug(
-                `[ClaudeAdapter] Emitted TOOL_CALL_END for backend tool: ${currentToolDisplayName}`
-              );
 
-              // Track that we already emitted END for this tool (so SDKUserMessage handler skips duplicate)
-              processedToolIds.add(currentToolCallId);
-
-              // Reset tool streaming state
               currentToolCallId = null;
               currentToolCallName = null;
               currentToolDisplayName = null;
               accumulatedToolJson = "";
             }
           } else if (eventType === "message_stop") {
-            // End the current text message ONLY if we actually started one
+            flushPendingMsg();
+
             if (currentMessageId && hasStreamedText) {
               subscriber.next({
                 type: EventType.TEXT_MESSAGE_END,
@@ -754,16 +744,8 @@ export class ClaudeAgentAdapter extends AbstractAgent {
                 runId,
                 messageId: currentMessageId,
               });
-              console.debug(
-                `[ClaudeAdapter] Closed text message (messageId=${currentMessageId.slice(0, 8)}...)`
-              );
-            } else if (currentMessageId && !hasStreamedText) {
-              console.debug(
-                "[ClaudeAdapter] Message ended with no text content (thinking-only) - not emitting TEXT_MESSAGE_END"
-              );
             }
             currentMessageId = null;
-            // NOTE: Don't reset hasStreamedText here!
           } else if (eventType === "message_delta") {
             // Handle message-level delta (e.g., stop_reason, usage)
             const delta = (event.delta as Record<string, unknown>) ?? {};
@@ -780,73 +762,36 @@ export class ClaudeAgentAdapter extends AbstractAgent {
           const assistantMsg = message as SDKAssistantMessage;
           const content = assistantMsg.message?.content ?? [];
 
-          // Process content blocks for tool calls and thinking
+          // Accumulate from the complete SDK message (fallback path).
+          // Uses the streaming ID so flushPendingMsg() can replace it with
+          // the richer streaming version (which has toolCalls).
+          {
+            const msgId = currentMessageId ?? randomUUID();
+            const aguiMsg = buildAguiAssistantMessage(assistantMsg, msgId);
+            if (aguiMsg) {
+              upsertMessage(aguiMsg);
+            }
+          }
+
+          // Process non-streamed tool_use blocks (fallback for tools not seen via stream events)
           for (const block of content) {
-            // Skip text blocks (already streamed)
-            if (block.type === "text") {
-              continue;
-            }
+            if (block.type !== "tool_use") continue;
+            const toolBlock = block as BetaToolUseBlock;
+            if (toolBlock.id && processedToolIds.has(toolBlock.id)) continue;
 
-            // Handle tool use blocks
-            if (block.type === "tool_use") {
-              const toolBlock = block as BetaToolUseBlock;
-              const toolId = toolBlock.id;
-
-              if (toolId && processedToolIds.has(toolId)) {
-                // We already emitted START/ARGS during streaming - skip duplicate
-                console.debug(
-                  `[ClaudeAdapter] ToolUseBlock already processed (streamed): ${toolBlock.name}`
-                );
-              } else {
-                // New tool - emit events (nested tools, non-streamed tools, etc.)
-                console.debug(
-                  `[ClaudeAdapter] Processing ToolUseBlock: ${toolBlock.name}`
-                );
-                const parentToolUseId =
-                  assistantMsg.parent_tool_use_id;
-                const { updatedState } = handleToolUseBlock(
-                  toolBlock,
-                  parentToolUseId ?? undefined,
-                  threadId,
-                  runId,
-                  this.currentState,
-                  subscriber
-                );
-
-                if (toolId) {
-                  processedToolIds.add(toolId);
-                }
-
-                if (updatedState !== null) {
-                  this.currentState = updatedState;
-                }
-              }
-            }
-
-            // Handle thinking blocks (already streamed via thinking_delta)
-            if (block.type === "thinking") {
-              const thinkingBlock = block as BetaThinkingBlock;
-              const thinkingText = thinkingBlock.thinking;
-              if (thinkingText) {
-                console.debug(
-                  `[ClaudeAdapter] ThinkingBlock received (already streamed), length=${thinkingText.length}`
-                );
-              }
-            }
-
-            // NOTE: tool_result blocks don't appear in AssistantMessage content in the TS SDK.
-            // They come through SDKUserMessage (synthetic) path, which is handled below.
+            const { updatedState } = handleToolUseBlock(
+              toolBlock,
+              assistantMsg.parent_tool_use_id ?? undefined,
+              threadId, runId, this.currentState, subscriber
+            );
+            if (toolBlock.id) processedToolIds.add(toolBlock.id);
+            if (updatedState !== null) this.currentState = updatedState;
           }
         }
         // Handle user messages (may contain tool results)
         else if (message.type === "user") {
           const userMsg = message as SDKUserMessage;
 
-          // Look for tool_result blocks in user message content.
-          // The TS SDK sends tool results as synthetic user messages.
-          // We check multiple paths since SDK versions may differ:
-          // 1. isSynthetic + tool_use_result (documented SDK properties)
-          // 2. Direct content inspection (fallback for SDK variations)
           const msgContent = (userMsg.message ?? userMsg) as {
             content?: unknown[];
           };
@@ -857,44 +802,21 @@ export class ClaudeAgentAdapter extends AbstractAgent {
               const block = blk as Record<string, unknown>;
               if (block.type === "tool_result" && block.tool_use_id) {
                 const toolUseId = block.tool_use_id as string;
-
-                // TOOL_CALL_END was already emitted at content_block_stop.
-                // Only emit TOOL_CALL_RESULT here for the result content.
                 const resultContent = block.content;
-                let resultStr = "";
-                try {
-                  if (Array.isArray(resultContent) && resultContent.length > 0) {
-                    const firstBlock = resultContent[0] as Record<string, unknown>;
-                    if (firstBlock?.type === "text") {
-                      const textContent = (firstBlock.text as string) ?? "";
-                      try {
-                        resultStr = JSON.stringify(JSON.parse(textContent));
-                      } catch {
-                        resultStr = textContent;
-                      }
-                    } else {
-                      resultStr = JSON.stringify(resultContent);
-                    }
-                  } else if (resultContent != null) {
-                    resultStr = JSON.stringify(resultContent);
-                  }
-                } catch {
-                  resultStr = String(resultContent ?? "");
-                }
+
+                // Build AG-UI tool message (reuse shared parsing logic)
+                const toolMsg = buildAguiToolMessage(toolUseId, resultContent);
+                upsertMessage(toolMsg);
 
                 subscriber.next({
                   type: EventType.TOOL_CALL_RESULT,
                   threadId,
                   runId,
-                  messageId: `${toolUseId}-result`,
+                  messageId: toolMsg.id,
                   toolCallId: toolUseId,
-                  content: resultStr,
+                  content: toolMsg.content as string,
                   role: "tool",
                 });
-
-                console.debug(
-                  `[ClaudeAdapter] Emitted TOOL_CALL_RESULT for backend tool: ${toolUseId.slice(0, 8)}...`
-                );
               }
             }
           }
@@ -902,37 +824,35 @@ export class ClaudeAgentAdapter extends AbstractAgent {
         // Handle system messages
         else if (message.type === "system") {
           const raw = message as unknown as Record<string, unknown>;
-          const subtype = raw.subtype as string | undefined;
 
           // Capture session_id for session resumption
           // TS SDK places session_id as a direct top-level property on system messages
           const sessionId = raw.session_id as string | undefined;
           if (sessionId && !this.sessionIdsByThread.has(threadId)) {
             this.sessionIdsByThread.set(threadId, sessionId);
-            console.debug(
-              `[ClaudeAdapter] Captured session_id ${sessionId.slice(0, 8)}... for thread ${threadId.slice(0, 8)}...`
-            );
           }
 
-          // Extract message content from data for system message display
           const data = raw.data as Record<string, unknown> | undefined;
           const msgText = (data?.message as string) ?? (data?.text as string) ?? "";
           if (msgText) {
-            console.debug(`[ClaudeAdapter] SystemMessage: subtype=${subtype}`);
+            const sysMsgId = randomUUID();
             emitSystemMessageEvents(subscriber, threadId, runId, msgText);
+
+            upsertMessage({
+              id: sysMsgId,
+              role: "system" as const,
+              content: msgText,
+            });
           }
         }
         // Handle result messages
         else if (message.type === "result") {
           const resultMsg = message as SDKResultMessage;
 
-          // Capture result data for RunFinished event (METADATA ONLY, not content!)
+          // Capture metadata for RunFinished event
           this.lastResultData = {
-            isError:
-              (resultMsg as { is_error?: boolean }).is_error ?? false,
-            // Don't include 'result' text - it was already streamed
-            durationMs: (resultMsg as { duration_ms?: number })
-              .duration_ms,
+            isError: (resultMsg as { is_error?: boolean }).is_error ?? false,
+            durationMs: (resultMsg as { duration_ms?: number }).duration_ms,
             durationApiMs: (resultMsg as { duration_api_ms?: number })
               .duration_api_ms,
             numTurns: (resultMsg as { num_turns?: number }).num_turns,
@@ -946,44 +866,29 @@ export class ClaudeAgentAdapter extends AbstractAgent {
                 .structured_output,
           };
 
-          // Only display result text if we haven't streamed text (avoids duplicates)
           const resultText = (resultMsg as { result?: string }).result;
           if (!hasStreamedText && resultText) {
             const resultMsgId = randomUUID();
-            subscriber.next({
-              type: EventType.TEXT_MESSAGE_START,
-              threadId,
-              runId,
-              messageId: resultMsgId,
-              role: "assistant",
-            });
-            subscriber.next({
-              type: EventType.TEXT_MESSAGE_CONTENT,
-              threadId,
-              runId,
-              messageId: resultMsgId,
-              delta: resultText,
-            });
-            subscriber.next({
-              type: EventType.TEXT_MESSAGE_END,
-              threadId,
-              runId,
-              messageId: resultMsgId,
-            });
+            subscriber.next({ type: EventType.TEXT_MESSAGE_START, threadId, runId, messageId: resultMsgId, role: "assistant" });
+            subscriber.next({ type: EventType.TEXT_MESSAGE_CONTENT, threadId, runId, messageId: resultMsgId, delta: resultText });
+            subscriber.next({ type: EventType.TEXT_MESSAGE_END, threadId, runId, messageId: resultMsgId });
+
+            upsertMessage({ id: resultMsgId, role: "assistant" as const, content: resultText });
           }
         }
       }
 
-      console.debug(
-        `[ClaudeAdapter] Response stream completed (${messageCount} messages)`
-      );
-
-      // Log final session info
-      const finalSessionId =
-        this.sessionIdsByThread.get(threadId) ?? threadId;
-      console.debug(
-        `[ClaudeAdapter] Conversation state saved in .claude/ (sessionId=${finalSessionId.slice(0, 8)}..., threadId=${threadId.slice(0, 8)}...)`
-      );
+      // Emit MESSAGES_SNAPSHOT with input messages + new messages from this run
+      if (runMessages.length > 0) {
+        const allMessages: Message[] = [...(input.messages ?? []), ...runMessages];
+        console.debug(
+          `[ClaudeAdapter] MESSAGES_SNAPSHOT: ${allMessages.length} msgs (${messageCount} SDK messages processed)`
+        );
+        subscriber.next({
+          type: EventType.MESSAGES_SNAPSHOT,
+          messages: allMessages,
+        });
+      }
     } finally {
       this.activeQuery = null;
     }

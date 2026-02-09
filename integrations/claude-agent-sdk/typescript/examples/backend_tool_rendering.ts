@@ -6,6 +6,7 @@
  */
 
 import { ClaudeAgentAdapter } from "@ag-ui/claude-agent-sdk";
+import { DEFAULT_DISALLOWED_TOOLS } from "./constants";
 import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 
@@ -59,24 +60,6 @@ export function createBackendToolAdapter(): ClaudeAgentAdapter {
     mcpServers: { weather: weatherServer },
     allowedTools: ["mcp__weather__get_weather"],
     includePartialMessages: true,
-    disallowedTools: [
-      "Task",
-      "TaskOutput",
-      "Bash",
-      "Glob",
-      "Grep",
-      "ExitPlanMode",
-      "Read",
-      "Edit",
-      "Write",
-      "NotebookEdit",
-      "WebFetch",
-      "TodoWrite",
-      "WebSearch",
-      "KillShell",
-      "AskUserQuestion",
-      "Skill",
-      "EnterPlanMode",
-    ],
+    disallowedTools: [...DEFAULT_DISALLOWED_TOOLS],
   });
 }

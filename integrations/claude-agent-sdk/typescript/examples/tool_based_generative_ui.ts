@@ -9,6 +9,7 @@
  */
 
 import { ClaudeAgentAdapter } from "@ag-ui/claude-agent-sdk";
+import { DEFAULT_DISALLOWED_TOOLS } from "./constants";
 
 const systemPrompt = `You are a creative writing assistant that renders content using beautiful UI components.
 
@@ -66,24 +67,6 @@ export function createToolBasedGenerativeUiAdapter(): ClaudeAgentAdapter {
     description: "Creative writing assistant with frontend tool rendering",
     model: "claude-haiku-4-5",
     systemPrompt,
-    disallowedTools: [
-      "Task",
-      "TaskOutput",
-      "Bash",
-      "Glob",
-      "Grep",
-      "ExitPlanMode",
-      "Read",
-      "Edit",
-      "Write",
-      "NotebookEdit",
-      "WebFetch",
-      "TodoWrite",
-      "WebSearch",
-      "KillShell",
-      "AskUserQuestion",
-      "Skill",
-      "EnterPlanMode",
-    ],
+    disallowedTools: [...DEFAULT_DISALLOWED_TOOLS],
   });
 }

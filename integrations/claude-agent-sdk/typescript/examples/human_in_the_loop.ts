@@ -16,6 +16,7 @@
  */
 
 import { ClaudeAgentAdapter } from "@ag-ui/claude-agent-sdk";
+import { DEFAULT_DISALLOWED_TOOLS } from "./constants";
 
 const systemPrompt = `You are a task planning assistant specialized in creating clear, actionable step-by-step plans.
 
@@ -77,24 +78,6 @@ export function createHumanInTheLoopAdapter(): ClaudeAgentAdapter {
     description: "Task planning assistant with human approval workflow",
     model: "claude-haiku-4-5",
     systemPrompt,
-    disallowedTools: [
-      "Task",
-      "TaskOutput",
-      "Bash",
-      "Glob",
-      "Grep",
-      "ExitPlanMode",
-      "Read",
-      "Edit",
-      "Write",
-      "NotebookEdit",
-      "WebFetch",
-      "TodoWrite",
-      "WebSearch",
-      "KillShell",
-      "AskUserQuestion",
-      "Skill",
-      "EnterPlanMode",
-    ],
+    disallowedTools: [...DEFAULT_DISALLOWED_TOOLS],
   });
 }

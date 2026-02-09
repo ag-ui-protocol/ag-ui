@@ -6,6 +6,7 @@ The adapter supports all ClaudeAgentOptions from the Claude Agent SDK.
 """
 
 from ag_ui_claude_sdk import ClaudeAgentAdapter
+from .constants import DEFAULT_DISALLOWED_TOOLS
 
 
 def create_agentic_chat_adapter(cwd: str) -> ClaudeAgentAdapter:
@@ -24,7 +25,6 @@ def create_agentic_chat_adapter(cwd: str) -> ClaudeAgentAdapter:
         options={
             "model": "claude-haiku-4-5",
             "system_prompt": "You are a helpful assistant with access to tools.",
-            "disallowed_tools": ['Task', 'TaskOutput', 'Bash', 'Glob', 'Grep', 'ExitPlanMode', 'Read', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'TodoWrite', 'WebSearch', 'KillShell', 'AskUserQuestion', 'Skill', 'EnterPlanMode'],
-
+            "disallowed_tools": list(DEFAULT_DISALLOWED_TOOLS),
         }
     )

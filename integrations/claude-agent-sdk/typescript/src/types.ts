@@ -24,6 +24,7 @@ import type {
   ThinkingStartEvent,
   ThinkingEndEvent,
   StateSnapshotEvent,
+  MessagesSnapshotEvent,
   CustomEvent,
 } from "@ag-ui/core";
 
@@ -72,4 +73,5 @@ export type ProcessedEvent =
   | ThinkingStartEvent
   | ThinkingEndEvent
   | StateSnapshotEvent
+  | MessagesSnapshotEvent
   | CustomEvent;

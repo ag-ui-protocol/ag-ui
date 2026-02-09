@@ -6,7 +6,6 @@
 
 import { Subscriber } from "rxjs";
 import { EventType, randomUUID } from "@ag-ui/client";
-import type { BaseEvent } from "@ag-ui/core";
 import type { BetaToolUseBlock } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import {
   STATE_MANAGEMENT_TOOL_NAME,
@@ -125,70 +124,6 @@ export function handleToolUseBlock(
   }
 
   return { updatedState: null };
-}
-
-/**
- * Handle tool result content from Claude SDK.
- *
- * Parses Claude SDK tool result format and emits TOOL_CALL_END + TOOL_CALL_RESULT.
- * Claude SDK tools return: [{"type": "text", "text": "{json_data}"}]
- * Frontend expects just the parsed json_data.
- */
-export function handleToolResultBlock(
-  toolUseId: string,
-  content: unknown,
-  threadId: string,
-  runId: string,
-  subscriber: Subscriber<ProcessedEvent>
-): void {
-  // Parse tool result content for frontend rendering
-  let resultStr = "";
-  if (content != null) {
-    try {
-      // If content is a list of content blocks (Claude SDK format)
-      if (Array.isArray(content) && content.length > 0) {
-        const firstBlock = content[0] as Record<string, unknown>;
-        if (firstBlock?.type === "text") {
-          const textContent = (firstBlock.text as string) ?? "";
-          // Try to parse as JSON (tools often return JSON strings)
-          try {
-            const parsedJson = JSON.parse(textContent);
-            resultStr = JSON.stringify(parsedJson);
-          } catch {
-            // Not JSON, use as-is
-            resultStr = textContent;
-          }
-        } else {
-          // Fallback: stringify the whole content
-          resultStr = JSON.stringify(content);
-        }
-      } else {
-        // Fallback: stringify as-is
-        resultStr = JSON.stringify(content);
-      }
-    } catch {
-      resultStr = String(content);
-    }
-  }
-
-  // Emit ToolCallEnd to signal completion
-  subscriber.next({
-    type: EventType.TOOL_CALL_END,
-    threadId,
-    runId,
-    toolCallId: toolUseId,
-  });
-
-  // Emit ToolCallResult with the actual result content
-  subscriber.next({
-    type: EventType.TOOL_CALL_RESULT,
-    threadId,
-    runId,
-    messageId: `${toolUseId}-result`,
-    toolCallId: toolUseId,
-    content: resultStr,
-    role: "tool",
-  });
 }
 
 /**

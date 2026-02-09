@@ -9,6 +9,7 @@ and Claude can discover and call them without backend implementation.
 """
 
 from ag_ui_claude_sdk import ClaudeAgentAdapter
+from .constants import DEFAULT_DISALLOWED_TOOLS
 
 
 def create_tool_based_generative_ui_adapter(cwd: str) -> ClaudeAgentAdapter:
@@ -86,6 +87,6 @@ You: "That's 4!" (no tool needed)
         options={
             "model": "claude-haiku-4-5",
             "system_prompt": system_prompt,
-            "disallowed_tools": ['Task', 'TaskOutput', 'Bash', 'Glob', 'Grep', 'ExitPlanMode', 'Read', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'TodoWrite', 'WebSearch', 'KillShell', 'AskUserQuestion', 'Skill', 'EnterPlanMode'],
+            "disallowed_tools": list(DEFAULT_DISALLOWED_TOOLS),
         }
     )
