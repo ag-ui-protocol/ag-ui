@@ -387,7 +387,7 @@ class LangGraphAgent:
 
         kwargs = self.get_stream_kwargs(
             input=stream_input,
-            fork=fork,
+            config=fork,
             subgraphs=bool(subgraphs_stream_enabled),
             version="v2",
         )
