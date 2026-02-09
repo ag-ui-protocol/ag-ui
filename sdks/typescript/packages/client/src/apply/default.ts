@@ -603,9 +603,6 @@ export const defaultApplyEvents = (
           const activityEvent = event as ActivityDeltaEvent;
           const existingIndex = messages.findIndex((m) => m.id === activityEvent.messageId);
           if (existingIndex === -1) {
-            console.warn(
-              `ACTIVITY_DELTA: No message found with ID '${activityEvent.messageId}' to apply patch`,
-            );
             return emitUpdates();
           }
 

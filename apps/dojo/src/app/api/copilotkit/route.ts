@@ -2,7 +2,7 @@ import {
   CopilotRuntime,
   InMemoryAgentRunner,
   createCopilotEndpoint,
-} from "@copilotkitnext/runtime";
+} from "@copilotkit/runtime/v2";
 import { handle } from "hono/vercel";
 
 const runtime = new CopilotRuntime({
@@ -17,6 +17,8 @@ const app = createCopilotEndpoint({
   basePath: "/api/copilotkit",
 });
 
-export const GET = handle(app);
-export const POST = handle(app);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const handler = (handle as any)(app);
+export const GET = handler;
+export const POST = handler;
 

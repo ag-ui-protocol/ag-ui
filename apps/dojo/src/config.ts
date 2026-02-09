@@ -87,6 +87,12 @@ export const featureConfig: FeatureConfig[] = [
     description: "Chat based on CopilotKit vnext",
     tags: ["Chat", "VNext", "Streaming"],
   }),
+  createFeatureConfig({
+    id: "a2ui_chat",
+    name: "A2UI Chat",
+    description: "Chat with rich A2UI surface rendering using BuiltInAgent",
+    tags: ["Chat", "A2UI", "Generative UI", "Streaming"],
+  }),
 ];
 
 export default featureConfig;
