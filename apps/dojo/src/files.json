@@ -947,6 +947,26 @@
       "type": "file"
     }
   ],
+  "mastra::vnext_chat": [
+    {
+      "name": "page.tsx",
+      "content": "\"use client\";\n\nimport React from \"react\";\nimport \"@copilotkitnext/react/styles.css\";\nimport { CopilotChat, CopilotKitProvider } from \"@copilotkitnext/react\";\n\nexport const dynamic = \"force-dynamic\";\n\ninterface PageProps {\n  params: Promise<{\n    integrationId: string;\n  }>;\n}\n\nexport default function Page({ params }: PageProps) {\n  const { integrationId } = React.use(params);\n\n  return (\n    <CopilotKitProvider\n      runtimeUrl={`/api/copilotkitnext/${integrationId}`}\n      showDevConsole=\"auto\"\n    >\n      <main\n        className=\"flex min-h-screen flex-1 flex-col overflow-hidden\"\n        style={{ minHeight: \"100dvh\" }}\n      >\n        <Chat threadId={`${integrationId}-vnext_chat`} />\n      </main>\n    </CopilotKitProvider>\n  );\n}\n\nfunction Chat({ threadId }: { threadId: string }) {\n  return (\n    <div className=\"flex flex-1 flex-col overflow-hidden\">\n      <CopilotChat style={{ flex: 1, minHeight: \"100%\" }} threadId={threadId} />\n    </div>\n  );\n}\n",
+      "language": "typescript",
+      "type": "file"
+    },
+    {
+      "name": "README.mdx",
+      "content": "# 🔮 VNext Chat\n\n## What This Demo Shows\n\nThis demo showcases a streamlined chat experience built with the CopilotKit\nvNext stack:\n\n1. **Modern vNext UI**: Lightweight chat interface with streaming responses\n2. **Integration-specific backend**: Uses the selected integration runtime\n3. **Threaded conversations**: Messages remain scoped to a stable thread id\n\n## How to Interact\n\nThis is a straightforward chat interface. Simply:\n\n- Type your message and press Enter\n- The selected integration agent responds in real time\n- Conversations are threaded and maintain context\n\n## ✨ Under the Hood\n\n**What's happening technically:**\n\n- The frontend connects to `/api/copilotkitnext/{integrationId}`\n- The integration id determines which backend runtime handles requests\n- Responses stream back in real-time\n\n**Why this feature is useful:**\n\n- **Consistent UX**: Same chat UI across different integrations\n- **Fast experimentation**: Compare runtimes without changing frontend code\n- **Simple surface area**: Minimal setup for end-to-end conversational testing\n",
+      "language": "markdown",
+      "type": "file"
+    },
+    {
+      "name": "agentic-chat.ts",
+      "content": "import { Agent } from \"@mastra/core/agent\";\nimport { Memory } from \"@mastra/memory\";\nimport { LibSQLStore } from \"@mastra/libsql\";\nimport { weatherTool } from \"../tools/weather-tool\";\n\nexport const agenticChatAgent = new Agent({\n  id: \"agentic_chat\",\n  name: \"Agentic Chat\",\n  instructions: `\n      You are a helpful weather assistant that provides accurate weather information.\n\n      Your primary function is to help users get weather details for specific locations. When responding:\n      - Always ask for a location if none is provided\n      - If the location name isn’t in English, please translate it\n      - If giving a location with multiple parts (e.g. \"New York, NY\"), use the most relevant part (e.g. \"New York\")\n      - Include relevant details like humidity, wind conditions, and precipitation\n      - Keep responses concise but informative\n\n      Use the weatherTool to fetch current weather data.\n`,\n  model: \"openai/gpt-4o-mini\",\n  tools: { weatherTool },\n  memory: new Memory({\n    storage: new LibSQLStore({\n      id: 'agentic-chat-memory',\n      url: \"file:../mastra.db\", // path is relative to the .mastra/output directory\n    }),\n  }),\n});\n",
+      "language": "ts",
+      "type": "file"
+    }
+  ],
   "mastra::backend_tool_rendering": [
     {
       "name": "page.tsx",
@@ -1041,6 +1061,26 @@
     {
       "name": "README.mdx",
       "content": "# 🤖 Agentic Chat with Frontend Tools\n\n## What This Demo Shows\n\nThis demo showcases CopilotKit's **agentic chat** capabilities with **frontend\ntool integration**:\n\n1. **Natural Conversation**: Chat with your Copilot in a familiar chat interface\n2. **Frontend Tool Execution**: The Copilot can directly interacts with your UI\n   by calling frontend functions\n3. **Seamless Integration**: Tools defined in the frontend and automatically\n   discovered and made available to the agent\n\n## How to Interact\n\nTry asking your Copilot to:\n\n- \"Can you change the background color to something more vibrant?\"\n- \"Make the background a blue to purple gradient\"\n- \"Set the background to a sunset-themed gradient\"\n- \"Change it back to a simple light color\"\n\nYou can also chat about other topics - the agent will respond conversationally\nwhile having the ability to use your UI tools when appropriate.\n\n## ✨ Frontend Tool Integration in Action\n\n**What's happening technically:**\n\n- The React component defines a frontend function using `useCopilotAction`\n- CopilotKit automatically exposes this function to the agent\n- When you make a request, the agent determines whether to use the tool\n- The agent calls the function with the appropriate parameters\n- The UI immediately updates in response\n\n**What you'll see in this demo:**\n\n- The Copilot understands requests to change the background\n- It generates CSS values for colors and gradients\n- When it calls the tool, the background changes instantly\n- The agent provides a conversational response about the changes it made\n\nThis technique of exposing frontend functions to your Copilot can be extended to\nany UI manipulation you want to enable, from theme changes to data filtering,\nnavigation, or complex UI state management!\n",
+      "language": "markdown",
+      "type": "file"
+    },
+    {
+      "name": "agentic-chat.ts",
+      "content": "import { Agent } from \"@mastra/core/agent\";\nimport { Memory } from \"@mastra/memory\";\nimport { z } from \"zod\";\nimport { weatherTool } from \"../tools\";\nimport { getStorage } from \"../storage\";\n\nexport const agenticChatAgent = new Agent({\n  id: 'agentic_chat',\n  name: \"agentic_chat\",\n  instructions: `\n    You are a helpful weather assistant that provides accurate weather information.\n\n    Your primary function is to help users get weather details for specific locations. When responding:\n    - Always ask for a location if none is provided\n    - If the location name isn't in English, please translate it\n    - If giving a location with multiple parts (e.g. \"New York, NY\"), use the most relevant part (e.g. \"New York\")\n    - Include relevant details like humidity, wind conditions, and precipitation\n    - Keep responses concise but informative\n  `,\n  model: \"openai/gpt-4o\",\n  tools: { get_weather: weatherTool },\n  memory: new Memory({\n    storage: getStorage(),\n    options: {\n      workingMemory: {\n        enabled: true,\n        schema: z.object({\n          firstName: z.string(),\n        }),\n      },\n    },\n  }),\n});\n",
+      "language": "ts",
+      "type": "file"
+    }
+  ],
+  "mastra-agent-local::vnext_chat": [
+    {
+      "name": "page.tsx",
+      "content": "\"use client\";\n\nimport React from \"react\";\nimport \"@copilotkitnext/react/styles.css\";\nimport { CopilotChat, CopilotKitProvider } from \"@copilotkitnext/react\";\n\nexport const dynamic = \"force-dynamic\";\n\ninterface PageProps {\n  params: Promise<{\n    integrationId: string;\n  }>;\n}\n\nexport default function Page({ params }: PageProps) {\n  const { integrationId } = React.use(params);\n\n  return (\n    <CopilotKitProvider\n      runtimeUrl={`/api/copilotkitnext/${integrationId}`}\n      showDevConsole=\"auto\"\n    >\n      <main\n        className=\"flex min-h-screen flex-1 flex-col overflow-hidden\"\n        style={{ minHeight: \"100dvh\" }}\n      >\n        <Chat threadId={`${integrationId}-vnext_chat`} />\n      </main>\n    </CopilotKitProvider>\n  );\n}\n\nfunction Chat({ threadId }: { threadId: string }) {\n  return (\n    <div className=\"flex flex-1 flex-col overflow-hidden\">\n      <CopilotChat style={{ flex: 1, minHeight: \"100%\" }} threadId={threadId} />\n    </div>\n  );\n}\n",
+      "language": "typescript",
+      "type": "file"
+    },
+    {
+      "name": "README.mdx",
+      "content": "# 🔮 VNext Chat\n\n## What This Demo Shows\n\nThis demo showcases a streamlined chat experience built with the CopilotKit\nvNext stack:\n\n1. **Modern vNext UI**: Lightweight chat interface with streaming responses\n2. **Integration-specific backend**: Uses the selected integration runtime\n3. **Threaded conversations**: Messages remain scoped to a stable thread id\n\n## How to Interact\n\nThis is a straightforward chat interface. Simply:\n\n- Type your message and press Enter\n- The selected integration agent responds in real time\n- Conversations are threaded and maintain context\n\n## ✨ Under the Hood\n\n**What's happening technically:**\n\n- The frontend connects to `/api/copilotkitnext/{integrationId}`\n- The integration id determines which backend runtime handles requests\n- Responses stream back in real-time\n\n**Why this feature is useful:**\n\n- **Consistent UX**: Same chat UI across different integrations\n- **Fast experimentation**: Compare runtimes without changing frontend code\n- **Simple surface area**: Minimal setup for end-to-end conversational testing\n",
       "language": "markdown",
       "type": "file"
     },
@@ -2346,7 +2386,7 @@
     },
     {
       "name": "README.mdx",
-      "content": "# 🔮 VNext Chat (A2A Direct)\n\n## What This Demo Shows\n\nThis demo showcases **direct A2A (Agent-to-Agent) communication** using the next\ngeneration CopilotKit interface:\n\n1. **Direct A2A Protocol**: Communicate directly with A2A-compatible agents\n2. **Simplified Interface**: Clean, minimal chat UI powered by CopilotKit vNext\n3. **Protocol Compliance**: Full A2A protocol support for agent interoperability\n\n## How to Interact\n\nThis is a straightforward chat interface. Simply:\n\n- Type your message and press Enter\n- The agent will respond using the A2A protocol\n- Conversations are threaded and maintain context\n\n## ✨ A2A Protocol in Action\n\n**What's happening technically:**\n\n- The frontend connects to an A2A-compatible agent endpoint\n- Messages are sent using the standardized A2A protocol format\n- Responses stream back in real-time\n- The protocol ensures interoperability between different agent implementations\n\n**Key benefits of A2A:**\n\n- **Interoperability**: Any A2A-compliant agent can be used\n- **Standardization**: Common protocol for agent communication\n- **Flexibility**: Swap agents without changing frontend code\n",
+      "content": "# 🔮 VNext Chat\n\n## What This Demo Shows\n\nThis demo showcases a streamlined chat experience built with the CopilotKit\nvNext stack:\n\n1. **Modern vNext UI**: Lightweight chat interface with streaming responses\n2. **Integration-specific backend**: Uses the selected integration runtime\n3. **Threaded conversations**: Messages remain scoped to a stable thread id\n\n## How to Interact\n\nThis is a straightforward chat interface. Simply:\n\n- Type your message and press Enter\n- The selected integration agent responds in real time\n- Conversations are threaded and maintain context\n\n## ✨ Under the Hood\n\n**What's happening technically:**\n\n- The frontend connects to `/api/copilotkitnext/{integrationId}`\n- The integration id determines which backend runtime handles requests\n- Responses stream back in real-time\n\n**Why this feature is useful:**\n\n- **Consistent UX**: Same chat UI across different integrations\n- **Fast experimentation**: Compare runtimes without changing frontend code\n- **Simple surface area**: Minimal setup for end-to-end conversational testing\n",
       "language": "markdown",
       "type": "file"
     }

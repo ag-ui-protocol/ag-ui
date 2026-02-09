@@ -88,6 +88,7 @@ export const menuIntegrations = [
     name: "Mastra",
     features: [
       "agentic_chat",
+      "vnext_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
       "tool_based_generative_ui",
@@ -98,6 +99,7 @@ export const menuIntegrations = [
     name: "Mastra Agent (Local)",
     features: [
       "agentic_chat",
+      "vnext_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
       "shared_state",

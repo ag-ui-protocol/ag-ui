@@ -1,33 +1,32 @@
-# 🔮 VNext Chat (A2A Direct)
+# 🔮 VNext Chat
 
 ## What This Demo Shows
 
-This demo showcases **direct A2A (Agent-to-Agent) communication** using the next
-generation CopilotKit interface:
+This demo showcases a streamlined chat experience built with the CopilotKit
+vNext stack:
 
-1. **Direct A2A Protocol**: Communicate directly with A2A-compatible agents
-2. **Simplified Interface**: Clean, minimal chat UI powered by CopilotKit vNext
-3. **Protocol Compliance**: Full A2A protocol support for agent interoperability
+1. **Modern vNext UI**: Lightweight chat interface with streaming responses
+2. **Integration-specific backend**: Uses the selected integration runtime
+3. **Threaded conversations**: Messages remain scoped to a stable thread id
 
 ## How to Interact
 
 This is a straightforward chat interface. Simply:
 
 - Type your message and press Enter
-- The agent will respond using the A2A protocol
+- The selected integration agent responds in real time
 - Conversations are threaded and maintain context
 
-## ✨ A2A Protocol in Action
+## ✨ Under the Hood
 
 **What's happening technically:**
 
-- The frontend connects to an A2A-compatible agent endpoint
-- Messages are sent using the standardized A2A protocol format
+- The frontend connects to `/api/copilotkitnext/{integrationId}`
+- The integration id determines which backend runtime handles requests
 - Responses stream back in real-time
-- The protocol ensures interoperability between different agent implementations
 
-**Key benefits of A2A:**
+**Why this feature is useful:**
 
-- **Interoperability**: Any A2A-compliant agent can be used
-- **Standardization**: Common protocol for agent communication
-- **Flexibility**: Swap agents without changing frontend code
+- **Consistent UX**: Same chat UI across different integrations
+- **Fast experimentation**: Compare runtimes without changing frontend code
+- **Simple surface area**: Minimal setup for end-to-end conversational testing
