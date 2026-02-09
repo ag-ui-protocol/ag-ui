@@ -20,3 +20,5 @@ node_modules
 .pnpm-store
 
 **/.poetry-cache
+**/.env.local
+integrations/claude-agent-sdk/**/.env.local
