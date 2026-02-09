@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch",
-    "clean": "rm -rf dist coverage",
+    "clean": "git clean -fdX --exclude=\"!.env\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

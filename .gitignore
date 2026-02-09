@@ -10,7 +10,8 @@ mastra.db*
 test-results/
 
 **/target
-.turbo
+.nx/cache
+.nx/workspace-data
 
 node_modules
 .vscode

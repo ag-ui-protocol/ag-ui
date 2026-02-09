@@ -12,7 +12,7 @@
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch",
-    "clean": "rm -rf dist .turbo node_modules",
+    "clean": "git clean -fdX --exclude=\"!.env\"",
     "typecheck": "tsc --noEmit",
     "test:exports": "publint --strict && attw --pack",
     "link:global": "pnpm link --global",

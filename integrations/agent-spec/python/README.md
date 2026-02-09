@@ -42,7 +42,7 @@ uv sync --extra langgraph --extra wayflow && uv run dev   # both runtimes; serve
 # uv sync --extra wayflow && uv run dev
 # then run Dojo (in a separate terminal):
 # Option A — run everything from repo root (multiple apps):
-#   pnpm turbo run dev
+#   pnpm dev
 # Option B — run only Dojo:
 #   cd ag-ui/apps/dojo
 #   AGENT_SPEC_URL=http://localhost:9003 pnpm dev (make sure to run pnpm build first)

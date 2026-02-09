@@ -1,12 +1,14 @@
 ---
-description: 
-globs: 
+description:
+globs:
 alwaysApply: true
 ---
+
 # Project Overview
 
 This monorepo project utilizes:
-- Turborepo for build system orchestration
+
+- Nx for build system orchestration
 - PNPM for package management
 - Jest for unit testing
 

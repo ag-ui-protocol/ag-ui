@@ -16,7 +16,7 @@
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch",
-    "clean": "rm -rf dist .turbo node_modules coverage",
+    "clean": "git clean -fdX --exclude=\"!.env\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
