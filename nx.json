@@ -2,6 +2,17 @@
   "$schema": "https://nx.dev/reference/nx-json#workspace-configuration",
   "useDaemonProcess": true,
   "parallel": 30,
+  "defaultBase": "main",
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*"],
+    "production": [
+      "default",
+      "!{projectRoot}/**/?(*.)+(spec|test).ts",
+      "!{projectRoot}/**/__tests__/**/*",
+      "!{projectRoot}/vitest.config.ts",
+      "!{projectRoot}/vitest.config.mts"
+    ]
+  },
   "targetDefaults": {
     "generate": {
       "outputs": [
@@ -15,8 +26,8 @@
         "generate"
       ],
       "inputs": [
-        "{projectRoot}/**/*",
-        "{projectRoot}/.env*"
+        "production",
+        "^production"
       ],
       "outputs": [
         "{projectRoot}/dist",
@@ -47,11 +58,19 @@
       "dependsOn": [
         "build"
       ],
+      "inputs": [
+        "default",
+        "^production"
+      ],
       "cache": true
     },
     "test:coverage": {
       "dependsOn": [
         "build"
+      ],
+      "inputs": [
+        "default",
+        "^production"
       ],
       "outputs": [
         "{projectRoot}/coverage"
