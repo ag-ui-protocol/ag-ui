@@ -295,11 +295,20 @@ class LangGraphAgent:
                     break
 
             if last_user_message:
-                return await self.prepare_regenerate_stream(
-                    input=input,
-                    message_checkpoint=last_user_message,
-                    config=config
-                )
+                # Only treat as regenerate if the message ID already exists
+                # in the checkpoint.  A new client-generated ID means this is
+                # a normal thread continuation, not a regenerate request.
+                # See: https://github.com/ag-ui-protocol/ag-ui/issues/706
+                checkpoint_message_ids = {
+                    getattr(msg, "id", None)
+                    for msg in agent_state.values.get("messages", [])
+                }
+                if last_user_message.id in checkpoint_message_ids:
+                    return await self.prepare_regenerate_stream(
+                        input=input,
+                        message_checkpoint=last_user_message,
+                        config=config
+                    )
 
         events_to_dispatch = []
         if has_active_interrupts and not resume_input:
