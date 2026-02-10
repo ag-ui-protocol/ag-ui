@@ -32,7 +32,7 @@ import {
 import { mergeMap, mergeAll, defaultIfEmpty, concatMap } from "rxjs/operators";
 import { of, EMPTY } from "rxjs";
 import { structuredClone_ } from "../utils";
-import { applyPatch } from "fast-json-patch";
+import * as jsonpatch from "fast-json-patch";
 import {
   AgentStateMutation,
   AgentSubscriber,
@@ -481,7 +481,7 @@ export const defaultApplyEvents = (
 
             try {
               // Apply the JSON Patch operations to the current state without mutating the original
-              const result = applyPatch(state, delta, true, false);
+              const result = jsonpatch.applyPatch(state, delta, true, false);
               state = result.newDocument;
               applyMutation({ state });
             } catch (error: unknown) {
@@ -639,7 +639,7 @@ export const defaultApplyEvents = (
             try {
               const baseContent = structuredClone_(existingActivityMessage.content ?? {});
 
-              const result = applyPatch(
+              const result = jsonpatch.applyPatch(
                 baseContent,
                 activityEvent.patch ?? [],
                 true,
