@@ -41,5 +41,12 @@
     "tsdown": "^0.20.1",
     "typescript": "^5.3.3",
     "vitest": "^4.0.18"
+  },
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
   }
 }
