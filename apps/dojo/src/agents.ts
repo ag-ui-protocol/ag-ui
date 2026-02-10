@@ -27,6 +27,8 @@ import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
 import { LangGraphAgent as CpkLangGraphAgent } from "@copilotkit/runtime/langgraph";
 
+
+
 const envVars = getEnvVars();
 
 export const agentsIntegrations = {
@@ -345,4 +347,30 @@ export const agentsIntegrations = {
     ),
     human_in_the_loop: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/human-in-the-loop`, debug: true }),
   }),
+
+  "claude-agent-sdk-python": async () =>
+    mapAgents(
+      (path) => new HttpAgent({ url: `${envVars.claudeAgentSdkUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        shared_state: "shared_state",
+        human_in_the_loop: "human_in_the_loop",
+        tool_based_generative_ui: "tool_based_generative_ui",
+      }
+    ),
+
+  // TypeScript Claude Agent SDK — connects to standalone server (like Python version).
+  // Start with: cd integrations/claude-agent-sdk/typescript && ANTHROPIC_API_KEY=xxx npx tsx examples/server.ts
+  "claude-agent-sdk-typescript": async () =>
+    mapAgents(
+      (path) => new HttpAgent({ url: `${envVars.claudeAgentSdkTsUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        shared_state: "shared_state",
+        human_in_the_loop: "human_in_the_loop",
+        tool_based_generative_ui: "tool_based_generative_ui",
+      }
+    ),
 } satisfies AgentsMap;
