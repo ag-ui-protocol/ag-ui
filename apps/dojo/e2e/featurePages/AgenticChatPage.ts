@@ -148,7 +148,7 @@ export class AgenticChatPage {
     await message.hover();
     await this.page.waitForTimeout(500);
 
-    const regenerateButton = this.page.locator('button[aria-label="Regenerate response"]');
+    const regenerateButton = message.locator('button[aria-label="Regenerate response"]');
 
     try {
       await regenerateButton.click({ timeout: 3000 });
