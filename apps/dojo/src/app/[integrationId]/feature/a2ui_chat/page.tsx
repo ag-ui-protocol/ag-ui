@@ -9,7 +9,7 @@ import {
   useFrontendTool,
   ToolCallStatus,
 } from "@copilotkit/react-core/v2";
-import { createA2UIMessageRenderer } from "@copilotkit/a2ui-renderer";
+import { createA2UIMessageRenderer } from "../../../../tmp/A2UIMessageRenderer";
 import { theme } from "./theme";
 import { z } from "zod";
 
