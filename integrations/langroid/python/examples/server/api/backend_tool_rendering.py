@@ -40,6 +40,8 @@ class RenderChartTool(ToolMessage):
 llm_config = lr.language_models.OpenAIGPTConfig(
     chat_model=lr.language_models.OpenAIChatModel.GPT4o,
     api_key=os.getenv("OPENAI_API_KEY"),
+    # Make behavior deterministic for demos and e2e tests
+    temperature=0.0,
 )
 
 
@@ -47,11 +49,17 @@ llm_config = lr.language_models.OpenAIGPTConfig(
 agent_config = lr.ChatAgentConfig(
     name="WeatherAssistant",
     llm=llm_config,
-    system_message="""You are a helpful assistant with backend tool rendering capabilities. 
-    You can get weather information and render charts. 
-    Always use the appropriate tools when users ask about weather or want to visualize data.
-    IMPORTANT: When describing weather data, use the EXACT values from the tool result. 
-    Do not make up or estimate values - quote the precise temperature, conditions, humidity, and wind speed from the tool result.""",
+    system_message="""You are a helpful assistant with backend tool rendering capabilities.
+    You can get weather information and render charts.
+
+    CRITICAL RULES:
+    - When the user asks about the weather for a specific location, you MUST call the `get_weather` tool EXACTLY ONCE.
+    - Do NOT answer with current weather details unless you have first called `get_weather` and used the returned JSON.
+    - When describing weather data, use the EXACT values from the tool result (temperature, conditions, humidity, wind speed, feels_like, location).
+    - Never tell the user you are going to fetch or retrieve weather data without actually calling the `get_weather` tool.
+    - When the user asks to visualize or chart data, you MUST call the `render_chart` tool to generate the chart metadata.
+    - After calling a tool, provide a brief natural-language summary that is fully consistent with the tool result.
+    """,
     use_tools=True,
     use_functions_api=False,
 )

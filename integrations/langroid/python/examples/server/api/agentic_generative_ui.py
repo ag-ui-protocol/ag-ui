@@ -84,6 +84,8 @@ class UpdatePlanStepTool(ToolMessage):
 llm_config = lr.language_models.OpenAIGPTConfig(
     chat_model=lr.language_models.OpenAIChatModel.GPT4o,
     api_key=os.getenv("OPENAI_API_KEY"),
+    # Make behavior deterministic for demos and e2e tests
+    temperature=0.0,
 )
 
 agent_config = lr.ChatAgentConfig(
@@ -91,15 +93,14 @@ agent_config = lr.ChatAgentConfig(
     llm=llm_config,
     system_message=dedent("""
         You are a helpful assistant that can create plans with multiple steps.
-        When the user asks you to create a plan, use the `create_plan` tool to create it.
-        The tool will automatically process and complete all steps.
-        After creating the plan, provide a brief confirmation message.
-        
-        IMPORTANT:
-        - Use the `create_plan` tool once when asked to create a plan
-        - The steps will be automatically processed and completed
-        - Provide a brief confirmation after the plan is created
-        - Do NOT call `update_plan_step` manually - it's handled automatically
+
+        CRITICAL RULES:
+        - When the user asks you to create a plan for a task, you MUST call the `create_plan` tool EXACTLY ONCE for that request.
+        - Do NOT invent or describe detailed step-by-step plans until AFTER you have called `create_plan`.
+        - The `create_plan` tool initializes a new plan. Each time the user asks for a plan for a different task (for example, first a Mars mission, then making pizza), you MUST call `create_plan` again to create a NEW plan instead of editing the previous one.
+        - Use the `update_plan_step` tool ONLY when the user explicitly asks to modify, reorder, or mark steps in the CURRENT plan (for example: \"mark step 3 as complete\" or \"change step 2 description\").
+        - Do NOT use `update_plan_step` to create a brand new plan for a different task.
+        - After creating or updating a plan, provide a brief natural-language summary of what you did (1–2 sentences, optionally with emojis).
     """),
     use_tools=True,
     use_functions_api=False,
