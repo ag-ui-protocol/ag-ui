@@ -1,0 +1,53 @@
+name: "Feature Request"
+description: "Have an idea to improve AG-UI? We'd love to hear it."
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Help us understand the problem you're trying to solve.
+
+        > **Before you file:** Search [existing issues](https://github.com/ag-ui-protocol/ag-ui/issues) to see if this has already been requested.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight Checklist
+      options:
+        - label: I have searched existing issues and this hasn't been requested yet.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Motivation
+      description: What problem are you trying to solve? Why is this needed?
+      placeholder: "I'm trying to do X but there's no way to..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe what you'd like to happen. Include API sketches or examples if helpful.
+      placeholder: "It would be great if AG-UI supported..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you tried any workarounds or considered other approaches?
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Anything else — use cases, screenshots, links to related discussions, etc.
+    validations:
+      required: false
