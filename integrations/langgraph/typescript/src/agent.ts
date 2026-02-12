@@ -128,6 +128,15 @@ export class LangGraphAgent extends AbstractAgent {
   // Stop control flags
   private cancelRequested: boolean = false;
   private cancelSent: boolean = false;
+  /**
+   * Tracks whether the "events" stream mode is producing on_chat_model_stream events.
+   * When true, messages-tuple events are skipped to avoid duplicate streaming.
+   */
+  private _eventsStreamActive = false;
+  /**
+   * Tracks the current in-progress message or tool call from messages-tuple events.
+   */
+  private _messagesTupleTracker: { messageId?: string; toolCallId?: string } = {};
   // @ts-expect-error no need to initialize subscriber right now
   subscriber: Subscriber<ProcessedEvents>;
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
@@ -191,13 +200,16 @@ export class LangGraphAgent extends AbstractAgent {
     // Reset cancel flags for this run
     this.cancelRequested = false;
     this.cancelSent = false;
+    // Reset messages-tuple fallback state for this run
+    this._eventsStreamActive = false;
+    this._messagesTupleTracker = {};
     this.subscriber = subscriber;
     if (!this.assistant) {
       this.assistant = await this.getAssistant();
     }
     const threadId = input.threadId ?? randomUUID();
     const streamMode =
-      input.forwardedProps?.streamMode ?? (["events", "values", "updates"] satisfies StreamMode[]);
+      input.forwardedProps?.streamMode ?? (["events", "values", "updates", "messages-tuple"] satisfies StreamMode[]);
     const preparedStream = await this.prepareStream({ ...input, threadId }, streamMode);
 
     if (!preparedStream) {
@@ -463,7 +475,11 @@ export class LangGraphAgent extends AbstractAgent {
             streamResponseChunk.event.startsWith("values"));
 
         // @ts-ignore
-        if (!streamModes.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream && streamResponseChunk.event !== 'error') {
+        // Fix: "messages-tuple" stream mode produces SSE events with event type "messages",
+        // so we also allow "messages" events when "messages-tuple" is in streamModes.
+        const isMessagesTupleEvent = streamResponseChunk.event === "messages" &&
+          (Array.isArray(streamModes) ? streamModes : [streamModes]).includes("messages-tuple" as StreamMode);
+        if (!streamModes.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream && !isMessagesTupleEvent && streamResponseChunk.event !== 'error') {
           continue;
         }
 
@@ -484,6 +500,14 @@ export class LangGraphAgent extends AbstractAgent {
             rawEvent: streamResponseChunk,
           });
           break;
+        }
+
+        // Handle messages-tuple events: data is [AIMessageChunk, metadata] tuple
+        if (streamResponseChunk.event === "messages") {
+          if (!this._eventsStreamActive) {
+            this.handleMessagesTupleEvent(streamResponseChunk.data);
+          }
+          continue;
         }
 
         if (streamResponseChunk.event === "updates") {
@@ -576,41 +600,49 @@ export class LangGraphAgent extends AbstractAgent {
         this.handleSingleEvent(chunkData);
       }
 
-      state = await this.client.threads.getState(threadId);
-      const tasks = state.tasks;
-      const interrupts = (tasks?.[0]?.interrupts ?? []) as Interrupt[];
-      const isEndNode = state.next.length === 0;
-      const writes = state.metadata?.writes ?? {};
+      // Post-loop finalization: fetch final state and emit RUN_FINISHED.
+      // Wrapped defensively so RUN_FINISHED is always emitted even if
+      // getState() or message conversion fails.
+      try {
+        state = await this.client.threads.getState(threadId);
+        const tasks = state.tasks;
+        const interrupts = (tasks?.[0]?.interrupts ?? []) as Interrupt[];
+        const isEndNode = state.next.length === 0;
+        const writes = state.metadata?.writes ?? {};
 
-      // Initialize a new node name to use in the next if block
-      let newNodeName = this.activeRun!.nodeName!;
+        // Initialize a new node name to use in the next if block
+        let newNodeName = this.activeRun!.nodeName!;
 
-      if (!interrupts?.length) {
-        newNodeName = isEndNode ? "__end__" : (state.next[0] ?? Object.keys(writes)[0]);
-      }
+        if (!interrupts?.length) {
+          newNodeName = isEndNode ? "__end__" : (state.next[0] ?? Object.keys(writes)[0]);
+        }
 
-      interrupts.forEach((interrupt) => {
-        this.dispatchEvent({
-          type: EventType.CUSTOM,
-          name: LangGraphEventTypes.OnInterrupt,
-          value:
-            typeof interrupt.value === "string" ? interrupt.value : JSON.stringify(interrupt.value),
-          rawEvent: interrupt,
+        interrupts.forEach((interrupt) => {
+          this.dispatchEvent({
+            type: EventType.CUSTOM,
+            name: LangGraphEventTypes.OnInterrupt,
+            value:
+              typeof interrupt.value === "string" ? interrupt.value : JSON.stringify(interrupt.value),
+            rawEvent: interrupt,
+          });
         });
-      });
 
-      this.handleNodeChange(newNodeName);
-      // Immediately turn off new step
-      this.handleNodeChange(undefined);
+        this.handleNodeChange(newNodeName);
+        // Immediately turn off new step
+        this.handleNodeChange(undefined);
 
-      this.dispatchEvent({
-        type: EventType.STATE_SNAPSHOT,
-        snapshot: this.getStateSnapshot(state),
-      });
-      this.dispatchEvent({
-        type: EventType.MESSAGES_SNAPSHOT,
-        messages: langchainMessagesToAgui((state.values as { messages: any[] }).messages ?? []),
-      });
+        this.dispatchEvent({
+          type: EventType.STATE_SNAPSHOT,
+          snapshot: this.getStateSnapshot(state),
+        });
+        this.dispatchEvent({
+          type: EventType.MESSAGES_SNAPSHOT,
+          messages: langchainMessagesToAgui((state.values as { messages: any[] }).messages ?? []),
+        });
+      } catch (postLoopError) {
+        // Log but don't throw — we still need to emit RUN_FINISHED below
+        console.error("[LangGraphAgent] Post-loop finalization error:", postLoopError);
+      }
 
       this.dispatchEvent({
         type: EventType.RUN_FINISHED,
@@ -627,7 +659,120 @@ export class LangGraphAgent extends AbstractAgent {
     }
   }
 
+  /**
+   * Process [AIMessageChunk, metadata] tuples from messages-tuple stream mode.
+   *
+   * This is a fallback for streaming when the "events" stream mode does not
+   * produce on_chat_model_stream data (e.g., create_agent on LangGraph Platform).
+   *
+   * It handles the full message lifecycle:
+   * - START and CONTENT/ARGS for text and tool call streaming
+   * - END events triggered by finish_reason chunks
+   */
+  private handleMessagesTupleEvent(data: any): void {
+    if (!Array.isArray(data)) return;
+    const chunk = data[0];
+
+    // Skip non-AI chunks (e.g., tool result messages, human messages)
+    if (chunk.type && chunk.type !== "AIMessageChunk") return;
+
+    // Handle finish_reason chunks — emit END events to close open messages/tool calls
+    const finishReason = chunk.response_metadata?.finish_reason;
+    if (finishReason) {
+      if (this._messagesTupleTracker.toolCallId) {
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_END,
+          toolCallId: this._messagesTupleTracker.toolCallId,
+        });
+        this._messagesTupleTracker = { messageId: this._messagesTupleTracker.messageId };
+      } else if (this._messagesTupleTracker.messageId) {
+        this.dispatchEvent({
+          type: EventType.TEXT_MESSAGE_END,
+          messageId: this._messagesTupleTracker.messageId,
+        });
+        this._messagesTupleTracker = {};
+      }
+      return;
+    }
+
+    const content =
+      typeof chunk.content === "string"
+        ? chunk.content
+        : Array.isArray(chunk.content)
+          ? chunk.content.find((c: any) => c.type === "text")?.text
+          : null;
+    const toolCallChunks = chunk.tool_call_chunks;
+
+    // Handle tool call chunks
+    if (toolCallChunks?.length > 0) {
+      const tc = toolCallChunks[0];
+      if (tc.name) {
+        // New tool call — close any previous tool call first
+        if (this._messagesTupleTracker.toolCallId) {
+          this.dispatchEvent({
+            type: EventType.TOOL_CALL_END,
+            toolCallId: this._messagesTupleTracker.toolCallId,
+          });
+        }
+        const toolCallId = tc.id || chunk.id;
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_START,
+          toolCallId,
+          toolCallName: tc.name,
+          parentMessageId: chunk.id,
+        });
+        this._messagesTupleTracker = { messageId: chunk.id, toolCallId };
+        this.activeRun!.hasFunctionStreaming = true;
+        if (tc.args) {
+          this.dispatchEvent({
+            type: EventType.TOOL_CALL_ARGS,
+            toolCallId,
+            delta: tc.args,
+          });
+        }
+      } else if (tc.args && this._messagesTupleTracker.toolCallId) {
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: this._messagesTupleTracker.toolCallId,
+          delta: tc.args,
+        });
+      }
+      return;
+    }
+
+    // Skip empty initialization chunks
+    if (!content) return;
+
+    // Handle text content
+    if (!this._messagesTupleTracker.messageId || this._messagesTupleTracker.toolCallId) {
+      // Close any open tool call before starting text
+      if (this._messagesTupleTracker.toolCallId) {
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_END,
+          toolCallId: this._messagesTupleTracker.toolCallId,
+        });
+      }
+      this.dispatchEvent({
+        type: EventType.TEXT_MESSAGE_START,
+        role: "assistant",
+        messageId: chunk.id,
+      });
+      this._messagesTupleTracker = { messageId: chunk.id };
+    }
+    this.dispatchEvent({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: this._messagesTupleTracker.messageId!,
+      delta: content,
+    });
+  }
+
   handleSingleEvent(event: any): void {
+    // Track if events-mode streaming is producing data;
+    // when active, messages-tuple events are skipped to avoid duplicates.
+    if (event.event === LangGraphEventTypes.OnChatModelStream) {
+      this._eventsStreamActive = true;
+    }
+
     switch (event.event) {
       case LangGraphEventTypes.OnChatModelStream:
         let shouldEmitMessages = event.metadata["emit-messages"] ?? true;
