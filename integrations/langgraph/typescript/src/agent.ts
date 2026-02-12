@@ -672,7 +672,8 @@ export class LangGraphAgent extends AbstractAgent {
           ? chunk.content.find((c: any) => c.type === "text")?.text
           : null;
     const toolCallChunks = chunk.tool_call_chunks;
-    const isFinished = chunk.response_metadata?.finish_reason === "stop";
+    const finishReason = chunk.response_metadata?.finish_reason;
+    const isFinished = finishReason === "stop" || finishReason === "tool_calls";
 
     // Handle tool call chunks
     if (toolCallChunks?.length > 0) {
@@ -727,7 +728,9 @@ export class LangGraphAgent extends AbstractAgent {
 
     // Handle text content streaming
     if (content) {
-      if (!this._messagesTupleTracker.messageId) {
+      // Start a new text message if there isn't one active, or if the previous
+      // tracker was for a tool call (different message context).
+      if (!this._messagesTupleTracker.messageId || this._messagesTupleTracker.toolCallId) {
         this.dispatchEvent({
           type: EventType.TEXT_MESSAGE_START,
           role: "assistant",
