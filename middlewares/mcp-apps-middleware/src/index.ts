@@ -45,12 +45,30 @@ type RunNextWithStateReturn = ReturnType<Middleware["runNextWithState"]>;
 export type EventWithState = ExtractObservableType<RunNextWithStateReturn>;
 
 /**
+ * CSP metadata from MCP resource contents (per SEP-1865)
+ */
+interface ResourceCSP {
+  resourceDomains?: string[];
+  connectDomains?: string[];
+}
+
+/**
+ * UI metadata from MCP resource contents (per SEP-1865)
+ */
+interface ResourceUIMeta {
+  csp?: ResourceCSP;
+  prefersBorder?: boolean;
+  permissions?: Record<string, unknown>;
+}
+
+/**
  * UI Tool with its source server config and resource URI
  */
 interface UIToolInfo {
   tool: Tool;
   serverConfig: MCPClientConfig;
   resourceUri: string;
+  resourceUIMeta?: ResourceUIMeta;
 }
 
 /**
@@ -414,6 +432,7 @@ export class MCPAppsMiddleware extends Middleware {
                       serverHash: getServerHash(toolInfo.serverConfig),
                       serverId: toolInfo.serverConfig.serverId,
                       toolInput: args,
+                      ...(toolInfo.resourceUIMeta && { resourceUIMeta: toolInfo.resourceUIMeta }),
                     },
                     replace: true,
                   };
@@ -596,13 +615,38 @@ export class MCPAppsMiddleware extends Middleware {
       const response = await client.listTools();
 
       // Filter for tools with UI resources and convert to AG-UI format with server config
-      const uiTools = response.tools
+      const uiToolsWithoutMeta = response.tools
         .filter(hasUIResource)
         .map((mcpTool) => ({
           tool: convertMCPToolToAGUITool(mcpTool),
           serverConfig,
           resourceUri: mcpTool._meta!["ui/resourceUri"] as string,
         }));
+
+      // Fetch resource metadata (CSP, permissions, etc.) for each unique resourceUri
+      const resourceUris = [...new Set(uiToolsWithoutMeta.map((t) => t.resourceUri))];
+      const resourceMetaMap = new Map<string, ResourceUIMeta>();
+
+      for (const uri of resourceUris) {
+        try {
+          const resourceResult = await client.readResource({ uri });
+          const content = resourceResult.contents?.[0];
+          if (content && typeof content === "object" && "_meta" in content) {
+            const meta = content._meta as { ui?: ResourceUIMeta } | undefined;
+            if (meta?.ui) {
+              resourceMetaMap.set(uri, meta.ui);
+            }
+          }
+        } catch {
+          // Resource metadata is optional; continue without it
+        }
+      }
+
+      // Attach resource metadata to each tool
+      const uiTools: UIToolInfo[] = uiToolsWithoutMeta.map((info) => ({
+        ...info,
+        resourceUIMeta: resourceMetaMap.get(info.resourceUri),
+      }));
 
       return uiTools;
     } finally {

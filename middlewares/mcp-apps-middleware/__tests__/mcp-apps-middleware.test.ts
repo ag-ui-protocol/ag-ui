@@ -889,7 +889,7 @@ describe("MCPAppsMiddleware", () => {
       expect((activityEvent as any).content.resource).toBeUndefined();
     });
 
-    it("does not call readResource during tool execution", async () => {
+    it("calls readResource during tool discovery for resource metadata only", async () => {
       const uiTool = createMCPToolWithUI("ui-tool", "ui://server/tool");
       mockListTools.mockResolvedValue({ tools: [uiTool] });
       mockCallTool.mockResolvedValue(createMCPToolCallResult([{ type: "text", text: "Result" }]));
@@ -903,9 +903,11 @@ describe("MCPAppsMiddleware", () => {
 
       await collectEvents(middleware.run(input, agent));
 
-      // readResource should NOT be called during tool execution
-      // (frontend will fetch via proxied request)
-      expect(mockReadResource).not.toHaveBeenCalled();
+      // readResource IS called during tool discovery to fetch CSP/UI metadata
+      // but the frontend still fetches the actual resource content via proxied requests
+      expect(mockReadResource).toHaveBeenCalledWith({ uri: "ui://server/tool" });
+      // Should only be called once per unique resourceUri during discovery
+      expect(mockReadResource).toHaveBeenCalledTimes(1);
     });
   });
 
