@@ -652,18 +652,25 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   /**
-   * Process [AIMessageChunk, metadata] tuples from messages-tuple stream mode
-   * and convert them into AG-UI text message and tool call events.
-   * Used as a fallback when the "events" stream mode does not produce
-   * on_chat_model_stream data (e.g., create_agent on LangGraph Platform).
+   * Process [AIMessageChunk, metadata] tuples from messages-tuple stream mode.
+   *
+   * This is a **lightweight fallback** for token-level streaming only. It emits
+   * START and CONTENT/ARGS events. Endings (TEXT_MESSAGE_END, TOOL_CALL_END)
+   * and run lifecycle events are left to the events-mode handlers
+   * (on_chat_model_end, on_tool_end) or CopilotKit's finalizeRunEvents.
+   *
+   * Used when the "events" stream mode does not produce on_chat_model_stream
+   * data (e.g., create_agent on LangGraph Platform).
    */
   private handleMessagesTupleEvent(data: any): void {
     if (!Array.isArray(data)) return;
     const chunk = data[0];
-    // const metadata = data[1] ?? {};
 
     // Skip non-AI chunks (e.g., tool result messages, human messages)
     if (chunk.type && chunk.type !== "AIMessageChunk") return;
+
+    // Skip finish chunks — endings are handled by events-mode or finalizeRunEvents
+    if (chunk.response_metadata?.finish_reason) return;
 
     const content =
       typeof chunk.content === "string"
@@ -672,31 +679,28 @@ export class LangGraphAgent extends AbstractAgent {
           ? chunk.content.find((c: any) => c.type === "text")?.text
           : null;
     const toolCallChunks = chunk.tool_call_chunks;
-    const finishReason = chunk.response_metadata?.finish_reason;
-    const isFinished = finishReason === "stop" || finishReason === "tool_calls";
 
-    // Handle tool call chunks
+    // Handle tool call chunks — emit START and ARGS only
     if (toolCallChunks?.length > 0) {
       const tc = toolCallChunks[0];
       if (tc.name) {
-        // End any text message in progress
-        if (this._messagesTupleTracker.messageId && !this._messagesTupleTracker.toolCallId) {
-          this.dispatchEvent({
-            type: EventType.TEXT_MESSAGE_END,
-            messageId: this._messagesTupleTracker.messageId,
-          });
-        }
-        // Start new tool call
+        const toolCallId = tc.id || chunk.id;
         this.dispatchEvent({
           type: EventType.TOOL_CALL_START,
-          toolCallId: tc.id || chunk.id,
+          toolCallId,
           toolCallName: tc.name,
           parentMessageId: chunk.id,
         });
-        this._messagesTupleTracker = { messageId: chunk.id, toolCallId: tc.id || chunk.id };
+        this._messagesTupleTracker = { messageId: chunk.id, toolCallId };
         this.activeRun!.hasFunctionStreaming = true;
+        if (tc.args) {
+          this.dispatchEvent({
+            type: EventType.TOOL_CALL_ARGS,
+            toolCallId,
+            delta: tc.args,
+          });
+        }
       } else if (tc.args && this._messagesTupleTracker.toolCallId) {
-        // Stream tool call args
         this.dispatchEvent({
           type: EventType.TOOL_CALL_ARGS,
           toolCallId: this._messagesTupleTracker.toolCallId,
@@ -706,44 +710,23 @@ export class LangGraphAgent extends AbstractAgent {
       return;
     }
 
-    // Handle finish
-    if (isFinished) {
-      if (this._messagesTupleTracker.toolCallId) {
-        this.dispatchEvent({
-          type: EventType.TOOL_CALL_END,
-          toolCallId: this._messagesTupleTracker.toolCallId,
-        });
-      } else if (this._messagesTupleTracker.messageId) {
-        this.dispatchEvent({
-          type: EventType.TEXT_MESSAGE_END,
-          messageId: this._messagesTupleTracker.messageId,
-        });
-      }
-      this._messagesTupleTracker = {};
-      return;
-    }
-
     // Skip empty initialization chunks
-    if (!content && !toolCallChunks?.length) return;
+    if (!content) return;
 
-    // Handle text content streaming
-    if (content) {
-      // Start a new text message if there isn't one active, or if the previous
-      // tracker was for a tool call (different message context).
-      if (!this._messagesTupleTracker.messageId || this._messagesTupleTracker.toolCallId) {
-        this.dispatchEvent({
-          type: EventType.TEXT_MESSAGE_START,
-          role: "assistant",
-          messageId: chunk.id,
-        });
-        this._messagesTupleTracker = { messageId: chunk.id };
-      }
+    // Handle text content — emit START and CONTENT only
+    if (!this._messagesTupleTracker.messageId || this._messagesTupleTracker.toolCallId) {
       this.dispatchEvent({
-        type: EventType.TEXT_MESSAGE_CONTENT,
-        messageId: this._messagesTupleTracker.messageId!,
-        delta: content,
+        type: EventType.TEXT_MESSAGE_START,
+        role: "assistant",
+        messageId: chunk.id,
       });
+      this._messagesTupleTracker = { messageId: chunk.id };
     }
+    this.dispatchEvent({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: this._messagesTupleTracker.messageId!,
+      delta: content,
+    });
   }
 
   handleSingleEvent(event: any): void {
