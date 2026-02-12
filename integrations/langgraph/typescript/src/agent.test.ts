@@ -161,10 +161,10 @@ describe("LangGraphAgent", () => {
       expect((events[2] as any).delta).toBe(" world");
     });
 
-    it("skips finish_reason chunks (endings handled by events-mode or finalizeRunEvents)", () => {
+    it("emits TEXT_MESSAGE_END on finish_reason 'stop'", () => {
       const { agent, events } = setupAgentForEventHandling();
 
-      // Start a message
+      // Start a text message
       (agent as any).handleMessagesTupleEvent([
         {
           type: "AIMessageChunk",
@@ -176,7 +176,7 @@ describe("LangGraphAgent", () => {
         {},
       ]);
 
-      // Finish chunk — should be skipped entirely
+      // Finish chunk with stop
       (agent as any).handleMessagesTupleEvent([
         {
           type: "AIMessageChunk",
@@ -188,13 +188,86 @@ describe("LangGraphAgent", () => {
         {},
       ]);
 
-      // Only START + CONTENT, no END
-      expect(events).toHaveLength(2);
+      expect(events).toHaveLength(3);
       expect(events[0].type).toBe(EventType.TEXT_MESSAGE_START);
       expect(events[1].type).toBe(EventType.TEXT_MESSAGE_CONTENT);
+      expect(events[2]).toEqual(
+        expect.objectContaining({
+          type: EventType.TEXT_MESSAGE_END,
+          messageId: "msg-1",
+        }),
+      );
     });
 
-    it("emits TOOL_CALL_START and TOOL_CALL_ARGS for tool calls (no END)", () => {
+    it("emits TOOL_CALL_END on finish_reason 'tool_calls'", () => {
+      const { agent, events } = setupAgentForEventHandling();
+
+      // Tool call start
+      (agent as any).handleMessagesTupleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "ai-msg-1",
+          content: "",
+          tool_call_chunks: [{ id: "tc-1", name: "search", args: "" }],
+          response_metadata: {},
+        },
+        {},
+      ]);
+
+      // Tool call args
+      (agent as any).handleMessagesTupleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "ai-msg-1",
+          content: "",
+          tool_call_chunks: [{ args: '{"query":"test"}' }],
+          response_metadata: {},
+        },
+        {},
+      ]);
+
+      // Finish chunk with tool_calls
+      (agent as any).handleMessagesTupleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "ai-msg-1",
+          content: "",
+          tool_call_chunks: [],
+          response_metadata: { finish_reason: "tool_calls" },
+        },
+        {},
+      ]);
+
+      expect(events).toHaveLength(3);
+      expect(events[0].type).toBe(EventType.TOOL_CALL_START);
+      expect(events[1].type).toBe(EventType.TOOL_CALL_ARGS);
+      expect(events[2]).toEqual(
+        expect.objectContaining({
+          type: EventType.TOOL_CALL_END,
+          toolCallId: "tc-1",
+        }),
+      );
+    });
+
+    it("finish_reason with no open tracker is a no-op", () => {
+      const { agent, events } = setupAgentForEventHandling();
+
+      // Finish chunk with nothing open
+      (agent as any).handleMessagesTupleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "msg-1",
+          content: "",
+          tool_call_chunks: [],
+          response_metadata: { finish_reason: "stop" },
+        },
+        {},
+      ]);
+
+      expect(events).toHaveLength(0);
+    });
+
+    it("emits TOOL_CALL_START and TOOL_CALL_ARGS for tool calls", () => {
       const { agent, events } = setupAgentForEventHandling();
 
       // Tool call start
@@ -232,7 +305,6 @@ describe("LangGraphAgent", () => {
         {},
       ]);
 
-      // Only START + ARGS, no END (endings handled elsewhere)
       expect(events).toHaveLength(3);
       expect(events[0]).toEqual(
         expect.objectContaining({
@@ -283,38 +355,152 @@ describe("LangGraphAgent", () => {
       );
     });
 
-    it("starts a new text message when text arrives and tracker has stale tool call context", () => {
+    it("closes previous tool call when a new tool call starts", () => {
       const { agent, events } = setupAgentForEventHandling();
 
-      // Simulate stale tracker state (tool call context that wasn't cleaned up)
-      (agent as any)._messagesTupleTracker = { messageId: "old-msg", toolCallId: "old-tc" };
+      // First tool call
+      (agent as any).handleMessagesTupleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "ai-msg-1",
+          content: "",
+          tool_call_chunks: [{ id: "tc-1", name: "search", args: "" }],
+          response_metadata: {},
+        },
+        {},
+      ]);
 
-      // New text content arrives
+      // Second tool call — should auto-close the first
+      (agent as any).handleMessagesTupleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "ai-msg-1",
+          content: "",
+          tool_call_chunks: [{ id: "tc-2", name: "fetch", args: "" }],
+          response_metadata: {},
+        },
+        {},
+      ]);
+
+      expect(events).toHaveLength(3);
+      expect(events[0].type).toBe(EventType.TOOL_CALL_START);
+      expect((events[0] as any).toolCallName).toBe("search");
+      expect(events[1]).toEqual(
+        expect.objectContaining({
+          type: EventType.TOOL_CALL_END,
+          toolCallId: "tc-1",
+        }),
+      );
+      expect(events[2]).toEqual(
+        expect.objectContaining({
+          type: EventType.TOOL_CALL_START,
+          toolCallId: "tc-2",
+          toolCallName: "fetch",
+        }),
+      );
+    });
+
+    it("closes open tool call when text content arrives", () => {
+      const { agent, events } = setupAgentForEventHandling();
+
+      // Tool call
+      (agent as any).handleMessagesTupleEvent([
+        {
+          type: "AIMessageChunk",
+          id: "ai-msg-1",
+          content: "",
+          tool_call_chunks: [{ id: "tc-1", name: "search", args: "" }],
+          response_metadata: {},
+        },
+        {},
+      ]);
+
+      // Text content arrives — should close tool call and start text
       (agent as any).handleMessagesTupleEvent([
         {
           type: "AIMessageChunk",
           id: "new-msg",
-          content: "Fresh response",
+          content: "Here are the results",
           tool_call_chunks: [],
           response_metadata: {},
         },
         {},
       ]);
 
-      expect(events).toHaveLength(2);
-      expect(events[0]).toEqual(
+      expect(events).toHaveLength(4);
+      expect(events[0].type).toBe(EventType.TOOL_CALL_START);
+      expect(events[1]).toEqual(
+        expect.objectContaining({
+          type: EventType.TOOL_CALL_END,
+          toolCallId: "tc-1",
+        }),
+      );
+      expect(events[2]).toEqual(
         expect.objectContaining({
           type: EventType.TEXT_MESSAGE_START,
           messageId: "new-msg",
         }),
       );
-      expect(events[1]).toEqual(
+      expect(events[3]).toEqual(
         expect.objectContaining({
           type: EventType.TEXT_MESSAGE_CONTENT,
-          messageId: "new-msg",
-          delta: "Fresh response",
+          delta: "Here are the results",
         }),
       );
+    });
+
+    it("full lifecycle: text start → content → end", () => {
+      const { agent, events } = setupAgentForEventHandling();
+
+      // Text content
+      (agent as any).handleMessagesTupleEvent([
+        { type: "AIMessageChunk", id: "msg-1", content: "Hi", tool_call_chunks: [], response_metadata: {} },
+        {},
+      ]);
+      (agent as any).handleMessagesTupleEvent([
+        { type: "AIMessageChunk", id: "msg-1", content: " there", tool_call_chunks: [], response_metadata: {} },
+        {},
+      ]);
+      // Finish
+      (agent as any).handleMessagesTupleEvent([
+        { type: "AIMessageChunk", id: "msg-1", content: "", tool_call_chunks: [], response_metadata: { finish_reason: "stop" } },
+        {},
+      ]);
+
+      const types = events.map((e) => e.type);
+      expect(types).toEqual([
+        EventType.TEXT_MESSAGE_START,
+        EventType.TEXT_MESSAGE_CONTENT,
+        EventType.TEXT_MESSAGE_CONTENT,
+        EventType.TEXT_MESSAGE_END,
+      ]);
+    });
+
+    it("full lifecycle: tool start → args → end", () => {
+      const { agent, events } = setupAgentForEventHandling();
+
+      // Tool call
+      (agent as any).handleMessagesTupleEvent([
+        { type: "AIMessageChunk", id: "ai-1", content: "", tool_call_chunks: [{ id: "tc-1", name: "search", args: '{"q":' }], response_metadata: {} },
+        {},
+      ]);
+      (agent as any).handleMessagesTupleEvent([
+        { type: "AIMessageChunk", id: "ai-1", content: "", tool_call_chunks: [{ args: '"hi"}' }], response_metadata: {} },
+        {},
+      ]);
+      // Finish
+      (agent as any).handleMessagesTupleEvent([
+        { type: "AIMessageChunk", id: "ai-1", content: "", tool_call_chunks: [], response_metadata: { finish_reason: "tool_calls" } },
+        {},
+      ]);
+
+      const types = events.map((e) => e.type);
+      expect(types).toEqual([
+        EventType.TOOL_CALL_START,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_ARGS,
+        EventType.TOOL_CALL_END,
+      ]);
     });
 
     it("skips non-AI message chunks", () => {
