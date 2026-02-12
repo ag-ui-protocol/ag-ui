@@ -128,6 +128,15 @@ export class LangGraphAgent extends AbstractAgent {
   // Stop control flags
   private cancelRequested: boolean = false;
   private cancelSent: boolean = false;
+  /**
+   * Tracks whether the "events" stream mode is producing on_chat_model_stream events.
+   * When true, messages-tuple events are skipped to avoid duplicate streaming.
+   */
+  private _eventsStreamActive = false;
+  /**
+   * Tracks the current in-progress message or tool call from messages-tuple events.
+   */
+  private _messagesTupleTracker: { messageId?: string; toolCallId?: string } = {};
   // @ts-expect-error no need to initialize subscriber right now
   subscriber: Subscriber<ProcessedEvents>;
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
@@ -191,13 +200,16 @@ export class LangGraphAgent extends AbstractAgent {
     // Reset cancel flags for this run
     this.cancelRequested = false;
     this.cancelSent = false;
+    // Reset messages-tuple fallback state for this run
+    this._eventsStreamActive = false;
+    this._messagesTupleTracker = {};
     this.subscriber = subscriber;
     if (!this.assistant) {
       this.assistant = await this.getAssistant();
     }
     const threadId = input.threadId ?? randomUUID();
     const streamMode =
-      input.forwardedProps?.streamMode ?? (["events", "values", "updates"] satisfies StreamMode[]);
+      input.forwardedProps?.streamMode ?? (["events", "values", "updates", "messages-tuple"] satisfies StreamMode[]);
     const preparedStream = await this.prepareStream({ ...input, threadId }, streamMode);
 
     if (!preparedStream) {
@@ -463,7 +475,11 @@ export class LangGraphAgent extends AbstractAgent {
             streamResponseChunk.event.startsWith("values"));
 
         // @ts-ignore
-        if (!streamModes.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream && streamResponseChunk.event !== 'error') {
+        // Fix: "messages-tuple" stream mode produces SSE events with event type "messages",
+        // so we also allow "messages" events when "messages-tuple" is in streamModes.
+        const isMessagesTupleEvent = streamResponseChunk.event === "messages" &&
+          (Array.isArray(streamModes) ? streamModes : [streamModes]).includes("messages-tuple" as StreamMode);
+        if (!streamModes.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream && !isMessagesTupleEvent && streamResponseChunk.event !== 'error') {
           continue;
         }
 
@@ -484,6 +500,14 @@ export class LangGraphAgent extends AbstractAgent {
             rawEvent: streamResponseChunk,
           });
           break;
+        }
+
+        // Handle messages-tuple events: data is [AIMessageChunk, metadata] tuple
+        if (streamResponseChunk.event === "messages") {
+          if (!this._eventsStreamActive) {
+            this.handleMessagesTupleEvent(streamResponseChunk.data);
+          }
+          continue;
         }
 
         if (streamResponseChunk.event === "updates") {
@@ -627,7 +651,105 @@ export class LangGraphAgent extends AbstractAgent {
     }
   }
 
+  /**
+   * Process [AIMessageChunk, metadata] tuples from messages-tuple stream mode
+   * and convert them into AG-UI text message and tool call events.
+   * Used as a fallback when the "events" stream mode does not produce
+   * on_chat_model_stream data (e.g., create_agent on LangGraph Platform).
+   */
+  private handleMessagesTupleEvent(data: any): void {
+    if (!Array.isArray(data)) return;
+    const chunk = data[0];
+    // const metadata = data[1] ?? {};
+
+    // Skip non-AI chunks (e.g., tool result messages, human messages)
+    if (chunk.type && chunk.type !== "AIMessageChunk") return;
+
+    const content =
+      typeof chunk.content === "string"
+        ? chunk.content
+        : Array.isArray(chunk.content)
+          ? chunk.content.find((c: any) => c.type === "text")?.text
+          : null;
+    const toolCallChunks = chunk.tool_call_chunks;
+    const isFinished = chunk.response_metadata?.finish_reason === "stop";
+
+    // Handle tool call chunks
+    if (toolCallChunks?.length > 0) {
+      const tc = toolCallChunks[0];
+      if (tc.name) {
+        // End any text message in progress
+        if (this._messagesTupleTracker.messageId && !this._messagesTupleTracker.toolCallId) {
+          this.dispatchEvent({
+            type: EventType.TEXT_MESSAGE_END,
+            messageId: this._messagesTupleTracker.messageId,
+          });
+        }
+        // Start new tool call
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_START,
+          toolCallId: tc.id || chunk.id,
+          toolCallName: tc.name,
+          parentMessageId: chunk.id,
+        });
+        this._messagesTupleTracker = { messageId: chunk.id, toolCallId: tc.id || chunk.id };
+        this.activeRun!.hasFunctionStreaming = true;
+      } else if (tc.args && this._messagesTupleTracker.toolCallId) {
+        // Stream tool call args
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: this._messagesTupleTracker.toolCallId,
+          delta: tc.args,
+        });
+      }
+      return;
+    }
+
+    // Handle finish
+    if (isFinished) {
+      if (this._messagesTupleTracker.toolCallId) {
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_END,
+          toolCallId: this._messagesTupleTracker.toolCallId,
+        });
+      } else if (this._messagesTupleTracker.messageId) {
+        this.dispatchEvent({
+          type: EventType.TEXT_MESSAGE_END,
+          messageId: this._messagesTupleTracker.messageId,
+        });
+      }
+      this._messagesTupleTracker = {};
+      return;
+    }
+
+    // Skip empty initialization chunks
+    if (!content && !toolCallChunks?.length) return;
+
+    // Handle text content streaming
+    if (content) {
+      if (!this._messagesTupleTracker.messageId) {
+        this.dispatchEvent({
+          type: EventType.TEXT_MESSAGE_START,
+          role: "assistant",
+          messageId: chunk.id,
+        });
+        this._messagesTupleTracker = { messageId: chunk.id };
+      }
+      this.dispatchEvent({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: this._messagesTupleTracker.messageId!,
+        delta: content,
+      });
+    }
+  }
+
   handleSingleEvent(event: any): void {
+    // Track if events-mode streaming is producing data;
+    // when active, messages-tuple events are skipped to avoid duplicates.
+    if (event.event === LangGraphEventTypes.OnChatModelStream) {
+      this._eventsStreamActive = true;
+    }
+
     switch (event.event) {
       case LangGraphEventTypes.OnChatModelStream:
         let shouldEmitMessages = event.metadata["emit-messages"] ?? true;
