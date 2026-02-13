@@ -14,7 +14,7 @@ from ag_ui.core import (
     TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent,
     ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent,
     ToolCallResultEvent, StateSnapshotEvent, StateDeltaEvent,
-    CustomEvent, Message, UserMessage, AssistantMessage, ToolMessage,
+    CustomEvent, Message, UserMessage, AssistantMessage, ToolMessage, ReasoningMessage,
     ToolCall, FunctionCall,
     ThinkingStartEvent, ThinkingEndEvent,
     ThinkingTextMessageStartEvent, ThinkingTextMessageContentEvent, ThinkingTextMessageEndEvent,
@@ -1196,11 +1196,26 @@ def _translate_function_calls_to_tool_calls(function_calls: List[Any]) -> List[T
     return tool_calls
 
 
+def _is_thought_part(part: Any) -> bool:
+    """Check if a content part is a thought/reasoning part.
+
+    Returns False when the google-genai SDK lacks thought support.
+    """
+    if not _check_thought_support():
+        return False
+    thought_value = getattr(part, 'thought', None)
+    return thought_value is True
+
+
 def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
     """Convert ADK session events to AG-UI Message list.
 
     This function extracts complete messages from ADK events, filtering out
     partial/streaming events and converting to the appropriate AG-UI message types.
+
+    Thought parts (Part.thought=True) are separated from regular text and emitted
+    as ReasoningMessage objects so the client can render them distinctly instead of
+    leaking internal model reasoning into the visible chat history.
 
     Args:
         events: List of ADK events from a session (session.events)
@@ -1225,10 +1240,15 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
         if not hasattr(content, 'parts') or not content.parts:
             continue
 
-        # Extract text content from parts
+        # Separate thought parts from regular text parts
         text_content = ""
+        thinking_content = ""
         for part in content.parts:
-            if hasattr(part, 'text') and part.text:
+            if not hasattr(part, 'text') or not part.text:
+                continue
+            if _is_thought_part(part):
+                thinking_content += part.text
+            else:
                 text_content += part.text
 
         # Get function calls and responses
@@ -1252,11 +1272,13 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
             continue
 
         # Skip events with no meaningful content
-        if not text_content and not function_calls:
+        if not text_content and not thinking_content and not function_calls:
             continue
 
-        # Handle user messages
+        # Handle user messages - exclude thought parts entirely
         if author == "user":
+            if not text_content:
+                continue
             user_message = UserMessage(
                 id=event_id,
                 role="user",
@@ -1268,16 +1290,27 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
         # Note: ADK agents set author to the agent's name (e.g., "my_agent"),
         # not "model". We treat any non-"user" author as an assistant message.
         else:
+            # Emit reasoning as a separate ReasoningMessage before the assistant message
+            if thinking_content:
+                reasoning_message = ReasoningMessage(
+                    id=f"{event_id}-reasoning",
+                    role="reasoning",
+                    content=thinking_content
+                )
+                messages.append(reasoning_message)
+
             # Convert function calls to tool calls if present
             tool_calls = _translate_function_calls_to_tool_calls(function_calls) if function_calls else None
 
-            assistant_message = AssistantMessage(
-                id=event_id,
-                role="assistant",
-                content=text_content if text_content else None,
-                tool_calls=tool_calls
-            )
-            messages.append(assistant_message)
+            # Only emit assistant message if there is visible content or tool calls
+            if text_content or tool_calls:
+                assistant_message = AssistantMessage(
+                    id=event_id,
+                    role="assistant",
+                    content=text_content if text_content else None,
+                    tool_calls=tool_calls
+                )
+                messages.append(assistant_message)
 
     return messages
         
