@@ -1947,6 +1947,32 @@
       "type": "file"
     }
   ],
+  "ag2::agentic_chat": [
+    {
+      "name": "page.tsx",
+      "content": "\"use client\";\nimport React, { useState } from \"react\";\nimport \"@copilotkit/react-ui/styles.css\";\nimport \"./style.css\";\nimport {\n  CopilotKit,\n  useFrontendTool,\n  useHumanInTheLoop,\n  useCopilotReadable,\n} from \"@copilotkit/react-core\";\nimport { CopilotChat } from \"@copilotkit/react-ui\";\n\ninterface AgenticChatProps {\n  params: Promise<{\n    integrationId: string;\n  }>;\n}\n\nconst AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {\n  const { integrationId } = React.use(params);\n\n  return (\n    <CopilotKit\n      runtimeUrl={`/api/copilotkit/${integrationId}`}\n      showDevConsole={false}\n      // agent lock to the relevant agent\n      agent=\"agentic_chat\"\n    >\n      <Chat />\n    </CopilotKit>\n  );\n};\n\nconst Chat = () => {\n  const [background, setBackground] = useState<string>(\"--copilot-kit-background-color\");\n\n  useCopilotReadable({\n    description: 'Name of the user',\n    value: 'Bob'\n  })\n  useFrontendTool({\n    name: \"change_background\",\n    description:\n      \"Change the background color of the chat. Can be anything that the CSS background attribute accepts. Regular colors, linear of radial gradients etc.\",\n    parameters: [\n      {\n        name: \"background\",\n        type: \"string\",\n        description: \"The background. Prefer gradients. Only use when asked.\",\n      },\n    ],\n    handler: ({ background }) => {\n      setBackground(background);\n      return {\n        status: \"success\",\n        message: `Background changed to ${background}`,\n      };\n    },\n  });\n\n  return (\n    <div\n      className=\"flex justify-center items-center h-full w-full\"\n      data-testid=\"background-container\"\n      style={{ background }}\n    >\n      <div className=\"h-full w-full md:w-8/10 md:h-8/10 rounded-lg\">\n        <CopilotChat\n          className=\"h-full rounded-2xl max-w-6xl mx-auto\"\n          labels={{ initial: \"Hi, I'm an agent. Want to chat?\" }}\n          suggestions={[\n            {\n              title: \"Change background\",\n              message: \"Change the background to something new.\",\n            },\n            {\n              title: \"Generate sonnet\",\n              message: \"Write a short sonnet about AI.\",\n            },\n          ]}\n        />\n      </div>\n    </div>\n  );\n};\n\nexport default AgenticChat;\n",
+      "language": "typescript",
+      "type": "file"
+    },
+    {
+      "name": "style.css",
+      "content": ".copilotKitInput {\n  border-bottom-left-radius: 0.75rem;\n  border-bottom-right-radius: 0.75rem;\n  border-top-left-radius: 0.75rem;\n  border-top-right-radius: 0.75rem;\n  border: 1px solid var(--copilot-kit-separator-color) !important;\n}\n  \n.copilotKitChat {\n  background-color: #fff !important;\n}\n  ",
+      "language": "css",
+      "type": "file"
+    },
+    {
+      "name": "README.mdx",
+      "content": "# 🤖 Agentic Chat with Frontend Tools\n\n## What This Demo Shows\n\nThis demo showcases CopilotKit's **agentic chat** capabilities with **frontend\ntool integration**:\n\n1. **Natural Conversation**: Chat with your Copilot in a familiar chat interface\n2. **Frontend Tool Execution**: The Copilot can directly interacts with your UI\n   by calling frontend functions\n3. **Seamless Integration**: Tools defined in the frontend and automatically\n   discovered and made available to the agent\n\n## How to Interact\n\nTry asking your Copilot to:\n\n- \"Can you change the background color to something more vibrant?\"\n- \"Make the background a blue to purple gradient\"\n- \"Set the background to a sunset-themed gradient\"\n- \"Change it back to a simple light color\"\n\nYou can also chat about other topics - the agent will respond conversationally\nwhile having the ability to use your UI tools when appropriate.\n\n## ✨ Frontend Tool Integration in Action\n\n**What's happening technically:**\n\n- The React component defines a frontend function using `useCopilotAction`\n- CopilotKit automatically exposes this function to the agent\n- When you make a request, the agent determines whether to use the tool\n- The agent calls the function with the appropriate parameters\n- The UI immediately updates in response\n\n**What you'll see in this demo:**\n\n- The Copilot understands requests to change the background\n- It generates CSS values for colors and gradients\n- When it calls the tool, the background changes instantly\n- The agent provides a conversational response about the changes it made\n\nThis technique of exposing frontend functions to your Copilot can be extended to\nany UI manipulation you want to enable, from theme changes to data filtering,\nnavigation, or complex UI state management!\n",
+      "language": "markdown",
+      "type": "file"
+    },
+    {
+      "name": "agentic_chat.py",
+      "content": "\"\"\"Agentic Chat example using AG2 with AG-UI protocol.\n\nExposes a ConversableAgent via AGUIStream for the AG-UI Dojo.\nSee: https://docs.ag2.ai/latest/docs/user-guide/ag-ui/\n\"\"\"\n\nfrom fastapi import FastAPI\nfrom autogen import ConversableAgent, LLMConfig\nfrom autogen.ag_ui import AGUIStream\n\nagent = ConversableAgent(\n    name=\"support_bot\",\n    system_message=\"You are a helpful assistant. You answer product questions and help users.\",\n    llm_config=LLMConfig({\"model\": \"gpt-4o-mini\"}),\n)\n\nstream = AGUIStream(agent)\nagentic_chat_app = FastAPI()\nagentic_chat_app.mount(\"\", stream.build_asgi())\n",
+      "language": "python",
+      "type": "file"
+    }
+  ],
   "agno::agentic_chat": [
     {
       "name": "page.tsx",

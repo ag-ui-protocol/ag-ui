@@ -60,6 +60,12 @@ const ALL_SERVICES = {
     cwd: path.join(integrationsRoot, 'server-starter-all-features/python/examples'),
     env: { PORT: 8001 },
   }],
+  'ag2': [{
+    command: 'uv run dev',
+    name: 'AG2',
+    cwd: path.join(integrationsRoot, 'ag2/python/examples'),
+    env: { PORT: 8018 },
+  }],
   'agno': [{
     command: 'uv run dev',
     name: 'Agno',
@@ -165,6 +171,7 @@ const ALL_SERVICES = {
     cwd: path.join(gitRoot, 'apps/dojo'),
     env: {
       PORT: 9999,
+      AG2_URL: 'http://localhost:8018',
       SERVER_STARTER_URL: 'http://localhost:8000',
       SERVER_STARTER_ALL_FEATURES_URL: 'http://localhost:8001',
       AGNO_URL: 'http://localhost:8002',
@@ -190,6 +197,7 @@ const ALL_SERVICES = {
     cwd: gitRoot,
     env: {
       PORT: 9999,
+      AG2_URL: 'http://localhost:8018',
       SERVER_STARTER_URL: 'http://localhost:8000',
       SERVER_STARTER_ALL_FEATURES_URL: 'http://localhost:8001',
       AGNO_URL: 'http://localhost:8002',

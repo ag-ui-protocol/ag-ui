@@ -59,6 +59,11 @@ const ALL_TARGETS = {
     name: "Server AF",
     cwd: path.join(integrationsRoot, "server-starter-all-features/python/examples"),
   },
+  ag2: {
+    command: "uv sync",
+    name: "AG2",
+    cwd: path.join(integrationsRoot, "ag2/python/examples"),
+  },
   agno: {
     command: "uv sync",
     name: "Agno",

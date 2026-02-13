@@ -251,6 +251,21 @@ const agentFilesMapper: Record<
     );
   },
   "spring-ai": () => ({}),
+  ag2: (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/ag2/python/examples/server/api/${agentId}.py`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
   agno: (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({
