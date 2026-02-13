@@ -88,6 +88,9 @@ class ADKAgent:
 
         # Message snapshot configuration
         emit_messages_snapshot: bool = False,
+
+        # Streaming function call arguments (Gemini 3+ via Vertex AI)
+        streaming_function_call_arguments: bool = False,
     ):
         """Initialize the ADKAgent.
 
@@ -121,6 +124,12 @@ class ADKAgent:
                 full message history (e.g., for client-side persistence or AG-UI
                 protocol compliance). Note: Clients using CopilotKit can use the
                 /agents/state endpoint instead for on-demand history retrieval.
+            streaming_function_call_arguments: Whether to enable streaming of function
+                call arguments from Gemini 3+ models via Vertex AI. When enabled,
+                TOOL_CALL_ARGS events are emitted incrementally as the model streams
+                partial arguments, allowing the UI to show progressive updates.
+                Requires google-adk >= 1.24.0 and stream_function_call_arguments=True
+                in the model's GenerateContentConfig. Defaults to False.
 
             Note:
             If delete_session_on_cleanup=False but save_session_to_memory_on_cleanup=True, sessions will accumulate in SessionService but still be saved to memory on cleanup.
@@ -182,6 +191,19 @@ class ADKAgent:
         self._predict_state = predict_state
         # Message snapshot configuration
         self._emit_messages_snapshot = emit_messages_snapshot
+
+        # Streaming function call arguments (Gemini 3+ via Vertex AI)
+        if streaming_function_call_arguments and not self._adk_supports_streaming_fc_args():
+            import warnings
+            warnings.warn(
+                "streaming_function_call_arguments=True requires google-adk >= 1.24.0. "
+                "The feature will be disabled. Upgrade with: pip install 'google-adk>=1.24.0'",
+                UserWarning,
+                stacklevel=2,
+            )
+            self._streaming_function_call_arguments = False
+        else:
+            self._streaming_function_call_arguments = streaming_function_call_arguments
 
         # App-based configuration (set by from_app() classmethod)
         self._app: Optional["App"] = None
@@ -262,6 +284,7 @@ class ADKAgent:
         # AG-UI specific
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
         emit_messages_snapshot: bool = False,
+        streaming_function_call_arguments: bool = False,
     ) -> "ADKAgent":
         """Create ADKAgent from an ADK App instance.
 
@@ -293,6 +316,8 @@ class ADKAgent:
             cleanup_interval_seconds: Interval for session cleanup
             predict_state: Configuration for predictive state updates
             emit_messages_snapshot: Whether to emit MessagesSnapshotEvent at end of runs
+            streaming_function_call_arguments: Whether to enable streaming of function
+                call arguments from Gemini 3+ models. Requires google-adk >= 1.24.0.
 
         Returns:
             ADKAgent instance configured to use the App
@@ -335,6 +360,7 @@ class ADKAgent:
             save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
             predict_state=predict_state,
             emit_messages_snapshot=emit_messages_snapshot,
+            streaming_function_call_arguments=streaming_function_call_arguments,
         )
         # Store App for per-request App creation with modified agents
         instance._app = app
@@ -572,6 +598,25 @@ class ADKAgent:
         """
         sig = inspect.signature(Runner.__init__)
         return 'plugin_close_timeout' in sig.parameters
+
+    @staticmethod
+    def _adk_supports_streaming_fc_args() -> bool:
+        """Check if google-adk supports reliable streaming function call arguments.
+
+        Streaming FC args requires google-adk >= 1.24.0 where the
+        StreamingResponseAggregator bugs (google/adk-python#4311) are fixed.
+        We detect this by checking for partial_args on FunctionCall.
+
+        Returns:
+            True if streaming FC args is supported, False otherwise
+        """
+        try:
+            from google.genai import types
+            if hasattr(types.FunctionCall, 'model_fields'):
+                return 'partial_args' in types.FunctionCall.model_fields
+            return hasattr(types.FunctionCall, 'partial_args')
+        except Exception:
+            return False
 
     def _create_runner(self, adk_agent: BaseAgent, user_id: str, app_name: str) -> Runner:
         """Create a new runner instance.
@@ -1732,6 +1777,7 @@ class ADKAgent:
                 client_emitted_tool_call_ids=client_emitted_ids,
                 client_tool_names=client_tool_names,
                 is_resumable=self._is_adk_resumable(),
+                streaming_function_call_arguments=self._streaming_function_call_arguments,
             )
 
             # Share the translator's emitted IDs set with proxy toolsets so
