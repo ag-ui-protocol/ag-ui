@@ -10,6 +10,15 @@ import { describe, it, expect } from "vitest";
 import { encode, decode } from "../src/proto";
 import { expectRoundTripEquality } from "./test-utils";
 
+const MODALITIES = ["image", "audio", "video", "document"] as const;
+
+const MIME_BY_MODALITY: Record<(typeof MODALITIES)[number], string> = {
+  image: "image/png",
+  audio: "audio/wav",
+  video: "video/mp4",
+  document: "application/pdf",
+};
+
 describe("Message Events", () => {
   describe("TextMessageStartEvent", () => {
     it("should round-trip encode/decode correctly", () => {
@@ -111,6 +120,178 @@ describe("Message Events", () => {
                 function: {
                   name: "get_weather",
                   arguments: JSON.stringify({ location: "San Francisco" }),
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      expectRoundTripEquality(event);
+    });
+
+    it("should round-trip multimodal user message content parts", () => {
+      const event: MessagesSnapshotEvent = {
+        type: EventType.MESSAGES_SNAPSHOT,
+        messages: [
+          {
+            id: "msg-user-mm",
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Compare these files",
+              },
+              {
+                type: "image",
+                source: {
+                  type: "url",
+                  value: "https://example.com/image.png",
+                  mimeType: "image/png",
+                },
+              },
+              {
+                type: "document",
+                source: {
+                  type: "data",
+                  value: "JVBERi0xLjcK",
+                  mimeType: "application/pdf",
+                },
+                metadata: {
+                  media_type: "application/pdf",
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      expectRoundTripEquality(event);
+    });
+
+    describe.each(MODALITIES)("multimodal round-trip: %s", (modality) => {
+      it.each([true, false])("url source (metadata: %s)", (withMetadata) => {
+        const event: MessagesSnapshotEvent = {
+          type: EventType.MESSAGES_SNAPSHOT,
+          messages: [
+            {
+              id: `msg-${modality}-url-${withMetadata ? "meta" : "no-meta"}`,
+              role: "user",
+              content: [
+                {
+                  type: modality,
+                  source: {
+                    type: "url",
+                    value: `https://example.com/${modality}`,
+                    mimeType: MIME_BY_MODALITY[modality],
+                  },
+                  ...(withMetadata ? { metadata: { providerHint: "high" } } : {}),
+                },
+              ],
+            },
+          ],
+        };
+
+        expectRoundTripEquality(event);
+      });
+
+      it.each([true, false])("data source (metadata: %s)", (withMetadata) => {
+        const event: MessagesSnapshotEvent = {
+          type: EventType.MESSAGES_SNAPSHOT,
+          messages: [
+            {
+              id: `msg-${modality}-data-${withMetadata ? "meta" : "no-meta"}`,
+              role: "user",
+              content: [
+                {
+                  type: modality,
+                  source: {
+                    type: "data",
+                    value: "Zm9v",
+                    mimeType: MIME_BY_MODALITY[modality],
+                  },
+                  ...(withMetadata ? { metadata: { providerHint: "high" } } : {}),
+                },
+              ],
+            },
+          ],
+        };
+
+        expectRoundTripEquality(event);
+      });
+
+      it("url source without mimeType", () => {
+        const event: MessagesSnapshotEvent = {
+          type: EventType.MESSAGES_SNAPSHOT,
+          messages: [
+            {
+              id: `msg-${modality}-url-no-mime`,
+              role: "user",
+              content: [
+                {
+                  type: modality,
+                  source: {
+                    type: "url",
+                    value: `https://example.com/${modality}/raw`,
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        expectRoundTripEquality(event);
+      });
+    });
+
+    it("should round-trip a user message containing all modalities", () => {
+      const event: MessagesSnapshotEvent = {
+        type: EventType.MESSAGES_SNAPSHOT,
+        messages: [
+          {
+            id: "msg-user-all-modalities",
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Process all modalities",
+              },
+              {
+                type: "image",
+                source: {
+                  type: "url",
+                  value: "https://example.com/image.png",
+                  mimeType: "image/png",
+                },
+              },
+              {
+                type: "audio",
+                source: {
+                  type: "data",
+                  value: "UklGRiQAAABXQVZF",
+                  mimeType: "audio/wav",
+                },
+              },
+              {
+                type: "video",
+                source: {
+                  type: "url",
+                  value: "https://example.com/video.mp4",
+                  mimeType: "video/mp4",
+                },
+                metadata: {
+                  duration: 12,
+                },
+              },
+              {
+                type: "document",
+                source: {
+                  type: "data",
+                  value: "JVBERi0xLjcK",
+                  mimeType: "application/pdf",
+                },
+                metadata: {
+                  media_type: "application/pdf",
                 },
               },
             ],
