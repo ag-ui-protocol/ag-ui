@@ -26,4 +26,4 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      - run: npx pkg-pr-new publish ./sdks/typescript/packages/*
+      - run: npx pkg-pr-new publish --pnpm --packageManager pnpm ./sdks/typescript/packages/*
