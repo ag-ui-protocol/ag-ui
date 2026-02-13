@@ -33,9 +33,9 @@ straightforward to map to any LLM provider's API.
 ### Overview
 
 Extend the `UserMessage` `content` property to be either a string or an array of
-`InputContentPart` objects. Each modality (image, audio, video, document) has
-its own dedicated part type with a typed `source` that is either inline `data`
-or a `url` reference. This makes it trivial to map content parts to any LLM
+`InputContent` objects. Each modality (image, audio, video, document) has its
+own dedicated part type with a typed `source` that is either inline `data` or a
+`url` reference. This makes it trivial to map content parts to any LLM
 provider's API.
 
 ```typescript
@@ -106,7 +106,7 @@ interface DocumentInputPart<TMetadata = unknown> {
   metadata?: TMetadata
 }
 
-type InputContentPart =
+type InputContent =
   | TextInputPart
   | ImageInputPart
   | AudioInputPart
@@ -118,7 +118,7 @@ type InputContentPart =
 type UserMessage = {
   id: string
   role: "user"
-  content: string | InputContentPart[]
+  content: string | InputContent[]
   name?: string
 }
 ```
@@ -422,9 +422,9 @@ Examples:
 
 TypeScript SDK:
 
-- New `Modality` type and all `InputContentPart` types in `@ag-ui/core`
+- New `Modality` type and all `InputContent` types in `@ag-ui/core`
 - `InputContentSource`, `InputContentDataSource`, `InputContentUrlSource` types
-- Updated `UserMessage` with `content: string | InputContentPart[]`
+- Updated `UserMessage` with `content: string | InputContent[]`
 - Helper methods for constructing typed content parts
 - Provider-specific metadata generics on each content part type
 
@@ -440,7 +440,7 @@ Python SDK:
 
 Frameworks need to:
 
-- Parse typed `InputContentPart` parts and dispatch on `part.type`
+- Parse typed `InputContent` parts and dispatch on `part.type`
 - Map content parts to provider-specific formats (the typed structure makes this
   straightforward)
 - Use `source.type` to determine whether to send inline data or a URL to the
@@ -479,7 +479,7 @@ Share screenshots (`ImageInputPart`) for UI/UX feedback or debugging assistance.
 
 ## Testing Strategy
 
-- Unit tests for each `InputContentPart` type and `InputContentSource` variant
+- Unit tests for each `InputContent` type and `InputContentSource` variant
 - Validate `source.type` discriminator correctly narrows the union
 - Integration tests with multimodal LLMs (OpenAI, Anthropic, Google)
 - Backward compatibility tests with plain `string` content

@@ -147,7 +147,30 @@ type UserMessage = {
 Union of supported multimodal fragments.
 
 ```typescript
-type InputContent = TextInputContent | BinaryInputContent
+type InputContent =
+  | TextInputContent
+  | ImageInputContent
+  | AudioInputContent
+  | VideoInputContent
+  | DocumentInputContent
+```
+
+### InputContentSource
+
+```typescript
+type InputContentSource = InputContentDataSource | InputContentUrlSource
+
+type InputContentDataSource = {
+  type: "data"
+  value: string
+  mimeType: string
+}
+
+type InputContentUrlSource = {
+  type: "url"
+  value: string
+  mimeType?: string
+}
 ```
 
 ### TextInputContent
@@ -159,20 +182,45 @@ type TextInputContent = {
 }
 ```
 
-### BinaryInputContent
+### ImageInputContent
 
 ```typescript
-type BinaryInputContent = {
-  type: "binary"
-  mimeType: string
-  id?: string
-  url?: string
-  data?: string
-  filename?: string
+type ImageInputContent = {
+  type: "image"
+  source: InputContentSource
+  metadata?: unknown
 }
 ```
 
-> At least one of `id`, `url`, or `data` must be provided.
+### AudioInputContent
+
+```typescript
+type AudioInputContent = {
+  type: "audio"
+  source: InputContentSource
+  metadata?: unknown
+}
+```
+
+### VideoInputContent
+
+```typescript
+type VideoInputContent = {
+  type: "video"
+  source: InputContentSource
+  metadata?: unknown
+}
+```
+
+### DocumentInputContent
+
+```typescript
+type DocumentInputContent = {
+  type: "document"
+  source: InputContentSource
+  metadata?: unknown
+}
+```
 
 ### ToolMessage
 

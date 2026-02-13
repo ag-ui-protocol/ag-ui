@@ -14,7 +14,14 @@ const message = UserMessageSchema.parse({
   role: "user" as const,
   content: [
     { type: "text", text: "Please describe this image" },
-    { type: "binary", mimeType: "image/png", url: "https://example.com/cat.png" },
+    {
+      type: "image",
+      source: {
+        type: "url",
+        value: "https://example.com/cat.png",
+        mimeType: "image/png",
+      },
+    },
   ],
 });
 
