@@ -25,6 +25,7 @@ The server listens on `http://localhost:8018` (or the port set by the `PORT` env
 ## Endpoints
 
 - `POST /agentic_chat` – Agentic chat agent (AG-UI compatible stream)
+- `POST /backend_tool_rendering` – Backend tool rendering (weather assistant with get_weather tool)
 
 ## References
 

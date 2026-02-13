@@ -11,7 +11,7 @@ from autogen.ag_ui import AGUIStream
 agent = ConversableAgent(
     name="support_bot",
     system_message="You are a helpful assistant. You answer product questions and help users.",
-    llm_config=LLMConfig({"model": "gpt-4o-mini"}),
+    llm_config=LLMConfig({"model": "gpt-4o-mini", "stream": True}),
 )
 
 stream = AGUIStream(agent)

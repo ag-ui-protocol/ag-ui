@@ -1,4 +1,0 @@
-ag2[ag-ui,openai]>=0.11.0
-fastapi>=0.116.0
-uvicorn>=0.35.0
-python-dotenv>=0.9.0

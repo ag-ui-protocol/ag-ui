@@ -13,16 +13,17 @@ from fastapi import FastAPI
 
 load_dotenv()
 
-from .api import agentic_chat
+from .api import agentic_chat, backend_tool_rendering
 
 app = FastAPI(title="AG2 AG-UI server")
 app.mount("/agentic_chat", agentic_chat.agentic_chat_app, "Agentic Chat")
+app.mount("/backend_tool_rendering", backend_tool_rendering.backend_tool_rendering_app, "Backend Tool Rendering")
 
 
 def main():
     """Start the FastAPI server."""
     port = int(os.getenv("PORT", "8018"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=True)
 
 
 if __name__ == "__main__":
