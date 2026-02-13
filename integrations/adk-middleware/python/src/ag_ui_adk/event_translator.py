@@ -170,6 +170,7 @@ class EventTranslator:
         client_emitted_tool_call_ids: Optional[set] = None,
         client_tool_names: Optional[set] = None,
         is_resumable: bool = False,
+        streaming_function_call_arguments: bool = False,
     ):
         """Initialize the event translator.
 
@@ -232,6 +233,33 @@ class EventTranslator:
         # to ensure the frontend shows the confirmation dialog with buttons enabled
         self._deferred_confirm_events: List[BaseEvent] = []
 
+        # Streaming function call arguments state (Mode A)
+        # When enabled, partial events carrying streaming FC chunks from Gemini 3+
+        # are translated into incremental TOOL_CALL_START/ARGS/END events.
+        self._streaming_fc_args_enabled = streaming_function_call_arguments
+        # Stable tool_call_id generated for the active streaming FC.
+        # Each partial chunk gets a different ID from ADK, so we generate one
+        # on the first chunk and reuse it for all subsequent AG-UI events.
+        self._active_streaming_fc_id: Optional[str] = None
+        # Tool name for the active streaming FC (set on first chunk).
+        self._active_streaming_fc_name: Optional[str] = None
+        # JSON paths that have had their opening JSON emitted (for closing at end).
+        self._streaming_fc_open_paths: List[str] = []
+        # JSON paths that have already had their key prefix emitted.
+        self._streaming_fc_started_paths: set[str] = set()
+        # Tool names that were fully streamed (for suppressing final aggregated event).
+        self._completed_streaming_fc_names: set[str] = set()
+        # Last completed streaming FC name/id — used for one-shot suppression of
+        # the next confirmed event with this name, then cleared.
+        self._last_completed_streaming_fc_name: Optional[str] = None
+        self._last_completed_streaming_fc_id: Optional[str] = None
+        # Maps confirmed (non-partial) FC id → streaming FC id, so that
+        # TOOL_CALL_RESULT uses the same ID the client saw in TOOL_CALL_START.
+        self._confirmed_to_streaming_id: Dict[str, str] = {}
+        # Tool names that opted into deferred TOOL_CALL_END via stream_tool_call=True.
+        self._streaming_lro_tool_names: set[str] = {
+            m.tool for m in self._predict_state_mappings if m.stream_tool_call
+        }
 
     def get_and_clear_deferred_confirm_events(self) -> List[BaseEvent]:
         """Get and clear any deferred confirm_changes events.
@@ -298,7 +326,21 @@ class EventTranslator:
                 ):
                     yield event
             
-            # Handle streaming function calls from partial events
+            # Handle streaming function calls from partial events (Mode A)
+            if self._streaming_fc_args_enabled and is_partial and hasattr(adk_event, 'get_function_calls'):
+                function_calls = adk_event.get_function_calls()
+                if function_calls:
+                    try:
+                        lro_ids = set(getattr(adk_event, 'long_running_tool_ids', []) or [])
+                    except Exception:
+                        lro_ids = set()
+                    for func_call in function_calls:
+                        fc_id = getattr(func_call, 'id', None)
+                        if fc_id in lro_ids or fc_id in self._client_emitted_tool_call_ids:
+                            continue
+                        async for event in self._translate_streaming_function_call(func_call):
+                            yield event
+
             # Handle complete (non-partial) function calls
             if hasattr(adk_event, 'get_function_calls') and not is_partial:
                 function_calls = adk_event.get_function_calls()
@@ -320,7 +362,18 @@ class EventTranslator:
                         if getattr(fc, 'id', None) not in all_lro_ids
                         and getattr(fc, 'id', None) not in self._client_emitted_tool_call_ids
                         and getattr(fc, 'name', None) not in self._client_tool_names
+                        and getattr(fc, 'name', None) != self._last_completed_streaming_fc_name
                     ]
+
+                    # Map confirmed FC ids to streaming FC ids for result remapping
+                    if self._last_completed_streaming_fc_name:
+                        for fc in function_calls:
+                            fc_name = getattr(fc, 'name', None)
+                            fc_id = getattr(fc, 'id', None)
+                            if fc_name == self._last_completed_streaming_fc_name and fc_id and self._last_completed_streaming_fc_id:
+                                self._confirmed_to_streaming_id[fc_id] = self._last_completed_streaming_fc_id
+                        self._last_completed_streaming_fc_name = None
+                        self._last_completed_streaming_fc_id = None
 
                     if non_lro_calls:
                         logger.debug(f"ADK function calls detected (non-LRO, non-streamed): {len(non_lro_calls)} of {len(function_calls)} total")
@@ -837,6 +890,142 @@ class EventTranslator:
 
                     self._emitted_confirm_for_tools.add(tool_name)
 
+    async def _translate_streaming_function_call(
+        self,
+        func_call: Any,
+    ) -> AsyncGenerator[BaseEvent, None]:
+        """Translate a streaming function call chunk to AG-UI tool call events.
+
+        With google-adk >= 1.24.0 and stream_function_call_arguments=True,
+        Gemini 3+ models send function call arguments as incremental chunks:
+
+        1. First chunk:  name="tool", will_continue=True, partial_args=None/[]
+        2. Middle chunks: name=None, partial_args=[PartialArg(...)], will_continue=True
+        3. End marker:   name=None, partial_args=None, will_continue=None/False
+        4. Final (aggregated): name="tool", args={...}, partial=False (handled by translate())
+
+        Each partial chunk gets a DIFFERENT ID from ADK. We generate a stable
+        tool_call_id on the first chunk and reuse it for all AG-UI events.
+
+        Args:
+            func_call: A FunctionCall from a partial ADK event.
+
+        Yields:
+            TOOL_CALL_START, TOOL_CALL_ARGS (incremental JSON), TOOL_CALL_END
+        """
+        tool_name = getattr(func_call, 'name', None)
+        partial_args = getattr(func_call, 'partial_args', None)
+        will_continue = getattr(func_call, 'will_continue', None)
+
+        # --- First chunk: has name + will_continue ---
+        if tool_name and will_continue and self._active_streaming_fc_id is None:
+            self._active_streaming_fc_id = str(uuid.uuid4())
+            self._active_streaming_fc_name = tool_name
+            self._streaming_fc_open_paths = []
+            self._streaming_fc_started_paths = set()
+
+            # Close any active text message stream before tool calls
+            async for event in self.force_close_streaming_message():
+                yield event
+
+            # Emit PredictState if configured for this tool
+            if tool_name in self._predict_state_by_tool:
+                self._predictive_state_tool_call_ids.add(self._active_streaming_fc_id)
+                if tool_name not in self._emitted_predict_state_for_tools:
+                    mappings = self._predict_state_by_tool[tool_name]
+                    predict_state_payload = [m.to_payload() for m in mappings]
+                    yield CustomEvent(
+                        type=EventType.CUSTOM,
+                        name="PredictState",
+                        value=predict_state_payload,
+                    )
+                    self._emitted_predict_state_for_tools.add(tool_name)
+
+            # Emit TOOL_CALL_START
+            yield ToolCallStartEvent(
+                type=EventType.TOOL_CALL_START,
+                tool_call_id=self._active_streaming_fc_id,
+                tool_call_name=tool_name,
+                parent_message_id=None,
+            )
+            self.emitted_tool_call_ids.add(self._active_streaming_fc_id)
+            logger.debug(f"Streaming FC started: tool={tool_name}, id={self._active_streaming_fc_id}")
+            return
+
+        # --- No active streaming FC — skip stray chunks ---
+        if self._active_streaming_fc_id is None:
+            return
+
+        tool_call_id = self._active_streaming_fc_id
+
+        # --- Continuation chunks: emit partial_args as TOOL_CALL_ARGS deltas ---
+        if partial_args:
+            for partial_arg in partial_args:
+                string_value = getattr(partial_arg, 'string_value', None)
+                if string_value is None:
+                    continue
+                json_path = getattr(partial_arg, 'json_path', None) or ''
+
+                if json_path and json_path not in self._streaming_fc_started_paths:
+                    # First occurrence of this json_path: emit JSON key prefix
+                    key = json_path.lstrip('$.')
+                    # Build opening: {"key": "escaped_start...
+                    # We use json.dumps for proper key quoting, then append escaped value
+                    escaped_value = json.dumps(string_value)[1:-1]  # strip wrapping quotes
+                    delta = '{' + json.dumps(key) + ': "' + escaped_value
+                    self._streaming_fc_started_paths.add(json_path)
+                    self._streaming_fc_open_paths.append(json_path)
+                elif string_value:
+                    # Continuation: just the escaped string fragment
+                    delta = json.dumps(string_value)[1:-1]  # strip wrapping quotes
+                else:
+                    continue
+
+                if delta:
+                    yield ToolCallArgsEvent(
+                        type=EventType.TOOL_CALL_ARGS,
+                        tool_call_id=tool_call_id,
+                        delta=delta,
+                    )
+
+        # --- End marker: no partial_args, will_continue is None/False ---
+        if not partial_args and not will_continue:
+            resolved_name = self._active_streaming_fc_name
+
+            # Close any open JSON paths with closing quote + brace
+            if self._streaming_fc_open_paths:
+                yield ToolCallArgsEvent(
+                    type=EventType.TOOL_CALL_ARGS,
+                    tool_call_id=tool_call_id,
+                    delta='"}',
+                )
+
+            # Determine if TOOL_CALL_END should be deferred (streaming LRO)
+            should_defer_end = (
+                resolved_name in self._streaming_lro_tool_names
+                if resolved_name else False
+            )
+
+            if not should_defer_end:
+                yield ToolCallEndEvent(
+                    type=EventType.TOOL_CALL_END,
+                    tool_call_id=tool_call_id,
+                )
+
+            # Record completion for duplicate suppression
+            if resolved_name:
+                self._completed_streaming_fc_names.add(resolved_name)
+                self._last_completed_streaming_fc_name = resolved_name
+                self._last_completed_streaming_fc_id = tool_call_id
+
+            logger.debug(f"Streaming FC ended: tool={resolved_name}, id={tool_call_id}")
+
+            # Reset active streaming state
+            self._active_streaming_fc_id = None
+            self._active_streaming_fc_name = None
+            self._streaming_fc_open_paths = []
+            self._streaming_fc_started_paths = set()
+
     async def _translate_function_response(
         self,
         function_response: list[types.FunctionResponse],
@@ -855,6 +1044,10 @@ class EventTranslator:
         for func_response in function_response:
 
             tool_call_id = getattr(func_response, 'id', str(uuid.uuid4()))
+
+            # Remap tool_call_id if this is a confirmed response for a streamed FC
+            if tool_call_id in self._confirmed_to_streaming_id:
+                tool_call_id = self._confirmed_to_streaming_id[tool_call_id]
 
             # Skip TOOL_CALL_RESULT for long-running tools (handled by frontend)
             if tool_call_id in self.long_running_tool_ids:
@@ -968,7 +1161,16 @@ class EventTranslator:
         self._is_thinking = False
         self._is_streaming_thinking = False
         self._current_thinking_text = ""
-        logger.debug("Reset EventTranslator state (including streaming and thinking state)")
+        # Reset streaming FC args state
+        self._active_streaming_fc_id = None
+        self._active_streaming_fc_name = None
+        self._streaming_fc_open_paths.clear()
+        self._streaming_fc_started_paths.clear()
+        self._completed_streaming_fc_names.clear()
+        self._last_completed_streaming_fc_name = None
+        self._last_completed_streaming_fc_id = None
+        self._confirmed_to_streaming_id.clear()
+        logger.debug("Reset EventTranslator state (including streaming, thinking, and streaming FC state)")
 
 
 def _translate_function_calls_to_tool_calls(function_calls: List[Any]) -> List[ToolCall]:
