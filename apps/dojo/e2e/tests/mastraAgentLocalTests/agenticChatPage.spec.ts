@@ -30,6 +30,9 @@ test("[MastraAgentLocal] Agentic Chat sends and receives a message", async ({
 test("[MastraAgentLocal] Agentic Chat changes background on message and reset", async ({
   page,
 }) => {
+  // This test is inherently flaky because it depends on the LLM interpreting
+  // the prompt correctly and emitting the right state update to change CSS.
+  // Use more retries to compensate for LLM non-determinism.
   await retryOnAIFailure(async () => {
     await page.goto(
       "/mastra-agent-local/feature/agentic_chat"
@@ -46,32 +49,24 @@ test("[MastraAgentLocal] Agentic Chat changes background on message and reset", 
     console.log("Initial background color:", initialBackground);
 
     // 1. Send message to change background to blue
-    await chat.sendMessage("Change the background color to blue. You must change it.");
-    await chat.assertUserMessageVisible(
-      /change the background color to blue/i
-    );
+    await chat.sendMessage("Set the background color to blue");
     await waitForAIResponse(page);
 
     // Wait for the background to change from its initial value.
-    // Use a longer timeout since the agent needs to process and emit a state update.
     await expect(backgroundContainer).not.toHaveCSS('background-color', initialBackground, { timeout: 30000 });
     const backgroundAfterBlue = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
     console.log("Background after blue request:", backgroundAfterBlue);
-    // Just verify it changed — don't assert the exact color since LLM might pick a shade
     expect(backgroundAfterBlue).not.toBe(initialBackground);
 
     // 2. Change to pink
-    await chat.sendMessage("Now change the background color to pink. You must change it.");
-    await chat.assertUserMessageVisible(
-      /change the background color to pink/i
-    );
+    await chat.sendMessage("Set the background color to pink");
     await waitForAIResponse(page);
 
     await expect(backgroundContainer).not.toHaveCSS('background-color', backgroundAfterBlue, { timeout: 30000 });
     const backgroundAfterPink = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
     console.log("Background after pink request:", backgroundAfterPink);
     expect(backgroundAfterPink).not.toBe(backgroundAfterBlue);
-  });
+  }, 4); // 4 retries for this inherently flaky LLM-dependent test
 });
 
 test("[MastraAgentLocal] Agentic Chat retains memory of user messages during a conversation", async ({

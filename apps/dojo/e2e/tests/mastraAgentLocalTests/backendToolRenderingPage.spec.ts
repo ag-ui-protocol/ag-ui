@@ -13,11 +13,11 @@ test("[MastraAgentLocal] Backend Tool Rendering displays weather cards", async (
     await page.getByRole("button", { name: "Weather in San Francisco" }).click();
     await waitForAIResponse(page);
 
-    // Wait for either test ID or fallback to "Current Weather" text
-    const weatherCard = page.getByTestId("weather-card");
-    const currentWeatherText = page.getByText("Current Weather");
+    // Wait for weather card to appear — use first() since multiple cards may render
+    const weatherCard = page.getByTestId("weather-card").first();
+    const currentWeatherText = page.getByText("Current Weather").first();
 
-    await expect(weatherCard.or(currentWeatherText.first())).toBeVisible({ timeout: 30000 });
+    await expect(weatherCard.or(currentWeatherText)).toBeVisible({ timeout: 30000 });
 
     // Verify weather content is present (use flexible selectors)
     const hasHumidity = await page
