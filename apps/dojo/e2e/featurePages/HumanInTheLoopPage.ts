@@ -24,7 +24,7 @@ export class HumanInTheLoopPage {
   }
 
   async openChat() {
-    await this.agentGreeting.isVisible();
+    await this.agentGreeting.waitFor({ state: "visible", timeout: 15000 });
   }
 
   async sendMessage(message: string) {

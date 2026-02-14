@@ -22,21 +22,18 @@ export class ToolBaseGenUIPage {
   }
 
   async generateHaiku(message: string) {
-    // Wait for either sidebar or popup to be ready
-    await this.page.waitForTimeout(2000);
     await this.messageBox.waitFor({ state: "visible", timeout: 15000 });
     await this.messageBox.click();
     await this.messageBox.fill(message);
-    await this.page.waitForTimeout(1000);
     await this.sendButton.waitFor({ state: "visible", timeout: 15000 });
     await this.sendButton.click();
-    await this.page.waitForTimeout(2000);
+    // Wait for the send button to reappear (agent finished responding)
+    await this.sendButton.waitFor({ state: "visible", timeout: 90000 });
   }
 
   async checkGeneratedHaiku() {
-    await this.page.waitForTimeout(3000);
     const cards = this.page.locator('[data-testid="haiku-card"]');
-    await cards.last().waitFor({ state: "visible", timeout: 20000 });
+    await cards.last().waitFor({ state: "visible", timeout: 30000 });
     const mostRecentCard = cards.last();
     await mostRecentCard
       .locator('[data-testid="haiku-japanese-line"]')
@@ -45,7 +42,6 @@ export class ToolBaseGenUIPage {
   }
 
   async extractChatHaikuContent(page: Page): Promise<string> {
-    await page.waitForTimeout(4000);
     const allHaikuCards = page.locator('[data-testid="haiku-card"]');
     await allHaikuCards.first().waitFor({ state: "visible", timeout: 15000 });
     const cardCount = await allHaikuCards.count();
@@ -85,7 +81,6 @@ export class ToolBaseGenUIPage {
   }
 
   async extractMainDisplayHaikuContent(page: Page): Promise<string> {
-    await page.waitForTimeout(2000);
     const carousel = page.locator('[data-testid="haiku-carousel"]');
     await carousel.waitFor({ state: "visible", timeout: 10000 });
 

@@ -57,9 +57,6 @@ export class AgenticChatPage {
   async getBackground(
     property: "backgroundColor" | "backgroundImage" = "backgroundColor"
   ): Promise<string> {
-    // Wait a bit for background to apply
-    await this.page.waitForTimeout(500);
-
     // Try multiple selectors for the background element
     const selectors = [
       'div[style*="background"]',
@@ -146,7 +143,6 @@ export class AgenticChatPage {
 
     // Hover over the message to reveal the regenerate button
     await message.hover();
-    await this.page.waitForTimeout(500);
 
     const regenerateButton = message.locator('button[aria-label="Regenerate response"]');
 

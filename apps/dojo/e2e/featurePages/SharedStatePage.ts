@@ -27,7 +27,7 @@ export class SharedStatePage {
   }
 
   async openChat() {
-    await this.agentGreeting.isVisible();
+    await this.agentGreeting.waitFor({ state: "visible", timeout: 15000 });
   }
 
   async sendMessage(message: string) {
@@ -37,14 +37,14 @@ export class SharedStatePage {
   }
 
   async loader() {
-    const timeout = (ms) => new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("Timeout waiting for promptResponseLoader to become visible")), ms);
-    });
-
-    await Promise.race([
-      this.promptResponseLoader.isVisible(),
-      timeout(5000) // 5 seconds timeout
-    ]);
+    // Wait for the loading state to appear and then disappear,
+    // indicating the agent has finished responding.
+    try {
+      await this.promptResponseLoader.waitFor({ state: "visible", timeout: 5000 });
+      await this.promptResponseLoader.waitFor({ state: "hidden", timeout: 90000 });
+    } catch {
+      // If the loader never appeared, the response may have already completed — that's fine
+    }
   }
 
   async awaitIngredientCard(name: string) {
