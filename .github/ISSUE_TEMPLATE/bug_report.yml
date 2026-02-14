@@ -1,0 +1,86 @@
+name: "🐛 Bug Report"
+description: "Something isn't working as expected? Let us know so we can fix it."
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve AG-UI! Please fill this out so we can reproduce and fix the issue quickly.
+
+        > **Before you file:** Search [existing issues](https://github.com/ag-ui-protocol/ag-ui/issues) to avoid duplicates.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight Checklist
+      options:
+        - label: I have searched [existing issues](https://github.com/ag-ui-protocol/ag-ui/issues) and this hasn't been reported yet.
+          required: true
+        - label: I am using the **latest** version AG-UI.
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the Bug
+      description: A clear description of what went wrong.
+      placeholder: "When I do X, Y happens instead of Z."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Walk us through exactly how to trigger this bug.
+      placeholder: |
+        1. Install `@ag-ui/client`
+        2. Create an HttpAgent pointing at `http://localhost:8000/agent`
+        3. Call `agent.run(...)` with ...
+        4. Observe the error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen instead?
+      placeholder: "I expected X to happen when..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Tell us what you're working with so we can reproduce your setup.
+      placeholder: |
+        AG-UI package(s) & version(s): e.g. @ag-ui/core@0.0.44
+        Runtime: e.g. Node 22 / Python 3.12
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Screenshots
+      description: If applicable, add screenshots to help explain your problem.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs & Errors
+      description: Paste any relevant stack traces or error output. Auto-formatted as code.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Anything else — workarounds, screenshots, related issues, etc.
+    validations:
+      required: false

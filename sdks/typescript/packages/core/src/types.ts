@@ -9,6 +9,7 @@ export const ToolCallSchema = z.object({
   id: z.string(),
   type: z.literal("function"),
   function: FunctionCallSchema,
+  encryptedValue: z.string().optional(),
 });
 
 export const BaseMessageSchema = z.object({
@@ -16,6 +17,7 @@ export const BaseMessageSchema = z.object({
   role: z.string(),
   content: z.string().optional(),
   name: z.string().optional(),
+  encryptedValue: z.string().optional(),
 });
 
 export const TextInputContentSchema = z.object({
@@ -87,6 +89,7 @@ export const ToolMessageSchema = z.object({
   role: z.literal("tool"),
   toolCallId: z.string(),
   error: z.string().optional(),
+  encryptedValue: z.string().optional(),
 });
 
 export const ActivityMessageSchema = z.object({
@@ -96,6 +99,13 @@ export const ActivityMessageSchema = z.object({
   content: z.record(z.any()),
 });
 
+export const ReasoningMessageSchema = z.object({
+  id: z.string(),
+  role: z.literal("reasoning"),
+  content: z.string(),
+  encryptedValue: z.string().optional(),
+});
+
 export const MessageSchema = z.discriminatedUnion("role", [
   DeveloperMessageSchema,
   SystemMessageSchema,
@@ -103,6 +113,7 @@ export const MessageSchema = z.discriminatedUnion("role", [
   UserMessageSchema,
   ToolMessageSchema,
   ActivityMessageSchema,
+  ReasoningMessageSchema,
 ]);
 
 export const RoleSchema = z.union([
@@ -112,6 +123,7 @@ export const RoleSchema = z.union([
   z.literal("user"),
   z.literal("tool"),
   z.literal("activity"),
+  z.literal("reasoning"),
 ]);
 
 export const ContextSchema = z.object({
@@ -149,6 +161,7 @@ export type AssistantMessage = z.infer<typeof AssistantMessageSchema>;
 export type UserMessage = z.infer<typeof UserMessageSchema>;
 export type ToolMessage = z.infer<typeof ToolMessageSchema>;
 export type ActivityMessage = z.infer<typeof ActivityMessageSchema>;
+export type ReasoningMessage = z.infer<typeof ReasoningMessageSchema>;
 export type Message = z.infer<typeof MessageSchema>;
 export type Context = z.infer<typeof ContextSchema>;
 export type Tool = z.infer<typeof ToolSchema>;

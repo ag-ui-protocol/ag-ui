@@ -113,12 +113,12 @@ const ALL_TARGETS = {
     cwd: path.join(middlewaresRoot, "a2a-middleware/examples"),
   },
   dojo: {
-    command: "pnpm install --no-frozen-lockfile && pnpm build --filter=demo-viewer...",
+    command: "pnpm install --no-frozen-lockfile && npx nx run demo-viewer:build",
     name: "Dojo",
     cwd: gitRoot,
   },
   "dojo-dev": {
-    command: "pnpm install --no-frozen-lockfile && pnpm build --filter=demo-viewer^...",
+    command: "pnpm install --no-frozen-lockfile && npx nx run-many -t build --exclude=demo-viewer",
     name: "Dojo (dev)",
     cwd: gitRoot,
   },

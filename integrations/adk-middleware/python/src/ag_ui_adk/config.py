@@ -21,12 +21,15 @@ class PredictStateMapping:
         tool_argument: The argument name from the tool that provides the value
         emit_confirm_tool: If True (default), emit a confirm_changes tool call
             after this tool completes. This triggers the confirmation dialog in the UI.
+        stream_tool_call: If True, defer TOOL_CALL_END during streaming FC args
+            to keep the tool call "open" for LRO/HITL flows.
     """
 
     state_key: str
     tool: str
     tool_argument: str
     emit_confirm_tool: bool = True
+    stream_tool_call: bool = False
 
     def to_payload(self) -> Dict[str, str]:
         """Convert to the payload format expected by the UI."""

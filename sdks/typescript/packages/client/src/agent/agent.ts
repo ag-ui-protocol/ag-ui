@@ -21,6 +21,7 @@ import {
   MiddlewareFunction,
   FunctionMiddleware,
   BackwardCompatibility_0_0_39,
+  BackwardCompatibility_0_0_45,
 } from "@/middleware";
 import packageJson from "../../package.json";
 
@@ -64,6 +65,12 @@ export abstract class AbstractAgent {
 
     if (compareVersions(this.maxVersion, "0.0.39") <= 0) {
       this.middlewares.unshift(new BackwardCompatibility_0_0_39());
+    }
+
+    // Auto-insert BackwardCompatibility_0_0_45 for backward compatibility
+    // with legacy THINKING events (deprecated, will be removed in 1.0.0)
+    if (compareVersions(this.maxVersion, "0.0.45") <= 0) {
+      this.middlewares.unshift(new BackwardCompatibility_0_0_45());
     }
   }
 

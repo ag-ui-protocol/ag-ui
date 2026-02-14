@@ -88,6 +88,9 @@ class ADKAgent:
 
         # Message snapshot configuration
         emit_messages_snapshot: bool = False,
+
+        # Streaming function call arguments (Gemini 3+ via Vertex AI)
+        streaming_function_call_arguments: bool = False,
     ):
         """Initialize the ADKAgent.
 
@@ -121,6 +124,12 @@ class ADKAgent:
                 full message history (e.g., for client-side persistence or AG-UI
                 protocol compliance). Note: Clients using CopilotKit can use the
                 /agents/state endpoint instead for on-demand history retrieval.
+            streaming_function_call_arguments: Whether to enable streaming of function
+                call arguments from Gemini 3+ models via Vertex AI. When enabled,
+                TOOL_CALL_ARGS events are emitted incrementally as the model streams
+                partial arguments, allowing the UI to show progressive updates.
+                Requires google-adk >= 1.24.0 and stream_function_call_arguments=True
+                in the model's GenerateContentConfig. Defaults to False.
 
             Note:
             If delete_session_on_cleanup=False but save_session_to_memory_on_cleanup=True, sessions will accumulate in SessionService but still be saved to memory on cleanup.
@@ -183,6 +192,19 @@ class ADKAgent:
         # Message snapshot configuration
         self._emit_messages_snapshot = emit_messages_snapshot
 
+        # Streaming function call arguments (Gemini 3+ via Vertex AI)
+        if streaming_function_call_arguments and not self._adk_supports_streaming_fc_args():
+            import warnings
+            warnings.warn(
+                "streaming_function_call_arguments=True requires google-adk >= 1.24.0. "
+                "The feature will be disabled. Upgrade with: pip install 'google-adk>=1.24.0'",
+                UserWarning,
+                stacklevel=2,
+            )
+            self._streaming_function_call_arguments = False
+        else:
+            self._streaming_function_call_arguments = streaming_function_call_arguments
+
         # App-based configuration (set by from_app() classmethod)
         self._app: Optional["App"] = None
         self._plugin_close_timeout: float = 5.0
@@ -209,6 +231,29 @@ class ADKAgent:
         if resumability_config is None:
             return False
         return getattr(resumability_config, 'is_resumable', False)
+
+    def _root_agent_needs_invocation_id(self) -> bool:
+        """Check if the root agent requires invocation_id for HITL resumption.
+
+        Composite orchestrators (SequentialAgent, LoopAgent) store internal
+        state (e.g. current_sub_agent position) that can only be restored via
+        populate_invocation_agent_states(), which requires invocation_id.
+
+        LlmAgents — including those with sub_agents as transfer targets — do
+        NOT need invocation_id. Passing it triggers _get_subagent_to_resume()
+        which raises ValueError for non-composite agents.
+
+        Returns:
+            True if the root agent is a composite orchestrator
+        """
+        from google.adk.agents import LoopAgent, SequentialAgent
+
+        root = self._adk_agent
+        if root is None and self._app is not None:
+            root = getattr(self._app, 'root_agent', None)
+        if root is None:
+            return False
+        return isinstance(root, (SequentialAgent, LoopAgent))
 
     @classmethod
     def from_app(
@@ -239,6 +284,7 @@ class ADKAgent:
         # AG-UI specific
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
         emit_messages_snapshot: bool = False,
+        streaming_function_call_arguments: bool = False,
     ) -> "ADKAgent":
         """Create ADKAgent from an ADK App instance.
 
@@ -270,6 +316,8 @@ class ADKAgent:
             cleanup_interval_seconds: Interval for session cleanup
             predict_state: Configuration for predictive state updates
             emit_messages_snapshot: Whether to emit MessagesSnapshotEvent at end of runs
+            streaming_function_call_arguments: Whether to enable streaming of function
+                call arguments from Gemini 3+ models. Requires google-adk >= 1.24.0.
 
         Returns:
             ADKAgent instance configured to use the App
@@ -312,6 +360,7 @@ class ADKAgent:
             save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
             predict_state=predict_state,
             emit_messages_snapshot=emit_messages_snapshot,
+            streaming_function_call_arguments=streaming_function_call_arguments,
         )
         # Store App for per-request App creation with modified agents
         instance._app = app
@@ -549,6 +598,25 @@ class ADKAgent:
         """
         sig = inspect.signature(Runner.__init__)
         return 'plugin_close_timeout' in sig.parameters
+
+    @staticmethod
+    def _adk_supports_streaming_fc_args() -> bool:
+        """Check if google-adk supports reliable streaming function call arguments.
+
+        Streaming FC args requires google-adk >= 1.24.0 where the
+        StreamingResponseAggregator bugs (google/adk-python#4311) are fixed.
+        We detect this by checking for partial_args on FunctionCall.
+
+        Returns:
+            True if streaming FC args is supported, False otherwise
+        """
+        try:
+            from google.genai import types
+            if hasattr(types.FunctionCall, 'model_fields'):
+                return 'partial_args' in types.FunctionCall.model_fields
+            return hasattr(types.FunctionCall, 'partial_args')
+        except Exception:
+            return False
 
     def _create_runner(self, adk_agent: BaseAgent, user_id: str, app_name: str) -> Runner:
         """Create a new runner instance.
@@ -1518,9 +1586,9 @@ class ADKAgent:
                     "Continuing with potentially stale session."
                 )
 
-            # Retrieve stored invocation_id for HITL resumption
-            # When resuming after HITL pause, we must use the SAME invocation_id
-            # to restore SequentialAgent state (current_sub_agent position)
+            # Read invocation_id stored during a previous LRO pause.
+            # Used to tag FunctionResponse events and passed to run_async
+            # for composite agents (SequentialAgent, LoopAgent).
             stored_invocation_id: Optional[str] = None
             try:
                 current_state = await self._session_manager.get_session_state(
@@ -1605,7 +1673,8 @@ class ADKAgent:
                 import time
 
                 function_response_content = types.Content(parts=function_response_parts, role='user')
-                # Use stored invocation_id for HITL resumption to restore SequentialAgent state
+                # Tag FunctionResponse with the original invocation_id so ADK can
+                # match it to the function_call in session events
                 resume_invocation_id = stored_invocation_id or input.run_id
                 function_response_event = Event(
                     timestamp=time.time(),
@@ -1667,6 +1736,18 @@ class ADKAgent:
                 # when it processes new_message. Explicitly calling append_event here would cause
                 # duplicate function_response events in the session (GitHub issue fix).
                 function_response_content = types.Content(parts=function_response_parts, role='user')
+                # Tag FunctionResponse with the original invocation_id so ADK can
+                # match it to the function_call in session events
+                resume_invocation_id = stored_invocation_id or input.run_id
+                function_response_event = Event(
+                    timestamp=time.time(),
+                    author='user',
+                    content=function_response_content,
+                    invocation_id=resume_invocation_id,
+                )
+                logger.debug(f"Creating FunctionResponse event with invocation_id={resume_invocation_id}")
+
+                await self._session_manager._session_service.append_event(session, function_response_event)
 
                 new_message = function_response_content
             else:
@@ -1696,6 +1777,7 @@ class ADKAgent:
                 client_emitted_tool_call_ids=client_emitted_ids,
                 client_tool_names=client_tool_names,
                 is_resumable=self._is_adk_resumable(),
+                streaming_function_call_arguments=self._streaming_function_call_arguments,
             )
 
             # Share the translator's emitted IDs set with proxy toolsets so
@@ -1743,8 +1825,7 @@ class ADKAgent:
 
             # Run ADK agent
             is_long_running_tool = False
-            invocation_id_stored = False  # Track if we've stored the invocation_id this run
-            # Flag for LRO persistence fix: when True, we continue draining events until non-partial
+            lro_invocation_id: Optional[str] = None
             lro_draining_for_persistence = False
             run_kwargs = {
                 "user_id": user_id,
@@ -1753,16 +1834,16 @@ class ADKAgent:
                 "run_config": run_config
             }
 
-            # Pass stored invocation_id to run_async for HITL resumption
-            # This enables SequentialAgent to restore its current_sub_agent position
-            # Only pass invocation_id if the app is resumable (has ResumabilityConfig)
-            if stored_invocation_id and self._is_adk_resumable():
+            # Conditionally pass invocation_id based on root agent type.
+            # Composite agents (SequentialAgent, LoopAgent) need it so ADK calls
+            # populate_invocation_agent_states() to restore internal state.
+            # Standalone LlmAgents must NOT receive it — triggers ValueError
+            # in _get_subagent_to_resume().
+            if stored_invocation_id and self._is_adk_resumable() and self._root_agent_needs_invocation_id():
                 run_kwargs["invocation_id"] = stored_invocation_id
-                logger.info(f"[RUN_ASYNC] HITL resumption with invocation_id: {stored_invocation_id}")
-            else:
-                logger.info(f"[RUN_ASYNC] New run (no invocation_id, resumable={self._is_adk_resumable()})")
+                logger.debug(f"HITL resumption with invocation_id: {stored_invocation_id}")
 
-            logger.info(f"[RUN_ASYNC] Calling runner.run_async with session_id={backend_session_id}, has_message={new_message is not None}")
+            logger.debug(f"Calling runner.run_async with session_id={backend_session_id}, has_message={new_message is not None}")
 
             async for adk_event in runner.run_async(**run_kwargs):
                 event_invocation_id = getattr(adk_event, 'invocation_id', None)
@@ -1811,23 +1892,6 @@ class ADKAgent:
                     else:
                         # Still partial, keep draining
                         continue
-
-                # Store invocation_id for HITL resumption on first event with valid ID
-                # This enables SequentialAgent to restore its current_sub_agent position
-                # Only store if the app is resumable (has ResumabilityConfig)
-                if (event_invocation_id and not invocation_id_stored and
-                        not stored_invocation_id and self._is_adk_resumable()):
-                    try:
-                        await self._session_manager.update_session_state(
-                            backend_session_id, app_name, user_id,
-                            {INVOCATION_ID_STATE_KEY: event_invocation_id}
-                        )
-                        invocation_id_stored = True
-                        logger.debug(
-                            f"Stored invocation_id for HITL resumption: {event_invocation_id}"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to store invocation_id: {e}")
 
                 final_response = adk_event.is_final_response()
                 has_content = adk_event.content and hasattr(adk_event.content, 'parts') and adk_event.content.parts
@@ -1900,6 +1964,7 @@ class ADKAgent:
                     # need to know an LRO pause happened for invocation_id management.
                     if has_lro_function_call:
                         is_long_running_tool = True
+                        lro_invocation_id = event_invocation_id
 
                     async for ag_ui_event in event_translator.translate_lro_function_calls(
                         adk_event
@@ -1958,21 +2023,29 @@ class ADKAgent:
             async for ag_ui_event in event_translator.force_close_streaming_message():
                 await event_queue.put(ag_ui_event)
 
-            # Clear stored invocation_id after a completed run so subsequent
-            # new runs don't erroneously attempt HITL resumption with a stale ID.
-            # Only clear when NOT paused on an LRO tool — if we're pausing for
-            # HITL, the invocation_id is needed for the resume.
-            if self._is_adk_resumable() and (stored_invocation_id or invocation_id_stored) and not is_long_running_tool:
-                try:
-                    await self._session_manager.update_session_state(
-                        backend_session_id, app_name, user_id,
-                        {INVOCATION_ID_STATE_KEY: None}
-                    )
-                    logger.debug(
-                        f"Cleared stored invocation_id after completed run: {stored_invocation_id}"
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to clear stored invocation_id: {e}")
+            # Manage invocation_id lifecycle for resumable agents.
+            # Composite agents: store after LRO pause so the next resume can
+            # pass it to run_async for populate_invocation_agent_states().
+            # All agents: clear stale IDs after normal completion.
+            if self._is_adk_resumable():
+                if is_long_running_tool and lro_invocation_id and self._root_agent_needs_invocation_id():
+                    try:
+                        await self._session_manager.update_session_state(
+                            backend_session_id, app_name, user_id,
+                            {INVOCATION_ID_STATE_KEY: lro_invocation_id}
+                        )
+                        logger.debug(f"Stored invocation_id for HITL resumption: {lro_invocation_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to store invocation_id: {e}")
+                elif stored_invocation_id and not is_long_running_tool:
+                    try:
+                        await self._session_manager.update_session_state(
+                            backend_session_id, app_name, user_id,
+                            {INVOCATION_ID_STATE_KEY: None}
+                        )
+                        logger.debug("Cleared stale invocation_id after completed run")
+                    except Exception as e:
+                        logger.warning(f"Failed to clear invocation_id: {e}")
 
             # moving states snapshot events after the text event clousure to avoid this error https://github.com/Contextable/ag-ui/issues/28
             final_state = await self._session_manager.get_session_state(backend_session_id, app_name, user_id)

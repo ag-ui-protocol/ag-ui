@@ -8,8 +8,20 @@ description: "Event stream transformation and filtering for AG-UI agents"
 The middleware system in `@ag-ui/client` provides a powerful way to transform, filter, and augment event streams flowing through agents. Middleware can intercept and modify events, add logging, implement authentication, filter tool calls, and more.
 
 ```typescript
-import { Middleware, MiddlewareFunction, FilterToolCallsMiddleware } from "@ag-ui/client"
+import {
+  AbstractAgent,
+  BaseEvent,
+  EventType,
+  FilterToolCallsMiddleware,
+  Message,
+  Middleware,
+  MiddlewareFunction,
+  RunAgentInput
+} from "@ag-ui/client"
+import { Observable } from "rxjs"
 ```
+
+Examples below assume the relevant RxJS operators/utilities (`map`, `tap`, `filter`, `finalize`, `catchError`, `switchMap`, `timer`, `of`, etc.) are imported.
 
 ## Types
 
@@ -24,18 +36,39 @@ type MiddlewareFunction = (
 ) => Observable<BaseEvent>
 ```
 
+Function middleware receives events exactly as emitted by the next middleware or agent.
+
 ### Middleware
 
 Abstract base class for creating middleware.
 
 ```typescript
+interface EventWithState {
+  event: BaseEvent
+  messages: Message[]
+  state: unknown
+}
+
 abstract class Middleware {
   abstract run(
     input: RunAgentInput,
     next: AbstractAgent
   ): Observable<BaseEvent>
+
+  protected runNext(
+    input: RunAgentInput,
+    next: AbstractAgent
+  ): Observable<BaseEvent>
+
+  protected runNextWithState(
+    input: RunAgentInput,
+    next: AbstractAgent
+  ): Observable<EventWithState>
 }
 ```
+
+- `runNext()` runs `next.run(...)` and normalizes chunk events into complete `TEXT_MESSAGE_*` / `TOOL_CALL_*` sequences.
+- `runNextWithState()` does the same and also provides accumulated `messages` and `state` after each event is applied.
 
 ## Function-Based Middleware
 
@@ -59,13 +92,13 @@ agent.use(loggingMiddleware)
 ### Transforming Events
 
 ```typescript
-const prefixMiddleware: MiddlewareFunction = (input, next) => {
+const timestampMiddleware: MiddlewareFunction = (input, next) => {
   return next.run(input).pipe(
     map(event => {
-      if (event.type === EventType.TEXT_MESSAGE_CHUNK) {
+      if (event.type === EventType.RUN_STARTED) {
         return {
           ...event,
-          delta: `[Assistant]: ${event.delta}`
+          timestamp: Date.now()
         }
       }
       return event
@@ -105,7 +138,7 @@ class CounterMiddleware extends Middleware {
   run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
     let runEvents = 0
 
-    return next.run(input).pipe(
+    return this.runNext(input, next).pipe(
       tap(() => {
         runEvents++
         this.totalEvents++
@@ -132,23 +165,55 @@ class AuthMiddleware extends Middleware {
   }
 
   run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
-    // Add authentication to context
-    const authenticatedInput = {
+    // Attach auth data in forwardedProps for downstream transport/agent logic
+    const authenticatedInput: RunAgentInput = {
       ...input,
-      context: [
-        ...input.context,
-        {
-          type: "auth",
-          [this.headerName]: `Bearer ${this.apiKey}`
+      forwardedProps: {
+        ...input.forwardedProps,
+        auth: {
+          headerName: this.headerName,
+          value: `Bearer ${this.apiKey}`
         }
-      ]
+      }
     }
 
-    return next.run(authenticatedInput)
+    return this.runNext(authenticatedInput, next)
   }
 }
 
-agent.use(new AuthMiddleware(process.env.API_KEY))
+const apiKey = process.env.API_KEY ?? ""
+agent.use(new AuthMiddleware(apiKey))
+```
+
+## Accumulator Helpers (Class Middleware)
+
+Class middleware can use helper methods from `Middleware` to work with normalized events and accumulated state.
+
+### `runNext()`
+
+`runNext()` forwards execution and normalizes chunk events into full `TEXT_MESSAGE_*` and `TOOL_CALL_*` events.
+
+### `runNextWithState()`
+
+`runNextWithState()` returns `{ event, messages, state }`, where `messages` and `state` are the accumulated values after each event has been applied.
+
+```typescript
+class MetricsWithStateMiddleware extends Middleware {
+  run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
+    return this.runNextWithState(input, next).pipe(
+      tap(({ event, messages, state }) => {
+        if (event.type === EventType.RUN_FINISHED) {
+          const stateKeyCount =
+            state && typeof state === "object" ? Object.keys(state).length : 0
+
+          console.log("Assistant messages:", messages.filter(m => m.role === "assistant").length)
+          console.log("Final state keys:", stateKeyCount)
+        }
+      }),
+      map(({ event }) => event)
+    )
+  }
+}
 ```
 
 ## Built-in Middleware
@@ -156,6 +221,8 @@ agent.use(new AuthMiddleware(process.env.API_KEY))
 ### FilterToolCallsMiddleware
 
 Filters tool calls based on allowed or disallowed lists.
+
+`FilterToolCallsMiddleware` filters emitted `TOOL_CALL_*` events (including args/results for blocked calls). It does not prevent tool execution in the upstream model/runtime.
 
 ```typescript
 import { FilterToolCallsMiddleware } from "@ag-ui/client"
@@ -179,15 +246,7 @@ const allowFilter = new FilterToolCallsMiddleware({
 agent.use(allowFilter)
 ```
 
-#### Block Specific Tools
-
-```typescript
-const blockFilter = new FilterToolCallsMiddleware({
-  disallowedToolCalls: ["delete", "modify", "execute"]
-})
-
-agent.use(blockFilter)
-```
+You can also use `disallowedToolCalls` instead of `allowedToolCalls`.
 
 ## Middleware Patterns
 
@@ -225,13 +284,13 @@ class RateLimitMiddleware extends Middleware {
       return timer(this.minInterval - elapsed).pipe(
         switchMap(() => {
           this.lastCall = Date.now()
-          return next.run(input)
+          return this.runNext(input, next)
         })
       )
     }
 
     this.lastCall = now
-    return next.run(input)
+    return this.runNext(input, next)
   }
 }
 
@@ -239,79 +298,21 @@ class RateLimitMiddleware extends Middleware {
 agent.use(new RateLimitMiddleware(1000))
 ```
 
-### Retry Logic
-
-```typescript
-const retryMiddleware: MiddlewareFunction = (input, next) => {
-  return next.run(input).pipe(
-    retry({
-      count: 3,
-      delay: (error, retryCount) => {
-        console.log(`Retry attempt ${retryCount}`)
-        return timer(1000 * retryCount) // Exponential backoff
-      }
-    })
-  )
-}
-```
-
-### Caching
-
-```typescript
-class CacheMiddleware extends Middleware {
-  private cache = new Map<string, BaseEvent[]>()
-
-  run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
-    const cacheKey = this.getCacheKey(input)
-
-    if (this.cache.has(cacheKey)) {
-      console.log("Cache hit")
-      return from(this.cache.get(cacheKey)!)
-    }
-
-    const events: BaseEvent[] = []
-
-    return next.run(input).pipe(
-      tap(event => events.push(event)),
-      finalize(() => {
-        this.cache.set(cacheKey, events)
-      })
-    )
-  }
-
-  private getCacheKey(input: RunAgentInput): string {
-    // Create a cache key from the input
-    return JSON.stringify({
-      messages: input.messages,
-      tools: input.tools.map(t => t.name)
-    })
-  }
-}
-```
+Other common patterns include retry logic and response caching.
 
 ## Chaining Middleware
 
 Multiple middleware can be combined to create sophisticated processing pipelines.
 
 ```typescript
-// Create middleware instances
 const logger = loggingMiddleware
 const auth = new AuthMiddleware(apiKey)
-const filter = new FilterToolCallsMiddleware({
-  allowedToolCalls: ["search"]
-})
-const rateLimit = new RateLimitMiddleware(1000)
+const filter = new FilterToolCallsMiddleware({ allowedToolCalls: ["search"] })
 
-// Apply middleware in order
-agent.use(
-  logger,      // First: Log all events
-  auth,        // Second: Add authentication
-  rateLimit,   // Third: Apply rate limiting
-  filter       // Fourth: Filter tool calls
-)
+agent.use(logger, auth, filter)
 
 // Execution flow:
-// logger → auth → rateLimit → filter → agent → filter → rateLimit → auth → logger
+// logger → auth → filter → agent → filter → auth → logger
 ```
 
 ## Advanced Usage
@@ -320,7 +321,7 @@ agent.use(
 
 ```typescript
 const debugMiddleware: MiddlewareFunction = (input, next) => {
-  const isDebug = input.context.some(c => c.type === "debug")
+  const isDebug = input.forwardedProps?.debug === true
 
   if (!isDebug) {
     return next.run(input)
@@ -334,38 +335,9 @@ const debugMiddleware: MiddlewareFunction = (input, next) => {
 }
 ```
 
-### Event Filtering
+## Lifecycle Notes
 
-```typescript
-const filterEventsMiddleware: MiddlewareFunction = (input, next) => {
-  return next.run(input).pipe(
-    filter(event => {
-      // Only allow specific event types
-      return [
-        EventType.RUN_STARTED,
-        EventType.TEXT_MESSAGE_CHUNK,
-        EventType.RUN_FINISHED
-      ].includes(event.type)
-    })
-  )
-}
-```
-
-### Stream Manipulation
-
-```typescript
-const bufferMiddleware: MiddlewareFunction = (input, next) => {
-  return next.run(input).pipe(
-    // Buffer text chunks and emit them in batches
-    bufferWhen(() =>
-      interval(100).pipe(
-        filter(() => true)
-      )
-    ),
-    map(events => events.flat())
-  )
-}
-```
+Middleware added with `agent.use(...)` runs in `runAgent()` (and the legacy bridge path). `connectAgent()` currently calls `connect()` directly and does not run middleware.
 
 ## Best Practices
 
@@ -382,11 +354,12 @@ The middleware system is fully typed for excellent IDE support:
 
 ```typescript
 import {
-  Middleware,
+  AbstractAgent,
+  BaseEvent,
   MiddlewareFunction,
-  FilterToolCallsMiddleware
+  RunAgentInput
 } from "@ag-ui/client"
-import { RunAgentInput, BaseEvent, EventType } from "@ag-ui/core"
+import { Observable } from "rxjs"
 
 // Type-safe middleware function
 const typedMiddleware: MiddlewareFunction = (
@@ -394,15 +367,5 @@ const typedMiddleware: MiddlewareFunction = (
   next: AbstractAgent
 ): Observable<BaseEvent> => {
   return next.run(input)
-}
-
-// Type-safe middleware class
-class TypedMiddleware extends Middleware {
-  run(
-    input: RunAgentInput,
-    next: AbstractAgent
-  ): Observable<BaseEvent> {
-    return next.run(input)
-  }
 }
 ```

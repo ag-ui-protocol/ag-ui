@@ -1,0 +1,26 @@
+name: unit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdks/community/ruby/**"
+      - ".github/workflows/unit-ruby-sdk.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "sdks/community/ruby/**"
+      - ".github/workflows/unit-ruby-sdk.yml"
+
+jobs:
+  ruby:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.4'
+        bundler-cache: true
+        working-directory: sdks/community/ruby
+    - run: bundle exec rake
+      working-directory: sdks/community/ruby
