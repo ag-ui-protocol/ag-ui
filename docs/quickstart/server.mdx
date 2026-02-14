@@ -163,7 +163,7 @@ Open `apps/dojo/package.json` and add the package `@ag-ui/openai-server`:
     "@ag-ui/server-starter": "workspace:*",
     "@ag-ui/server-starter-all-features": "workspace:*",
     "@ag-ui/vercel-ai-sdk": "workspace:*",
-    "@ag-ui/openai-server": "workspace:*", <- Add this line
+    "@ag-ui/openai-server": "workspace:*", // Add this line
 
   ... rest of package.json
 }
@@ -218,6 +218,77 @@ async def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):
 
         message_id = str(uuid.uuid4())
 
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream"
+    )
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+Awesome! We are already sending `RunStartedEvent` and `RunFinishedEvent` events,
+which gives us a basic AG-UI compliant endpoint. Now let's make it do something
+useful.
+
+## Implementing Basic Chat
+
+Let's enhance our endpoint to call OpenAI's API and stream the responses back as
+AG-UI events:
+
+```python
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
+from ag_ui.core import (
+    RunAgentInput,
+    Message,
+    EventType,
+    RunStartedEvent,
+    RunFinishedEvent,
+    TextMessageStartEvent,
+    TextMessageContentEvent,
+    TextMessageEndEvent
+)
+from ag_ui.encoder import EventEncoder
+import uuid
+from openai import OpenAI
+import dotenv
+import os
+
+app = FastAPI(title="AG-UI Endpoint")
+
+@app.post("/awp")
+async def my_endpoint(input_data: RunAgentInput):
+    async def event_generator():
+        # Create an event encoder to properly format SSE events
+        encoder = EventEncoder()
+
+        # Send run started event
+        yield encoder.encode(
+            RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=input_data.thread_id,
+                run_id=input_data.run_id
+            )
+        )
+
+        # Initialize OpenAI client
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        # Convert AG-UI messages to OpenAI messages format
+        openai_messages = []
+        for msg in input_data.messages:
+            if msg.role in ["user", "system", "assistant"]:
+                openai_messages.append({
+                    "role": msg.role,
+                    "content": msg.content or ""
+                })
+
+        # Generate a message ID for the assistant's response
+        message_id = str(uuid.uuid4())
+
+        # Send text message start event
         yield encoder.encode(
             TextMessageStartEvent(
                 type=EventType.TEXT_MESSAGE_START,
@@ -234,6 +305,24 @@ async def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):
             )
         )
 
+        # Process the streaming response and send content events
+        for chunk in stream:
+            if (chunk.choices and 
+                len(chunk.choices) > 0 and 
+                chunk.choices[0].delta and 
+                hasattr(chunk.choices[0].delta, 'content') and 
+                chunk.choices[0].delta.content):
+                
+                content = chunk.choices[0].delta.content
+                yield encoder.encode(
+                    TextMessageContentEvent(
+                        type=EventType.TEXT_MESSAGE_CONTENT,
+                        message_id=message_id,
+                        delta=content
+                    )
+                )
+
+        # Send text message end event
         yield encoder.encode(
             TextMessageEndEvent(
                 type=EventType.TEXT_MESSAGE_END,
@@ -243,11 +332,11 @@ async def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):
 
         # Send run finished event
         yield encoder.encode(
-          RunFinishedEvent(
-            type=EventType.RUN_FINISHED,
-            thread_id=input_data.thread_id,
-            run_id=input_data.run_id
-          ),
+            RunFinishedEvent(
+                type=EventType.RUN_FINISHED,
+                thread_id=input_data.thread_id,
+                run_id=input_data.run_id
+            )
         )
 
     return StreamingResponse(
@@ -301,6 +390,8 @@ from ag_ui.core import (
     RunStartedEvent,
     RunFinishedEvent,
     RunErrorEvent,
+    TextMessageChunkEvent,
+    ToolCallChunkEvent,
 )
 from ag_ui.encoder import EventEncoder
 from openai import OpenAI
@@ -362,22 +453,26 @@ async def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):
             for chunk in stream:
                 # Handle text content chunks
                 if chunk.choices[0].delta.content:
-                    yield encoder.encode({
-                        "type": EventType.TEXT_MESSAGE_CHUNK,
-                        "message_id": message_id,
-                        "delta": chunk.choices[0].delta.content,
-                    })
+                    yield encoder.encode(
+                        TextMessageChunkEvent(
+                            type=EventType.TEXT_MESSAGE_CHUNK,
+                            message_id=message_id,
+                            delta=chunk.choices[0].delta.content,
+                        )
+                    )
                 # Handle tool call chunks
                 elif chunk.choices[0].delta.tool_calls:
                     tool_call = chunk.choices[0].delta.tool_calls[0]
 
-                    yield encoder.encode({
-                        "type": EventType.TOOL_CALL_CHUNK,
-                        "tool_call_id": tool_call.id,
-                        "tool_call_name": tool_call.function.name if tool_call.function else None,
-                        "parent_message_id": message_id,
-                        "delta": tool_call.function.arguments if tool_call.function else None,
-                    })
+                    yield encoder.encode(
+                        ToolCallChunkEvent(
+                            type=EventType.TOOL_CALL_CHUNK,
+                            tool_call_id=tool_call.id,
+                            tool_call_name=tool_call.function.name if tool_call.function else None,
+                            parent_message_id=message_id,
+                            delta=tool_call.function.arguments if tool_call.function else None,
+                        )
+                    )
 
             yield encoder.encode(
                 RunFinishedEvent(
@@ -424,6 +519,31 @@ Let's break down what your server is doing:
 3. **Streaming** – We forward each chunk as either `TEXT_MESSAGE_CHUNK` or
    `TOOL_CALL_CHUNK`
 4. **Finish** – We emit `RUN_FINISHED` (or `RUN_ERROR` if something goes wrong)
+
+Test your endpoint with:
+```bash
+curl -X POST http://localhost:8000/awp \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{
+    "threadId": "thread_123",
+    "runId": "run_456",
+    "state": {},
+    "messages": [
+      {
+        "id": "msg_1",
+        "role": "user",
+        "content": "Hello, how are you?"
+      }
+    ],
+    "tools": [],
+    "context": [],
+    "forwardedProps": {}
+  }'
+```
+
+This implementation creates a fully functional AG-UI endpoint that processes
+messages and streams back the responses in real-time.
 
 ## Step 5 – Chat with your server
 
