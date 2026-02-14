@@ -134,6 +134,30 @@ export class AgenticChatPage {
     await expect(agentMessage).toContainText(expectedText, { timeout: 10000 });
   }
 
+  async getAssistantMessageText(index: number): Promise<string> {
+    const message = this.agentMessage.nth(index);
+    await expect(message).toBeVisible({ timeout: 10000 });
+    return (await message.textContent()) ?? "";
+  }
+
+  async regenerateResponse(index: number) {
+    const message = this.agentMessage.nth(index);
+    await expect(message).toBeVisible({ timeout: 10000 });
+
+    // Hover over the message to reveal the regenerate button
+    await message.hover();
+    await this.page.waitForTimeout(500);
+
+    const regenerateButton = message.locator('button[aria-label="Regenerate response"]');
+
+    try {
+      await regenerateButton.click({ timeout: 3000 });
+    } catch {
+      // If hover didn't reveal the button, force click
+      await regenerateButton.click({ force: true });
+    }
+  }
+
   async assertWeatherResponseStructure() {
     const agentMessage = this.page.locator(".copilotKitAssistantMessage").last();
 

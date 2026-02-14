@@ -1,0 +1,102 @@
+{
+  "$schema": "https://nx.dev/reference/nx-json#workspace-configuration",
+  "useDaemonProcess": true,
+  "parallel": 30,
+  "defaultBase": "main",
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*"],
+    "production": [
+      "default",
+      "!{projectRoot}/**/?(*.)+(spec|test).ts",
+      "!{projectRoot}/**/__tests__/**/*",
+      "!{projectRoot}/vitest.config.ts",
+      "!{projectRoot}/vitest.config.mts"
+    ]
+  },
+  "targetDefaults": {
+    "generate": {
+      "outputs": [
+        "{projectRoot}/src/generated"
+      ],
+      "cache": true
+    },
+    "build": {
+      "dependsOn": [
+        "^build",
+        "generate"
+      ],
+      "inputs": [
+        "production",
+        "^production"
+      ],
+      "outputs": [
+        "{projectRoot}/dist",
+        "{projectRoot}/.next"
+      ],
+      "cache": true
+    },
+    "lint": {
+      "dependsOn": [
+        "^lint"
+      ],
+      "cache": true
+    },
+    "check-types": {
+      "dependsOn": [
+        "^check-types"
+      ],
+      "cache": true
+    },
+    "dev": {
+      "dependsOn": [
+        "^build",
+        "generate"
+      ],
+      "cache": false
+    },
+    "test": {
+      "dependsOn": [
+        "build"
+      ],
+      "inputs": [
+        "default",
+        "^production"
+      ],
+      "cache": true
+    },
+    "test:coverage": {
+      "dependsOn": [
+        "build"
+      ],
+      "inputs": [
+        "default",
+        "^production"
+      ],
+      "outputs": [
+        "{projectRoot}/coverage"
+      ],
+      "cache": true
+    },
+    "test:watch": {
+      "dependsOn": [
+        "build"
+      ],
+      "cache": false
+    },
+    "clean": {
+      "cache": false
+    },
+    "link:global": {
+      "cache": false
+    },
+    "unlink:global": {
+      "cache": false
+    },
+    "start": {
+      "dependsOn": [
+        "^build"
+      ],
+      "cache": false
+    }
+  }
+}

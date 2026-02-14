@@ -43,6 +43,7 @@
               "concepts/agents",
               "concepts/middleware",
               "concepts/messages",
+              "concepts/reasoning",
               "concepts/state",
               "concepts/serialization",
               "concepts/tools",
@@ -53,7 +54,6 @@
             "group": "Draft Proposals",
             "pages": [
               "drafts/overview",
-              "drafts/reasoning",
               "drafts/multimodal-messages",
               "drafts/interrupts",
               "drafts/generative-ui",
@@ -62,11 +62,18 @@
           },
           {
             "group": "Tutorials",
-            "pages": ["tutorials/cursor", "tutorials/debugging"]
+            "pages": [
+              "tutorials/cursor",
+              "tutorials/debugging"
+            ]
           },
           {
             "group": "Development",
-            "pages": ["development/updates", "development/roadmap", "development/contributing"]
+            "pages": [
+              "development/updates",
+              "development/roadmap",
+              "development/contributing"
+            ]
           }
         ]
       },
@@ -79,7 +86,11 @@
             "pages": [
               {
                 "group": "@ag-ui/core",
-                "pages": ["sdk/js/core/overview", "sdk/js/core/types", "sdk/js/core/events"]
+                "pages": [
+                  "sdk/js/core/overview",
+                  "sdk/js/core/types",
+                  "sdk/js/core/events"
+                ]
               },
               {
                 "group": "@ag-ui/client",
@@ -109,7 +120,9 @@
               },
               {
                 "group": "ag_ui.encoder",
-                "pages": ["sdk/python/encoder/overview"]
+                "pages": [
+                  "sdk/python/encoder/overview"
+                ]
               }
             ]
           }

@@ -7,6 +7,8 @@ description: "Transform and intercept events in AG-UI agents"
 
 Middleware in AG-UI provides a powerful way to transform, filter, and augment the event streams that flow through agents. It enables you to add cross-cutting concerns like logging, authentication, rate limiting, and event filtering without modifying the core agent logic.
 
+Examples below assume the relevant RxJS operators/utilities (`map`, `tap`, `catchError`, `switchMap`, `timer`, etc.) are imported.
+
 ## What is Middleware?
 
 Middleware sits between the agent execution and the event consumer, allowing you to:
@@ -33,6 +35,8 @@ agent.use(loggingMiddleware, authMiddleware, filterMiddleware)
 await agent.runAgent()
 ```
 
+Middleware added with `agent.use(...)` is applied in `runAgent()`. `connectAgent()` currently calls `connect()` directly and does not run middleware.
+
 ## Function-Based Middleware
 
 For simple transformations, you can use function-based middleware. This is the most concise way to add middleware:
@@ -44,7 +48,10 @@ import { EventType } from "@ag-ui/core"
 const prefixMiddleware: MiddlewareFunction = (input, next) => {
   return next.run(input).pipe(
     map(event => {
-      if (event.type === EventType.TEXT_MESSAGE_CHUNK) {
+      if (
+        event.type === EventType.TEXT_MESSAGE_CHUNK ||
+        event.type === EventType.TEXT_MESSAGE_CONTENT
+      ) {
         return {
           ...event,
           delta: `[AI]: ${event.delta}`
@@ -77,7 +84,7 @@ class MetricsMiddleware extends Middleware {
   run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
     const startTime = Date.now()
 
-    return next.run(input).pipe(
+    return this.runNext(input, next).pipe(
       tap(event => {
         this.eventCount++
         this.metricsService.recordEvent(event.type)
@@ -93,6 +100,10 @@ class MetricsMiddleware extends Middleware {
 
 agent.use(new MetricsMiddleware(metricsService))
 ```
+
+If you are writing class middleware, prefer the helper methods:
+- `runNext(input, next)` normalizes chunk events into full `TEXT_MESSAGE_*`/`TOOL_CALL_*` sequences.
+- `runNextWithState(input, next)` also provides accumulated `messages` and `state` after each event.
 
 ## Built-in Middleware
 
@@ -118,102 +129,22 @@ const blockedFilter = new FilterToolCallsMiddleware({
 agent.use(allowedFilter)
 ```
 
+`FilterToolCallsMiddleware` filters emitted `TOOL_CALL_*` events. It does not block tool execution in the upstream model/runtime.
+
 ## Middleware Patterns
 
-### Logging Middleware
-
-```typescript
-const loggingMiddleware: MiddlewareFunction = (input, next) => {
-  console.log("Request:", input.messages)
-
-  return next.run(input).pipe(
-    tap(event => console.log("Event:", event.type)),
-    catchError(error => {
-      console.error("Error:", error)
-      throw error
-    })
-  )
-}
-```
-
-### Authentication Middleware
-
-```typescript
-class AuthMiddleware extends Middleware {
-  constructor(private apiKey: string) {
-    super()
-  }
-
-  run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
-    // Add authentication to the context
-    const authenticatedInput = {
-      ...input,
-      context: [
-        ...input.context,
-        { type: "auth", apiKey: this.apiKey }
-      ]
-    }
-
-    return next.run(authenticatedInput)
-  }
-}
-```
-
-### Rate Limiting Middleware
-
-```typescript
-class RateLimitMiddleware extends Middleware {
-  private lastCall = 0
-
-  constructor(private minInterval: number) {
-    super()
-  }
-
-  run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
-    const now = Date.now()
-    const timeSinceLastCall = now - this.lastCall
-
-    if (timeSinceLastCall < this.minInterval) {
-      const delay = this.minInterval - timeSinceLastCall
-      return timer(delay).pipe(
-        switchMap(() => {
-          this.lastCall = Date.now()
-          return next.run(input)
-        })
-      )
-    }
-
-    this.lastCall = now
-    return next.run(input)
-  }
-}
-```
+Common patterns include logging, auth via `forwardedProps`, and rate limiting. See the [JS middleware reference](/sdk/js/client/middleware) for concrete implementations.
 
 ## Combining Middleware
 
 You can combine multiple middleware to create sophisticated processing pipelines:
 
 ```typescript
-// Function middleware for simple logging
-const logMiddleware: MiddlewareFunction = (input, next) => {
-  console.log(`Starting run ${input.runId}`)
-  return next.run(input)
-}
+const logMiddleware: MiddlewareFunction = (input, next) => next.run(input)
+const metricsMiddleware = new MetricsMiddleware(metricsService)
+const filterMiddleware = new FilterToolCallsMiddleware({ allowedToolCalls: ["search"] })
 
-// Class middleware for authentication
-const authMiddleware = new AuthMiddleware(apiKey)
-
-// Built-in middleware for filtering
-const filterMiddleware = new FilterToolCallsMiddleware({
-  allowedToolCalls: ["search", "summarize"]
-})
-
-// Apply all middleware in order
-agent.use(
-  logMiddleware,        // First: log the request
-  authMiddleware,       // Second: add authentication
-  filterMiddleware      // Third: filter tool calls
-)
+agent.use(logMiddleware, metricsMiddleware, filterMiddleware)
 ```
 
 ## Execution Order
@@ -255,7 +186,7 @@ Apply middleware based on runtime conditions:
 
 ```typescript
 const conditionalMiddleware: MiddlewareFunction = (input, next) => {
-  if (input.context.some(c => c.type === "debug")) {
+  if (input.forwardedProps?.debug === true) {
     // Apply debug logging
     return next.run(input).pipe(
       tap(event => console.debug(event))
@@ -265,42 +196,7 @@ const conditionalMiddleware: MiddlewareFunction = (input, next) => {
 }
 ```
 
-### Event Transformation
-
-Transform specific event types:
-
-```typescript
-const transformMiddleware: MiddlewareFunction = (input, next) => {
-  return next.run(input).pipe(
-    map(event => {
-      if (event.type === EventType.TOOL_CALL_START) {
-        // Add timestamp to tool calls
-        return {
-          ...event,
-          metadata: {
-            ...event.metadata,
-            timestamp: Date.now()
-          }
-        }
-      }
-      return event
-    })
-  )
-}
-```
-
-### Stream Control
-
-Control the flow of events:
-
-```typescript
-const throttleMiddleware: MiddlewareFunction = (input, next) => {
-  return next.run(input).pipe(
-    // Throttle text message chunks to prevent overwhelming the UI
-    throttleTime(50, undefined, { leading: true, trailing: true })
-  )
-}
-```
+For event transformation and stream-control variants, see the [JS middleware reference](/sdk/js/client/middleware).
 
 ## Conclusion
 
