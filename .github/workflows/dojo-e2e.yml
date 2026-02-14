@@ -89,6 +89,10 @@ jobs:
             test_path: tests/crewAITests
             services: ["dojo", "crew-ai"]
             wait_on: http://localhost:9999,tcp:localhost:8003
+          - suite: langroid
+            test_path: tests/langroidTests
+            services: ["dojo", "langroid"]
+            wait_on: http://localhost:9999,tcp:localhost:8018
           - suite: langgraph-python
             test_path: tests/langgraphPythonTests
             services: ["dojo", "langgraph-platform-python"]
@@ -213,6 +217,14 @@ jobs:
           echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> python/examples/.env
           echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > typescript/examples/.env
           echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> typescript/examples/.env
+
+      - name: write langroid env files
+        working-directory: integrations/langroid/python/examples
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        if: ${{ contains(join(matrix.services, ','), 'langroid') }}
+        run: |
+          echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > .env
 
       - name: Run dojo+agents
         uses: JarvusInnovations/background-action@v1
