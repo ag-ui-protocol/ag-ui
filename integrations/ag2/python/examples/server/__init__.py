@@ -16,6 +16,7 @@ from .api import (
     agentic_generative_ui,
     backend_tool_rendering,
     human_in_the_loop,
+    shared_state,
     tool_based_generative_ui,
 )
 
@@ -44,6 +45,11 @@ app.mount(
     "/tool_based_generative_ui",
     tool_based_generative_ui.tool_based_generative_ui_app,
     "Tool-based Generative UI",
+)
+app.mount(
+    "/shared_state",
+    shared_state.shared_state_app,
+    "Shared State",
 )
 
 

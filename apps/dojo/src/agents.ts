@@ -355,6 +355,7 @@ export const agentsIntegrations = {
         backend_tool_rendering: "backend_tool_rendering",
         human_in_the_loop: "human_in_the_loop",
         agentic_generative_ui: "agentic_generative_ui",
+        shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
       }
     ),

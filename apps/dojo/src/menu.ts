@@ -176,6 +176,7 @@ export const menuIntegrations = [
       "backend_tool_rendering",
       "human_in_the_loop",
       "agentic_generative_ui",
+      "shared_state",
       "tool_based_generative_ui",
     ],
   },
