@@ -13,11 +13,12 @@ from fastapi import FastAPI
 
 load_dotenv()
 
-from .api import agentic_chat, backend_tool_rendering
+from .api import agentic_chat, backend_tool_rendering, human_in_the_loop
 
 app = FastAPI(title="AG2 AG-UI server")
 app.mount("/agentic_chat", agentic_chat.agentic_chat_app, "Agentic Chat")
 app.mount("/backend_tool_rendering", backend_tool_rendering.backend_tool_rendering_app, "Backend Tool Rendering")
+app.mount("/human_in_the_loop", human_in_the_loop.human_in_the_loop_app, "Human in the Loop")
 
 
 def main():

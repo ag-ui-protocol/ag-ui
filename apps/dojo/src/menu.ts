@@ -171,7 +171,11 @@ export const menuIntegrations = [
   {
     id: "ag2",
     name: "AG2",
-    features: ["agentic_chat", "backend_tool_rendering"],
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "human_in_the_loop",
+    ],
   },
   {
     id: "agno",
