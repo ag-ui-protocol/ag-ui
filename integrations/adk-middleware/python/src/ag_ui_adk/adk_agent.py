@@ -25,6 +25,7 @@ from google.adk.agents import BaseAgent, LlmAgent, RunConfig as ADKRunConfig
 from google.adk.agents.run_config import StreamingMode
 from google.adk.agents.llm_agent import InstructionProvider, ToolUnion
 from google.adk.sessions import BaseSessionService, InMemorySessionService
+from google.adk.sessions.session import Event
 from google.adk.artifacts import BaseArtifactService, InMemoryArtifactService
 from google.adk.memory import BaseMemoryService, InMemoryMemoryService
 from google.adk.auth.credential_service.base_credential_service import BaseCredentialService
@@ -1668,10 +1669,6 @@ class ADKAgent:
 
                 # Add FunctionResponse as separate event to session
                 # (session was already obtained from _ensure_session_exists above)
-
-                from google.adk.sessions.session import Event
-                import time
-
                 function_response_content = types.Content(parts=function_response_parts, role='user')
                 # Tag FunctionResponse with the original invocation_id so ADK can
                 # match it to the function_call in session events
@@ -1731,10 +1728,14 @@ class ADKAgent:
                     )
                     function_response_parts.append(updated_function_response_part)
 
-                # Persist FunctionResponse event so DatabaseSessionService has invocation_id
-                from google.adk.sessions.session import Event
-                import time
-
+                # Pre-persist FunctionResponse to session BEFORE calling runner.run_async().
+                # This is required because InMemorySessionService.get_session() returns a deep copy,
+                # and the runner's state checks (e.g., populate_invocation_agent_states, early-exit at
+                # runners.py:523) happen before its internal _append_new_message_to_session(). Without
+                # pre-appending, HITL resumption fails because ADK considers the invocation complete.
+                #
+                # To prevent duplicate FunctionResponse events, we set new_message = None since
+                # we've already appended the function response. The runner won't append it again.
                 function_response_content = types.Content(parts=function_response_parts, role='user')
                 # Tag FunctionResponse with the original invocation_id so ADK can
                 # match it to the function_call in session events
@@ -1749,7 +1750,10 @@ class ADKAgent:
 
                 await self._session_manager._session_service.append_event(session, function_response_event)
 
-                new_message = function_response_content
+                # Set new_message to None - we've already appended the FunctionResponse above.
+                # Passing function_response_content here would cause the runner to append it again,
+                # resulting in duplicate function_response events in the session.
+                new_message = None
             else:
                 # No tool results, just use the user message
                 # If user_message is None (e.g., unseen_messages was empty because all were
