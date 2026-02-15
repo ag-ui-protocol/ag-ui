@@ -5,7 +5,6 @@ The frontend renders tool calls and results (e.g. weather card).
 See: https://docs.ag2.ai/latest/docs/user-guide/ag-ui/
 """
 
-from __future__ import annotations
 import json
 
 import httpx

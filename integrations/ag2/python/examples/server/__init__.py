@@ -3,8 +3,6 @@
 Exposes AG-UI compatible endpoints using AG2's AGUIStream.
 """
 
-from __future__ import annotations
-
 import os
 
 import uvicorn
@@ -15,9 +13,10 @@ load_dotenv()
 
 from .api import (
     agentic_chat,
+    agentic_generative_ui,
     backend_tool_rendering,
     human_in_the_loop,
-    agentic_generative_ui,
+    tool_based_generative_ui,
 )
 
 app = FastAPI(title="AG2 AG-UI server")
@@ -40,6 +39,11 @@ app.mount(
     "/agentic_generative_ui",
     agentic_generative_ui.agentic_generative_ui_app,
     "Agentic Generative UI",
+)
+app.mount(
+    "/tool_based_generative_ui",
+    tool_based_generative_ui.tool_based_generative_ui_app,
+    "Tool-based Generative UI",
 )
 
 
