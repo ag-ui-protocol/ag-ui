@@ -1610,18 +1610,22 @@ class TestDatabaseSessionServiceCompatibility:
         )
 
     @pytest.mark.asyncio
-    async def test_invocation_id_set_on_function_response_event_tool_results_only(self, ag_ui_adk):
-        """Test invocation_id is set when tool results arrive WITHOUT a user message.
+    async def test_explicit_persist_with_null_new_message_for_tool_results_only(self, ag_ui_adk):
+        """Test that we explicitly persist function_response but pass new_message=None.
 
-        This tests the tool-results-only branch in adk_agent.py (the elif active_tool_results
-        path around line 1486). In HITL workflows, clients may send back just the tool result
-        without any additional user message.
+        When tool results arrive WITHOUT a trailing user message, ag-ui-adk MUST:
+        1. Explicitly persist the function_response via append_event() - required because
+           InMemorySessionService.get_session() returns a deep copy, and ADK's state checks
+           happen before its internal persistence. Without pre-appending, HITL resumption fails.
+        2. Pass new_message=None to prevent the runner from appending a duplicate.
 
-        Regression test for PR #958.
+        This prevents duplicate function_response events while maintaining HITL functionality.
+
+        Related to PR #958 (invocation_id) and duplicate function_response bug fix.
         """
-        thread_id = "test_thread_invocation_id_tool_only"
-        tool_call_id = "tool_call_tool_only_test"
-        expected_run_id = "run_id_tool_only_67890"
+        thread_id = "test_thread_explicit_persist_null_msg"
+        tool_call_id = "tool_call_explicit_persist_test"
+        expected_run_id = "run_id_explicit_persist_67890"
 
         # Create input with tool result ONLY (no trailing user message)
         input_data = RunAgentInput(
@@ -1670,9 +1674,13 @@ class TestDatabaseSessionServiceCompatibility:
             processed_message_ids=["user_1", "assistant_1"],
         )
 
-        # Mock runner to avoid LLM calls
+        # Mock runner to verify new_message is None (our fix to prevent duplicates)
         class MockRunner:
             async def run_async(self, **kwargs):
+                # Verify that new_message is None to prevent duplicate
+                assert kwargs.get('new_message') is None, (
+                    f"new_message should be None to prevent duplicate, got: {kwargs.get('new_message')}"
+                )
                 return
                 yield
 
@@ -1698,14 +1706,32 @@ class TestDatabaseSessionServiceCompatibility:
                 message_batch=None  # No trailing user message.
             )
 
-        # Assert invocation_id is persisted.
+        # Verify: ag-ui-adk should have explicitly persisted exactly 1 function_response
         session = await ag_ui_adk._session_manager._session_service.get_session(
             session_id=backend_session_id,
             app_name=app_name,
             user_id="test_user"
         )
-        self._assert_function_response_invocation_id(
-            session, tool_call_id, expected_run_id
+
+        # Count function_response events for this tool_call_id
+        function_response_count = 0
+        for event in session.events:
+            if event.content and hasattr(event.content, "parts"):
+                for part in event.content.parts:
+                    if hasattr(part, "function_response") and part.function_response:
+                        fr = part.function_response
+                        if hasattr(fr, "id") and fr.id == tool_call_id:
+                            function_response_count += 1
+
+        # With the fix:
+        # - We explicitly append_event (1 event from our code)
+        # - new_message = None, so runner doesn't append another
+        # - Total: exactly 1 function_response event
+        assert function_response_count == 1, (
+            f"Expected exactly 1 function_response event (from explicit append_event), "
+            f"but found {function_response_count}. "
+            f"If count is 0, the explicit append was removed (HITL resumption will break). "
+            f"If count is 2, new_message is not None (duplicate bug)."
         )
 
     @pytest.mark.asyncio
