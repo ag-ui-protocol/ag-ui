@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **NEW**: Streaming function call arguments support for Gemini 3+ models via Vertex AI (#822)
+  - Enables real-time streaming of `TOOL_CALL_ARGS` events as the model generates function call arguments incrementally
+  - Activated via `streaming_function_call_arguments=True` on `ADKAgent` / `ADKAgent.from_app()`
+  - Requires `google-adk >= 1.24.0` (version-gated; emits a warning and disables on older versions)
+  - Requires `stream_function_call_arguments=True` in the model's `GenerateContentConfig` and SSE streaming mode
+  - JSON deltas are emitted as concatenable fragments: clients join all `TOOL_CALL_ARGS.delta` values to reconstruct the complete arguments JSON
+  - Integrates with predictive state updates: `PredictState` CustomEvents are emitted before `TOOL_CALL_START` for configured tools
+  - New `stream_tool_call` field on `PredictStateMapping` defers `TOOL_CALL_END` for LRO/HITL workflows
+  - Final aggregated (non-partial) events are automatically suppressed to prevent duplicate tool call emissions
+  - Confirmed function call IDs are remapped to the streaming ID so `TOOL_CALL_RESULT` uses a consistent ID
+  - No upstream monkey-patches or workarounds required (google/adk-python#4311 is fixed in ADK 1.24.0)
+
 ### Deprecated
 
 - **DEPRECATED**: Non-resumable (fire-and-forget) HITL flow via `ADKAgent(adk_agent=...)` with client-side tools
