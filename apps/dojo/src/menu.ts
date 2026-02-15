@@ -175,6 +175,7 @@ export const menuIntegrations = [
       "agentic_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
+      "agentic_generative_ui",
     ],
   },
   {
