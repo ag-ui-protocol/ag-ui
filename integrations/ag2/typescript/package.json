@@ -1,0 +1,44 @@
+{
+  "name": "@ag-ui/ag2",
+  "version": "0.0.1",
+  "author": "AG-UI Team",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "files": [
+    "dist/**",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "clean": "git clean -fdX --exclude=\"!.env\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:exports": "publint --strict && attw --pack"
+  },
+  "peerDependencies": {
+    "@ag-ui/core": ">=0.0.37",
+    "@ag-ui/client": ">=0.0.37",
+    "rxjs": "7.8.1"
+  },
+  "devDependencies": {
+    "@ag-ui/core": "workspace:*",
+    "@ag-ui/client": "workspace:*",
+    "@arethetypeswrong/cli": "^0.17.4",
+    "@types/node": "^20.11.19",
+    "publint": "^0.3.12",
+    "tsdown": "^0.20.1",
+    "typescript": "^5.3.3",
+    "vitest": "^4.0.18"
+  },
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
+  }
+}
