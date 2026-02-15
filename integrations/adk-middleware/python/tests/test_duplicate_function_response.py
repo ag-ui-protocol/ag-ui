@@ -7,22 +7,27 @@ DatabaseSessionService and StreamingMode.NONE.
 
 Root cause: When tool results arrived WITHOUT a trailing user message,
 ag-ui-adk explicitly persisted the function_response via append_event(),
-then passed the same function_response_content as new_message to ADK's
+AND passed the same function_response_content as new_message to ADK's
 runner.run_async(). ADK then also persisted the new_message internally,
 resulting in duplicate function_response events with different invocation_ids.
 
-The fix removes the explicit append_event() call when the function_response_content
-is passed as new_message, allowing ADK to be the sole persister.
+The fix keeps the explicit append_event() (required for HITL resumption to work
+because InMemorySessionService.get_session() returns a deep copy and ADK's state
+checks happen before its internal persistence), but sets new_message = None to
+prevent the runner from appending a duplicate.
 """
 
 import pytest
 import asyncio
+import time
 from unittest.mock import patch, AsyncMock
 
 from ag_ui.core import (
     RunAgentInput, Tool as AGUITool,
     UserMessage, ToolMessage, AssistantMessage, ToolCall, FunctionCall,
 )
+from google.adk.sessions.session import Event
+from google.genai import types
 
 from ag_ui_adk import ADKAgent
 from ag_ui_adk.session_manager import SessionManager
@@ -66,10 +71,6 @@ class TestDuplicateFunctionResponseFix:
         tool_args: dict,
     ):
         """Helper to set up a session with a pending tool call."""
-        from google.adk.sessions.session import Event
-        from google.genai import types
-        import time
-
         app_name = "test_app"
 
         # Create the session
@@ -134,7 +135,8 @@ class TestDuplicateFunctionResponseFix:
 
         Before fix: 2 function_response events (one from explicit append_event,
                     one from ADK's runner processing new_message)
-        After fix:  1 function_response event (only from ADK's runner)
+        After fix:  1 function_response event (from explicit append_event only,
+                    new_message is set to None so runner doesn't duplicate)
         """
         thread_id = "test_no_duplicate_without_user"
         tool_call_id = "lro_tool_call_123"
@@ -193,10 +195,14 @@ class TestDuplicateFunctionResponseFix:
             ag_ui_adk, thread_id, tool_call_id, "frontend_action", {"action": "render"}
         )
 
-        # Mock the runner to avoid actual LLM calls but still trigger the persistence path
+        # Mock the runner to avoid actual LLM calls
+        # The mock runner doesn't persist anything - this verifies our code does the right thing
         class MockRunner:
             async def run_async(self, **kwargs):
-                # The mock runner doesn't persist anything - only our code does
+                # Verify that new_message is None (our fix)
+                assert kwargs.get('new_message') is None, (
+                    f"new_message should be None to prevent duplicate, got: {kwargs.get('new_message')}"
+                )
                 return
                 yield
 
@@ -229,19 +235,19 @@ class TestDuplicateFunctionResponseFix:
             user_id="test_user"
         )
 
-        # The fix ensures we DON'T explicitly persist when ADK will handle it
-        # Since our mock runner doesn't persist anything, we expect 0 from our code path
-        # (In real usage with real ADK, ADK's runner would persist exactly 1)
         function_response_count = self._count_function_responses_in_session(
             session, tool_call_id
         )
 
-        # With the fix: we removed the explicit append_event, so our code doesn't persist
-        # The real ADK runner would persist one, but our mock doesn't
-        assert function_response_count == 0, (
-            f"Expected 0 function_response events from ag-ui-adk code "
-            f"(ADK runner would add 1 in production), but found {function_response_count}. "
-            f"This suggests duplicate persistence bug may have regressed."
+        # With the fix:
+        # - We explicitly append_event (1 event from our code)
+        # - new_message = None, so runner doesn't append another
+        # - Total: exactly 1 function_response event
+        assert function_response_count == 1, (
+            f"Expected exactly 1 function_response event (from explicit append_event), "
+            f"but found {function_response_count}. "
+            f"If count is 0, the explicit append was removed (HITL resumption will break). "
+            f"If count is 2, new_message is not None (duplicate bug)."
         )
 
     @pytest.mark.asyncio
@@ -314,6 +320,9 @@ class TestDuplicateFunctionResponseFix:
         # Mock the runner
         class MockRunner:
             async def run_async(self, **kwargs):
+                # With trailing user message, new_message should be the user message (not None)
+                new_msg = kwargs.get('new_message')
+                assert new_msg is not None, "new_message should be the user message"
                 return
                 yield
 
@@ -351,7 +360,7 @@ class TestDuplicateFunctionResponseFix:
             session, tool_call_id
         )
 
-        # With trailing user message, we SHOULD explicitly persist (ADK gets user msg)
+        # With trailing user message, we explicitly persist (ADK gets user msg as new_message)
         assert function_response_count == 1, (
             f"Expected exactly 1 function_response event when tool result has "
             f"trailing user message, but found {function_response_count}. "
@@ -360,10 +369,11 @@ class TestDuplicateFunctionResponseFix:
 
     @pytest.mark.asyncio
     async def test_multiple_tool_results_without_user_message(self, ag_ui_adk):
-        """Test multiple tool results without trailing user message don't cause duplicates.
+        """Test multiple tool results without trailing user message - exactly 1 event per tool.
 
-        When multiple tool results arrive without a user message, we should not
-        persist any function_response events explicitly (ADK handles all of them).
+        When multiple tool results arrive without a user message, we should persist
+        exactly ONE function_response event per tool (all in a single Content with
+        multiple parts). The runner receives new_message = None, so no duplicates.
         """
         thread_id = "test_multiple_tools_no_user"
         tool_call_id_1 = "lro_tool_call_multi_1"
@@ -452,10 +462,6 @@ class TestDuplicateFunctionResponseFix:
         )
 
         # Add FunctionCall events for both
-        from google.adk.sessions.session import Event
-        from google.genai import types
-        import time
-
         for tool_id, tool_name in [(tool_call_id_1, "action_one"), (tool_call_id_2, "action_two")]:
             fc_content = types.Content(
                 parts=[
@@ -478,6 +484,10 @@ class TestDuplicateFunctionResponseFix:
         # Mock the runner
         class MockRunner:
             async def run_async(self, **kwargs):
+                # new_message should be None (our fix)
+                assert kwargs.get('new_message') is None, (
+                    f"new_message should be None, got: {kwargs.get('new_message')}"
+                )
                 return
                 yield
 
@@ -501,7 +511,7 @@ class TestDuplicateFunctionResponseFix:
                 message_batch=None  # No trailing user message
             )
 
-        # Verify: no function_response events from our code
+        # Verify: exactly 1 function_response per tool (both in same event with multiple parts)
         session = await ag_ui_adk._session_manager._session_service.get_session(
             session_id=backend_session_id,
             app_name=app_name,
@@ -511,9 +521,9 @@ class TestDuplicateFunctionResponseFix:
         count_1 = self._count_function_responses_in_session(session, tool_call_id_1)
         count_2 = self._count_function_responses_in_session(session, tool_call_id_2)
 
-        assert count_1 == 0, (
-            f"Expected 0 function_response for tool 1, found {count_1}"
+        assert count_1 == 1, (
+            f"Expected exactly 1 function_response for tool 1, found {count_1}"
         )
-        assert count_2 == 0, (
-            f"Expected 0 function_response for tool 2, found {count_2}"
+        assert count_2 == 1, (
+            f"Expected exactly 1 function_response for tool 2, found {count_2}"
         )
