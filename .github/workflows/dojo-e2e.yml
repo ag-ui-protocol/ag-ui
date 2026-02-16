@@ -75,68 +75,104 @@ jobs:
         include:
           - suite: a2a-middleware
             test_path: tests/a2aMiddlewareTests
-            services: ["dojo", "a2a-middleware"]
             wait_on: http://localhost:9999,tcp:localhost:8011,tcp:localhost:8012,tcp:localhost:8013,tcp:localhost:8014
+            install_cmd: cd middlewares/a2a-middleware/examples && uv sync
+            server_cmd: |
+              (cd middlewares/a2a-middleware/examples && PORT=8011 uv run buildings_management.py) &
+              (cd middlewares/a2a-middleware/examples && PORT=8012 uv run finance.py) &
+              (cd middlewares/a2a-middleware/examples && PORT=8013 uv run it.py) &
+              (cd middlewares/a2a-middleware/examples && PORT=8014 uv run orchestrator.py) &
+            needs_langgraph_env: false
           - suite: adk-middleware
             test_path: tests/adkMiddlewareTests
-            services: ["dojo", "adk-middleware"]
             wait_on: http://localhost:9999,tcp:localhost:8010
+            install_cmd: cd integrations/adk-middleware/python/examples && uv sync
+            server_cmd: (cd integrations/adk-middleware/python/examples && PORT=8010 uv run dev) &
+            needs_langgraph_env: false
           - suite: agno
             test_path: tests/agnoTests
-            services: ["dojo", "agno"]
             wait_on: http://localhost:9999,tcp:localhost:8002
+            install_cmd: cd integrations/agno/python/examples && uv sync
+            server_cmd: (cd integrations/agno/python/examples && PORT=8002 uv run dev) &
+            needs_langgraph_env: false
           - suite: crew-ai
             test_path: tests/crewAITests
-            services: ["dojo", "crew-ai"]
             wait_on: http://localhost:9999,tcp:localhost:8003
-          - suite: langgraph-python
-            test_path: tests/langgraphPythonTests
-            services: ["dojo", "langgraph-platform-python"]
-            wait_on: http://localhost:9999,tcp:localhost:8005
-          - suite: langgraph-typescript
-            test_path: tests/langgraphTypescriptTests
-            services: ["dojo", "langgraph-platform-typescript"]
-            wait_on: http://localhost:9999,tcp:localhost:8006
+            install_cmd: cd integrations/crew-ai/python && poetry install
+            server_cmd: (cd integrations/crew-ai/python && PORT=8003 poetry run dev) &
+            needs_langgraph_env: false
           - suite: langgraph-fastapi
             test_path: tests/langgraphFastAPITests
-            services: ["dojo", "langgraph-fastapi"]
             wait_on: http://localhost:9999,tcp:localhost:8004
+            install_cmd: cd integrations/langgraph/python/examples && POETRY_VIRTUALENVS_IN_PROJECT=false poetry install
+            server_cmd: (cd integrations/langgraph/python/examples && POETRY_VIRTUALENVS_IN_PROJECT=false PORT=8004 poetry run dev) &
+            needs_langgraph_env: true
+          - suite: langgraph-python
+            test_path: tests/langgraphPythonTests
+            wait_on: http://localhost:9999,tcp:localhost:8005
+            install_cmd: ""
+            server_cmd: (cd integrations/langgraph/python/examples && pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8005) &
+            needs_langgraph_env: true
+          - suite: langgraph-typescript
+            test_path: tests/langgraphTypescriptTests
+            wait_on: http://localhost:9999,tcp:localhost:8006
+            install_cmd: cd integrations/langgraph/typescript/examples && pnpm install
+            server_cmd: (cd integrations/langgraph/typescript/examples && pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8006) &
+            needs_langgraph_env: true
           - suite: llama-index
             test_path: tests/llamaIndexTests
-            services: ["dojo", "llama-index"]
             wait_on: http://localhost:9999,tcp:localhost:8007
+            install_cmd: cd integrations/llama-index/python/examples && uv sync
+            server_cmd: (cd integrations/llama-index/python/examples && PORT=8007 uv run dev) &
+            needs_langgraph_env: false
           - suite: mastra
             test_path: tests/mastraTests
-            services: ["dojo", "mastra"]
             wait_on: http://localhost:9999,tcp:localhost:8008
+            install_cmd: cd integrations/mastra/typescript/examples && pnpm install --no-frozen-lockfile
+            server_cmd: (cd integrations/mastra/typescript/examples && PORT=8008 npm run dev) &
+            needs_langgraph_env: false
           - suite: mastra-agent-local
             test_path: tests/mastraAgentLocalTests
-            services: ["dojo"]
             wait_on: http://localhost:9999
+            install_cmd: ""
+            server_cmd: ""
+            needs_langgraph_env: false
           - suite: middleware-starter
             test_path: tests/middlewareStarterTests
-            services: ["dojo"]
             wait_on: http://localhost:9999
+            install_cmd: ""
+            server_cmd: ""
+            needs_langgraph_env: false
           - suite: pydantic-ai
             test_path: tests/pydanticAITests
-            services: ["dojo", "pydantic-ai"]
             wait_on: http://localhost:9999,tcp:localhost:8009
+            install_cmd: cd integrations/pydantic-ai/python/examples && uv sync
+            server_cmd: (cd integrations/pydantic-ai/python/examples && PORT=8009 uv run dev) &
+            needs_langgraph_env: false
           - suite: server-starter
             test_path: tests/serverStarterTests
-            services: ["dojo", "server-starter"]
             wait_on: http://localhost:9999,tcp:localhost:8000
+            install_cmd: cd integrations/server-starter/python/examples && poetry install
+            server_cmd: (cd integrations/server-starter/python/examples && PORT=8000 poetry run dev) &
+            needs_langgraph_env: false
           - suite: server-starter-all
             test_path: tests/serverStarterAllFeaturesTests
-            services: ["dojo", "server-starter-all"]
             wait_on: http://localhost:9999,tcp:localhost:8001
+            install_cmd: cd integrations/server-starter-all-features/python/examples && poetry install
+            server_cmd: (cd integrations/server-starter-all-features/python/examples && PORT=8001 poetry run dev) &
+            needs_langgraph_env: false
           - suite: aws-strands
             test_path: tests/awsStrandsTests
-            services: ["dojo", "aws-strands"]
             wait_on: http://localhost:9999,tcp:localhost:8017
+            install_cmd: cd integrations/aws-strands/python/examples && poetry install
+            server_cmd: (cd integrations/aws-strands/python/examples && PORT=8017 poetry run dev) &
+            needs_langgraph_env: false
           # - suite: vercel-ai-sdk
           #   test_path: tests/vercelAISdkTests
-          #   services: ["dojo"]
           #   wait_on: http://localhost:9999
+          #   install_cmd: ""
+          #   server_cmd: ""
+          #   needs_langgraph_env: false
 
     steps:
       - name: Checkout code
@@ -195,39 +231,55 @@ jobs:
       - name: Build project
         run: pnpm run build
 
-      - name: Prepare dojo for e2e
-        working-directory: apps/dojo
-        if: ${{ join(matrix.services, ',') != '' }}
-        run: node ./scripts/prep-dojo-everything.js --only ${{ join(matrix.services, ',') }}
+      - name: Install integration dependencies
+        if: ${{ matrix.install_cmd != '' }}
+        run: ${{ matrix.install_cmd }}
 
       - name: Install e2e dependencies
         working-directory: apps/dojo/e2e
-        run: |
-          pnpm install
+        run: pnpm install
 
-      - name: write langgraph env files
+      - name: Write langgraph env files
+        if: ${{ matrix.needs_langgraph_env == true }}
         working-directory: integrations/langgraph
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
-        if: ${{ contains(join(matrix.services, ','), 'langgraph-fastapi') || contains(join(matrix.services, ','), 'langgraph-platform-python') || contains(join(matrix.services, ','), 'langgraph-platform-typescript') }}
         run: |
           echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > python/examples/.env
           echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> python/examples/.env
           echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > typescript/examples/.env
           echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> typescript/examples/.env
 
-      - name: Run dojo+agents
+      - name: Start services
         uses: JarvusInnovations/background-action@v1
         env:
+          PORT: "9999"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-        if: ${{ join(matrix.services, ',') != '' && contains(join(matrix.services, ','), 'dojo') }}
+          SERVER_STARTER_URL: http://localhost:8000
+          SERVER_STARTER_ALL_FEATURES_URL: http://localhost:8001
+          AGNO_URL: http://localhost:8002
+          CREW_AI_URL: http://localhost:8003
+          LANGGRAPH_FAST_API_URL: http://localhost:8004
+          LANGGRAPH_PYTHON_URL: http://localhost:8005
+          LANGGRAPH_TYPESCRIPT_URL: http://localhost:8006
+          LLAMA_INDEX_URL: http://localhost:8007
+          MASTRA_URL: http://localhost:8008
+          PYDANTIC_AI_URL: http://localhost:8009
+          ADK_MIDDLEWARE_URL: http://localhost:8010
+          A2A_MIDDLEWARE_BUILDINGS_MANAGEMENT_URL: http://localhost:8011
+          A2A_MIDDLEWARE_FINANCE_URL: http://localhost:8012
+          A2A_MIDDLEWARE_IT_URL: http://localhost:8013
+          A2A_MIDDLEWARE_ORCHESTRATOR_URL: http://localhost:8014
+          AWS_STRANDS_URL: http://localhost:8017
+          NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: "cpkdojo.local___CopilotKit Feature Viewer"
         with:
           run: |
-            node ../scripts/run-dojo-everything.js --only ${{ join(matrix.services, ',') }}
-          working-directory: apps/dojo/e2e
+            (cd apps/dojo && pnpm run start) &
+            ${{ matrix.server_cmd }}
+            wait
           wait-on: ${{ matrix.wait_on }}
           wait-for: 300000
 
