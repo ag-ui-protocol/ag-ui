@@ -20,6 +20,7 @@ import httpx
 
 from ag_ui.core import (
     RunAgentInput, UserMessage, AssistantMessage, ToolMessage,
+    ReasoningMessage,
     EventType, MessagesSnapshotEvent, ToolCall, FunctionCall
 )
 
@@ -60,6 +61,43 @@ def create_mock_adk_event(
         event.content = None
 
     # Mock function call methods
+    event.get_function_calls = MagicMock(return_value=function_calls or [])
+    event.get_function_responses = MagicMock(return_value=function_responses or [])
+
+    return event
+
+
+def create_mock_adk_event_with_parts(
+    event_id: str = None,
+    author: str = "test_agent",
+    parts: List[dict] = None,
+    partial: bool = False,
+    function_calls: List[Any] = None,
+    function_responses: List[Any] = None,
+):
+    """Create a mock ADK event with explicit parts control.
+
+    Each item in parts should be a dict with keys:
+        text: str - the text content
+        thought: bool - whether this is a thought part (default False)
+    """
+    event = MagicMock()
+    event.id = event_id or str(uuid.uuid4())
+    event.author = author
+    event.partial = partial
+
+    event.content = MagicMock()
+    if parts:
+        mock_parts = []
+        for p in parts:
+            part = MagicMock()
+            part.text = p.get("text")
+            part.thought = p.get("thought", False)
+            mock_parts.append(part)
+        event.content.parts = mock_parts
+    else:
+        event.content = None
+
     event.get_function_calls = MagicMock(return_value=function_calls or [])
     event.get_function_responses = MagicMock(return_value=function_responses or [])
 
@@ -290,6 +328,234 @@ class TestAdkEventsToMessages:
         assert isinstance(messages[0], AssistantMessage)
         assert messages[0].content is None or messages[0].content == ""
         assert len(messages[0].tool_calls) == 1
+
+
+class TestThoughtPartSeparation:
+    """Tests for separating thought parts from regular text in adk_events_to_messages.
+
+    When extended thinking is enabled, ADK events contain Part objects with
+    thought=True alongside regular text parts. These must be separated so that
+    internal model reasoning is not shown as chat content to the user.
+    """
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_thought_parts_emitted_as_reasoning_message(self, mock_thought):
+        """Thought parts should become ReasoningMessage, not part of AssistantMessage.content."""
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-1",
+            author="model",
+            parts=[
+                {"text": "Let me think about this carefully.", "thought": True},
+                {"text": "Here is my answer."},
+            ],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 2
+        assert isinstance(messages[0], ReasoningMessage)
+        assert messages[0].role == "reasoning"
+        assert messages[0].content == "Let me think about this carefully."
+        assert messages[0].id == "evt-1-reasoning"
+
+        assert isinstance(messages[1], AssistantMessage)
+        assert messages[1].role == "assistant"
+        assert messages[1].content == "Here is my answer."
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_multiple_thought_parts_concatenated(self, mock_thought):
+        """Multiple thought parts in one event should be concatenated into one ReasoningMessage."""
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-2",
+            author="model",
+            parts=[
+                {"text": "First I need to check ", "thought": True},
+                {"text": "the user's request.", "thought": True},
+                {"text": "Done!"},
+            ],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 2
+        assert isinstance(messages[0], ReasoningMessage)
+        assert messages[0].content == "First I need to check the user's request."
+        assert isinstance(messages[1], AssistantMessage)
+        assert messages[1].content == "Done!"
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_thought_only_event_emits_reasoning_only(self, mock_thought):
+        """An event with only thought parts should emit only a ReasoningMessage."""
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-3",
+            author="model",
+            parts=[
+                {"text": "Internal reasoning only.", "thought": True},
+            ],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        assert isinstance(messages[0], ReasoningMessage)
+        assert messages[0].content == "Internal reasoning only."
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_user_message_thought_parts_excluded(self, mock_thought):
+        """Thought parts in user events should be excluded entirely."""
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-4",
+            author="user",
+            parts=[
+                {"text": "Some injected thought.", "thought": True},
+                {"text": "Hello there!"},
+            ],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        assert isinstance(messages[0], UserMessage)
+        assert messages[0].content == "Hello there!"
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_user_message_with_only_thought_parts_skipped(self, mock_thought):
+        """User events containing only thought parts should be skipped."""
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-5",
+            author="user",
+            parts=[
+                {"text": "Only thought content.", "thought": True},
+            ],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 0
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_thought_parts_with_tool_calls(self, mock_thought):
+        """Thought parts and tool calls should both be preserved correctly."""
+        fc = create_mock_function_call(name="search", args={"q": "test"}, fc_id="fc-1")
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-6",
+            author="model",
+            parts=[
+                {"text": "I should search for this.", "thought": True},
+                {"text": "Let me search."},
+            ],
+            function_calls=[fc],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 2
+        assert isinstance(messages[0], ReasoningMessage)
+        assert messages[0].content == "I should search for this."
+        assert isinstance(messages[1], AssistantMessage)
+        assert messages[1].content == "Let me search."
+        assert messages[1].tool_calls is not None
+        assert len(messages[1].tool_calls) == 1
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_thought_only_with_tool_calls(self, mock_thought):
+        """Event with only thought parts + tool calls should emit both messages."""
+        fc = create_mock_function_call(name="do_it", args={}, fc_id="fc-2")
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-7",
+            author="model",
+            parts=[
+                {"text": "Internal reasoning before tool call.", "thought": True},
+            ],
+            function_calls=[fc],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 2
+        assert isinstance(messages[0], ReasoningMessage)
+        assert isinstance(messages[1], AssistantMessage)
+        assert messages[1].content is None
+        assert len(messages[1].tool_calls) == 1
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=False)
+    def test_no_thought_support_treats_all_as_text(self, mock_thought):
+        """When SDK lacks thought support, all parts are treated as regular text."""
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-8",
+            author="model",
+            parts=[
+                {"text": "Would be thought.", "thought": True},
+                {"text": " Regular text."},
+            ],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        # Without thought support, everything is concatenated as before
+        assert len(messages) == 1
+        assert isinstance(messages[0], AssistantMessage)
+        assert messages[0].content == "Would be thought. Regular text."
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_conversation_with_reasoning_preserves_order(self, mock_thought):
+        """Full conversation with reasoning should preserve correct message order."""
+        events = [
+            create_mock_adk_event(event_id="1", author="user", text="Hi"),
+            create_mock_adk_event_with_parts(
+                event_id="2",
+                author="model",
+                parts=[
+                    {"text": "The user said hi.", "thought": True},
+                    {"text": "Hello!"},
+                ],
+            ),
+            create_mock_adk_event(event_id="3", author="user", text="What is 2+2?"),
+            create_mock_adk_event_with_parts(
+                event_id="4",
+                author="model",
+                parts=[
+                    {"text": "Simple arithmetic.", "thought": True},
+                    {"text": "4"},
+                ],
+            ),
+        ]
+
+        messages = adk_events_to_messages(events)
+
+        assert len(messages) == 6
+        assert isinstance(messages[0], UserMessage)
+        assert messages[0].content == "Hi"
+        assert isinstance(messages[1], ReasoningMessage)
+        assert messages[1].content == "The user said hi."
+        assert isinstance(messages[2], AssistantMessage)
+        assert messages[2].content == "Hello!"
+        assert isinstance(messages[3], UserMessage)
+        assert messages[3].content == "What is 2+2?"
+        assert isinstance(messages[4], ReasoningMessage)
+        assert messages[4].content == "Simple arithmetic."
+        assert isinstance(messages[5], AssistantMessage)
+        assert messages[5].content == "4"
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_reasoning_message_serializes_correctly(self, mock_thought):
+        """ReasoningMessage should serialize with role='reasoning' for JSON responses."""
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-ser",
+            author="model",
+            parts=[
+                {"text": "Thinking...", "thought": True},
+                {"text": "Answer."},
+            ],
+        )
+
+        messages = adk_events_to_messages([event])
+        serialized = [msg.model_dump(by_alias=True) for msg in messages]
+
+        assert serialized[0]["role"] == "reasoning"
+        assert serialized[0]["content"] == "Thinking..."
+        assert serialized[1]["role"] == "assistant"
+        assert serialized[1]["content"] == "Answer."
 
 
 class TestTranslateFunctionCallsToToolCalls:
