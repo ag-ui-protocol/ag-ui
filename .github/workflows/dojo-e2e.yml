@@ -284,10 +284,11 @@ jobs:
           A2A_MIDDLEWARE_ORCHESTRATOR_URL: http://localhost:8014
           AWS_STRANDS_URL: http://localhost:8017
           NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: "cpkdojo.local___CopilotKit Feature Viewer"
+          SERVER_CMD: ${{ matrix.server_cmd }}
         with:
           run: |
             cd apps/dojo && pnpm run start &
-            ${{ matrix.server_cmd }}
+            eval "$SERVER_CMD"
           wait-on: ${{ matrix.wait_on }}
           wait-for: 300000
 
