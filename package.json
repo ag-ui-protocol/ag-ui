@@ -3,9 +3,11 @@
   "author": "Markus Ecker <markus.ecker@gmail.com>",
   "private": true,
   "scripts": {
-    "build": "nx run-many -t build --exclude=apps/** && nx run-many -t build --projects=apps/**",
+    "build": "nx run-many -t build --exclude=apps/**",
+    "build:packages": "nx run-many -t build --projects=sdks/**",
     "build:integrations": "nx run-many -t build --projects=integrations/**",
     "build:middlewares": "nx run-many -t build --projects=middlewares/**",
+    "build:dojo": "nx run-many -t build --projects=demo-viewer",
     "build:examples": "nx run-many -t build --projects=apps/**",
     "clean": "git clean -fdX --exclude=\"!.env\"",
     "build:clean": "git clean -fdX --exclude=\"!.env\" && pnpm install && pnpm run build",
