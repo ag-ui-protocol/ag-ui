@@ -67,7 +67,7 @@ const ALL_SERVICES = {
     env: { PORT: 8002 },
   }],
   'crew-ai': [{
-    command: 'poetry run dev',
+    command: 'uv run dev',
     name: 'CrewAI',
     cwd: path.join(integrationsRoot, 'crew-ai/python'),
     env: { PORT: 8003 },
