@@ -25,6 +25,7 @@ from google.adk.agents import BaseAgent, LlmAgent, RunConfig as ADKRunConfig
 from google.adk.agents.run_config import StreamingMode
 from google.adk.agents.llm_agent import InstructionProvider, ToolUnion
 from google.adk.sessions import BaseSessionService, InMemorySessionService
+from google.adk.sessions.session import Event
 from google.adk.artifacts import BaseArtifactService, InMemoryArtifactService
 from google.adk.memory import BaseMemoryService, InMemoryMemoryService
 from google.adk.auth.credential_service.base_credential_service import BaseCredentialService
@@ -1626,6 +1627,9 @@ class ADKAgent:
             # message_batch was None but unseen_messages contained valid user messages
             user_message = await self._convert_latest_message(input, unseen_messages)
 
+            # Track invocation_id for tool-only submissions (when new_message will be None)
+            tool_only_invocation_id: Optional[str] = None
+
             # if there is a tool response submission by the user, add FunctionResponse to session first
             if active_tool_results and user_message:
                 # We have BOTH tool results AND a user message
@@ -1668,10 +1672,6 @@ class ADKAgent:
 
                 # Add FunctionResponse as separate event to session
                 # (session was already obtained from _ensure_session_exists above)
-
-                from google.adk.sessions.session import Event
-                import time
-
                 function_response_content = types.Content(parts=function_response_parts, role='user')
                 # Tag FunctionResponse with the original invocation_id so ADK can
                 # match it to the function_call in session events
@@ -1731,25 +1731,18 @@ class ADKAgent:
                     )
                     function_response_parts.append(updated_function_response_part)
 
-                # Persist FunctionResponse event so DatabaseSessionService has invocation_id
-                from google.adk.sessions.session import Event
-                import time
-
+                # Create function_response_content but DON'T pre-persist to avoid duplicates.
+                # Instead, pass as new_message with explicit invocation_id to control the ID ADK uses.
                 function_response_content = types.Content(parts=function_response_parts, role='user')
-                # Tag FunctionResponse with the original invocation_id so ADK can
-                # match it to the function_call in session events
-                resume_invocation_id = stored_invocation_id or input.run_id
-                function_response_event = Event(
-                    timestamp=time.time(),
-                    author='user',
-                    content=function_response_content,
-                    invocation_id=resume_invocation_id,
-                )
-                logger.debug(f"Creating FunctionResponse event with invocation_id={resume_invocation_id}")
+                # Use input.run_id (not stored_invocation_id) as the invocation_id for this tool response
+                # This ensures DatabaseSessionService compatibility
+                tool_response_invocation_id = input.run_id
 
-                await self._session_manager._session_service.append_event(session, function_response_event)
-
+                # Pass both new_message AND invocation_id to ADK.
+                # This tells ADK: "process this message, but use THIS specific invocation_id"
+                # (rather than auto-generating an e-xxx ID)
                 new_message = function_response_content
+                tool_only_invocation_id = tool_response_invocation_id
             else:
                 # No tool results, just use the user message
                 # If user_message is None (e.g., unseen_messages was empty because all were
@@ -1834,14 +1827,18 @@ class ADKAgent:
                 "run_config": run_config
             }
 
-            # Conditionally pass invocation_id based on root agent type.
+            # Conditionally pass invocation_id based on root agent type and scenario.
             # Composite agents (SequentialAgent, LoopAgent) need it so ADK calls
             # populate_invocation_agent_states() to restore internal state.
-            # Standalone LlmAgents must NOT receive it — triggers ValueError
-            # in _get_subagent_to_resume().
+            # For tool responses, we pass tool_only_invocation_id (input.run_id) to ensure
+            # ADK uses the client's run_id instead of auto-generating an e-xxx ID.
             if stored_invocation_id and self._is_adk_resumable() and self._root_agent_needs_invocation_id():
                 run_kwargs["invocation_id"] = stored_invocation_id
                 logger.debug(f"HITL resumption with invocation_id: {stored_invocation_id}")
+            elif tool_only_invocation_id and self._is_adk_resumable():
+                # Tool response case: use client's run_id as invocation_id
+                run_kwargs["invocation_id"] = tool_only_invocation_id
+                logger.debug(f"Tool response with explicit invocation_id: {tool_only_invocation_id}")
 
             logger.debug(f"Calling runner.run_async with session_id={backend_session_id}, has_message={new_message is not None}")
 

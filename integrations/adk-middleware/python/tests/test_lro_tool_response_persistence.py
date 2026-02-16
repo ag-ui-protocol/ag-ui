@@ -161,11 +161,6 @@ class TestLROToolResponseIntegration:
         )
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="Known duplicate FunctionResponse persistence on main (issue #1074). "
-               "Fix expected in PR #1075.",
-        strict=False,
-    )
     async def test_tool_result_persists_single_function_response(
         self, check_api_key, simple_agent
     ):
@@ -509,11 +504,6 @@ class TestHITLResumptionIntegration:
         )
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="Known duplicate FunctionResponse persistence on main (issue #1074). "
-               "Fix expected in PR #1075.",
-        strict=False,
-    )
     async def test_hitl_resumption_preserves_invocation_context(
         self, check_api_key, hitl_agent
     ):
