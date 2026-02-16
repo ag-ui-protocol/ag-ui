@@ -260,35 +260,64 @@ jobs:
           echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > typescript/examples/.env
           echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> typescript/examples/.env
 
+      - name: Write startup script
+        env:
+          SERVER_CMD: ${{ matrix.server_cmd }}
+        run: |
+          cat > /tmp/start-services.sh << 'DOJO_EOF'
+          #!/usr/bin/env bash
+          set -m
+
+          export PORT=9999
+          export SERVER_STARTER_URL=http://localhost:8000
+          export SERVER_STARTER_ALL_FEATURES_URL=http://localhost:8001
+          export AGNO_URL=http://localhost:8002
+          export CREW_AI_URL=http://localhost:8003
+          export LANGGRAPH_FAST_API_URL=http://localhost:8004
+          export LANGGRAPH_PYTHON_URL=http://localhost:8005
+          export LANGGRAPH_TYPESCRIPT_URL=http://localhost:8006
+          export LLAMA_INDEX_URL=http://localhost:8007
+          export MASTRA_URL=http://localhost:8008
+          export PYDANTIC_AI_URL=http://localhost:8009
+          export ADK_MIDDLEWARE_URL=http://localhost:8010
+          export A2A_MIDDLEWARE_BUILDINGS_MANAGEMENT_URL=http://localhost:8011
+          export A2A_MIDDLEWARE_FINANCE_URL=http://localhost:8012
+          export A2A_MIDDLEWARE_IT_URL=http://localhost:8013
+          export A2A_MIDDLEWARE_ORCHESTRATOR_URL=http://localhost:8014
+          export AWS_STRANDS_URL=http://localhost:8017
+          export NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE='cpkdojo.local___CopilotKit Feature Viewer'
+
+          echo "::group::Starting dojo"
+          (cd apps/dojo && pnpm run start) &
+          DOJO_PID=$!
+          echo "Dojo PID: $DOJO_PID"
+          echo "::endgroup::"
+          DOJO_EOF
+
+          # Append server command from env var (preserves newlines)
+          if [ "$SERVER_CMD" != "wait" ] && [ -n "$SERVER_CMD" ]; then
+            echo "" >> /tmp/start-services.sh
+            echo "echo '::group::Starting integration server'" >> /tmp/start-services.sh
+            echo "$SERVER_CMD" >> /tmp/start-services.sh
+            echo "echo '::endgroup::'" >> /tmp/start-services.sh
+          fi
+
+          echo "" >> /tmp/start-services.sh
+          echo "wait" >> /tmp/start-services.sh
+
+          chmod +x /tmp/start-services.sh
+          echo "--- Generated startup script ---"
+          cat /tmp/start-services.sh
+          echo "--- End startup script ---"
+
       - name: Start services
         uses: JarvusInnovations/background-action@v1
         env:
-          PORT: "9999"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          SERVER_STARTER_URL: http://localhost:8000
-          SERVER_STARTER_ALL_FEATURES_URL: http://localhost:8001
-          AGNO_URL: http://localhost:8002
-          CREW_AI_URL: http://localhost:8003
-          LANGGRAPH_FAST_API_URL: http://localhost:8004
-          LANGGRAPH_PYTHON_URL: http://localhost:8005
-          LANGGRAPH_TYPESCRIPT_URL: http://localhost:8006
-          LLAMA_INDEX_URL: http://localhost:8007
-          MASTRA_URL: http://localhost:8008
-          PYDANTIC_AI_URL: http://localhost:8009
-          ADK_MIDDLEWARE_URL: http://localhost:8010
-          A2A_MIDDLEWARE_BUILDINGS_MANAGEMENT_URL: http://localhost:8011
-          A2A_MIDDLEWARE_FINANCE_URL: http://localhost:8012
-          A2A_MIDDLEWARE_IT_URL: http://localhost:8013
-          A2A_MIDDLEWARE_ORCHESTRATOR_URL: http://localhost:8014
-          AWS_STRANDS_URL: http://localhost:8017
-          NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: "cpkdojo.local___CopilotKit Feature Viewer"
-          SERVER_CMD: ${{ matrix.server_cmd }}
         with:
-          run: |
-            cd apps/dojo && pnpm run start &
-            eval "$SERVER_CMD"
+          run: bash /tmp/start-services.sh
           wait-on: ${{ matrix.wait_on }}
           wait-for: 300000
 
