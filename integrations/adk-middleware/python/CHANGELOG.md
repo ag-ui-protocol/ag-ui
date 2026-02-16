@@ -45,6 +45,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIXED**: Duplicate function_response events when using LongRunningFunctionTool (#1074, #1075)
+  - Eliminated duplicate function_response events that were persisted to session database with different invocation_ids
+  - Fix works for all agent types (simple LlmAgent and composite SequentialAgent/LoopAgent)
+  - Maintains correct invocation_id from client's run_id for DatabaseSessionService compatibility
+  - Preserves HITL resumption functionality for composite agents
+  - Supports stateless client patterns that re-send full message history
+  - Thanks to **@bajayo** for identifying the issue, providing comprehensive tests (529 lines!), and implementing the initial fix
+  - Regression fix ensures compatibility across all agent types and usage patterns
+
 - **FIXED**: Invocation ID handling for HITL resumption with composite agents (#1080)
   - Fixed "No agent to transfer to" errors when resuming after HITL pauses by conditionally passing `invocation_id` based on root agent type
   - Composite orchestrators (SequentialAgent, LoopAgent) now correctly receive `invocation_id` in `run_async()` to restore internal state on HITL resumption
