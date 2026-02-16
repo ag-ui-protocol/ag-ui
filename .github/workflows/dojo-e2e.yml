@@ -195,6 +195,11 @@ jobs:
       - name: Build project
         run: pnpm run build
 
+      - name: Prepare dojo for e2e
+        working-directory: apps/dojo
+        if: ${{ join(matrix.services, ',') != '' }}
+        run: node ./scripts/prep-dojo-everything.js --only ${{ join(matrix.services, ',') }}
+
       - name: Install e2e dependencies
         working-directory: apps/dojo/e2e
         run: |
