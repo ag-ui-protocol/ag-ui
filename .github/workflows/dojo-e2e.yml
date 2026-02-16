@@ -81,97 +81,97 @@ jobs:
               (cd middlewares/a2a-middleware/examples && PORT=8011 uv run buildings_management.py) &
               (cd middlewares/a2a-middleware/examples && PORT=8012 uv run finance.py) &
               (cd middlewares/a2a-middleware/examples && PORT=8013 uv run it.py) &
-              (cd middlewares/a2a-middleware/examples && PORT=8014 uv run orchestrator.py) &
+              cd middlewares/a2a-middleware/examples && PORT=8014 uv run orchestrator.py
             needs_langgraph_env: false
           - suite: adk-middleware
             test_path: tests/adkMiddlewareTests
             wait_on: http://localhost:9999,tcp:localhost:8010
             install_cmd: cd integrations/adk-middleware/python/examples && uv sync
-            server_cmd: (cd integrations/adk-middleware/python/examples && PORT=8010 uv run dev) &
+            server_cmd: cd integrations/adk-middleware/python/examples && PORT=8010 uv run dev
             needs_langgraph_env: false
           - suite: agno
             test_path: tests/agnoTests
             wait_on: http://localhost:9999,tcp:localhost:8002
             install_cmd: cd integrations/agno/python/examples && uv sync
-            server_cmd: (cd integrations/agno/python/examples && PORT=8002 uv run dev) &
+            server_cmd: cd integrations/agno/python/examples && PORT=8002 uv run dev
             needs_langgraph_env: false
           - suite: crew-ai
             test_path: tests/crewAITests
             wait_on: http://localhost:9999,tcp:localhost:8003
             install_cmd: cd integrations/crew-ai/python && poetry install
-            server_cmd: (cd integrations/crew-ai/python && PORT=8003 poetry run dev) &
+            server_cmd: cd integrations/crew-ai/python && PORT=8003 poetry run dev
             needs_langgraph_env: false
           - suite: langgraph-fastapi
             test_path: tests/langgraphFastAPITests
             wait_on: http://localhost:9999,tcp:localhost:8004
             install_cmd: cd integrations/langgraph/python/examples && POETRY_VIRTUALENVS_IN_PROJECT=false poetry install
-            server_cmd: (cd integrations/langgraph/python/examples && POETRY_VIRTUALENVS_IN_PROJECT=false PORT=8004 poetry run dev) &
+            server_cmd: cd integrations/langgraph/python/examples && POETRY_VIRTUALENVS_IN_PROJECT=false PORT=8004 poetry run dev
             needs_langgraph_env: true
           - suite: langgraph-python
             test_path: tests/langgraphPythonTests
             wait_on: http://localhost:9999,tcp:localhost:8005
             install_cmd: ""
-            server_cmd: (cd integrations/langgraph/python/examples && pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8005) &
+            server_cmd: cd integrations/langgraph/python/examples && pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8005
             needs_langgraph_env: true
           - suite: langgraph-typescript
             test_path: tests/langgraphTypescriptTests
             wait_on: http://localhost:9999,tcp:localhost:8006
             install_cmd: cd integrations/langgraph/typescript/examples && pnpm install
-            server_cmd: (cd integrations/langgraph/typescript/examples && pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8006) &
+            server_cmd: cd integrations/langgraph/typescript/examples && pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8006
             needs_langgraph_env: true
           - suite: llama-index
             test_path: tests/llamaIndexTests
             wait_on: http://localhost:9999,tcp:localhost:8007
             install_cmd: cd integrations/llama-index/python/examples && uv sync
-            server_cmd: (cd integrations/llama-index/python/examples && PORT=8007 uv run dev) &
+            server_cmd: cd integrations/llama-index/python/examples && PORT=8007 uv run dev
             needs_langgraph_env: false
           - suite: mastra
             test_path: tests/mastraTests
             wait_on: http://localhost:9999,tcp:localhost:8008
             install_cmd: cd integrations/mastra/typescript/examples && pnpm install --no-frozen-lockfile
-            server_cmd: (cd integrations/mastra/typescript/examples && PORT=8008 npm run dev) &
+            server_cmd: cd integrations/mastra/typescript/examples && PORT=8008 npm run dev
             needs_langgraph_env: false
           - suite: mastra-agent-local
             test_path: tests/mastraAgentLocalTests
             wait_on: http://localhost:9999
             install_cmd: ""
-            server_cmd: ""
+            server_cmd: wait
             needs_langgraph_env: false
           - suite: middleware-starter
             test_path: tests/middlewareStarterTests
             wait_on: http://localhost:9999
             install_cmd: ""
-            server_cmd: ""
+            server_cmd: wait
             needs_langgraph_env: false
           - suite: pydantic-ai
             test_path: tests/pydanticAITests
             wait_on: http://localhost:9999,tcp:localhost:8009
             install_cmd: cd integrations/pydantic-ai/python/examples && uv sync
-            server_cmd: (cd integrations/pydantic-ai/python/examples && PORT=8009 uv run dev) &
+            server_cmd: cd integrations/pydantic-ai/python/examples && PORT=8009 uv run dev
             needs_langgraph_env: false
           - suite: server-starter
             test_path: tests/serverStarterTests
             wait_on: http://localhost:9999,tcp:localhost:8000
             install_cmd: cd integrations/server-starter/python/examples && poetry install
-            server_cmd: (cd integrations/server-starter/python/examples && PORT=8000 poetry run dev) &
+            server_cmd: cd integrations/server-starter/python/examples && PORT=8000 poetry run dev
             needs_langgraph_env: false
           - suite: server-starter-all
             test_path: tests/serverStarterAllFeaturesTests
             wait_on: http://localhost:9999,tcp:localhost:8001
             install_cmd: cd integrations/server-starter-all-features/python/examples && poetry install
-            server_cmd: (cd integrations/server-starter-all-features/python/examples && PORT=8001 poetry run dev) &
+            server_cmd: cd integrations/server-starter-all-features/python/examples && PORT=8001 poetry run dev
             needs_langgraph_env: false
           - suite: aws-strands
             test_path: tests/awsStrandsTests
             wait_on: http://localhost:9999,tcp:localhost:8017
             install_cmd: cd integrations/aws-strands/python/examples && poetry install
-            server_cmd: (cd integrations/aws-strands/python/examples && PORT=8017 poetry run dev) &
+            server_cmd: cd integrations/aws-strands/python/examples && PORT=8017 poetry run dev
             needs_langgraph_env: false
           # - suite: vercel-ai-sdk
           #   test_path: tests/vercelAISdkTests
           #   wait_on: http://localhost:9999
           #   install_cmd: ""
-          #   server_cmd: ""
+          #   server_cmd: wait
           #   needs_langgraph_env: false
 
     steps:
@@ -231,6 +231,15 @@ jobs:
       - name: Build project
         run: pnpm run build
 
+      - name: Verify dojo build
+        run: |
+          if [ ! -d "apps/dojo/.next" ]; then
+            echo "::warning::.next directory missing after global build, building demo-viewer explicitly"
+            npx nx run demo-viewer:build
+          else
+            echo "✅ .next directory exists"
+          fi
+
       - name: Install integration dependencies
         if: ${{ matrix.install_cmd != '' }}
         run: ${{ matrix.install_cmd }}
@@ -277,9 +286,8 @@ jobs:
           NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: "cpkdojo.local___CopilotKit Feature Viewer"
         with:
           run: |
-            (cd apps/dojo && pnpm run start) &
+            cd apps/dojo && pnpm run start &
             ${{ matrix.server_cmd }}
-            wait
           wait-on: ${{ matrix.wait_on }}
           wait-for: 300000
 
