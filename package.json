@@ -35,5 +35,29 @@
   "engines": {
     "node": ">=18"
   },
-  "version": "0.0.1"
+  "version": "0.0.1",
+  "pnpm": {
+    "overrides": {
+      "@ag-ui/a2a": "workspace:*",
+      "@ag-ui/a2a-middleware": "workspace:*",
+      "@ag-ui/adk": "workspace:*",
+      "@ag-ui/agno": "workspace:*",
+      "@ag-ui/aws-strands": "workspace:*",
+      "@ag-ui/client": "workspace:*",
+      "@ag-ui/core": "workspace:*",
+      "@ag-ui/crewai": "workspace:*",
+      "@ag-ui/encoder": "workspace:*",
+      "@ag-ui/langchain": "workspace:*",
+      "@ag-ui/langgraph": "workspace:*",
+      "@ag-ui/llamaindex": "workspace:*",
+      "@ag-ui/mastra": "workspace:*",
+      "@ag-ui/middleware-starter": "workspace:*",
+      "@ag-ui/proto": "workspace:*",
+      "@ag-ui/pydantic-ai": "workspace:*",
+      "@ag-ui/server-starter": "workspace:*",
+      "@ag-ui/server-starter-all-features": "workspace:*",
+      "@ag-ui/spring-ai": "workspace:*",
+      "@ag-ui/vercel-ai-sdk": "workspace:*"
+    }
+  }
 }
