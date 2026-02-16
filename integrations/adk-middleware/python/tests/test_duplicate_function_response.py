@@ -196,12 +196,23 @@ class TestDuplicateFunctionResponseFix:
         )
 
         # Mock the runner to avoid actual LLM calls
-        # The mock runner doesn't persist anything - this verifies our code does the right thing
+        # This verifies we pass the correct parameters to prevent duplicates
         class MockRunner:
             async def run_async(self, **kwargs):
-                # Verify that new_message is None (our fix)
-                assert kwargs.get('new_message') is None, (
-                    f"new_message should be None to prevent duplicate, got: {kwargs.get('new_message')}"
+                # Regression fix: verify BOTH new_message and invocation_id are provided
+                new_msg = kwargs.get('new_message')
+                inv_id = kwargs.get('invocation_id')
+
+                # Should pass new_message with function_response content
+                assert new_msg is not None, (
+                    "new_message should contain function_response (regression fix approach)"
+                )
+                assert hasattr(new_msg, 'parts'), "new_message should have parts"
+                assert len(new_msg.parts) > 0, "new_message should have at least one part"
+
+                # Should specify invocation_id to prevent ADK auto-generation
+                assert inv_id is not None, (
+                    "invocation_id should be provided to use client's run_id"
                 )
                 return
                 yield
@@ -228,27 +239,10 @@ class TestDuplicateFunctionResponseFix:
                 message_batch=None  # No trailing user message
             )
 
-        # Verify: get the session and count function_response events
-        session = await ag_ui_adk._session_manager._session_service.get_session(
-            session_id=backend_session_id,
-            app_name=app_name,
-            user_id="test_user"
-        )
-
-        function_response_count = self._count_function_responses_in_session(
-            session, tool_call_id
-        )
-
-        # With the fix:
-        # - We explicitly append_event (1 event from our code)
-        # - new_message = None, so runner doesn't append another
-        # - Total: exactly 1 function_response event
-        assert function_response_count == 1, (
-            f"Expected exactly 1 function_response event (from explicit append_event), "
-            f"but found {function_response_count}. "
-            f"If count is 0, the explicit append was removed (HITL resumption will break). "
-            f"If count is 2, new_message is not None (duplicate bug)."
-        )
+        # Note: With the regression fix approach, we pass new_message + invocation_id to ADK.
+        # The MockRunner above validates these parameters are correct.
+        # Integration tests with real ADK runners (test_lro_tool_response_persistence.py)
+        # validate that only 1 function_response event is persisted with the correct invocation_id.
 
     @pytest.mark.asyncio
     async def test_function_response_persisted_with_user_message(self, ag_ui_adk):
@@ -484,9 +478,20 @@ class TestDuplicateFunctionResponseFix:
         # Mock the runner
         class MockRunner:
             async def run_async(self, **kwargs):
-                # new_message should be None (our fix)
-                assert kwargs.get('new_message') is None, (
-                    f"new_message should be None, got: {kwargs.get('new_message')}"
+                # Regression fix: verify BOTH new_message and invocation_id are provided
+                new_msg = kwargs.get('new_message')
+                inv_id = kwargs.get('invocation_id')
+
+                # Should pass new_message with function_response content (multiple parts)
+                assert new_msg is not None, (
+                    "new_message should contain function_response (regression fix approach)"
+                )
+                assert hasattr(new_msg, 'parts'), "new_message should have parts"
+                assert len(new_msg.parts) == 2, "new_message should have 2 parts (2 tool results)"
+
+                # Should specify invocation_id to prevent ADK auto-generation
+                assert inv_id is not None, (
+                    "invocation_id should be provided to use client's run_id"
                 )
                 return
                 yield
@@ -511,19 +516,7 @@ class TestDuplicateFunctionResponseFix:
                 message_batch=None  # No trailing user message
             )
 
-        # Verify: exactly 1 function_response per tool (both in same event with multiple parts)
-        session = await ag_ui_adk._session_manager._session_service.get_session(
-            session_id=backend_session_id,
-            app_name=app_name,
-            user_id="test_user"
-        )
-
-        count_1 = self._count_function_responses_in_session(session, tool_call_id_1)
-        count_2 = self._count_function_responses_in_session(session, tool_call_id_2)
-
-        assert count_1 == 1, (
-            f"Expected exactly 1 function_response for tool 1, found {count_1}"
-        )
-        assert count_2 == 1, (
-            f"Expected exactly 1 function_response for tool 2, found {count_2}"
-        )
+        # Note: With the regression fix approach, we pass new_message + invocation_id to ADK.
+        # The MockRunner above validates these parameters are correct (including 2 parts).
+        # Integration tests with real ADK runners validate that function_response events
+        # are persisted correctly without duplication.
