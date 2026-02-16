@@ -51,11 +51,11 @@ async def get_weather(location: str) -> str:
     Returns:
         Dictionary with temperature, conditions, humidity, wind_speed, feels_like, location.
     """
-    with httpx.Client() as client:
+    async with httpx.AsyncClient() as client:
         geocoding_url = (
             f"https://geocoding-api.open-meteo.com/v1/search?name={location}&count=1"
         )
-        geocoding_response = client.get(geocoding_url)
+        geocoding_response = await client.get(geocoding_url)
         geocoding_data = geocoding_response.json()
 
         if not geocoding_data.get("results"):
@@ -72,8 +72,8 @@ async def get_weather(location: str) -> str:
             f"&current=temperature_2m,apparent_temperature,relative_humidity_2m,"
             f"wind_speed_10m,wind_gusts_10m,weather_code"
         )
-        weather_response = client.get(weather_url)
-        weather_data = weather_response.json()
+        weather_response = await client.get(weather_url)
+        weather_data = await weather_response.json()
         current = weather_data["current"]
 
         return json.dumps({
