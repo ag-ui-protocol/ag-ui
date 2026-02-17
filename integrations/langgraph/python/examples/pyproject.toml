@@ -1,34 +1,37 @@
-[tool.poetry]
-name = "langgraph_agui_dojo"
+[project]
+name = "langgraph-agui-dojo"
 version = "0.1.0"
 description = ""
 readme = "README.md"
-packages = [{ include = "agents" }]
-authors = ["Ran Shem Tov"]
+authors = [
+    { name = "Ran Shem Tov" }
+]
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "copilotkit==0.1.76",
+    "uvicorn>=0.34.0",
+    "dotenv>=0.9.9",
+    "langchain>=1.0.3",
+    "langchain-anthropic>=1.0.1",
+    "langchain-core>=1.0.2",
+    "langchain-community>=0.0.36",
+    "langchain-google-genai>=2.1.12",
+    "langchain-openai>=1.0.1",
+    "langgraph>=1.0.0",
+    "ag-ui-langgraph",
+    "python-dotenv>=1.0.0",
+    "fastapi>=0.115.12",
+]
 
-[project]
-name = "agents"
-version = "0.0.1"
-
-[tool.poetry.dependencies]
-copilotkit = "0.1.76"
-python = ">=3.10,<3.13"
-uvicorn = "^0.34.0"
-dotenv = "^0.9.9"
-langchain = ">=1.0.3"
-langchain-anthropic = ">=1.0.1"
-langchain-core = ">=1.0.2"
-langchain-community = ">=0.0.36"
-langchain-google-genai = ">=2.1.12"
-langchain-openai = ">=1.0.1"
-langgraph = ">=1.0.0"
+[tool.uv.sources]
 ag-ui-langgraph = { path = "../" }
-python-dotenv = "^1.0.0"
-fastapi = "^0.115.12"
+
+[project.scripts]
+dev = "agents.dojo:main"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.poetry.scripts]
-dev = "agents.dojo:main"
+[tool.hatch.build.targets.wheel]
+packages = ["agents"]

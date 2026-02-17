@@ -49,13 +49,13 @@ const middlewaresRoot = path.join(gitRoot, 'middlewares');
 // Define all runnable services keyed by a stable id
 const ALL_SERVICES = {
   'server-starter': [{
-    command: 'poetry run dev',
+    command: 'uv run dev',
     name: 'Server Starter',
     cwd: path.join(integrationsRoot, 'server-starter/python/examples'),
     env: { PORT: 8000 },
   }],
   'server-starter-all': [{
-    command: 'poetry run dev',
+    command: 'uv run dev',
     name: 'Server AF',
     cwd: path.join(integrationsRoot, 'server-starter-all-features/python/examples'),
     env: { PORT: 8001 },
@@ -73,13 +73,10 @@ const ALL_SERVICES = {
     env: { PORT: 8003 },
   }],
   'langgraph-fastapi': [{
-    command: 'poetry run dev',
+    command: 'uv run dev',
     name: 'LG FastAPI',
     cwd: path.join(integrationsRoot, 'langgraph/python/examples'),
-    env: {
-      PORT: 8004,
-      POETRY_VIRTUALENVS_IN_PROJECT: 'false',
-    },
+    env: { PORT: 8004 },
   }],
   'langgraph-platform-python': [{
     command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8005',
