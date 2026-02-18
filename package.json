@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "build": "nx run-many -t build",
-    "clean": "git clean -fdX --exclude=\"!.env\"",
-    "build:clean": "git clean -fdX --exclude=\"!.env\" && pnpm install && pnpm run build",
+    "clean": "git clean -fdX --exclude=\".env\"",
+    "build:clean": "pnpm run clean && pnpm install && pnpm run build",
     "dev": "pnpm run build --projects=sdks/** && nx watch --projects=sdks/** -- pnpm run build --projects=sdks/**",
     "dev:integrations": "pnpm run build --projects=integrations/** && nx watch --projects=integrations/** -- pnpm run build --projects=integrations/**",
     "dev:middlewares": "pnpm run build --projects=middlewares/** && nx watch --projects=middlewares/** -- pnpm run build --projects=middlewares/**",
@@ -21,9 +21,9 @@
     "graph": "nx graph",
     "bump": "pnpm --filter './sdks/typescript/packages/*' exec -- pnpm version",
     "bump:alpha": "pnpm --filter './sdks/typescript/packages/*' exec -- pnpm version --preid alpha",
-    "publish": "git clean -fdX --exclude=\"!.env\" && pnpm install && pnpm run build && pnpm publish -r --filter='./sdks/typescript/packages/*'",
-    "publish:integrations": "git clean -fdX --exclude=\"!.env\" && pnpm install && pnpm run build && pnpm publish -r --filter='./integrations/*'",
-    "publish:alpha": "git clean -fdX --exclude=\"!.env\" && pnpm install && pnpm run build && pnpm publish -r --no-git-checks --filter='./sdks/typescript/packages/*' --tag alpha",
+    "publish": "pnpm run clean && pnpm install && pnpm run build && pnpm publish -r --filter='./sdks/typescript/packages/*'",
+    "publish:integrations": "pnpm run clean && pnpm install && pnpm run build && pnpm publish -r --filter='./integrations/*'",
+    "publish:alpha": "pnpm run clean && pnpm install && pnpm run build && pnpm publish -r --no-git-checks --filter='./sdks/typescript/packages/*' --tag alpha",
     "test:exports": "nx run-many -t test:exports"
   },
   "devDependencies": {
