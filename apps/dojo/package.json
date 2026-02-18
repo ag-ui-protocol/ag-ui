@@ -29,6 +29,7 @@
     "@ag-ui/server-starter-all-features": "workspace:*",
     "@ag-ui/spring-ai": "workspace:*",
     "@ag-ui/vercel-ai-sdk": "workspace:*",
+    "@ag-ui/langroid": "workspace:*",
     "@ai-sdk/openai": "^2.0.42",
     "@copilotkit/react-core": "1.51.4-next.3",
     "@copilotkit/react-ui": "1.51.4-next.3",

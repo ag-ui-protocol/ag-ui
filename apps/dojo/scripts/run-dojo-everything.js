@@ -72,6 +72,12 @@ const ALL_SERVICES = {
     cwd: path.join(integrationsRoot, 'crew-ai/python'),
     env: { PORT: 8003 },
   }],
+  'langroid': [{
+    command: 'poetry run dev',
+    name: 'Langroid',
+    cwd: path.join(integrationsRoot, 'langroid/python/examples'),
+    env: { PORT: 8018 },
+  }],
   'langgraph-fastapi': [{
     command: 'uv run dev',
     name: 'LG FastAPI',
@@ -166,6 +172,7 @@ const ALL_SERVICES = {
       SERVER_STARTER_ALL_FEATURES_URL: 'http://localhost:8001',
       AGNO_URL: 'http://localhost:8002',
       CREW_AI_URL: 'http://localhost:8003',
+      LANGROID_URL: 'http://localhost:8018',
       LANGGRAPH_FAST_API_URL: 'http://localhost:8004',
       LANGGRAPH_PYTHON_URL: 'http://localhost:8005',
       LANGGRAPH_TYPESCRIPT_URL: 'http://localhost:8006',
@@ -191,6 +198,7 @@ const ALL_SERVICES = {
       SERVER_STARTER_ALL_FEATURES_URL: 'http://localhost:8001',
       AGNO_URL: 'http://localhost:8002',
       CREW_AI_URL: 'http://localhost:8003',
+      LANGROID_URL: 'http://localhost:8018',
       LANGGRAPH_FAST_API_URL: 'http://localhost:8004',
       LANGGRAPH_PYTHON_URL: 'http://localhost:8005',
       LANGGRAPH_TYPESCRIPT_URL: 'http://localhost:8006',
