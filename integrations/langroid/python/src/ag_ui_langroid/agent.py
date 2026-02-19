@@ -168,9 +168,15 @@ class LangroidAgent:
                 else:
                     response_content = str(llm_response)
                 
+                # Check if the response itself is a ToolMessage (Langroid might return ToolMessage directly)
+                if hasattr(llm_response, "request") and hasattr(llm_response, "purpose"):
+                    tool_call_detected = True
+                    tool_call_message = llm_response
+                    logger.info(f"✅ Response IS a ToolMessage: request={llm_response.request}")
+                
                 if has_pending_tool_result:
                     logger.info("⏭️ Skipping tool detection - last message is a tool result, will only generate text response")
-                else:
+                elif not tool_call_detected:
                     if response_content:
                         content_stripped = response_content.strip()
                         # Check for tool call patterns: ```json\n{...} or {...} with "request" field
@@ -491,7 +497,53 @@ class LangroidAgent:
                                     has_handler = handler_method and callable(handler_method)
                                 
                                 if has_handler:
-                                    logger.info(f"✅ Agentic generative UI tool {tool_name} - handler completed, all state events emitted, finishing run")
+                                    logger.info(f"✅ Agentic generative UI tool {tool_name} - handler completed, all state events emitted, generating text response")
+                                    
+                                    # After emitting state events, get a text response from the LLM
+                                    try:
+                                        follow_up_response = actual_agent.llm_response("")
+                                        if follow_up_response:
+                                            # Extract content from response
+                                            follow_up_content = ""
+                                            if hasattr(follow_up_response, "content"):
+                                                follow_up_content = str(follow_up_response.content) if follow_up_response.content else ""
+                                            elif isinstance(follow_up_response, str):
+                                                follow_up_content = follow_up_response
+                                            else:
+                                                follow_up_content = str(follow_up_response)
+                                            
+                                            # Remove any JSON tool call patterns from content
+                                            if follow_up_content and ("```json" in follow_up_content or '{"request"' in follow_up_content):
+                                                # Extract text before JSON
+                                                json_start = follow_up_content.find("{")
+                                                if json_start >= 0:
+                                                    follow_up_content = follow_up_content[:json_start].strip()
+                                            
+                                            if follow_up_content and follow_up_content.strip():
+                                                response_message_id = str(uuid.uuid4())
+                                                yield TextMessageStartEvent(
+                                                    type=EventType.TEXT_MESSAGE_START,
+                                                    message_id=response_message_id,
+                                                    role="assistant",
+                                                )
+                                                
+                                                chunk_size = 50
+                                                for i in range(0, len(follow_up_content), chunk_size):
+                                                    chunk = follow_up_content[i:i+chunk_size]
+                                                    yield TextMessageContentEvent(
+                                                        type=EventType.TEXT_MESSAGE_CONTENT,
+                                                        message_id=response_message_id,
+                                                        delta=chunk,
+                                                    )
+                                                
+                                                yield TextMessageEndEvent(
+                                                    type=EventType.TEXT_MESSAGE_END,
+                                                    message_id=response_message_id,
+                                                )
+                                                logger.info(f"✅ Text response generated after state events: {follow_up_content[:100]}")
+                                    except Exception as follow_up_err:
+                                        logger.warning(f"Failed to get follow-up text response: {follow_up_err}", exc_info=True)
+                                    
                                     yield RunFinishedEvent(
                                         type=EventType.RUN_FINISHED,
                                         thread_id=input_data.thread_id,

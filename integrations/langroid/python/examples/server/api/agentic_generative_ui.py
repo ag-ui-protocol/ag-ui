@@ -94,13 +94,18 @@ agent_config = lr.ChatAgentConfig(
     system_message=dedent("""
         You are a helpful assistant that can create plans with multiple steps.
 
-        CRITICAL RULES:
-        - When the user asks you to create a plan for a task, you MUST call the `create_plan` tool EXACTLY ONCE for that request.
-        - Do NOT invent or describe detailed step-by-step plans until AFTER you have called `create_plan`.
-        - The `create_plan` tool initializes a new plan. Each time the user asks for a plan for a different task (for example, first a Mars mission, then making pizza), you MUST call `create_plan` again to create a NEW plan instead of editing the previous one.
-        - Use the `update_plan_step` tool ONLY when the user explicitly asks to modify, reorder, or mark steps in the CURRENT plan (for example: \"mark step 3 as complete\" or \"change step 2 description\").
-        - Do NOT use `update_plan_step` to create a brand new plan for a different task.
-        - After creating or updating a plan, provide a brief natural-language summary of what you did (1–2 sentences, optionally with emojis).
+        CRITICAL RULES - YOU MUST FOLLOW THESE EXACTLY:
+        1. When the user asks you to create a plan, make a plan, or break down a task into steps, you MUST IMMEDIATELY call the `create_plan` tool. Do NOT respond with text first.
+        2. NEVER say you have "already created" a plan unless you have actually called the `create_plan` tool in this conversation.
+        3. NEVER describe steps in your text response - the `create_plan` tool will handle displaying the steps.
+        4. The `create_plan` tool requires a `steps` parameter which is a list of step descriptions as strings.
+        5. After calling `create_plan`, provide a brief summary (1-2 sentences with emojis) of what you did.
+        6. Use `update_plan_step` ONLY when the user explicitly asks to modify an existing plan's steps.
+        
+        Examples:
+        - User: "give me a plan to make brownies" → You MUST call create_plan with steps like ["Gather ingredients", "Mix batter", "Bake", etc.]
+        - User: "Go to Mars" → You MUST call create_plan with steps for a Mars mission
+        - User: "mark step 3 as complete" → Use update_plan_step to update the status
     """),
     use_tools=True,
     use_functions_api=False,
@@ -120,12 +125,16 @@ class PlanAssistantAgent(ChatAgent):
         Handle create_plan tool execution.
         Creates plan and returns result. State events will be handled by handler method.
         Returns string result for Langroid to continue processing.
+        Note: Don't include steps in the return value - the handler will emit them via STATE_SNAPSHOT.
+        This prevents the frontend from creating a duplicate component from the tool result.
         """
         plan = Plan(
             steps=[Step(description=step) for step in msg.steps],
         )
         self._plan_data = plan.model_dump()
-        return json.dumps({"status": "plan_created", "steps_count": len(msg.steps), "steps": plan.model_dump()["steps"]})
+        # Return simple confirmation without steps - handler will emit STATE_SNAPSHOT
+        # This matches LangGraph's pattern of returning "Steps executed." without the steps
+        return json.dumps({"status": "plan_created", "steps_count": len(msg.steps)})
     
     def update_plan_step(
         self, msg: UpdatePlanStepTool
@@ -149,11 +158,17 @@ class PlanAssistantAgent(ChatAgent):
         """
         Handler for create_plan tool result - emits state events.
         Automatically processes all steps and emits state deltas.
+        Uses self._plan_data which was set during create_plan execution.
         """
         import asyncio
         import random
         
-        steps = result_data.get("steps", [])
+        # Get steps from _plan_data (set during create_plan) instead of result_data
+        # This allows us to return a simple tool result without steps to prevent duplicate components
+        if not hasattr(self, "_plan_data") or not self._plan_data:
+            return
+        
+        steps = self._plan_data.get("steps", [])
         if not steps:
             return
         

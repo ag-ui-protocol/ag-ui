@@ -4,7 +4,7 @@ test("[Langroid] Backend Tool Rendering displays weather cards", async ({ page }
   // Set shorter default timeout for this test
   test.setTimeout(30000); // 30 seconds total
 
-  await page.goto("/langroid/feature/backend_tool_rendering");
+  await page.goto("/langroid/feature/backend_tool_rendering", { waitUntil: "domcontentloaded" });
 
   // Verify suggestion buttons are visible
   await expect(page.getByRole("button", { name: "Weather in San Francisco" })).toBeVisible({
