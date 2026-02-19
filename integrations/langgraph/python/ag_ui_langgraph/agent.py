@@ -127,7 +127,7 @@ class LangGraphAgent:
         INITIAL_ACTIVE_RUN = {
             "id": input.run_id,
             "thread_id": thread_id,
-            "thinking_process": None,
+            "reasoning_process": None,
             "node_name": None,
             "has_function_streaming": False,
         }
@@ -531,48 +531,48 @@ class LangGraphAgent:
             is_message_end_event = has_current_stream and not current_stream.get("tool_call_id") and not is_message_content_event
 
             if reasoning_data:
-                for event_str in self.handle_thinking_event(reasoning_data):
+                for event_str in self.handle_reasoning_event(reasoning_data):
                     yield event_str
                 return
 
             # Handle redacted_thinking blocks (encrypted reasoning content)
-            if encrypted_reasoning_data and self.active_run.get('thinking_process', None) is not None:
-                thinking_message_id = self.active_run["thinking_process"]["message_id"]
+            if encrypted_reasoning_data and self.active_run.get('reasoning_process', None) is not None:
+                reasoning_message_id = self.active_run["reasoning_process"]["message_id"]
                 yield self._dispatch_event(
                     ReasoningEncryptedValueEvent(
                         type=EventType.REASONING_ENCRYPTED_VALUE,
                         subtype="message",
-                        entity_id=thinking_message_id,
+                        entity_id=reasoning_message_id,
                         encrypted_value=encrypted_reasoning_data,
                     )
                 )
                 return
 
-            if reasoning_data is None and self.active_run.get('thinking_process', None) is not None:
-                thinking_message_id = self.active_run["thinking_process"]["message_id"]
+            if reasoning_data is None and self.active_run.get('reasoning_process', None) is not None:
+                reasoning_message_id = self.active_run["reasoning_process"]["message_id"]
                 # Emit signature as encrypted value if accumulated during reasoning
-                if self.active_run["thinking_process"].get("signature"):
+                if self.active_run["reasoning_process"].get("signature"):
                     yield self._dispatch_event(
                         ReasoningEncryptedValueEvent(
                             type=EventType.REASONING_ENCRYPTED_VALUE,
                             subtype="message",
-                            entity_id=thinking_message_id,
-                            encrypted_value=self.active_run["thinking_process"]["signature"],
+                            entity_id=reasoning_message_id,
+                            encrypted_value=self.active_run["reasoning_process"]["signature"],
                         )
                     )
                 yield self._dispatch_event(
                     ReasoningMessageEndEvent(
                         type=EventType.REASONING_MESSAGE_END,
-                        message_id=thinking_message_id,
+                        message_id=reasoning_message_id,
                     )
                 )
                 yield self._dispatch_event(
                     ReasoningEndEvent(
                         type=EventType.REASONING_END,
-                        message_id=thinking_message_id,
+                        message_id=reasoning_message_id,
                     )
                 )
-                self.active_run["thinking_process"] = None
+                self.active_run["reasoning_process"] = None
 
             if tool_call_used_to_predict_state:
                 yield self._dispatch_event(
@@ -805,33 +805,33 @@ class LangGraphAgent:
                 )
             )
 
-    def handle_thinking_event(self, reasoning_data: LangGraphReasoning) -> Generator[str, Any, str | None]:
+    def handle_reasoning_event(self, reasoning_data: LangGraphReasoning) -> Generator[str, Any, str | None]:
         if not reasoning_data or "type" not in reasoning_data or "text" not in reasoning_data:
             return ""
 
-        thinking_step_index = reasoning_data.get("index")
+        reasoning_step_index = reasoning_data.get("index")
 
-        if (self.active_run.get("thinking_process") and
-                self.active_run["thinking_process"].get("index") and
-                self.active_run["thinking_process"]["index"] != thinking_step_index):
+        if (self.active_run.get("reasoning_process") and
+                self.active_run["reasoning_process"].get("index") and
+                self.active_run["reasoning_process"]["index"] != reasoning_step_index):
 
-            thinking_message_id = self.active_run["thinking_process"]["message_id"]
-            if self.active_run["thinking_process"].get("type"):
+            reasoning_message_id = self.active_run["reasoning_process"]["message_id"]
+            if self.active_run["reasoning_process"].get("type"):
                 yield self._dispatch_event(
                     ReasoningMessageEndEvent(
                         type=EventType.REASONING_MESSAGE_END,
-                        message_id=thinking_message_id,
+                        message_id=reasoning_message_id,
                     )
                 )
             yield self._dispatch_event(
                 ReasoningEndEvent(
                     type=EventType.REASONING_END,
-                    message_id=thinking_message_id,
+                    message_id=reasoning_message_id,
                 )
             )
-            self.active_run["thinking_process"] = None
+            self.active_run["reasoning_process"] = None
 
-        if not self.active_run.get("thinking_process"):
+        if not self.active_run.get("reasoning_process"):
             message_id = str(uuid.uuid4())
             yield self._dispatch_event(
                 ReasoningStartEvent(
@@ -839,30 +839,30 @@ class LangGraphAgent:
                     message_id=message_id,
                 )
             )
-            self.active_run["thinking_process"] = {
-                "index": thinking_step_index,
+            self.active_run["reasoning_process"] = {
+                "index": reasoning_step_index,
                 "message_id": message_id,
             }
 
-        if self.active_run["thinking_process"].get("type") != reasoning_data["type"]:
+        if self.active_run["reasoning_process"].get("type") != reasoning_data["type"]:
             yield self._dispatch_event(
                 ReasoningMessageStartEvent(
                     type=EventType.REASONING_MESSAGE_START,
-                    message_id=self.active_run["thinking_process"]["message_id"],
+                    message_id=self.active_run["reasoning_process"]["message_id"],
                     role="assistant",
                 )
             )
-            self.active_run["thinking_process"]["type"] = reasoning_data["type"]
+            self.active_run["reasoning_process"]["type"] = reasoning_data["type"]
 
         # Accumulate signature if present (Anthropic extended thinking)
         if reasoning_data.get("signature"):
-            self.active_run["thinking_process"]["signature"] = reasoning_data["signature"]
+            self.active_run["reasoning_process"]["signature"] = reasoning_data["signature"]
 
-        if self.active_run["thinking_process"].get("type"):
+        if self.active_run["reasoning_process"].get("type"):
             yield self._dispatch_event(
                 ReasoningMessageContentEvent(
                     type=EventType.REASONING_MESSAGE_CONTENT,
-                    message_id=self.active_run["thinking_process"]["message_id"],
+                    message_id=self.active_run["reasoning_process"]["message_id"],
                     delta=reasoning_data["text"]
                 )
             )

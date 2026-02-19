@@ -50,7 +50,7 @@ export type MessageInProgress = {
   toolCallName?: string | null;
 };
 
-export type ThinkingInProgress = {
+export type ReasoningInProgress = {
   index: number;
   type?: LangGraphReasoning['type'];
   messageId: string;

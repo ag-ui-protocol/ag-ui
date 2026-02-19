@@ -18,7 +18,7 @@ import {
   LangGraphEventTypes,
   State,
   MessagesInProgressRecord,
-  ThinkingInProgress,
+  ReasoningInProgress,
   SchemaKeys,
   MessageInProgress,
   RunMetadata,
@@ -126,7 +126,7 @@ export class LangGraphAgent extends AbstractAgent {
   graphId: string;
   assistant?: Assistant;
   messagesInProcess: MessagesInProgressRecord;
-  thinkingProcess: null | ThinkingInProgress;
+  reasoningProcess: null | ReasoningInProgress;
   activeRun?: RunMetadata;
   // Stop control flags
   private cancelRequested: boolean = false;
@@ -143,7 +143,7 @@ export class LangGraphAgent extends AbstractAgent {
     this.agentName = config.agentName;
     this.graphId = config.graphId;
     this.assistantConfig = config.assistantConfig;
-    this.thinkingProcess = null;
+    this.reasoningProcess = null;
     this.client =
       config?.client ??
       new LangGraphClient({
@@ -160,8 +160,8 @@ export class LangGraphAgent extends AbstractAgent {
       agentName: this.agentName,
       graphId: this.graphId,
       assistantConfig: this.assistantConfig,
-      thinkingProcess: this.thinkingProcess
-        ? structuredClone(this.thinkingProcess)
+      reasoningProcess: this.reasoningProcess
+        ? structuredClone(this.reasoningProcess)
         : null,
       constantSchemaKeys: [...this.constantSchemaKeys],
       client: this.client,
@@ -662,40 +662,40 @@ export class LangGraphAgent extends AbstractAgent {
           hasCurrentStream && !currentStream?.toolCallId && !isMessageContentEvent;
 
         if (reasoningData) {
-          this.handleThinkingEvent(reasoningData);
+          this.handleReasoningEvent(reasoningData);
           break;
         }
 
         // Handle redacted_thinking blocks (encrypted reasoning content)
-        if (encryptedReasoningData && this.thinkingProcess) {
+        if (encryptedReasoningData && this.reasoningProcess) {
           this.dispatchEvent({
             type: EventType.REASONING_ENCRYPTED_VALUE,
             subtype: "message",
-            entityId: this.thinkingProcess.messageId,
+            entityId: this.reasoningProcess.messageId,
             encryptedValue: encryptedReasoningData,
           });
           break;
         }
 
-        if (!reasoningData && this.thinkingProcess) {
+        if (!reasoningData && this.reasoningProcess) {
           // Emit signature as encrypted value if accumulated during reasoning
-          if (this.thinkingProcess.signature) {
+          if (this.reasoningProcess.signature) {
             this.dispatchEvent({
               type: EventType.REASONING_ENCRYPTED_VALUE,
               subtype: "message",
-              entityId: this.thinkingProcess.messageId,
-              encryptedValue: this.thinkingProcess.signature,
+              entityId: this.reasoningProcess.messageId,
+              encryptedValue: this.reasoningProcess.signature,
             });
           }
           this.dispatchEvent({
             type: EventType.REASONING_MESSAGE_END,
-            messageId: this.thinkingProcess.messageId,
+            messageId: this.reasoningProcess.messageId,
           });
           this.dispatchEvent({
             type: EventType.REASONING_END,
-            messageId: this.thinkingProcess.messageId,
+            messageId: this.reasoningProcess.messageId,
           });
-          this.thinkingProcess = null;
+          this.reasoningProcess = null;
         }
 
         if (toolCallUsedToPredictState) {
@@ -974,58 +974,58 @@ export class LangGraphAgent extends AbstractAgent {
     super.abortRun();
   }
 
-  handleThinkingEvent(reasoningData: LangGraphReasoning) {
+  handleReasoningEvent(reasoningData: LangGraphReasoning) {
     if (!reasoningData || !reasoningData.type || !reasoningData.text) {
       return;
     }
 
-    const thinkingStepIndex = reasoningData.index;
+    const reasoningStepIndex = reasoningData.index;
 
-    if (this.thinkingProcess?.index && this.thinkingProcess.index !== thinkingStepIndex) {
-      if (this.thinkingProcess.type) {
+    if (this.reasoningProcess?.index && this.reasoningProcess.index !== reasoningStepIndex) {
+      if (this.reasoningProcess.type) {
         this.dispatchEvent({
           type: EventType.REASONING_MESSAGE_END,
-          messageId: this.thinkingProcess.messageId,
+          messageId: this.reasoningProcess.messageId,
         });
       }
       this.dispatchEvent({
         type: EventType.REASONING_END,
-        messageId: this.thinkingProcess.messageId,
+        messageId: this.reasoningProcess.messageId,
       });
-      this.thinkingProcess = null;
+      this.reasoningProcess = null;
     }
 
-    if (!this.thinkingProcess) {
+    if (!this.reasoningProcess) {
       // No thinking step yet. Start a new one
       const messageId = randomUUID();
       this.dispatchEvent({
         type: EventType.REASONING_START,
         messageId,
       });
-      this.thinkingProcess = {
-        index: thinkingStepIndex,
+      this.reasoningProcess = {
+        index: reasoningStepIndex,
         messageId,
       };
     }
 
-    if (this.thinkingProcess.type !== reasoningData.type) {
+    if (this.reasoningProcess.type !== reasoningData.type) {
       this.dispatchEvent({
         type: EventType.REASONING_MESSAGE_START,
-        messageId: this.thinkingProcess.messageId,
+        messageId: this.reasoningProcess.messageId,
         role: "reasoning" as const,
       });
-      this.thinkingProcess.type = reasoningData.type;
+      this.reasoningProcess.type = reasoningData.type;
     }
 
     // Accumulate signature if present (Anthropic extended thinking)
     if (reasoningData.signature) {
-      this.thinkingProcess.signature = reasoningData.signature;
+      this.reasoningProcess.signature = reasoningData.signature;
     }
 
-    if (this.thinkingProcess.type) {
+    if (this.reasoningProcess.type) {
       this.dispatchEvent({
         type: EventType.REASONING_MESSAGE_CONTENT,
-        messageId: this.thinkingProcess.messageId,
+        messageId: this.reasoningProcess.messageId,
         delta: reasoningData.text,
       });
     }
