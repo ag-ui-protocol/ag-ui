@@ -265,28 +265,75 @@ function flattenUserContent(content: Message["content"]): string {
 export function resolveReasoningContent(eventData: any): LangGraphReasoning | null {
   const content = eventData.chunk?.content
 
-  // Anthropic reasoning response
   if (content && Array.isArray(content) && content.length && content[0]) {
-    if (!content[0].thinking) return null
-    return {
-      text: content[0].thinking,
-      type: 'text',
-      index: content[0].index,
+    const block = content[0];
+
+    // Old langchain-anthropic format: { type: "thinking", thinking: "..." }
+    if (block.type === 'thinking' && block.thinking) {
+      const result: LangGraphReasoning = {
+        text: block.thinking,
+        type: 'text',
+        index: block.index ?? 0,
+      }
+      // Extract signature if present (Anthropic extended thinking signature)
+      if (block.signature) {
+        result.signature = block.signature;
+      }
+      return result;
+    }
+
+    // New LangChain standardized format: { type: "reasoning", reasoning: "..." }
+    if (block.type === 'reasoning' && block.reasoning) {
+      return {
+        text: block.reasoning,
+        type: 'text',
+        index: block.index ?? 0,
+      }
+    }
+
+    // OpenAI Responses API v1 format: { type: "reasoning", summary: [{ text: "..." }] }
+    if (block.type === 'reasoning' && block.summary?.[0]?.text) {
+      return {
+        type: 'text',
+        text: block.summary[0].text,
+        index: block.summary[0].index ?? 0,
+      }
     }
   }
 
-  /// OpenAI reasoning response
-  if (eventData.chunk.additional_kwargs?.reasoning?.summary?.[0]) {
-    const data = eventData.chunk.additional_kwargs?.reasoning.summary[0]
+  // OpenAI legacy format via additional_kwargs
+  if (eventData.chunk?.additional_kwargs?.reasoning?.summary?.[0]) {
+    const data = eventData.chunk.additional_kwargs.reasoning.summary[0]
     if (!data || !data.text) return null
     return {
       type: 'text',
       text: data.text,
-      index: data.index,
+      index: data.index ?? 0,
     }
   }
 
   return null
+}
+
+/**
+ * Resolves encrypted reasoning content from Anthropic responses.
+ * This handles:
+ * - `signature` fields on thinking blocks (cryptographic verification)
+ * - `redacted_thinking` blocks with encrypted `data` (redacted chain-of-thought)
+ */
+export function resolveEncryptedReasoningContent(eventData: any): string | null {
+  const content = eventData.chunk?.content
+
+  if (!content || !Array.isArray(content) || !content.length || !content[0]) {
+    return null;
+  }
+
+  // Anthropic redacted_thinking block: { type: "redacted_thinking", data: "..." }
+  if (content[0].type === 'redacted_thinking' && content[0].data) {
+    return content[0].data;
+  }
+
+  return null;
 }
 
 export function resolveMessageContent(content?: LangGraphMessage['content']): string | null {

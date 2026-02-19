@@ -89,5 +89,6 @@ PredictStateTool = TypedDict("PredictStateTool", {
 LangGraphReasoning = TypedDict("LangGraphReasoning", {
     "type": str,
     "text": str,
-    "index": int
+    "index": int,
+    "signature": NotRequired[Optional[str]],
 })

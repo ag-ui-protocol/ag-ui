@@ -53,6 +53,8 @@ export type MessageInProgress = {
 export type ThinkingInProgress = {
   index: number;
   type?: LangGraphReasoning['type'];
+  messageId: string;
+  signature?: string;
 }
 
 export interface RunMetadata {
@@ -124,5 +126,6 @@ export interface PredictStateTool {
 export interface LangGraphReasoning {
   type: 'text';
   text: string;
-  index: number
+  index: number;
+  signature?: string;
 }
