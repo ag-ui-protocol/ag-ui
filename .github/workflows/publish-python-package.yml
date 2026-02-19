@@ -37,6 +37,7 @@ jobs:
         env:
           ACTOR: ${{ github.actor }}
           PACKAGE: ${{ inputs.package }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx tsx scripts/check-codeowners-auth.ts
 
       - name: Install uv

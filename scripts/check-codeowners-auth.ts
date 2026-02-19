@@ -7,10 +7,55 @@ interface CodeownersRule {
 
 const actor = process.env.ACTOR;
 const pkg = process.env.PACKAGE;
+const githubToken = process.env.GITHUB_TOKEN;
 
 if (!actor || !pkg) {
   console.error("ERROR: ACTOR and PACKAGE environment variables are required");
   process.exit(1);
+}
+
+async function isTeamMember(
+  org: string,
+  teamSlug: string,
+  username: string
+): Promise<boolean> {
+  if (!githubToken) {
+    console.warn(
+      `WARN: No GITHUB_TOKEN set, cannot resolve team membership for ${org}/${teamSlug}`
+    );
+    return false;
+  }
+  const url = `https://api.github.com/orgs/${org}/teams/${teamSlug}/members/${username}`;
+  const resp = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${githubToken}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  // 204 = is a member, 404 = not a member
+  return resp.status === 204;
+}
+
+async function isAuthorizedByOwners(
+  owners: string[],
+  username: string
+): Promise<boolean> {
+  for (const owner of owners) {
+    if (owner.includes("/")) {
+      // org/team reference
+      const [org, teamSlug] = owner.split("/", 2);
+      if (await isTeamMember(org, teamSlug, username)) {
+        return true;
+      }
+    } else {
+      // individual user
+      if (owner === username) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 // Parse CODEOWNERS
@@ -39,7 +84,6 @@ if (pkg.endsWith(pythonSuffix)) {
   pathsToCheck.push(pkg.slice(0, -pythonSuffix.length));
 }
 
-let authorized = false;
 let matchedRule: CodeownersRule | null = null;
 
 for (const checkPath of pathsToCheck) {
@@ -47,7 +91,6 @@ for (const checkPath of pathsToCheck) {
     const pattern = rule.pattern.replace(/\/$/, "");
     if (checkPath === pattern || checkPath.startsWith(pattern + "/")) {
       matchedRule = rule;
-      authorized = rule.owners.includes(actor);
       break;
     }
   }
@@ -57,8 +100,9 @@ for (const checkPath of pathsToCheck) {
 // Fall back to root owners if no specific rule matched
 if (!matchedRule) {
   matchedRule = { pattern: "*", owners: rootOwners };
-  authorized = rootOwners.includes(actor);
 }
+
+const authorized = await isAuthorizedByOwners(matchedRule.owners, actor);
 
 console.log(`Actor:          ${actor}`);
 console.log(`Package:        ${pkg}`);
