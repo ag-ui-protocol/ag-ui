@@ -44,6 +44,7 @@
   "pnpm": {
     "overrides": {
       "@ag-ui/a2a": "workspace:*",
+      "@ag-ui/ag2": "workspace:*",
       "@ag-ui/a2a-middleware": "workspace:*",
       "@ag-ui/adk": "workspace:*",
       "@ag-ui/agno": "workspace:*",
