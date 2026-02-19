@@ -202,7 +202,7 @@ async function experiencesFinder(state: TravelAgentState, config?: RunnableConfi
   const activities = STATIC_EXPERIENCES.filter(exp => exp.type === "activity").slice(0, 2);
   const experiences = [...restaurants, ...activities];
 
-  const model = new ChatOpenAI({ model: "gpt-4o" });
+  const model = new ChatOpenAI({ model: "gpt-5-nano" });
 
   if (!config) {
     config = { recursionLimit: 25 };
@@ -292,7 +292,7 @@ async function supervisorAgent(state: TravelAgentState, config?: RunnableConfig)
     `;
 
   // Define the model
-  const model = new ChatOpenAI({ model: "gpt-4o" });
+  const model = new ChatOpenAI({ model: "gpt-5-nano" });
 
   if (!config) {
     config = { recursionLimit: 25 };

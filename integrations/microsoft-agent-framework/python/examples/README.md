@@ -131,7 +131,7 @@ agent = simple_agent(azure_client)
 ```python
 from agent_framework.openai import OpenAIChatClient
 
-openai_client = OpenAIChatClient(model_id="gpt-4o")
+openai_client = OpenAIChatClient(model_id="gpt-5-nano")
 agent = weather_agent(openai_client)
 ```
 
@@ -145,7 +145,7 @@ from agent_framework.openai import OpenAIChatClient
 
 # Create clients
 azure_client = AzureOpenAIChatClient()
-openai_client = OpenAIChatClient(model_id="gpt-4o")
+openai_client = OpenAIChatClient(model_id="gpt-5-nano")
 
 # Use different clients for different agents
 agent1 = simple_agent(azure_client)

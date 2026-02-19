@@ -65,7 +65,7 @@ class ToolBasedGenerativeUIFlow(Flow[CopilotKitState]):
             completion(
 
                 # 1.1 Specify the model to use
-                model="openai/gpt-4o",
+                model="openai/gpt-5-nano",
                 messages=[
                     {
                         "role": "system", 

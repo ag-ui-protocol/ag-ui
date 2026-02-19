@@ -27,7 +27,7 @@ class MyFlow(Flow[CopilotKitState]):
     async def chat(self):
         response = await copilotkit_stream(
             completion(
-                model="openai/gpt-4o",
+                model="openai/gpt-5-nano",
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant."},
                     *self.state.messages

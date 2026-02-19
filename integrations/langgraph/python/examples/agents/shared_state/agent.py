@@ -169,7 +169,7 @@ async def chat_node(state: Dict[str, Any], config: RunnableConfig):
     """
 
     # Define the model
-    model = ChatOpenAI(model="gpt-4o-mini")
+    model = ChatOpenAI(model="gpt-5-nano")
 
     # Define config for the model
     if config is None:

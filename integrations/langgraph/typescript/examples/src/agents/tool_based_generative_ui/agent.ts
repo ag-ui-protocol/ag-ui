@@ -15,7 +15,7 @@ export const AgentStateAnnotation = Annotation.Root({
 export type AgentState = typeof AgentStateAnnotation.State;
 
 async function chatNode(state: AgentState, config?: RunnableConfig): Promise<Command> {
-  const model = new ChatOpenAI({ model: "gpt-4o" });
+  const model = new ChatOpenAI({ model: "gpt-5-nano" });
 
   const modelWithTools = model.bindTools(
     [

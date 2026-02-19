@@ -96,7 +96,7 @@ agent = ConversableAgent(
     Just give a very brief summary (one sentence) of what you did with some emojis. 
     Always say you actually did the steps, not merely generated them.
     """),
-    llm_config=LLMConfig({"model": "gpt-4o-mini", "stream": True}),
+    llm_config=LLMConfig({"model": "gpt-5-nano", "stream": True}),
     functions=[create_plan, update_plan_step],
 )
 

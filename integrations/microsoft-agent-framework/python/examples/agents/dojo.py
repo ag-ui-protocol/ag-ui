@@ -67,7 +67,7 @@ api_key = os.getenv("OPENAI_API_KEY")
 # You can use different chat clients for different agents:
 
 # from agent_framework.openai import OpenAIChatClient
-# openai_client = OpenAIChatClient(model_id="gpt-4o")
+# openai_client = OpenAIChatClient(model_id="gpt-5-nano")
 # azure_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
 # Then pass different clients to different agents:

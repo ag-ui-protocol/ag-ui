@@ -105,7 +105,7 @@ async def get_weather(location: str) -> str:
 
 # Create the router with weather tools
 backend_tool_rendering_router = get_ag_ui_workflow_router(
-    llm=OpenAI(model="gpt-4o-mini"),
+    llm=OpenAI(model="gpt-5-nano"),
     backend_tools=[get_weather],
     system_prompt=dedent(
         """

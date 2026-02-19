@@ -109,7 +109,7 @@ async def get_weather(location: str) -> str:
 
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5-nano"),
     tools=[
         get_weather,
     ],

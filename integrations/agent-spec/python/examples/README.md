@@ -39,14 +39,14 @@ The example server loads a `.env` file on startup (via `python-dotenv`). Place i
 Common variables:
 - `PORT`: the HTTP port for the example FastAPI server (default `9003`).
 - `OPENAI_BASE_URL`: OpenAI‑compatible API base (e.g., `https://api.openai.com/v1`).
-- `OPENAI_MODEL`: model id (e.g., `gpt-4o` or provider‑specific ids).
+- `OPENAI_MODEL`: model id (e.g., `gpt-5-nano` or provider‑specific ids).
 - `OPENAI_API_KEY`: API key for your provider.
 
 Example `.env`:
 ```
 PORT=9003
 OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o
+OPENAI_MODEL=gpt-5-nano
 OPENAI_API_KEY=sk-...
 ```
 

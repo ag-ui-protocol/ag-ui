@@ -73,7 +73,7 @@ async function visionChatNode(state: AgentState, config?: RunnableConfig) {
 
   // 1. Use a vision-capable model
   // GPT-4o supports vision, as do other models like Claude 3
-  const model = new ChatOpenAI({ model: "gpt-4o" });
+  const model = new ChatOpenAI({ model: "gpt-5-nano" });
 
   // Define config for the model
   if (!config) {

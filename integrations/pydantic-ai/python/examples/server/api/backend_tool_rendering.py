@@ -10,7 +10,7 @@ import httpx
 from pydantic_ai import Agent
 
 agent = Agent(
-    "openai:gpt-4o-mini",
+    "openai:gpt-5-nano",
     instructions=dedent(
         """
         You are a helpful weather assistant that provides accurate weather information.

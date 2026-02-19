@@ -8,7 +8,7 @@ export const toolBasedGenerativeUIAgent = new Agent({
   instructions: `
       You are a helpful haiku assistant that provides the user with a haiku.
 `,
-  model: "openai/gpt-4o-mini",
+  model: "openai/gpt-5-nano",
   memory: new Memory({
     storage: new LibSQLStore({
       id: 'tool-based-generative-ui-memory',

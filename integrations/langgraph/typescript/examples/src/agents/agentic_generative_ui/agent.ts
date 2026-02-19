@@ -85,7 +85,7 @@ async function chatNode(state: AgentState, config?: RunnableConfig) {
     `;
 
   // Define the model
-  const model = new ChatOpenAI({ model: "gpt-4o" });
+  const model = new ChatOpenAI({ model: "gpt-5-nano" });
   
   // Define config for the model with emit_intermediate_state to stream tool calls to frontend
   if (!config) {

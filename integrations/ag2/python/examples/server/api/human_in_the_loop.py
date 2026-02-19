@@ -25,7 +25,7 @@ agent = ConversableAgent(
         - If accepted, confirm the creation of the plan and the number of selected (enabled) steps only
         - If not accepted, ask the user for more information, DO NOT use the `generate_task_steps` tool again
     """),
-    llm_config=LLMConfig({"model": "gpt-4o-mini", "stream": True}),
+    llm_config=LLMConfig({"model": "gpt-5-nano", "stream": True}),
 )
 
 stream = AGUIStream(agent)
