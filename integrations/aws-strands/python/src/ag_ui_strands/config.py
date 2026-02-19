@@ -17,6 +17,8 @@ from typing import (
 
 from ag_ui.core import RunAgentInput
 
+from strands.session import SessionManager
+
 
 StatePayload = Dict[str, Any]
 
@@ -45,6 +47,7 @@ StateFromArgs = Callable[[ToolCallContext], Awaitable[Optional[StatePayload]] | 
 StateFromResult = Callable[[ToolResultContext], Awaitable[Optional[StatePayload]] | Optional[StatePayload]]
 CustomResultHandler = Callable[[ToolResultContext], AsyncIterator[Any]]
 StateContextBuilder = Callable[[RunAgentInput, str], str]
+SessionManagerProvider = Callable[[RunAgentInput], SessionManager]
 
 
 @dataclass
@@ -83,6 +86,8 @@ class StrandsAgentConfig:
 
     tool_behaviors: Dict[str, ToolBehavior] = field(default_factory=dict)
     state_context_builder: Optional[StateContextBuilder] = None
+    session_manager_provider: Optional[SessionManagerProvider] = None
+
 
 
 async def maybe_await(value: Any) -> Any:
