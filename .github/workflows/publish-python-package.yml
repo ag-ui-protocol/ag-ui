@@ -28,6 +28,7 @@ jobs:
     permissions:
       contents: read
       id-token: write # Required for PyPI trusted publishing
+      organization: read # Required for CODEOWNERS team membership checks
 
     steps:
       - name: Checkout code
