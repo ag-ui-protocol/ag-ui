@@ -102,17 +102,17 @@ if (!matchedRule) {
   matchedRule = { pattern: "*", owners: rootOwners };
 }
 
-const authorized = await isAuthorizedByOwners(matchedRule.owners, actor);
+isAuthorizedByOwners(matchedRule.owners, actor).then((authorized) => {
+  console.log(`Actor:          ${actor}`);
+  console.log(`Package:        ${pkg}`);
+  console.log(
+    `Matched rule:   ${matchedRule!.pattern} -> ${matchedRule!.owners.join(", ")}`
+  );
+  console.log(`Authorized:     ${authorized}`);
 
-console.log(`Actor:          ${actor}`);
-console.log(`Package:        ${pkg}`);
-console.log(
-  `Matched rule:   ${matchedRule.pattern} -> ${matchedRule.owners.join(", ")}`
-);
-console.log(`Authorized:     ${authorized}`);
-
-if (!authorized) {
-  console.error(`\nERROR: ${actor} is not a CODEOWNERS owner for ${pkg}`);
-  console.error(`Allowed users: ${matchedRule.owners.join(", ")}`);
-  process.exit(1);
-}
+  if (!authorized) {
+    console.error(`\nERROR: ${actor} is not a CODEOWNERS owner for ${pkg}`);
+    console.error(`Allowed users: ${matchedRule!.owners.join(", ")}`);
+    process.exit(1);
+  }
+});
