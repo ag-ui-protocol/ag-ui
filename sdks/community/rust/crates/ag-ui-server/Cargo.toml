@@ -1,0 +1,65 @@
+[package]
+name = "ag-ui-server"
+version = "0.1.0"
+edition = "2024"
+description = "Server-side SDK for hosting AG-UI protocol agents."
+license = "MIT"
+readme = "README.md"
+keywords = ["agent", "ui", "streaming", "sse", "ai"]
+categories = ["web-programming", "asynchronous"]
+
+[dependencies]
+# Core AG-UI
+ag-ui-core = { path = "../ag-ui-core" }
+
+# Async runtime
+async-trait = "0.1"
+futures = "0.3"
+tokio = { version = "1", features = ["sync", "rt"] }
+tokio-util = "0.7"
+tokio-stream = "0.1"
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+bytes = "1"
+
+# Error handling
+thiserror = { workspace = true }
+
+# State management
+parking_lot = "0.12"
+json-patch = "4"
+
+# Logging
+tracing = "0.1"
+
+# Axum integration (default feature)
+axum = { version = "0.7", optional = true }
+http = { version = "1", optional = true }
+
+# Protocol buffers (optional)
+prost = { version = "0.13", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+proptest = "1"
+assert_matches = "1.5"
+tower = { version = "0.5", features = ["util"] }
+axum = { version = "0.7", features = ["macros"] }
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
+http-body-util = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { workspace = true }
+
+[features]
+default = ["axum-integration"]
+axum-integration = ["dep:axum", "dep:http"]
+proto = ["dep:prost"]
+full = ["axum-integration", "proto"]
+
+[[example]]
+name = "basic_agent"
+path = "examples/basic_agent.rs"
+required-features = ["axum-integration"]
