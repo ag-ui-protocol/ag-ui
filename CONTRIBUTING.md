@@ -10,9 +10,9 @@ Here's how to get involved:
 
 Pick the right spot so we can help you faster:
 
-- **Bugs / Feature Ideas** → [GitHub Issues](https://github.com/ag-ui-protocol/ag-ui/issues)
-- **"How do I...?" / General Questions** → [GitHub Discussions](https://github.com/ag-ui-protocol/ag-ui/discussions)
-- **Quick chats / casual stuff** → [Discord](https://discord.gg/Jd3FzfdJa8) → `#-💎-contributing`
+- **Bugs / Feature Requests** → [GitHub Issues](https://github.com/ag-ui-protocol/ag-ui/issues)
+- **"How do I...?** → [Discord](https://discord.gg/Jd3FzfdJa8) → `#-💎-contributing`
+- **Introduce Yourself** → [Discord](https://discord.gg/Jd3FzfdJa8) → `🤝-intro`
 
 ---
 
