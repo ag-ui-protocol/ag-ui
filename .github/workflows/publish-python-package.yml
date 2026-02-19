@@ -44,16 +44,24 @@ jobs:
         with:
           version: ">=0.8.0"
 
-      - name: Set up Python
-        run: uv python install 3.12
-
       - name: Install dependencies
         working-directory: ${{ inputs.package }}
         run: uv sync
 
       - name: Run tests
         working-directory: ${{ inputs.package }}
-        run: uv run python -m pytest
+        run: |
+          TEST_CMD=$(uv run python -c "
+          import tomllib, sys
+          cfg = tomllib.load(open('pyproject.toml', 'rb'))
+          try:
+              cmd = cfg['tool']['ag-ui']['scripts']['test']
+          except KeyError:
+              print('ERROR: No test script configured in [tool.ag-ui.scripts]', file=sys.stderr)
+              sys.exit(1)
+          print(cmd)
+          ")
+          uv run $TEST_CMD
 
       - name: Build package
         working-directory: ${{ inputs.package }}

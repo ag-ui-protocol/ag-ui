@@ -369,7 +369,7 @@ const Chat = ({ integrationId }: { integrationId: string }) => {
         <CopilotChat
           suggestions={[
             { title: "Simple plan", message: "Please plan a trip to mars in 5 steps." },
-            { title: "Complex plan", message: "Please plan a pastra dish in 10 steps." },
+            { title: "Complex plan", message: "Please plan a pasta dish in 10 steps." },
           ]}
           className="h-full rounded-2xl max-w-6xl mx-auto"
           labels={{

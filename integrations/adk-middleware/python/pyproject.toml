@@ -16,6 +16,9 @@ dependencies = [
     "uvicorn>=0.35.0",
 ]
 
+[tool.ag-ui.scripts]
+test = "python -m pytest"
+
 [build-system]
 requires = ["uv_build>=0.8.0,<0.9"]
 build-backend = "uv_build"
