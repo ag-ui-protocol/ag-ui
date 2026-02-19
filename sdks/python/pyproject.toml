@@ -1,6 +1,6 @@
 [project]
 name = "ag-ui-protocol"
-version = "0.1.11"
+version = "0.1.12"
 description = ""
 authors = [
     { name = "Markus Ecker", email = "markus.ecker@gmail.com" }
