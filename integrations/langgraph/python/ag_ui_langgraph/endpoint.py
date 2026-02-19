@@ -9,6 +9,10 @@ from .agent import LangGraphAgent
 def add_langgraph_fastapi_endpoint(app: FastAPI, agent: LangGraphAgent, path: str = "/"):
     """Adds an endpoint to the FastAPI app."""
 
+    # Strip trailing slash so sub-paths like f"{path}/health" don't
+    # produce double-slash routes (e.g. "//health" when path="/").
+    base = path.rstrip("/")
+
     @app.post(path)
     async def langgraph_agent_endpoint(input_data: RunAgentInput, request: Request):
         # Get the accept header from the request
@@ -26,7 +30,7 @@ def add_langgraph_fastapi_endpoint(app: FastAPI, agent: LangGraphAgent, path: st
             media_type=encoder.get_content_type()
         )
 
-    @app.get(f"{path}/health")
+    @app.get(f"{base}/health")
     def health():
         """Health check."""
         return {
