@@ -25,7 +25,7 @@ app = FastAPI(title="LangGraph Dojo Example Server")
 
 agents = {
     # Register the LangGraph agent using the LangGraphAgent class
-    "agentic_chat": LangGraphAgent(
+    "agentic_chat": LangGraphAGUIAgent(
         name="agentic_chat",
         description="An example for an agentic chat flow using LangGraph.",
         graph=agentic_chat_graph,
