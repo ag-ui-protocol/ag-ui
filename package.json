@@ -24,11 +24,17 @@
     "publish": "pnpm run clean && pnpm install && pnpm run build && pnpm publish -r --filter='./sdks/typescript/packages/*'",
     "publish:integrations": "pnpm run clean && pnpm install && pnpm run build && pnpm publish -r --filter='./integrations/*'",
     "publish:alpha": "pnpm run clean && pnpm install && pnpm run build && pnpm publish -r --no-git-checks --filter='./sdks/typescript/packages/*' --tag alpha",
-    "test:exports": "nx run-many -t test:exports"
+    "test:exports": "nx run-many -t test:exports",
+    "changeset": "nx release plan",
+    "release": "tsx scripts/release.ts --dry-run=false",
+    "release:dry-run": "tsx scripts/release.ts",
+    "release:publish": "nx release publish"
   },
   "devDependencies": {
+    "@nx/js": "^22.5.1",
     "nx": "^22.4.5",
     "prettier": "^3.5.3",
+    "tsx": "^4.20.6",
     "typescript": "5.8.2"
   },
   "packageManager": "pnpm@10.13.1",

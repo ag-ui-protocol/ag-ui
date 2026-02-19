@@ -1,0 +1,139 @@
+name: Publish
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  publish-typescript:
+    if: >
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'release')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org/
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "25.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Publish to npm
+        run: |
+          # Publish each group separately, skipping already-published versions
+          GROUPS=("sdk" "integrations" "middlewares")
+          FAILED=0
+
+          for group in "${GROUPS[@]}"; do
+            echo "=== Publishing group: $group ==="
+            npx nx release publish --groups="$group" 2>&1 || {
+              echo "Warning: Some packages in group '$group' may have failed to publish (likely already published)"
+            }
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_ACCESS_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
+
+  publish-python:
+    if: >
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'release')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: ">=0.8.0"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Detect and publish changed Python packages
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          PYTHON_PACKAGES=(
+            "sdks/python"
+            "integrations/langgraph/python"
+            "integrations/crew-ai/python"
+            "integrations/adk-middleware/python"
+            "integrations/agent-spec/python"
+            "integrations/aws-strands/python"
+          )
+
+          for pkg_dir in "${PYTHON_PACKAGES[@]}"; do
+            if [ ! -f "$pkg_dir/pyproject.toml" ]; then
+              echo "Skipping $pkg_dir (no pyproject.toml)"
+              continue
+            fi
+
+            # Extract package name and version from pyproject.toml
+            PKG_NAME=$(python3 -c "
+          import tomllib
+          with open('$pkg_dir/pyproject.toml', 'rb') as f:
+              data = tomllib.load(f)
+          print(data['project']['name'])
+          ")
+            PKG_VERSION=$(python3 -c "
+          import tomllib
+          with open('$pkg_dir/pyproject.toml', 'rb') as f:
+              data = tomllib.load(f)
+          print(data['project']['version'])
+          ")
+
+            # Check if this version already exists on PyPI
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/$PKG_NAME/$PKG_VERSION/json")
+
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "Skipping $PKG_NAME@$PKG_VERSION (already published)"
+              continue
+            fi
+
+            echo "Publishing $PKG_NAME@$PKG_VERSION from $pkg_dir"
+            cd "$pkg_dir"
+            uv sync
+            uv build
+            uv publish
+            cd "$GITHUB_WORKSPACE"
+          done
