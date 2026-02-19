@@ -161,11 +161,6 @@ class TestLROToolResponseIntegration:
         )
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="Known duplicate FunctionResponse persistence on main (issue #1074). "
-               "Fix expected in PR #1075.",
-        strict=False,
-    )
     async def test_tool_result_persists_single_function_response(
         self, check_api_key, simple_agent
     ):
@@ -286,11 +281,6 @@ class TestLROToolResponseIntegration:
             )
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="On main the middleware uses the stored ADK invocation_id, not the "
-               "AG-UI run_id. Correct behaviour expected after PR #1075.",
-        strict=False,
-    )
     async def test_function_response_has_correct_invocation_id(
         self, check_api_key, simple_agent
     ):
@@ -384,11 +374,6 @@ class TestLROToolResponseIntegration:
                 )
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="Trailing user message + stored invocation_id causes ADK resumption "
-               "error ('No agent to transfer to'). Requires fix in PR #1075.",
-        strict=False,
-    )
     async def test_tool_result_with_trailing_user_message(
         self, check_api_key, simple_agent
     ):
@@ -519,11 +504,6 @@ class TestHITLResumptionIntegration:
         )
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="Known duplicate FunctionResponse persistence on main (issue #1074). "
-               "Fix expected in PR #1075.",
-        strict=False,
-    )
     async def test_hitl_resumption_preserves_invocation_context(
         self, check_api_key, hitl_agent
     ):

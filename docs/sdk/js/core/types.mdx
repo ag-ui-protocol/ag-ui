@@ -29,16 +29,16 @@ type RunAgentInput = {
 }
 ```
 
-| Property         | Type        | Description                                    |
-| ---------------- | ----------- | ---------------------------------------------- |
-| `threadId`       | `string`    | ID of the conversation thread                  |
-| `runId`          | `string`    | ID of the current run                          |
-| `parentRunId`    | `string (optional)` | ID of the run that spawned this run          |
-| `state`          | `any`       | Current state of the agent                     |
-| `messages`       | `Message[]` | Array of messages in the conversation          |
-| `tools`          | `Tool[]`    | Array of tools available to the agent          |
-| `context`        | `Context[]` | Array of context objects provided to the agent |
-| `forwardedProps` | `any`       | Additional properties forwarded to the agent   |
+| Property         | Type                | Description                                    |
+| ---------------- | ------------------- | ---------------------------------------------- |
+| `threadId`       | `string`            | ID of the conversation thread                  |
+| `runId`          | `string`            | ID of the current run                          |
+| `parentRunId`    | `string (optional)` | ID of the run that spawned this run            |
+| `state`          | `any`               | Current state of the agent                     |
+| `messages`       | `Message[]`         | Array of messages in the conversation          |
+| `tools`          | `Tool[]`            | Array of tools available to the agent          |
+| `context`        | `Context[]`         | Array of context objects provided to the agent |
+| `forwardedProps` | `any`               | Additional properties forwarded to the agent   |
 
 ## Message Types
 
@@ -50,7 +50,14 @@ messages in the system.
 Represents the possible roles a message sender can have.
 
 ```typescript
-type Role = "developer" | "system" | "assistant" | "user" | "tool" | "activity"
+type Role =
+  | "developer"
+  | "system"
+  | "assistant"
+  | "user"
+  | "tool"
+  | "activity"
+  | "reasoning"
 ```
 
 ### DeveloperMessage
@@ -128,12 +135,12 @@ type UserMessage = {
 }
 ```
 
-| Property  | Type                        | Description                                                           |
-| --------- | --------------------------- | --------------------------------------------------------------------- |
-| `id`      | `string`                    | Unique identifier for the message                                     |
-| `role`    | `"user"`                    | Role of the message sender, fixed as "user"                           |
+| Property  | Type                       | Description                                                           |
+| --------- | -------------------------- | --------------------------------------------------------------------- |
+| `id`      | `string`                   | Unique identifier for the message                                     |
+| `role`    | `"user"`                   | Role of the message sender, fixed as "user"                           |
 | `content` | `string \| InputContent[]` | Either plain text or an ordered array of multimodal content fragments |
-| `name`    | `string`                    | Optional name of the sender                                           |
+| `name`    | `string`                   | Optional name of the sender                                           |
 
 ### InputContent
 
@@ -178,16 +185,18 @@ type ToolMessage = {
   role: "tool"
   toolCallId: string
   error?: string
+  encryptedValue?: string
 }
 ```
 
-| Property     | Type     | Description                                  |
-| ------------ | -------- | -------------------------------------------- |
-| `id`         | `string` | Unique identifier for the message            |
-| `content`    | `string` | Text content of the message                  |
-| `role`       | `"tool"` | Role of the message sender, fixed as "tool"  |
-| `toolCallId` | `string` | ID of the tool call this message responds to |
-| `error`      | `string` | Error message if the tool call failed        |
+| Property         | Type                | Description                                     |
+| ---------------- | ------------------- | ----------------------------------------------- |
+| `id`             | `string`            | Unique identifier for the message               |
+| `content`        | `string`            | Text content of the message                     |
+| `role`           | `"tool"`            | Role of the message sender, fixed as "tool"     |
+| `toolCallId`     | `string`            | ID of the tool call this message responds to    |
+| `error`          | `string` (optional) | Error message if the tool call failed           |
+| `encryptedValue` | `string` (optional) | Optional encrypted value attached via signature |
 
 ### ActivityMessage
 
@@ -209,6 +218,27 @@ type ActivityMessage = {
 | `activityType` | `string`              | Activity discriminator used for renderer selection      |
 | `content`      | `Record<string, any>` | Structured payload representing the activity state      |
 
+### ReasoningMessage
+
+Represents a reasoning/thinking message from an agent's internal thought
+process.
+
+```typescript
+type ReasoningMessage = {
+  id: string
+  role: "reasoning"
+  content: string
+  encryptedValue?: string
+}
+```
+
+| Property         | Type                | Description                                        |
+| ---------------- | ------------------- | -------------------------------------------------- |
+| `id`             | `string`            | Unique identifier for the reasoning message        |
+| `role`           | `"reasoning"`       | Fixed discriminator identifying the reasoning role |
+| `content`        | `string`            | The reasoning/thinking content                     |
+| `encryptedValue` | `string` (optional) | Optional encrypted value attached via signature    |
+
 ### Message
 
 A union type representing any type of message in the system.
@@ -221,6 +251,7 @@ type Message =
   | UserMessage
   | ToolMessage
   | ActivityMessage
+  | ReasoningMessage
 ```
 
 ### ToolCall
@@ -232,14 +263,16 @@ type ToolCall = {
   id: string
   type: "function"
   function: FunctionCall
+  encryptedValue?: string
 }
 ```
 
-| Property   | Type           | Description                              |
-| ---------- | -------------- | ---------------------------------------- |
-| `id`       | `string`       | Unique identifier for the tool call      |
-| `type`     | `"function"`   | Type of the tool call, always "function" |
-| `function` | `FunctionCall` | Details about the function being called  |
+| Property         | Type                | Description                                     |
+| ---------------- | ------------------- | ----------------------------------------------- |
+| `id`             | `string`            | Unique identifier for the tool call             |
+| `type`           | `"function"`        | Type of the tool call, always "function"        |
+| `function`       | `FunctionCall`      | Details about the function being called         |
+| `encryptedValue` | `string` (optional) | Optional encrypted value attached via signature |
 
 #### FunctionCall
 

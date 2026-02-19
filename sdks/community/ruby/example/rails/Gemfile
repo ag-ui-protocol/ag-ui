@@ -1,0 +1,5 @@
+source "https://rubygems.org"
+
+gem "rails", "~> 7.1"
+gem "puma", "~> 6.4"
+gem "ag-ui-protocol", "~> 0.1.1"

@@ -113,3 +113,39 @@ test("[LangGraph FastAPI] Agentic Chat retains memory of user messages during a 
     await chat.assertAgentReplyVisible(new RegExp(favFruit, "i"));
   });
 });
+
+test("[LangGraph FastAPI] Agentic Chat regenerates a response", async ({
+  page,
+}) => {
+  await retryOnAIFailure(async () => {
+    await page.goto("/langgraph-fastapi/feature/agentic_chat");
+
+    const chat = new AgenticChatPage(page);
+
+    await chat.openChat();
+    await chat.agentGreeting.waitFor({ state: "visible" });
+
+    // Send first message and wait for response
+    await chat.sendMessage("Hello agent");
+    await waitForAIResponse(page);
+
+    // Send second message asking for a joke
+    await chat.sendMessage("tell me a joke");
+    await waitForAIResponse(page);
+
+    // Record the joke response text (index 2: greeting=0, hello reply=1, joke=2)
+    const originalJoke = await chat.getAssistantMessageText(2);
+
+    // Send another message so the joke is not the last message
+    await chat.sendMessage("provide a random person's name");
+    await waitForAIResponse(page);
+
+    // Regenerate the joke response
+    await chat.regenerateResponse(2);
+    await waitForAIResponse(page);
+
+    // Verify the regenerated response differs from the original
+    const newJoke = await chat.getAssistantMessageText(2);
+    expect(newJoke).not.toBe(originalJoke);
+  });
+});

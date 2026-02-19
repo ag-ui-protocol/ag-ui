@@ -49,16 +49,22 @@ const middlewaresRoot = path.join(gitRoot, 'middlewares');
 // Define all runnable services keyed by a stable id
 const ALL_SERVICES = {
   'server-starter': [{
-    command: 'poetry run dev',
+    command: 'uv run dev',
     name: 'Server Starter',
     cwd: path.join(integrationsRoot, 'server-starter/python/examples'),
     env: { PORT: 8000 },
   }],
   'server-starter-all': [{
-    command: 'poetry run dev',
+    command: 'uv run dev',
     name: 'Server AF',
     cwd: path.join(integrationsRoot, 'server-starter-all-features/python/examples'),
     env: { PORT: 8001 },
+  }],
+  'ag2': [{
+    command: 'uv run dev',
+    name: 'AG2',
+    cwd: path.join(integrationsRoot, 'ag2/python/examples'),
+    env: { PORT: 8018 },
   }],
   'agno': [{
     command: 'uv run dev',
@@ -73,13 +79,10 @@ const ALL_SERVICES = {
     env: { PORT: 8003 },
   }],
   'langgraph-fastapi': [{
-    command: 'poetry run dev',
+    command: 'uv run dev',
     name: 'LG FastAPI',
     cwd: path.join(integrationsRoot, 'langgraph/python/examples'),
-    env: {
-      PORT: 8004,
-      POETRY_VIRTUALENVS_IN_PROJECT: 'false',
-    },
+    env: { PORT: 8004 },
   }],
   'langgraph-platform-python': [{
     command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8005',
@@ -165,6 +168,7 @@ const ALL_SERVICES = {
     cwd: path.join(gitRoot, 'apps/dojo'),
     env: {
       PORT: 9999,
+      AG2_URL: 'http://localhost:8018',
       SERVER_STARTER_URL: 'http://localhost:8000',
       SERVER_STARTER_ALL_FEATURES_URL: 'http://localhost:8001',
       AGNO_URL: 'http://localhost:8002',
@@ -190,6 +194,7 @@ const ALL_SERVICES = {
     cwd: gitRoot,
     env: {
       PORT: 9999,
+      AG2_URL: 'http://localhost:8018',
       SERVER_STARTER_URL: 'http://localhost:8000',
       SERVER_STARTER_ALL_FEATURES_URL: 'http://localhost:8001',
       AGNO_URL: 'http://localhost:8002',

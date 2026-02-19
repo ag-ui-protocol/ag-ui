@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-02-16
+
+### Added
+
+- **NEW**: Streaming function call arguments support for Gemini 3+ models via Vertex AI (#822)
+  - Enables real-time streaming of `TOOL_CALL_ARGS` events as the model generates function call arguments incrementally
+  - Activated via `streaming_function_call_arguments=True` on `ADKAgent` / `ADKAgent.from_app()`
+  - Requires `google-adk >= 1.24.0` (version-gated; emits a warning and disables on older versions)
+  - Requires `stream_function_call_arguments=True` in the model's `GenerateContentConfig` and SSE streaming mode
+  - JSON deltas are emitted as concatenable fragments: clients join all `TOOL_CALL_ARGS.delta` values to reconstruct the complete arguments JSON
+  - Integrates with predictive state updates: `PredictState` CustomEvents are emitted before `TOOL_CALL_START` for configured tools
+  - New `stream_tool_call` field on `PredictStateMapping` defers `TOOL_CALL_END` for LRO/HITL workflows
+  - Final aggregated (non-partial) events are automatically suppressed to prevent duplicate tool call emissions
+  - Confirmed function call IDs are remapped to the streaming ID so `TOOL_CALL_RESULT` uses a consistent ID
+  - No upstream monkey-patches or workarounds required (google/adk-python#4311 is fixed in ADK 1.24.0)
+
 ### Deprecated
 
 - **DEPRECATED**: Non-resumable (fire-and-forget) HITL flow via `ADKAgent(adk_agent=...)` with client-side tools
@@ -31,6 +47,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIXED**: Thought parts separated from text in message history (#1110, #1118, #1124)
+  - `adk_events_to_messages()` was concatenating thought parts (Part.thought=True) with regular text into a single AssistantMessage.content string, causing internal model reasoning to leak into the visible chat when users reloaded sessions
+  - Thought parts are now emitted as ReasoningMessage (role="reasoning") before the AssistantMessage, matching the live streaming behavior where THINKING_* events are already separated from TEXT_MESSAGE events
+  - Thanks to **@lakshminarasimmanv** for identifying and fixing this issue!
+- **FIXED**: Duplicate function_response events when using LongRunningFunctionTool (#1074, #1075)
+  - Eliminated duplicate function_response events that were persisted to session database with different invocation_ids
+  - Fix works for all agent types (simple LlmAgent and composite SequentialAgent/LoopAgent)
+  - Maintains correct invocation_id from client's run_id for DatabaseSessionService compatibility
+  - Preserves HITL resumption functionality for composite agents
+  - Supports stateless client patterns that re-send full message history
+  - Thanks to **@bajayo** for identifying the issue, providing comprehensive tests (529 lines!), and implementing the initial fix
+  - Regression fix ensures compatibility across all agent types and usage patterns
+
+- **FIXED**: Invocation ID handling for HITL resumption with composite agents (#1080)
+  - Fixed "No agent to transfer to" errors when resuming after HITL pauses by conditionally passing `invocation_id` based on root agent type
+  - Composite orchestrators (SequentialAgent, LoopAgent) now correctly receive `invocation_id` in `run_async()` to restore internal state on HITL resumption
+  - Standalone LlmAgents and LlmAgents with transfer targets no longer receive `invocation_id`, preventing ValueError in `_get_subagent_to_resume()`
+  - Deferred `invocation_id` storage to post-run lifecycle to avoid stale session errors with DatabaseSessionService
+  - Tool result submissions with trailing user messages now work correctly without causing ADK resumption errors
+  - Thanks to **@lakshminarasimmanv** for this comprehensive fix!
 - **FIXED**: Reload session on cache miss to populate events (#1021)
   - `_find_session_by_thread_id()` uses `list_sessions()` which returns metadata only; now reloads via `get_session()` after a cache miss so that session events are available
   - Thanks to **@lakshminarasimmanv** for this fix!

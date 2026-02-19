@@ -1,0 +1,3 @@
+.yardoc/
+*.log
+Gemfile.lock

@@ -50,14 +50,19 @@ const middlewaresRoot = path.join(gitRoot, "middlewares");
 // Define all prep targets keyed by a stable id
 const ALL_TARGETS = {
   "server-starter": {
-    command: "poetry install",
+    command: "uv sync",
     name: "Server Starter",
     cwd: path.join(integrationsRoot, "server-starter/python/examples"),
   },
   "server-starter-all": {
-    command: "poetry install",
+    command: "uv sync",
     name: "Server AF",
     cwd: path.join(integrationsRoot, "server-starter-all-features/python/examples"),
+  },
+  ag2: {
+    command: "uv sync",
+    name: "AG2",
+    cwd: path.join(integrationsRoot, "ag2/python/examples"),
   },
   agno: {
     command: "uv sync",
@@ -70,12 +75,9 @@ const ALL_TARGETS = {
     cwd: path.join(integrationsRoot, "crew-ai/python"),
   },
   "langgraph-fastapi": {
-    command: "poetry install",
+    command: "uv sync",
     name: "LG FastAPI",
     cwd: path.join(integrationsRoot, "langgraph/python/examples"),
-    env: {
-      POETRY_VIRTUALENVS_IN_PROJECT: "false",
-    },
   },
   "langgraph-platform-typescript": {
     command: "pnpm install",
@@ -113,12 +115,12 @@ const ALL_TARGETS = {
     cwd: path.join(middlewaresRoot, "a2a-middleware/examples"),
   },
   dojo: {
-    command: "pnpm install --no-frozen-lockfile && pnpm build --filter=demo-viewer...",
+    command: "pnpm install --no-frozen-lockfile && npx nx run demo-viewer:build",
     name: "Dojo",
     cwd: gitRoot,
   },
   "dojo-dev": {
-    command: "pnpm install --no-frozen-lockfile && pnpm build --filter=demo-viewer^...",
+    command: "pnpm install --no-frozen-lockfile && npx nx run-many -t build --exclude=demo-viewer",
     name: "Dojo (dev)",
     cwd: gitRoot,
   },
