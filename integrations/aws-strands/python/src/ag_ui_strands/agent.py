@@ -6,7 +6,7 @@ Simple adapter following the Agno pattern.
 import json
 import logging
 import uuid
-from typing import Any, AsyncIterator, Dict, List
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from strands import Agent as StrandsAgentCore
 
@@ -51,6 +51,7 @@ class StrandsAgent:
         name: str,
         description: str = "",
         config: "StrandsAgentConfig | None" = None,
+        hooks: Optional[list] = None,
     ):
         # Store template agent configuration for creating fresh instances
         self._model = agent.model
@@ -69,6 +70,7 @@ class StrandsAgent:
         self.name = name
         self.description = description
         self.config = config or StrandsAgentConfig()
+        self._hooks = hooks or []
 
         # Dictionary to store agent instances per thread
         self._agents_by_thread: Dict[str, StrandsAgentCore] = {}
@@ -86,6 +88,7 @@ class StrandsAgent:
                 model=self._model,
                 system_prompt=self._system_prompt,
                 tools=self._tools,
+                hooks=self._hooks,
                 **self._agent_kwargs,
             )
         strands_agent = self._agents_by_thread[thread_id]
