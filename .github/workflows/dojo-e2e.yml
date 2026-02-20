@@ -244,6 +244,7 @@ jobs:
 
       # Cache Python tool caches and virtual envs; restore only to avoid long saves
       - name: Cache Python dependencies (restore-only)
+        if: ${{ contains(matrix.agent_prepare, 'uv ') || contains(matrix.agent_prepare, 'poetry ') || contains(toJson(matrix.agent_processes), 'uv run') || contains(toJson(matrix.agent_processes), 'poetry run') }}
         id: cache-python
         uses: actions/cache/restore@v4
         with:
@@ -256,15 +257,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pydeps-
 
-      - name: Cache Nx build output
-        uses: actions/cache@v4
-        with:
-          path: .nx/cache
-          key: ${{ runner.os }}-nx-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
-          restore-keys: |
-            ${{ runner.os }}-nx-${{ hashFiles('**/pnpm-lock.yaml') }}-
-            ${{ runner.os }}-nx-
-
       - name: Cache Next.js build
         uses: actions/cache@v4
         with:
@@ -274,6 +266,7 @@ jobs:
             ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
 
       - name: Install Poetry
+        if: ${{ contains(matrix.agent_prepare, 'poetry ') || contains(toJson(matrix.agent_processes), 'poetry run') }}
         uses: snok/install-poetry@v1
         with:
           version: latest
@@ -281,12 +274,25 @@ jobs:
           virtualenvs-in-project: true
 
       - name: Install uv
+        if: ${{ contains(matrix.agent_prepare, 'uv ') || contains(toJson(matrix.agent_processes), 'uv run') }}
         uses: astral-sh/setup-uv@v6
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Cache e2e dependencies
+        id: cache-e2e-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/dojo/e2e/node_modules
+            ~/.cache/ms-playwright
+          key: ${{ runner.os }}-dojo-e2e-deps-${{ hashFiles('pnpm-lock.yaml', 'apps/dojo/e2e/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-dojo-e2e-deps-
+
       - name: Install e2e dependencies
+        if: ${{ steps.cache-e2e-deps.outputs.cache-hit != 'true' }}
         working-directory: apps/dojo/e2e
         run: |
           pnpm install
