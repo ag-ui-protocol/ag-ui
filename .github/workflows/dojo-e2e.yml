@@ -139,7 +139,7 @@ jobs:
             agent_prepare: uv sync
             agent_processes:
               - name: langgraph-fastapi
-                cmd: PORT=8004 uv run dev
+                cmd: PORT=8004 uv run uvicorn agents.dojo:app --host 0.0.0.0 --port 8004
             needs_langgraph_env: true
             wait_on: http://localhost:9999,tcp:localhost:8004
           - suite: llama-index
@@ -373,6 +373,37 @@ jobs:
             nohup bash -lc "$cmd" >/dev/null 2>&1 &
             echo "$!|$name" >> "$DOJO_PID_FILE"
           done < <(echo "$AGENT_PROCESSES" | jq -r '.[] | [.name, .cmd] | @tsv')
+
+      - name: Debug startup probe (langgraph-fastapi)
+        if: ${{ matrix.suite == 'langgraph-fastapi' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PID_FILE="$RUNNER_TEMP/dojo-service-pids-${{ matrix.suite }}.txt"
+          echo "Startup probe for langgraph-fastapi"
+
+          sleep 10
+
+          if [[ -f "$PID_FILE" ]]; then
+            while IFS='|' read -r pid name; do
+              [[ -z "$pid" || -z "$name" ]] && continue
+              if kill -0 "$pid" 2>/dev/null; then
+                echo "Process alive: $name ($pid)"
+              else
+                echo "Process not alive: $name ($pid)"
+              fi
+            done < "$PID_FILE"
+          else
+            echo "PID file not found: $PID_FILE"
+          fi
+
+          echo "Open ports snapshot:"
+          ss -ltnp | grep -E ':9999|:8004' || true
+
+          if ! ss -ltn | grep -q ':8004'; then
+            echo "langgraph-fastapi is not listening on :8004 after startup probe"
+            exit 1
+          fi
 
       - name: Wait for services
         shell: bash
