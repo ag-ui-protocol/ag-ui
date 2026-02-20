@@ -321,11 +321,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          LOG_DIR="$RUNNER_TEMP/dojo-service-logs-${{ matrix.suite }}"
           PID_FILE="$RUNNER_TEMP/dojo-service-pids-${{ matrix.suite }}.txt"
-          mkdir -p "$LOG_DIR"
           : > "$PID_FILE"
-          echo "DOJO_LOG_DIR=$LOG_DIR" >> "$GITHUB_ENV"
           echo "DOJO_PID_FILE=$PID_FILE" >> "$GITHUB_ENV"
 
       - name: Start dojo
@@ -355,8 +352,8 @@ jobs:
           NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: cpkdojo.local___CopilotKit Feature Viewer
         run: |
           set -euo pipefail
-          nohup pnpm run start > "$DOJO_LOG_DIR/dojo.log" 2>&1 &
-          echo "$!|dojo|$DOJO_LOG_DIR/dojo.log" >> "$DOJO_PID_FILE"
+          nohup pnpm run start >/dev/null 2>&1 &
+          echo "$!|dojo" >> "$DOJO_PID_FILE"
 
       - name: Start selected agent
         if: ${{ toJson(matrix.agent_processes) != '[]' }}
@@ -369,10 +366,9 @@ jobs:
 
           while IFS=$'\t' read -r name cmd; do
             [[ -z "$name" || -z "$cmd" ]] && continue
-            log_file="$DOJO_LOG_DIR/${name}.log"
             echo "Starting $name"
-            nohup bash -lc "$cmd" > "$log_file" 2>&1 &
-            echo "$!|$name|$log_file" >> "$DOJO_PID_FILE"
+            nohup bash -lc "$cmd" >/dev/null 2>&1 &
+            echo "$!|$name" >> "$DOJO_PID_FILE"
           done < <(echo "$AGENT_PROCESSES" | jq -r '.[] | [.name, .cmd] | @tsv')
 
       - name: Wait for services
@@ -399,37 +395,13 @@ jobs:
           set +e
           PID_FILE="$RUNNER_TEMP/dojo-service-pids-${{ matrix.suite }}.txt"
           if [[ -f "$PID_FILE" ]]; then
-            while IFS='|' read -r pid name log_file; do
+            while IFS='|' read -r pid name; do
               if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
                 echo "Stopping $name (pid $pid)"
                 kill "$pid" 2>/dev/null || true
               fi
             done < "$PID_FILE"
           fi
-
-      - name: Show service logs on failure
-        if: failure()
-        shell: bash
-        run: |
-          set +e
-          PID_FILE="$RUNNER_TEMP/dojo-service-pids-${{ matrix.suite }}.txt"
-          if [[ -f "$PID_FILE" ]]; then
-            while IFS='|' read -r pid name log_file; do
-              if [[ -f "$log_file" ]]; then
-                echo "::group::${name} (last 200 lines)"
-                tail -n 200 "$log_file"
-                echo "::endgroup::"
-              fi
-            done < "$PID_FILE"
-          fi
-
-      - name: Upload service logs – ${{ matrix.suite }}
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.suite }}-service-logs
-          path: ${{ runner.temp }}/dojo-service-logs-${{ matrix.suite }}/**/*
-          retention-days: 7
 
       - name: Upload traces – ${{ matrix.suite }}
         if: always() # Uploads artifacts even if tests fail
