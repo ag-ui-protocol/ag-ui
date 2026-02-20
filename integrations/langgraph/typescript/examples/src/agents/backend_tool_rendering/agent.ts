@@ -30,7 +30,7 @@ async function chatNode(state: AgentState, config?: RunnableConfig) {
    */
   
   // 1. Define the model
-  const model = new ChatOpenAI({ model: "gpt-4o" });
+  const model = new ChatOpenAI({ model: "gpt-5-nano" });
   
   // Define config for the model
   if (!config) {

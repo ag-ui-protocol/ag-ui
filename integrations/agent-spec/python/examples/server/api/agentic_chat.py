@@ -28,7 +28,7 @@ from pyagentspec.property import Property
 
 agent_llm = OpenAiCompatibleConfig(
     name="my_llm",
-    model_id=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+    model_id=os.environ.get("OPENAI_MODEL", "gpt-5-nano"),
     url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 )
 

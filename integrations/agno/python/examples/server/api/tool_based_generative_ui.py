@@ -42,7 +42,7 @@ def generate_haiku(english: List[str], japanese: List[str], image_names: List[st
     return "Haiku generated"
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5-nano"),
     tools=[generate_haiku],
     description="Help the user with writing Haikus. If the user asks for a haiku, use the generate_haiku tool to display the haiku to the user.",
     debug_mode=True,

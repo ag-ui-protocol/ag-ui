@@ -56,7 +56,7 @@ system_prompt = """
     Always say you actually did the steps, not merely generated them.
     """
 agent = Agent(
-    'openai:gpt-4o-mini',
+    'openai:gpt-5-nano',
     instructions=system_prompt,
 )
 

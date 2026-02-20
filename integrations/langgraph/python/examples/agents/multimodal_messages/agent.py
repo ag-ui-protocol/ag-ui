@@ -34,7 +34,7 @@ async def vision_chat_node(state: AgentState, config: Optional[RunnableConfig] =
 
     # 1. Use a vision-capable model
     # GPT-4o supports vision, as do other models like Claude 3
-    model = ChatOpenAI(model="gpt-4o")
+    model = ChatOpenAI(model="gpt-5-nano")
 
     # Define config for the model
     if config is None:

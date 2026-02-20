@@ -99,7 +99,7 @@ Your primary function is to help users get weather details for specific location
 - Keep responses concise but informative
 
 Use the get_weather tool to fetch current weather data.""",
-    llm_config=LLMConfig({"model": "gpt-4o-mini", "stream": True}),
+    llm_config=LLMConfig({"model": "gpt-5-nano", "stream": True}),
     functions=[get_weather],
 )
 

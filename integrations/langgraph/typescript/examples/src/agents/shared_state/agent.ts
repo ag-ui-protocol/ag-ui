@@ -168,7 +168,7 @@ async function chatNode(state: AgentState, config?: RunnableConfig): Promise<Com
     `;
 
   // Define the model
-  const model = new ChatOpenAI({ model: "gpt-4o-mini" });
+  const model = new ChatOpenAI({ model: "gpt-5-nano" });
   
   // Define config for the model
   if (!config) {

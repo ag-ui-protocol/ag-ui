@@ -22,7 +22,7 @@ def change_background(background: str) -> str:  # pylint: disable=unused-argumen
 
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5-nano"),
     tools=[
         YFinanceTools(),
         change_background,

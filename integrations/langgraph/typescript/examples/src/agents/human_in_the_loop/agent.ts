@@ -85,7 +85,7 @@ async function chatNode(state: AgentState, config?: RunnableConfig): Promise<Com
     `;
 
   // Define the model
-  const model = new ChatOpenAI({ model: "gpt-4o-mini" });
+  const model = new ChatOpenAI({ model: "gpt-5-nano" });
   
   // Define config for the model
   if (!config) {
@@ -221,7 +221,7 @@ async function processStepsNode(state: AgentState, config?: RunnableConfig): Pro
     Don't just repeat a list of steps, come up with a creative but short description (3 sentences max) of how you are performing the task.
     `;
   
-  const finalResponse = await new ChatOpenAI({ model: "gpt-4o" }).invoke([
+  const finalResponse = await new ChatOpenAI({ model: "gpt-5-nano" }).invoke([
     new SystemMessage({ content: finalPrompt }),
     { role: "user", content: userResponse }
   ], config);

@@ -142,7 +142,7 @@ agent = ConversableAgent(
         summarise the changes in one sentence, don't describe the recipe in
         detail or send it as a message to the user.
     """),
-    llm_config=LLMConfig({"model": "gpt-4o-mini", "stream": True}),
+    llm_config=LLMConfig({"model": "gpt-5-nano", "stream": True}),
     functions=[get_current_recipe, display_recipe],
 )
 

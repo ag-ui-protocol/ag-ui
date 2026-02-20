@@ -45,7 +45,7 @@ def generate_task_steps(
 
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5-nano"),
     tools=[generate_task_steps],
     description="You are a helpful task planning assistant that helps break down complex tasks into manageable steps.",
     instructions="""

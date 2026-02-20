@@ -13,7 +13,7 @@ import { copilotkitMiddleware } from "@copilotkit/sdk-js/langgraph";
 const checkpointer = new MemorySaver();
 
 export const agenticChatGraph = createAgent({
-  model: "openai:gpt-4o",
+  model: "openai:gpt-5-nano",
   tools: [],  // Backend tools go here
   middleware: [copilotkitMiddleware],
   systemPrompt: "You are a helpful assistant.",

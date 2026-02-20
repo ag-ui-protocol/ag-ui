@@ -10,7 +10,7 @@ from autogen.ag_ui import AGUIStream
 
 agent = ConversableAgent(
     name="haiku_bot",
-    llm_config=LLMConfig({"model": "gpt-4o-mini", "stream": True}),
+    llm_config=LLMConfig({"model": "gpt-5-nano", "stream": True}),
 )
 
 stream = AGUIStream(agent)

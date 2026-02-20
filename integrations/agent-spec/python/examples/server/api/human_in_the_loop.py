@@ -62,7 +62,7 @@ generate_task_steps_tool = ClientTool(
 
 agent_llm = OpenAiCompatibleConfig(
     name="hitl_llm",
-    model_id=os.getenv("OPENAI_MODEL", "gpt-4o"),
+    model_id=os.getenv("OPENAI_MODEL", "gpt-5-nano"),
     url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
 )
 

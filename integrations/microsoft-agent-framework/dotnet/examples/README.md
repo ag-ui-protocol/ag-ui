@@ -12,7 +12,7 @@ Set the following environment variables before running the server:
 
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-$env:AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="gpt-4o-mini"
+$env:AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="gpt-5-nano"
 ```
 
 If you prefer to use `appsettings.Development.json` or user secrets you can place the same keys under the root configuration section.
