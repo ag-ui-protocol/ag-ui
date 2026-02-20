@@ -361,6 +361,9 @@ jobs:
         working-directory: ${{ matrix.agent_dir }}
         env:
           AGENT_PROCESSES: ${{ toJson(matrix.agent_processes) }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: |
           set -euo pipefail
 
