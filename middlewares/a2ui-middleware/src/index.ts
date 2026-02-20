@@ -12,6 +12,7 @@ import {
   ActivitySnapshotEvent,
   ActivityDeltaEvent,
   ToolCallResultEvent,
+  ToolCallStartEvent,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
 
@@ -21,7 +22,7 @@ import {
   A2UIUserAction,
 } from "./types";
 import { SEND_A2UI_JSON_TOOL, SEND_A2UI_TOOL_NAME, LOG_A2UI_EVENT_TOOL_NAME } from "./tools";
-import { getSystemPromptWarning, getOperationSurfaceId } from "./schema";
+import { getSystemPromptWarning, getOperationSurfaceId, tryParseA2UIOperations } from "./schema";
 
 // Re-exports
 export * from "./types";
@@ -64,11 +65,13 @@ export class A2UIMiddleware extends Middleware {
     // Process user action from forwardedProps (append synthetic messages)
     const enhancedInput = this.processUserAction(input);
 
-    // Inject the send_a2ui_json_to_client tool
-    const inputWithTool = this.injectTool(enhancedInput);
+    // Conditionally inject the send_a2ui_json_to_client tool
+    const finalInput = this.config.injectA2UITool
+      ? this.injectTool(enhancedInput)
+      : enhancedInput;
 
     // Process the event stream using runNextWithState for automatic message tracking
-    return this.processStream(this.runNextWithState(inputWithTool, next));
+    return this.processStream(this.runNextWithState(finalInput, next));
   }
 
   /**
@@ -165,10 +168,20 @@ export class A2UIMiddleware extends Middleware {
   private processStream(source: Observable<EventWithState>): Observable<BaseEvent> {
     return new Observable<BaseEvent>((subscriber) => {
       let heldRunFinished: EventWithState | null = null;
+      // Track tool call IDs belonging to send_a2ui_json_to_client so we skip them
+      const a2uiToolCallIds = new Set<string>();
 
       const subscription = source.subscribe({
         next: (eventWithState) => {
           const event = eventWithState.event;
+
+          // Track send_a2ui_json_to_client tool call IDs from TOOL_CALL_START events
+          if (event.type === EventType.TOOL_CALL_START) {
+            const startEvent = event as ToolCallStartEvent;
+            if (startEvent.toolCallName === SEND_A2UI_TOOL_NAME) {
+              a2uiToolCallIds.add(startEvent.toolCallId);
+            }
+          }
 
           // If we have a held RUN_FINISHED and a new event comes, flush it first
           if (heldRunFinished) {
@@ -181,6 +194,19 @@ export class A2UIMiddleware extends Middleware {
             heldRunFinished = eventWithState;
           } else {
             subscriber.next(event);
+
+            // Auto-detect A2UI JSON in tool call results from other tools
+            if (event.type === EventType.TOOL_CALL_RESULT) {
+              const resultEvent = event as ToolCallResultEvent;
+              if (!a2uiToolCallIds.has(resultEvent.toolCallId)) {
+                const operations = tryParseA2UIOperations(resultEvent.content);
+                if (operations) {
+                  for (const activityEvent of this.createA2UIActivityEvents(operations)) {
+                    subscriber.next(activityEvent);
+                  }
+                }
+              }
+            }
           }
         },
         error: (err) => {
@@ -310,6 +336,30 @@ export class A2UIMiddleware extends Middleware {
       console.warn("[A2UIMiddleware] a2ui_json has unexpected type:", typeof a2uiJsonValue);
     }
 
+    // Create activity events from the parsed operations
+    events.push(...this.createA2UIActivityEvents(operations));
+
+    // Create TOOL_CALL_RESULT event
+    const resultEvent: ToolCallResultEvent = {
+      type: EventType.TOOL_CALL_RESULT,
+      messageId: randomUUID(),
+      toolCallId,
+      content: JSON.stringify(operations),
+    };
+    events.push(resultEvent);
+
+    return events;
+  }
+
+  /**
+   * Create ACTIVITY_DELTA + ACTIVITY_SNAPSHOT events from A2UI operations,
+   * grouped by surfaceId.
+   */
+  private createA2UIActivityEvents(
+    operations: Array<Record<string, unknown>>
+  ): BaseEvent[] {
+    const events: BaseEvent[] = [];
+
     // Group operations by surfaceId
     const operationsBySurface = new Map<string, Array<Record<string, unknown>>>();
     for (const op of operations) {
@@ -347,18 +397,6 @@ export class A2UIMiddleware extends Middleware {
       };
       events.push(snapshotEvent);
     }
-
-    // Create TOOL_CALL_RESULT event
-    const resultEvent: ToolCallResultEvent = {
-      type: EventType.TOOL_CALL_RESULT,
-      messageId: randomUUID(),
-      toolCallId,
-      content: JSON.stringify({
-        success: true,
-        surfacesRendered: Array.from(operationsBySurface.keys()),
-      }),
-    };
-    events.push(resultEvent);
 
     return events;
   }

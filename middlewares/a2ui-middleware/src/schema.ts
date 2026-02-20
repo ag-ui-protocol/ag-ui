@@ -973,6 +973,39 @@ export function getSystemPromptWarning(): string {
 }
 
 /**
+ * Try to parse text as A2UI operations.
+ * Returns the array of operations if the text contains valid A2UI JSON, or null otherwise.
+ */
+export function tryParseA2UIOperations(text: string): Array<Record<string, unknown>> | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+
+  if (Array.isArray(parsed)) {
+    // Check if at least one item is a valid A2UI operation
+    const hasA2UI = parsed.some(
+      (item) =>
+        typeof item === "object" &&
+        item !== null &&
+        getOperationSurfaceId(item as Record<string, unknown>) !== undefined
+    );
+    return hasA2UI ? (parsed as Array<Record<string, unknown>>) : null;
+  }
+
+  if (typeof parsed === "object" && parsed !== null) {
+    // Single object — check if it's a valid A2UI operation
+    if (getOperationSurfaceId(parsed as Record<string, unknown>) !== undefined) {
+      return [parsed as Record<string, unknown>];
+    }
+  }
+
+  return null;
+}
+
+/**
  * Extract surfaceId from a single A2UI operation
  */
 export function getOperationSurfaceId(operation: Record<string, unknown>): string | undefined {
