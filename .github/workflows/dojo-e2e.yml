@@ -136,7 +136,7 @@ jobs:
           - suite: langgraph-fastapi
             test_path: tests/langgraphFastAPITests
             agent_dir: integrations/langgraph/python/examples
-            agent_prepare: poetry install
+            agent_prepare: poetry install --no-root
             agent_processes:
               - name: langgraph-fastapi
                 cmd: PORT=8004 poetry run dev
