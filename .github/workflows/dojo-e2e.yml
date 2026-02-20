@@ -136,10 +136,10 @@ jobs:
           - suite: langgraph-fastapi
             test_path: tests/langgraphFastAPITests
             agent_dir: integrations/langgraph/python/examples
-            agent_prepare: uv sync
+            agent_prepare: poetry install
             agent_processes:
               - name: langgraph-fastapi
-                cmd: PORT=8004 uv run dev
+                cmd: PORT=8004 poetry run dev
             needs_langgraph_env: true
             wait_on: http://localhost:9999,tcp:localhost:8004
           - suite: llama-index
