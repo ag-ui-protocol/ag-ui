@@ -134,7 +134,7 @@ export const agentsIntegrations = {
     // A2UI Chat with middleware
     a2ui_chat: (() => {
       const agent = new LangGraphAgent({ deploymentUrl: envVars.langgraphPythonUrl, graphId: "a2ui_chat" });
-      agent.use(new A2UIMiddleware({ systemInstructionsAdded: true }));
+      agent.use(new A2UIMiddleware({ systemInstructionsAdded: true, injectA2UITool: true }));
       return agent;
     })(),
   }),
@@ -154,10 +154,16 @@ export const agentsIntegrations = {
         subgraphs: "subgraphs",
       }
     ),
-    // A2UI Chat with middleware
+    // A2UI Chat with middleware - uses backend tool auto-detection (no injected tool)
     a2ui_chat: (() => {
       const agent = new LangGraphHttpAgent({ url: `${envVars.langgraphFastApiUrl}/agent/a2ui_chat` });
       agent.use(new A2UIMiddleware({ systemInstructionsAdded: true }));
+      return agent;
+    })(),
+    // A2UI Chat with middleware - uses injected frontend tool
+    a2ui_chat_inject: (() => {
+      const agent = new LangGraphHttpAgent({ url: `${envVars.langgraphFastApiUrl}/agent/a2ui_chat` });
+      agent.use(new A2UIMiddleware({ systemInstructionsAdded: true, injectA2UITool: true }));
       return agent;
     })(),
   }),
@@ -373,7 +379,7 @@ ${A2UI_PROMPT}`;
       model: "openai/gpt-4o",
       prompt: systemPrompt,
     });
-    builtInAgent.use(new A2UIMiddleware({ systemInstructionsAdded: true }));
+    builtInAgent.use(new A2UIMiddleware({ systemInstructionsAdded: true, injectA2UITool: true }));
 
     return {
       a2ui_chat: builtInAgent as unknown as AbstractAgent,
