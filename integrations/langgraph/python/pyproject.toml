@@ -18,9 +18,6 @@ dependencies = [
 [project.optional-dependencies]
 fastapi = ["fastapi>=0.115.12"]
 
-[project.scripts]
-dev = "ag_ui_langgraph.dojo:main"
-
 [tool.ag-ui.scripts]
 test = "python -m unittest discover tests"
 
