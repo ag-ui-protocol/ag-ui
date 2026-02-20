@@ -2,6 +2,7 @@
 This module contains the types for the Agent User Interaction Protocol Python SDK.
 """
 
+import warnings
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -79,8 +80,62 @@ class TextInputContent(ConfiguredBaseModel):
     text: str
 
 
+class InputContentDataSource(ConfiguredBaseModel):
+    """Inline base64-encoded source."""
+
+    type: Literal["data"] = "data"
+    value: str
+    mime_type: str
+
+
+class InputContentUrlSource(ConfiguredBaseModel):
+    """URL-referenced source."""
+
+    type: Literal["url"] = "url"
+    value: str
+    mime_type: Optional[str] = None
+
+
+InputContentSource = Annotated[
+    Union[InputContentDataSource, InputContentUrlSource],
+    Field(discriminator="type"),
+]
+
+
+class ImageInputContent(ConfiguredBaseModel):
+    """An image input content fragment."""
+
+    type: Literal["image"] = "image"
+    source: InputContentSource
+    metadata: Optional[Any] = None
+
+
+class AudioInputContent(ConfiguredBaseModel):
+    """An audio input content fragment."""
+
+    type: Literal["audio"] = "audio"
+    source: InputContentSource
+    metadata: Optional[Any] = None
+
+
+class VideoInputContent(ConfiguredBaseModel):
+    """A video input content fragment."""
+
+    type: Literal["video"] = "video"
+    source: InputContentSource
+    metadata: Optional[Any] = None
+
+
+class DocumentInputContent(ConfiguredBaseModel):
+    """A document input content fragment."""
+
+    type: Literal["document"] = "document"
+    source: InputContentSource
+    metadata: Optional[Any] = None
+
+
 class BinaryInputContent(ConfiguredBaseModel):
-    """A binary payload reference in a multimodal user message."""
+    """A deprecated binary payload reference in a multimodal user message."""
 
     type: Literal["binary"] = "binary"  # pyright: ignore[reportIncompatibleVariableOverride]
     mime_type: str
@@ -96,11 +151,33 @@ class BinaryInputContent(ConfiguredBaseModel):
             raise ValueError("BinaryInputContent requires id, url, or data to be provided.")
         return self
 
+    def model_post_init(self, __context: Any) -> None:
+        warnings.warn(
+            "BinaryInputContent is deprecated and will be removed in a future release. "
+            "Use ImageInputContent/AudioInputContent/VideoInputContent/DocumentInputContent with InputContentSource.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
 
 InputContent = Annotated[
-    Union[TextInputContent, BinaryInputContent],
+    Union[
+        TextInputContent,
+        ImageInputContent,
+        AudioInputContent,
+        VideoInputContent,
+        DocumentInputContent,
+        BinaryInputContent,
+    ],
     Field(discriminator="type"),
 ]
+
+ImageInputPart = ImageInputContent
+AudioInputPart = AudioInputContent
+VideoInputPart = VideoInputContent
+DocumentInputPart = DocumentInputContent
+
+InputContentPart = InputContent
 
 
 class UserMessage(BaseMessage):

@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package ag_ui;
 
+import "google/protobuf/struct.proto";
+
 message ToolCall {
   string id = 1;
   string type = 2; 
@@ -12,6 +14,57 @@ message ToolCall {
   Function function = 3;
 }
 
+message InputContentDataSource {
+  string value = 1;
+  string mime_type = 2;
+}
+
+message InputContentUrlSource {
+  string value = 1;
+  optional string mime_type = 2;
+}
+
+message InputContentSource {
+  oneof source {
+    InputContentDataSource data = 1;
+    InputContentUrlSource url = 2;
+  }
+}
+
+message TextInputPart {
+  string text = 1;
+}
+
+message ImageInputPart {
+  InputContentSource source = 1;
+  optional google.protobuf.Value metadata = 2;
+}
+
+message AudioInputPart {
+  InputContentSource source = 1;
+  optional google.protobuf.Value metadata = 2;
+}
+
+message VideoInputPart {
+  InputContentSource source = 1;
+  optional google.protobuf.Value metadata = 2;
+}
+
+message DocumentInputPart {
+  InputContentSource source = 1;
+  optional google.protobuf.Value metadata = 2;
+}
+
+message InputContent {
+  oneof part {
+    TextInputPart text = 1;
+    ImageInputPart image = 2;
+    AudioInputPart audio = 3;
+    VideoInputPart video = 4;
+    DocumentInputPart document = 5;
+  }
+}
+
 message Message {
   string id = 1;
   string role = 2;
@@ -20,4 +73,5 @@ message Message {
   repeated ToolCall tool_calls = 5;
   optional string tool_call_id = 6;
   optional string error = 7;
+  repeated InputContent content_parts = 8;
 }
