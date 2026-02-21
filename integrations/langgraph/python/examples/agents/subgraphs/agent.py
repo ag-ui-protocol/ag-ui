@@ -175,7 +175,7 @@ async def experiences_finder(state: TravelAgentState, config: RunnableConfig):
     activities = [exp for exp in STATIC_EXPERIENCES if exp.type == "activity"][:2]
     experiences = restaurants + activities
 
-    model = ChatOpenAI(model="gpt-4o")
+    model = ChatOpenAI(model="gpt-4.1-mini")
 
     if config is None:
         config = RunnableConfig(recursion_limit=25)
@@ -246,7 +246,7 @@ async def supervisor_agent(state: TravelAgentState, config: RunnableConfig):
     """
 
     # Define the model
-    model = ChatOpenAI(model="gpt-4o")
+    model = ChatOpenAI(model="gpt-4.1-mini")
 
     if config is None:
         config = RunnableConfig(recursion_limit=25)

@@ -45,7 +45,7 @@ export class SharedStatePage {
     }
     // Wait for the loading indicator to disappear (AI response finished)
     try {
-      await this.promptResponseLoader.waitFor({ state: "hidden", timeout: 120000 });
+      await this.promptResponseLoader.waitFor({ state: "hidden", timeout: 60000 });
     } catch {
       // Loader may already be gone
     }
@@ -64,7 +64,7 @@ export class SharedStatePage {
         );
       },
       name,
-      { timeout: 120000 }
+      { timeout: 60000 }
     );
   }
 

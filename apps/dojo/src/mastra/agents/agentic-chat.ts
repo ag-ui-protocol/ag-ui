@@ -17,7 +17,7 @@ export const agenticChatAgent = new Agent({
     - Include relevant details like humidity, wind conditions, and precipitation
     - Keep responses concise but informative
   `,
-  model: "openai/gpt-4o",
+  model: "openai/gpt-4.1-mini",
   tools: { get_weather: weatherTool },
   memory: new Memory({
     storage: getStorage(),

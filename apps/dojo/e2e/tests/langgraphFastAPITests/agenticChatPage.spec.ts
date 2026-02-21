@@ -52,7 +52,7 @@ test("[LangGraph FastAPI] Agentic Chat changes background on message and reset",
     await waitForAIResponse(page);
 
     // Wait for the background to change from its initial value (AI tool call may take time)
-    await expect(backgroundContainer).not.toHaveCSS('background-color', initialBackground, { timeout: 30000 });
+    await expect(backgroundContainer).not.toHaveCSS('background-color', initialBackground, { timeout: 15000 });
     const backgroundAfterBlue = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
     console.log("Background after blue request:", backgroundAfterBlue);
 
@@ -64,7 +64,7 @@ test("[LangGraph FastAPI] Agentic Chat changes background on message and reset",
     await waitForAIResponse(page);
 
     // Wait for the background to change from the previous value
-    await expect(backgroundContainer).not.toHaveCSS('background-color', backgroundAfterBlue, { timeout: 30000 });
+    await expect(backgroundContainer).not.toHaveCSS('background-color', backgroundAfterBlue, { timeout: 15000 });
     const backgroundAfterPink = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
     console.log("Background after pink request:", backgroundAfterPink);
     // Verify it also differs from initial (not a reset)
