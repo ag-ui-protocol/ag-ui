@@ -1,0 +1,45 @@
+name: unit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "integrations/community/genkit/go/**"
+      - ".github/workflows/unit-genkit-go.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "integrations/community/genkit/go/**"
+      - ".github/workflows/unit-genkit-go.yml"
+
+jobs:
+  go-genkit:
+    name: Go Genkit Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+
+      - name: Setup Go module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-genkit-${{ hashFiles('integrations/community/genkit/go/genkit/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-genkit-
+
+      - name: Download dependencies
+        working-directory: integrations/community/genkit/go/genkit
+        run: go mod download
+
+      - name: Run tests
+        working-directory: integrations/community/genkit/go/genkit
+        run: go test ./... -v
