@@ -1,24 +1,25 @@
 import os
-import uvicorn
-from fastapi import FastAPI
 
+import uvicorn
 from dotenv import load_dotenv
+from fastapi import FastAPI
 
 load_dotenv()
 
 os.environ["LANGGRAPH_FAST_API"] = "true"
 
 from ag_ui_langgraph import LangGraphAgent, add_langgraph_fastapi_endpoint
+from copilotkit import LangGraphAGUIAgent
+
+from .agentic_chat.agent import graph as agentic_chat_graph
+from .agentic_chat_reasoning.agent import graph as agentic_chat_reasoning_graph
+from .agentic_generative_ui.agent import graph as agentic_generative_ui_graph
+from .backend_tool_rendering.agent import graph as backend_tool_rendering_graph
 from .human_in_the_loop.agent import graph as human_in_the_loop_graph
 from .predictive_state_updates.agent import graph as predictive_state_updates_graph
 from .shared_state.agent import graph as shared_state_graph
-from .tool_based_generative_ui.agent import graph as tool_based_generative_ui_graph
-from .agentic_chat.agent import graph as agentic_chat_graph
-from .agentic_generative_ui.agent import graph as agentic_generative_ui_graph
-from .agentic_chat_reasoning.agent import graph as agentic_chat_reasoning_graph
-from .backend_tool_rendering.agent import graph as backend_tool_rendering_graph
 from .subgraphs.agent import graph as subgraphs_graph
-from copilotkit import LangGraphAGUIAgent
+from .tool_based_generative_ui.agent import graph as tool_based_generative_ui_graph
 
 app = FastAPI(title="LangGraph Dojo Example Server")
 

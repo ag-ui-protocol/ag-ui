@@ -219,19 +219,46 @@ def agui_messages_to_langchain(messages: List[AGUIMessage]) -> List[BaseMessage]
 def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
     content = chunk.content
     if not content:
-        return None
+        # Fall through to check additional_kwargs for OpenAI legacy format
+        pass
 
-    # Anthropic reasoning response
     if isinstance(content, list) and content and content[0]:
-        if not content[0].get("thinking"):
-            return None
-        return LangGraphReasoning(
-            text=content[0]["thinking"],
-            type="text",
-            index=content[0].get("index", 0)
-        )
+        block = content[0]
+        block_type = block.get("type") if isinstance(block, dict) else None
 
-    # OpenAI reasoning response
+        # Old langchain-anthropic format: { type: "thinking", thinking: "..." }
+        if block_type == "thinking" and block.get("thinking"):
+            result = LangGraphReasoning(
+                text=block["thinking"],
+                type="text",
+                index=block.get("index", 0)
+            )
+            # Extract signature if present (Anthropic extended thinking signature)
+            if block.get("signature"):
+                result["signature"] = block["signature"]
+            return result
+
+        # New LangChain standardized format: { type: "reasoning", reasoning: "..." }
+        if block_type == "reasoning" and block.get("reasoning"):
+            return LangGraphReasoning(
+                text=block["reasoning"],
+                type="text",
+                index=block.get("index", 0)
+            )
+
+        # OpenAI Responses API v1 format: { type: "reasoning", summary: [{ text: "..." }] }
+        if block_type == "reasoning" and block.get("summary"):
+            summaries = block["summary"]
+            if summaries and isinstance(summaries, list) and summaries[0]:
+                data = summaries[0]
+                if data.get("text"):
+                    return LangGraphReasoning(
+                        type="text",
+                        text=data["text"],
+                        index=data.get("index", 0)
+                    )
+
+    # OpenAI legacy format via additional_kwargs
     if hasattr(chunk, "additional_kwargs"):
         reasoning = chunk.additional_kwargs.get("reasoning", {})
         summary = reasoning.get("summary", [])
@@ -244,6 +271,23 @@ def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
                 text=data["text"],
                 index=data.get("index", 0)
             )
+
+    return None
+
+
+def resolve_encrypted_reasoning_content(chunk: Any) -> str | None:
+    """
+    Resolves encrypted reasoning content from Anthropic responses.
+    This handles:
+    - `redacted_thinking` blocks with encrypted `data` (redacted chain-of-thought)
+    """
+    content = chunk.content if chunk else None
+    if not content or not isinstance(content, list) or not content or not content[0]:
+        return None
+
+    # Anthropic redacted_thinking block: { type: "redacted_thinking", data: "..." }
+    if content[0].get("type") == "redacted_thinking" and content[0].get("data"):
+        return content[0]["data"]
 
     return None
 

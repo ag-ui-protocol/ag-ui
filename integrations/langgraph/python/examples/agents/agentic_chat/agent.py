@@ -6,8 +6,11 @@ import os
 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
+<<<<<<< HEAD
 
 from copilotkit import CopilotKitMiddleware, CopilotKitState
+=======
+>>>>>>> c10f7571 (fix: revert agentic_chat example changes that broke CI)
 
 # Conditionally use a checkpointer based on the environment
 # Check for multiple indicators that we're running in LangGraph dev/API mode
