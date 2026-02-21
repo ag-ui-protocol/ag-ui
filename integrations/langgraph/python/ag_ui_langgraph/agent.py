@@ -111,7 +111,7 @@ class LangGraphAgent:
             forwarded_props = {
                 camel_to_snake(k): v for k, v in input.forwarded_props.items()
             }
-        async for event_str in self._handle_stream_events(input.copy(update={"forwarded_props": forwarded_props})):
+        async for event_str in self._handle_stream_events(input.model_copy(update={"forwarded_props": forwarded_props})):
             yield event_str
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[str, None]:
@@ -413,15 +413,15 @@ class LangGraphAgent:
         try:
             input_schema = self.graph.get_input_jsonschema(config)
             output_schema = self.graph.get_output_jsonschema(config)
-            config_schema = self.graph.config_schema().schema()
+            config_schema = self.graph.get_context_jsonschema() or {}
 
             input_schema_keys = list(input_schema["properties"].keys()) if "properties" in input_schema else []
             output_schema_keys = list(output_schema["properties"].keys()) if "properties" in output_schema else []
             config_schema_keys = list(config_schema["properties"].keys()) if "properties" in config_schema else []
             context_schema_keys = []
 
-            if hasattr(self.graph, "context_schema") and self.graph.context_schema is not None:
-                context_schema = self.graph.context_schema().schema()
+            context_schema = self.graph.get_context_jsonschema()
+            if context_schema is not None:
                 context_schema_keys = list(context_schema["properties"].keys()) if "properties" in context_schema else []
 
 
