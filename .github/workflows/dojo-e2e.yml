@@ -75,63 +75,140 @@ jobs:
         include:
           - suite: a2a-middleware
             test_path: tests/a2aMiddlewareTests
-            services: ["dojo", "a2a-middleware"]
+            agent_dir: middlewares/a2a-middleware/examples
+            agent_prepare: uv sync
+            agent_processes:
+              - name: a2a-buildings-management
+                cmd: PORT=8011 uv run buildings_management.py
+              - name: a2a-finance
+                cmd: PORT=8012 uv run finance.py
+              - name: a2a-it
+                cmd: PORT=8013 uv run it.py
+              - name: a2a-orchestrator
+                cmd: PORT=8014 uv run orchestrator.py
+            needs_langgraph_env: false
             wait_on: http://localhost:9999,tcp:localhost:8011,tcp:localhost:8012,tcp:localhost:8013,tcp:localhost:8014
           - suite: adk-middleware
             test_path: tests/adkMiddlewareTests
-            services: ["dojo", "adk-middleware"]
+            agent_dir: integrations/adk-middleware/python/examples
+            agent_prepare: uv sync
+            agent_processes:
+              - name: adk-middleware
+                cmd: PORT=8010 uv run dev
+            needs_langgraph_env: false
             wait_on: http://localhost:9999,tcp:localhost:8010
           - suite: agno
             test_path: tests/agnoTests
-            services: ["dojo", "agno"]
+            agent_dir: integrations/agno/python/examples
+            agent_prepare: uv sync
+            agent_processes:
+              - name: agno
+                cmd: PORT=8002 uv run dev
+            needs_langgraph_env: false
             wait_on: http://localhost:9999,tcp:localhost:8002
           - suite: crew-ai
             test_path: tests/crewAITests
-            services: ["dojo", "crew-ai"]
+            agent_dir: integrations/crew-ai/python
+            agent_prepare: poetry install
+            agent_processes:
+              - name: crew-ai
+                cmd: PORT=8003 poetry run dev
+            needs_langgraph_env: false
             wait_on: http://localhost:9999,tcp:localhost:8003
           - suite: langgraph-python
             test_path: tests/langgraphPythonTests
-            services: ["dojo", "langgraph-platform-python"]
+            agent_dir: integrations/langgraph/python/examples
+            agent_prepare: uv sync
+            agent_processes:
+              - name: langgraph-platform-python
+                cmd: PORT=8005 pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8005
+            needs_langgraph_env: true
             wait_on: http://localhost:9999,tcp:localhost:8005
           - suite: langgraph-typescript
             test_path: tests/langgraphTypescriptTests
-            services: ["dojo", "langgraph-platform-typescript"]
+            agent_dir: integrations/langgraph/typescript/examples
+            agent_prepare: pnpm install
+            agent_processes:
+              - name: langgraph-platform-typescript
+                cmd: PORT=8006 pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8006
+            needs_langgraph_env: true
             wait_on: http://localhost:9999,tcp:localhost:8006
           - suite: langgraph-fastapi
             test_path: tests/langgraphFastAPITests
-            services: ["dojo", "langgraph-fastapi"]
+            agent_dir: integrations/langgraph/python/examples
+            agent_prepare: uv sync
+            agent_processes:
+              - name: langgraph-fastapi
+                cmd: PORT=8004 uv run uvicorn agents.dojo:app --host 0.0.0.0 --port 8004
+            needs_langgraph_env: true
             wait_on: http://localhost:9999,tcp:localhost:8004
           - suite: llama-index
             test_path: tests/llamaIndexTests
-            services: ["dojo", "llama-index"]
+            agent_dir: integrations/llama-index/python/examples
+            agent_prepare: uv sync
+            agent_processes:
+              - name: llama-index
+                cmd: PORT=8007 uv run dev
+            needs_langgraph_env: false
             wait_on: http://localhost:9999,tcp:localhost:8007
           - suite: mastra
             test_path: tests/mastraTests
-            services: ["dojo", "mastra"]
+            agent_dir: integrations/mastra/typescript/examples
+            agent_prepare: pnpm install --no-frozen-lockfile
+            agent_processes:
+              - name: mastra
+                cmd: PORT=8008 npm run dev
+            needs_langgraph_env: false
             wait_on: http://localhost:9999,tcp:localhost:8008
           - suite: mastra-agent-local
             test_path: tests/mastraAgentLocalTests
-            services: ["dojo"]
+            agent_dir: ""
+            agent_prepare: ""
+            agent_processes: []
+            needs_langgraph_env: false
             wait_on: http://localhost:9999
           - suite: middleware-starter
             test_path: tests/middlewareStarterTests
-            services: ["dojo"]
+            agent_dir: ""
+            agent_prepare: ""
+            agent_processes: []
+            needs_langgraph_env: false
             wait_on: http://localhost:9999
           - suite: pydantic-ai
             test_path: tests/pydanticAITests
-            services: ["dojo", "pydantic-ai"]
+            agent_dir: integrations/pydantic-ai/python/examples
+            agent_prepare: uv sync
+            agent_processes:
+              - name: pydantic-ai
+                cmd: PORT=8009 uv run dev
+            needs_langgraph_env: false
             wait_on: http://localhost:9999,tcp:localhost:8009
           - suite: server-starter
             test_path: tests/serverStarterTests
-            services: ["dojo", "server-starter"]
+            agent_dir: integrations/server-starter/python/examples
+            agent_prepare: uv sync
+            agent_processes:
+              - name: server-starter
+                cmd: PORT=8000 uv run dev
+            needs_langgraph_env: false
             wait_on: http://localhost:9999,tcp:localhost:8000
           - suite: server-starter-all
             test_path: tests/serverStarterAllFeaturesTests
-            services: ["dojo", "server-starter-all"]
+            agent_dir: integrations/server-starter-all-features/python/examples
+            agent_prepare: uv sync
+            agent_processes:
+              - name: server-starter-all
+                cmd: PORT=8001 uv run dev
+            needs_langgraph_env: false
             wait_on: http://localhost:9999,tcp:localhost:8001
           - suite: aws-strands
             test_path: tests/awsStrandsTests
-            services: ["dojo", "aws-strands"]
+            agent_dir: integrations/aws-strands/python/examples
+            agent_prepare: poetry install
+            agent_processes:
+              - name: aws-strands
+                cmd: PORT=8017 poetry run dev
+            needs_langgraph_env: false
             wait_on: http://localhost:9999,tcp:localhost:8017
           # - suite: vercel-ai-sdk
           #   test_path: tests/vercelAISdkTests
@@ -165,8 +242,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
-      # Cache Python tool caches and virtualenvs; restore only to avoid long saves
+      # Cache Python tool caches and virtual envs; restore only to avoid long saves
       - name: Cache Python dependencies (restore-only)
+        if: ${{ contains(matrix.agent_prepare, 'uv ') || contains(matrix.agent_prepare, 'poetry ') || contains(toJson(matrix.agent_processes), 'uv run') || contains(toJson(matrix.agent_processes), 'poetry run') }}
         id: cache-python
         uses: actions/cache/restore@v4
         with:
@@ -179,15 +257,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pydeps-
 
-      - name: Cache Nx build output
-        uses: actions/cache@v4
-        with:
-          path: .nx/cache
-          key: ${{ runner.os }}-nx-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
-          restore-keys: |
-            ${{ runner.os }}-nx-${{ hashFiles('**/pnpm-lock.yaml') }}-
-            ${{ runner.os }}-nx-
-
       - name: Cache Next.js build
         uses: actions/cache@v4
         with:
@@ -197,6 +266,7 @@ jobs:
             ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
 
       - name: Install Poetry
+        if: ${{ contains(matrix.agent_prepare, 'poetry ') || contains(toJson(matrix.agent_processes), 'poetry run') }}
         uses: snok/install-poetry@v1
         with:
           version: latest
@@ -204,17 +274,25 @@ jobs:
           virtualenvs-in-project: true
 
       - name: Install uv
+        if: ${{ contains(matrix.agent_prepare, 'uv ') || contains(toJson(matrix.agent_processes), 'uv run') }}
         uses: astral-sh/setup-uv@v6
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Prepare dojo for e2e
-        working-directory: apps/dojo
-        if: ${{ join(matrix.services, ',') != '' }}
-        run: node ./scripts/prep-dojo-everything.js --only ${{ join(matrix.services, ',') }}
+      - name: Cache e2e dependencies
+        id: cache-e2e-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/dojo/e2e/node_modules
+            ~/.cache/ms-playwright
+          key: ${{ runner.os }}-dojo-e2e-deps-${{ hashFiles('pnpm-lock.yaml', 'apps/dojo/e2e/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-dojo-e2e-deps-
 
       - name: Install e2e dependencies
+        if: ${{ steps.cache-e2e-deps.outputs.cache-hit != 'true' }}
         working-directory: apps/dojo/e2e
         run: |
           pnpm install
@@ -224,26 +302,86 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
-        if: ${{ contains(join(matrix.services, ','), 'langgraph-fastapi') || contains(join(matrix.services, ','), 'langgraph-platform-python') || contains(join(matrix.services, ','), 'langgraph-platform-typescript') }}
+        if: ${{ matrix.needs_langgraph_env }}
         run: |
           echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > python/examples/.env
           echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> python/examples/.env
           echo "OPENAI_API_KEY=${OPENAI_API_KEY}" > typescript/examples/.env
           echo "LANGSMITH_API_KEY=${LANGSMITH_API_KEY}" >> typescript/examples/.env
 
-      - name: Run dojo+agents
-        uses: JarvusInnovations/background-action@v1
+      - name: Prepare dojo build
+        run: npx nx run demo-viewer:build
+
+      - name: Prepare selected agent
+        if: ${{ matrix.agent_prepare != '' }}
+        working-directory: ${{ matrix.agent_dir }}
+        run: ${{ matrix.agent_prepare }}
+
+      - name: Initialize process tracking
+        shell: bash
+        run: |
+          set -euo pipefail
+          PID_FILE="$RUNNER_TEMP/dojo-service-pids-${{ matrix.suite }}.txt"
+          : > "$PID_FILE"
+          echo "DOJO_PID_FILE=$PID_FILE" >> "$GITHUB_ENV"
+
+      - name: Start dojo
+        shell: bash
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-        if: ${{ join(matrix.services, ',') != '' && contains(join(matrix.services, ','), 'dojo') }}
-        with:
-          run: |
-            node ../scripts/run-dojo-everything.js --only ${{ join(matrix.services, ',') }}
-          working-directory: apps/dojo/e2e
-          wait-on: ${{ matrix.wait_on }}
-          wait-for: 300000
+          PORT: 9999
+          AG2_URL: http://localhost:8018
+          SERVER_STARTER_URL: http://localhost:8000
+          SERVER_STARTER_ALL_FEATURES_URL: http://localhost:8001
+          AGNO_URL: http://localhost:8002
+          CREW_AI_URL: http://localhost:8003
+          LANGGRAPH_FAST_API_URL: http://localhost:8004
+          LANGGRAPH_PYTHON_URL: http://localhost:8005
+          LANGGRAPH_TYPESCRIPT_URL: http://localhost:8006
+          LLAMA_INDEX_URL: http://localhost:8007
+          MASTRA_URL: http://localhost:8008
+          PYDANTIC_AI_URL: http://localhost:8009
+          ADK_MIDDLEWARE_URL: http://localhost:8010
+          A2A_MIDDLEWARE_BUILDINGS_MANAGEMENT_URL: http://localhost:8011
+          A2A_MIDDLEWARE_FINANCE_URL: http://localhost:8012
+          A2A_MIDDLEWARE_IT_URL: http://localhost:8013
+          A2A_MIDDLEWARE_ORCHESTRATOR_URL: http://localhost:8014
+          AWS_STRANDS_URL: http://localhost:8017
+          NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: cpkdojo.local___CopilotKit Feature Viewer
+        run: |
+          set -euo pipefail
+          nohup pnpm run start >/dev/null 2>&1 &
+          echo "$!|dojo" >> "$DOJO_PID_FILE"
+
+      - name: Start selected agent
+        if: ${{ toJson(matrix.agent_processes) != '[]' }}
+        shell: bash
+        working-directory: ${{ matrix.agent_dir }}
+        env:
+          AGENT_PROCESSES: ${{ toJson(matrix.agent_processes) }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          while IFS=$'\t' read -r name cmd; do
+            [[ -z "$name" || -z "$cmd" ]] && continue
+            echo "Starting $name"
+            nohup bash -lc "$cmd" >/dev/null 2>&1 &
+            echo "$!|$name" >> "$DOJO_PID_FILE"
+          done < <(echo "$AGENT_PROCESSES" | jq -r '.[] | [.name, .cmd] | @tsv')
+
+      - name: Wait for services
+        shell: bash
+        env:
+          WAIT_ON_TARGETS: ${{ matrix.wait_on }}
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra TARGETS <<< "$WAIT_ON_TARGETS"
+          pnpm dlx wait-on --timeout 300000 "${TARGETS[@]}"
 
       - name: Run tests – ${{ matrix.suite }}
         working-directory: apps/dojo/e2e
@@ -252,6 +390,21 @@ jobs:
           PLAYWRIGHT_SUITE: ${{ matrix.suite }}
         run: |
           pnpm test -- ${{ matrix.test_path }}
+
+      - name: Stop dojo and selected agents
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          PID_FILE="$RUNNER_TEMP/dojo-service-pids-${{ matrix.suite }}.txt"
+          if [[ -f "$PID_FILE" ]]; then
+            while IFS='|' read -r pid name; do
+              if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+                echo "Stopping $name (pid $pid)"
+                kill "$pid" 2>/dev/null || true
+              fi
+            done < "$PID_FILE"
+          fi
 
       - name: Upload traces – ${{ matrix.suite }}
         if: always() # Uploads artifacts even if tests fail
