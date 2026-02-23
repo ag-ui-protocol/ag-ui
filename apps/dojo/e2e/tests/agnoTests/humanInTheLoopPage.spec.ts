@@ -30,7 +30,7 @@ test.describe("Human in the Loop Feature", () => {
 
       await page.waitForFunction(
         () => {
-          const messages = Array.from(document.querySelectorAll('.copilotKitAssistantMessage'));
+          const messages = Array.from(document.querySelectorAll('.prose[data-message-id]'));
           const lastMessage = messages[messages.length - 1];
           const content = lastMessage?.textContent?.trim() || '';
           return messages.length >= 3 && content.length > 0;
@@ -73,7 +73,7 @@ test.describe("Human in the Loop Feature", () => {
 
       await page.waitForFunction(
         () => {
-          const messages = Array.from(document.querySelectorAll('.copilotKitAssistantMessage'));
+          const messages = Array.from(document.querySelectorAll('.prose[data-message-id]'));
           const lastMessage = messages[messages.length - 1];
           const content = lastMessage?.textContent?.trim() || '';
 

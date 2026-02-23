@@ -23,7 +23,7 @@ export class AgenticChatPage {
       .or(page.locator('input[type="text"]'))
       .or(page.locator('textarea'));
     this.sendButton = page
-      .locator('[data-test-id="copilot-chat-ready"]')
+      .locator('button:has(svg.lucide-arrow-up)')
       .or(page.getByRole("button", { name: /send/i }))
       .or(page.locator('button[type="submit"]'));
     this.chatBackground = page
@@ -31,9 +31,9 @@ export class AgenticChatPage {
       .or(page.locator('.flex.justify-center.items-center.h-full.w-full'))
       .or(page.locator('body'));
     this.agentMessage = page
-      .locator(".copilotKitAssistantMessage");
+      .locator('.prose[data-message-id]');
     this.userMessage = page
-      .locator(".copilotKitUserMessage");
+      .locator('.items-end[data-message-id]');
   }
 
   async openChat() {
@@ -115,7 +115,7 @@ export class AgenticChatPage {
     const expectedTexts = Array.isArray(expectedText) ? expectedText : [expectedText];
     for (const expectedText1 of expectedTexts) {
       try {
-        const agentMessage = this.page.locator(".copilotKitAssistantMessage", {
+        const agentMessage = this.page.locator('.prose[data-message-id]', {
           hasText: expectedText1
         });
         await expect(agentMessage.last()).toBeVisible({ timeout: 10000 });
@@ -130,7 +130,7 @@ export class AgenticChatPage {
   }
 
   async assertAgentReplyContains(expectedText: string) {
-    const agentMessage = this.page.locator(".copilotKitAssistantMessage").last();
+    const agentMessage = this.page.locator('.prose[data-message-id]').last();
     await expect(agentMessage).toContainText(expectedText, { timeout: 10000 });
   }
 
@@ -159,7 +159,7 @@ export class AgenticChatPage {
   }
 
   async assertWeatherResponseStructure() {
-    const agentMessage = this.page.locator(".copilotKitAssistantMessage").last();
+    const agentMessage = this.page.locator('.prose[data-message-id]').last();
 
     // Check for main weather response structure
     await expect(agentMessage).toContainText(/weather.*islamabad/i, { timeout: 10000 });

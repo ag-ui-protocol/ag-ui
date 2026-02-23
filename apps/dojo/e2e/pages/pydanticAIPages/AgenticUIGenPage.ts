@@ -14,9 +14,9 @@ export class AgenticGenUIPage {
     this.page = page;
     this.planTaskButton = page.getByRole('button', { name: 'Agentic Generative UI' });
     this.chatInput = page.getByRole('textbox', { name: 'Type a message...' });
-    this.sendButton = page.locator('[data-test-id="copilot-chat-ready"]');
-    this.agentMessage = page.locator('.copilotKitAssistantMessage');
-    this.userMessage = page.locator('.copilotKitUserMessage');
+    this.sendButton = page.locator('button:has(svg.lucide-arrow-up)');
+    this.agentMessage = page.locator('.prose[data-message-id]');
+    this.userMessage = page.locator('.items-end[data-message-id]');
     this.agentGreeting = page.getByText('This agent demonstrates');
     this.agentPlannerContainer = page.getByTestId('task-progress');
   }
@@ -49,7 +49,7 @@ export class AgenticGenUIPage {
     const expectedTexts = Array.isArray(expectedText) ? expectedText : [expectedText];
     for (const expectedText1 of expectedTexts) {
       try {
-        const agentMessage = this.page.locator(".copilotKitAssistantMessage", {
+        const agentMessage = this.page.locator('.prose[data-message-id]', {
           hasText: expectedText1
         });
         await expect(agentMessage.last()).toBeVisible({ timeout: 10000 });

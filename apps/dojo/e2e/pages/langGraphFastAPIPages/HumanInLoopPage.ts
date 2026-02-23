@@ -16,11 +16,11 @@ export class HumanInLoopPage {
     this.planTaskButton = page.getByRole('button', { name: 'Human in the loop Plan a task' });
     this.agentGreeting = page.getByText('This agent demonstrates human-in-the-loop');
     this.chatInput = page.getByRole('textbox', { name: 'Type a message...' });
-    this.sendButton = page.locator('[data-test-id="copilot-chat-ready"]');
+    this.sendButton = page.locator('button:has(svg.lucide-arrow-up)');
     this.plan = page.getByTestId('select-steps');
     this.performStepsButton = page.getByRole('button', { name: '✨Perform Steps' });
-    this.agentMessage = page.locator('.copilotKitAssistantMessage');
-    this.userMessage = page.locator('.copilotKitUserMessage');
+    this.agentMessage = page.locator('.prose[data-message-id]');
+    this.userMessage = page.locator('.items-end[data-message-id]');
   }
 
   async openChat() {
@@ -30,7 +30,11 @@ export class HumanInLoopPage {
   async sendMessage(message: string) {
     await this.chatInput.click();
     await this.chatInput.fill(message);
-    await this.sendButton.click();
+    try {
+      await this.sendButton.click({ timeout: 3000 });
+    } catch {
+      await this.chatInput.press("Enter");
+    }
   }
 
   async selectItemsInPlanner() {

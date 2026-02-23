@@ -14,7 +14,7 @@ export class ToolBaseGenUIPage {
     this.page = page;
     this.haikuAgentIntro = page.getByText("I'm a haiku generator 👋. How can I help you?").first();
     this.messageBox = page.getByPlaceholder("Type a message...").first();
-    this.sendButton = page.locator('[data-test-id="copilot-chat-ready"]').first();
+    this.sendButton = page.locator('button:has(svg.lucide-arrow-up)').first();
     this.haikuBlock = page.locator('[data-testid="haiku-card"]');
     this.applyButton = page.getByRole("button", { name: "Apply" });
     this.japaneseLines = page.locator('[data-testid="haiku-japanese-line"]');
@@ -28,8 +28,12 @@ export class ToolBaseGenUIPage {
     await this.messageBox.click();
     await this.messageBox.fill(message);
     await this.page.waitForTimeout(1000);
-    await this.sendButton.waitFor({ state: "visible", timeout: 15000 });
-    await this.sendButton.click();
+    try {
+      await this.sendButton.waitFor({ state: "visible", timeout: 5000 });
+      await this.sendButton.click();
+    } catch {
+      await this.messageBox.press("Enter");
+    }
     await this.page.waitForTimeout(2000);
   }
 

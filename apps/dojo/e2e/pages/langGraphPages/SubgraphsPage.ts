@@ -40,9 +40,9 @@ export class SubgraphsPage {
     this.travelPlannerButton = page.getByRole('button', { name: /travel.*planner|subgraphs/i });
     this.agentGreeting = page.getByText(/travel.*planning|supervisor.*coordinate/i);
     this.chatInput = page.getByRole('textbox', { name: 'Type a message...' });
-    this.sendButton = page.locator('[data-test-id="copilot-chat-ready"]');
-    this.agentMessage = page.locator('.copilotKitAssistantMessage');
-    this.userMessage = page.locator('.copilotKitUserMessage');
+    this.sendButton = page.locator('button:has(svg.lucide-arrow-up)');
+    this.agentMessage = page.locator('.prose[data-message-id]');
+    this.userMessage = page.locator('.items-end[data-message-id]');
     
     // Flight selection elements
     this.flightOptions = page.locator('[data-testid*="flight"], .flight-option');
@@ -78,7 +78,11 @@ export class SubgraphsPage {
   async sendMessage(message: string) {
     await this.chatInput.click();
     await this.chatInput.fill(message);
-    await this.sendButton.click();
+    try {
+      await this.sendButton.click({ timeout: 3000 });
+    } catch {
+      await this.chatInput.press("Enter");
+    }
   }
 
   async selectFlight(airline: 'KLM' | 'United') {

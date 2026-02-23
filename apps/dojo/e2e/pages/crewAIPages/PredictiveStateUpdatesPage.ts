@@ -19,15 +19,15 @@ export class PredictiveStateUpdatesPage {
     this.page = page;
     this.agentGreeting = page.getByText("Hi 👋 How can I help with your document?");
     this.chatInput = page.getByRole('textbox', { name: 'Type a message...' });
-    this.sendButton = page.locator('[data-test-id="copilot-chat-ready"]');
+    this.sendButton = page.locator('button:has(svg.lucide-arrow-up)');
     this.agentResponsePrompt = page.locator('div.tiptap.ProseMirror');
     this.userApprovalModal = page.locator('div.bg-white.rounded.shadow-lg >> text=Confirm Changes');
     this.acceptedButton = page.getByText('✓ Accepted');
-    this.confirmedChangesResponse = page.locator('div.copilotKitMarkdown').first();
-    this.rejectedChangesResponse = page.locator('div.copilotKitMarkdown').last();
+    this.confirmedChangesResponse = page.locator('.prose[data-message-id]').first();
+    this.rejectedChangesResponse = page.locator('.prose[data-message-id]').last();
     this.highlights = page.locator('.tiptap em');
-    this.agentMessage = page.locator('.copilotKitAssistantMessage');
-    this.userMessage = page.locator('.copilotKitUserMessage');
+    this.agentMessage = page.locator('.prose[data-message-id]');
+    this.userMessage = page.locator('.items-end[data-message-id]');
   }
 
   async openChat() {
@@ -37,7 +37,11 @@ export class PredictiveStateUpdatesPage {
   async sendMessage(message: string) {
     await this.chatInput.click();
     await this.chatInput.fill(message);
-    await this.sendButton.click();
+    try {
+      await this.sendButton.click({ timeout: 3000 });
+    } catch {
+      await this.chatInput.press("Enter");
+    }
   }
 
   async getPredictiveResponse() {

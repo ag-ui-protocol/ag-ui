@@ -24,7 +24,7 @@ test.describe("Agent Generative UI Feature", () => {
 
     await page.waitForFunction(
       () => {
-        const messages = Array.from(document.querySelectorAll('.copilotKitAssistantMessage'));
+        const messages = Array.from(document.querySelectorAll('.prose[data-message-id]'));
         const lastMessage = messages[messages.length - 1];
         const content = lastMessage?.textContent?.trim() || '';
 
@@ -56,7 +56,7 @@ test.describe("Agent Generative UI Feature", () => {
 
     await page.waitForFunction(
       () => {
-        const messages = Array.from(document.querySelectorAll('.copilotKitAssistantMessage'));
+        const messages = Array.from(document.querySelectorAll('.prose[data-message-id]'));
         const lastMessage = messages[messages.length - 1];
         const content = lastMessage?.textContent?.trim() || '';
 
