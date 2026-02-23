@@ -209,6 +209,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build packages
+        run: pnpm build && pnpm build:dojo
+
       - name: Prepare dojo for e2e
         working-directory: apps/dojo
         if: ${{ join(matrix.services, ',') != '' }}
