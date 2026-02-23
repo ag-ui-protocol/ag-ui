@@ -1,14 +1,15 @@
 "use client";
 import React, { useState } from "react";
-import "@copilotkit/react-ui/styles.css";
+import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
 import {
-  CopilotKit,
+  CopilotKitProvider,
   useFrontendTool,
-  useHumanInTheLoop,
-  useCopilotReadable,
-} from "@copilotkit/react-core";
-import { CopilotChat } from "@copilotkit/react-ui";
+  useAgentContext,
+  useConfigureSuggestions,
+  CopilotChat,
+} from "@copilotkit/react-core/v2";
+import { z } from "zod";
 
 interface AgenticChatProps {
   params: Promise<{
@@ -20,42 +21,52 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
   const { integrationId } = React.use(params);
 
   return (
-    <CopilotKit
+    <CopilotKitProvider
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
-      // agent lock to the relevant agent
-      agent="agentic_chat"
     >
       <Chat />
-    </CopilotKit>
+    </CopilotKitProvider>
   );
 };
 
 const Chat = () => {
   const [background, setBackground] = useState<string>("--copilot-kit-background-color");
 
-  useCopilotReadable({
+  useAgentContext({
     description: 'Name of the user',
     value: 'Bob'
-  })
+  });
+
   useFrontendTool({
     name: "change_background",
     description:
       "Change the background color of the chat. Can be anything that the CSS background attribute accepts. Regular colors, linear of radial gradients etc.",
-    parameters: [
-      {
-        name: "background",
-        type: "string",
-        description: "The background. Prefer gradients. Only use when asked.",
-      },
-    ],
-    handler: ({ background }) => {
+    // Cast needed: dojo uses Zod v4 but @copilotkitnext was built against Zod v3
+    parameters: z.object({
+      background: z.string().describe("The background. Prefer gradients. Only use when asked."),
+    }) as any,
+    handler: async ({ background }: { background: string }) => {
       setBackground(background);
       return {
         status: "success",
         message: `Background changed to ${background}`,
       };
     },
+  });
+
+  useConfigureSuggestions({
+    suggestions: [
+      {
+        title: "Change background",
+        message: "Change the background to something new.",
+      },
+      {
+        title: "Generate sonnet",
+        message: "Write a short sonnet about AI.",
+      },
+    ],
+    available: "always",
   });
 
   return (
@@ -66,18 +77,9 @@ const Chat = () => {
     >
       <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
         <CopilotChat
+          agentId="agentic_chat"
           className="h-full rounded-2xl max-w-6xl mx-auto"
-          labels={{ initial: "Hi, I'm an agent. Want to chat?" }}
-          suggestions={[
-            {
-              title: "Change background",
-              message: "Change the background to something new.",
-            },
-            {
-              title: "Generate sonnet",
-              message: "Write a short sonnet about AI.",
-            },
-          ]}
+          labels={{ welcomeMessageText: "Hi, I'm an agent. Want to chat?" }}
         />
       </div>
     </div>

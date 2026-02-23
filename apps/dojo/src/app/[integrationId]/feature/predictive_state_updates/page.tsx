@@ -1,5 +1,5 @@
 "use client";
-import "@copilotkit/react-ui/styles.css";
+import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
 
 import MarkdownIt from "markdown-it";
@@ -8,9 +8,17 @@ import React from "react";
 import { diffWords } from "diff";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { useEffect, useState } from "react";
-import { CopilotKit, useCoAgent, useCopilotAction, useCopilotChat } from "@copilotkit/react-core";
-import { CopilotChat, CopilotSidebar } from "@copilotkit/react-ui";
+import { useEffect, useState, useRef } from "react";
+import {
+  CopilotKitProvider,
+  useAgent,
+  UseAgentUpdate,
+  useHumanInTheLoop,
+  useConfigureSuggestions,
+  CopilotChat,
+  CopilotSidebar,
+} from "@copilotkit/react-core/v2";
+import { z } from "zod";
 import { useMobileView } from "@/utils/use-mobile-view";
 import { useMobileChat } from "@/utils/use-mobile-chat";
 import { useURLParams } from "@/contexts/url-params-context";
@@ -35,11 +43,9 @@ export default function PredictiveStateUpdates({ params }: PredictiveStateUpdate
   const initialLabel = "Hi 👋 How can I help with your document?";
 
   return (
-    <CopilotKit
+    <CopilotKitProvider
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
-      // agent lock to the relevant agent
-      agent="predictive_state_updates"
     >
       <div
         className="min-h-screen w-full"
@@ -138,20 +144,10 @@ export default function PredictiveStateUpdates({ params }: PredictiveStateUpdate
               {/* Chat Content - Flexible container for messages and input */}
               <div className="flex-1 flex flex-col min-h-0 overflow-hidden pb-16">
                 <CopilotChat
+                  agentId="predictive_state_updates"
                   className="h-full flex flex-col"
-                  suggestions={[
-                    {
-                      title: "Write a pirate story",
-                      message: "Please write a story about a pirate named Candy Beard.",
-                    },
-                    {
-                      title: "Write a mermaid story",
-                      message: "Please write a story about a mermaid named Luna.",
-                    },
-                    { title: "Add character", message: "Please add a character named Courage." },
-                  ]}
                   labels={{
-                    initial: initialLabel,
+                    welcomeMessageText: initialLabel,
                   }}
                 />
               </div>
@@ -164,28 +160,17 @@ export default function PredictiveStateUpdates({ params }: PredictiveStateUpdate
           </>
         ) : (
           <CopilotSidebar
+            agentId="predictive_state_updates"
             defaultOpen={chatDefaultOpen}
-            suggestions={[
-              {
-                title: "Write a pirate story",
-                message: "Please write a story about a pirate named Candy Beard.",
-              },
-              {
-                title: "Write a mermaid story",
-                message: "Please write a story about a mermaid named Luna.",
-              },
-              { title: "Add character", message: "Please add a character named Courage." },
-            ]}
             labels={{
-              title: chatTitle,
-              initial: initialLabel,
+              modalHeaderTitle: chatTitle,
+              welcomeMessageText: initialLabel,
             }}
-            clickOutsideToClose={false}
           />
         )}
         <DocumentEditor />
       </div>
-    </CopilotKit>
+    </CopilotKitProvider>
   );
 }
 
@@ -203,18 +188,33 @@ const DocumentEditor = () => {
   });
   const [placeholderVisible, setPlaceholderVisible] = useState(false);
   const [currentDocument, setCurrentDocument] = useState("");
-  const { isLoading } = useCopilotChat();
 
-  const {
-    state: agentState,
-    setState: setAgentState,
-    nodeName,
-  } = useCoAgent<AgentState>({
-    name: "predictive_state_updates",
-    initialState: {
-      document: "",
-    },
+  useConfigureSuggestions({
+    suggestions: [
+      {
+        title: "Write a pirate story",
+        message: "Please write a story about a pirate named Candy Beard.",
+      },
+      {
+        title: "Write a mermaid story",
+        message: "Please write a story about a mermaid named Luna.",
+      },
+      { title: "Add character", message: "Please add a character named Courage." },
+    ],
+    available: "always",
   });
+
+  const { agent } = useAgent({
+    agentId: "predictive_state_updates",
+    updates: [UseAgentUpdate.OnStateChanged, UseAgentUpdate.OnRunStatusChanged],
+  });
+
+  const agentState = agent.state as AgentState | undefined;
+  const setAgentState = (s: AgentState) => agent.setState(s);
+  const isLoading = agent.isRunning;
+
+  // Track when a run transitions from running to not running (replaces nodeName == "end")
+  const wasRunning = useRef(false);
 
   useEffect(() => {
     if (isLoading) {
@@ -224,8 +224,8 @@ const DocumentEditor = () => {
   }, [isLoading]);
 
   useEffect(() => {
-    if (nodeName == "end") {
-      // set the text one final time when loading is done
+    if (wasRunning.current && !isLoading) {
+      // Run just finished - set the text one final time
       if (currentDocument.trim().length > 0 && currentDocument !== agentState?.document) {
         const newDocument = agentState?.document || "";
         const diff = diffPartialText(currentDocument, newDocument, true);
@@ -233,7 +233,8 @@ const DocumentEditor = () => {
         editor?.commands.setContent(markdown);
       }
     }
-  }, [nodeName]);
+    wasRunning.current = isLoading;
+  }, [isLoading]);
 
   useEffect(() => {
     if (isLoading) {
@@ -263,10 +264,10 @@ const DocumentEditor = () => {
   }, [text]);
 
   // TODO(steve): Remove this when all agents have been updated to use write_document tool.
-  useCopilotAction(
+  useHumanInTheLoop(
     {
       name: "confirm_changes",
-      renderAndWaitForResponse: ({ args, respond, status }) => (
+      render: ({ args, respond, status }) => (
         <ConfirmChanges
           args={args}
           respond={respond}
@@ -287,18 +288,15 @@ const DocumentEditor = () => {
   );
 
   // Action to write the document.
-  useCopilotAction(
+  useHumanInTheLoop(
     {
       name: "write_document",
       description: `Present the proposed changes to the user for review`,
-      parameters: [
-        {
-          name: "document",
-          type: "string",
-          description: "The full updated document in markdown format",
-        },
-      ],
-      renderAndWaitForResponse({ args, status, respond }) {
+      // Cast needed: dojo uses Zod v4 but @copilotkitnext was built against Zod v3
+      parameters: z.object({
+        document: z.string().describe("The full updated document in markdown format"),
+      }) as any,
+      render({ args, status, respond }: { args: { document?: string }; status: string; respond?: (result: unknown) => Promise<void> }) {
         if (status === "executing") {
           return (
             <ConfirmChanges

@@ -1,9 +1,14 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import "@copilotkit/react-ui/styles.css";
+import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
-import { CopilotKit, useCoAgent, useLangGraphInterrupt } from "@copilotkit/react-core";
-import { CopilotSidebar } from "@copilotkit/react-ui";
+import {
+  CopilotKitProvider,
+  useAgent,
+  UseAgentUpdate,
+  CopilotSidebar,
+} from "@copilotkit/react-core/v2";
+import { useLangGraphInterrupt } from "@copilotkit/react-core";
 import { useMobileView } from "@/utils/use-mobile-view";
 import { useMobileChat } from "@/utils/use-mobile-chat";
 import { useURLParams } from "@/contexts/url-params-context";
@@ -169,10 +174,9 @@ export default function Subgraphs({ params }: SubgraphsProps) {
   const initialLabel = 'Hi! ✈️ Ready to plan an amazing trip? Try saying "Plan a trip to Paris" or "Find me flights to Tokyo"';
 
   return (
-    <CopilotKit
+    <CopilotKitProvider
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
-      agent="subgraphs"
     >
       <div className="travel-planner-container">
         <TravelPlanner />
@@ -242,12 +246,12 @@ export default function Subgraphs({ params }: SubgraphsProps) {
               {/* Chat Content */}
               <div className="flex-1 flex flex-col min-h-0 overflow-hidden pb-16">
                 <CopilotSidebar
+                  agentId="subgraphs"
                   defaultOpen={chatDefaultOpen}
                   labels={{
-                    title: chatTitle,
-                    initial: initialLabel,
+                    modalHeaderTitle: chatTitle,
+                    welcomeMessageText: initialLabel,
                   }}
-                  clickOutsideToClose={false}
                 />
               </div>
             </div>
@@ -262,28 +266,34 @@ export default function Subgraphs({ params }: SubgraphsProps) {
           </>
         ) : (
           <CopilotSidebar
+            agentId="subgraphs"
             defaultOpen={chatDefaultOpen}
             labels={{
-              title: chatTitle,
-              initial: initialLabel,
+              modalHeaderTitle: chatTitle,
+              welcomeMessageText: initialLabel,
             }}
-            clickOutsideToClose={false}
           />
         )}
       </div>
-    </CopilotKit>
+    </CopilotKitProvider>
   );
 }
 
 function TravelPlanner() {
   const { isMobile } = useMobileView();
-  const { state: agentState, nodeName } = useCoAgent<TravelAgentState>({
-    name: "subgraphs",
-    initialState: INITIAL_STATE,
-    config: {
-      streamSubgraphs: true,
-    }
+  const { agent } = useAgent({
+    agentId: "subgraphs",
+    updates: [UseAgentUpdate.OnStateChanged],
   });
+
+  const agentState = agent.state as TravelAgentState | undefined;
+
+  // Set initial state on mount
+  useEffect(() => {
+    if (!agentState) {
+      agent.setState(INITIAL_STATE);
+    }
+  }, []);
 
   useLangGraphInterrupt({
     render: ({ event, resolve }) => <InterruptHumanInTheLoop event={event} resolve={resolve} />,
@@ -293,7 +303,7 @@ function TravelPlanner() {
   const ItineraryStrip = () => {
     const selectedFlight = agentState?.itinerary?.flight;
     const selectedHotel = agentState?.itinerary?.hotel;
-    const hasExperiences = agentState?.experiences?.length > 0;
+    const hasExperiences = (agentState?.experiences?.length ?? 0) > 0;
 
     return (
       <div className="itinerary-strip">
@@ -318,7 +328,7 @@ function TravelPlanner() {
           {hasExperiences && (
             <div className="itinerary-item">
               <span className="item-icon">🎯</span>
-              <span>{agentState.experiences.length} experiences planned</span>
+              <span>{agentState?.experiences?.length ?? 0} experiences planned</span>
             </div>
           )}
         </div>
@@ -326,18 +336,10 @@ function TravelPlanner() {
     );
   };
 
-  // Compact agent status
+  // Compact agent status - read active_agent from state instead of nodeName
   const AgentStatus = () => {
-    let activeAgent = 'supervisor';
-    if (nodeName?.includes('flights_agent')) {
-      activeAgent = 'flights';
-    }
-    if (nodeName?.includes('hotels_agent')) {
-      activeAgent = 'hotels';
-    }
-    if (nodeName?.includes('experiences_agent')) {
-      activeAgent = 'experiences';
-    }
+    const activeAgent = agentState?.active_agent || 'supervisor';
+
     return (
       <div className="agent-status">
         <div className="status-label">Active Agent:</div>
@@ -369,8 +371,8 @@ function TravelPlanner() {
       <div className="details-section">
         <h4>✈️ Flight Options</h4>
         <div className="detail-items">
-          {agentState?.flights?.length > 0 ? (
-            agentState.flights.map((flight, index) => (
+          {(agentState?.flights?.length ?? 0) > 0 ? (
+            agentState!.flights.map((flight, index) => (
               <div key={index} className="detail-item">
                 <strong>{flight.airline}:</strong>
                 <span>{flight.departure} → {flight.arrival} ({flight.duration}) - {flight.price}</span>
@@ -390,8 +392,8 @@ function TravelPlanner() {
       <div className="details-section">
         <h4>🏨 Hotel Options</h4>
         <div className="detail-items">
-          {agentState?.hotels?.length > 0 ? (
-            agentState.hotels.map((hotel, index) => (
+          {(agentState?.hotels?.length ?? 0) > 0 ? (
+            agentState!.hotels.map((hotel, index) => (
               <div key={index} className="detail-item">
                 <strong>{hotel.name}:</strong>
                 <span>{hotel.location} - {hotel.price_per_night} ({hotel.rating})</span>
@@ -411,8 +413,8 @@ function TravelPlanner() {
       <div className="details-section">
         <h4>🎯 Experiences</h4>
         <div className="detail-items">
-          {agentState?.experiences?.length > 0 ? (
-            agentState.experiences.map((experience, index) => (
+          {(agentState?.experiences?.length ?? 0) > 0 ? (
+            agentState!.experiences.map((experience, index) => (
               <div key={index} className="activity-item">
                 <div className="activity-name">{experience.name}</div>
                 <div className="activity-category">{experience.type}</div>

@@ -1,9 +1,14 @@
 "use client";
 import React from "react";
-import "@copilotkit/react-ui/styles.css";
+import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
-import { CopilotKit, useCopilotAction } from "@copilotkit/react-core";
-import { CopilotChat } from "@copilotkit/react-ui";
+import {
+  CopilotKitProvider,
+  useRenderTool,
+  useConfigureSuggestions,
+  CopilotChat,
+} from "@copilotkit/react-core/v2";
+import { z } from "zod";
 
 interface AgenticChatProps {
   params: Promise<{
@@ -15,22 +20,23 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
   const { integrationId } = React.use(params);
 
   return (
-    <CopilotKit
+    <CopilotKitProvider
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
-      agent="backend_tool_rendering"
     >
       <Chat />
-    </CopilotKit>
+    </CopilotKitProvider>
   );
 };
 
 const Chat = () => {
-  useCopilotAction({
+  useRenderTool({
     name: "get_weather",
-    available: "disabled",
-    parameters: [{ name: "location", type: "string", required: true }],
-    render: ({ args, result, status }) => {
+    // Cast needed: dojo uses Zod v4 but @copilotkitnext/react was built against Zod v3
+    args: z.object({
+      location: z.string(),
+    }) as any,
+    render: ({ args, result, status }: any) => {
       if (status !== "complete") {
         return (
           <div className=" bg-[#667eea] text-white p-4 rounded-lg max-w-md">
@@ -60,26 +66,31 @@ const Chat = () => {
     },
   });
 
+  useConfigureSuggestions({
+    suggestions: [
+      {
+        title: "Weather in San Francisco",
+        message: "What's the weather like in San Francisco?",
+      },
+      {
+        title: "Weather in New York",
+        message: "Tell me about the weather in New York.",
+      },
+      {
+        title: "Weather in Tokyo",
+        message: "How's the weather in Tokyo today?",
+      },
+    ],
+    available: "always",
+  });
+
   return (
     <div className="flex justify-center items-center h-full w-full">
       <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
         <CopilotChat
+          agentId="backend_tool_rendering"
           className="h-full rounded-2xl max-w-6xl mx-auto"
-          labels={{ initial: "Hi! I can look up the weather for you. Just ask!" }}
-          suggestions={[
-            {
-              title: "Weather in San Francisco",
-              message: "What's the weather like in San Francisco?",
-            },
-            {
-              title: "Weather in New York",
-              message: "Tell me about the weather in New York.",
-            },
-            {
-              title: "Weather in Tokyo",
-              message: "How's the weather in Tokyo today?",
-            },
-          ]}
+          labels={{ welcomeMessageText: "Hi! I can look up the weather for you. Just ask!" }}
         />
       </div>
     </div>

@@ -1,13 +1,15 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import "@copilotkit/react-ui/styles.css";
+import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
 import {
-  CopilotKit,
+  CopilotKitProvider,
   useHumanInTheLoop,
-  useLangGraphInterrupt,
-} from "@copilotkit/react-core";
-import { CopilotChat } from "@copilotkit/react-ui";
+  useConfigureSuggestions,
+  CopilotChat,
+} from "@copilotkit/react-core/v2";
+import { useLangGraphInterrupt } from "@copilotkit/react-core";
+import { z } from "zod";
 import { useTheme } from "next-themes";
 
 interface HumanInTheLoopProps {
@@ -20,14 +22,12 @@ const HumanInTheLoop: React.FC<HumanInTheLoopProps> = ({ params }) => {
   const { integrationId } = React.use(params);
 
   return (
-    <CopilotKit
+    <CopilotKitProvider
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
-      // agent lock to the relevant agent
-      agent="human_in_the_loop"
     >
       <Chat integrationId={integrationId} />
-    </CopilotKit>
+    </CopilotKitProvider>
   );
 };
 
@@ -328,6 +328,14 @@ const InterruptHumanInTheLoop: React.FC<{
 };
 
 const Chat = ({ integrationId }: { integrationId: string }) => {
+  useConfigureSuggestions({
+    suggestions: [
+      { title: "Simple plan", message: "Please plan a trip to mars in 5 steps." },
+      { title: "Complex plan", message: "Please plan a pasta dish in 10 steps." },
+    ],
+    available: "always",
+  });
+
   // Langgraph uses it's own hook to handle human-in-the-loop interactions via langgraph interrupts,
   // This hook won't do anything for other integrations.
   useLangGraphInterrupt({
@@ -336,29 +344,18 @@ const Chat = ({ integrationId }: { integrationId: string }) => {
   useHumanInTheLoop({
     name: "generate_task_steps",
     description: "Generates a list of steps for the user to perform",
-    parameters: [
-      {
-        name: "steps",
-        type: "object[]",
-        attributes: [
-          {
-            name: "description",
-            type: "string",
-          },
-          {
-            name: "status",
-            type: "string",
-            enum: ["enabled", "disabled", "executing"],
-          },
-        ],
-      },
-    ],
-    // Langgraph uses it's own hook to handle human-in-the-loop interactions via langgraph interrupts,
-    // so don't use this action for langgraph integration.
-    available: ["langgraph", "langgraph-fastapi", "langgraph-typescript"].includes(integrationId)
-      ? "disabled"
-      : "enabled",
-    render: ({ args, respond, status }) => {
+    // Cast needed: dojo uses Zod v4 but @copilotkitnext was built against Zod v3
+    parameters: z.object({
+      steps: z.array(
+        z.object({
+          description: z.string(),
+          status: z.enum(["enabled", "disabled", "executing"]),
+        }),
+      ),
+    }) as any,
+    // Note: In v1, `available` was used to disable this for langgraph integrations.
+    // In v2, availability is handled at the agent/backend level.
+    render: ({ args, respond, status }: any) => {
       return <StepsFeedback args={args} respond={respond} status={status} />;
     },
   });
@@ -367,13 +364,10 @@ const Chat = ({ integrationId }: { integrationId: string }) => {
     <div className="flex justify-center items-center h-full w-full">
       <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
         <CopilotChat
-          suggestions={[
-            { title: "Simple plan", message: "Please plan a trip to mars in 5 steps." },
-            { title: "Complex plan", message: "Please plan a pasta dish in 10 steps." },
-          ]}
+          agentId="human_in_the_loop"
           className="h-full rounded-2xl max-w-6xl mx-auto"
           labels={{
-            initial:
+            welcomeMessageText:
               "Hi, I'm an agent specialized in helping you with your tasks. How can I help you?",
           }}
         />

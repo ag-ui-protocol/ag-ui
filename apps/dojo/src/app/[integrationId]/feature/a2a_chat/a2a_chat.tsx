@@ -1,15 +1,16 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import "@copilotkit/react-ui/styles.css";
+import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
 import {
-  ActionRenderProps,
-  CopilotKit,
-  useRenderToolCall,
-  useCopilotAction,
-  useCopilotChat,
-} from "@copilotkit/react-core";
-import { CopilotChat } from "@copilotkit/react-ui";
+  CopilotKitProvider,
+  useAgent,
+  UseAgentUpdate,
+  useRenderTool,
+  useHumanInTheLoop,
+  CopilotChat,
+} from "@copilotkit/react-core/v2";
+import { z } from "zod";
 import dedent from "dedent";
 
 interface A2AChatProps {
@@ -23,14 +24,12 @@ const A2AChat: React.FC<A2AChatProps> = ({ params, onNotification }) => {
   const { integrationId } = React.use(params);
 
   return (
-    <CopilotKit
+    <CopilotKitProvider
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
-      // agent lock to the relevant agent
-      agent="a2a_chat"
     >
       <Chat onNotification={onNotification} />
-    </CopilotKit>
+    </CopilotKitProvider>
   );
 };
 
@@ -49,22 +48,7 @@ interface Table {
   seats: Seat[];
 }
 
-type MessageActionRenderProps = ActionRenderProps<
-  [
-    {
-      readonly name: "agentName";
-      readonly type: "string";
-      readonly description: "The name of the A2A agent to send the message to";
-    },
-    {
-      readonly name: "task";
-      readonly type: "string";
-      readonly description: "The message to send to the A2A agent";
-    },
-  ]
->;
-
-const MaybeMessageToA2A = ({ status, args }: MessageActionRenderProps) => {
+const MaybeMessageToA2A = ({ status, args }: { status: string; args: { agentName: string; task: string }; result?: string }) => {
   switch (status) {
     case "executing":
     case "complete":
@@ -75,10 +59,10 @@ const MaybeMessageToA2A = ({ status, args }: MessageActionRenderProps) => {
   }
 };
 
-const MaybeMessageFromA2A = ({ status, args, result }: MessageActionRenderProps) => {
+const MaybeMessageFromA2A = ({ status, args, result }: { status: string; args: { agentName: string; task: string }; result?: string }) => {
   switch (status) {
     case "complete":
-      return <Message from={args.agentName} to={"Agent"} message={result} color="blue" />;
+      return <Message from={args.agentName} to={"Agent"} message={result || ""} color="blue" />;
     case "executing":
     case "inProgress":
     default:
@@ -114,7 +98,13 @@ const Message = ({ from, to, message, color }: MessageProps) => {
 };
 
 const Chat = ({ onNotification }: { onNotification?: () => void }) => {
-  const { isLoading, visibleMessages } = useCopilotChat();
+  const { agent } = useAgent({
+    agentId: "a2a_chat",
+    updates: [UseAgentUpdate.OnMessagesChanged, UseAgentUpdate.OnRunStatusChanged],
+  });
+
+  const isLoading = agent.isRunning;
+  const visibleMessages = agent.messages;
 
   useEffect(() => {
     if (
@@ -126,26 +116,18 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
     }
   }, [isLoading, visibleMessages, onNotification]);
 
-  useRenderToolCall({
+  useRenderTool({
     name: "send_message_to_a2a_agent",
-    description: "Sends a message to an A2A agent",
-    parameters: [
-      {
-        name: "agentName",
-        type: "string",
-        description: "The name of the A2A agent to send the message to",
-      },
-      {
-        name: "task",
-        type: "string",
-        description: "The message to send to the A2A agent",
-      },
-    ],
-    render: (actionRenderProps: MessageActionRenderProps) => {
+    // Cast needed: dojo uses Zod v4 but @copilotkitnext/react was built against Zod v3
+    args: z.object({
+      agentName: z.string().describe("The name of the A2A agent to send the message to"),
+      task: z.string().describe("The message to send to the A2A agent"),
+    }) as any,
+    render: (props: any) => {
       return (
         <>
-          <MaybeMessageToA2A {...actionRenderProps} />
-          <MaybeMessageFromA2A {...actionRenderProps} />
+          <MaybeMessageToA2A {...props} />
+          <MaybeMessageFromA2A {...props} />
         </>
       );
     },
@@ -157,7 +139,7 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
   } | null>(null);
   const [isConfirmed, setIsConfirmed] = useState(false);
 
-  useCopilotAction(
+  useHumanInTheLoop(
     {
       name: "pickTable",
       description: dedent(`
@@ -170,49 +152,26 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
       - tableName: (string): The name of the table that was selected
       - seatNumber: (number): The number of the seat that was selected
     `),
-      parameters: [
-        {
-          name: "tables",
-          type: "object[]",
-          attributes: [
-            {
-              name: "name",
-              type: "string",
-              description: "The name of the table",
-            },
-            {
-              name: "seats",
-              type: "object[]",
-              attributes: [
-                {
-                  name: "seatNumber",
-                  type: "number",
-                  description: "The number of the seat",
-                },
-                {
-                  name: "status",
-                  type: "string",
-                  enum: ["available", "occupied"],
-                  description: "The status of the seat",
-                },
-                {
-                  name: "name",
-                  type: "string",
-                  description: "The name of the person occupying the seat",
-                },
-              ],
-            },
-          ],
-          description: `A JSON encoded array of tables. This is an example of the format: [{ "name": "Table 1", "seats": [{ "seatNumber": 1, "status": "available" }, { "seatNumber": 2, "status": "occupied", "name": "Alice" }] }, { "name": "Table 2", "seats": [{ "seatNumber": 1, "status": "available" }, { "seatNumber": 2, "status": "available" }] }, { "name": "Table 3", "seats": [{ "seatNumber": 1, "status": "occupied", "name": "Bob" }, { "seatNumber": 2, "status": "available" }] }]`,
-        },
-      ],
+      // Cast needed: dojo uses Zod v4 but @copilotkitnext was built against Zod v3
+      parameters: z.object({
+        tables: z.array(
+          z.object({
+            name: z.string().describe("The name of the table"),
+            seats: z.array(
+              z.object({
+                seatNumber: z.number().describe("The number of the seat"),
+                status: z.enum(["available", "occupied"]).describe("The status of the seat"),
+                name: z.string().optional().describe("The name of the person occupying the seat"),
+              }),
+            ),
+          }),
+        ).describe(`A JSON encoded array of tables. This is an example of the format: [{ "name": "Table 1", "seats": [{ "seatNumber": 1, "status": "available" }, { "seatNumber": 2, "status": "occupied", "name": "Alice" }] }, { "name": "Table 2", "seats": [{ "seatNumber": 1, "status": "available" }, { "seatNumber": 2, "status": "available" }] }, { "name": "Table 3", "seats": [{ "seatNumber": 1, "status": "occupied", "name": "Bob" }, { "seatNumber": 2, "status": "available" }] }]`),
+      }) as any,
 
-      renderAndWaitForResponse(allofit) {
-        const { args, respond } = allofit;
-
+      render({ args, respond }: { args: { tables?: Table[] }; respond?: (result: unknown) => Promise<void> }) {
         const availableSeats =
           args.tables?.reduce(
-            (total, table: Table) =>
+            (total: number, table: Table) =>
               total +
               (table.seats?.filter((seat: Seat) => seat.status === "available").length || 0),
             0,
@@ -271,7 +230,7 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
 
             {/* Tables Grid */}
             <div className="grid grid-cols-2 gap-8 mb-8">
-              {args.tables?.map((table, tableIndex) => (
+              {args.tables?.map((table: Table, tableIndex: number) => (
                 <div key={tableIndex} className="bg-gray-50 p-6 rounded-lg">
                   <h3 className="text-lg font-semibold text-center mb-4">{table.name}</h3>
                   <div className="grid grid-cols-2 gap-3">
@@ -394,8 +353,9 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
     >
       <div className="w-8/10 h-8/10 rounded-lg">
         <CopilotChat
+          agentId="a2a_chat"
           className="h-full rounded-2xl"
-          labels={{ initial: "Hi, I'm an agent. Want to chat?" }}
+          labels={{ welcomeMessageText: "Hi, I'm an agent. Want to chat?" }}
         />
       </div>
     </div>

@@ -2,10 +2,9 @@ import {
   CopilotRuntime,
   InMemoryAgentRunner,
   createCopilotEndpoint,
-} from "@copilotkitnext/runtime";
+} from "@copilotkit/runtime/v2";
 import { handle } from "hono/vercel";
 import type { NextRequest } from "next/server";
-import { BuiltInAgent } from "@copilotkitnext/agent";
 import type { AbstractAgent } from "@ag-ui/client";
 
 import { agentsIntegrations } from "@/agents";
@@ -27,25 +26,20 @@ async function getHandler(integrationId: string) {
   }
 
   const getAgents = agentsIntegrations[integrationId as IntegrationId];
-
-  let agents: Record<string, AbstractAgent>;
-  if (getAgents) {
-    agents = (await getAgents())  
-  } else {
-    const defaultAgent = new BuiltInAgent({
-      model: "openai/gpt-5-mini",
-    })  ;
-    agents = { default: defaultAgent };
+  if (!getAgents) {
+    return null;
   }
 
+  const agents = await getAgents();
+
   const runtime = new CopilotRuntime({
-    agents,
+    agents: agents as Record<string, AbstractAgent>,
     runner: new InMemoryAgentRunner(),
   });
 
   const app = createCopilotEndpoint({
     runtime,
-    basePath: `/api/copilotkitnext/${integrationId}`,
+    basePath: `/api/copilotkit/${integrationId}`,
   });
 
   const handler = handle(app);
@@ -56,11 +50,17 @@ async function getHandler(integrationId: string) {
 export async function GET(request: NextRequest, context: RouteParams) {
   const { integrationId } = await context.params;
   const handler = await getHandler(integrationId);
+  if (!handler) {
+    return new Response("Integration not found", { status: 404 });
+  }
   return handler(request);
 }
 
 export async function POST(request: NextRequest, context: RouteParams) {
   const { integrationId } = await context.params;
   const handler = await getHandler(integrationId);
+  if (!handler) {
+    return new Response("Integration not found", { status: 404 });
+  }
   return handler(request);
 }

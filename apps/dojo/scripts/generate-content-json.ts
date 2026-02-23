@@ -16,7 +16,7 @@ async function getFile(_filePath: string | undefined, _fileName?: string) {
     return {};
   }
 
-  const fileName = _fileName ?? _filePath.split("/").pop() ?? "";
+  const fileName = _fileName ?? path.basename(_filePath);
   const filePath = _fileName ? path.join(_filePath, fileName) : _filePath;
 
   // Check if it's a remote URL
