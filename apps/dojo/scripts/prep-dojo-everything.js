@@ -74,11 +74,11 @@ const ALL_TARGETS = {
     name: "CrewAI",
     cwd: path.join(integrationsRoot, "crew-ai/python"),
   },
-  'langroid': [{
+  'langroid': {
     command: 'poetry install',
     name: 'Langroid',
     cwd: path.join(integrationsRoot, 'langroid/python/examples'),
-  }],
+  },
   "langgraph-fastapi": {
     command: "uv sync",
     name: "LG FastAPI",
