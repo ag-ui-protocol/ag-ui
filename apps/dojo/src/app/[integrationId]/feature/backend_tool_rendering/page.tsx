@@ -32,10 +32,9 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
 const Chat = () => {
   useRenderTool({
     name: "get_weather",
-    // Cast needed: dojo uses Zod v4 but @copilotkit/react-core/v2 was built against Zod v3
-    parameters: z.object({
+     parameters: z.object({
       location: z.string(),
-    }) as any,
+    })  ,
     render: ({ args, result, status }: any) => {
       if (status !== "complete") {
         return (

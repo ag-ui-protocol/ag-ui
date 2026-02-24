@@ -14,7 +14,7 @@ export class ToolBaseGenUIPage {
 
   constructor(page: Page) {
     this.page = page;
-    this.haikuAgentIntro = page.getByText("I'm a haiku generator 👋. How can I help you?").first();
+    this.haikuAgentIntro = page.getByText("I'm a haiku generator. How can I help you?").first();
     this.messageBox = CopilotSelectors.chatTextarea(page);
     this.sendButton = CopilotSelectors.sendButton(page);
     this.haikuBlock = page.locator('[data-testid="haiku-card"]');

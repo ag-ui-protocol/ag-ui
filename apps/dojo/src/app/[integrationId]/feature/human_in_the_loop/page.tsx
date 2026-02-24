@@ -1,7 +1,6 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import "@copilotkit/react-core/v2/styles.css";
-import "./style.css";
 import {
   CopilotKitProvider,
   useHumanInTheLoop,
@@ -344,15 +343,14 @@ const Chat = ({ integrationId }: { integrationId: string }) => {
   useHumanInTheLoop({
     name: "generate_task_steps",
     description: "Generates a list of steps for the user to perform",
-    // Cast needed: dojo uses Zod v4 but @copilotkitnext was built against Zod v3
-    parameters: z.object({
+     parameters: z.object({
       steps: z.array(
         z.object({
           description: z.string(),
           status: z.enum(["enabled", "disabled", "executing"]),
         }),
       ),
-    }) as any,
+    })  ,
     // Note: In v1, `available` was used to disable this for langgraph integrations.
     // In v2, availability is handled at the agent/backend level.
     render: ({ args, respond, status }: any) => {

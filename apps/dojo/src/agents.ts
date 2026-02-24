@@ -89,14 +89,18 @@ export const agentsIntegrations = {
     });
 
     return MastraAgent.getRemoteAgents({
-      mastraClient,
+      // Cast needed: pnpm may resolve separate @mastra/client-js installations
+      // for dojo vs @ag-ui/mastra, causing nominal type mismatch on private fields
+      mastraClient: mastraClient as any,
       resourceId: "mastra-agent-remote"
     }) as Promise<Record<"agentic_chat" | "backend_tool_rendering" | "human_in_the_loop" | "tool_based_generative_ui", AbstractAgent>>;
   },
 
   "mastra-agent-local": async () => {
     return MastraAgent.getLocalAgents({
-      mastra,
+      // Cast needed: pnpm may resolve separate @mastra/core installations
+      // for dojo vs @ag-ui/mastra, causing nominal type mismatch on private fields
+      mastra: mastra as any,
       resourceId: "mastra-agent-local"
     }) as Record<"agentic_chat" | "backend_tool_rendering" | "human_in_the_loop" | "shared_state" | "tool_based_generative_ui", AbstractAgent>;
   },

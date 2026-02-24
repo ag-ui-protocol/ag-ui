@@ -118,11 +118,10 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
 
   useRenderTool({
     name: "send_message_to_a2a_agent",
-    // Cast needed: dojo uses Zod v4 but @copilotkitnext/react was built against Zod v3
     parameters: z.object({
       agentName: z.string().describe("The name of the A2A agent to send the message to"),
       task: z.string().describe("The message to send to the A2A agent"),
-    }) as any,
+    })  ,
     render: (props: any) => {
       return (
         <>
@@ -152,7 +151,7 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
       - tableName: (string): The name of the table that was selected
       - seatNumber: (number): The number of the seat that was selected
     `),
-      // Cast needed: dojo uses Zod v4 but @copilotkitnext was built against Zod v3
+      // Cast needed: pnpm may resolve separate Zod installations for dojo vs CopilotKit
       parameters: z.object({
         tables: z.array(
           z.object({

@@ -64,10 +64,9 @@ const Chat = () => {
     name: "change_background",
     description:
       "Change the background color of the chat. Can be anything that the CSS background attribute accepts. Regular colors, linear of radial gradients etc.",
-    // Cast needed: dojo uses Zod v4 but @copilotkitnext was built against Zod v3
-    parameters: z.object({
+     parameters: z.object({
       background: z.string().describe("The background. Prefer gradients."),
-    }) as any,
+    })  ,
     handler: async ({ background }: { background: string }) => {
       setBackground(background);
     },

@@ -292,10 +292,9 @@ const DocumentEditor = () => {
     {
       name: "write_document",
       description: `Present the proposed changes to the user for review`,
-      // Cast needed: dojo uses Zod v4 but @copilotkitnext was built against Zod v3
-      parameters: z.object({
+       parameters: z.object({
         document: z.string().describe("The full updated document in markdown format"),
-      }) as any,
+      }) ,
       render({ args, status, respond }: { args: { document?: string }; status: string; respond?: (result: unknown) => Promise<void> }) {
         if (status === "executing") {
           return (

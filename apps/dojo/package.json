@@ -82,7 +82,7 @@
     "tailwindcss-animate": "^1.0.7",
     "untruncate-json": "^0.0.1",
     "uuid": "^11.1.0",
-    "zod": "^4.3.6"
+    "zod": "^3.25.75"
   },
   "peerDependencies": {
     "@ag-ui/client": "workspace:*",

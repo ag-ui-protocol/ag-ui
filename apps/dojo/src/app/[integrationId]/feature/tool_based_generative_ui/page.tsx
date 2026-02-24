@@ -94,13 +94,12 @@ function HaikuDisplay() {
   useFrontendTool(
     {
       name: "generate_haiku",
-      // Cast needed: dojo uses Zod v4 but @copilotkitnext was built against Zod v3
-      parameters: z.object({
+       parameters: z.object({
         japanese: z.array(z.string()).describe("3 lines of haiku in Japanese"),
         english: z.array(z.string()).describe("3 lines of haiku translated to English"),
         image_name: z.string().describe(`One relevant image name from: ${VALID_IMAGE_NAMES.join(", ")}`),
         gradient: z.string().describe("CSS Gradient color for the background"),
-      }) as any,
+      })  ,
       followUp: false,
       handler: async ({ japanese, english, image_name, gradient }: { japanese: string[]; english: string[]; image_name: string; gradient: string }) => {
         const newHaiku: Haiku = {
