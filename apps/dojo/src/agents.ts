@@ -362,7 +362,7 @@ export const agentsIntegrations = {
 
   "claude-agent-sdk-python": async () =>
     mapAgents(
-      (path) => new HttpAgent({ url: `${envVars.claudeAgentSdkUrl}/${path}` }),
+      (path) => new HttpAgent({ url: `${envVars.claudeAgentSdkPythonUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
         backend_tool_rendering: "backend_tool_rendering",
@@ -374,7 +374,7 @@ export const agentsIntegrations = {
 
   "claude-agent-sdk-typescript": async () =>
     mapAgents(
-      (path) => new HttpAgent({ url: `${envVars.claudeAgentSdkTsUrl}/${path}` }),
+      (path) => new HttpAgent({ url: `${envVars.claudeAgentSdkTypescriptUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
         backend_tool_rendering: "backend_tool_rendering",
