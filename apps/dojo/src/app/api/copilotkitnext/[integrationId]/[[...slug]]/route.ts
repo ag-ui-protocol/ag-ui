@@ -2,10 +2,10 @@ import {
   CopilotRuntime,
   InMemoryAgentRunner,
   createCopilotEndpoint,
-} from "@copilotkitnext/runtime";
+} from "@copilotkit/runtime/v2";
 import { handle } from "hono/vercel";
 import type { NextRequest } from "next/server";
-import { BuiltInAgent } from "@copilotkitnext/agent";
+import { BuiltInAgent } from "@copilotkit/runtime/v2";
 import type { AbstractAgent } from "@ag-ui/client";
 
 import { agentsIntegrations } from "@/agents";

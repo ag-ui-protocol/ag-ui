@@ -119,7 +119,7 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
   useRenderTool({
     name: "send_message_to_a2a_agent",
     // Cast needed: dojo uses Zod v4 but @copilotkitnext/react was built against Zod v3
-    args: z.object({
+    parameters: z.object({
       agentName: z.string().describe("The name of the A2A agent to send the message to"),
       task: z.string().describe("The message to send to the A2A agent"),
     }) as any,

@@ -1,8 +1,8 @@
 "use client";
 
 import React from "react";
-import "@copilotkitnext/react/styles.css";
-import { CopilotChat, CopilotKitProvider } from "@copilotkitnext/react";
+import "@copilotkit/react-core/v2/styles.css";
+import { CopilotChat, CopilotKitProvider } from "@copilotkit/react-core/v2";
 
 export const dynamic = "force-dynamic";
 
