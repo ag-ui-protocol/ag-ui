@@ -1,7 +1,6 @@
 import {
   test,
   expect,
-  waitForAIResponse,
   retryOnAIFailure,
 } from "../../test-isolation-helper";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
@@ -20,7 +19,6 @@ test("[LangGraph] Agentic Chat sends and receives a message", async ({
     await chat.agentGreeting.isVisible;
     await chat.sendMessage("Hi, I am duaa");
 
-    await waitForAIResponse(page);
     await chat.assertUserMessageVisible("Hi, I am duaa");
     await chat.assertAgentReplyVisible(/Hello/i);
   });
@@ -49,7 +47,6 @@ test("[LangGraph] Agentic Chat changes background on message and reset", async (
     await chat.assertUserMessageVisible(
       "Hi change the background color to blue"
     );
-    await waitForAIResponse(page);
 
     await expect(backgroundContainer).not.toHaveCSS('background-color', initialBackground, { timeout: 7000 });
     const backgroundBlue = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
@@ -61,7 +58,6 @@ test("[LangGraph] Agentic Chat changes background on message and reset", async (
     await chat.assertUserMessageVisible(
       "Hi change the background color to pink"
     );
-    await waitForAIResponse(page);
 
     await expect(backgroundContainer).not.toHaveCSS('background-color', backgroundBlue, { timeout: 7000 });
     const backgroundPink = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
@@ -84,32 +80,27 @@ test("[LangGraph] Agentic Chat retains memory of user messages during a conversa
 
     await chat.sendMessage("Hey there");
     await chat.assertUserMessageVisible("Hey there");
-    await waitForAIResponse(page);
     await chat.assertAgentReplyVisible(/how can I assist you/i);
 
     const favFruit = "Mango";
     await chat.sendMessage(`My favorite fruit is ${favFruit}`);
     await chat.assertUserMessageVisible(`My favorite fruit is ${favFruit}`);
-    await waitForAIResponse(page);
     await chat.assertAgentReplyVisible(new RegExp(favFruit, "i"));
 
     await chat.sendMessage("and I love listening to Kaavish");
     await chat.assertUserMessageVisible("and I love listening to Kaavish");
-    await waitForAIResponse(page);
     await chat.assertAgentReplyVisible(/Kaavish/i);
 
     await chat.sendMessage("tell me an interesting fact about Moon");
     await chat.assertUserMessageVisible(
       "tell me an interesting fact about Moon"
     );
-    await waitForAIResponse(page);
     await chat.assertAgentReplyVisible(/Moon/i);
 
     await chat.sendMessage("Can you remind me what my favorite fruit is?");
     await chat.assertUserMessageVisible(
       "Can you remind me what my favorite fruit is?"
     );
-    await waitForAIResponse(page);
     await chat.assertAgentReplyVisible(new RegExp(favFruit, "i"));
   });
 });
@@ -127,22 +118,18 @@ test("[LangGraph Typescript] Agentic Chat regenerates a response", async ({
 
     // Send first message and wait for response
     await chat.sendMessage("Hello agent");
-    await waitForAIResponse(page);
 
     // Send second message asking for a joke
     await chat.sendMessage("tell me a joke");
-    await waitForAIResponse(page);
 
     // Record the joke response text (index 2: greeting=0, hello reply=1, joke=2)
     const originalJoke = await chat.getAssistantMessageText(2);
 
     // Send another message so the joke is not the last message
     await chat.sendMessage("provide a random person's name");
-    await waitForAIResponse(page);
 
     // Regenerate the joke response
     await chat.regenerateResponse(2);
-    await waitForAIResponse(page);
 
     // Verify the regenerated response differs from the original
     const newJoke = await chat.getAssistantMessageText(2);

@@ -1,11 +1,9 @@
 import {
   test,
   expect,
-  waitForAIResponse,
   retryOnAIFailure,
 } from "../../test-isolation-helper";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
-
 
 test.describe("Agentic Chat Feature", () => {
   test("[ADK Middleware] Agentic Chat sends and receives a message", async ({
@@ -22,7 +20,6 @@ test.describe("Agentic Chat Feature", () => {
       await chat.agentGreeting.isVisible;
       await chat.sendMessage("Hello, I am duaa.");
 
-      await waitForAIResponse(page);
       await chat.assertUserMessageVisible("Hello, I am duaa.");
       await chat.assertAgentReplyVisible(/Hello/i);
     });
@@ -51,7 +48,6 @@ test.describe("Agentic Chat Feature", () => {
       await chat.assertUserMessageVisible(
         "Hi change the background color to blue"
       );
-      await waitForAIResponse(page);
 
       await expect(backgroundContainer).not.toHaveCSS('background-color', initialBackground, { timeout: 7000 });
       const backgroundBlue = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
@@ -63,7 +59,6 @@ test.describe("Agentic Chat Feature", () => {
       await chat.assertUserMessageVisible(
         "Hi change the background color to pink"
       );
-      await waitForAIResponse(page);
 
       await expect(backgroundContainer).not.toHaveCSS('background-color', backgroundBlue, { timeout: 7000 });
       const backgroundPink = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
@@ -86,25 +81,21 @@ test.describe("Agentic Chat Feature", () => {
 
       await chat.sendMessage("Hey there");
       await chat.assertUserMessageVisible("Hey there");
-      await waitForAIResponse(page);
       await chat.assertAgentReplyVisible(/how can I assist you/i);
 
       const favFruit = "Mango";
       await chat.sendMessage(`My favorite fruit is ${favFruit}`);
       await chat.assertUserMessageVisible(`My favorite fruit is ${favFruit}`);
-      await waitForAIResponse(page);
       await chat.assertAgentReplyVisible(new RegExp(favFruit, "i"));
 
       await chat.sendMessage("and I love listening to Kaavish");
       await chat.assertUserMessageVisible("and I love listening to Kaavish");
-      await waitForAIResponse(page);
       await chat.assertAgentReplyVisible(/Kaavish/i);
 
       await chat.sendMessage("Can you remind me what my favorite fruit is?");
       await chat.assertUserMessageVisible(
         "Can you remind me what my favorite fruit is?"
       );
-      await waitForAIResponse(page);
       await chat.assertAgentReplyVisible(new RegExp(favFruit, "i"));
     });
   });

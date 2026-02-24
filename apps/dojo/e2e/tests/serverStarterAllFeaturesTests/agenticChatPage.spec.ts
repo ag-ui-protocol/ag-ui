@@ -1,7 +1,6 @@
 import {
   test,
   expect,
-  waitForAIResponse,
   retryOnAIFailure,
 } from "../../test-isolation-helper";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
@@ -19,7 +18,6 @@ test("[Server Starter all features] Agentic Chat displays countdown from 10 to 1
     await chat.agentGreeting.waitFor({ state: "visible" });
     await chat.sendMessage("Hey there");
     await chat.assertUserMessageVisible("Hey there");
-    await waitForAIResponse(page);
 
     const countdownMessage = page
       .locator('.prose[data-message-id]')

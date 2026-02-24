@@ -1,6 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { CopilotSelectors } from '../../utils/copilot-selectors';
-import { sendChatMessage } from '../../utils/copilot-actions';
+import { sendAndAwaitResponse } from '../../utils/copilot-actions';
 
 export class SubgraphsPage {
   readonly page: Page;
@@ -78,14 +78,14 @@ export class SubgraphsPage {
   }
 
   async sendMessage(message: string) {
-    await sendChatMessage(this.page, message);
+    await sendAndAwaitResponse(this.page, message);
   }
 
   async selectFlight(airline: 'KLM' | 'United') {
     const flightOption = airline === 'KLM' ? this.klmFlightOption : this.unitedFlightOption;
 
     // Wait for flight options to be presented
-    await expect(this.flightOptions.first()).toBeVisible({ timeout: 15000 });
+    await expect(this.flightOptions.first()).toBeVisible();
 
     // Click on the desired flight option
     await flightOption.click();
@@ -107,7 +107,7 @@ export class SubgraphsPage {
     }
 
     // Wait for hotel options to be presented
-    await expect(this.hotelOptions.first()).toBeVisible({ timeout: 15000 });
+    await expect(this.hotelOptions.first()).toBeVisible();
 
     // Click on the desired hotel option
     await hotelOption.click();
@@ -116,19 +116,19 @@ export class SubgraphsPage {
   async waitForFlightsAgent() {
     await expect(
       this.page.getByText(/flight.*options|Amsterdam.*San Francisco|KLM|United/i).first()
-    ).toBeVisible({ timeout: 20000 });
+    ).toBeVisible();
   }
 
   async waitForHotelsAgent() {
     await expect(
       this.page.getByText(/hotel.*options|accommodation|Zephyr|Ritz-Carlton|Hotel Zoe/i).first()
-    ).toBeVisible({ timeout: 20000 });
+    ).toBeVisible();
   }
 
   async waitForExperiencesAgent() {
     await expect(
       this.page.getByText(/experience|activities|restaurant|Pier 39|Golden Gate|Swan Oyster|Tartine/i).first()
-    ).toBeVisible({ timeout: 20000 });
+    ).toBeVisible();
   }
 
   async verifyStaticFlightData() {
@@ -143,11 +143,11 @@ export class SubgraphsPage {
   }
 
   async verifyStaticExperienceData() {
-    await expect(this.page.getByText('No experiences planned yet')).not.toBeVisible({ timeout: 20000 }).catch(() => {
+    await expect(this.page.getByText('No experiences planned yet')).not.toBeVisible().catch(() => {
       console.log('Still waiting for experiences to load...');
     });
 
-    await expect(this.page.locator('.activity-name').first()).toBeVisible({ timeout: 15000 });
+    await expect(this.page.locator('.activity-name').first()).toBeVisible();
 
     const experienceContent = this.page.locator('.activity-name').first().or(
       this.page.getByText(/Pier 39|Golden Gate Bridge|Swan Oyster Depot|Tartine Bakery/i).first()
@@ -175,12 +175,12 @@ export class SubgraphsPage {
   async waitForSupervisorCoordination() {
     await expect(
       this.page.getByText(/supervisor|coordinate|specialist|routing/i).first()
-    ).toBeVisible({ timeout: 15000 });
+    ).toBeVisible();
   }
 
   async waitForAgentCompletion() {
     await expect(
       this.page.getByText(/complete|finished|planning.*done|itinerary.*ready/i).first()
-    ).toBeVisible({ timeout: 30000 });
+    ).toBeVisible();
   }
 }

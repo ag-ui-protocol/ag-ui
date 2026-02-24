@@ -1,6 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { CopilotSelectors } from '../utils/copilot-selectors';
-import { sendChatMessage } from '../utils/copilot-actions';
+import { sendAndAwaitResponse } from '../utils/copilot-actions';
 
 export class HumanInTheLoopPage {
   readonly page: Page;
@@ -30,11 +30,11 @@ export class HumanInTheLoopPage {
   }
 
   async sendMessage(message: string) {
-    await sendChatMessage(this.page, message);
+    await sendAndAwaitResponse(this.page, message);
   }
 
   async selectItemsInPlanner() {
-    await expect(this.plan).toBeVisible({ timeout: 10000 });
+    await expect(this.plan).toBeVisible();
     await this.plan.click();
   }
 

@@ -15,7 +15,7 @@ test.skip("[Server Starter all features] should interact with the chat to get a 
     await genUIAgent.openChat();
     await genUIAgent.sendMessage("Hi");
     await genUIAgent.sendButton.click();
-    await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 15000 });
+    await expect(genUIAgent.agentPlannerContainer).toBeVisible();
     
     await genUIAgent.plan();
     await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 8000 });

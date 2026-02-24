@@ -1,6 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { CopilotSelectors } from '../../utils/copilot-selectors';
-import { sendChatMessage, awaitLLMResponseDone } from '../../utils/copilot-actions';
+import { sendAndAwaitResponse } from '../../utils/copilot-actions';
 
 export class AgenticGenUIPage {
   readonly page: Page;
@@ -39,8 +39,7 @@ export class AgenticGenUIPage {
   }
 
   async sendMessage(message: string) {
-    await sendChatMessage(this.page, message);
-    await awaitLLMResponseDone(this.page);
+    await sendAndAwaitResponse(this.page, message);
   }
 
   getPlannerButton(name: string | RegExp) {
@@ -54,7 +53,7 @@ export class AgenticGenUIPage {
         const agentMessage = CopilotSelectors.assistantMessages(this.page).filter({
           hasText: expectedText1
         });
-        await expect(agentMessage.last()).toBeVisible({ timeout: 10000 });
+        await expect(agentMessage.last()).toBeVisible();
       } catch (error) {
         console.log(`Did not work for ${expectedText1}`)
         if (expectedText1 === expectedTexts[expectedTexts.length - 1]) {

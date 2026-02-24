@@ -24,10 +24,10 @@ test("[Agno] Backend Tool Rendering displays weather cards", async ({
 
   // Try test ID first, fallback to text
   try {
-    await expect(weatherCard).toBeVisible({ timeout: 10000 });
+    await expect(weatherCard).toBeVisible();
   } catch (e) {
     // Fallback to checking for "Current Weather" text
-    await expect(currentWeatherText.first()).toBeVisible({ timeout: 10000 });
+    await expect(currentWeatherText.first()).toBeVisible();
   }
 
   // Verify all weather data fields are present and correctly displayed

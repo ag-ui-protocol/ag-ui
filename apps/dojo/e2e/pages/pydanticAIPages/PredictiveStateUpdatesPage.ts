@@ -1,6 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { CopilotSelectors } from '../../utils/copilot-selectors';
-import { sendChatMessage } from '../../utils/copilot-actions';
+import { sendAndAwaitResponse } from '../../utils/copilot-actions';
 
 export class PredictiveStateUpdatesPage {
   readonly page: Page;
@@ -37,11 +37,11 @@ export class PredictiveStateUpdatesPage {
   }
 
   async sendMessage(message: string) {
-    await sendChatMessage(this.page, message);
+    await sendAndAwaitResponse(this.page, message);
   }
 
   async getPredictiveResponse() {
-    await expect(this.agentResponsePrompt).toBeVisible({ timeout: 10000 });
+    await expect(this.agentResponsePrompt).toBeVisible();
     await this.agentResponsePrompt.click();
   }
 

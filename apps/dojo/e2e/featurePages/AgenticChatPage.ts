@@ -1,6 +1,6 @@
 import { Page, Locator, expect } from "@playwright/test";
 import { CopilotSelectors } from "../utils/copilot-selectors";
-import { sendChatMessage } from "../utils/copilot-actions";
+import { sendAndAwaitResponse } from "../utils/copilot-actions";
 
 export class AgenticChatPage {
   readonly page: Page;
@@ -36,7 +36,7 @@ export class AgenticChatPage {
   }
 
   async sendMessage(message: string) {
-    await sendChatMessage(this.page, message);
+    await sendAndAwaitResponse(this.page, message);
   }
 
   async getBackground(
@@ -100,7 +100,7 @@ export class AgenticChatPage {
         const agentMessage = CopilotSelectors.assistantMessages(this.page).filter({
           hasText: expectedText1
         });
-        await expect(agentMessage.last()).toBeVisible({ timeout: 10000 });
+        await expect(agentMessage.last()).toBeVisible();
       } catch (error) {
         console.log(`Did not work for ${expectedText1}`)
         // Allow test to pass if at least one expectedText matches
@@ -113,18 +113,18 @@ export class AgenticChatPage {
 
   async assertAgentReplyContains(expectedText: string) {
     const agentMessage = CopilotSelectors.assistantMessages(this.page).last();
-    await expect(agentMessage).toContainText(expectedText, { timeout: 10000 });
+    await expect(agentMessage).toContainText(expectedText);
   }
 
   async getAssistantMessageText(index: number): Promise<string> {
     const message = this.agentMessage.nth(index);
-    await expect(message).toBeVisible({ timeout: 10000 });
+    await expect(message).toBeVisible();
     return (await message.textContent()) ?? "";
   }
 
   async regenerateResponse(index: number) {
     const message = this.agentMessage.nth(index);
-    await expect(message).toBeVisible({ timeout: 10000 });
+    await expect(message).toBeVisible();
 
     // Hover over the message to reveal the regenerate button
     await message.hover();
@@ -143,16 +143,16 @@ export class AgenticChatPage {
     const agentMessage = CopilotSelectors.assistantMessages(this.page).last();
 
     // Check for main weather response structure
-    await expect(agentMessage).toContainText(/weather.*islamabad/i, { timeout: 10000 });
+    await expect(agentMessage).toContainText(/weather.*islamabad/i);
 
     // Check for temperature information
-    await expect(agentMessage).toContainText("Temperature:", { timeout: 5000 });
+    await expect(agentMessage).toContainText("Temperature:");
     // Check for humidity
-    await expect(agentMessage).toContainText("Humidity:", { timeout: 5000 });
+    await expect(agentMessage).toContainText("Humidity:");
 
     // Check for wind speed
-    await expect(agentMessage).toContainText("Wind Speed:", { timeout: 5000 });
+    await expect(agentMessage).toContainText("Wind Speed:");
     // Check for conditions
-    await expect(agentMessage).toContainText("Conditions:", { timeout: 5000 });
+    await expect(agentMessage).toContainText("Conditions:");
   }
 }
