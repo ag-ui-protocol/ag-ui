@@ -37,10 +37,9 @@ test("[LangGraph] Agentic Chat changes background on message and reset", async (
     await chat.openChat();
     await chat.agentGreeting.waitFor({ state: "visible" });
 
-    // Store initial background color
-    const backgroundContainer = page.locator('[data-testid="background-container"]')
-    const initialBackground = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
-    console.log("Initial background color:", initialBackground);
+    const backgroundContainer = page.locator('[data-testid="background-container"]');
+    const getBackground = () => backgroundContainer.evaluate(el => el.style.background);
+    const initialBackground = await getBackground();
 
     // 1. Send message to change background to blue
     await chat.sendMessage("Hi change the background color to blue");
@@ -48,10 +47,8 @@ test("[LangGraph] Agentic Chat changes background on message and reset", async (
       "Hi change the background color to blue"
     );
 
-    await expect(backgroundContainer).not.toHaveCSS('background-color', initialBackground, { timeout: 7000 });
-    const backgroundBlue = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
-    // Check if background is blue (string color name or contains blue)
-    expect(backgroundBlue.toLowerCase()).toMatch(/blue|rgb\(.*,.*,.*\)|#[0-9a-f]{6}/);
+    await expect.poll(getBackground).not.toBe(initialBackground);
+    const backgroundAfterBlue = await getBackground();
 
     // 2. Change to pink
     await chat.sendMessage("Hi change the background color to pink");
@@ -59,10 +56,7 @@ test("[LangGraph] Agentic Chat changes background on message and reset", async (
       "Hi change the background color to pink"
     );
 
-    await expect(backgroundContainer).not.toHaveCSS('background-color', backgroundBlue, { timeout: 7000 });
-    const backgroundPink = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
-    // Check if background is pink (string color name or contains pink)
-    expect(backgroundPink.toLowerCase()).toMatch(/pink|rgb\(.*,.*,.*\)|#[0-9a-f]{6}/);
+    await expect.poll(getBackground).not.toBe(backgroundAfterBlue);
   });
 });
 

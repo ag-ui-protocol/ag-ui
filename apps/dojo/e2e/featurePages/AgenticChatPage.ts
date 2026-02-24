@@ -8,7 +8,6 @@ export class AgenticChatPage {
   readonly agentGreeting: Locator;
   readonly chatInput: Locator;
   readonly sendButton: Locator;
-  readonly chatBackground: Locator;
   readonly agentMessage: Locator;
   readonly userMessage: Locator;
 
@@ -19,10 +18,6 @@ export class AgenticChatPage {
       .getByText("Hi, I'm an agent. Want to chat?");
     this.chatInput = CopilotSelectors.chatTextarea(page);
     this.sendButton = CopilotSelectors.sendButton(page);
-    this.chatBackground = page
-      .locator('div[style*="background"]')
-      .or(page.locator('.flex.justify-center.items-center.h-full.w-full'))
-      .or(page.locator('body'));
     this.agentMessage = CopilotSelectors.assistantMessages(page);
     this.userMessage = CopilotSelectors.userMessages(page);
   }
@@ -37,52 +32,6 @@ export class AgenticChatPage {
 
   async sendMessage(message: string) {
     await sendAndAwaitResponse(this.page, message);
-  }
-
-  async getBackground(
-    property: "backgroundColor" | "backgroundImage" = "backgroundColor"
-  ): Promise<string> {
-    // Try multiple selectors for the background element
-    const selectors = [
-      'div[style*="background"]',
-      'div[style*="background-color"]',
-      '.flex.justify-center.items-center.h-full.w-full',
-      'div.flex.justify-center.items-center.h-full.w-full',
-      '[class*="bg-"]',
-      'div[class*="background"]'
-    ];
-
-    for (const selector of selectors) {
-      try {
-        const element = this.page.locator(selector).first();
-        if (await element.isVisible({ timeout: 1000 })) {
-          const value = await element.evaluate(
-            (el, prop) => {
-              // Check inline style first
-              if (el.style.background) return el.style.background;
-              if (el.style.backgroundColor) return el.style.backgroundColor;
-              // Then computed style
-              return getComputedStyle(el)[prop as any];
-            },
-            property
-          );
-          if (value && value !== "rgba(0, 0, 0, 0)" && value !== "transparent") {
-            console.log(`[${selector}] ${property}: ${value}`);
-            return value;
-          }
-        }
-      } catch (e) {
-        continue;
-      }
-    }
-
-    // Fallback to original element
-    const value = await this.chatBackground.first().evaluate(
-      (el, prop) => getComputedStyle(el)[prop as any],
-      property
-    );
-    console.log(`[Fallback] ${property}: ${value}`);
-    return value;
   }
 
   async getGradientButtonByName(name: string | RegExp) {

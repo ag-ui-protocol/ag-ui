@@ -37,10 +37,9 @@ test("[MastraAgentLocal] Agentic Chat changes background on message and reset", 
     await chat.openChat();
     await chat.agentGreeting.waitFor({ state: "visible" });
 
-    // Store initial background color
-    const backgroundContainer = page.locator('[data-testid="background-container"]')
-    const initialBackground = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
-    console.log("Initial background color:", initialBackground);
+    const backgroundContainer = page.locator('[data-testid="background-container"]');
+    const getBackground = () => backgroundContainer.evaluate(el => el.style.background);
+    const initialBackground = await getBackground();
 
     // 1. Send message to change background to blue
     await chat.sendMessage("Hi change the background color to blue");
@@ -48,10 +47,8 @@ test("[MastraAgentLocal] Agentic Chat changes background on message and reset", 
       "Hi change the background color to blue"
     );
 
-    // Wait for the background to change from its initial value (AI tool call may take time)
-    await expect(backgroundContainer).not.toHaveCSS('background-color', initialBackground, { timeout: 15000 });
-    const backgroundAfterBlue = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
-    console.log("Background after blue request:", backgroundAfterBlue);
+    await expect.poll(getBackground).not.toBe(initialBackground);
+    const backgroundAfterBlue = await getBackground();
 
     // 2. Change to pink
     await chat.sendMessage("Hi change the background color to pink");
@@ -59,10 +56,8 @@ test("[MastraAgentLocal] Agentic Chat changes background on message and reset", 
       "Hi change the background color to pink"
     );
 
-    // Wait for the background to change from the previous value
-    await expect(backgroundContainer).not.toHaveCSS('background-color', backgroundAfterBlue, { timeout: 15000 });
-    const backgroundAfterPink = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
-    console.log("Background after pink request:", backgroundAfterPink);
+    await expect.poll(getBackground).not.toBe(backgroundAfterBlue);
+    const backgroundAfterPink = await getBackground();
     // Verify it also differs from initial (not a reset)
     expect(backgroundAfterPink).not.toBe(initialBackground);
   });
