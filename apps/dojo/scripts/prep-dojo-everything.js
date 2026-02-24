@@ -75,7 +75,7 @@ const ALL_TARGETS = {
     cwd: path.join(integrationsRoot, "crew-ai/python"),
   },
   'langroid': {
-    command: 'poetry install',
+    command: 'uv sync',
     name: 'Langroid',
     cwd: path.join(integrationsRoot, 'langroid/python/examples'),
   },

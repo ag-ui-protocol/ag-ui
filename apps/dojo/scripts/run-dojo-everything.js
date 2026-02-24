@@ -79,7 +79,7 @@ const ALL_SERVICES = {
     env: { PORT: 8003 },
   }],
   'langroid': [{
-    command: 'poetry run dev',
+    command: 'uv run dev',
     name: 'Langroid',
     cwd: path.join(integrationsRoot, 'langroid/python/examples'),
     env: { PORT: 8018 },
