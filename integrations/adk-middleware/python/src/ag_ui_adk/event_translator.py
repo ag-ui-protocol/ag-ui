@@ -208,6 +208,10 @@ class EventTranslator:
         self._last_streamed_text: Optional[str] = None  # Snapshot of most recently streamed text
         self._last_streamed_run_id: Optional[str] = None  # Run identifier for the last streamed text
         self.long_running_tool_ids: List[str] = []  # Track the long running tool IDs
+        # Maps LRO function call name → the ID we emitted to the client.
+        # Used to build a remap when the final (non-partial) event arrives
+        # with a different ID for the same logical function call.
+        self.lro_emitted_ids_by_name: Dict[str, str] = {}
 
         # Track thinking message streaming state (for thought parts)
         self._is_thinking: bool = False  # Whether we're currently in a thinking block
@@ -746,6 +750,7 @@ class EventTranslator:
                            or getattr(part.function_call, 'name', None) not in self._client_tool_names):
                         long_running_function_call = part.function_call
                         self.long_running_tool_ids.append(long_running_function_call.id)
+                        self.lro_emitted_ids_by_name[long_running_function_call.name] = long_running_function_call.id
                         yield ToolCallStartEvent(
                             type=EventType.TOOL_CALL_START,
                             tool_call_id=long_running_function_call.id,
@@ -1153,6 +1158,7 @@ class EventTranslator:
         self._last_streamed_text = None
         self._last_streamed_run_id = None
         self.long_running_tool_ids.clear()
+        self.lro_emitted_ids_by_name.clear()
         self._emitted_predict_state_for_tools.clear()
         self._emitted_confirm_for_tools.clear()
         self._predictive_state_tool_call_ids.clear()

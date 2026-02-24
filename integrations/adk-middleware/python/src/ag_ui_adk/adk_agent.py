@@ -547,8 +547,131 @@ class ADKAgent:
             return False
 
         return len(pending_calls) > 0
-    
-    
+
+    def _extract_lro_id_remap(
+        self,
+        adk_event,
+        event_translator: 'EventTranslator',
+    ) -> Dict[str, str]:
+        """Extract ID remapping from a non-partial event's LRO function calls.
+
+        When SSE streaming is enabled, ADK's ``populate_client_function_call_id``
+        generates different UUIDs for the same function call across partial and
+        final events.  This method builds a mapping from the ID the client
+        received (emitted from the partial event) to the ID ADK persisted (from
+        the final event), so that tool-result submissions can use the correct ID.
+
+        Returns:
+            Dict mapping client-facing IDs to ADK-persisted IDs.
+        """
+        remap: Dict[str, str] = {}
+        if not adk_event.content or not hasattr(adk_event.content, 'parts'):
+            return remap
+
+        for part in (adk_event.content.parts or []):
+            fc = getattr(part, 'function_call', None)
+            if not fc:
+                continue
+            final_id = getattr(fc, 'id', None)
+            fc_name = getattr(fc, 'name', None)
+            if not final_id or not fc_name:
+                continue
+
+            emitted_id = event_translator.lro_emitted_ids_by_name.get(fc_name)
+            if emitted_id and emitted_id != final_id:
+                remap[emitted_id] = final_id
+                logger.info(
+                    f"LRO ID remap: client_id={emitted_id} -> persisted_id={final_id} "
+                    f"(tool={fc_name})"
+                )
+
+        return remap
+
+    async def _store_lro_id_remap(
+        self,
+        remap: Dict[str, str],
+        session_id: str,
+        app_name: str,
+        user_id: str,
+    ) -> None:
+        """Persist an LRO ID remapping in session state.
+
+        Merges *remap* into the existing ``lro_tool_call_id_remap`` stored in
+        the session so that multiple LRO tool calls can accumulate mappings.
+        """
+        try:
+            existing: Dict[str, str] = await self._session_manager.get_state_value(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id,
+                key="lro_tool_call_id_remap",
+                default={},
+            )
+            existing.update(remap)
+            await self._session_manager.set_state_value(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id,
+                key="lro_tool_call_id_remap",
+                value=existing,
+            )
+            logger.debug(f"Stored LRO ID remap in session state: {remap}")
+        except Exception as e:
+            logger.warning(f"Failed to store LRO ID remap: {e}")
+
+    async def _get_lro_id_remap(
+        self,
+        session_id: str,
+        app_name: str,
+        user_id: str,
+    ) -> Dict[str, str]:
+        """Retrieve the LRO ID remapping from session state."""
+        try:
+            return await self._session_manager.get_state_value(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id,
+                key="lro_tool_call_id_remap",
+                default={},
+            )
+        except Exception as e:
+            logger.warning(f"Failed to retrieve LRO ID remap: {e}")
+            return {}
+
+    async def _consume_lro_id_remap(
+        self,
+        tool_call_id: str,
+        session_id: str,
+        app_name: str,
+        user_id: str,
+    ) -> str:
+        """Look up and consume (remove) a single LRO ID remap entry.
+
+        Returns the remapped ID if one exists, otherwise returns *tool_call_id*
+        unchanged.
+        """
+        remap = await self._get_lro_id_remap(session_id, app_name, user_id)
+        if tool_call_id not in remap:
+            return tool_call_id
+
+        remapped_id = remap.pop(tool_call_id)
+        logger.info(
+            f"Remapped tool_call_id {tool_call_id} -> {remapped_id} for FunctionResponse"
+        )
+        # Persist the reduced remap (entry consumed)
+        try:
+            await self._session_manager.set_state_value(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id,
+                key="lro_tool_call_id_remap",
+                value=remap,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to update LRO ID remap after consumption: {e}")
+
+        return remapped_id
+
     def _default_run_config(self, input: RunAgentInput) -> ADKRunConfig:
         """Create default RunConfig with SSE streaming enabled.
 
@@ -1630,6 +1753,16 @@ class ADKAgent:
             # Track invocation_id for tool-only submissions (when new_message will be None)
             tool_only_invocation_id: Optional[str] = None
 
+            # Load LRO ID remapping for tool-result submissions.
+            # When SSE streaming is active, the partial and final events may
+            # carry different function-call IDs for the same logical call.
+            # The remap converts client-facing IDs back to the IDs ADK persisted.
+            lro_id_remap: Dict[str, str] = {}
+            if active_tool_results:
+                lro_id_remap = await self._get_lro_id_remap(
+                    backend_session_id, app_name, user_id
+                )
+
             # if there is a tool response submission by the user, add FunctionResponse to session first
             if active_tool_results and user_message:
                 # We have BOTH tool results AND a user message
@@ -1637,6 +1770,8 @@ class ADKAgent:
                 function_response_parts = []
                 for tool_msg in active_tool_results:
                     tool_call_id = tool_msg['message'].tool_call_id
+                    # Apply LRO ID remap: convert client-facing ID to ADK-persisted ID
+                    tool_call_id = lro_id_remap.get(tool_call_id, tool_call_id)
                     content = tool_msg['message'].content
 
                     # Debug: Log the actual tool message content we received
@@ -1700,6 +1835,8 @@ class ADKAgent:
                 function_response_parts = []
                 for tool_msg in active_tool_results:
                     tool_call_id = tool_msg['message'].tool_call_id
+                    # Apply LRO ID remap: convert client-facing ID to ADK-persisted ID
+                    tool_call_id = lro_id_remap.get(tool_call_id, tool_call_id)
                     content = tool_msg['message'].content
 
                     logger.debug(f"Received tool result for call {tool_call_id}: content='{content}', type={type(content)}")
@@ -1881,6 +2018,15 @@ class ADKAgent:
                     
                     # Check if we got a non-partial event (persistence complete)
                     if not event_partial:
+                        # Capture LRO ID remapping: the final (persisted) event
+                        # may carry different function-call IDs than the partial
+                        # event we already emitted to the client.
+                        lro_remap = self._extract_lro_id_remap(adk_event, event_translator)
+                        if lro_remap:
+                            await self._store_lro_id_remap(
+                                lro_remap, backend_session_id, app_name, user_id
+                            )
+
                         logger.info(
                             f"Received non-partial event during LRO drain, persistence complete "
                             f"(thread={input.thread_id})"
@@ -1970,6 +2116,17 @@ class ADKAgent:
                         if ag_ui_event.type == EventType.TOOL_CALL_END:
                             is_long_running_tool = True
                         logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
+
+                    # Capture LRO ID remapping from non-partial events.
+                    # The final (persisted) event may carry different function-call
+                    # IDs than the partial event we already emitted to the client.
+                    if has_lro_function_call and not event_partial:
+                        lro_remap = self._extract_lro_id_remap(adk_event, event_translator)
+                        if lro_remap:
+                            await self._store_lro_id_remap(
+                                lro_remap, backend_session_id, app_name, user_id
+                            )
+
                     # Hard stop the execution if we find any long running tool
                     # AND the agent is NOT using ADK's native resumability.
                     # With ResumabilityConfig, ADK handles the pause/resume flow
