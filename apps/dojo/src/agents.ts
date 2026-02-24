@@ -8,8 +8,8 @@ import { ServerStarterAgent } from "@ag-ui/server-starter";
 import { ServerStarterAllFeaturesAgent } from "@ag-ui/server-starter-all-features";
 import { MastraClient } from "@mastra/client-js";
 import { MastraAgent } from "@ag-ui/mastra";
-// import { VercelAISDKAgent } from "@ag-ui/vercel-ai-sdk";
-// import { openai } from "@ai-sdk/openai";
+import { VercelAISDKAgent } from "@ag-ui/vercel-ai-sdk";
+import { openai } from "@ai-sdk/openai";
 import { LangGraphAgent, LangGraphHttpAgent } from "@ag-ui/langgraph";
 import { AgnoAgent } from "@ag-ui/agno";
 import { LlamaIndexAgent } from "@ag-ui/llamaindex";
@@ -102,10 +102,9 @@ export const agentsIntegrations = {
     }) as Record<"agentic_chat" | "backend_tool_rendering" | "human_in_the_loop" | "shared_state" | "tool_based_generative_ui", AbstractAgent>;
   },
 
-  // Disabled until we can support Vercel AI SDK v5
-  // "vercel-ai-sdk": async () => ({
-  //   agentic_chat: new VercelAISDKAgent({ model: openai("gpt-4o") }),
-  // }),
+  "vercel-ai-sdk": async () => ({
+    agentic_chat: new VercelAISDKAgent({ model: openai("gpt-4o-mini") }),
+  }),
 
   langgraph: async () => ({
     ...mapAgents(

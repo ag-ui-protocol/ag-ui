@@ -190,7 +190,7 @@ const agentFilesMapper: Record<
       path.join(
         __dirname,
         integrationsFolderPath,
-        `/vercel-ai-sdk/src/index.ts`,
+        `/vercel-ai-sdk/typescript/src/index.ts`,
       ),
     ],
   }),
