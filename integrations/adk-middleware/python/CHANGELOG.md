@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **FIX**: Remap LRO tool-call IDs across SSE streaming partial/final events (#1168)
+  - ADK's `populate_client_function_call_id()` generates different UUIDs for the same function call across partial and final SSE streaming events, breaking HITL workflows
+  - `EventTranslator` now tracks emitted IDs per tool name (`lro_emitted_ids_by_name`) during `translate_lro_function_calls()`
+  - When the non-partial event arrives, `_extract_lro_id_remap()` builds a client-ID → persisted-ID mapping
+  - Remap is stored in session state (`lro_tool_call_id_remap`) so it survives across HTTP requests
+  - `FunctionResponse` construction applies the remap transparently — clients continue using their original IDs
+
 ## [0.5.0] - 2026-02-16
 
 ### Added
