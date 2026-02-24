@@ -127,7 +127,7 @@ const ALL_TARGETS = {
   "claude-agent-sdk-python": {
     command: "uv sync",
     name: "Claude Agent SDK (Python)",
-    cwd: path.join(integrationsRoot, "claude-agent-sdk/python"),
+    cwd: path.join(integrationsRoot, "claude-agent-sdk/python/examples"),
   },
   "claude-agent-sdk-typescript": {
     command: "pnpm install",

@@ -151,7 +151,7 @@ const ALL_SERVICES = {
     env: { PORT: 8014 },
   }],
   'claude-agent-sdk-python': [{
-    command: 'uv run python server.py',
+    command: 'uv run dev',
     name: 'Claude Agent SDK (Python)',
     cwd: path.join(integrationsRoot, 'claude-agent-sdk/python/examples'),
     env: { PORT: 8888 },
