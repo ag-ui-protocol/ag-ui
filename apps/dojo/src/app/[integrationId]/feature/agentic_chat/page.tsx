@@ -56,9 +56,9 @@ const Chat = () => {
 
   useRenderTool({
     name: "get_weather",
-    parameters: z.object({
+    args: z.object({
       location: z.string(),
-    }) as any,
+    })  ,
     render: ({ args, result, status }: any) => {
       if (status !== "complete") {
         return <div data-testid="weather-info-loading">Loading weather...</div>;
