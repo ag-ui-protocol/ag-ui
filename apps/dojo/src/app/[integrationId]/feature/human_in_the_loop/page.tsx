@@ -380,16 +380,16 @@ const StepsFeedback = ({ args, respond, status }: { args: any; respond: any; sta
   const [accepted, setAccepted] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (status === "executing" && localSteps.length === 0) {
+    if (status === "executing" && localSteps.length === 0 && Array.isArray(args?.steps) && args.steps.length > 0) {
       setLocalSteps(args.steps);
     }
-  }, [status, args.steps, localSteps]);
+  }, [status, args?.steps, localSteps]);
 
-  if (args.steps === undefined || args.steps.length === 0) {
+  if (!Array.isArray(args?.steps) || args.steps.length === 0) {
     return <></>;
   }
 
-  const steps = localSteps.length > 0 ? localSteps : args.steps;
+  const steps = Array.isArray(localSteps) && localSteps.length > 0 ? localSteps : args.steps;
   const enabledCount = steps.filter((step: any) => step.status === "enabled").length;
 
   const handleStepToggle = (index: number) => {

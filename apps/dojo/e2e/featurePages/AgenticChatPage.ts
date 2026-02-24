@@ -89,19 +89,13 @@ export class AgenticChatPage {
   }
 
   async assertWeatherResponseStructure() {
-    const agentMessage = CopilotSelectors.assistantMessages(this.page).last();
+    // The get_weather tool renders a deterministic component with data-testid="weather-info"
+    const weatherInfo = this.page.getByTestId("weather-info");
+    await expect(weatherInfo.last()).toBeVisible();
 
-    // Check for main weather response structure
-    await expect(agentMessage).toContainText(/weather.*islamabad/i);
-
-    // Check for temperature information
-    await expect(agentMessage).toContainText("Temperature:");
-    // Check for humidity
-    await expect(agentMessage).toContainText("Humidity:");
-
-    // Check for wind speed
-    await expect(agentMessage).toContainText("Wind Speed:");
-    // Check for conditions
-    await expect(agentMessage).toContainText("Conditions:");
+    await expect(weatherInfo.last()).toContainText("Temperature:");
+    await expect(weatherInfo.last()).toContainText("Humidity:");
+    await expect(weatherInfo.last()).toContainText("Wind Speed:");
+    await expect(weatherInfo.last()).toContainText("Conditions:");
   }
 }

@@ -46,14 +46,41 @@ export async function sendChatMessage(page: Page, message: string) {
 
 /**
  * Send a message and wait for the LLM to finish responding.
+ *
+ * Uses assistant message counting to avoid a race condition in multi-turn
+ * conversations where `data-copilot-running="false"` from the previous
+ * response is still present when we start checking.
  */
 export async function sendAndAwaitResponse(
   page: Page,
   message: string,
   timeout = LLM_RESPONSE_TIMEOUT
 ) {
+  // Snapshot assistant message count before sending so we can detect
+  // when the agent starts responding to THIS message.
+  const countBefore = await page
+    .locator('[data-testid="copilot-assistant-message"]')
+    .count();
+
   await sendChatMessage(page, message);
-  await awaitLLMResponseDone(page, timeout);
+
+  // Wait for a NEW assistant message to appear, proving the agent
+  // started responding to our message (not a stale previous response).
+  await page.waitForFunction(
+    (before) =>
+      document.querySelectorAll('[data-testid="copilot-assistant-message"]')
+        .length > before,
+    countBefore,
+    { timeout }
+  );
+
+  // Now wait for the stream to finish — at this point the running state
+  // belongs to the current response, not a stale one.
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[data-copilot-running="false"]') !== null,
+    { timeout }
+  );
 }
 
 /**

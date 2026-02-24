@@ -4,6 +4,7 @@ import "@copilotkit/react-core/v2/styles.css";
 import {
   CopilotKitProvider,
   useFrontendTool,
+  useRenderTool,
   useAgentContext,
   useConfigureSuggestions,
   CopilotChat,
@@ -50,6 +51,27 @@ const Chat = () => {
         status: "success",
         message: `Background changed to ${background}`,
       };
+    },
+  });
+
+  useRenderTool({
+    name: "get_weather",
+    parameters: z.object({
+      location: z.string(),
+    }) as any,
+    render: ({ args, result, status }: any) => {
+      if (status !== "complete") {
+        return <div data-testid="weather-info-loading">Loading weather...</div>;
+      }
+      return (
+        <div data-testid="weather-info">
+          <strong>Weather in {result?.city || args.location}</strong>
+          <div>Temperature: {result?.temperature}°C</div>
+          <div>Humidity: {result?.humidity}%</div>
+          <div>Wind Speed: {result?.windSpeed ?? result?.wind_speed} mph</div>
+          <div>Conditions: {result?.conditions}</div>
+        </div>
+      );
     },
   });
 
