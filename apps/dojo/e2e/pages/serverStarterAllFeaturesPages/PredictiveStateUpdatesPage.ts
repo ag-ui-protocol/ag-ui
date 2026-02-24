@@ -99,7 +99,7 @@ export class PredictiveStateUpdatesPage {
     if (count > 0) {
       expect(count).toBeGreaterThan(0);
     } else {
-      const modal = this.page.locator('[data-testid="confirm-changes-modal"]');
+      const modal = this.page.locator('[data-testid="confirm-changes-modal"]').last();
       await expect(modal).toBeVisible();
     }
   }

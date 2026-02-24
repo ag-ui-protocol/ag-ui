@@ -97,7 +97,7 @@ export class PredictiveStateUpdatesPage {
     if (count > 0) {
       expect(count).toBeGreaterThan(0);
     } else {
-      const modal = this.page.locator('div.bg-white.rounded.shadow-lg');
+      const modal = this.page.locator('div.bg-white.rounded.shadow-lg').last();
       await expect(modal).toBeVisible();
     }
   }
