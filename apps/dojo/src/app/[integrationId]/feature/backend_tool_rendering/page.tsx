@@ -32,7 +32,7 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
 const Chat = () => {
   useRenderTool({
     name: "get_weather",
-    args: z.object({
+    parameters: z.object({
       location: z.string(),
     })  ,
     render: ({ args, result, status }: any) => {

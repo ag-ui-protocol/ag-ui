@@ -118,7 +118,7 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
 
   useRenderTool({
     name: "send_message_to_a2a_agent",
-    args: z.object({
+    parameters: z.object({
       agentName: z.string().describe("The name of the A2A agent to send the message to"),
       task: z.string().describe("The message to send to the A2A agent"),
     }),
