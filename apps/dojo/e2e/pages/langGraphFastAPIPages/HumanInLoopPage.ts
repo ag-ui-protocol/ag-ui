@@ -1,4 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { CopilotSelectors } from '../../utils/copilot-selectors';
+import { sendChatMessage } from '../../utils/copilot-actions';
 
 export class HumanInLoopPage {
   readonly page: Page;
@@ -15,12 +17,12 @@ export class HumanInLoopPage {
     this.page = page;
     this.planTaskButton = page.getByRole('button', { name: 'Human in the loop Plan a task' });
     this.agentGreeting = page.getByText('This agent demonstrates human-in-the-loop');
-    this.chatInput = page.getByRole('textbox', { name: 'Type a message...' });
-    this.sendButton = page.locator('button:has(svg.lucide-arrow-up)');
+    this.chatInput = CopilotSelectors.chatTextarea(page);
+    this.sendButton = CopilotSelectors.sendButton(page);
     this.plan = page.getByTestId('select-steps');
     this.performStepsButton = page.getByRole('button', { name: '✨Perform Steps' });
-    this.agentMessage = page.locator('.prose[data-message-id]');
-    this.userMessage = page.locator('.items-end[data-message-id]');
+    this.agentMessage = CopilotSelectors.assistantMessages(page);
+    this.userMessage = CopilotSelectors.userMessages(page);
   }
 
   async openChat() {
@@ -28,13 +30,7 @@ export class HumanInLoopPage {
   }
 
   async sendMessage(message: string) {
-    await this.chatInput.click();
-    await this.chatInput.fill(message);
-    try {
-      await this.sendButton.click({ timeout: 3000 });
-    } catch {
-      await this.chatInput.press("Enter");
-    }
+    await sendChatMessage(this.page, message);
   }
 
   async selectItemsInPlanner() {
@@ -54,7 +50,7 @@ export class HumanInLoopPage {
     if (typeof identifier === 'number') {
       item = items.nth(identifier);
     } else {
-      item = items.filter({ 
+      item = items.filter({
         has: this.page.getByTestId('step-text').filter({ hasText: identifier })
       }).first();
     }
@@ -72,7 +68,7 @@ export class HumanInLoopPage {
     if (typeof target === 'number') {
       item = items.nth(target);
     } else {
-      item = items.filter({ 
+      item = items.filter({
         has: this.page.getByTestId('step-text').filter({ hasText: target })
       }).first();
     }

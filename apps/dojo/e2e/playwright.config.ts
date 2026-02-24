@@ -44,7 +44,7 @@ function getBaseUrl(): string {
 }
 
 export default defineConfig({
-  timeout: process.env.CI ? 300_000 : 120_000, // 5min in CI, 2min locally for AI tests
+  timeout: process.env.CI ? 60_000 : 30_000, // 1min in CI, 30s locally
   testDir: "./tests",
   retries: process.env.CI ? 3 : 0, // More retries for flaky AI tests in CI, 0 for local
   // Make this sequential for now to avoid race conditions
@@ -58,15 +58,14 @@ export default defineConfig({
       mode: "retain-on-failure", // Only keep videos for failed tests
       size: { width: 1280, height: 720 },
     },
-    // Increased timeouts for AI interactions
-    navigationTimeout: 90_000, // 1.5 minutes for slow AI app loads
-    actionTimeout: 60_000, // 1 minute for AI-driven actions (clicking, filling)
+    navigationTimeout: 30_000,
+    actionTimeout: 15_000,
     // Test isolation - ensure clean state between tests
     testIdAttribute: "data-testid",
     baseURL: getBaseUrl(),
   },
   expect: {
-    timeout: 120_000, // 2 minutes for AI-generated content to appear
+    timeout: 15_000,
   },
   // Test isolation between each test
   projects: [

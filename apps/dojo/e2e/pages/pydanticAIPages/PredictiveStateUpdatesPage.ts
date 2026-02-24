@@ -1,4 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { CopilotSelectors } from '../../utils/copilot-selectors';
+import { sendChatMessage } from '../../utils/copilot-actions';
 
 export class PredictiveStateUpdatesPage {
   readonly page: Page;
@@ -18,16 +20,16 @@ export class PredictiveStateUpdatesPage {
   constructor(page: Page) {
     this.page = page;
     this.agentGreeting = page.getByText("Hi 👋 How can I help with your document?");
-    this.chatInput = page.getByRole('textbox', { name: 'Type a message...' });
-    this.sendButton = page.locator('button:has(svg.lucide-arrow-up)');
+    this.chatInput = CopilotSelectors.chatTextarea(page);
+    this.sendButton = CopilotSelectors.sendButton(page);
     this.agentResponsePrompt = page.locator('div.tiptap.ProseMirror');
     this.userApprovalModal = page.locator('div.bg-white.rounded.shadow-lg >> text=Confirm Changes');
     this.acceptedButton = page.getByText('✓ Accepted');
-    this.confirmedChangesResponse = page.locator('.prose[data-message-id]').first();
-    this.rejectedChangesResponse = page.locator('.prose[data-message-id]').last();
+    this.confirmedChangesResponse = CopilotSelectors.assistantMessages(page).first();
+    this.rejectedChangesResponse = CopilotSelectors.assistantMessages(page).last();
     this.highlights = page.locator('.tiptap em');
-    this.agentMessage = page.locator('.prose[data-message-id]');
-    this.userMessage = page.locator('.items-end[data-message-id]');
+    this.agentMessage = CopilotSelectors.assistantMessages(page);
+    this.userMessage = CopilotSelectors.userMessages(page);
   }
 
   async openChat() {
@@ -35,13 +37,7 @@ export class PredictiveStateUpdatesPage {
   }
 
   async sendMessage(message: string) {
-    await this.chatInput.click();
-    await this.chatInput.fill(message);
-    try {
-      await this.sendButton.click({ timeout: 3000 });
-    } catch {
-      await this.chatInput.press("Enter");
-    }
+    await sendChatMessage(this.page, message);
   }
 
   async getPredictiveResponse() {

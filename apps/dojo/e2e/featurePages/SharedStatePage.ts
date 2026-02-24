@@ -1,4 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { CopilotSelectors } from '../utils/copilot-selectors';
+import { sendChatMessage, awaitLLMResponseDone } from '../utils/copilot-actions';
 
 export class SharedStatePage {
   readonly page: Page;
@@ -14,15 +16,14 @@ export class SharedStatePage {
 
   constructor(page: Page) {
     this.page = page;
-    // Remove iframe references and use actual greeting text
     this.agentGreeting = page.getByText("Hi 👋 How can I help with your recipe?");
-    this.chatInput = page.getByRole('textbox', { name: 'Type a message...' });
-    this.sendButton = page.locator('button:has(svg.lucide-arrow-up)');
+    this.chatInput = CopilotSelectors.chatTextarea(page);
+    this.sendButton = CopilotSelectors.sendButton(page);
     this.promptResponseLoader = page.getByRole('button', { name: 'Please Wait...', disabled: true });
     this.instructionsContainer = page.locator('.instructions-container');
     this.addIngredient = page.getByRole('button', { name: '+ Add Ingredient' });
-    this.agentMessage = page.locator('.prose[data-message-id]');
-    this.userMessage = page.locator('.items-end[data-message-id]');
+    this.agentMessage = CopilotSelectors.assistantMessages(page);
+    this.userMessage = CopilotSelectors.userMessages(page);
     this.ingredientCards = page.locator('.ingredient-card');
   }
 
@@ -31,30 +32,12 @@ export class SharedStatePage {
   }
 
   async sendMessage(message: string) {
-    await this.chatInput.click();
-    await this.chatInput.fill(message);
-    try {
-      await this.sendButton.click({ timeout: 3000 });
-    } catch {
-      await this.chatInput.press("Enter");
-    }
+    await sendChatMessage(this.page, message);
   }
 
   async loader() {
-    // Wait for the loading indicator to appear (it may already be visible)
-    try {
-      await this.promptResponseLoader.waitFor({ state: "visible", timeout: 10000 });
-    } catch {
-      // Loader may have already appeared and disappeared, continue
-    }
-    // Wait for the loading indicator to disappear (AI response finished)
-    try {
-      await this.promptResponseLoader.waitFor({ state: "hidden", timeout: 60000 });
-    } catch {
-      // Loader may already be gone
-    }
-    // Additional stabilization wait for content to render
-    await this.page.waitForTimeout(2000);
+    // Wait for the LLM stream to finish using data-copilot-running
+    await awaitLLMResponseDone(this.page);
   }
 
   async awaitIngredientCard(name: string) {
@@ -68,7 +51,7 @@ export class SharedStatePage {
         );
       },
       name,
-      { timeout: 60000 }
+      { timeout: 15000 }
     );
   }
 

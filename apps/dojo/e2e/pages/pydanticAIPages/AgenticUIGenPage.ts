@@ -1,4 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { CopilotSelectors } from '../../utils/copilot-selectors';
+import { sendChatMessage, awaitLLMResponseDone } from '../../utils/copilot-actions';
 
 export class AgenticGenUIPage {
   readonly page: Page;
@@ -13,10 +15,10 @@ export class AgenticGenUIPage {
   constructor(page: Page) {
     this.page = page;
     this.planTaskButton = page.getByRole('button', { name: 'Agentic Generative UI' });
-    this.chatInput = page.getByRole('textbox', { name: 'Type a message...' });
-    this.sendButton = page.locator('button:has(svg.lucide-arrow-up)');
-    this.agentMessage = page.locator('.prose[data-message-id]');
-    this.userMessage = page.locator('.items-end[data-message-id]');
+    this.chatInput = CopilotSelectors.chatTextarea(page);
+    this.sendButton = CopilotSelectors.sendButton(page);
+    this.agentMessage = CopilotSelectors.assistantMessages(page);
+    this.userMessage = CopilotSelectors.userMessages(page);
     this.agentGreeting = page.getByText('This agent demonstrates');
     this.agentPlannerContainer = page.getByTestId('task-progress');
   }
@@ -37,8 +39,8 @@ export class AgenticGenUIPage {
   }
 
   async sendMessage(message: string) {
-    await this.chatInput.fill(message);
-    await this.page.waitForTimeout(5000)
+    await sendChatMessage(this.page, message);
+    await awaitLLMResponseDone(this.page);
   }
 
   getPlannerButton(name: string | RegExp) {
@@ -49,13 +51,12 @@ export class AgenticGenUIPage {
     const expectedTexts = Array.isArray(expectedText) ? expectedText : [expectedText];
     for (const expectedText1 of expectedTexts) {
       try {
-        const agentMessage = this.page.locator('.prose[data-message-id]', {
+        const agentMessage = CopilotSelectors.assistantMessages(this.page).filter({
           hasText: expectedText1
         });
         await expect(agentMessage.last()).toBeVisible({ timeout: 10000 });
       } catch (error) {
         console.log(`Did not work for ${expectedText1}`)
-        // Allow test to pass if at least one expectedText matches
         if (expectedText1 === expectedTexts[expectedTexts.length - 1]) {
           throw error;
         }

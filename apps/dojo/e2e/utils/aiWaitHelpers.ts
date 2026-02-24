@@ -1,32 +1,33 @@
 import { expect, Locator, Page } from "@playwright/test";
+import { awaitLLMResponseDone } from "./copilot-actions";
 
 /**
- * Wait for AI assistant messages with extended timeout and retry logic
+ * Wait for AI assistant messages with extended timeout and retry logic.
  */
 export async function waitForAIResponse(
   locator: Locator,
   pattern: RegExp,
-  timeoutMs: number = 120_000 // 2 minutes default
+  timeoutMs: number = 15_000
 ) {
   await expect(locator.getByText(pattern)).toBeVisible({ timeout: timeoutMs });
 }
 
 /**
- * Wait for AI-generated content to appear with polling
+ * Wait for AI-generated content to appear.
  */
 export async function waitForAIContent(
   locator: Locator,
-  timeoutMs: number = 120_000 // 2 minutes default
+  timeoutMs: number = 15_000
 ) {
   await expect(locator).toBeVisible({ timeout: timeoutMs });
 }
 
 /**
- * Wait for AI form interactions with extended timeout
+ * Wait for AI form interactions to be ready.
  */
 export async function waitForAIFormReady(
   locator: Locator,
-  timeoutMs: number = 60_000 // 1 minute default
+  timeoutMs: number = 15_000
 ) {
   await expect(locator).toBeVisible({ timeout: timeoutMs });
   await expect(locator).toBeEnabled({ timeout: timeoutMs });
@@ -34,43 +35,42 @@ export async function waitForAIFormReady(
 }
 
 /**
- * Wait for AI dialog/modal to appear
+ * Wait for AI dialog/modal to appear.
  */
 export async function waitForAIDialog(
   locator: Locator,
-  timeoutMs: number = 90_000 // 1.5 minutes default
+  timeoutMs: number = 15_000
 ) {
   await expect(locator).toBeVisible({ timeout: timeoutMs });
 }
 
 /**
- * Wait for pattern matching with custom timeout for AI responses
+ * Wait for the LLM to finish, then check for any matching pattern.
+ * No more polling loop — waits for stream to end, then asserts.
  */
 export async function waitForAIPatterns(
   page: Page,
   patterns: RegExp[],
-  timeoutMs: number = 120_000 // 2 minutes default
+  timeoutMs: number = 15_000
 ): Promise<void> {
-  const endTime = Date.now() + timeoutMs;
+  // Wait for the LLM stream to complete first
+  await awaitLLMResponseDone(page, timeoutMs);
 
-  while (Date.now() < endTime) {
-    for (const pattern of patterns) {
-      try {
-        const element = page.locator("body").getByText(pattern);
-        if ((await element.count()) > 0) {
-          await expect(element.first()).toBeVisible({ timeout: 5000 });
-          return; // Found a match
-        }
-      } catch {
-        // Continue searching
+  // Then check for patterns immediately
+  for (const pattern of patterns) {
+    try {
+      const element = page.locator("body").getByText(pattern);
+      if ((await element.count()) > 0) {
+        await expect(element.first()).toBeVisible({ timeout: 5000 });
+        return;
       }
+    } catch {
+      // Continue to next pattern
     }
-
-    await page.waitForTimeout(2000); // Wait 2s before next check
   }
 
   throw new Error(
-    `None of the expected patterns matched within ${timeoutMs}ms: ${patterns
+    `None of the expected patterns matched after LLM response: ${patterns
       .map((p) => p.toString())
       .join(", ")}`
   );

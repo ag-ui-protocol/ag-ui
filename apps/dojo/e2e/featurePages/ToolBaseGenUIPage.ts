@@ -1,4 +1,6 @@
 import { Page, Locator, expect } from "@playwright/test";
+import { CopilotSelectors } from "../utils/copilot-selectors";
+import { sendChatMessage, awaitLLMResponseDone } from "../utils/copilot-actions";
 
 export class ToolBaseGenUIPage {
   readonly page: Page;
@@ -13,8 +15,8 @@ export class ToolBaseGenUIPage {
   constructor(page: Page) {
     this.page = page;
     this.haikuAgentIntro = page.getByText("I'm a haiku generator 👋. How can I help you?").first();
-    this.messageBox = page.getByPlaceholder("Type a message...").first();
-    this.sendButton = page.locator('button:has(svg.lucide-arrow-up)').first();
+    this.messageBox = CopilotSelectors.chatTextarea(page);
+    this.sendButton = CopilotSelectors.sendButton(page);
     this.haikuBlock = page.locator('[data-testid="haiku-card"]');
     this.applyButton = page.getByRole("button", { name: "Apply" });
     this.japaneseLines = page.locator('[data-testid="haiku-japanese-line"]');
@@ -22,34 +24,22 @@ export class ToolBaseGenUIPage {
   }
 
   async generateHaiku(message: string) {
-    // Wait for either sidebar or popup to be ready
-    await this.page.waitForTimeout(2000);
     await this.messageBox.waitFor({ state: "visible", timeout: 15000 });
-    await this.messageBox.click();
-    await this.messageBox.fill(message);
-    await this.page.waitForTimeout(1000);
-    try {
-      await this.sendButton.waitFor({ state: "visible", timeout: 5000 });
-      await this.sendButton.click();
-    } catch {
-      await this.messageBox.press("Enter");
-    }
-    await this.page.waitForTimeout(2000);
+    await sendChatMessage(this.page, message);
+    await awaitLLMResponseDone(this.page);
   }
 
   async checkGeneratedHaiku() {
-    await this.page.waitForTimeout(3000);
     const cards = this.page.locator('[data-testid="haiku-card"]');
-    await cards.last().waitFor({ state: "visible", timeout: 20000 });
+    await cards.last().waitFor({ state: "visible", timeout: 15000 });
     const mostRecentCard = cards.last();
     await mostRecentCard
       .locator('[data-testid="haiku-japanese-line"]')
       .first()
-      .waitFor({ state: "visible", timeout: 20000 });
+      .waitFor({ state: "visible", timeout: 15000 });
   }
 
   async extractChatHaikuContent(page: Page): Promise<string> {
-    await page.waitForTimeout(4000);
     const allHaikuCards = page.locator('[data-testid="haiku-card"]');
     await allHaikuCards.first().waitFor({ state: "visible", timeout: 15000 });
     const cardCount = await allHaikuCards.count();
@@ -89,7 +79,6 @@ export class ToolBaseGenUIPage {
   }
 
   async extractMainDisplayHaikuContent(page: Page): Promise<string> {
-    await page.waitForTimeout(2000);
     const carousel = page.locator('[data-testid="haiku-carousel"]');
     await carousel.waitFor({ state: "visible", timeout: 10000 });
 
@@ -168,7 +157,7 @@ export class ToolBaseGenUIPage {
     await expect
       .poll(
         async () => this.carouselIncludesHaiku(page, chatHaikuContent),
-        { timeout: 20000, intervals: [500, 1000, 2000] },
+        { timeout: 15000, intervals: [500, 1000, 2000] },
       )
       .toBe(true);
   }

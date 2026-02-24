@@ -1,4 +1,6 @@
 import { Page, Locator, expect } from "@playwright/test";
+import { CopilotSelectors } from "../utils/copilot-selectors";
+import { sendChatMessage } from "../utils/copilot-actions";
 
 export class AgenticChatPage {
   readonly page: Page;
@@ -12,28 +14,17 @@ export class AgenticChatPage {
 
   constructor(page: Page) {
     this.page = page;
-    this.openChatButton = page.getByRole("button", {
-      name: /chat/i,
-    });
+    this.openChatButton = CopilotSelectors.chatToggle(page);
     this.agentGreeting = page
       .getByText("Hi, I'm an agent. Want to chat?");
-    this.chatInput = page
-      .getByRole("textbox", { name: "Type a message..." })
-      .or(page.getByRole("textbox"))
-      .or(page.locator('input[type="text"]'))
-      .or(page.locator('textarea'));
-    this.sendButton = page
-      .locator('button:has(svg.lucide-arrow-up)')
-      .or(page.getByRole("button", { name: /send/i }))
-      .or(page.locator('button[type="submit"]'));
+    this.chatInput = CopilotSelectors.chatTextarea(page);
+    this.sendButton = CopilotSelectors.sendButton(page);
     this.chatBackground = page
       .locator('div[style*="background"]')
       .or(page.locator('.flex.justify-center.items-center.h-full.w-full'))
       .or(page.locator('body'));
-    this.agentMessage = page
-      .locator('.prose[data-message-id]');
-    this.userMessage = page
-      .locator('.items-end[data-message-id]');
+    this.agentMessage = CopilotSelectors.assistantMessages(page);
+    this.userMessage = CopilotSelectors.userMessages(page);
   }
 
   async openChat() {
@@ -45,21 +36,12 @@ export class AgenticChatPage {
   }
 
   async sendMessage(message: string) {
-    await this.chatInput.click();
-    await this.chatInput.fill(message);
-    try {
-      await this.sendButton.click();
-    } catch (error) {
-      await this.chatInput.press("Enter");
-    }
+    await sendChatMessage(this.page, message);
   }
 
   async getBackground(
     property: "backgroundColor" | "backgroundImage" = "backgroundColor"
   ): Promise<string> {
-    // Wait a bit for background to apply
-    await this.page.waitForTimeout(500);
-
     // Try multiple selectors for the background element
     const selectors = [
       'div[style*="background"]',
@@ -115,7 +97,7 @@ export class AgenticChatPage {
     const expectedTexts = Array.isArray(expectedText) ? expectedText : [expectedText];
     for (const expectedText1 of expectedTexts) {
       try {
-        const agentMessage = this.page.locator('.prose[data-message-id]', {
+        const agentMessage = CopilotSelectors.assistantMessages(this.page).filter({
           hasText: expectedText1
         });
         await expect(agentMessage.last()).toBeVisible({ timeout: 10000 });
@@ -130,7 +112,7 @@ export class AgenticChatPage {
   }
 
   async assertAgentReplyContains(expectedText: string) {
-    const agentMessage = this.page.locator('.prose[data-message-id]').last();
+    const agentMessage = CopilotSelectors.assistantMessages(this.page).last();
     await expect(agentMessage).toContainText(expectedText, { timeout: 10000 });
   }
 
@@ -146,9 +128,8 @@ export class AgenticChatPage {
 
     // Hover over the message to reveal the regenerate button
     await message.hover();
-    await this.page.waitForTimeout(500);
 
-    const regenerateButton = message.locator('button[aria-label="Regenerate response"]');
+    const regenerateButton = message.getByTestId("copilot-regenerate-button");
 
     try {
       await regenerateButton.click({ timeout: 3000 });
@@ -159,7 +140,7 @@ export class AgenticChatPage {
   }
 
   async assertWeatherResponseStructure() {
-    const agentMessage = this.page.locator('.prose[data-message-id]').last();
+    const agentMessage = CopilotSelectors.assistantMessages(this.page).last();
 
     // Check for main weather response structure
     await expect(agentMessage).toContainText(/weather.*islamabad/i, { timeout: 10000 });

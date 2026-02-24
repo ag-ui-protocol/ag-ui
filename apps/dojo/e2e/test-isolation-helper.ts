@@ -1,4 +1,5 @@
 import { test as base, Page } from "@playwright/test";
+import { awaitLLMResponseDone } from "./utils/copilot-actions";
 
 // Extend base test with isolation setup
 export const test = base.extend<{}, {}>({
@@ -7,9 +8,6 @@ export const test = base.extend<{}, {}>({
     await page.context().clearCookies();
     await page.context().clearPermissions();
 
-    // Add delay to ensure AI services are ready
-    await page.waitForTimeout(1000);
-
     await use(page);
 
     // After each test - cleanup
@@ -17,22 +15,12 @@ export const test = base.extend<{}, {}>({
   },
 });
 
-// Add AI-specific wait helpers for better reliability
-export async function waitForAIResponse(page: Page, timeout: number = 90000) {
-  // Wait for AI response indicators
-  await page.waitForFunction(
-    () => {
-      // Look for common AI loading indicators
-      const loadingIndicators = document.querySelectorAll(
-        '[data-testid*="loading"], .loading, .spinner'
-      );
-      return loadingIndicators.length === 0;
-    },
-    { timeout }
-  );
-
-  // Additional wait for content to stabilize
-  await page.waitForTimeout(2000);
+/**
+ * Wait for the AI response to finish (SSE stream complete).
+ * Delegates to awaitLLMResponseDone which uses the data-copilot-running attribute.
+ */
+export async function waitForAIResponse(page: Page, timeout: number = 15000) {
+  await awaitLLMResponseDone(page, timeout);
 }
 
 export async function retryOnAIFailure<T>(
