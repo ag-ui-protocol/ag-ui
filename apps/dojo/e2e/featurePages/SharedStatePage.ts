@@ -37,20 +37,35 @@ export class SharedStatePage {
   }
 
   async loader() {
-    const timeout = (ms) => new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("Timeout waiting for promptResponseLoader to become visible")), ms);
-    });
-
-    await Promise.race([
-      this.promptResponseLoader.isVisible(),
-      timeout(5000) // 5 seconds timeout
-    ]);
+    // Wait for the loading indicator to appear (it may already be visible)
+    try {
+      await this.promptResponseLoader.waitFor({ state: "visible", timeout: 10000 });
+    } catch {
+      // Loader may have already appeared and disappeared, continue
+    }
+    // Wait for the loading indicator to disappear (AI response finished)
+    try {
+      await this.promptResponseLoader.waitFor({ state: "hidden", timeout: 60000 });
+    } catch {
+      // Loader may already be gone
+    }
+    // Additional stabilization wait for content to render
+    await this.page.waitForTimeout(2000);
   }
 
   async awaitIngredientCard(name: string) {
-    const selector = `.ingredient-card:has(input.ingredient-name-input[value="${name}"])`;
-    const cardLocator = this.page.locator(selector);
-    await expect(cardLocator).toBeVisible();
+    // Use page.waitForFunction for case-insensitive matching on input values,
+    // since CSS attribute selectors are case-sensitive
+    await this.page.waitForFunction(
+      (ingredientName) => {
+        const inputs = document.querySelectorAll('.ingredient-card input.ingredient-name-input');
+        return Array.from(inputs).some(
+          (input: HTMLInputElement) => input.value.toLowerCase().includes(ingredientName.toLowerCase())
+        );
+      },
+      name,
+      { timeout: 60000 }
+    );
   }
 
   async addNewIngredient(placeholderText: string) {

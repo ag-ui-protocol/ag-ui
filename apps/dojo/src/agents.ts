@@ -26,6 +26,7 @@ import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
 import { LangGraphAgent as CpkLangGraphAgent } from "@copilotkit/runtime/langgraph";
+import { Ag2Agent } from "@ag-ui/ag2";
 import { LangroidHttpAgent } from "@ag-ui/langroid";
 
 const envVars = getEnvVars();
@@ -91,12 +92,14 @@ export const agentsIntegrations = {
 
     return MastraAgent.getRemoteAgents({
       mastraClient,
+      resourceId: "mastra-agent-remote"
     }) as Promise<Record<"agentic_chat" | "backend_tool_rendering" | "human_in_the_loop" | "tool_based_generative_ui", AbstractAgent>>;
   },
 
   "mastra-agent-local": async () => {
     return MastraAgent.getLocalAgents({
       mastra,
+      resourceId: "mastra-agent-local"
     }) as Record<"agentic_chat" | "backend_tool_rendering" | "human_in_the_loop" | "shared_state" | "tool_based_generative_ui", AbstractAgent>;
   },
 
@@ -344,6 +347,19 @@ export const agentsIntegrations = {
     ),
     human_in_the_loop: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/human-in-the-loop`, debug: true }),
   }),
+
+  "ag2": async () =>
+    mapAgents(
+      (path) => new Ag2Agent({ url: `${envVars.ag2Url}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        human_in_the_loop: "human_in_the_loop",
+        agentic_generative_ui: "agentic_generative_ui",
+        shared_state: "shared_state",
+        tool_based_generative_ui: "tool_based_generative_ui",
+      }
+    ),
 
   langroid: async () =>
     mapAgents(

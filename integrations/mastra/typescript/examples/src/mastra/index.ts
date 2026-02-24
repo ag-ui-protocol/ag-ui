@@ -19,6 +19,7 @@ export const mastra = new Mastra({
     human_in_the_loop: humanInTheLoopAgent,
   },
   storage: new LibSQLStore({
+    id: 'mastra-storage',
     // stores telemetry, evals, ... into memory storage, if it needs to persist, change to file:../mastra.db
     url: ":memory:",
   }),

@@ -1,4 +1,4 @@
-# AG-UI-4J Core
+# AG-UI Core
 
 ![Java](https://img.shields.io/badge/Java-17-orange?logo=openjdk&logoColor=white)
 ![Maven](https://img.shields.io/badge/Maven-0.0.1-C71A36?logo=apachemaven&logoColor=white)
@@ -11,8 +11,8 @@ This package contains the [Events](./src/main/java/com/agui/core/event), [Messag
 
 ```xml
 <dependency>
-    <groupId>com.ag-ui</groupId>
-    <artifactId>core</artifactId>
+    <groupId>com.ag-ui.community</groupId>
+    <artifactId>java-core</artifactId>
     <version>0.0.1</version>
 </dependency>
 ```

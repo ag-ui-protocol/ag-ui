@@ -31,6 +31,12 @@ from google.adk.agents import Agent
 from google.adk import tools as adk_tools
 import os
 
+# Compatibility shim for PreloadMemoryTool (renamed in newer ADK versions)
+try:
+    PreloadMemoryTool = adk_tools.preload_memory.PreloadMemoryTool
+except AttributeError:
+    PreloadMemoryTool = adk_tools.preload_memory_tool.PreloadMemoryTool
+
 # Ensure session_manager logger is set to DEBUG after import
 logging.getLogger('ag_ui_adk.session_manager').setLevel(logging.DEBUG)
 # Also explicitly set adk_agent logger to DEBUG
@@ -71,7 +77,7 @@ async def setup_and_run():
         - Admit when you don't know something
 
         Always be friendly and professional.""",
-        tools=[adk_tools.preload_memory_tool.PreloadMemoryTool()]
+        tools=[PreloadMemoryTool()]
     )
 
     # Try to import haiku generator agent

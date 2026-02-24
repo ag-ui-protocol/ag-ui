@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	coretypes "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -12,7 +13,7 @@ func TestMessageMarshalUnmarshal_Text(t *testing.T) {
 	msg := Message{
 		ID:      "msg-1",
 		Role:    "user",
-		Content: strPtr("hello"),
+		Content: "hello",
 	}
 
 	data, err := json.Marshal(msg)
@@ -22,19 +23,19 @@ func TestMessageMarshalUnmarshal_Text(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &decoded))
 
 	assert.Equal(t, "msg-1", decoded.ID)
-	assert.Equal(t, "user", decoded.Role)
-	require.NotNil(t, decoded.Content)
-	assert.Equal(t, "hello", *decoded.Content)
-	assert.Nil(t, decoded.ActivityContent)
+	assert.Equal(t, "user", string(decoded.Role))
+	content, ok := decoded.ContentString()
+	require.True(t, ok)
+	assert.Equal(t, "hello", content)
 	assert.Empty(t, decoded.ActivityType)
 }
 
 func TestMessageMarshalUnmarshal_Activity(t *testing.T) {
 	msg := Message{
-		ID:              "activity-1",
-		Role:            RoleActivity,
-		ActivityType:    "PLAN",
-		ActivityContent: map[string]any{"status": "working"},
+		ID:           "activity-1",
+		Role:         RoleActivity,
+		ActivityType: "PLAN",
+		Content:      map[string]any{"status": "working"},
 	}
 
 	data, err := json.Marshal(msg)
@@ -44,20 +45,22 @@ func TestMessageMarshalUnmarshal_Activity(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &decoded))
 
 	assert.Equal(t, "activity-1", decoded.ID)
-	assert.Equal(t, "activity", decoded.Role)
+	assert.Equal(t, "activity", string(decoded.Role))
 	assert.Equal(t, "PLAN", decoded.ActivityType)
-	require.Nil(t, decoded.Content)
-	require.NotNil(t, decoded.ActivityContent)
-	assert.Equal(t, "working", decoded.ActivityContent["status"])
+	_, ok := decoded.ContentString()
+	assert.False(t, ok)
+
+	content, ok := decoded.ContentActivity()
+	require.True(t, ok)
+	assert.Equal(t, "working", content["status"])
 }
 
 func TestValidateMessage_NonActivityRejectsActivityFields(t *testing.T) {
 	msg := Message{
-		ID:              "msg-1",
-		Role:            "user",
-		Content:         strPtr("hello"),
-		ActivityType:    "PLAN",
-		ActivityContent: map[string]any{"status": "draft"},
+		ID:           "msg-1",
+		Role:         "user",
+		Content:      "hello",
+		ActivityType: "PLAN",
 	}
 
 	err := validateMessage(msg)
@@ -77,29 +80,67 @@ func TestValidateMessage_ActivityRequiresFields(t *testing.T) {
 	err = validateMessage(msg)
 	assert.Error(t, err)
 
-	msg.ActivityContent = map[string]any{"status": "draft"}
+	msg.Content = map[string]any{"status": "draft"}
 	err = validateMessage(msg)
 	assert.NoError(t, err)
 
-	msg = Message{
-		ID:              "msg-1",
-		Role:            "user",
-		Content:         strPtr("hello"),
-		ActivityType:    "PLAN",
-		ActivityContent: map[string]any{"status": "oops"},
-	}
+	msg.Content = "not-an-object"
 	err = validateMessage(msg)
 	assert.Error(t, err)
 }
 
-func TestMessageMarshalJSON_IncludesOptionalFields(t *testing.T) {
-	name := "bob"
-	toolCallID := "tool-123"
+func TestValidateMessage_UserAllowsTextOrMultimodal(t *testing.T) {
+	msg := Message{
+		ID:      "msg-1",
+		Role:    "user",
+		Content: "hello",
+	}
+
+	assert.NoError(t, validateMessage(msg))
+
+	msg.Content = []coretypes.InputContent{
+		{Type: coretypes.InputContentTypeText, Text: "hi"},
+		{Type: coretypes.InputContentTypeBinary, MimeType: "image/png", URL: "https://example.com/test.png"},
+	}
+	assert.NoError(t, validateMessage(msg))
+
+	msg.Content = map[string]any{"unexpected": true}
+	assert.Error(t, validateMessage(msg))
+}
+
+func TestValidateMessage_AssistantContentMustBeStringWhenPresent(t *testing.T) {
 	msg := Message{
 		ID:      "msg-1",
 		Role:    "assistant",
-		Content: strPtr("hello"),
-		Name:    &name,
+		Content: map[string]any{"unexpected": true},
+	}
+	assert.Error(t, validateMessage(msg))
+
+	msg.Content = "ok"
+	assert.NoError(t, validateMessage(msg))
+}
+
+func TestValidateMessage_ToolRequiresToolCallIDAndStringContent(t *testing.T) {
+	msg := Message{
+		ID:      "msg-1",
+		Role:    "tool",
+		Content: "ok",
+	}
+	assert.Error(t, validateMessage(msg))
+
+	msg.ToolCallID = "tool-1"
+	assert.NoError(t, validateMessage(msg))
+
+	msg.Content = map[string]any{"unexpected": true}
+	assert.Error(t, validateMessage(msg))
+}
+
+func TestMessageMarshalJSON_IncludesOptionalFields_Assistant(t *testing.T) {
+	msg := Message{
+		ID:      "msg-1",
+		Role:    "assistant",
+		Content: "hello",
+		Name:    "bob",
 		ToolCalls: []ToolCall{
 			{
 				ID:   "tool-1",
@@ -110,7 +151,6 @@ func TestMessageMarshalJSON_IncludesOptionalFields(t *testing.T) {
 				},
 			},
 		},
-		ToolCallID: &toolCallID,
 	}
 
 	data, err := json.Marshal(msg)
@@ -123,19 +163,18 @@ func TestMessageMarshalJSON_IncludesOptionalFields(t *testing.T) {
 	assert.Equal(t, "assistant", decoded["role"])
 	assert.Equal(t, "hello", decoded["content"])
 	assert.Equal(t, "bob", decoded["name"])
-	assert.Equal(t, "tool-123", decoded["toolCallId"])
 	toolCalls, ok := decoded["toolCalls"].([]any)
 	require.True(t, ok)
 	assert.Len(t, toolCalls, 1)
 }
 
-func TestMessageMarshalJSON_ActivityPrefersActivityContent(t *testing.T) {
+func TestMessageMarshalJSON_IncludesOptionalFields_Tool(t *testing.T) {
 	msg := Message{
-		ID:              "activity-1",
-		Role:            "activity",
-		Content:         strPtr("should-be-ignored"),
-		ActivityType:    "PLAN",
-		ActivityContent: map[string]any{"status": "draft"},
+		ID:         "msg-1",
+		Role:       "tool",
+		Content:    "ok",
+		ToolCallID: "tool-123",
+		Error:      "boom",
 	}
 
 	data, err := json.Marshal(msg)
@@ -144,64 +183,9 @@ func TestMessageMarshalJSON_ActivityPrefersActivityContent(t *testing.T) {
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(data, &decoded))
 
-	assert.Equal(t, "activity-1", decoded["id"])
-	assert.Equal(t, "activity", decoded["role"])
-	assert.Equal(t, "PLAN", decoded["activityType"])
-	content, ok := decoded["content"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "draft", content["status"])
-}
-
-func TestMessageUnmarshalJSON_InvalidTextContent(t *testing.T) {
-	payload := []byte(`{"id":"msg-1","role":"user","content":123}`)
-	var msg Message
-	err := json.Unmarshal(payload, &msg)
-	assert.Error(t, err)
-}
-
-func TestMessageUnmarshalJSON_InvalidActivityContent(t *testing.T) {
-	payload := []byte(`{"id":"activity-1","role":"activity","activityType":"PLAN","content":"not-an-object"}`)
-	var msg Message
-	err := json.Unmarshal(payload, &msg)
-	assert.Error(t, err)
-}
-
-func TestMessageUnmarshalJSON_ResetsActivityFieldsForText(t *testing.T) {
-	payload := []byte(`{"id":"msg-1","role":"user","activityType":"PLAN","content":"hello"}`)
-	var msg Message
-	err := json.Unmarshal(payload, &msg)
-	require.NoError(t, err)
-
-	assert.Equal(t, "msg-1", msg.ID)
-	assert.Equal(t, "user", msg.Role)
-	require.NotNil(t, msg.Content)
-	assert.Equal(t, "hello", *msg.Content)
-	assert.Empty(t, msg.ActivityType)
-	assert.Nil(t, msg.ActivityContent)
-}
-
-func TestMessageUnmarshalJSON_TextWithNoContent(t *testing.T) {
-	payload := []byte(`{"id":"msg-1","role":"user"}`)
-	var msg Message
-	err := json.Unmarshal(payload, &msg)
-	require.NoError(t, err)
-
-	assert.Equal(t, "msg-1", msg.ID)
-	assert.Equal(t, "user", msg.Role)
-	assert.Nil(t, msg.Content)
-	assert.Nil(t, msg.ActivityContent)
-	assert.Empty(t, msg.ActivityType)
-}
-
-func TestMessageUnmarshalJSON_ActivityWithNoContent(t *testing.T) {
-	payload := []byte(`{"id":"activity-1","role":"activity","activityType":"PLAN"}`)
-	var msg Message
-	err := json.Unmarshal(payload, &msg)
-	require.NoError(t, err)
-
-	assert.Equal(t, "activity-1", msg.ID)
-	assert.Equal(t, "activity", msg.Role)
-	assert.Equal(t, "PLAN", msg.ActivityType)
-	assert.Nil(t, msg.Content)
-	assert.Nil(t, msg.ActivityContent)
+	assert.Equal(t, "msg-1", decoded["id"])
+	assert.Equal(t, "tool", decoded["role"])
+	assert.Equal(t, "ok", decoded["content"])
+	assert.Equal(t, "tool-123", decoded["toolCallId"])
+	assert.Equal(t, "boom", decoded["error"])
 }

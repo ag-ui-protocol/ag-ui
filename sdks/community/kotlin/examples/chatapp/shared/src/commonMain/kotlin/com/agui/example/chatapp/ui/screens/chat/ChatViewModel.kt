@@ -32,6 +32,13 @@ class ChatViewModel(
 
     fun clearError() = controller.clearError()
 
+    // clawg-ui pairing methods
+    fun completePairing() = controller.completePairing()
+
+    fun retryAfterApproval() = controller.retryAfterApproval()
+
+    fun dismissPairing() = controller.dismissPairing()
+
     fun dispose() {
         controller.close()
         scope.cancel()

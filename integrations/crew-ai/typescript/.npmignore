@@ -1,4 +1,4 @@
-.turbo
+.nx
 .DS_Store
 .git
 .gitignore
@@ -7,8 +7,8 @@
 .env
 __tests__
 src
-tsup.config.ts
+tsdown.config.ts
 tsconfig.json
-jest.config.js
+vitest.config.ts
 server
 python

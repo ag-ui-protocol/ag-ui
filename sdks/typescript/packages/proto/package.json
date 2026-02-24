@@ -1,7 +1,7 @@
 {
   "name": "@ag-ui/proto",
   "author": "Markus Ecker <markus.ecker@gmail.com>",
-  "version": "0.0.43",
+  "version": "0.0.45",
   "private": false,
   "publishConfig": {
     "access": "public"
@@ -10,12 +10,15 @@
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "lint": "eslint \"src/**/*.ts*\"",
-    "clean": "rm -rf dist .turbo node_modules",
-    "test": "jest",
-    "generate": "mkdir -p ./src/generated && npx protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=./src/generated --ts_proto_opt=esModuleInterop=true,outputJsonMethods=false,outputClientImpl=false -I ./src/proto ./src/proto/*.proto",
+    "clean": "git clean -fdX --exclude=\"!.env\"",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "test:exports": "publint --strict && attw --pack",
+    "generate": "mkdir -p ./src/generated && npx protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto.CMD --ts_proto_out=./src/generated --ts_proto_opt=esModuleInterop=true,outputJsonMethods=false,outputClientImpl=false -I ./src/proto ./src/proto/*.proto",
     "link:global": "pnpm link --global",
     "unlink:global": "pnpm unlink --global"
   },
@@ -25,12 +28,19 @@
     "@protobuf-ts/protoc": "^2.11.1"
   },
   "devDependencies": {
-    "@jest/globals": "^29.7.0",
-    "@types/jest": "^29.5.14",
-    "jest": "^29.7.0",
-    "ts-jest": "^29.1.2",
+    "@vitest/coverage-istanbul": "^4.0.18",
+    "publint": "^0.3.12",
+    "@arethetypeswrong/cli": "^0.17.4",
+    "vitest": "^4.0.18",
     "ts-proto": "^2.7.0",
-    "tsup": "^8.0.2",
+    "tsdown": "^0.20.1",
     "typescript": "^5.8.2"
+  },
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
   }
 }

@@ -22,15 +22,21 @@ The basic message structure includes:
 ```typescript
 interface BaseMessage {
   id: string // Unique identifier for the message
-  role: string // The role of the sender (user, assistant, system, tool)
+  role: string // The role of the sender (user, assistant, system, tool, reasoning)
   content?: string // Optional text content of the message
   name?: string // Optional name of the sender
+  encryptedContent?: string // Optional encrypted content for privacy-preserving state continuity
 }
 ```
 
-The `role` discriminator can be `"user"`, `"assistant"`, `"system"`,
-`"tool"`, `"developer"`, or `"activity"`. Concrete message types extend this
-shape with the fields they need.
+The `role` discriminator can be `"user"`, `"assistant"`, `"system"`, `"tool"`,
+`"developer"`, `"activity"`, or `"reasoning"`. Concrete message types extend
+this shape with the fields they need.
+
+> The `encryptedContent` field enables privacy-preserving workflows where
+> sensitive content (such as reasoning chains) can be passed across turns
+> without exposing the raw content. This is particularly useful for zero data
+> retention (ZDR) compliance and `store:false` scenarios.
 
 ## Message Types
 
@@ -66,9 +72,11 @@ interface BinaryInputContent {
 }
 ```
 
-> For `BinaryInputContent`, provide at least one of `id`, `url`, or `data` to reference the payload.
+> For `BinaryInputContent`, provide at least one of `id`, `url`, or `data` to
+> reference the payload.
 
-This structure keeps traditional plain-text inputs working while enabling richer payloads such as images, audio clips, or uploaded files in the same message.
+This structure keeps traditional plain-text inputs working while enabling richer
+payloads such as images, audio clips, or uploaded files in the same message.
 
 ### Assistant Messages
 
@@ -81,6 +89,7 @@ interface AssistantMessage {
   content?: string // Text response from the assistant (optional if using tool calls)
   name?: string // Optional assistant identifier
   toolCalls?: ToolCall[] // Optional tool calls made by the assistant
+  encryptedContent?: string // Optional encrypted content for state continuity
 }
 ```
 
@@ -107,13 +116,22 @@ interface ToolMessage {
   role: "tool"
   content: string // Result from the tool execution
   toolCallId: string // ID of the tool call this message responds to
+  error?: string // Optional error message if the tool execution failed
+  encryptedValue?: string // Optional encrypted reasoning for state continuity
 }
 ```
 
+Key points:
+
+- The `toolCallId` links the result back to the original tool call
+- Use `error` to indicate tool execution failures
+- Use `encryptedValue` to attach encrypted chain-of-thought related to how the
+  agent interpreted or processed the tool result
+
 ### Activity Messages
 
-Structured UI messages that exist only on the frontend.
- Used for progress, status, or any custom visual element that shouldn’t be sent to the model: 
+Structured UI messages that exist only on the frontend.  Used for progress,
+status, or any custom visual element that shouldn’t be sent to the model:
 
 ```typescript
 interface ActivityMessage {
@@ -123,13 +141,18 @@ interface ActivityMessage {
   content: Record<string, any> // Structured payload rendered by the frontend
 }
 ```
-Key points
-- Emitted via `ACTIVITY_SNAPSHOT` and `ACTIVITY_DELTA` to support live, updateable UI (checklists, steps, search-in-progress, etc.).
-- **Frontend-only:** never forwarded to the agent, so no filtering and no LLM confusion.
-- **Customizable:** define your own `activityType` and `content` and render a matching UI component.
-- **Streamable:** can be updated over time for long-running operations.
-- Helps persist/restore custom events by turning them into durable message objects.
 
+Key points
+
+- Emitted via `ACTIVITY_SNAPSHOT` and `ACTIVITY_DELTA` to support live,
+  updateable UI (checklists, steps, search-in-progress, etc.).
+- **Frontend-only:** never forwarded to the agent, so no filtering and no LLM
+  confusion.
+- **Customizable:** define your own `activityType` and `content` and render a
+  matching UI component.
+- **Streamable:** can be updated over time for long-running operations.
+- Helps persist/restore custom events by turning them into durable message
+  objects.
 
 ### Developer Messages
 
@@ -143,6 +166,44 @@ interface DeveloperMessage {
   name?: string
 }
 ```
+
+### Reasoning Messages
+
+Messages representing the agent's internal reasoning or chain-of-thought
+process:
+
+```typescript
+interface ReasoningMessage {
+  id: string
+  role: "reasoning"
+  content: string // Reasoning content (visible to client)
+  encryptedValue?: string // Optional encrypted reasoning for state continuity
+}
+```
+
+<Tip>
+  Unlike Activity messages, Reasoning messages are intended to represent the
+  agent's internal thought process and may be encrypted for privacy and are
+  meant to be sent back to the agent for further processing on subsequent turns.
+</Tip>
+
+Key points:
+
+- Emitted via `REASONING_MESSAGE_START`, `REASONING_MESSAGE_CONTENT`, and
+  `REASONING_MESSAGE_END` events.
+- **Visibility control:** Content may be visible to users (as a summary) or
+  fully encrypted.
+- **Encrypted values:** Use `REASONING_ENCRYPTED_VALUE` events to attach
+  encrypted chain-of-thought to messages or tool calls without exposing content.
+- **State continuity:** Encrypted reasoning items can be passed across
+  conversation turns without exposing raw chain-of-thought.
+- **Privacy-first:** Supports `store:false` and zero data retention (ZDR)
+  policies while preserving reasoning capabilities.
+- **Separate from assistant messages:** Reasoning is kept distinct from final
+  responses to avoid polluting the conversation history.
+
+See [Reasoning Events](/concepts/events#reasoning-events) for the streaming
+event lifecycle.
 
 ## Vendor Neutrality
 

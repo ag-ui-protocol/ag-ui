@@ -20,6 +20,7 @@ import httpx
 
 from ag_ui.core import (
     RunAgentInput, UserMessage, AssistantMessage, ToolMessage,
+    ReasoningMessage,
     EventType, MessagesSnapshotEvent, ToolCall, FunctionCall
 )
 
@@ -60,6 +61,43 @@ def create_mock_adk_event(
         event.content = None
 
     # Mock function call methods
+    event.get_function_calls = MagicMock(return_value=function_calls or [])
+    event.get_function_responses = MagicMock(return_value=function_responses or [])
+
+    return event
+
+
+def create_mock_adk_event_with_parts(
+    event_id: str = None,
+    author: str = "test_agent",
+    parts: List[dict] = None,
+    partial: bool = False,
+    function_calls: List[Any] = None,
+    function_responses: List[Any] = None,
+):
+    """Create a mock ADK event with explicit parts control.
+
+    Each item in parts should be a dict with keys:
+        text: str - the text content
+        thought: bool - whether this is a thought part (default False)
+    """
+    event = MagicMock()
+    event.id = event_id or str(uuid.uuid4())
+    event.author = author
+    event.partial = partial
+
+    event.content = MagicMock()
+    if parts:
+        mock_parts = []
+        for p in parts:
+            part = MagicMock()
+            part.text = p.get("text")
+            part.thought = p.get("thought", False)
+            mock_parts.append(part)
+        event.content.parts = mock_parts
+    else:
+        event.content = None
+
     event.get_function_calls = MagicMock(return_value=function_calls or [])
     event.get_function_responses = MagicMock(return_value=function_responses or [])
 
@@ -292,6 +330,234 @@ class TestAdkEventsToMessages:
         assert len(messages[0].tool_calls) == 1
 
 
+class TestThoughtPartSeparation:
+    """Tests for separating thought parts from regular text in adk_events_to_messages.
+
+    When extended thinking is enabled, ADK events contain Part objects with
+    thought=True alongside regular text parts. These must be separated so that
+    internal model reasoning is not shown as chat content to the user.
+    """
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_thought_parts_emitted_as_reasoning_message(self, mock_thought):
+        """Thought parts should become ReasoningMessage, not part of AssistantMessage.content."""
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-1",
+            author="model",
+            parts=[
+                {"text": "Let me think about this carefully.", "thought": True},
+                {"text": "Here is my answer."},
+            ],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 2
+        assert isinstance(messages[0], ReasoningMessage)
+        assert messages[0].role == "reasoning"
+        assert messages[0].content == "Let me think about this carefully."
+        assert messages[0].id == "evt-1-reasoning"
+
+        assert isinstance(messages[1], AssistantMessage)
+        assert messages[1].role == "assistant"
+        assert messages[1].content == "Here is my answer."
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_multiple_thought_parts_concatenated(self, mock_thought):
+        """Multiple thought parts in one event should be concatenated into one ReasoningMessage."""
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-2",
+            author="model",
+            parts=[
+                {"text": "First I need to check ", "thought": True},
+                {"text": "the user's request.", "thought": True},
+                {"text": "Done!"},
+            ],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 2
+        assert isinstance(messages[0], ReasoningMessage)
+        assert messages[0].content == "First I need to check the user's request."
+        assert isinstance(messages[1], AssistantMessage)
+        assert messages[1].content == "Done!"
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_thought_only_event_emits_reasoning_only(self, mock_thought):
+        """An event with only thought parts should emit only a ReasoningMessage."""
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-3",
+            author="model",
+            parts=[
+                {"text": "Internal reasoning only.", "thought": True},
+            ],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        assert isinstance(messages[0], ReasoningMessage)
+        assert messages[0].content == "Internal reasoning only."
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_user_message_thought_parts_excluded(self, mock_thought):
+        """Thought parts in user events should be excluded entirely."""
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-4",
+            author="user",
+            parts=[
+                {"text": "Some injected thought.", "thought": True},
+                {"text": "Hello there!"},
+            ],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        assert isinstance(messages[0], UserMessage)
+        assert messages[0].content == "Hello there!"
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_user_message_with_only_thought_parts_skipped(self, mock_thought):
+        """User events containing only thought parts should be skipped."""
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-5",
+            author="user",
+            parts=[
+                {"text": "Only thought content.", "thought": True},
+            ],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 0
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_thought_parts_with_tool_calls(self, mock_thought):
+        """Thought parts and tool calls should both be preserved correctly."""
+        fc = create_mock_function_call(name="search", args={"q": "test"}, fc_id="fc-1")
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-6",
+            author="model",
+            parts=[
+                {"text": "I should search for this.", "thought": True},
+                {"text": "Let me search."},
+            ],
+            function_calls=[fc],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 2
+        assert isinstance(messages[0], ReasoningMessage)
+        assert messages[0].content == "I should search for this."
+        assert isinstance(messages[1], AssistantMessage)
+        assert messages[1].content == "Let me search."
+        assert messages[1].tool_calls is not None
+        assert len(messages[1].tool_calls) == 1
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_thought_only_with_tool_calls(self, mock_thought):
+        """Event with only thought parts + tool calls should emit both messages."""
+        fc = create_mock_function_call(name="do_it", args={}, fc_id="fc-2")
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-7",
+            author="model",
+            parts=[
+                {"text": "Internal reasoning before tool call.", "thought": True},
+            ],
+            function_calls=[fc],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 2
+        assert isinstance(messages[0], ReasoningMessage)
+        assert isinstance(messages[1], AssistantMessage)
+        assert messages[1].content is None
+        assert len(messages[1].tool_calls) == 1
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=False)
+    def test_no_thought_support_treats_all_as_text(self, mock_thought):
+        """When SDK lacks thought support, all parts are treated as regular text."""
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-8",
+            author="model",
+            parts=[
+                {"text": "Would be thought.", "thought": True},
+                {"text": " Regular text."},
+            ],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        # Without thought support, everything is concatenated as before
+        assert len(messages) == 1
+        assert isinstance(messages[0], AssistantMessage)
+        assert messages[0].content == "Would be thought. Regular text."
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_conversation_with_reasoning_preserves_order(self, mock_thought):
+        """Full conversation with reasoning should preserve correct message order."""
+        events = [
+            create_mock_adk_event(event_id="1", author="user", text="Hi"),
+            create_mock_adk_event_with_parts(
+                event_id="2",
+                author="model",
+                parts=[
+                    {"text": "The user said hi.", "thought": True},
+                    {"text": "Hello!"},
+                ],
+            ),
+            create_mock_adk_event(event_id="3", author="user", text="What is 2+2?"),
+            create_mock_adk_event_with_parts(
+                event_id="4",
+                author="model",
+                parts=[
+                    {"text": "Simple arithmetic.", "thought": True},
+                    {"text": "4"},
+                ],
+            ),
+        ]
+
+        messages = adk_events_to_messages(events)
+
+        assert len(messages) == 6
+        assert isinstance(messages[0], UserMessage)
+        assert messages[0].content == "Hi"
+        assert isinstance(messages[1], ReasoningMessage)
+        assert messages[1].content == "The user said hi."
+        assert isinstance(messages[2], AssistantMessage)
+        assert messages[2].content == "Hello!"
+        assert isinstance(messages[3], UserMessage)
+        assert messages[3].content == "What is 2+2?"
+        assert isinstance(messages[4], ReasoningMessage)
+        assert messages[4].content == "Simple arithmetic."
+        assert isinstance(messages[5], AssistantMessage)
+        assert messages[5].content == "4"
+
+    @patch('ag_ui_adk.event_translator._check_thought_support', return_value=True)
+    def test_reasoning_message_serializes_correctly(self, mock_thought):
+        """ReasoningMessage should serialize with role='reasoning' for JSON responses."""
+        event = create_mock_adk_event_with_parts(
+            event_id="evt-ser",
+            author="model",
+            parts=[
+                {"text": "Thinking...", "thought": True},
+                {"text": "Answer."},
+            ],
+        )
+
+        messages = adk_events_to_messages([event])
+        serialized = [msg.model_dump(by_alias=True) for msg in messages]
+
+        assert serialized[0]["role"] == "reasoning"
+        assert serialized[0]["content"] == "Thinking..."
+        assert serialized[1]["role"] == "assistant"
+        assert serialized[1]["content"] == "Answer."
+
+
 class TestTranslateFunctionCallsToToolCalls:
     """Unit tests for _translate_function_calls_to_tool_calls helper."""
 
@@ -428,8 +694,20 @@ class TestAgentsStateEndpoint:
         params=[FastAPI, APIRouter]
     )
     def app(self, request):
-        """Create a FastAPI app."""
+        """Create a FastAPI app or APIRouter."""
         return request.param()
+
+    def get_test_app(self, app):
+        """Return app suitable for TestClient (wrap APIRouter in FastAPI if needed).
+
+        Note: This must be called AFTER routes are added to the router,
+        since include_router copies routes at the time of inclusion.
+        """
+        if isinstance(app, APIRouter):
+            fastapi_app = FastAPI()
+            fastapi_app.include_router(app)
+            return fastapi_app
+        return app
 
     def test_agents_state_endpoint_exists(self, app, mock_agent):
         """The /agents/state endpoint should be registered."""
@@ -462,7 +740,7 @@ class TestAgentsStateEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
 
-        with TestClient(app) as client:
+        with TestClient(self.get_test_app(app)) as client:
             response = client.post(
                 "/agents/state",
                 json={"threadId": "test-thread-123"}
@@ -489,7 +767,7 @@ class TestAgentsStateEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
 
-        with TestClient(app) as client:
+        with TestClient(self.get_test_app(app)) as client:
             response = client.post(
                 "/agents/state",
                 json={"threadId": "nonexistent-thread"}
@@ -499,6 +777,69 @@ class TestAgentsStateEndpoint:
             data = response.json()
             assert data["threadExists"] is False
             assert data["threadId"] == "nonexistent-thread"
+
+    def test_agents_state_cache_miss_loads_events(self, app, mock_agent):
+        """Should load events via get_session() on cache miss.
+
+        This tests the fix for the bug where _find_session_by_thread_id()
+        uses list_sessions() which returns session metadata only, not events.
+        The endpoint must call get_session() after cache miss to populate events.
+        """
+        # Create a session with events that will be returned by get_session
+        mock_session_with_events = MagicMock()
+        mock_session_with_events.id = "backend-session-id"
+        mock_session_with_events.events = [
+            create_mock_adk_event(author="user", text="Hello from cache miss"),
+            create_mock_adk_event(author="model", text="Response after reload"),
+        ]
+
+        # Create a session without events (as returned by list_sessions)
+        mock_session_metadata_only = MagicMock()
+        mock_session_metadata_only.id = "backend-session-id"
+        mock_session_metadata_only.events = None  # list_sessions doesn't populate events
+
+        # Mock cache miss: _get_session_metadata returns None
+        mock_agent._get_session_metadata = MagicMock(return_value=None)
+
+        # Mock _find_session_by_thread_id returning session metadata (no events)
+        mock_agent._session_manager._find_session_by_thread_id = AsyncMock(
+            return_value=mock_session_metadata_only
+        )
+
+        # Initialize empty cache to simulate cache miss path
+        mock_agent._session_lookup_cache = {}
+
+        # Mock get_session to return the full session WITH events
+        mock_session_service = MagicMock()
+        mock_session_service.get_session = AsyncMock(return_value=mock_session_with_events)
+        mock_agent._session_manager._session_service = mock_session_service
+        mock_agent._session_manager.get_session_state = AsyncMock(return_value={"key": "value"})
+
+        add_adk_fastapi_endpoint(app, mock_agent, path="/")
+
+        with TestClient(self.get_test_app(app)) as client:
+            response = client.post(
+                "/agents/state",
+                json={"threadId": "cache-miss-thread"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["threadId"] == "cache-miss-thread"
+            assert data["threadExists"] is True
+
+            # Verify messages are populated from the reloaded session
+            messages = json.loads(data["messages"])
+            assert len(messages) == 2
+            assert messages[0]["content"] == "Hello from cache miss"
+            assert messages[1]["content"] == "Response after reload"
+
+            # Verify get_session was called to reload the session with events
+            mock_session_service.get_session.assert_called_once_with(
+                session_id="backend-session-id",
+                app_name="test_app",
+                user_id="test_user"
+            )
 
     def test_agents_state_handles_empty_events(self, app, mock_agent):
         """Should return empty messages list for session with no events."""
@@ -521,7 +862,7 @@ class TestAgentsStateEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
 
-        with TestClient(app) as client:
+        with TestClient(self.get_test_app(app)) as client:
             response = client.post(
                 "/agents/state",
                 json={"threadId": "empty-thread"}
@@ -540,7 +881,7 @@ class TestAgentsStateEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
 
-        with TestClient(app) as client:
+        with TestClient(self.get_test_app(app)) as client:
             response = client.post(
                 "/agents/state",
                 json={"threadId": "error-thread"}
@@ -572,7 +913,7 @@ class TestAgentsStateEndpoint:
 
         add_adk_fastapi_endpoint(app, mock_agent, path="/")
 
-        with TestClient(app) as client:
+        with TestClient(self.get_test_app(app)) as client:
             response = client.post(
                 "/agents/state",
                 json={
@@ -609,8 +950,20 @@ class TestMessageHistoryIntegration:
         params=[FastAPI, APIRouter]
     )
     def app(self, request):
-        """Create a FastAPI app."""
+        """Create a FastAPI app or APIRouter."""
         return request.param()
+
+    def get_test_app(self, app):
+        """Return app suitable for TestClient (wrap APIRouter in FastAPI if needed).
+
+        Note: This must be called AFTER routes are added to the router,
+        since include_router copies routes at the time of inclusion.
+        """
+        if isinstance(app, APIRouter):
+            fastapi_app = FastAPI()
+            fastapi_app.include_router(app)
+            return fastapi_app
+        return app
 
     @pytest.mark.asyncio
     async def test_agents_state_with_real_session_manager(self, app, real_agent):
@@ -625,7 +978,7 @@ class TestMessageHistoryIntegration:
         )
 
         async with AsyncClient(
-            transport=ASGITransport(app=app),
+            transport=ASGITransport(app=self.get_test_app(app)),
             base_url="http://test"
         ) as client:
             # Now /agents/state should find the existing session
@@ -645,7 +998,7 @@ class TestMessageHistoryIntegration:
         add_adk_fastapi_endpoint(app, real_agent, path="/")
 
         async with AsyncClient(
-            transport=ASGITransport(app=app),
+            transport=ASGITransport(app=self.get_test_app(app)),
             base_url="http://test"
         ) as client:
             response = await client.post(
@@ -767,7 +1120,7 @@ class TestLiveServerIntegration:
         else:
             raise ValueError("app fixture must be FastAPI or APIRouter")
 
-        with UvicornServer(app) as server:
+        with UvicornServer(main_app) as server:
             yield server
 
     def test_live_server_agents_state_endpoint(self, live_server, live_agent):
@@ -781,7 +1134,7 @@ class TestLiveServerIntegration:
                 app_name="live_test_app",
                 user_id="live_test_user"
             )
-        asyncio.get_event_loop().run_until_complete(create_session())
+        asyncio.run(create_session())
 
         response = httpx.post(
             f"{live_server.base_url}/agents/state",
@@ -846,7 +1199,7 @@ class TestLiveServerIntegration:
                 app_name="live_test_app",
                 user_id="live_test_user"
             )
-        asyncio.get_event_loop().run_until_complete(create_session())
+        asyncio.run(create_session())
 
         # First request - session should exist
         response1 = httpx.post(
@@ -882,7 +1235,7 @@ class TestLiveServerIntegration:
                     app_name="live_test_app",
                     user_id="live_test_user"
                 )
-        asyncio.get_event_loop().run_until_complete(create_sessions())
+        asyncio.run(create_sessions())
 
         responses = []
         for thread_id in threads:

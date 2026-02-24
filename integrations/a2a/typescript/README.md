@@ -11,7 +11,7 @@ A TypeScript integration that connects AG-UI agents with remote services that ex
 - Optional fallback from streaming to blocking requests when an agent does not support SSE.
 - Event conversion utilities that surface A2A messages, task status updates, and artifact chunks as AG-UI events.
 - Helper tool schema (`send_message_to_a2a_agent`) for orchestration scenarios.
-- Example client and Jest tests to validate conversions and streaming flows.
+- Example client and Vitest tests to validate conversions and streaming flows.
 
 ## Installation
 
@@ -33,9 +33,7 @@ const client = new A2AClient("https://my-a2a-agent");
 
 const agent = new A2AAgent({
   a2aClient: client,
-  initialMessages: [
-    { id: "user-1", role: "user", content: "Plan a team offsite" } as any,
-  ],
+  initialMessages: [{ id: "user-1", role: "user", content: "Plan a team offsite" } as any],
 });
 
 const { result, newMessages } = await agent.runAgent();
@@ -47,8 +45,8 @@ You can inject your own `A2AClient` instance via the `client` option, override d
 
 ## Configuration reference
 
-| Option | Description |
-| ------ | ----------- |
+| Option      | Description                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------- |
 | `a2aClient` | Required. Provide an `A2AClient` instance (with any auth headers or custom fetch logic you need). |
 
 ## Environment variables & authentication
