@@ -6,7 +6,6 @@ import os
 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
-
 from copilotkit import CopilotKitMiddleware, CopilotKitState
 
 # Conditionally use a checkpointer based on the environment

@@ -19,12 +19,14 @@ dependencies = [
     "langchain-openai>=1.0.1",
     "langgraph>=1.0.0",
     "ag-ui-langgraph",
+    "ag-ui-protocol",
     "python-dotenv>=1.0.0",
     "fastapi>=0.115.12",
 ]
 
 [tool.uv.sources]
 ag-ui-langgraph = { path = "../" }
+ag-ui-protocol = { path = "../../../../sdks/python" }
 
 [project.scripts]
 dev = "agents.dojo:main"

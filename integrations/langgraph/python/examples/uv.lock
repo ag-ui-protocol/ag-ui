@@ -39,15 +39,14 @@ dev = [{ name = "fastapi", specifier = ">=0.115.12" }]
 
 [[package]]
 name = "ag-ui-protocol"
-version = "0.1.10"
-source = { registry = "https://pypi.org/simple" }
+version = "0.1.11"
+source = { directory = "../../../../sdks/python" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/67/bb/5a5ec893eea5805fb9a3db76a9888c3429710dfb6f24bbb37568f2cf7320/ag_ui_protocol-0.1.10.tar.gz", hash = "sha256:3213991c6b2eb24bb1a8c362ee270c16705a07a4c5962267a083d0959ed894f4", size = 6945, upload-time = "2025-11-06T15:17:17.068Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8f/78/eb55fabaab41abc53f52c0918a9a8c0f747807e5306273f51120fd695957/ag_ui_protocol-0.1.10-py3-none-any.whl", hash = "sha256:c81e6981f30aabdf97a7ee312bfd4df0cd38e718d9fc10019c7d438128b93ab5", size = 7889, upload-time = "2025-11-06T15:17:15.325Z" },
-]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.11.2" }]
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -891,6 +890,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "ag-ui-langgraph" },
+    { name = "ag-ui-protocol" },
     { name = "copilotkit" },
     { name = "dotenv" },
     { name = "fastapi" },
@@ -908,6 +908,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "ag-ui-langgraph", directory = "../" },
+    { name = "ag-ui-protocol", directory = "../../../../sdks/python" },
     { name = "copilotkit", specifier = "==0.1.76" },
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "fastapi", specifier = ">=0.115.12" },
