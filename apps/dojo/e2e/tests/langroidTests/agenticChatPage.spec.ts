@@ -11,11 +11,8 @@ test("[Langroid] Agentic Chat sends and receives a message", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "/langroid/feature/agentic_chat",
-      { waitUntil: "domcontentloaded", timeout: 120000 }
+      "/langroid/feature/agentic_chat"
     );
-    // Wait for page to be ready - allow networkidle to fail gracefully
-    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
 
     const chat = new AgenticChatPage(page);
 
@@ -34,11 +31,8 @@ test("[Langroid] Agentic Chat changes background on message and reset", async ({
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "/langroid/feature/agentic_chat",
-      { waitUntil: "domcontentloaded", timeout: 120000 }
+      "/langroid/feature/agentic_chat"
     );
-    // Wait for page to be ready - allow networkidle to fail gracefully
-    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
 
     const chat = new AgenticChatPage(page);
 
@@ -81,11 +75,8 @@ test("[Langroid] Agentic Chat retains memory of user messages during a conversat
 }) => {
   await retryOnAIFailure(async () => {
     await page.goto(
-      "/langroid/feature/agentic_chat",
-      { waitUntil: "domcontentloaded", timeout: 120000 }
+      "/langroid/feature/agentic_chat"
     );
-    // Wait for page to be ready - allow networkidle to fail gracefully
-    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
 
     const chat = new AgenticChatPage(page);
     await chat.openChat();

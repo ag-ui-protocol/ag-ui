@@ -9,8 +9,7 @@ test.describe("Shared State Feature", () => {
 
     // Update URL to new domain
     await page.goto(
-      "/langroid/feature/shared_state",
-      { waitUntil: "domcontentloaded" }
+      "/langroid/feature/shared_state"
     );
 
     await sharedStateAgent.openChat();
@@ -28,8 +27,7 @@ test.describe("Shared State Feature", () => {
     const sharedStateAgent = new SharedStatePage(page);
 
     await page.goto(
-      "/langroid/feature/shared_state",
-      { waitUntil: "domcontentloaded" }
+      "/langroid/feature/shared_state"
     );
 
     await sharedStateAgent.openChat();
