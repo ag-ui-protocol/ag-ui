@@ -59,7 +59,7 @@ export default defineConfig({
       size: { width: 1280, height: 720 },
     },
     navigationTimeout: 30_000,
-    actionTimeout: 15_000,
+    actionTimeout: 3_000,
     // Test isolation - ensure clean state between tests
     testIdAttribute: "data-testid",
     baseURL: getBaseUrl(),
