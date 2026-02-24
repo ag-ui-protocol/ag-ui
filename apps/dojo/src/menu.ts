@@ -219,12 +219,11 @@ export const menuIntegrations = [
     name: "A2A (Direct)",
     features: ["vnext_chat"],
   },
-  // Disabled until we can support Vercel AI SDK v5
-  // {
-  //   id: "vercel-ai-sdk",
-  //   name: "Vercel AI SDK",
-  //   features: ["agentic_chat"],
-  // },
+  {
+    id: "vercel-ai-sdk",
+    name: "Vercel AI SDK",
+    features: ["agentic_chat"],
+  },
   {
     id: "middleware-starter",
     name: "Middleware Starter",

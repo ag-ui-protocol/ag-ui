@@ -16,11 +16,11 @@ yarn add @ag-ui/vercel-ai-sdk
 
 ```ts
 import { VercelAISDKAgent } from "@ag-ui/vercel-ai-sdk";
-import { openai } from "ai/openai";
+import { openai } from "@ai-sdk/openai";
 
 // Create an AG-UI compatible agent
 const agent = new VercelAISDKAgent({
-  model: openai("gpt-4"),
+  model: openai("gpt-4o-mini"),
   maxSteps: 3,
   toolChoice: "auto",
 });
