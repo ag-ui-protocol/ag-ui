@@ -22,3 +22,5 @@ node_modules
 
 **/.poetry-cache
 *.egg-info
+
+**/python/**/__pycache__/
