@@ -15,11 +15,9 @@ test.fixme("[CrewAI] Agentic Gen UI", () => {
 
     await genUIAgent.openChat();
     await genUIAgent.sendMessage("Hi");
-    await genUIAgent.sendButton.click();
     await genUIAgent.assertAgentReplyVisible(/Hello/);
 
     await genUIAgent.sendMessage("Give me a plan to make brownies");
-    await genUIAgent.sendButton.click();
     await expect(genUIAgent.agentPlannerContainer).toBeVisible();
     await genUIAgent.plan();
     await awaitLLMResponseDone(page);
@@ -37,11 +35,9 @@ test.fixme("[CrewAI] Agentic Gen UI", () => {
 
     await genUIAgent.openChat();
     await genUIAgent.sendMessage("Hi");
-    await genUIAgent.sendButton.click();
     await genUIAgent.assertAgentReplyVisible(/Hello/);
 
     await genUIAgent.sendMessage("Go to Mars");
-    await genUIAgent.sendButton.click();
 
     await expect(genUIAgent.agentPlannerContainer).toBeVisible();
     await genUIAgent.plan();

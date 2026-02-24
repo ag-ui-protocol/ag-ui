@@ -15,11 +15,9 @@ test.describe("Agent Generative UI Feature", () => {
 
     await genUIAgent.openChat();
     await genUIAgent.sendMessage("Hi");
-    await genUIAgent.sendButton.click();
     await genUIAgent.assertAgentReplyVisible(/Hello/);
 
     await genUIAgent.sendMessage("Give me a plan to make brownies using your tools");
-    await genUIAgent.sendButton.click();
 
     await expect(genUIAgent.agentPlannerContainer).toBeVisible();
 
@@ -39,11 +37,9 @@ test.describe("Agent Generative UI Feature", () => {
 
     await genUIAgent.openChat();
     await genUIAgent.sendMessage("Hi");
-    await genUIAgent.sendButton.click();
     await genUIAgent.assertAgentReplyVisible(/Hello/);
 
     await genUIAgent.sendMessage("Go to Mars using your tools");
-    await genUIAgent.sendButton.click();
 
     await expect(genUIAgent.agentPlannerContainer).toBeVisible();
 
