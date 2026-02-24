@@ -215,6 +215,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-dojo-e2e-deps-
       - name: Install e2e dependencies
+        if: ${{ steps.cache-e2e-deps.outputs.cache-hit != 'true' }}
         working-directory: apps/dojo/e2e
         run: |
           pnpm install
