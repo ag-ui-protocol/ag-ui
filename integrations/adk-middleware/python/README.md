@@ -1,3 +1,5 @@
+Test comment
+
 # ADK Middleware for AG-UI Protocol
 
 This Python middleware enables [Google ADK](https://google.github.io/adk-docs/) agents to be used with the AG-UI Protocol, providing a bridge between the two frameworks.
