@@ -1,17 +1,17 @@
 * @ag-ui-protocol/copilotkit
 
-sdks/community/java @ag-ui-protocol/copilotkit @pascalwilbrink
-docs/sdk/java @ag-ui-protocol/copilotkit @pascalwilbrink
+sdks/community/java @pascalwilbrink @ag-ui-protocol/copilotkit
+docs/sdk/java @pascalwilbrink @ag-ui-protocol/copilotkit
 
-sdks/community/kotlin @ag-ui-protocol/copilotkit @contextablemark
-docs/sdk/kotlin @ag-ui-protocol/copilotkit @contextablemark
+sdks/community/kotlin @contextablemark @ag-ui-protocol/copilotkit
+docs/sdk/kotlin @contextablemark @ag-ui-protocol/copilotkit
 
-sdks/community/go @ag-ui-protocol/copilotkit @mattsp1290
-docs/sdk/go @ag-ui-protocol/copilotkit @mattsp1290
+sdks/community/go @mattsp1290 @ag-ui-protocol/copilotkit
+docs/sdk/go @mattsp1290 @ag-ui-protocol/copilotkit
 
-sdks/community/dart @ag-ui-protocol/copilotkit @mattsp1290
-docs/sdk/dart @ag-ui-protocol/copilotkit @mattsp1290
+sdks/community/dart @mattsp1290 @ag-ui-protocol/copilotkit
+docs/sdk/dart @mattsp1290 @ag-ui-protocol/copilotkit
 
-integrations/adk-middleware @ag-ui-protocol/copilotkit @contextablemark
+integrations/adk-middleware @contextablemark @ag-ui-protocol/copilotkit
 
-integrations/agent-spec @ag-ui-protocol/copilotkit @sonleoracle
+integrations/agent-spec @sonleoracle @ag-ui-protocol/copilotkit
