@@ -69,7 +69,8 @@ export class PredictiveStateUpdatesPage {
   }
 
   async verifyAgentResponse(dragonName) {
-    const paragraphWithName = await this.page.locator(`div.tiptap >> text=${dragonName}`).first();
+    const paragraphWithName = this.page.locator(`div.tiptap >> text=${dragonName}`).first();
+    await expect(paragraphWithName).toBeVisible();
 
     const fullText = await paragraphWithName.textContent();
     if (!fullText) {
@@ -105,36 +106,14 @@ export class PredictiveStateUpdatesPage {
   }
 
   async getResponseContent() {
-    const contentSelectors = [
-      'div.tiptap.ProseMirror',
-      '[data-testid="copilot-assistant-message"]',
-      'div.tiptap'
-    ];
-
-    for (const selector of contentSelectors) {
-      const elements = this.page.locator(selector);
-      const count = await elements.count();
-
-      if (count > 0) {
-        try {
-          const lastElement = elements.nth(count - 1);
-          const content = await lastElement.textContent();
-          if (content && content.trim().length > 0) {
-            return content.trim();
-          }
-        } catch (error) {
-          continue;
-        }
+    const editor = this.page.locator('div.tiptap.ProseMirror');
+    const count = await editor.count();
+    if (count > 0) {
+      const content = await editor.last().textContent();
+      if (content && content.trim().length > 0) {
+        return content.trim();
       }
     }
-
-    const fallbackElements = this.page.locator('div.tiptap, [data-testid="copilot-assistant-message"]');
-    const fallbackCount = await fallbackElements.count();
-    if (fallbackCount > 0) {
-      const fallbackContent = await fallbackElements.nth(fallbackCount - 1).textContent();
-      return fallbackContent ? fallbackContent.trim() : null;
-    }
-
     return null;
   }
 }

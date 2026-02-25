@@ -69,7 +69,8 @@ export class PredictiveStateUpdatesPage {
   }
 
   async verifyAgentResponse(dragonName) {
-    const paragraphWithName = await this.page.locator(`div.tiptap >> text=${dragonName}`).first();
+    const paragraphWithName = this.page.locator(`div.tiptap >> text=${dragonName}`).first();
+    await expect(paragraphWithName).toBeVisible();
 
     const fullText = await paragraphWithName.textContent();
     if (!fullText) {
