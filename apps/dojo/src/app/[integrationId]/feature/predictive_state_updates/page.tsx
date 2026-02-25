@@ -266,6 +266,7 @@ const DocumentEditor = () => {
   // TODO(steve): Remove this when all agents have been updated to use write_document tool.
   useHumanInTheLoop(
     {
+      agentId: "predictive_state_updates",
       name: "confirm_changes",
       render: ({ args, respond, status }) => (
         <ConfirmChanges
@@ -290,6 +291,7 @@ const DocumentEditor = () => {
   // Action to write the document.
   useHumanInTheLoop(
     {
+      agentId: "predictive_state_updates",
       name: "write_document",
       description: `Present the proposed changes to the user for review`,
        parameters: z.object({

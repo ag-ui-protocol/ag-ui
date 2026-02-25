@@ -16,7 +16,7 @@ test("[Mastra] Agentic Chat sends and receives a greeting message", async ({
     const chat = new AgenticChatPage(page);
 
     await chat.openChat();
-    await chat.agentGreeting.isVisible;
+    await chat.agentGreeting.waitFor({ state: "visible" });
     await chat.sendMessage("Hi");
 
     await chat.assertUserMessageVisible("Hi");

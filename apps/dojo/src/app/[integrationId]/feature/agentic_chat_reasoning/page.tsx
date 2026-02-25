@@ -61,6 +61,7 @@ const Chat = () => {
   };
 
   useFrontendTool({
+    agentId: "agentic_chat_reasoning",
     name: "change_background",
     description:
       "Change the background color of the chat. Can be anything that the CSS background attribute accepts. Regular colors, linear of radial gradients etc.",

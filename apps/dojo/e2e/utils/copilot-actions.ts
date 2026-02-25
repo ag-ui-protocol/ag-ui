@@ -20,6 +20,7 @@ export async function awaitLLMResponseDone(
     await page.waitForFunction(
       () =>
         document.querySelector('[data-copilot-running="true"]') !== null,
+      null,
       { timeout: 3000 }
     );
   } catch {
@@ -29,6 +30,7 @@ export async function awaitLLMResponseDone(
   await page.waitForFunction(
     () =>
       document.querySelector('[data-copilot-running="false"]') !== null,
+    null,
     { timeout }
   );
 }
@@ -41,7 +43,10 @@ export async function sendChatMessage(page: Page, message: string) {
   const input = CopilotSelectors.chatTextarea(page);
   await input.click();
   await input.fill(message);
-  await CopilotSelectors.sendButton(page).click();
+  const sendButton = CopilotSelectors.sendButton(page);
+  await sendButton.waitFor({ state: "visible" });
+  await expect(sendButton).toBeEnabled();
+  await sendButton.click();
 }
 
 /**
@@ -79,6 +84,7 @@ export async function sendAndAwaitResponse(
   await page.waitForFunction(
     () =>
       document.querySelector('[data-copilot-running="false"]') !== null,
+    null,
     { timeout }
   );
 }

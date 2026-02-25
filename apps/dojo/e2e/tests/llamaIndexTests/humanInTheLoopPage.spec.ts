@@ -16,7 +16,6 @@ test.describe("Human in the Loop Feature", () => {
       await humanInLoop.openChat();
 
       await humanInLoop.sendMessage("Hi");
-      await humanInLoop.agentGreeting.isVisible();
 
       await humanInLoop.sendMessage(
         "give me a plan to make brownies, there should be only one step with eggs and one step with oven, this is a strict requirement so adhere"
@@ -47,7 +46,6 @@ test.describe("Human in the Loop Feature", () => {
       await humanInLoop.openChat();
 
       await humanInLoop.sendMessage("Hi");
-      await humanInLoop.agentGreeting.isVisible();
 
       await humanInLoop.sendMessage(
         "Plan a mission to Mars with multiple steps and the first step being 'Start The Planning'"

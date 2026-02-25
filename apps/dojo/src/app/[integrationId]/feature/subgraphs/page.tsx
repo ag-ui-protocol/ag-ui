@@ -7,6 +7,7 @@ import {
   useAgent,
   UseAgentUpdate,
   CopilotSidebar,
+  CopilotChatConfigurationProvider,
 } from "@copilotkit/react-core/v2";
 import { useLangGraphInterrupt } from "@copilotkit/react-core";
 import { useMobileView } from "@/utils/use-mobile-view";
@@ -178,6 +179,7 @@ export default function Subgraphs({ params }: SubgraphsProps) {
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
     >
+      <CopilotChatConfigurationProvider agentId="subgraphs">
       <div className="travel-planner-container">
         <TravelPlanner />
         {isMobile ? (
@@ -275,6 +277,7 @@ export default function Subgraphs({ params }: SubgraphsProps) {
           />
         )}
       </div>
+      </CopilotChatConfigurationProvider>
     </CopilotKitProvider>
   );
 }

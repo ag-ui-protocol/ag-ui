@@ -6,6 +6,7 @@ import {
   useHumanInTheLoop,
   useConfigureSuggestions,
   CopilotChat,
+  CopilotChatConfigurationProvider,
 } from "@copilotkit/react-core/v2";
 import { useLangGraphInterrupt } from "@copilotkit/react-core";
 import { z } from "zod";
@@ -327,6 +328,14 @@ const InterruptHumanInTheLoop: React.FC<{
 };
 
 const Chat = ({ integrationId }: { integrationId: string }) => {
+  return (
+    <CopilotChatConfigurationProvider agentId="human_in_the_loop">
+      <ChatContent />
+    </CopilotChatConfigurationProvider>
+  );
+};
+
+const ChatContent = () => {
   useConfigureSuggestions({
     suggestions: [
       { title: "Simple plan", message: "Please plan a trip to mars in 5 steps." },
@@ -338,9 +347,11 @@ const Chat = ({ integrationId }: { integrationId: string }) => {
   // Langgraph uses it's own hook to handle human-in-the-loop interactions via langgraph interrupts,
   // This hook won't do anything for other integrations.
   useLangGraphInterrupt({
+    
     render: ({ event, resolve }) => <InterruptHumanInTheLoop event={event} resolve={resolve} />,
   });
   useHumanInTheLoop({
+    agentId: "human_in_the_loop",
     name: "generate_task_steps",
     description: "Generates a list of steps for the user to perform",
      parameters: z.object({

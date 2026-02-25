@@ -1,6 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { CopilotSelectors } from '../../utils/copilot-selectors';
-import { sendAndAwaitResponse } from '../../utils/copilot-actions';
+import { sendChatMessage, awaitLLMResponseDone } from '../../utils/copilot-actions';
 
 export class PredictiveStateUpdatesPage {
   readonly page: Page;
@@ -34,11 +34,11 @@ export class PredictiveStateUpdatesPage {
   }
 
   async openChat() {
-    await this.agentGreeting.isVisible();
+    await this.agentGreeting.waitFor({ state: "visible" });
   }
 
   async sendMessage(message: string) {
-    await sendAndAwaitResponse(this.page, message);
+    await sendChatMessage(this.page, message);
   }
 
   async getPredictiveResponse() {
@@ -55,17 +55,17 @@ export class PredictiveStateUpdatesPage {
   }
 
   async getUserApproval() {
-    await this.userApprovalModal.isVisible();
-    await this.page.locator('[data-testid="confirm-button"]').click();
-    const acceptedLabel = this.page.locator('[data-testid="status-display"]').last();
-    await acceptedLabel.isVisible();
+    const confirmBtn = this.userApprovalModal.locator('[data-testid="confirm-button"]');
+    await expect(confirmBtn).toBeEnabled();
+    await confirmBtn.click();
+    await awaitLLMResponseDone(this.page);
   }
 
   async getUserRejection() {
-    await this.userApprovalModal.isVisible();
-    await this.page.locator('[data-testid="reject-button"]').click();
-    const rejectedLabel = this.page.locator('[data-testid="status-display"]').last();
-    await rejectedLabel.isVisible();
+    const rejectBtn = this.userApprovalModal.locator('[data-testid="reject-button"]');
+    await expect(rejectBtn).toBeEnabled();
+    await rejectBtn.click();
+    await awaitLLMResponseDone(this.page);
   }
 
   async verifyAgentResponse(dragonName) {

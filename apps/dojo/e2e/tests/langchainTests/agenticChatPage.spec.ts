@@ -16,7 +16,7 @@ test("[LangChain] Agentic Chat sends and receives a message", async ({
     const chat = new AgenticChatPage(page);
 
     await chat.openChat();
-    await chat.agentGreeting.isVisible;
+    await chat.agentGreeting.waitFor({ state: "visible" });
     await chat.sendMessage("Hi, I am duaa");
 
     await chat.assertUserMessageVisible("Hi, I am duaa");

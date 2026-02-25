@@ -19,7 +19,7 @@ test.describe("Predictive Status Updates Feature", () => {
 
       await predictiveStateUpdates.getPredictiveResponse();
       await predictiveStateUpdates.getUserApproval();
-      await predictiveStateUpdates.confirmedChangesResponse.isVisible();
+      await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
 
       const originalContent = await predictiveStateUpdates.getResponseContent();
       expect(originalContent).not.toBeNull();
@@ -33,7 +33,7 @@ test.describe("Predictive Status Updates Feature", () => {
       await predictiveStateUpdates.verifyHighlightedText();
 
       await predictiveStateUpdates.getUserApproval();
-      await predictiveStateUpdates.confirmedChangesResponse.isVisible();
+      await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
 
       const updatedContent = await predictiveStateUpdates.getResponseContent();
 
@@ -58,7 +58,7 @@ test.describe("Predictive Status Updates Feature", () => {
 
       await predictiveStateUpdates.getPredictiveResponse();
       await predictiveStateUpdates.getUserApproval();
-      await predictiveStateUpdates.confirmedChangesResponse.isVisible();
+      await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
 
       const originalContent = await predictiveStateUpdates.getResponseContent();
       expect(originalContent).not.toBeNull();
@@ -72,7 +72,7 @@ test.describe("Predictive Status Updates Feature", () => {
       await predictiveStateUpdates.verifyHighlightedText();
 
       await predictiveStateUpdates.getUserRejection();
-      await predictiveStateUpdates.rejectedChangesResponse.isVisible();
+      await expect(predictiveStateUpdates.rejectedChangesResponse).toBeVisible();
 
       const currentContent = await predictiveStateUpdates.getResponseContent();
 

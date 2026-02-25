@@ -79,6 +79,7 @@ export class HumanInLoopPage {
 
   async performSteps() {
     await this.performStepsButton.click();
+    await this.performStepsButton.waitFor({ state: "hidden" });
   }
 
   async assertAgentReplyVisible(expectedText: RegExp) {

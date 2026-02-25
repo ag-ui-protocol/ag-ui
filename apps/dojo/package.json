@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "npm run generate-content-json && next dev --webpack",
-    "build": "next build --webpack",
+    "dev": "npm run generate-content-json && next dev",
+    "build": "next build",
     "start": "npm run generate-content-json && next start",
     "lint": "eslint .",
     "mastra:dev": "mastra dev",

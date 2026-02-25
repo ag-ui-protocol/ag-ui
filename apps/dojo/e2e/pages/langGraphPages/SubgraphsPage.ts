@@ -39,7 +39,7 @@ export class SubgraphsPage {
 
   constructor(page: Page) {
     this.page = page;
-    this.travelPlannerButton = page.getByRole('button', { name: /travel.*planner|subgraphs/i });
+    this.travelPlannerButton = page.getByRole('button', { name: /subgraphs/i });
     this.agentGreeting = page.getByText(/travel.*planning|supervisor.*coordinate/i);
     this.chatInput = CopilotSelectors.chatTextarea(page);
     this.sendButton = CopilotSelectors.sendButton(page);

@@ -16,7 +16,7 @@ test("[LangGraph] Agentic Chat sends and receives a message", async ({
     const chat = new AgenticChatPage(page);
 
     await chat.openChat();
-    await chat.agentGreeting.isVisible;
+    await chat.agentGreeting.waitFor({ state: "visible" });
     await chat.sendMessage("Hi, I am duaa");
 
     await chat.assertUserMessageVisible("Hi, I am duaa");
@@ -128,6 +128,7 @@ test("[LangGraph Typescript] Agentic Chat regenerates a response", async ({
     // Wait for the regeneration stream to complete
     await page.waitForFunction(
       () => document.querySelector('[data-copilot-running="false"]') !== null,
+      null,
       { timeout: 15000 }
     );
 

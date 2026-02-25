@@ -1,6 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { CopilotSelectors } from '../../utils/copilot-selectors';
-import { sendAndAwaitResponse } from '../../utils/copilot-actions';
+import { sendChatMessage, awaitLLMResponseDone } from '../../utils/copilot-actions';
 
 export class PredictiveStateUpdatesPage {
   readonly page: Page;
@@ -33,11 +33,11 @@ export class PredictiveStateUpdatesPage {
   }
 
   async openChat() {
-    await this.agentGreeting.isVisible();
+    await this.agentGreeting.waitFor({ state: "visible" });
   }
 
   async sendMessage(message: string) {
-    await sendAndAwaitResponse(this.page, message);
+    await sendChatMessage(this.page, message);
   }
 
   async getPredictiveResponse() {
@@ -54,16 +54,19 @@ export class PredictiveStateUpdatesPage {
   }
 
   async getUserApproval() {
-    await this.userApprovalModal.last().isVisible();
-    await this.getButton(this.page, "Confirm");
-    const acceptedLabel = this.userApprovalModal.last().locator('text=✓ Accepted');
+    const modal = this.userApprovalModal.last();
+    const confirmBtn = modal.getByRole('button', { name: 'Confirm' });
+    await expect(confirmBtn).toBeEnabled();
+    await confirmBtn.click();
+    await awaitLLMResponseDone(this.page);
   }
 
   async getUserRejection() {
-    await this.userApprovalModal.last().isVisible();
-    await this.getButton(this.page, "Reject");
-    const rejectedLabel = await this.getStatusLabelOfButton(this.page, "✕ Rejected");
-    await rejectedLabel.isVisible();
+    const modal = this.userApprovalModal.last();
+    const rejectBtn = modal.getByRole('button', { name: 'Reject' });
+    await expect(rejectBtn).toBeEnabled();
+    await rejectBtn.click();
+    await awaitLLMResponseDone(this.page);
   }
 
   async verifyAgentResponse(dragonName) {

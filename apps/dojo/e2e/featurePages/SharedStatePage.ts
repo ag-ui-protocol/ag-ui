@@ -28,7 +28,7 @@ export class SharedStatePage {
   }
 
   async openChat() {
-    await this.agentGreeting.isVisible();
+    await this.agentGreeting.waitFor({ state: "visible" });
   }
 
   async sendMessage(message: string) {
@@ -56,8 +56,8 @@ export class SharedStatePage {
   }
 
   async addNewIngredient(placeholderText: string) {
-      this.addIngredient.click();
-      this.page.locator(`input[placeholder="${placeholderText}"]`);
+      await this.addIngredient.click();
+      await this.page.locator(`input[placeholder="${placeholderText}"]`).waitFor({ state: "visible" });
   }
 
   async getInstructionItems(containerLocator: Locator ) {

@@ -93,6 +93,7 @@ function HaikuDisplay() {
 
   useFrontendTool(
     {
+      agentId: "tool_based_generative_ui",
       name: "generate_haiku",
        parameters: z.object({
         japanese: z.array(z.string()).describe("3 lines of haiku in Japanese"),

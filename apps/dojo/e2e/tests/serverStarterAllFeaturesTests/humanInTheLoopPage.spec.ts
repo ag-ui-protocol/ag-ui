@@ -16,7 +16,6 @@ test.describe("Human in the Loop Feature", () => {
       await humanInLoop.openChat();
 
       await humanInLoop.sendMessage("Hi");
-      await humanInLoop.agentGreeting.isVisible();
       await expect(humanInLoop.plan).toBeVisible();
       await humanInLoop.performSteps();
       await awaitLLMResponseDone(page);

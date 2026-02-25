@@ -26,7 +26,7 @@ export class HumanInLoopPage {
   }
 
   async openChat() {
-    await this.agentGreeting.isVisible();
+    await this.agentGreeting.waitFor({ state: "visible" });
   }
 
   async sendMessage(message: string) {
@@ -79,6 +79,7 @@ export class HumanInLoopPage {
 
   async performSteps() {
     await this.performStepsButton.click();
+    await this.performStepsButton.waitFor({ state: "hidden" });
   }
 
   async assertAgentReplyVisible(expectedText: RegExp) {
