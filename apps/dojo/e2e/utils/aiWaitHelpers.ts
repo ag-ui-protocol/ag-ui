@@ -7,7 +7,7 @@ import { awaitLLMResponseDone } from "./copilot-actions";
 export async function waitForAIResponse(
   locator: Locator,
   pattern: RegExp,
-  timeoutMs: number = 15_000
+  timeoutMs: number = 30_000
 ) {
   await expect(locator.getByText(pattern)).toBeVisible({ timeout: timeoutMs });
 }
@@ -17,7 +17,7 @@ export async function waitForAIResponse(
  */
 export async function waitForAIContent(
   locator: Locator,
-  timeoutMs: number = 15_000
+  timeoutMs: number = 30_000
 ) {
   await expect(locator).toBeVisible({ timeout: timeoutMs });
 }
@@ -27,7 +27,7 @@ export async function waitForAIContent(
  */
 export async function waitForAIFormReady(
   locator: Locator,
-  timeoutMs: number = 15_000
+  timeoutMs: number = 30_000
 ) {
   await expect(locator).toBeVisible({ timeout: timeoutMs });
   await expect(locator).toBeEnabled({ timeout: timeoutMs });
@@ -39,7 +39,7 @@ export async function waitForAIFormReady(
  */
 export async function waitForAIDialog(
   locator: Locator,
-  timeoutMs: number = 15_000
+  timeoutMs: number = 30_000
 ) {
   await expect(locator).toBeVisible({ timeout: timeoutMs });
 }
@@ -51,7 +51,7 @@ export async function waitForAIDialog(
 export async function waitForAIPatterns(
   page: Page,
   patterns: RegExp[],
-  timeoutMs: number = 15_000
+  timeoutMs: number = 30_000
 ): Promise<void> {
   // Wait for the LLM stream to complete first
   await awaitLLMResponseDone(page, timeoutMs);

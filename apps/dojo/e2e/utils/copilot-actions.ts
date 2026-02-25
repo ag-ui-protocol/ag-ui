@@ -2,7 +2,7 @@ import { Page, expect } from "@playwright/test";
 import { CopilotSelectors } from "./copilot-selectors";
 
 /** Default timeout for waiting for LLM response to finish (SSE stream done) */
-const LLM_RESPONSE_TIMEOUT = 15_000;
+const LLM_RESPONSE_TIMEOUT = 30_000;
 /** Default timeout for finding a DOM element after response */
 const ELEMENT_TIMEOUT = 10_000;
 
