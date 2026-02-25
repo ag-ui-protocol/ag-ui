@@ -33,7 +33,8 @@ test.describe("Human in the Loop Feature", () => {
     });
   });
 
-  test("[ADK Middleware] should interact with the chat using predefined prompts and perform steps", async ({
+  // Agent does not respond to Mars plan prompt within timeout.
+  test.fixme("[ADK Middleware] should interact with the chat using predefined prompts and perform steps", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {

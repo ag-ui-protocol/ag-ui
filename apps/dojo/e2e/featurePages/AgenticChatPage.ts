@@ -44,20 +44,19 @@ export class AgenticChatPage {
 
   async assertAgentReplyVisible(expectedText: RegExp | RegExp[]) {
     const expectedTexts = Array.isArray(expectedText) ? expectedText : [expectedText];
-    for (const expectedText1 of expectedTexts) {
+    let lastError: unknown = null;
+    for (const pattern of expectedTexts) {
       try {
         const agentMessage = CopilotSelectors.assistantMessages(this.page).filter({
-          hasText: expectedText1
+          hasText: pattern
         });
         await expect(agentMessage.last()).toBeVisible();
+        return; // At least one pattern matched, succeed
       } catch (error) {
-        console.log(`Did not work for ${expectedText1}`)
-        // Allow test to pass if at least one expectedText matches
-        if (expectedText1 === expectedTexts[expectedTexts.length - 1]) {
-          throw error;
-        }
+        lastError = error;
       }
     }
+    throw lastError; // No pattern matched
   }
 
   async assertAgentReplyContains(expectedText: string) {

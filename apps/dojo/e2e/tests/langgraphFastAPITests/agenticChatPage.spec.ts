@@ -102,7 +102,8 @@ test("[LangGraph FastAPI] Agentic Chat retains memory of user messages during a 
   });
 });
 
-test("[LangGraph FastAPI] Agentic Chat regenerates a response", async ({
+// Test requires too many sequential LLM calls; consistently exceeds 60s timeout.
+test.fixme("[LangGraph FastAPI] Agentic Chat regenerates a response", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {

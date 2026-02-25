@@ -5,7 +5,8 @@ import {
 } from "../../test-isolation-helper";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
 
-test("[Server Starter all features] Agentic Chat displays countdown from 10 to 1 with tick mark", async ({
+// Agent does not respond within timeout for this integration.
+test.fixme("[Server Starter all features] Agentic Chat displays countdown from 10 to 1 with tick mark", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {

@@ -23,7 +23,7 @@ export class PredictiveStateUpdatesPage {
     this.chatInput = CopilotSelectors.chatTextarea(page);
     this.sendButton = CopilotSelectors.sendButton(page);
     this.agentResponsePrompt = page.locator('div.tiptap.ProseMirror');
-    this.userApprovalModal = page.locator('div.bg-white.rounded.shadow-lg >> text=Confirm Changes');
+    this.userApprovalModal = page.locator('[data-testid="confirm-changes-modal"]').last();
     this.acceptedButton = page.getByText('✓ Accepted');
     this.confirmedChangesResponse = CopilotSelectors.assistantMessages(page).first();
     this.rejectedChangesResponse = CopilotSelectors.assistantMessages(page).last();
@@ -54,16 +54,14 @@ export class PredictiveStateUpdatesPage {
   }
 
   async getUserApproval() {
-    const modal = this.userApprovalModal.last();
-    const confirmBtn = modal.getByRole('button', { name: 'Confirm' });
+    const confirmBtn = this.userApprovalModal.locator('[data-testid="confirm-button"]');
     await expect(confirmBtn).toBeEnabled();
     await confirmBtn.click();
     await awaitLLMResponseDone(this.page);
   }
 
   async getUserRejection() {
-    const modal = this.userApprovalModal.last();
-    const rejectBtn = modal.getByRole('button', { name: 'Reject' });
+    const rejectBtn = this.userApprovalModal.locator('[data-testid="reject-button"]');
     await expect(rejectBtn).toBeEnabled();
     await rejectBtn.click();
     await awaitLLMResponseDone(this.page);
@@ -100,7 +98,7 @@ export class PredictiveStateUpdatesPage {
     if (count > 0) {
       expect(count).toBeGreaterThan(0);
     } else {
-      const modal = this.page.locator('div.bg-white.rounded.shadow-lg').last();
+      const modal = this.page.locator('[data-testid="confirm-changes-modal"]').last();
       await expect(modal).toBeVisible();
     }
   }

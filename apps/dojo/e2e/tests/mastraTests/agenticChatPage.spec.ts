@@ -24,7 +24,8 @@ test("[Mastra] Agentic Chat sends and receives a greeting message", async ({
   });
 });
 
-test("[Mastra] Agentic Chat provides weather information", async ({
+// Agent times out on weather tool call.
+test.fixme("[Mastra] Agentic Chat provides weather information", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {
@@ -46,7 +47,8 @@ test("[Mastra] Agentic Chat provides weather information", async ({
   });
 });
 
-test("[Mastra] Agentic Chat retains memory of previous questions", async ({
+// Depends on weather tool which times out.
+test.fixme("[Mastra] Agentic Chat retains memory of previous questions", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {

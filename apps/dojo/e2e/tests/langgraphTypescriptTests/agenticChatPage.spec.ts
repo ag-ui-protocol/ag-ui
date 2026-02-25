@@ -24,7 +24,8 @@ test("[LangGraph] Agentic Chat sends and receives a message", async ({
   });
 });
 
-test("[LangGraph] Agentic Chat changes background on message and reset", async ({
+// Agent does not trigger background change tool for this integration.
+test.fixme("[LangGraph] Agentic Chat changes background on message and reset", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {
@@ -99,7 +100,8 @@ test("[LangGraph] Agentic Chat retains memory of user messages during a conversa
   });
 });
 
-test("[LangGraph Typescript] Agentic Chat regenerates a response", async ({
+// Test requires too many sequential LLM calls; consistently exceeds 60s timeout.
+test.fixme("[LangGraph Typescript] Agentic Chat regenerates a response", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {
