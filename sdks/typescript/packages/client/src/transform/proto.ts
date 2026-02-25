@@ -1,7 +1,8 @@
 import { Observable, Subject } from "rxjs";
 import { HttpEvent, HttpEventType } from "../run/http-request";
 import { BaseEvent } from "@ag-ui/core";
-import * as proto from "@ag-ui/proto";
+import {decode} from "@ag-ui/proto";
+import { EventStreamParser } from "./base-type";
 
 /**
  * Parses a stream of HTTP events into a stream of BaseEvent objects using Protocol Buffer format.
@@ -65,7 +66,7 @@ export const parseProtoStream = (source$: Observable<HttpEvent>): Observable<Bas
         const message = buffer.slice(4, totalLength);
 
         // Decode the protocol buffer message using the imported decode function
-        const event = proto.decode(message);
+        const event = decode(message);
 
         // Emit the parsed event
         eventSubject.next(event);
@@ -82,3 +83,21 @@ export const parseProtoStream = (source$: Observable<HttpEvent>): Observable<Bas
 
   return eventSubject.asObservable();
 };
+
+/**
+ * The default parser for AGUI protocol buffer streams. It uses the parseProtoStream function to convert HTTP events into BaseEvents.
+ * To use as part of the argument for transformHttpEventStreamFactory, simply pass in the parser function along with a condition that checks for the AGUI media type in the headers.
+ * 
+ * Example usage:
+ * 
+ * const transformStream = transformHttpEventStreamFactory([
+ *  {
+ *   condition: (event) => event.headers.get("content-type") === AGUI_MEDIA_TYPE, parser: defaultAGUIProtoStreamParser
+ *  },
+ * ]);
+ */
+export const defaultAGUIProtoStreamParser: EventStreamParser = (source$, eventSubject) => parseProtoStream(source$).subscribe({
+  next: (event) => eventSubject.next(event),
+  error: (err) => eventSubject.error(err),
+  complete: () => eventSubject.complete(),
+})

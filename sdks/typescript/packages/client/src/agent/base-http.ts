@@ -3,18 +3,20 @@ import { runHttpRequest } from "@/run/http-request";
 import { HttpAgentConfig, RunAgentParameters } from "./types";
 import { RunAgentInput, BaseEvent } from "@ag-ui/core";
 import { structuredClone_ } from "@/utils";
-import { transformHttpEventStream } from "@/transform/http";
 import { Observable } from "rxjs";
 import { AgentSubscriber } from "./subscriber";
+import { TransformHttpEventStreamHandlers } from "@/transform/base-type";
+import { transformHttpEventStreamFactory } from "@/transform/factory";
 
 interface RunHttpAgentConfig extends RunAgentParameters {
   abortController?: AbortController;
 }
 
-export class HttpAgent extends AbstractAgent {
+export class BaseHttpAgent extends AbstractAgent {
   public url: string;
   public headers: Record<string, string>;
   public abortController: AbortController = new AbortController();
+  private httpEventStreamHandlers: TransformHttpEventStreamHandlers[] = [];
 
   /**
    * Returns the fetch config for the http request.
@@ -52,15 +54,16 @@ export class HttpAgent extends AbstractAgent {
     super(config);
     this.url = config.url;
     this.headers = structuredClone_(config.headers ?? {});
+    this.httpEventStreamHandlers = config.streamHandlers ?? [];
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {
     const httpEvents = runHttpRequest(this.url, this.requestInit(input));
-    return transformHttpEventStream(httpEvents);
+    return transformHttpEventStreamFactory(this.httpEventStreamHandlers)(httpEvents);
   }
 
-  public clone(): HttpAgent {
-    const cloned = super.clone() as HttpAgent;
+  public clone(): BaseHttpAgent {
+    const cloned = super.clone() as BaseHttpAgent;
     cloned.url = this.url;
     cloned.headers = structuredClone_(this.headers ?? {});
 

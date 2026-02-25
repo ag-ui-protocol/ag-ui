@@ -1,5 +1,5 @@
 import { AbstractAgent } from "../agent";
-import { HttpAgent } from "../http";
+import { HttpAgent } from "../full-http";
 import { BaseEvent, Message, RunAgentInput } from "@ag-ui/core";
 import { EMPTY, Observable } from "rxjs";
 
