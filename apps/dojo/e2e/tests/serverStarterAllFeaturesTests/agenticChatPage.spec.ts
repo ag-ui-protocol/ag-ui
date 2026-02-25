@@ -4,9 +4,9 @@ import {
   retryOnAIFailure,
 } from "../../test-isolation-helper";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
+import { sendChatMessage } from "../../utils/copilot-actions";
 
-// Agent does not respond within timeout for this integration.
-test.fixme("[Server Starter all features] Agentic Chat displays countdown from 10 to 1 with tick mark", async ({
+test("[Server Starter all features] Agentic Chat displays countdown from 10 to 1 with tick mark", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {
@@ -17,7 +17,9 @@ test.fixme("[Server Starter all features] Agentic Chat displays countdown from 1
     const chat = new AgenticChatPage(page);
     await chat.openChat();
     await chat.agentGreeting.waitFor({ state: "visible" });
-    await chat.sendMessage("Hey there");
+    // Use sendChatMessage to avoid sendAndAwaitResponse timeout;
+    // the countdown assertion below handles the waiting with its own timeout.
+    await sendChatMessage(page, "Hey there");
     await chat.assertUserMessageVisible("Hey there");
 
     const countdownMessage = page

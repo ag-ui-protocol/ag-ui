@@ -4,6 +4,7 @@ import {
   retryOnAIFailure,
 } from "../../test-isolation-helper";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
+import { sendChatMessage, awaitLLMResponseDone } from "../../utils/copilot-actions";
 
 test("[Mastra] Agentic Chat sends and receives a greeting message", async ({
   page,
@@ -24,8 +25,7 @@ test("[Mastra] Agentic Chat sends and receives a greeting message", async ({
   });
 });
 
-// Agent times out on weather tool call.
-test.fixme("[Mastra] Agentic Chat provides weather information", async ({
+test("[Mastra] Agentic Chat provides weather information", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {
@@ -38,17 +38,17 @@ test.fixme("[Mastra] Agentic Chat provides weather information", async ({
     await chat.openChat();
     await chat.agentGreeting.waitFor({ state: "visible" });
 
-    // Ask for Islamabad weather
-    await chat.sendMessage("What is the weather in Islamabad");
+    // Ask for Islamabad weather — use sendChatMessage to avoid
+    // sendAndAwaitResponse timeout when the weather tool call is slow
+    await sendChatMessage(page, "What is the weather in Islamabad");
     await chat.assertUserMessageVisible("What is the weather in Islamabad");
 
-    // Check if the response contains the expected weather information structure
+    // The weather-info component renders deterministically; wait for it
     await chat.assertWeatherResponseStructure();
   });
 });
 
-// Depends on weather tool which times out.
-test.fixme("[Mastra] Agentic Chat retains memory of previous questions", async ({
+test("[Mastra] Agentic Chat retains memory of previous questions", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {
@@ -60,13 +60,17 @@ test.fixme("[Mastra] Agentic Chat retains memory of previous questions", async (
     await chat.openChat();
     await chat.agentGreeting.waitFor({ state: "visible" });
 
-    // First question about weather
-    await chat.sendMessage("What is the weather in Islamabad");
+    // First question about weather — sendChatMessage avoids the
+    // sendAndAwaitResponse timeout when the weather tool is slow
+    await sendChatMessage(page, "What is the weather in Islamabad");
     await chat.assertUserMessageVisible("What is the weather in Islamabad");
     await chat.assertWeatherResponseStructure();
 
+    // Ensure stream is done before sending next message
+    await awaitLLMResponseDone(page);
+
     // Ask about the first question to test memory
-    await chat.sendMessage("What was my first question");
+    await sendChatMessage(page, "What was my first question");
     await chat.assertUserMessageVisible("What was my first question");
 
     // Check if the agent remembers the first question about weather

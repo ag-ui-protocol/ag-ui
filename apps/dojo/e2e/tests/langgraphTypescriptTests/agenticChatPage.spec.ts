@@ -4,6 +4,7 @@ import {
   retryOnAIFailure,
 } from "../../test-isolation-helper";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
+import { sendChatMessage, awaitLLMResponseDone } from "../../utils/copilot-actions";
 
 test("[LangGraph] Agentic Chat sends and receives a message", async ({
   page,
@@ -24,8 +25,7 @@ test("[LangGraph] Agentic Chat sends and receives a message", async ({
   });
 });
 
-// Agent does not trigger background change tool for this integration.
-test.fixme("[LangGraph] Agentic Chat changes background on message and reset", async ({
+test("[LangGraph] Agentic Chat changes background on message and reset", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {
@@ -42,8 +42,9 @@ test.fixme("[LangGraph] Agentic Chat changes background on message and reset", a
     const getBackground = () => backgroundContainer.evaluate(el => el.style.background);
     const initialBackground = await getBackground();
 
-    // 1. Send message to change background to blue
-    await chat.sendMessage("Hi change the background color to blue");
+    // Use sendChatMessage to avoid sendAndAwaitResponse timeout;
+    // expect.poll handles waiting for the background to change.
+    await sendChatMessage(page, "Hi change the background color to blue");
     await chat.assertUserMessageVisible(
       "Hi change the background color to blue"
     );
@@ -51,8 +52,10 @@ test.fixme("[LangGraph] Agentic Chat changes background on message and reset", a
     await expect.poll(getBackground).not.toBe(initialBackground);
     const backgroundAfterBlue = await getBackground();
 
-    // 2. Change to pink
-    await chat.sendMessage("Hi change the background color to pink");
+    // Ensure first response is done before sending the next
+    await awaitLLMResponseDone(page);
+
+    await sendChatMessage(page, "Hi change the background color to pink");
     await chat.assertUserMessageVisible(
       "Hi change the background color to pink"
     );
@@ -100,8 +103,7 @@ test("[LangGraph] Agentic Chat retains memory of user messages during a conversa
   });
 });
 
-// Test requires too many sequential LLM calls; consistently exceeds 60s timeout.
-test.fixme("[LangGraph Typescript] Agentic Chat regenerates a response", async ({
+test("[LangGraph Typescript] Agentic Chat regenerates a response", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {
@@ -112,30 +114,28 @@ test.fixme("[LangGraph Typescript] Agentic Chat regenerates a response", async (
     await chat.openChat();
     await chat.agentGreeting.waitFor({ state: "visible" });
 
-    // Send first message and wait for response
-    await chat.sendMessage("Hello agent");
+    // Use sendChatMessage + awaitLLMResponseDone to save time budget
+    // vs sendAndAwaitResponse (avoids double-waiting on assistant message count).
+    // greeting=0, joke reply=1, filler reply=2
+    await sendChatMessage(page, "tell me a joke");
+    await awaitLLMResponseDone(page);
 
-    // Send second message asking for a joke
-    await chat.sendMessage("tell me a joke");
+    const originalJoke = await chat.getAssistantMessageText(1);
 
-    // Record the joke response text (index 2: greeting=0, hello reply=1, joke=2)
-    const originalJoke = await chat.getAssistantMessageText(2);
+    // Send a filler so the joke is not the last message
+    await sendChatMessage(page, "say hello");
+    await awaitLLMResponseDone(page);
 
-    // Send another message so the joke is not the last message
-    await chat.sendMessage("provide a random person's name");
+    // Regenerate the joke response (index 1)
+    await chat.regenerateResponse(1);
 
-    // Regenerate the joke response
-    await chat.regenerateResponse(2);
-
-    // Wait for the regeneration stream to complete
     await page.waitForFunction(
       () => document.querySelector('[data-copilot-running="false"]') !== null,
       null,
       { timeout: 15000 }
     );
 
-    // Verify the regenerated response is valid (non-empty)
-    const newJoke = await chat.getAssistantMessageText(2);
+    const newJoke = await chat.getAssistantMessageText(1);
     expect(newJoke.length).toBeGreaterThan(0);
   });
 });

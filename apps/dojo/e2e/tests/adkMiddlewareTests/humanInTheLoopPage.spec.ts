@@ -1,4 +1,4 @@
-import { awaitLLMResponseDone } from "../../utils/copilot-actions";
+import { awaitLLMResponseDone, sendChatMessage } from "../../utils/copilot-actions";
 import { test, expect, retryOnAIFailure } from "../../test-isolation-helper";
 import { HumanInLoopPage } from "../../pages/adkMiddlewarePages/HumanInLoopPage";
 
@@ -33,8 +33,7 @@ test.describe("Human in the Loop Feature", () => {
     });
   });
 
-  // Agent does not respond to Mars plan prompt within timeout.
-  test.fixme("[ADK Middleware] should interact with the chat using predefined prompts and perform steps", async ({
+  test("[ADK Middleware] should interact with the chat using predefined prompts and perform steps", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
@@ -46,8 +45,11 @@ test.describe("Human in the Loop Feature", () => {
 
       await humanInLoop.openChat();
 
-      await humanInLoop.sendMessage("Hi");
-      await humanInLoop.sendMessage(
+      // Use sendChatMessage to avoid sendAndAwaitResponse timeout
+      // for the slower Mars plan prompt
+      await sendChatMessage(page, "Hi");
+      await awaitLLMResponseDone(page);
+      await sendChatMessage(page,
         "Plan a mission to Mars with the first step being Start The Planning"
       );
       await expect(humanInLoop.plan).toBeVisible();
@@ -58,7 +60,7 @@ test.describe("Human in the Loop Feature", () => {
       await humanInLoop.performSteps();
       await awaitLLMResponseDone(page);
 
-      await humanInLoop.sendMessage(
+      await sendChatMessage(page,
         `Does the planner include ${uncheckedItem}? ⚠️ Reply with only words 'Yes' or 'No' (no explanation, no punctuation).`
       );
     });

@@ -1,9 +1,9 @@
 import { test, expect, retryOnAIFailure } from "../../test-isolation-helper";
 import { SharedStatePage } from "../../featurePages/SharedStatePage";
+import { sendChatMessage } from "../../utils/copilot-actions";
 
 test.describe("Shared State Feature", () => {
-  // Agent does not respond with assistant messages for this integration.
-  test.fixme("[Server Starter all features] should interact with the chat to get a recipe on prompt", async ({
+  test("[Server Starter all features] should interact with the chat to get a recipe on prompt", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
@@ -14,7 +14,9 @@ test.describe("Shared State Feature", () => {
       );
 
       await sharedStateAgent.openChat();
-      await sharedStateAgent.sendMessage('Please give me a pasta recipe of your choosing, but one of the ingredients should be "Pasta"');
+      // Use sendChatMessage to avoid sendAndAwaitResponse timeout;
+      // loader() and awaitIngredientCard handle the waiting.
+      await sendChatMessage(page, 'Please give me a pasta recipe of your choosing, but one of the ingredients should be "Pasta"');
       await sharedStateAgent.loader();
       await sharedStateAgent.awaitIngredientCard('Salt');
       await sharedStateAgent.getInstructionItems(
@@ -23,8 +25,7 @@ test.describe("Shared State Feature", () => {
     });
   });
 
-  // Agent does not respond with assistant messages for this integration.
-  test.fixme("[Server Starter all features] should share state between UI and chat", async ({
+  test("[Server Starter all features] should share state between UI and chat", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
@@ -47,8 +48,9 @@ test.describe("Shared State Feature", () => {
       // Wait for UI to update
       await page.waitForTimeout(1000);
 
-      // Ask chat for all ingredients
-      await sharedStateAgent.sendMessage("Give me all the ingredients");
+      // Use sendChatMessage to avoid sendAndAwaitResponse timeout;
+      // loader() and awaitIngredientCard handle the waiting.
+      await sendChatMessage(page, "Give me all the ingredients");
       await sharedStateAgent.loader();
 
       // Verify hardcoded ingredients

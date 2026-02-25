@@ -2,8 +2,7 @@ import { test, expect, retryOnAIFailure, } from "../../test-isolation-helper";
 import { PredictiveStateUpdatesPage } from "../../pages/serverStarterAllFeaturesPages/PredictiveStateUpdatesPage";
 
 test.describe("Predictive Status Updates Feature", () => {
-  // Agent does not write content to the document editor for this integration.
-  test.fixme("[Server Starter all features] should interact with agent and approve asked changes", async ({ page, }) => {
+  test("[Server Starter all features] should interact with agent and approve asked changes", async ({ page, }) => {
     await retryOnAIFailure(async () => {
       const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);
 
@@ -12,12 +11,10 @@ test.describe("Predictive Status Updates Feature", () => {
       );
 
       await predictiveStateUpdates.openChat();
-      await page.waitForTimeout(2000);
 
       await predictiveStateUpdates.sendMessage(
         "Give me a story for a dragon called Atlantis in document"
       );
-      await page.waitForTimeout(2000);
 
       await predictiveStateUpdates.getPredictiveResponse();
       await predictiveStateUpdates.getUserApproval();
@@ -27,10 +24,7 @@ test.describe("Predictive Status Updates Feature", () => {
       );
       expect(dragonName).not.toBeNull();
 
-      await page.waitForTimeout(3000);
-
       await predictiveStateUpdates.sendMessage("Change dragon name to Lola");
-      await page.waitForTimeout(2000);
 
       await predictiveStateUpdates.verifyHighlightedText();
 
@@ -43,8 +37,7 @@ test.describe("Predictive Status Updates Feature", () => {
     });
   });
 
-  // Skipped while the above test is fixme - the feature is not supported by this integration.
-  test.skip("[Server Starter all features] should interact with agent and reject asked changes", async ({ page, }) => {
+  test("[Server Starter all features] should interact with agent and reject asked changes", async ({ page, }) => {
     await retryOnAIFailure(async () => {
       const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);
 
@@ -53,12 +46,10 @@ test.describe("Predictive Status Updates Feature", () => {
       );
 
       await predictiveStateUpdates.openChat();
-      await page.waitForTimeout(2000);
 
       await predictiveStateUpdates.sendMessage(
         "Give me a story for a dragon called Atlantis in document"
       );
-      await page.waitForTimeout(2000);
 
       await predictiveStateUpdates.getPredictiveResponse();
       await predictiveStateUpdates.getUserApproval();
@@ -68,10 +59,7 @@ test.describe("Predictive Status Updates Feature", () => {
       );
       expect(dragonName).not.toBeNull();
 
-      await page.waitForTimeout(3000);
-
       await predictiveStateUpdates.sendMessage("Change dragon name to Lola");
-      await page.waitForTimeout(2000);
 
       await predictiveStateUpdates.verifyHighlightedText();
 
