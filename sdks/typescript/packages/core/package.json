@@ -3,6 +3,7 @@
   "author": "Markus Ecker <markus.ecker@gmail.com>",
   "version": "0.0.46",
   "private": false,
+  "sideEffects": false,
   "publishConfig": {
     "access": "public"
   },
@@ -22,8 +23,7 @@
     "unlink:global": "pnpm unlink --global"
   },
   "dependencies": {
-    "rxjs": "7.8.1",
-    "zod": "^3.22.4"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@vitest/coverage-istanbul": "^4.0.18",

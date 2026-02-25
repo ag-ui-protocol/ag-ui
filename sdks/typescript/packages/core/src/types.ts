@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4-mini";
 
 export const FunctionCallSchema = z.object({
   name: z.string(),
@@ -9,15 +9,15 @@ export const ToolCallSchema = z.object({
   id: z.string(),
   type: z.literal("function"),
   function: FunctionCallSchema,
-  encryptedValue: z.string().optional(),
+  encryptedValue: z.optional(z.string()),
 });
 
 export const BaseMessageSchema = z.object({
   id: z.string(),
   role: z.string(),
-  content: z.string().optional(),
-  name: z.string().optional(),
-  encryptedValue: z.string().optional(),
+  content: z.optional(z.string()),
+  name: z.optional(z.string()),
+  encryptedValue: z.optional(z.string()),
 });
 
 export const TextInputContentSchema = z.object({
@@ -28,57 +28,57 @@ export const TextInputContentSchema = z.object({
 const BinaryInputContentObjectSchema = z.object({
   type: z.literal("binary"),
   mimeType: z.string(),
-  id: z.string().optional(),
-  url: z.string().optional(),
-  data: z.string().optional(),
-  filename: z.string().optional(),
+  id: z.optional(z.string()),
+  url: z.optional(z.string()),
+  data: z.optional(z.string()),
+  filename: z.optional(z.string()),
 });
 
 const ensureBinaryPayload = (
   value: { id?: string; url?: string; data?: string },
-  ctx: z.RefinementCtx,
+  ctx: z.core.$RefinementCtx
 ) => {
   if (!value.id && !value.url && !value.data) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: "custom",
       message: "BinaryInputContent requires at least one of id, url, or data.",
       path: ["id"],
     });
   }
 };
 
-export const BinaryInputContentSchema = BinaryInputContentObjectSchema.superRefine((value, ctx) => {
+export const BinaryInputContentSchema = BinaryInputContentObjectSchema.check(z.superRefine((value, ctx) => {
   ensureBinaryPayload(value, ctx);
-});
+}));
 
 const InputContentBaseSchema = z.discriminatedUnion("type", [
   TextInputContentSchema,
   BinaryInputContentObjectSchema,
 ]);
 
-export const InputContentSchema = InputContentBaseSchema.superRefine((value, ctx) => {
+export const InputContentSchema = InputContentBaseSchema.check(z.superRefine((value, ctx) => {
   if (value.type === "binary") {
     ensureBinaryPayload(value, ctx);
   }
-});
+}));
 
-export const DeveloperMessageSchema = BaseMessageSchema.extend({
+export const DeveloperMessageSchema = z.extend(BaseMessageSchema, {
   role: z.literal("developer"),
   content: z.string(),
 });
 
-export const SystemMessageSchema = BaseMessageSchema.extend({
+export const SystemMessageSchema = z.extend(BaseMessageSchema, {
   role: z.literal("system"),
   content: z.string(),
 });
 
-export const AssistantMessageSchema = BaseMessageSchema.extend({
+export const AssistantMessageSchema = z.extend(BaseMessageSchema, {
   role: z.literal("assistant"),
-  content: z.string().optional(),
-  toolCalls: z.array(ToolCallSchema).optional(),
+  content: z.optional(z.string()),
+  toolCalls: z.optional(z.array(ToolCallSchema)),
 });
 
-export const UserMessageSchema = BaseMessageSchema.extend({
+export const UserMessageSchema = z.extend(BaseMessageSchema, {
   role: z.literal("user"),
   content: z.union([z.string(), z.array(InputContentSchema)]),
 });
@@ -88,22 +88,22 @@ export const ToolMessageSchema = z.object({
   content: z.string(),
   role: z.literal("tool"),
   toolCallId: z.string(),
-  error: z.string().optional(),
-  encryptedValue: z.string().optional(),
+  error: z.optional(z.string()),
+  encryptedValue: z.optional(z.string()),
 });
 
 export const ActivityMessageSchema = z.object({
   id: z.string(),
   role: z.literal("activity"),
   activityType: z.string(),
-  content: z.record(z.any()),
+  content: z.record(z.any(), z.any()),
 });
 
 export const ReasoningMessageSchema = z.object({
   id: z.string(),
   role: z.literal("reasoning"),
   content: z.string(),
-  encryptedValue: z.string().optional(),
+  encryptedValue: z.optional(z.string()),
 });
 
 export const MessageSchema = z.discriminatedUnion("role", [
@@ -140,7 +140,7 @@ export const ToolSchema = z.object({
 export const RunAgentInputSchema = z.object({
   threadId: z.string(),
   runId: z.string(),
-  parentRunId: z.string().optional(),
+  parentRunId: z.optional(z.string()),
   state: z.any(),
   messages: z.array(MessageSchema),
   tools: z.array(ToolSchema),
