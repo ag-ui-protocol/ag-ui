@@ -20,10 +20,10 @@ import ast
 import os
 import json
 import uuid
+import traceback
 from contextvars import ContextVar
 from typing import Any, Dict, List
 
-# AG‑UI Python SDK (events)
 from ag_ui.core.events import (
     RunFinishedEvent,
     RunStartedEvent,
@@ -235,7 +235,7 @@ class AgUiSpanProcessor(SpanProcessor):
                     tool_call_id = span.description.replace("tcid__", "")
                     self._tool_run_id_to_tool_call_id[event.request_id] = tool_call_id
             case ToolExecutionResponse():
-                tool_call_id = self._tool_run_id_to_tool_call_id[event.request_id]
+                tool_call_id = self._tool_run_id_to_tool_call_id[event.request_id] if self._runtime == "langgraph" else event.request_id
                 message_id = self._started_tool_calls[tool_call_id]["message_id"]
                 content = _normalize_tool_output(event.outputs)
                 events.append(
@@ -248,9 +248,9 @@ class AgUiSpanProcessor(SpanProcessor):
                 )
             case ExceptionRaised():
                 raise RuntimeError(
-                    "[AG-UI SpanProcessor] Exception occurred during agent execution:"
+                    "[AG-UI SpanProcessor] ExceptionRaised occurred during agent execution:"
                     + event.exception_message
-                    + f"\n\nStacktrace: {event.exception_stacktrace}"
+                    + f"\n\nStacktrace: {traceback.format_exc()}"
                 )
             case _:
                 return events
