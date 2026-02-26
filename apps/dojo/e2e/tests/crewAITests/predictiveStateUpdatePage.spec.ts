@@ -6,22 +6,24 @@ import {
 import { PredictiveStateUpdatesPage } from "../../pages/crewAIPages/PredictiveStateUpdatesPage";
 
 test.describe("Predictive Status Updates Feature", () => {
+  test.slow(); // Multi-step AI test: needs extra time for retries
+
   test("[CrewAI] should interact with agent and approve asked changes", async ({
     page,
   }) => {
     await retryOnAIFailure(async () => {
       const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);
 
-      // Update URL to new domain
       await page.goto(
         "/crewai/feature/predictive_state_updates"
       );
 
       await predictiveStateUpdates.openChat();
+
       await predictiveStateUpdates.sendMessage(
         "Give me a story for a dragon called Atlantis in document"
       );
-      await page.waitForTimeout(2000);
+
       await predictiveStateUpdates.getPredictiveResponse();
       await predictiveStateUpdates.getUserApproval();
       await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
@@ -32,10 +34,10 @@ test.describe("Predictive Status Updates Feature", () => {
 
       // Send update to change the dragon name
       await predictiveStateUpdates.sendMessage("Change dragon name to Lola");
-      await page.waitForTimeout(2000);
+
       await predictiveStateUpdates.verifyHighlightedText();
       await predictiveStateUpdates.getUserApproval();
-      await expect(predictiveStateUpdates.confirmedChangesResponse.nth(1)).toBeVisible();
+      await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
       const dragonNameNew = await predictiveStateUpdates.verifyAgentResponse(
         "Lola"
       );
@@ -49,7 +51,6 @@ test.describe("Predictive Status Updates Feature", () => {
     await retryOnAIFailure(async () => {
       const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);
 
-      // Update URL to new domain
       await page.goto(
         "/crewai/feature/predictive_state_updates"
       );
@@ -57,8 +58,9 @@ test.describe("Predictive Status Updates Feature", () => {
       await predictiveStateUpdates.openChat();
 
       await predictiveStateUpdates.sendMessage(
-        "Give me a story for a dragon called called Atlantis in document"
+        "Give me a story for a dragon called Atlantis in document"
       );
+
       await predictiveStateUpdates.getPredictiveResponse();
       await predictiveStateUpdates.getUserApproval();
       await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
@@ -69,7 +71,7 @@ test.describe("Predictive Status Updates Feature", () => {
 
       // Send update to change the dragon name
       await predictiveStateUpdates.sendMessage("Change dragon name to Lola");
-      await page.waitForTimeout(2000);
+
       await predictiveStateUpdates.verifyHighlightedText();
       await predictiveStateUpdates.getUserRejection();
       await expect(predictiveStateUpdates.rejectedChangesResponse).toBeVisible();

@@ -25,7 +25,7 @@ export class PredictiveStateUpdatesPage {
     this.agentResponsePrompt = page.locator('div.tiptap.ProseMirror');
     this.userApprovalModal = page.locator('[data-testid="confirm-changes-modal"]').last();
     this.acceptedButton = page.getByText('✓ Accepted');
-    this.confirmedChangesResponse = CopilotSelectors.assistantMessages(page).first();
+    this.confirmedChangesResponse = CopilotSelectors.assistantMessages(page).last();
     this.rejectedChangesResponse = CopilotSelectors.assistantMessages(page).last();
     this.highlights = page.locator('.tiptap em');
     this.agentMessage = CopilotSelectors.assistantMessages(page);
@@ -68,7 +68,8 @@ export class PredictiveStateUpdatesPage {
   }
 
   async verifyAgentResponse(dragonName) {
-    const paragraphWithName = await this.page.locator(`div.tiptap >> text=${dragonName}`).first();
+    const paragraphWithName = this.page.locator(`div.tiptap >> text=${dragonName}`).first();
+    await expect(paragraphWithName).toBeVisible();
 
     const fullText = await paragraphWithName.textContent();
     if (!fullText) {
