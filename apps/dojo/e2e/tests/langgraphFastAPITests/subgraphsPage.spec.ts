@@ -30,6 +30,7 @@ test.describe("Subgraphs Travel Agent Feature", () => {
       await subgraphsPage.verifyStaticFlightData();
 
       // FEATURE TEST: Test interrupt pause behavior - flow shouldn't auto-proceed
+      await page.waitForTimeout(3000);
       // await expect(page.getByText(/hotel.*options|accommodation|Zephyr|Ritz-Carlton|Hotel Zoe/i)).not.toBeVisible();
 
       // Select KLM flight through interrupt
@@ -49,6 +50,7 @@ test.describe("Subgraphs Travel Agent Feature", () => {
       await subgraphsPage.verifyStaticHotelData();
 
       // FEATURE TEST: Test interrupt pause behavior again
+      await page.waitForTimeout(3000);
 
       // Select Hotel Zoe through interrupt
       await subgraphsPage.selectHotel('Zoe');
@@ -94,6 +96,7 @@ test.describe("Subgraphs Travel Agent Feature", () => {
 
       await subgraphsPage.verifyStaticFlightData();
 
+      await page.waitForTimeout(3000);
       // FEATURE TEST: Test different selection - United instead of KLM
       await subgraphsPage.selectFlight('United');
 
@@ -111,6 +114,7 @@ test.describe("Subgraphs Travel Agent Feature", () => {
       await subgraphsPage.verifyStaticHotelData();
 
       // FEATURE TEST: Test interrupt pause behavior again
+      await page.waitForTimeout(3000);
 
       // FEATURE TEST: Test different hotel selection - Ritz-Carlton
       await subgraphsPage.selectHotel('Ritz-Carlton');

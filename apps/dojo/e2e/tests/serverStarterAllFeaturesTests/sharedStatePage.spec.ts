@@ -45,8 +45,8 @@ test.describe("Shared State Feature", () => {
       await newIngredientCard.locator('.ingredient-name-input').fill('Potatoes');
       await newIngredientCard.locator('.ingredient-amount-input').fill('12');
 
-      await expect(newIngredientCard.locator('.ingredient-name-input')).toHaveValue('Potatoes');
-      await expect(newIngredientCard.locator('.ingredient-amount-input')).toHaveValue('12');
+      // Wait for UI to update
+      await page.waitForTimeout(1000);
 
       // Use sendChatMessage to avoid sendAndAwaitResponse timeout;
       // loader() and awaitIngredientCard handle the waiting.

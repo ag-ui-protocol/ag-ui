@@ -44,12 +44,12 @@ function getBaseUrl(): string {
 }
 
 export default defineConfig({
-  timeout: process.env.CI ? 120_000 : 60_000,
+  timeout: process.env.CI ? 120_000 : 30_000, // 1min in CI, 30s locally
   testDir: "./tests",
   retries: process.env.CI ? 3 : 0, // More retries for flaky AI tests in CI, 0 for local
   // Make this sequential for now to avoid race conditions
   workers: process.env.CI ? 1 : undefined,
-  fullyParallel: process.env.CI ? false : true,
+  fullyParallel: process.env.CI ? true : true,
   use: {
     headless: true,
     viewport: { width: 1280, height: 720 },

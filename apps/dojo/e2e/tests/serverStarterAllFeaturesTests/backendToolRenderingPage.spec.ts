@@ -1,5 +1,4 @@
 import { test, expect } from "@playwright/test";
-import { awaitLLMResponseDone } from "../../utils/copilot-actions";
 
 test("[ServerStarterAllFeatures] Backend Tool Rendering displays weather cards", async ({
   page,
@@ -19,7 +18,6 @@ test("[ServerStarterAllFeatures] Backend Tool Rendering displays weather cards",
 
   // Click first suggestion and verify weather card appears
   await page.getByRole("button", { name: "Weather in San Francisco" }).click();
-  await awaitLLMResponseDone(page, 30_000);
 
   // Wait longer for weather card to appear (backend processing time)
   const weatherCard = page.getByTestId("weather-card");
@@ -45,6 +43,7 @@ test("[ServerStarterAllFeatures] Backend Tool Rendering displays weather cards",
   expect(weatherVisible).toBeTruthy();
 
   // Verify weather content is present (use flexible selectors)
+  await page.waitForTimeout(1000); // Give elements time to render
 
   const hasHumidity = await page
     .getByText("Humidity")
@@ -65,7 +64,7 @@ test("[ServerStarterAllFeatures] Backend Tool Rendering displays weather cards",
 
   // Click second suggestion
   await page.getByRole("button", { name: "Weather in New York" }).click();
-  await awaitLLMResponseDone(page, 30_000);
+  await page.waitForTimeout(3000); // Longer wait for backend to process
 
   // Verify at least one weather-related element is still visible
   const weatherElements = await page.getByText(/Weather|Humidity|Wind|Temperature/i).count();
