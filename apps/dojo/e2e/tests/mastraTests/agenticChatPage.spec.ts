@@ -51,6 +51,7 @@ test("[Mastra] Agentic Chat provides weather information", async ({
 test("[Mastra] Agentic Chat retains memory of previous questions", async ({
   page,
 }) => {
+  test.slow(); // Multi-step AI test with external weather API calls
   await retryOnAIFailure(async () => {
     await page.goto(
       "/mastra/feature/agentic_chat"
@@ -70,7 +71,7 @@ test("[Mastra] Agentic Chat retains memory of previous questions", async ({
     await awaitLLMResponseDone(page);
 
     // Ask about the first question to test memory
-    await sendChatMessage(page, "What was my first question");
+    await chat.sendMessage("What was my first question");
     await chat.assertUserMessageVisible("What was my first question");
 
     // Check if the agent remembers the first question about weather
