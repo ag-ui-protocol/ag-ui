@@ -139,35 +139,35 @@ importers:
         specifier: ^2.0.42
         version: 2.0.52(zod@4.3.6)
       '@copilotkit/a2ui-renderer':
-        specifier: 1.51.4-next.3
-        version: 1.51.4-next.3(2708bbfc5076efda458017be302f3dbc)
+        specifier: 1.51.4
+        version: 1.51.4(@copilotkit/react-core@1.51.4(3210f4b94372433af365788182b51fff))(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(signal-polyfill@0.2.2)
       '@copilotkit/react-core':
-        specifier: 1.51.4-next.3
-        version: 1.51.4-next.3(95b1f5caa1778c6683e4360b2810eec0)
+        specifier: 1.51.4
+        version: 1.51.4(3210f4b94372433af365788182b51fff)
       '@copilotkit/react-ui':
-        specifier: 1.51.4-next.3
-        version: 1.51.4-next.3(95b1f5caa1778c6683e4360b2810eec0)
+        specifier: 1.51.4
+        version: 1.51.4(3210f4b94372433af365788182b51fff)
       '@copilotkit/runtime':
-        specifier: 1.51.4-next.3
-        version: 1.51.4-next.3(13ab368acf85f3eab846f011c348c937)
+        specifier: 1.51.4
+        version: 1.51.4(d26172592fe8ca275c9bac3c30d5d776)
       '@copilotkit/runtime-client-gql':
-        specifier: 1.51.4-next.3
-        version: 1.51.4-next.3(b5259ae8f9a4603b6d44db35253bd0cb)
+        specifier: 1.51.4
+        version: 1.51.4(4d060b641a6d8da71b0607fee3511295)
       '@copilotkit/shared':
-        specifier: 1.51.4-next.3
-        version: 1.51.4-next.3(@ag-ui/core@sdks+typescript+packages+core)
+        specifier: 1.51.4
+        version: 1.51.4(@ag-ui/core@sdks+typescript+packages+core)
       '@copilotkitnext/agent':
-        specifier: 1.51.4-next.3
-        version: 1.51.4-next.3
+        specifier: 1.51.4
+        version: 1.51.4
       '@copilotkitnext/core':
-        specifier: 1.51.4-next.3
-        version: 1.51.4-next.3
+        specifier: 1.51.4
+        version: 1.51.4
       '@copilotkitnext/react':
-        specifier: 1.51.4-next.3
-        version: 1.51.4-next.3(@types/mdast@4.0.4)(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(micromark-util-types@2.0.2)(micromark@4.0.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
+        specifier: 1.51.4
+        version: 1.51.4(@types/mdast@4.0.4)(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(micromark-util-types@2.0.2)(micromark@4.0.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       '@copilotkitnext/runtime':
-        specifier: 1.51.4-next.3
-        version: 1.51.4-next.3(@ag-ui/client@sdks+typescript+packages+client)(@ag-ui/core@sdks+typescript+packages+core)(@ag-ui/encoder@sdks+typescript+packages+encoder)(@copilotkitnext/shared@1.51.5-next.2)
+        specifier: 1.51.4
+        version: 1.51.4(@ag-ui/client@sdks+typescript+packages+client)(@ag-ui/core@sdks+typescript+packages+core)(@ag-ui/encoder@sdks+typescript+packages+encoder)(@copilotkitnext/shared@1.51.5-next.2)
       '@langchain/openai':
         specifier: 1.0.0
         version: 1.0.0(@langchain/core@0.3.80(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@4.3.6)))(ws@8.18.3)
@@ -1762,26 +1762,27 @@ packages:
     resolution: {integrity: sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ==}
     engines: {node: '>=0.1.90'}
 
-  '@copilotkit/a2ui-renderer@1.51.4-next.3':
-    resolution: {integrity: sha512-QWyXWXgN68eCysGWpShd3nU0xhrMGCu44R4tTi6kHuzL+nNNmACE1sqN7VUwEXcu9pCt273e9FG0yfae9aB0uw==}
+  '@copilotkit/a2ui-renderer@1.51.4':
+    resolution: {integrity: sha512-SYodJ3igyvEzufQm72v0emvXg1lct+UpDS3sYmnFmImcRrQr2aYvnc2drSInYCsqFat74xQpSEQAvDwENjDyzA==}
     peerDependencies:
+      '@copilotkit/react-core': '>=1.51.4'
       react: ^18 || ^19 || ^19.0.0-rc
       react-dom: ^18 || ^19 || ^19.0.0-rc
 
-  '@copilotkit/react-core@1.51.4-next.3':
-    resolution: {integrity: sha512-myhcvrW7keJavttYK5eBBDp9HlX8Vbg8mlHrct39nJslIoRvlVx8CFvsESY2/KCtijzYXYhhTVrz2HO0wBucSw==}
+  '@copilotkit/react-core@1.51.4':
+    resolution: {integrity: sha512-NAWTz9j7eCfQze4EJWzUowBynXuPFVpE0xyOpJyqdVeUfvQZubEHvARnZ7DlWdJUBSMBaotJ75EZaFSQR9HX2g==}
     peerDependencies:
       react: ^18 || ^19 || ^19.0.0-rc
       react-dom: ^18 || ^19 || ^19.0.0-rc
       zod: '>=3.0.0'
 
-  '@copilotkit/react-ui@1.51.4-next.3':
-    resolution: {integrity: sha512-3sgCeyzi7FNhayzJ9KpSJxAyqaLUCnhckm6tQS/XuU6Qd+7Y1NikUc5JJpFRTJWgDnVyHY5P3nx76Ro96VcwOQ==}
+  '@copilotkit/react-ui@1.51.4':
+    resolution: {integrity: sha512-WbXslO08E5GJtrWICA7BapXpSaUc9W1Bxj3JrnimSeB+ouertXWrPc1gK9ty5VYpP76EV3sc+zZyw1Sx5ZHnuw==}
     peerDependencies:
       react: ^18 || ^19 || ^19.0.0-rc
 
-  '@copilotkit/runtime-client-gql@1.51.4-next.3':
-    resolution: {integrity: sha512-b62Nld24uypExA/LX35dWkyFKBnIZImVywXQoeoX/Qsi96wZYCoydew+WZ1LV5OvzcRyIdxD6pDL8r8Cu9JpWg==}
+  '@copilotkit/runtime-client-gql@1.51.4':
+    resolution: {integrity: sha512-M7U+/t/ofdrmDxBwul6DznP/yO46CMHyv/Dc4jKOqds+Ug/7aEXB/rlChs/sA+zcEGzcKoKutHXWAT/aScMh4w==}
     peerDependencies:
       react: ^18 || ^19 || ^19.0.0-rc
 
@@ -1821,13 +1822,13 @@ packages:
       openai:
         optional: true
 
-  '@copilotkit/runtime@1.51.4-next.3':
-    resolution: {integrity: sha512-UqIz6c0UmjMf7PF/iv9YWCxhMlv/qjwLQHFF3W49QhvbLeVC1eHduIDE4/e2v3WQyUnY9KxbkgsduWizUcPuKg==}
+  '@copilotkit/runtime@1.51.4':
+    resolution: {integrity: sha512-BBqOvrXrY4hxQ7Z6v7kcc26fEPdrNCxK9adZUCURdjV6pupd6fqaGP0FIIOOSA7l98HX79RI3V2MStn+1Xamiw==}
     peerDependencies:
       '@anthropic-ai/sdk': ^0.57.0
-      '@copilotkit/shared': 1.51.4-next.3
-      '@copilotkitnext/agent': 1.51.4-next.3
-      '@copilotkitnext/runtime': 1.51.4-next.3
+      '@copilotkit/shared': 1.51.4
+      '@copilotkitnext/agent': 1.51.4
+      '@copilotkitnext/runtime': 1.51.4
       '@langchain/aws': '>=0.1.9'
       '@langchain/community': '>=0.3.58'
       '@langchain/core': '>=0.3.66'
@@ -1857,8 +1858,8 @@ packages:
       openai:
         optional: true
 
-  '@copilotkit/shared@1.51.4-next.3':
-    resolution: {integrity: sha512-8ttqevgp4Scwqq/GC4Ji895jWSXEqJYahVcEo2IuIcDN28zGncJlYraDBm38R1QJMfSwWENsjoz+inEv/75qIg==}
+  '@copilotkit/shared@1.51.4':
+    resolution: {integrity: sha512-njIHsNGeH1AtrLBnqTup3GwGyBosg3VQEmAnxEs6JVNkvVfWxJO9OfVziPBnwZT5cXnMFkpo8zhfT5WSKllXLQ==}
     peerDependencies:
       '@ag-ui/core': ^0.0.43
 
@@ -1867,33 +1868,33 @@ packages:
     peerDependencies:
       '@ag-ui/core': ^0.0.45
 
-  '@copilotkitnext/agent@1.51.4-next.3':
-    resolution: {integrity: sha512-gTycfmtpOFX3cYgAfCs14874w0DHE6q55F4PN+ReqNAEFQ4H+5esVdG/znq4r7855u/WexWfEkNPv6jrh/sktw==}
+  '@copilotkitnext/agent@1.51.4':
+    resolution: {integrity: sha512-/+4uy7E5aHsLpiaZYKFqvNgU2OOCM83JRgKJy9gPZ87fyR2Hwu3Wj/EFiHWSzZBo/DOeFxE1u/3u5MPjlukntg==}
     engines: {node: '>=18'}
 
   '@copilotkitnext/agent@1.51.5-next.2':
     resolution: {integrity: sha512-uYCorgWCUNqA7IZLKyo8MtXljs/T3yIr8E4sL3uGSdBKeORfTHvNkdEEUosSXaD1XPXiyjRcFLXsRYkNCf1HnA==}
     engines: {node: '>=18'}
 
-  '@copilotkitnext/core@1.51.4-next.3':
-    resolution: {integrity: sha512-MvtEsJOHeyHwuTiGeYnm5b5+BCwcXwdPboRAew8AGSYE68UVSyuncJGqmrD/GFPgcT5ptjd3GMzCUTEAeugcgQ==}
+  '@copilotkitnext/core@1.51.4':
+    resolution: {integrity: sha512-mCjtcrQEeNm+SM6EHKWA04OKPNmm/gt+ITOlKA3uam/jnNU4YnVJoJHlbN+PX2XVzq9zhATr34GIlgGExOuZHw==}
     engines: {node: '>=18'}
 
-  '@copilotkitnext/react@1.51.4-next.3':
-    resolution: {integrity: sha512-9LBMRQe87wNCEPzUqer/a0dTI1ze0pHbmE4FEMqsee455yy5jh5QL00fKkSsSXuSBDjNbn8D8kwD3MDyYR9GGw==}
+  '@copilotkitnext/react@1.51.4':
+    resolution: {integrity: sha512-9pn0PvRQuMkg0d6hJ1q0qBtbSGxkyyHXoRwdeDaeSw+vsGQtVvSeyl/p4Bex6JosgoA2NTHmT2F5wZV/pbrf1A==}
     engines: {node: '>=18'}
     peerDependencies:
       react: '>=16.8.0'
       react-dom: '>=16.8.0'
 
-  '@copilotkitnext/runtime@1.51.4-next.3':
-    resolution: {integrity: sha512-8H3zGrLJKgjfN0KZBaInzMCPSGXCN3WZwv2qDnXiZn6l5sGwvn4ySt99k3R2nwU5B30uXY2rxgka6IPQPP5F0Q==}
+  '@copilotkitnext/runtime@1.51.4':
+    resolution: {integrity: sha512-XBkNxrVlyu7/dQunKEw5RX/NOrVEss36up/jVvGI6X31ayC0pjeMnyPcvmKbbbg5irdLUMgBeYgC3k93ke+dhg==}
     engines: {node: '>=18'}
     peerDependencies:
       '@ag-ui/client': 0.0.42
       '@ag-ui/core': 0.0.42
       '@ag-ui/encoder': 0.0.42
-      '@copilotkitnext/shared': 1.51.4-next.3
+      '@copilotkitnext/shared': 1.51.4
 
   '@copilotkitnext/runtime@1.51.5-next.2':
     resolution: {integrity: sha512-yeh7JD9wT+Y3UJI9ujrjj4nQ4z4nrlNlAR8ouB2DRh1UakuD0cFAGYuw+qtI26aaWYnwS/IiZRV4/9b356Y2dQ==}
@@ -1904,16 +1905,16 @@ packages:
       '@ag-ui/encoder': 0.0.45
       '@copilotkitnext/shared': 1.51.5-next.2
 
-  '@copilotkitnext/shared@1.51.4-next.3':
-    resolution: {integrity: sha512-DlSeIncnRa1rtBXBmje9pBnY7uBrLpDTdpn530mXW25+9GsIb84kC6+vOxVCgaggKPEXq+C2g195tWK2qyBnaw==}
+  '@copilotkitnext/shared@1.51.4':
+    resolution: {integrity: sha512-3C68dzGwuUShAHHnJVLSMOZ89QZrx8oXrGNx8VbFl3BrOw6Q+sG53hgx/QZ23TAwqKq3Gt7JVrbUp6iQE7DGsw==}
     engines: {node: '>=18'}
 
   '@copilotkitnext/shared@1.51.5-next.2':
     resolution: {integrity: sha512-/Nn1djFdYhIgWG7KgMk2cfJzNoeEhRgdKVwJAxCtMQVnghG3JpsBNijl1SUgi6b0yPBWQsH/23j6RPI/cUhswA==}
     engines: {node: '>=18'}
 
-  '@copilotkitnext/web-inspector@1.51.4-next.3':
-    resolution: {integrity: sha512-Bvv8Xx9Cnh9ZGYn6s7of0v2wo5F+6nPvyUxPquifyP5vo37418hgwg7833rDa679YFR8siDUJ+nBG95bc7BQ1w==}
+  '@copilotkitnext/web-inspector@1.51.4':
+    resolution: {integrity: sha512-zXJWbIgVkJUSsEedgQhbKg84bAod1lxdfR78rCaHrGO2XfSnZInphMOa3boQkbUdzKr1bhxWmgJd/fi5+/5AVQ==}
     engines: {node: '>=18'}
 
   '@emnapi/core@1.5.0':
@@ -11383,89 +11384,25 @@ snapshots:
   '@colors/colors@1.5.0':
     optional: true
 
-  '@copilotkit/a2ui-renderer@1.51.4-next.3(2708bbfc5076efda458017be302f3dbc)':
+  '@copilotkit/a2ui-renderer@1.51.4(@copilotkit/react-core@1.51.4(3210f4b94372433af365788182b51fff))(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(signal-polyfill@0.2.2)':
     dependencies:
       '@a2ui/lit': 0.8.1(signal-polyfill@0.2.2)
-      '@copilotkit/react-core': 1.51.4-next.3(16bf421483864221687c287d4388afdf)
-      '@lit-labs/signals': 0.1.3
-      '@lit/context': 1.1.6
-      lit: 3.3.1
+      '@copilotkit/react-core': 1.51.4(3210f4b94372433af365788182b51fff)
+      clsx: 2.1.1
+      markdown-it: 14.1.0
       react: 19.2.1
       react-dom: 19.2.1(react@19.2.1)
       zod: 3.25.76
     transitivePeerDependencies:
-      - '@ag-ui/core'
-      - '@anthropic-ai/sdk'
-      - '@copilotkitnext/agent'
-      - '@copilotkitnext/runtime'
-      - '@langchain/aws'
-      - '@langchain/community'
-      - '@langchain/core'
-      - '@langchain/google-gauth'
-      - '@langchain/langgraph-sdk'
-      - '@langchain/openai'
-      - '@opentelemetry/api'
-      - '@opentelemetry/exporter-trace-otlp-proto'
-      - '@opentelemetry/sdk-trace-base'
-      - '@types/mdast'
-      - '@types/react'
-      - '@types/react-dom'
-      - encoding
-      - graphql
-      - groq-sdk
-      - langchain
-      - micromark
-      - micromark-util-types
-      - openai
       - signal-polyfill
-      - supports-color
 
-  '@copilotkit/react-core@1.51.4-next.3(16bf421483864221687c287d4388afdf)':
+  '@copilotkit/react-core@1.51.4(3210f4b94372433af365788182b51fff)':
     dependencies:
       '@ag-ui/client': 0.0.43
-      '@copilotkit/runtime-client-gql': 1.51.4-next.3(b5259ae8f9a4603b6d44db35253bd0cb)
-      '@copilotkit/shared': 1.51.4-next.3(@ag-ui/core@sdks+typescript+packages+core)
-      '@copilotkitnext/core': 1.51.4-next.3
-      '@copilotkitnext/react': 1.51.4-next.3(@types/mdast@4.0.4)(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(micromark-util-types@2.0.2)(micromark@4.0.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
-      '@scarf/scarf': 1.4.0
-      react: 19.2.1
-      react-dom: 19.2.1(react@19.2.1)
-      react-markdown: 8.0.7(@types/react@19.2.2)(react@19.2.1)
-      untruncate-json: 0.0.1
-      zod: 3.25.76
-    transitivePeerDependencies:
-      - '@ag-ui/core'
-      - '@anthropic-ai/sdk'
-      - '@copilotkitnext/agent'
-      - '@copilotkitnext/runtime'
-      - '@langchain/aws'
-      - '@langchain/community'
-      - '@langchain/core'
-      - '@langchain/google-gauth'
-      - '@langchain/langgraph-sdk'
-      - '@langchain/openai'
-      - '@opentelemetry/api'
-      - '@opentelemetry/exporter-trace-otlp-proto'
-      - '@opentelemetry/sdk-trace-base'
-      - '@types/mdast'
-      - '@types/react'
-      - '@types/react-dom'
-      - encoding
-      - graphql
-      - groq-sdk
-      - langchain
-      - micromark
-      - micromark-util-types
-      - openai
-      - supports-color
-
-  '@copilotkit/react-core@1.51.4-next.3(95b1f5caa1778c6683e4360b2810eec0)':
-    dependencies:
-      '@ag-ui/client': 0.0.43
-      '@copilotkit/runtime-client-gql': 1.51.4-next.3(b5259ae8f9a4603b6d44db35253bd0cb)
-      '@copilotkit/shared': 1.51.4-next.3(@ag-ui/core@sdks+typescript+packages+core)
-      '@copilotkitnext/core': 1.51.4-next.3
-      '@copilotkitnext/react': 1.51.4-next.3(@types/mdast@4.0.4)(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(micromark-util-types@2.0.2)(micromark@4.0.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
+      '@copilotkit/runtime-client-gql': 1.51.4(4d060b641a6d8da71b0607fee3511295)
+      '@copilotkit/shared': 1.51.4(@ag-ui/core@sdks+typescript+packages+core)
+      '@copilotkitnext/core': 1.51.4
+      '@copilotkitnext/react': 1.51.4(@types/mdast@4.0.4)(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(micromark-util-types@2.0.2)(micromark@4.0.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       '@scarf/scarf': 1.4.0
       react: 19.2.1
       react-dom: 19.2.1(react@19.2.1)
@@ -11498,11 +11435,11 @@ snapshots:
       - openai
       - supports-color
 
-  '@copilotkit/react-ui@1.51.4-next.3(95b1f5caa1778c6683e4360b2810eec0)':
+  '@copilotkit/react-ui@1.51.4(3210f4b94372433af365788182b51fff)':
     dependencies:
-      '@copilotkit/react-core': 1.51.4-next.3(95b1f5caa1778c6683e4360b2810eec0)
-      '@copilotkit/runtime-client-gql': 1.51.4-next.3(b5259ae8f9a4603b6d44db35253bd0cb)
-      '@copilotkit/shared': 1.51.4-next.3(@ag-ui/core@sdks+typescript+packages+core)
+      '@copilotkit/react-core': 1.51.4(3210f4b94372433af365788182b51fff)
+      '@copilotkit/runtime-client-gql': 1.51.4(4d060b641a6d8da71b0607fee3511295)
+      '@copilotkit/shared': 1.51.4(@ag-ui/core@sdks+typescript+packages+core)
       '@headlessui/react': 2.2.9(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       react: 19.2.1
       react-markdown: 10.1.0(@types/react@19.2.2)(react@19.2.1)
@@ -11538,10 +11475,10 @@ snapshots:
       - supports-color
       - zod
 
-  '@copilotkit/runtime-client-gql@1.51.4-next.3(b5259ae8f9a4603b6d44db35253bd0cb)':
+  '@copilotkit/runtime-client-gql@1.51.4(4d060b641a6d8da71b0607fee3511295)':
     dependencies:
-      '@copilotkit/runtime': 1.51.4-next.3(13ab368acf85f3eab846f011c348c937)
-      '@copilotkit/shared': 1.51.4-next.3(@ag-ui/core@sdks+typescript+packages+core)
+      '@copilotkit/runtime': 1.51.4(d26172592fe8ca275c9bac3c30d5d776)
+      '@copilotkit/shared': 1.51.4(@ag-ui/core@sdks+typescript+packages+core)
       '@urql/core': 5.2.0(graphql@16.11.0)
       react: 19.2.1
       untruncate-json: 0.0.1
@@ -11608,14 +11545,14 @@ snapshots:
       - react
       - react-dom
 
-  '@copilotkit/runtime@1.51.4-next.3(13ab368acf85f3eab846f011c348c937)':
+  '@copilotkit/runtime@1.51.4(d26172592fe8ca275c9bac3c30d5d776)':
     dependencies:
       '@ag-ui/client': 0.0.43
       '@ag-ui/core': 0.0.43
       '@ag-ui/langgraph': 0.0.24(@ag-ui/client@0.0.43)(@ag-ui/core@0.0.43)(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@4.3.6))(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
-      '@copilotkit/shared': 1.51.4-next.3(@ag-ui/core@sdks+typescript+packages+core)
-      '@copilotkitnext/agent': 1.51.4-next.3
-      '@copilotkitnext/runtime': 1.51.4-next.3(@ag-ui/client@sdks+typescript+packages+client)(@ag-ui/core@sdks+typescript+packages+core)(@ag-ui/encoder@sdks+typescript+packages+encoder)(@copilotkitnext/shared@1.51.5-next.2)
+      '@copilotkit/shared': 1.51.4(@ag-ui/core@sdks+typescript+packages+core)
+      '@copilotkitnext/agent': 1.51.4
+      '@copilotkitnext/runtime': 1.51.4(@ag-ui/client@sdks+typescript+packages+client)(@ag-ui/core@sdks+typescript+packages+core)(@ag-ui/encoder@sdks+typescript+packages+encoder)(@copilotkitnext/shared@1.51.5-next.2)
       '@graphql-yoga/plugin-defer-stream': 3.16.0(graphql-yoga@5.16.0(graphql@16.11.0))(graphql@16.11.0)
       '@hono/node-server': 1.19.7(hono@4.11.5)
       '@langchain/core': 0.3.80(@opentelemetry/api@1.9.0)(@opentelemetry/exporter-trace-otlp-proto@0.203.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.1.0(@opentelemetry/api@1.9.0))(openai@4.104.0(ws@8.18.3)(zod@4.3.6))
@@ -11649,7 +11586,7 @@ snapshots:
       - react
       - react-dom
 
-  '@copilotkit/shared@1.51.4-next.3(@ag-ui/core@sdks+typescript+packages+core)':
+  '@copilotkit/shared@1.51.4(@ag-ui/core@sdks+typescript+packages+core)':
     dependencies:
       '@ag-ui/core': link:sdks/typescript/packages/core
       '@segment/analytics-node': 2.3.0
@@ -11671,7 +11608,7 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  '@copilotkitnext/agent@1.51.4-next.3':
+  '@copilotkitnext/agent@1.51.4':
     dependencies:
       '@ag-ui/client': 0.0.42
       '@ai-sdk/anthropic': 2.0.23(zod@3.25.76)
@@ -11699,21 +11636,21 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@copilotkitnext/core@1.51.4-next.3':
+  '@copilotkitnext/core@1.51.4':
     dependencies:
       '@ag-ui/client': 0.0.42
-      '@copilotkitnext/shared': 1.51.4-next.3
+      '@copilotkitnext/shared': 1.51.4
       rxjs: 7.8.1
       zod: 3.25.76
       zod-to-json-schema: 3.24.6(zod@3.25.76)
 
-  '@copilotkitnext/react@1.51.4-next.3(@types/mdast@4.0.4)(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(micromark-util-types@2.0.2)(micromark@4.0.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)':
+  '@copilotkitnext/react@1.51.4(@types/mdast@4.0.4)(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(micromark-util-types@2.0.2)(micromark@4.0.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)':
     dependencies:
       '@ag-ui/client': 0.0.42
       '@ag-ui/core': 0.0.42
-      '@copilotkitnext/core': 1.51.4-next.3
-      '@copilotkitnext/shared': 1.51.4-next.3
-      '@copilotkitnext/web-inspector': 1.51.4-next.3
+      '@copilotkitnext/core': 1.51.4
+      '@copilotkitnext/shared': 1.51.4
+      '@copilotkitnext/web-inspector': 1.51.4
       '@lit-labs/react': 2.1.3(@types/react@19.2.2)
       '@radix-ui/react-dropdown-menu': 2.1.16(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       '@radix-ui/react-slot': 1.2.3(@types/react@19.2.2)(react@19.2.1)
@@ -11738,7 +11675,7 @@ snapshots:
       - micromark-util-types
       - supports-color
 
-  '@copilotkitnext/runtime@1.51.4-next.3(@ag-ui/client@sdks+typescript+packages+client)(@ag-ui/core@sdks+typescript+packages+core)(@ag-ui/encoder@sdks+typescript+packages+encoder)(@copilotkitnext/shared@1.51.5-next.2)':
+  '@copilotkitnext/runtime@1.51.4(@ag-ui/client@sdks+typescript+packages+client)(@ag-ui/core@sdks+typescript+packages+core)(@ag-ui/encoder@sdks+typescript+packages+encoder)(@copilotkitnext/shared@1.51.5-next.2)':
     dependencies:
       '@ag-ui/client': link:sdks/typescript/packages/client
       '@ag-ui/core': link:sdks/typescript/packages/core
@@ -11764,7 +11701,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@copilotkitnext/shared@1.51.4-next.3':
+  '@copilotkitnext/shared@1.51.4':
     dependencies:
       '@ag-ui/client': 0.0.42
       partial-json: 0.1.7
@@ -11776,10 +11713,10 @@ snapshots:
       partial-json: 0.1.7
       uuid: 11.1.0
 
-  '@copilotkitnext/web-inspector@1.51.4-next.3':
+  '@copilotkitnext/web-inspector@1.51.4':
     dependencies:
       '@ag-ui/client': 0.0.42
-      '@copilotkitnext/core': 1.51.4-next.3
+      '@copilotkitnext/core': 1.51.4
       lit: 3.3.1
       lucide: 0.525.0
       marked: 12.0.2
