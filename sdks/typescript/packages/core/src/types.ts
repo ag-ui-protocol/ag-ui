@@ -134,7 +134,7 @@ export const ContextSchema = z.object({
 export const ToolSchema = z.object({
   name: z.string(),
   description: z.string(),
-  parameters: z.any(), // JSON Schema for the tool parameters
+  parameters: z.any().optional(), // JSON Schema for the tool parameters
 });
 
 export const RunAgentInputSchema = z.object({
