@@ -2,6 +2,7 @@ import { test, expect, retryOnAIFailure } from "../../test-isolation-helper";
 import { SubgraphsPage } from "../../pages/langGraphPages/SubgraphsPage";
 
 test.describe("Subgraphs Travel Agent Feature", () => {
+  test.slow(); // Multi-step AI test: needs extra time for retries
   test("[LangGraph] should complete full travel planning flow with feature validation", async ({
     page,
   }) => {
@@ -30,7 +31,7 @@ test.describe("Subgraphs Travel Agent Feature", () => {
       await subgraphsPage.verifyStaticFlightData();
 
       // FEATURE TEST: Test interrupt pause behavior - flow shouldn't auto-proceed
-      await page.waitForTimeout(3000);
+
       // await expect(page.getByText(/hotel.*options|accommodation|Zephyr|Ritz-Carlton|Hotel Zoe/i)).not.toBeVisible();
 
       // Select KLM flight through interrupt
@@ -51,7 +52,7 @@ test.describe("Subgraphs Travel Agent Feature", () => {
       await subgraphsPage.verifyStaticHotelData();
 
       // FEATURE TEST: Test interrupt pause behavior again
-      await page.waitForTimeout(3000);
+
 
       // Select Hotel Zoe through interrupt
       await subgraphsPage.selectHotel('Zoe');

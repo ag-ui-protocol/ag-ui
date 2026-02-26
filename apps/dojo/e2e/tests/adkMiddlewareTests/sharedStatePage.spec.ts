@@ -2,6 +2,7 @@ import { test, expect, retryOnAIFailure } from "../../test-isolation-helper";
 import { SharedStatePage } from "../../featurePages/SharedStatePage";
 
 test.describe("Shared State Feature", () => {
+  test.slow(); // Multi-step AI test: needs extra time for retries
   test("[ADK Middleware] should interact with the chat to get a recipe on prompt", async ({
     page,
   }) => {

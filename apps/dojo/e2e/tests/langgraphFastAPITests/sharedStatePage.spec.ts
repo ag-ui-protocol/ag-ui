@@ -6,6 +6,7 @@ import {
 import { SharedStatePage } from "../../featurePages/SharedStatePage";
 
 test.describe("Shared State Feature", () => {
+  test.slow(); // Multi-step AI test: needs extra time for retries
   test("[LangGraph FastAPI] should interact with the chat to get a recipe on prompt", async ({
     page,
   }) => {

@@ -6,6 +6,7 @@ import {
 import { PredictiveStateUpdatesPage } from "../../pages/langGraphFastAPIPages/PredictiveStateUpdatesPage";
 
 test.describe("Predictive Status Updates Feature", () => {
+  test.slow(); // Multi-step AI test: needs extra time for retries
   test("[LangGraph FastAPI] should interact with agent and approve asked changes", async ({
     page,
   }) => {
@@ -17,13 +18,11 @@ test.describe("Predictive Status Updates Feature", () => {
       );
 
       await predictiveStateUpdates.openChat();
-      await page.waitForTimeout(2000);
-
+      
       await predictiveStateUpdates.sendMessage(
         "Give me a story for a dragon called Atlantis in document"
       );
-      await page.waitForTimeout(2000);
-
+      
       await predictiveStateUpdates.getPredictiveResponse();
       await predictiveStateUpdates.getUserApproval();
       await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
@@ -32,11 +31,9 @@ test.describe("Predictive Status Updates Feature", () => {
       );
       expect(dragonName).not.toBeNull();
 
-      await page.waitForTimeout(3000);
-
+      
       await predictiveStateUpdates.sendMessage("Change dragon name to Lola");
-      await page.waitForTimeout(2000);
-
+      
       await predictiveStateUpdates.verifyHighlightedText();
       await predictiveStateUpdates.getUserApproval();
       await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
@@ -58,13 +55,11 @@ test.describe("Predictive Status Updates Feature", () => {
       );
 
       await predictiveStateUpdates.openChat();
-      await page.waitForTimeout(2000);
-
+      
       await predictiveStateUpdates.sendMessage(
         "Give me a story for a dragon called Atlantis in document"
       );
-      await page.waitForTimeout(2000);
-
+      
       await predictiveStateUpdates.getPredictiveResponse();
       await predictiveStateUpdates.getUserApproval();
       await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
@@ -73,11 +68,9 @@ test.describe("Predictive Status Updates Feature", () => {
       );
       expect(dragonName).not.toBeNull();
 
-      await page.waitForTimeout(3000);
-
+      
       await predictiveStateUpdates.sendMessage("Change dragon name to Lola");
-      await page.waitForTimeout(2000);
-
+      
       await predictiveStateUpdates.verifyHighlightedText();
       await predictiveStateUpdates.getUserRejection();
       await expect(predictiveStateUpdates.rejectedChangesResponse).toBeVisible();

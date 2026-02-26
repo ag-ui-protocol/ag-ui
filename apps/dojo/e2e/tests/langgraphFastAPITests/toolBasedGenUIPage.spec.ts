@@ -7,6 +7,7 @@ const pageURL =
 test('[LangGraph FastAPI] Haiku generation and display verification', async ({
   page,
 }) => {
+  test.slow(); // AI-dependent test: needs extra time
   await retryOnAIFailure(async () => {
     await page.goto(pageURL);
 
@@ -22,6 +23,7 @@ test('[LangGraph FastAPI] Haiku generation and display verification', async ({
 test('[LangGraph FastAPI] Haiku generation and UI consistency for two different prompts', async ({
   page,
 }) => {
+  test.slow(); // Two sequential AI generations: needs extra time
   await retryOnAIFailure(async () => {
     await page.goto(pageURL);
 

@@ -2,6 +2,7 @@ import { test, expect, retryOnAIFailure, } from "../../test-isolation-helper";
 import { PredictiveStateUpdatesPage } from "../../pages/serverStarterAllFeaturesPages/PredictiveStateUpdatesPage";
 
 test.describe("Predictive Status Updates Feature", () => {
+  test.slow(); // Multi-step AI test: needs extra time for retries
   test("[Server Starter all features] should interact with agent and approve asked changes", async ({ page, }) => {
     await retryOnAIFailure(async () => {
       const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);

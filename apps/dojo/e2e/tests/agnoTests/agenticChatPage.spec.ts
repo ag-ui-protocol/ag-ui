@@ -51,6 +51,7 @@ test("[Agno] Agentic Chat provides stock price information", async ({
 test("[Agno] Agentic Chat retains memory of previous questions", async ({
   page,
 }) => {
+  test.slow(); // Multi-message AI conversation: needs extra time
   await retryOnAIFailure(async () => {
     await page.goto(
       "/agno/feature/agentic_chat"
@@ -78,6 +79,7 @@ test("[Agno] Agentic Chat retains memory of previous questions", async ({
 test("[Agno] Agentic Chat retains memory of user messages during a conversation", async ({
   page,
 }) => {
+  test.slow(); // Multi-message AI conversation: needs extra time
   await retryOnAIFailure(async () => {
     await page.goto(
       "/agno/feature/agentic_chat"

@@ -1,6 +1,6 @@
 import { Page, Locator, expect } from "@playwright/test";
 import { CopilotSelectors } from "../utils/copilot-selectors";
-import { sendAndAwaitResponse } from "../utils/copilot-actions";
+import { sendChatMessage, awaitLLMResponseDone } from "../utils/copilot-actions";
 
 export class AgenticChatPage {
   readonly page: Page;
@@ -31,7 +31,8 @@ export class AgenticChatPage {
   }
 
   async sendMessage(message: string) {
-    await sendAndAwaitResponse(this.page, message);
+    await sendChatMessage(this.page, message);
+    await awaitLLMResponseDone(this.page);
   }
 
   async getGradientButtonByName(name: string | RegExp) {

@@ -3,6 +3,7 @@ import { test, expect, retryOnAIFailure } from "../../test-isolation-helper";
 import { AgenticGenUIPage } from "../../pages/pydanticAIPages/AgenticUIGenPage";
 
 test.describe("Agent Generative UI Feature", () => {
+  test.slow(); // Multi-step AI test: needs extra time for retries
   test("[PydanticAI] should interact with the chat to get a planner on prompt", async ({
     page,
   }) => {

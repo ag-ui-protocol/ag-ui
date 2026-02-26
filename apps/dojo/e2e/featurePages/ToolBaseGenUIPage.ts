@@ -1,6 +1,6 @@
 import { Page, Locator, expect } from "@playwright/test";
 import { CopilotSelectors } from "../utils/copilot-selectors";
-import { sendAndAwaitResponse } from "../utils/copilot-actions";
+import { sendChatMessage, awaitLLMResponseDone } from "../utils/copilot-actions";
 
 export class ToolBaseGenUIPage {
   readonly page: Page;
@@ -25,7 +25,8 @@ export class ToolBaseGenUIPage {
 
   async generateHaiku(message: string) {
     await this.messageBox.waitFor({ state: "visible" });
-    await sendAndAwaitResponse(this.page, message);
+    await sendChatMessage(this.page, message);
+    await awaitLLMResponseDone(this.page);
   }
 
   async checkGeneratedHaiku() {

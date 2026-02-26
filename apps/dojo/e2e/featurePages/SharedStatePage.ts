@@ -1,6 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { CopilotSelectors } from '../utils/copilot-selectors';
-import { sendAndAwaitResponse, awaitLLMResponseDone } from '../utils/copilot-actions';
+import { sendChatMessage, awaitLLMResponseDone } from '../utils/copilot-actions';
 
 export class SharedStatePage {
   readonly page: Page;
@@ -32,7 +32,8 @@ export class SharedStatePage {
   }
 
   async sendMessage(message: string) {
-    await sendAndAwaitResponse(this.page, message);
+    await sendChatMessage(this.page, message);
+    await awaitLLMResponseDone(this.page);
   }
 
   async loader() {

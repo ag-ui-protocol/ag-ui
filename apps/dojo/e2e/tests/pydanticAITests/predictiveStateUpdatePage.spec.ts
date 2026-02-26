@@ -6,6 +6,7 @@ import {
 import { PredictiveStateUpdatesPage } from "../../pages/pydanticAIPages/PredictiveStateUpdatesPage";
 
 test.describe("Predictive Status Updates Feature", () => {
+  test.slow(); // Multi-step AI test: needs extra time for retries
   // Fails on a production build.
   test.fixme("[PydanticAI] should interact with agent and approve asked changes", async ({
     page,

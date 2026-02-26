@@ -6,6 +6,7 @@ import {
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
 
 test.describe("Agentic Chat Feature", () => {
+  test.slow(); // Multi-step AI tests: needs extra time for retries
   test("[ADK Middleware] Agentic Chat sends and receives a message", async ({
     page,
   }) => {

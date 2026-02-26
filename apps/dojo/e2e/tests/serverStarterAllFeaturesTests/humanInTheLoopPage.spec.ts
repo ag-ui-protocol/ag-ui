@@ -3,6 +3,7 @@ import { test, expect, retryOnAIFailure } from "../../test-isolation-helper";
 import { HumanInLoopPage } from "../../pages/serverStarterAllFeaturesPages/HumanInLoopPage";
 
 test.describe("Human in the Loop Feature", () => {
+  test.slow(); // Multi-step AI test: needs extra time for retries
   test(" [Server Starter all features] should interact with the chat using predefined prompts and perform steps", async ({
     page,
   }) => {

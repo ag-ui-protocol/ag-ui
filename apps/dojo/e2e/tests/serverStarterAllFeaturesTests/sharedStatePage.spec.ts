@@ -3,6 +3,7 @@ import { SharedStatePage } from "../../featurePages/SharedStatePage";
 import { sendChatMessage } from "../../utils/copilot-actions";
 
 test.describe("Shared State Feature", () => {
+  test.slow(); // Multi-step AI test: needs extra time for retries
   test("[Server Starter all features] should interact with the chat to get a recipe on prompt", async ({
     page,
   }) => {

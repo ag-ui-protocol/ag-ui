@@ -63,6 +63,7 @@ test("[LlamaIndex] Agentic Chat changes background on message and reset", async 
 test("[LlamaIndex] Agentic Chat retains memory of user messages during a conversation", async ({
   page,
 }) => {
+  test.slow(); // Multi-message AI conversation: needs extra time
   await retryOnAIFailure(async () => {
     await page.goto(
       "/llama-index/feature/agentic_chat"

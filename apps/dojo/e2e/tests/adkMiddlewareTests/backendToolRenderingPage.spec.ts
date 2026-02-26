@@ -1,9 +1,8 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, retryOnAIFailure } from "../../test-isolation-helper";
+import { awaitLLMResponseDone } from "../../utils/copilot-actions";
 
 test("[ADK Middleware] Backend Tool Rendering displays weather cards", async ({ page }) => {
-  // Set shorter default timeout for this test
-  test.setTimeout(30000); // 30 seconds total
-
+  await retryOnAIFailure(async () => {
   await page.goto("/adk-middleware/feature/backend_tool_rendering");
 
   // Verify suggestion buttons are visible
@@ -46,9 +45,10 @@ test("[ADK Middleware] Backend Tool Rendering displays weather cards", async ({ 
 
   // Click second suggestion
   await page.getByRole("button", { name: "Weather in New York" }).click();
-  await page.waitForTimeout(2000);
+  await awaitLLMResponseDone(page);
 
   // Verify at least one weather-related element is still visible
   const weatherElements = await page.getByText(/Weather|Humidity|Wind|Temperature/i).count();
   expect(weatherElements).toBeGreaterThan(0);
+  });
 });

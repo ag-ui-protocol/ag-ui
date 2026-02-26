@@ -3,6 +3,7 @@ import { test, expect, retryOnAIFailure } from "../../test-isolation-helper";
 import { HumanInLoopPage } from "../../pages/pydanticAIPages/HumanInLoopPage";
 
 test.describe("Human in the Loop Feature", () => {
+  test.slow(); // Multi-step AI test: needs extra time for retries
   test("[PydanticAI] should interact with the chat and perform steps", async ({
     page,
   }) => {

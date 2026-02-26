@@ -9,6 +9,7 @@ import { sendChatMessage } from "../../utils/copilot-actions";
 test("[Server Starter all features] Agentic Chat displays countdown from 10 to 1 with tick mark", async ({
   page,
 }) => {
+  test.setTimeout(90000);
   await retryOnAIFailure(async () => {
     await page.goto(
       "/server-starter-all-features/feature/agentic_chat"
@@ -22,8 +23,9 @@ test("[Server Starter all features] Agentic Chat displays countdown from 10 to 1
     await sendChatMessage(page, "Hey there");
     await chat.assertUserMessageVisible("Hey there");
 
+    // v2 CopilotKit uses data-testid="copilot-assistant-message" with data-message-id
     const countdownMessage = page
-      .locator('.prose[data-message-id]')
+      .getByTestId('copilot-assistant-message')
       .filter({ hasText: 'counting down:' });
 
     await expect(countdownMessage).toBeVisible({ timeout: 30000 });
