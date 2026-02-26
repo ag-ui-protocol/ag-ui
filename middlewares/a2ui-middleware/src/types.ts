@@ -3,16 +3,6 @@
  */
 export interface A2UIMiddlewareConfig {
   /**
-   * If true, middleware assumes the system prompt already contains
-   * the A2UI schema between ---BEGIN A2UI JSON SCHEMA--- and
-   * ---END A2UI JSON SCHEMA--- markers.
-   *
-   * If false/undefined, logs a warning with the required schema
-   * instructions to add to the system prompt.
-   */
-  systemInstructionsAdded?: boolean;
-
-  /**
    * If true, the middleware injects the `send_a2ui_json_to_client` tool
    * into the agent's tool list so the LLM can call it directly.
    *

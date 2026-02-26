@@ -960,19 +960,6 @@ When the last messages are a \`log_a2ui_event\` tool call + result:
 ---END A2UI JSON SCHEMA---`;
 
 /**
- * Returns the warning message that should be shown when system instructions are not configured.
- */
-export function getSystemPromptWarning(): string {
-  return (
-    "[A2UIMiddleware] WARNING: systemInstructionsAdded is not set to true.\n" +
-    "You must add the A2UI specification to your system prompt.\n" +
-    "Add the following to your agent's system prompt:\n\n" +
-    A2UI_PROMPT +
-    "\n"
-  );
-}
-
-/**
  * Try to parse text as A2UI operations.
  * Returns the array of operations if the text contains valid A2UI JSON, or null otherwise.
  */

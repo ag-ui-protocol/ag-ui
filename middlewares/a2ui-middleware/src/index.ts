@@ -22,7 +22,7 @@ import {
   A2UIUserAction,
 } from "./types";
 import { SEND_A2UI_JSON_TOOL, SEND_A2UI_TOOL_NAME, LOG_A2UI_EVENT_TOOL_NAME } from "./tools";
-import { getSystemPromptWarning, getOperationSurfaceId, tryParseA2UIOperations } from "./schema";
+import { getOperationSurfaceId, tryParseA2UIOperations } from "./schema";
 
 // Re-exports
 export * from "./types";
@@ -51,11 +51,6 @@ export class A2UIMiddleware extends Middleware {
   constructor(config: A2UIMiddlewareConfig = {}) {
     super();
     this.config = config;
-
-    // Log warning if systemInstructionsAdded is not set
-    if (!config.systemInstructionsAdded) {
-      console.warn(getSystemPromptWarning());
-    }
   }
 
   /**

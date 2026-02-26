@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
   AbstractAgent,
   BaseEvent,
@@ -16,7 +16,6 @@ import {
   SEND_A2UI_TOOL_NAME,
   LOG_A2UI_EVENT_TOOL_NAME,
   extractSurfaceIds,
-  getSystemPromptWarning,
   tryParseA2UIOperations,
 } from "../src/index";
 
@@ -71,27 +70,9 @@ async function collectEvents(observable: Observable<BaseEvent>): Promise<BaseEve
 }
 
 describe("A2UIMiddleware", () => {
-  let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-  });
-
-  describe("constructor", () => {
-    it("should log warning when systemInstructionsAdded is not set", () => {
-      new A2UIMiddleware();
-      expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining("[A2UIMiddleware]"));
-    });
-
-    it("should not log warning when systemInstructionsAdded is true", () => {
-      new A2UIMiddleware({ systemInstructionsAdded: true });
-      expect(consoleWarnSpy).not.toHaveBeenCalled();
-    });
-  });
-
   describe("tool injection", () => {
     it("should inject send_a2ui_json_to_client tool when injectA2UITool is true", async () => {
-      const middleware = new A2UIMiddleware({ systemInstructionsAdded: true, injectA2UITool: true });
+      const middleware = new A2UIMiddleware({ injectA2UITool: true });
       const mockAgent = new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
@@ -106,7 +87,7 @@ describe("A2UIMiddleware", () => {
     });
 
     it("should not inject tool by default", async () => {
-      const middleware = new A2UIMiddleware({ systemInstructionsAdded: true });
+      const middleware = new A2UIMiddleware();
       const mockAgent = new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
@@ -121,7 +102,7 @@ describe("A2UIMiddleware", () => {
     });
 
     it("should not duplicate tool if already present", async () => {
-      const middleware = new A2UIMiddleware({ systemInstructionsAdded: true, injectA2UITool: true });
+      const middleware = new A2UIMiddleware({ injectA2UITool: true });
       const mockAgent = new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
@@ -144,7 +125,7 @@ describe("A2UIMiddleware", () => {
 
   describe("user action processing", () => {
     it("should prepend synthetic messages for user action", async () => {
-      const middleware = new A2UIMiddleware({ systemInstructionsAdded: true });
+      const middleware = new A2UIMiddleware();
       const mockAgent = new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
@@ -182,7 +163,7 @@ describe("A2UIMiddleware", () => {
     });
 
     it("should not modify messages when no user action present", async () => {
-      const middleware = new A2UIMiddleware({ systemInstructionsAdded: true });
+      const middleware = new A2UIMiddleware();
       const mockAgent = new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
@@ -197,7 +178,7 @@ describe("A2UIMiddleware", () => {
 
   describe("tool call interception", () => {
     it("should emit ACTIVITY_SNAPSHOT and TOOL_CALL_RESULT for send_a2ui_json_to_client", async () => {
-      const middleware = new A2UIMiddleware({ systemInstructionsAdded: true });
+      const middleware = new A2UIMiddleware();
       const toolCallId = "tc-123";
 
       // Using A2UI message format
@@ -238,12 +219,13 @@ describe("A2UIMiddleware", () => {
       expect(resultEvent).toBeDefined();
       expect((resultEvent as any).toolCallId).toBe(toolCallId);
       const resultContent = JSON.parse((resultEvent as any).content);
-      expect(resultContent.success).toBe(true);
-      expect(resultContent.surfacesRendered).toContain("test-surface");
+      expect(Array.isArray(resultContent)).toBe(true);
+      expect(resultContent).toHaveLength(2);
+      expect(resultContent[0]).toHaveProperty("beginRendering.surfaceId", "test-surface");
     });
 
     it("should pass through events for other tools", async () => {
-      const middleware = new A2UIMiddleware({ systemInstructionsAdded: true });
+      const middleware = new A2UIMiddleware();
       const toolCallId = "tc-other";
 
       const mockAgent = new MockAgent([
@@ -277,7 +259,7 @@ describe("A2UIMiddleware", () => {
     });
 
     it("should handle streaming args deltas", async () => {
-      const middleware = new A2UIMiddleware({ systemInstructionsAdded: true });
+      const middleware = new A2UIMiddleware();
       const toolCallId = "tc-streaming";
 
       // Using A2UI message format
@@ -331,7 +313,7 @@ describe("A2UI auto-detection in tool results", () => {
   });
 
   it("should emit ACTIVITY_SNAPSHOT when TOOL_CALL_RESULT contains valid A2UI JSON", async () => {
-    const middleware = new A2UIMiddleware({ systemInstructionsAdded: true });
+    const middleware = new A2UIMiddleware();
     const toolCallId = "tc-custom";
 
     const a2uiResult = JSON.stringify([
@@ -379,7 +361,7 @@ describe("A2UI auto-detection in tool results", () => {
   });
 
   it("should NOT emit ACTIVITY_SNAPSHOT when TOOL_CALL_RESULT contains non-A2UI JSON", async () => {
-    const middleware = new A2UIMiddleware({ systemInstructionsAdded: true });
+    const middleware = new A2UIMiddleware();
     const toolCallId = "tc-plain";
 
     const mockAgent = new MockAgent([
@@ -415,7 +397,7 @@ describe("A2UI auto-detection in tool results", () => {
   });
 
   it("should NOT double-process TOOL_CALL_RESULT for send_a2ui_json_to_client", async () => {
-    const middleware = new A2UIMiddleware({ systemInstructionsAdded: true });
+    const middleware = new A2UIMiddleware();
     const toolCallId = "tc-a2ui";
 
     const a2uiJson = JSON.stringify([
@@ -447,7 +429,7 @@ describe("A2UI auto-detection in tool results", () => {
   });
 
   it("should handle TOOL_CALL_RESULT with a single A2UI operation object", async () => {
-    const middleware = new A2UIMiddleware({ systemInstructionsAdded: true });
+    const middleware = new A2UIMiddleware();
     const toolCallId = "tc-single";
 
     const mockAgent = new MockAgent([
@@ -547,16 +529,6 @@ describe("extractSurfaceIds", () => {
     const surfaceIds = extractSurfaceIds(messages);
     expect(surfaceIds).toHaveLength(1);
     expect(surfaceIds).toContain("s1");
-  });
-});
-
-describe("getSystemPromptWarning", () => {
-  it("should contain schema and markers", () => {
-    const warning = getSystemPromptWarning();
-    expect(warning).toContain("[A2UIMiddleware]");
-    expect(warning).toContain("---BEGIN A2UI JSON SCHEMA---");
-    expect(warning).toContain("---END A2UI JSON SCHEMA---");
-    expect(warning).toContain("beginRendering");
   });
 });
 
