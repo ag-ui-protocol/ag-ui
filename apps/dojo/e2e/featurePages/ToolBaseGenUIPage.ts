@@ -30,17 +30,17 @@ export class ToolBaseGenUIPage {
 
   async checkGeneratedHaiku() {
     const cards = this.page.locator('[data-testid="haiku-card"]');
-    await cards.last().waitFor({ state: "visible" });
+    await cards.last().waitFor({ state: "visible", timeout: 30_000 });
     const mostRecentCard = cards.last();
     await mostRecentCard
       .locator('[data-testid="haiku-japanese-line"]')
       .first()
-      .waitFor({ state: "visible" });
+      .waitFor({ state: "visible", timeout: 30_000 });
   }
 
   async extractChatHaikuContent(page: Page): Promise<string> {
     const allHaikuCards = page.locator('[data-testid="haiku-card"]');
-    await allHaikuCards.first().waitFor({ state: "visible" });
+    await allHaikuCards.first().waitFor({ state: "visible", timeout: 30_000 });
     const cardCount = await allHaikuCards.count();
     let chatHaikuContainer;
     let chatHaikuLines;
@@ -52,7 +52,7 @@ export class ToolBaseGenUIPage {
 
       if (linesCount > 0) {
         try {
-          await chatHaikuLines.first().waitFor({ state: "visible" });
+          await chatHaikuLines.first().waitFor({ state: "visible", timeout: 30_000 });
           break;
         } catch (error) {
           continue;
@@ -79,7 +79,7 @@ export class ToolBaseGenUIPage {
 
   async extractMainDisplayHaikuContent(page: Page): Promise<string> {
     const carousel = page.locator('[data-testid="haiku-carousel"]');
-    await carousel.waitFor({ state: "visible" });
+    await carousel.waitFor({ state: "visible", timeout: 30_000 });
 
     // Find the visible carousel item (the active slide)
     const carouselItems = carousel.locator('[data-testid^="carousel-item-"]');

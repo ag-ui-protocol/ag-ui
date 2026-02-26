@@ -4,6 +4,7 @@ import {
   retryOnAIFailure,
 } from "../../test-isolation-helper";
 import { PredictiveStateUpdatesPage } from "../../pages/adkMiddlewarePages/PredictiveStateUpdatesPage";
+import { awaitLLMResponseDone } from "../../utils/copilot-actions";
 
 // TODO: Re-enable when ADK middleware agent is uncommented in agents.ts and menu.ts
 test.describe.skip("Predictive State Updates Feature", () => {
@@ -22,7 +23,7 @@ test.describe.skip("Predictive State Updates Feature", () => {
       await predictiveStateUpdates.sendMessage(
         "Give me a story for a dragon called Atlantis in document"
       );
-      await page.waitForTimeout(2000);
+      await awaitLLMResponseDone(page);
       await predictiveStateUpdates.getPredictiveResponse();
       await predictiveStateUpdates.getUserApproval();
       await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
@@ -33,7 +34,7 @@ test.describe.skip("Predictive State Updates Feature", () => {
 
       // Send update to change the dragon name
       await predictiveStateUpdates.sendMessage("Change dragon name to Lola");
-      await page.waitForTimeout(2000);
+      await awaitLLMResponseDone(page);
       await predictiveStateUpdates.verifyHighlightedText();
       await predictiveStateUpdates.getUserApproval();
       await expect(predictiveStateUpdates.confirmedChangesResponse.nth(1)).toBeVisible();
@@ -70,7 +71,7 @@ test.describe.skip("Predictive State Updates Feature", () => {
 
       // Send update to change the dragon name
       await predictiveStateUpdates.sendMessage("Change dragon name to Lola");
-      await page.waitForTimeout(2000);
+      await awaitLLMResponseDone(page);
       await predictiveStateUpdates.verifyHighlightedText();
       await predictiveStateUpdates.getUserRejection();
       await expect(predictiveStateUpdates.rejectedChangesResponse).toBeVisible();

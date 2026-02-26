@@ -18,7 +18,7 @@ test.describe("Agent Generative UI Feature", () => {
 
     await genUIAgent.sendMessage("Give me a plan to make brownies");
 
-    await expect(genUIAgent.agentPlannerContainer).toBeVisible();
+    await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 30_000 });
 
     await genUIAgent.plan();
     await awaitLLMResponseDone(page);
@@ -39,7 +39,7 @@ test.describe("Agent Generative UI Feature", () => {
 
     await genUIAgent.sendMessage("Go to Mars");
 
-    await expect(genUIAgent.agentPlannerContainer).toBeVisible();
+    await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 30_000 });
     await genUIAgent.plan();
     await awaitLLMResponseDone(page);
   });

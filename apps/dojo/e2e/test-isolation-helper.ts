@@ -26,7 +26,7 @@ export async function waitForAIResponse(page: Page, timeout: number = 15000) {
 export async function retryOnAIFailure<T>(
   operation: () => Promise<T>,
   maxRetries: number = 3,
-  delayMs: number = 5000
+  delayMs: number = 0
 ): Promise<T> {
   for (let i = 0; i < maxRetries; i++) {
     try {
@@ -49,7 +49,9 @@ export async function retryOnAIFailure<T>(
             i + 2
           }/${maxRetries}) after AI service error: ${errorMsg}`
         );
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        if (delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
         continue;
       }
 

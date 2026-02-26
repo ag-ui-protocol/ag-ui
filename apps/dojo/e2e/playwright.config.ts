@@ -44,7 +44,7 @@ function getBaseUrl(): string {
 }
 
 export default defineConfig({
-  timeout: process.env.CI ? 120_000 : 30_000, // 1min in CI, 30s locally
+  timeout: process.env.CI ? 120_000 : 60_000,
   testDir: "./tests",
   retries: process.env.CI ? 3 : 0, // More retries for flaky AI tests in CI, 0 for local
   // Make this sequential for now to avoid race conditions

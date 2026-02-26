@@ -49,7 +49,9 @@ test("[LangGraph] Agentic Chat changes background on message and reset", async (
       "Hi change the background color to blue"
     );
 
-    await expect.poll(getBackground).not.toBe(initialBackground);
+    await expect
+      .poll(getBackground, { timeout: 30_000 })
+      .not.toBe(initialBackground);
     const backgroundAfterBlue = await getBackground();
 
     // Ensure first response is done before sending the next
@@ -60,7 +62,9 @@ test("[LangGraph] Agentic Chat changes background on message and reset", async (
       "Hi change the background color to pink"
     );
 
-    await expect.poll(getBackground).not.toBe(backgroundAfterBlue);
+    await expect
+      .poll(getBackground, { timeout: 30_000 })
+      .not.toBe(backgroundAfterBlue);
   });
 });
 

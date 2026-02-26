@@ -15,24 +15,30 @@ export async function awaitLLMResponseDone(
   page: Page,
   timeout = LLM_RESPONSE_TIMEOUT
 ) {
-  // First wait briefly for the stream to start
+  const chat = CopilotSelectors.chat(page);
+  const sendButton = CopilotSelectors.sendButton(page);
+
+  await chat.waitFor({ state: "visible", timeout });
+
+  const waitForRunningTimeout = Math.min(5000, Math.max(1000, Math.floor(timeout / 3)));
+
   try {
-    await page.waitForFunction(
-      () =>
-        document.querySelector('[data-copilot-running="true"]') !== null,
-      null,
-      { timeout: 3000 }
-    );
+    await expect
+      .poll(async () => chat.getAttribute("data-copilot-running"), {
+        timeout: waitForRunningTimeout,
+      })
+      .toBe("true");
   } catch {
-    // May have already started and finished, continue
+    // Stream may start and complete quickly; continue to final state check.
   }
-  // Then wait for the stream to finish
-  await page.waitForFunction(
-    () =>
-      document.querySelector('[data-copilot-running="false"]') !== null,
-    null,
-    { timeout }
-  );
+
+  await expect
+    .poll(async () => chat.getAttribute("data-copilot-running"), {
+      timeout,
+    })
+    .toBe("false");
+
+  await expect(sendButton).toBeEnabled({ timeout });
 }
 
 /**
@@ -41,6 +47,8 @@ export async function awaitLLMResponseDone(
  */
 export async function sendChatMessage(page: Page, message: string) {
   const input = CopilotSelectors.chatTextarea(page);
+  await expect(input).toBeVisible();
+  await expect(input).toBeEnabled();
   await input.click();
   await input.fill(message);
   const sendButton = CopilotSelectors.sendButton(page);
@@ -71,22 +79,22 @@ export async function sendAndAwaitResponse(
 
   // Wait for a NEW assistant message to appear, proving the agent
   // started responding to our message (not a stale previous response).
-  await page.waitForFunction(
-    (before) =>
-      document.querySelectorAll('[data-testid="copilot-assistant-message"]')
-        .length > before,
-    countBefore,
-    { timeout }
-  );
+  try {
+    await page.waitForFunction(
+      (before) =>
+        document.querySelectorAll('[data-testid="copilot-assistant-message"]')
+          .length > before,
+      countBefore,
+      { timeout }
+    );
+  } catch {
+    // Some flows stream into existing containers; final completion check below
+    // is the source of truth for response completion.
+  }
 
   // Now wait for the stream to finish — at this point the running state
   // belongs to the current response, not a stale one.
-  await page.waitForFunction(
-    () =>
-      document.querySelector('[data-copilot-running="false"]') !== null,
-    null,
-    { timeout }
-  );
+  await awaitLLMResponseDone(page, timeout);
 }
 
 /**

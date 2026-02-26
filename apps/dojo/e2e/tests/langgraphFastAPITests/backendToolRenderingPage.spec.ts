@@ -1,8 +1,8 @@
 import { test, expect } from "@playwright/test";
+import { awaitLLMResponseDone } from "../../utils/copilot-actions";
 
 test("[LanggraphFastAPI] Backend Tool Rendering displays weather cards", async ({ page }) => {
-  // Set shorter default timeout for this test
-  test.setTimeout(30000); // 30 seconds total
+  test.setTimeout(60000);
 
   await page.goto("/langgraph-fastapi/feature/backend_tool_rendering");
 
@@ -13,6 +13,7 @@ test("[LanggraphFastAPI] Backend Tool Rendering displays weather cards", async (
 
   // Click first suggestion and verify weather card appears
   await page.getByRole("button", { name: "Weather in San Francisco" }).click();
+  await awaitLLMResponseDone(page, 30_000);
 
   // Wait for either test ID or fallback to "Current Weather" text
   const weatherCard = page.getByTestId("weather-card");
@@ -46,7 +47,7 @@ test("[LanggraphFastAPI] Backend Tool Rendering displays weather cards", async (
 
   // Click second suggestion
   await page.getByRole("button", { name: "Weather in New York" }).click();
-  await page.waitForTimeout(2000);
+  await awaitLLMResponseDone(page, 30_000);
 
   // Verify at least one weather-related element is still visible
   const weatherElements = await page.getByText(/Weather|Humidity|Wind|Temperature/i).count();
