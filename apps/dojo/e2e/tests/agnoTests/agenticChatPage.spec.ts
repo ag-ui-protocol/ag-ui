@@ -61,18 +61,17 @@ test("[Agno] Agentic Chat retains memory of previous questions", async ({
     await chat.openChat();
     await chat.agentGreeting.waitFor({ state: "visible" });
 
-    // First question
-    await chat.sendMessage("Hi");
-    await chat.sendMessage(appleAsk);
-    await chat.assertUserMessageVisible(appleAsk);
-    await chat.assertAgentReplyContains("The current stock price of Apple Inc. (AAPL) is");
+    // First question — use a simple, deterministic question (no external API)
+    await chat.sendMessage("What is the capital of France?");
+    await chat.assertUserMessageVisible("What is the capital of France?");
+    await chat.assertAgentReplyVisible(/Paris/i);
 
     // Ask about the first question to test memory
-    await chat.sendMessage("What was my first question");
-    await chat.assertUserMessageVisible("What was my first question");
+    await chat.sendMessage("What was my first question?");
+    await chat.assertUserMessageVisible("What was my first question?");
 
-    // Check if the agent remembers the first question about AAPL stock price
-    await chat.assertAgentReplyVisible(/Hi/i);
+    // Check if the agent remembers the first question about France
+    await chat.assertAgentReplyVisible(/France|capital|Paris/i);
   });
 });
 
