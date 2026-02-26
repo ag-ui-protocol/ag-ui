@@ -39,8 +39,8 @@ export default function Page({ params }: PageProps) {
     >
       <div className="a2ui-chat-container flex flex-col h-full overflow-hidden">
         {showToggle && (
-          <div style={{ padding: "8px 12px", display: "flex", alignItems: "center", gap: 8, fontSize: 13, borderBottom: "1px solid #e2e2e2" }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+          <div className="flex items-center gap-2 px-3 py-2 text-[13px] border-b border-[#e2e2e2]">
+            <label className="flex items-center gap-1.5 cursor-pointer">
               <input
                 type="checkbox"
                 checked={injectTool}
@@ -48,7 +48,7 @@ export default function Page({ params }: PageProps) {
               />
               injectA2UITool
             </label>
-            <span style={{ color: "#888" }}>
+            <span className="text-[#888]">
               {injectTool ? "(frontend tool injection)" : "(backend auto-detection)"}
             </span>
           </div>
