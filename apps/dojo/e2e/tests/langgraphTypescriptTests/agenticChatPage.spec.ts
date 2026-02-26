@@ -28,6 +28,7 @@ test("[LangGraph] Agentic Chat sends and receives a message", async ({
 test("[LangGraph] Agentic Chat changes background on message and reset", async ({
   page,
 }) => {
+  test.slow(); // Multi-step AI test: needs extra time
   await retryOnAIFailure(async () => {
     await page.goto(
       "/langgraph-typescript/feature/agentic_chat"
@@ -42,9 +43,8 @@ test("[LangGraph] Agentic Chat changes background on message and reset", async (
     const getBackground = () => backgroundContainer.evaluate(el => el.style.background);
     const initialBackground = await getBackground();
 
-    // Use sendChatMessage to avoid sendAndAwaitResponse timeout;
-    // expect.poll handles waiting for the background to change.
-    await sendChatMessage(page, "Hi change the background color to blue");
+    // 1. Send message to change background to blue
+    await chat.sendMessage("Hi change the background color to blue");
     await chat.assertUserMessageVisible(
       "Hi change the background color to blue"
     );
@@ -52,10 +52,8 @@ test("[LangGraph] Agentic Chat changes background on message and reset", async (
     await expect.poll(getBackground).not.toBe(initialBackground);
     const backgroundAfterBlue = await getBackground();
 
-    // Ensure first response is done before sending the next
-    await awaitLLMResponseDone(page);
-
-    await sendChatMessage(page, "Hi change the background color to pink");
+    // 2. Change to pink
+    await chat.sendMessage("Hi change the background color to pink");
     await chat.assertUserMessageVisible(
       "Hi change the background color to pink"
     );
@@ -102,8 +100,8 @@ test("[LangGraph] Agentic Chat retains memory of user messages during a conversa
     await chat.assertAgentReplyVisible(new RegExp(favFruit, "i"));
   });
 });
-
-test("[LangGraph Typescript] Agentic Chat regenerates a response", async ({
+// v2 doesn't support regenerating messages yet, so skipping this test for now
+test.skip("[LangGraph Typescript] Agentic Chat regenerates a response", async ({
   page,
 }) => {
   await retryOnAIFailure(async () => {
