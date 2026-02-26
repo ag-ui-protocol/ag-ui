@@ -1231,7 +1231,11 @@ export class LangGraphAgent extends AbstractAgent {
       'ag-ui': {
         tools: langGraphTools,
         context: input.context,
-      }
+      },
+      copilotkit: {
+        ...(state as any).copilotkit,
+        actions: langGraphTools,
+      },
     };
   }
 
