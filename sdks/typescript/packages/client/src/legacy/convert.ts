@@ -1,5 +1,5 @@
 import { mergeMap } from "rxjs/operators";
-import { applyPatch } from "fast-json-patch";
+import * as jsonpatch from "fast-json-patch";
 
 import {
   BaseEvent,
@@ -276,7 +276,7 @@ export const convertToLegacyEvents =
           }
           case EventType.STATE_DELTA: {
             const deltaEvent = event as StateDeltaEvent;
-            const result = applyPatch(currentState, deltaEvent.delta, true, false);
+            const result = jsonpatch.applyPatch(currentState, deltaEvent.delta, true, false);
             if (!result) {
               return [];
             }

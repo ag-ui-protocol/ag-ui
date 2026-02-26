@@ -6,7 +6,6 @@ import os
 
 from langchain.agents import create_agent
 from langchain_core.tools import tool
-
 from copilotkit import CopilotKitMiddleware, CopilotKitState
 
 # Conditionally use a checkpointer based on the environment
@@ -19,7 +18,7 @@ if is_fast_api:
     from langgraph.checkpoint.memory import MemorySaver
     memory = MemorySaver()
     graph = create_agent(
-        model="openai:gpt-4o",
+        model="openai:gpt-4.1-mini",
         tools=[],  # Backend tools go here
         middleware=[CopilotKitMiddleware()],
         system_prompt="You are a helpful assistant.",
@@ -29,7 +28,7 @@ if is_fast_api:
 else:
     # When running in LangGraph API/dev, don't use a custom checkpointer
     graph = create_agent(
-        model="openai:gpt-4o",
+        model="openai:gpt-4.1-mini",
         tools=[],  # Backend tools go here
         middleware=[CopilotKitMiddleware()],
         system_prompt="You are a helpful assistant.",

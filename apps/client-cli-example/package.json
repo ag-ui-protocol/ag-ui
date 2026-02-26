@@ -6,7 +6,7 @@
     "start": "tsx src/index.ts",
     "dev": "tsx --watch src/index.ts",
     "build": "tsc",
-    "clean": "rm -rf dist"
+    "clean": "git clean -fdX --exclude=\"!.env\""
   },
   "dependencies": {
     "@ag-ui/client": "workspace:*",

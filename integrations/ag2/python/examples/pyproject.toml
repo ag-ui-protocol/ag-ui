@@ -1,0 +1,19 @@
+[project]
+name = "ag2-agui-examples"
+version = "0.1.0"
+description = "AG2 AG-UI protocol examples for the Dojo"
+readme = "README.md"
+requires-python = ">=3.10,<4.0"
+dependencies = [
+    "ag2[ag-ui,openai]>=0.11.1",
+    "fastapi>=0.116.0",
+    "uvicorn>=0.35.0",
+    "python-dotenv>=0.9.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+dev = "server:main"
+
+[tool.uv]
+package = true

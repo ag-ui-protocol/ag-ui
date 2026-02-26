@@ -38,6 +38,13 @@ class EventType(str, Enum):
     RUN_ERROR = "RUN_ERROR"
     STEP_STARTED = "STEP_STARTED"
     STEP_FINISHED = "STEP_FINISHED"
+    REASONING_START = "REASONING_START"
+    REASONING_MESSAGE_START = "REASONING_MESSAGE_START"
+    REASONING_MESSAGE_CONTENT = "REASONING_MESSAGE_CONTENT"
+    REASONING_MESSAGE_END = "REASONING_MESSAGE_END"
+    REASONING_MESSAGE_CHUNK = "REASONING_MESSAGE_CHUNK"
+    REASONING_END = "REASONING_END"
+    REASONING_ENCRYPTED_VALUE = "REASONING_ENCRYPTED_VALUE"
 ```
 
 ## BaseEvent
@@ -79,12 +86,12 @@ class RunStartedEvent(BaseEvent):
     input: Optional[RunAgentInput] = None
 ```
 
-| Property         | Type                       | Description                                                                                                                              |
-| ---------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `thread_id`      | `str`                      | ID of the conversation thread                                                                                                            |
-| `run_id`         | `str`                      | ID of the agent run                                                                                                                      |
-| `parent_run_id`  | `Optional[str]`            | (Optional) Lineage pointer for branching/time travel. If present, refers to a prior run within the same thread                          |
-| `input`          | `Optional[RunAgentInput]`  | (Optional) The exact agent input payload sent to the agent for this run. May omit messages already in history                            |
+| Property        | Type                      | Description                                                                                                    |
+| --------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `thread_id`     | `str`                     | ID of the conversation thread                                                                                  |
+| `run_id`        | `str`                     | ID of the agent run                                                                                            |
+| `parent_run_id` | `Optional[str]`           | (Optional) Lineage pointer for branching/time travel. If present, refers to a prior run within the same thread |
+| `input`         | `Optional[RunAgentInput]` | (Optional) The exact agent input payload sent to the agent for this run. May omit messages already in history  |
 
 ### RunFinishedEvent
 
@@ -363,11 +370,11 @@ class ActivitySnapshotEvent(BaseEvent):
     replace: bool = True
 ```
 
-| Property        | Type  | Description                                           |
-| --------------- | ----- | ----------------------------------------------------- |
-| `message_id`    | `str` | Identifier for the target `ActivityMessage`           |
-| `activity_type` | `str` | Activity discriminator such as `"PLAN"` or `"SEARCH"` |
-| `content`       | `Any` | Structured payload describing the full activity state |
+| Property        | Type                    | Description                                                                        |
+| --------------- | ----------------------- | ---------------------------------------------------------------------------------- |
+| `message_id`    | `str`                   | Identifier for the target `ActivityMessage`                                        |
+| `activity_type` | `str`                   | Activity discriminator such as `"PLAN"` or `"SEARCH"`                              |
+| `content`       | `Any`                   | Structured payload describing the full activity state                              |
 | `replace`       | `bool` (default `True`) | When `False`, the snapshot is ignored if a message with the same ID already exists |
 
 ### ActivityDeltaEvent
@@ -384,11 +391,11 @@ class ActivityDeltaEvent(BaseEvent):
     patch: List[Any]
 ```
 
-| Property        | Type         | Description                                                          |
-| --------------- | ------------ | -------------------------------------------------------------------- |
-| `message_id`    | `str`        | Identifier for the target `ActivityMessage`                          |
-| `activity_type` | `str`        | Activity discriminator mirroring the most recent snapshot            |
-| `patch`         | `List[Any]`  | JSON Patch operations applied to the structured activity content     |
+| Property        | Type        | Description                                                      |
+| --------------- | ----------- | ---------------------------------------------------------------- |
+| `message_id`    | `str`       | Identifier for the target `ActivityMessage`                      |
+| `activity_type` | `str`       | Activity discriminator mirroring the most recent snapshot        |
+| `patch`         | `List[Any]` | JSON Patch operations applied to the structured activity content |
 
 ## Special Events
 
@@ -428,6 +435,169 @@ class CustomEvent(BaseEvent):
 | `name`   | `str` | Name of the custom event        |
 | `value`  | `Any` | Value associated with the event |
 
+## Reasoning Events
+
+These events represent the lifecycle of reasoning/thinking processes within an
+agent. Reasoning events allow agents to expose their internal thought process to
+the frontend, creating `ReasoningMessage` objects that persist in the message
+history with the role `"reasoning"`.
+
+### ReasoningStartEvent
+
+`from ag_ui.core import ReasoningStartEvent`
+
+Signals the start of a reasoning phase. This is a pass-through event that
+notifies subscribers but does not create messages.
+
+```python
+class ReasoningStartEvent(BaseEvent):
+    type: Literal[EventType.REASONING_START]
+    message_id: str
+```
+
+| Property     | Type  | Description                        |
+| ------------ | ----- | ---------------------------------- |
+| `message_id` | `str` | Identifier for the reasoning phase |
+
+### ReasoningMessageStartEvent
+
+`from ag_ui.core import ReasoningMessageStartEvent`
+
+Signals the start of a reasoning message. Creates a new `ReasoningMessage` in
+the message history.
+
+```python
+class ReasoningMessageStartEvent(BaseEvent):
+    type: Literal[EventType.REASONING_MESSAGE_START]
+    message_id: str
+    role: Literal["assistant"]
+```
+
+| Property     | Type                   | Description                       |
+| ------------ | ---------------------- | --------------------------------- |
+| `message_id` | `str`                  | Unique identifier for the message |
+| `role`       | `Literal["assistant"]` | Role is always "assistant"        |
+
+### ReasoningMessageContentEvent
+
+`from ag_ui.core import ReasoningMessageContentEvent`
+
+Represents a chunk of content in a streaming reasoning message.
+
+```python
+class ReasoningMessageContentEvent(BaseEvent):
+    type: Literal[EventType.REASONING_MESSAGE_CONTENT]
+    message_id: str
+    delta: str
+```
+
+| Property     | Type  | Description                                    |
+| ------------ | ----- | ---------------------------------------------- |
+| `message_id` | `str` | Matches the ID from ReasoningMessageStartEvent |
+| `delta`      | `str` | Reasoning content chunk                        |
+
+### ReasoningMessageEndEvent
+
+`from ag_ui.core import ReasoningMessageEndEvent`
+
+Signals the end of a reasoning message.
+
+```python
+class ReasoningMessageEndEvent(BaseEvent):
+    type: Literal[EventType.REASONING_MESSAGE_END]
+    message_id: str
+```
+
+| Property     | Type  | Description                                    |
+| ------------ | ----- | ---------------------------------------------- |
+| `message_id` | `str` | Matches the ID from ReasoningMessageStartEvent |
+
+### ReasoningMessageChunkEvent
+
+`from ag_ui.core import ReasoningMessageChunkEvent`
+
+Convenience event for complete reasoning messages without manually emitting
+`ReasoningMessageStart`/`ReasoningMessageEnd`.
+
+```python
+class ReasoningMessageChunkEvent(BaseEvent):
+    type: Literal[EventType.REASONING_MESSAGE_CHUNK]
+    message_id: Optional[str] = None  # required on first chunk for a message
+    delta: Optional[str] = None
+```
+
+Behavior
+
+- Convenience: Some consumers (e.g., the JS/TS client) expand chunk events into
+  the standard start/content/end sequence automatically.
+- First chunk requirements: The first chunk for a given message must include
+  `message_id`.
+- Streaming: Subsequent chunks with the same `message_id` correspond to content
+  pieces; completion triggers an implied end in clients that perform expansion.
+
+### ReasoningEndEvent
+
+`from ag_ui.core import ReasoningEndEvent`
+
+Signals the end of a reasoning phase. This is a pass-through event that notifies
+subscribers but does not modify messages.
+
+```python
+class ReasoningEndEvent(BaseEvent):
+    type: Literal[EventType.REASONING_END]
+    message_id: str
+```
+
+| Property     | Type  | Description                        |
+| ------------ | ----- | ---------------------------------- |
+| `message_id` | `str` | Identifier for the reasoning phase |
+
+### ReasoningEncryptedValueEvent
+
+`from ag_ui.core import ReasoningEncryptedValueEvent`
+
+Attaches an encrypted value to a message or tool call. When this event is
+emitted, it finds the referenced entity by `entity_id` and sets its
+`encrypted_value` field.
+
+```python
+ReasoningEncryptedValueSubtype = Literal["tool-call", "message"]
+
+class ReasoningEncryptedValueEvent(BaseEvent):
+    type: Literal[EventType.REASONING_ENCRYPTED_VALUE]
+    subtype: ReasoningEncryptedValueSubtype
+    entity_id: str
+    encrypted_value: str
+```
+
+| Property          | Type                             | Description                                        |
+| ----------------- | -------------------------------- | -------------------------------------------------- |
+| `subtype`         | `ReasoningEncryptedValueSubtype` | The type of entity this value belongs to           |
+| `entity_id`       | `str`                            | ID of the tool call or message to attach the value |
+| `encrypted_value` | `str`                            | The encrypted value to attach to the entity        |
+
+## Deprecated Events
+
+<Warning>
+  The `THINKING_*` events are deprecated and will be removed in version 1.0.0.
+  New implementations should use `REASONING_*` events instead.
+</Warning>
+
+### Thinking Events (Deprecated)
+
+The following event types are deprecated:
+
+| Deprecated Event                | Replacement                 |
+| ------------------------------- | --------------------------- |
+| `THINKING_START`                | `REASONING_START`           |
+| `THINKING_END`                  | `REASONING_END`             |
+| `THINKING_TEXT_MESSAGE_START`   | `REASONING_MESSAGE_START`   |
+| `THINKING_TEXT_MESSAGE_CONTENT` | `REASONING_MESSAGE_CONTENT` |
+| `THINKING_TEXT_MESSAGE_END`     | `REASONING_MESSAGE_END`     |
+
+See [Reasoning Migration](/concepts/reasoning#migration-from-thinking-events)
+for detailed migration guidance.
+
 ## Event Discrimination
 
 `from ag_ui.core import Event`
@@ -447,6 +617,8 @@ Event = Annotated[
         StateSnapshotEvent,
         StateDeltaEvent,
         MessagesSnapshotEvent,
+        ActivitySnapshotEvent,
+        ActivityDeltaEvent,
         RawEvent,
         CustomEvent,
         RunStartedEvent,
@@ -454,6 +626,13 @@ Event = Annotated[
         RunErrorEvent,
         StepStartedEvent,
         StepFinishedEvent,
+        ReasoningStartEvent,
+        ReasoningMessageStartEvent,
+        ReasoningMessageContentEvent,
+        ReasoningMessageEndEvent,
+        ReasoningMessageChunkEvent,
+        ReasoningEndEvent,
+        ReasoningEncryptedValueEvent,
     ],
     Field(discriminator="type")
 ]
@@ -461,6 +640,7 @@ Event = Annotated[
 
 This allows for runtime validation of events and type checking at development
 time.
+
 ### TextMessageChunkEvent
 
 Convenience event for complete text messages without manually emitting
@@ -477,6 +657,7 @@ class TextMessageChunkEvent(BaseEvent):
 ```
 
 Behavior
+
 - Convenience: Some consumers (e.g., the JS/TS client) expand chunk events into
   the standard start/content/end sequence automatically, allowing producers to
   omit explicit start/end events when using chunks.
@@ -502,6 +683,7 @@ class ToolCallChunkEvent(BaseEvent):
 ```
 
 Behavior
+
 - Convenience: Consumers may expand chunk sequences into the standard
   start/args/end triad (the JS/TS client does this automatically).
 - First chunk requirements: Include both `tool_call_id` and `tool_call_name` on

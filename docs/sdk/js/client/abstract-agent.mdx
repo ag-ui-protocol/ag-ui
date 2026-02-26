@@ -123,7 +123,7 @@ agent.use(new FilterToolCallsMiddleware({
 agent.use(loggingMiddleware, authMiddleware, filterMiddleware);
 ```
 
-Middleware executes in the order added, with each wrapping the next. See the [Middleware documentation](/sdk/js/client/middleware) for more details.
+Middleware executes in the order added, with each wrapping the next. Middleware is applied in `runAgent()`; `connectAgent()` currently calls `connect()` directly. See the [Middleware documentation](/sdk/js/client/middleware) for more details.
 
 ### abortRun()
 

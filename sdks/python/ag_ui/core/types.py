@@ -34,6 +34,7 @@ class ToolCall(ConfiguredBaseModel):
     id: str
     type: Literal["function"] = "function"  # pyright: ignore[reportIncompatibleVariableOverride]
     function: FunctionCall
+    encrypted_value: Optional[str] = None
 
 
 class BaseMessage(ConfiguredBaseModel):
@@ -44,6 +45,7 @@ class BaseMessage(ConfiguredBaseModel):
     role: str
     content: Optional[str] = None
     name: Optional[str] = None
+    encrypted_value: Optional[str] = None
 
 
 class DeveloperMessage(BaseMessage):
@@ -119,6 +121,7 @@ class ToolMessage(ConfiguredBaseModel):
     content: str
     tool_call_id: str
     error: Optional[str] = None
+    encrypted_value: Optional[str] = None
 
 
 class ActivityMessage(ConfiguredBaseModel):
@@ -132,6 +135,17 @@ class ActivityMessage(ConfiguredBaseModel):
     content: Dict[str, Any]
 
 
+class ReasoningMessage(ConfiguredBaseModel):
+    """
+    A reasoning message containing the agent's internal reasoning process.
+    """
+
+    id: str
+    role: Literal["reasoning"] = "reasoning"  # pyright: ignore[reportIncompatibleVariableOverride]
+    content: str
+    encrypted_value: Optional[str] = None
+
+
 Message = Annotated[
     Union[
         DeveloperMessage,
@@ -140,11 +154,12 @@ Message = Annotated[
         UserMessage,
         ToolMessage,
         ActivityMessage,
+        ReasoningMessage,
     ],
     Field(discriminator="role")
 ]
 
-Role = Literal["developer", "system", "assistant", "user", "tool", "activity"]
+Role = Literal["developer", "system", "assistant", "user", "tool", "activity", "reasoning"]
 
 
 class Context(ConfiguredBaseModel):

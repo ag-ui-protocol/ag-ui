@@ -1,19 +1,24 @@
-[tool.poetry]
-name = "example_server"
+[project]
+name = "example-server"
 version = "0.1.0"
 description = ""
-authors = ["Markus Ecker <markus.ecker@gmail.com>"]
+authors = [
+    { name = "Markus Ecker", email = "markus.ecker@gmail.com" }
+]
 readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ag-ui-protocol>=0.1.5",
+    "fastapi>=0.115.12",
+    "uvicorn>=0.34.3",
+]
 
-[tool.poetry.dependencies]
-python = "^3.12"
-ag-ui-protocol = "^0.1.5"
-fastapi = "^0.115.12"
-uvicorn = "^0.34.3"
+[project.scripts]
+dev = "example_server:main"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.poetry.scripts]
-dev = "example_server:main"
+[tool.hatch.build.targets.wheel]
+packages = ["example_server"]
