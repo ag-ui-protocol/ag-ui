@@ -25,6 +25,11 @@ from ag_ui.core.events import (
     RunErrorEvent,
     StepStartedEvent,
     StepFinishedEvent,
+    ReasoningStartEvent,
+    ReasoningMessageStartEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningEndEvent,
     Event
 )
 
@@ -595,6 +600,72 @@ class TestEvents(unittest.TestCase):
         
         # Verify Unicode and special characters are preserved
         self.assertEqual(deserialized.delta, text)
+
+
+    def test_reasoning_message_start_role_is_reasoning(self):
+        """Test that ReasoningMessageStartEvent.role is 'reasoning', not 'assistant'.
+
+        Regression test for GitHub issue #1169: Python SDK defined role as
+        Literal["assistant"] while TypeScript SDK uses z.literal("reasoning"),
+        causing cross-SDK wire incompatibility.
+        """
+        event = ReasoningMessageStartEvent(
+            message_id="msg_reasoning_1",
+            role="reasoning",
+        )
+        self.assertEqual(event.role, "reasoning")
+        self.assertEqual(event.type, EventType.REASONING_MESSAGE_START)
+
+        # Verify serialization produces "reasoning" on the wire
+        serialized = event.model_dump(by_alias=True)
+        self.assertEqual(serialized["role"], "reasoning")
+        self.assertEqual(serialized["messageId"], "msg_reasoning_1")
+
+    def test_reasoning_message_start_rejects_assistant_role(self):
+        """Test that ReasoningMessageStartEvent rejects role='assistant'.
+
+        Ensures the fix for #1169 prevents the old incorrect value.
+        """
+        with self.assertRaises(ValidationError):
+            ReasoningMessageStartEvent(
+                message_id="msg_bad_role",
+                role="assistant",
+            )
+
+    def test_reasoning_message_start_deserialization_from_wire(self):
+        """Test deserializing a ReasoningMessageStartEvent from wire format (camelCase JSON).
+
+        Verifies cross-SDK compatibility: a TypeScript client sending
+        role="reasoning" is correctly parsed by the Python SDK.
+        """
+        wire_data = {
+            "type": "REASONING_MESSAGE_START",
+            "messageId": "msg_from_ts",
+            "role": "reasoning",
+        }
+        event_adapter = TypeAdapter(Event)
+        event = event_adapter.validate_python(wire_data)
+        self.assertIsInstance(event, ReasoningMessageStartEvent)
+        self.assertEqual(event.role, "reasoning")
+        self.assertEqual(event.message_id, "msg_from_ts")
+
+    def test_reasoning_events_round_trip(self):
+        """Test full reasoning event lifecycle serialization round-trip."""
+        events = [
+            ReasoningStartEvent(message_id="msg_r1"),
+            ReasoningMessageStartEvent(message_id="msg_r1", role="reasoning"),
+            ReasoningMessageContentEvent(message_id="msg_r1", delta="Thinking about..."),
+            ReasoningMessageEndEvent(message_id="msg_r1"),
+            ReasoningEndEvent(message_id="msg_r1"),
+        ]
+
+        event_adapter = TypeAdapter(Event)
+        for original in events:
+            json_str = original.model_dump_json(by_alias=True)
+            deserialized = event_adapter.validate_json(json_str)
+            self.assertIsInstance(deserialized, type(original))
+            self.assertEqual(deserialized.type, original.type)
+            self.assertEqual(deserialized.message_id, original.message_id)
 
 
 if __name__ == "__main__":

@@ -5,12 +5,14 @@ from pydantic import TypeAdapter
 from ag_ui.core.types import (
     FunctionCall,
     ToolCall,
+    Tool,
     DeveloperMessage,
     SystemMessage,
     AssistantMessage,
     UserMessage,
     ToolMessage,
     ActivityMessage,
+    ReasoningMessage,
     Message,
     RunAgentInput,
     TextInputContent,
@@ -757,6 +759,71 @@ class TestBaseTypes(unittest.TestCase):
             deserialized.state["session"]["user"]["preferences"]["filters"],
             ["important", "urgent"]
         )
+
+
+    def test_tool_without_parameters(self):
+        """Test that Tool accepts omitted parameters field.
+
+        Regression test for GitHub issue #1185: TypeScript ToolSchema allows
+        parameters to be optional (z.any()), but Python's Tool model requires
+        it, causing ValidationError when TS tools are sent to Python backends.
+        """
+        # This simulates what arrives from a TypeScript client that omits parameters
+        tool = Tool.model_validate({"name": "my_tool", "description": "A tool"})
+        self.assertEqual(tool.name, "my_tool")
+        self.assertEqual(tool.description, "A tool")
+        self.assertIsNone(tool.parameters)
+
+    def test_tool_with_parameters(self):
+        """Test that Tool still works correctly when parameters are provided."""
+        schema = {"type": "object", "properties": {"x": {"type": "string"}}}
+        tool = Tool(name="my_tool", description="A tool", parameters=schema)
+        self.assertEqual(tool.name, "my_tool")
+        self.assertEqual(tool.parameters, schema)
+
+        serialized = tool.model_dump(by_alias=True)
+        self.assertEqual(serialized["parameters"], schema)
+
+    def test_tool_parameters_none_explicit(self):
+        """Test that Tool accepts explicit None for parameters."""
+        tool = Tool(name="noop", description="No params", parameters=None)
+        self.assertIsNone(tool.parameters)
+
+    def test_run_agent_input_with_parameterless_tools(self):
+        """Test RunAgentInput with tools that have no parameters.
+
+        Regression test for #1185: ensures tools without parameters round-trip
+        through RunAgentInput deserialization.
+        """
+        data = {
+            "threadId": "t1",
+            "runId": "r1",
+            "state": {},
+            "messages": [],
+            "tools": [
+                {"name": "tool_a", "description": "Tool A"},
+                {"name": "tool_b", "description": "Tool B", "parameters": {"type": "object"}},
+            ],
+            "context": [],
+            "forwardedProps": {},
+        }
+        run_input = RunAgentInput.model_validate(data)
+        self.assertEqual(len(run_input.tools), 2)
+        self.assertIsNone(run_input.tools[0].parameters)
+        self.assertEqual(run_input.tools[1].parameters, {"type": "object"})
+
+    def test_reasoning_message_in_union(self):
+        """Test that ReasoningMessage can be deserialized through the Message union."""
+        message_adapter = TypeAdapter(Message)
+        data = {
+            "id": "reasoning_1",
+            "role": "reasoning",
+            "content": "Let me think about this...",
+        }
+        msg = message_adapter.validate_python(data)
+        self.assertIsInstance(msg, ReasoningMessage)
+        self.assertEqual(msg.role, "reasoning")
+        self.assertEqual(msg.content, "Let me think about this...")
 
 
 if __name__ == "__main__":
