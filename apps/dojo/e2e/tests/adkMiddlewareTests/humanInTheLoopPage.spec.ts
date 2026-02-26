@@ -1,4 +1,4 @@
-import { awaitLLMResponseDone, sendChatMessage } from "../../utils/copilot-actions";
+import { awaitLLMResponseDone } from "../../utils/copilot-actions";
 import { test, expect, retryOnAIFailure } from "../../test-isolation-helper";
 import { HumanInLoopPage } from "../../pages/adkMiddlewarePages/HumanInLoopPage";
 
@@ -46,22 +46,19 @@ test.describe("Human in the Loop Feature", () => {
 
       await humanInLoop.openChat();
 
-      // Use sendChatMessage to avoid sendAndAwaitResponse timeout
-      // for the slower Mars plan prompt
-      await sendChatMessage(page, "Hi");
+      // Click the predefined "Simple plan" suggestion button
+      const simplePlanButton = page.getByRole("button", { name: "Simple plan" });
+      await simplePlanButton.waitFor({ state: "visible" });
+      await simplePlanButton.click();
       await awaitLLMResponseDone(page);
-      await sendChatMessage(page,
-        "Plan a mission to Mars with the first step being Start The Planning"
-      );
       await expect(humanInLoop.plan).toBeVisible();
 
-      const uncheckedItem = "Start The Planning";
-
-      await humanInLoop.uncheckItem(uncheckedItem);
+      // Uncheck the first step by index
+      const uncheckedItem = await humanInLoop.uncheckItem(0);
       await humanInLoop.performSteps();
       await awaitLLMResponseDone(page);
 
-      await sendChatMessage(page,
+      await humanInLoop.sendMessage(
         `Does the planner include ${uncheckedItem}? ⚠️ Reply with only words 'Yes' or 'No' (no explanation, no punctuation).`
       );
     });
