@@ -17,7 +17,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.graph import MessagesState
 from langgraph.prebuilt import ToolNode
 
-from .prompt import A2UI_PROMPT
+from agents.a2ui_chat.prompt import A2UI_PROMPT
 
 
 # --- Backend tools that return A2UI JSON ---
