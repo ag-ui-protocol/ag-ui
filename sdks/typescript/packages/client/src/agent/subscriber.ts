@@ -250,7 +250,9 @@ export async function runSubscribersWithMutation(
     } catch (error) {
       // Log subscriber errors but continue processing (silence during tests)
       const isTestEnvironment =
-        process.env.NODE_ENV === "test" || process.env.VITEST_WORKER_ID !== undefined;
+        typeof process !== "undefined" &&
+        typeof process.env !== "undefined" &&
+        (process.env.NODE_ENV === "test" || process.env.VITEST_WORKER_ID !== undefined);
 
       if (!isTestEnvironment) {
         console.error("Subscriber error:", error);
