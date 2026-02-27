@@ -18,7 +18,7 @@ export const sharedStateAgent = new Agent({
 
     If you have just created or modified the recipe, just answer in one sentence what you did. Do not describe the recipe, just say what you did. Do not mention "working memory", "memory", or "state" in your answer.
   `,
-  model: "openai/gpt-4o",
+  model: "openai/gpt-4.1-mini",
   memory: new Memory({
     storage: getStorage(),
     options: {

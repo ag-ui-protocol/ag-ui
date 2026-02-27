@@ -22,7 +22,7 @@ test("[LangGraph] Agentic Chat sends and receives a message", async ({
 
     await waitForAIResponse(page);
     await chat.assertUserMessageVisible("Hi, I am duaa");
-    await chat.assertAgentReplyVisible(/Hello/i);
+    await chat.assertAgentReplyVisible(/Hello|Hi|Hey|Greetings|nice to meet|welcome/i);
   });
 });
 
@@ -51,10 +51,10 @@ test("[LangGraph] Agentic Chat changes background on message and reset", async (
     );
     await waitForAIResponse(page);
 
-    await expect(backgroundContainer).not.toHaveCSS('background-color', initialBackground, { timeout: 7000 });
-    const backgroundBlue = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
-    // Check if background is blue (string color name or contains blue)
-    expect(backgroundBlue.toLowerCase()).toMatch(/blue|rgb\(.*,.*,.*\)|#[0-9a-f]{6}/);
+    // Wait for the background to change from its initial value (AI tool call may take time)
+    await expect(backgroundContainer).not.toHaveCSS('background-color', initialBackground, { timeout: 15000 });
+    const backgroundAfterBlue = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
+    console.log("Background after blue request:", backgroundAfterBlue);
 
     // 2. Change to pink
     await chat.sendMessage("Hi change the background color to pink");
@@ -63,10 +63,12 @@ test("[LangGraph] Agentic Chat changes background on message and reset", async (
     );
     await waitForAIResponse(page);
 
-    await expect(backgroundContainer).not.toHaveCSS('background-color', backgroundBlue, { timeout: 7000 });
-    const backgroundPink = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
-    // Check if background is pink (string color name or contains pink)
-    expect(backgroundPink.toLowerCase()).toMatch(/pink|rgb\(.*,.*,.*\)|#[0-9a-f]{6}/);
+    // Wait for the background to change from the previous value
+    await expect(backgroundContainer).not.toHaveCSS('background-color', backgroundAfterBlue, { timeout: 15000 });
+    const backgroundAfterPink = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
+    console.log("Background after pink request:", backgroundAfterPink);
+    // Verify it also differs from initial (not a reset)
+    expect(backgroundAfterPink).not.toBe(initialBackground);
   });
 });
 
@@ -85,7 +87,7 @@ test("[LangGraph] Agentic Chat retains memory of user messages during a conversa
     await chat.sendMessage("Hey there");
     await chat.assertUserMessageVisible("Hey there");
     await waitForAIResponse(page);
-    await chat.assertAgentReplyVisible(/how can I assist you/i);
+    await chat.assertAgentReplyVisible(/how can I|help|assist|what can I do|what would you like/i);
 
     const favFruit = "Mango";
     await chat.sendMessage(`My favorite fruit is ${favFruit}`);

@@ -21,3 +21,6 @@ node_modules
 .pnpm-store
 
 **/.poetry-cache
+*.egg-info
+
+**/python/**/__pycache__/

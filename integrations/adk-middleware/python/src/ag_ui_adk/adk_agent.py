@@ -25,6 +25,7 @@ from google.adk.agents import BaseAgent, LlmAgent, RunConfig as ADKRunConfig
 from google.adk.agents.run_config import StreamingMode
 from google.adk.agents.llm_agent import InstructionProvider, ToolUnion
 from google.adk.sessions import BaseSessionService, InMemorySessionService
+from google.adk.sessions.session import Event
 from google.adk.artifacts import BaseArtifactService, InMemoryArtifactService
 from google.adk.memory import BaseMemoryService, InMemoryMemoryService
 from google.adk.auth.credential_service.base_credential_service import BaseCredentialService
@@ -88,6 +89,9 @@ class ADKAgent:
 
         # Message snapshot configuration
         emit_messages_snapshot: bool = False,
+
+        # Streaming function call arguments (Gemini 3+ via Vertex AI)
+        streaming_function_call_arguments: bool = False,
     ):
         """Initialize the ADKAgent.
 
@@ -121,6 +125,12 @@ class ADKAgent:
                 full message history (e.g., for client-side persistence or AG-UI
                 protocol compliance). Note: Clients using CopilotKit can use the
                 /agents/state endpoint instead for on-demand history retrieval.
+            streaming_function_call_arguments: Whether to enable streaming of function
+                call arguments from Gemini 3+ models via Vertex AI. When enabled,
+                TOOL_CALL_ARGS events are emitted incrementally as the model streams
+                partial arguments, allowing the UI to show progressive updates.
+                Requires google-adk >= 1.24.0 and stream_function_call_arguments=True
+                in the model's GenerateContentConfig. Defaults to False.
 
             Note:
             If delete_session_on_cleanup=False but save_session_to_memory_on_cleanup=True, sessions will accumulate in SessionService but still be saved to memory on cleanup.
@@ -182,6 +192,19 @@ class ADKAgent:
         self._predict_state = predict_state
         # Message snapshot configuration
         self._emit_messages_snapshot = emit_messages_snapshot
+
+        # Streaming function call arguments (Gemini 3+ via Vertex AI)
+        if streaming_function_call_arguments and not self._adk_supports_streaming_fc_args():
+            import warnings
+            warnings.warn(
+                "streaming_function_call_arguments=True requires google-adk >= 1.24.0. "
+                "The feature will be disabled. Upgrade with: pip install 'google-adk>=1.24.0'",
+                UserWarning,
+                stacklevel=2,
+            )
+            self._streaming_function_call_arguments = False
+        else:
+            self._streaming_function_call_arguments = streaming_function_call_arguments
 
         # App-based configuration (set by from_app() classmethod)
         self._app: Optional["App"] = None
@@ -262,6 +285,7 @@ class ADKAgent:
         # AG-UI specific
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
         emit_messages_snapshot: bool = False,
+        streaming_function_call_arguments: bool = False,
     ) -> "ADKAgent":
         """Create ADKAgent from an ADK App instance.
 
@@ -293,6 +317,8 @@ class ADKAgent:
             cleanup_interval_seconds: Interval for session cleanup
             predict_state: Configuration for predictive state updates
             emit_messages_snapshot: Whether to emit MessagesSnapshotEvent at end of runs
+            streaming_function_call_arguments: Whether to enable streaming of function
+                call arguments from Gemini 3+ models. Requires google-adk >= 1.24.0.
 
         Returns:
             ADKAgent instance configured to use the App
@@ -335,6 +361,7 @@ class ADKAgent:
             save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
             predict_state=predict_state,
             emit_messages_snapshot=emit_messages_snapshot,
+            streaming_function_call_arguments=streaming_function_call_arguments,
         )
         # Store App for per-request App creation with modified agents
         instance._app = app
@@ -520,8 +547,131 @@ class ADKAgent:
             return False
 
         return len(pending_calls) > 0
-    
-    
+
+    def _extract_lro_id_remap(
+        self,
+        adk_event,
+        event_translator: 'EventTranslator',
+    ) -> Dict[str, str]:
+        """Extract ID remapping from a non-partial event's LRO function calls.
+
+        When SSE streaming is enabled, ADK's ``populate_client_function_call_id``
+        generates different UUIDs for the same function call across partial and
+        final events.  This method builds a mapping from the ID the client
+        received (emitted from the partial event) to the ID ADK persisted (from
+        the final event), so that tool-result submissions can use the correct ID.
+
+        Returns:
+            Dict mapping client-facing IDs to ADK-persisted IDs.
+        """
+        remap: Dict[str, str] = {}
+        if not adk_event.content or not hasattr(adk_event.content, 'parts'):
+            return remap
+
+        for part in (adk_event.content.parts or []):
+            fc = getattr(part, 'function_call', None)
+            if not fc:
+                continue
+            final_id = getattr(fc, 'id', None)
+            fc_name = getattr(fc, 'name', None)
+            if not final_id or not fc_name:
+                continue
+
+            emitted_id = event_translator.lro_emitted_ids_by_name.get(fc_name)
+            if emitted_id and emitted_id != final_id:
+                remap[emitted_id] = final_id
+                logger.info(
+                    f"LRO ID remap: client_id={emitted_id} -> persisted_id={final_id} "
+                    f"(tool={fc_name})"
+                )
+
+        return remap
+
+    async def _store_lro_id_remap(
+        self,
+        remap: Dict[str, str],
+        session_id: str,
+        app_name: str,
+        user_id: str,
+    ) -> None:
+        """Persist an LRO ID remapping in session state.
+
+        Merges *remap* into the existing ``lro_tool_call_id_remap`` stored in
+        the session so that multiple LRO tool calls can accumulate mappings.
+        """
+        try:
+            existing: Dict[str, str] = await self._session_manager.get_state_value(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id,
+                key="lro_tool_call_id_remap",
+                default={},
+            )
+            existing.update(remap)
+            await self._session_manager.set_state_value(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id,
+                key="lro_tool_call_id_remap",
+                value=existing,
+            )
+            logger.debug(f"Stored LRO ID remap in session state: {remap}")
+        except Exception as e:
+            logger.warning(f"Failed to store LRO ID remap: {e}")
+
+    async def _get_lro_id_remap(
+        self,
+        session_id: str,
+        app_name: str,
+        user_id: str,
+    ) -> Dict[str, str]:
+        """Retrieve the LRO ID remapping from session state."""
+        try:
+            return await self._session_manager.get_state_value(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id,
+                key="lro_tool_call_id_remap",
+                default={},
+            )
+        except Exception as e:
+            logger.warning(f"Failed to retrieve LRO ID remap: {e}")
+            return {}
+
+    async def _consume_lro_id_remap(
+        self,
+        tool_call_id: str,
+        session_id: str,
+        app_name: str,
+        user_id: str,
+    ) -> str:
+        """Look up and consume (remove) a single LRO ID remap entry.
+
+        Returns the remapped ID if one exists, otherwise returns *tool_call_id*
+        unchanged.
+        """
+        remap = await self._get_lro_id_remap(session_id, app_name, user_id)
+        if tool_call_id not in remap:
+            return tool_call_id
+
+        remapped_id = remap.pop(tool_call_id)
+        logger.info(
+            f"Remapped tool_call_id {tool_call_id} -> {remapped_id} for FunctionResponse"
+        )
+        # Persist the reduced remap (entry consumed)
+        try:
+            await self._session_manager.set_state_value(
+                session_id=session_id,
+                app_name=app_name,
+                user_id=user_id,
+                key="lro_tool_call_id_remap",
+                value=remap,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to update LRO ID remap after consumption: {e}")
+
+        return remapped_id
+
     def _default_run_config(self, input: RunAgentInput) -> ADKRunConfig:
         """Create default RunConfig with SSE streaming enabled.
 
@@ -572,6 +722,25 @@ class ADKAgent:
         """
         sig = inspect.signature(Runner.__init__)
         return 'plugin_close_timeout' in sig.parameters
+
+    @staticmethod
+    def _adk_supports_streaming_fc_args() -> bool:
+        """Check if google-adk supports reliable streaming function call arguments.
+
+        Streaming FC args requires google-adk >= 1.24.0 where the
+        StreamingResponseAggregator bugs (google/adk-python#4311) are fixed.
+        We detect this by checking for partial_args on FunctionCall.
+
+        Returns:
+            True if streaming FC args is supported, False otherwise
+        """
+        try:
+            from google.genai import types
+            if hasattr(types.FunctionCall, 'model_fields'):
+                return 'partial_args' in types.FunctionCall.model_fields
+            return hasattr(types.FunctionCall, 'partial_args')
+        except Exception:
+            return False
 
     def _create_runner(self, adk_agent: BaseAgent, user_id: str, app_name: str) -> Runner:
         """Create a new runner instance.
@@ -1581,6 +1750,19 @@ class ADKAgent:
             # message_batch was None but unseen_messages contained valid user messages
             user_message = await self._convert_latest_message(input, unseen_messages)
 
+            # Track invocation_id for tool-only submissions (when new_message will be None)
+            tool_only_invocation_id: Optional[str] = None
+
+            # Load LRO ID remapping for tool-result submissions.
+            # When SSE streaming is active, the partial and final events may
+            # carry different function-call IDs for the same logical call.
+            # The remap converts client-facing IDs back to the IDs ADK persisted.
+            lro_id_remap: Dict[str, str] = {}
+            if active_tool_results:
+                lro_id_remap = await self._get_lro_id_remap(
+                    backend_session_id, app_name, user_id
+                )
+
             # if there is a tool response submission by the user, add FunctionResponse to session first
             if active_tool_results and user_message:
                 # We have BOTH tool results AND a user message
@@ -1588,6 +1770,8 @@ class ADKAgent:
                 function_response_parts = []
                 for tool_msg in active_tool_results:
                     tool_call_id = tool_msg['message'].tool_call_id
+                    # Apply LRO ID remap: convert client-facing ID to ADK-persisted ID
+                    tool_call_id = lro_id_remap.get(tool_call_id, tool_call_id)
                     content = tool_msg['message'].content
 
                     # Debug: Log the actual tool message content we received
@@ -1623,10 +1807,6 @@ class ADKAgent:
 
                 # Add FunctionResponse as separate event to session
                 # (session was already obtained from _ensure_session_exists above)
-
-                from google.adk.sessions.session import Event
-                import time
-
                 function_response_content = types.Content(parts=function_response_parts, role='user')
                 # Tag FunctionResponse with the original invocation_id so ADK can
                 # match it to the function_call in session events
@@ -1655,6 +1835,8 @@ class ADKAgent:
                 function_response_parts = []
                 for tool_msg in active_tool_results:
                     tool_call_id = tool_msg['message'].tool_call_id
+                    # Apply LRO ID remap: convert client-facing ID to ADK-persisted ID
+                    tool_call_id = lro_id_remap.get(tool_call_id, tool_call_id)
                     content = tool_msg['message'].content
 
                     logger.debug(f"Received tool result for call {tool_call_id}: content='{content}', type={type(content)}")
@@ -1686,25 +1868,18 @@ class ADKAgent:
                     )
                     function_response_parts.append(updated_function_response_part)
 
-                # Persist FunctionResponse event so DatabaseSessionService has invocation_id
-                from google.adk.sessions.session import Event
-                import time
-
+                # Create function_response_content but DON'T pre-persist to avoid duplicates.
+                # Instead, pass as new_message with explicit invocation_id to control the ID ADK uses.
                 function_response_content = types.Content(parts=function_response_parts, role='user')
-                # Tag FunctionResponse with the original invocation_id so ADK can
-                # match it to the function_call in session events
-                resume_invocation_id = stored_invocation_id or input.run_id
-                function_response_event = Event(
-                    timestamp=time.time(),
-                    author='user',
-                    content=function_response_content,
-                    invocation_id=resume_invocation_id,
-                )
-                logger.debug(f"Creating FunctionResponse event with invocation_id={resume_invocation_id}")
+                # Use input.run_id (not stored_invocation_id) as the invocation_id for this tool response
+                # This ensures DatabaseSessionService compatibility
+                tool_response_invocation_id = input.run_id
 
-                await self._session_manager._session_service.append_event(session, function_response_event)
-
+                # Pass both new_message AND invocation_id to ADK.
+                # This tells ADK: "process this message, but use THIS specific invocation_id"
+                # (rather than auto-generating an e-xxx ID)
                 new_message = function_response_content
+                tool_only_invocation_id = tool_response_invocation_id
             else:
                 # No tool results, just use the user message
                 # If user_message is None (e.g., unseen_messages was empty because all were
@@ -1732,6 +1907,7 @@ class ADKAgent:
                 client_emitted_tool_call_ids=client_emitted_ids,
                 client_tool_names=client_tool_names,
                 is_resumable=self._is_adk_resumable(),
+                streaming_function_call_arguments=self._streaming_function_call_arguments,
             )
 
             # Share the translator's emitted IDs set with proxy toolsets so
@@ -1788,14 +1964,18 @@ class ADKAgent:
                 "run_config": run_config
             }
 
-            # Conditionally pass invocation_id based on root agent type.
+            # Conditionally pass invocation_id based on root agent type and scenario.
             # Composite agents (SequentialAgent, LoopAgent) need it so ADK calls
             # populate_invocation_agent_states() to restore internal state.
-            # Standalone LlmAgents must NOT receive it — triggers ValueError
-            # in _get_subagent_to_resume().
+            # For tool responses, we pass tool_only_invocation_id (input.run_id) to ensure
+            # ADK uses the client's run_id instead of auto-generating an e-xxx ID.
             if stored_invocation_id and self._is_adk_resumable() and self._root_agent_needs_invocation_id():
                 run_kwargs["invocation_id"] = stored_invocation_id
                 logger.debug(f"HITL resumption with invocation_id: {stored_invocation_id}")
+            elif tool_only_invocation_id and self._is_adk_resumable():
+                # Tool response case: use client's run_id as invocation_id
+                run_kwargs["invocation_id"] = tool_only_invocation_id
+                logger.debug(f"Tool response with explicit invocation_id: {tool_only_invocation_id}")
 
             logger.debug(f"Calling runner.run_async with session_id={backend_session_id}, has_message={new_message is not None}")
 
@@ -1838,6 +2018,15 @@ class ADKAgent:
                     
                     # Check if we got a non-partial event (persistence complete)
                     if not event_partial:
+                        # Capture LRO ID remapping: the final (persisted) event
+                        # may carry different function-call IDs than the partial
+                        # event we already emitted to the client.
+                        lro_remap = self._extract_lro_id_remap(adk_event, event_translator)
+                        if lro_remap:
+                            await self._store_lro_id_remap(
+                                lro_remap, backend_session_id, app_name, user_id
+                            )
+
                         logger.info(
                             f"Received non-partial event during LRO drain, persistence complete "
                             f"(thread={input.thread_id})"
@@ -1927,6 +2116,17 @@ class ADKAgent:
                         if ag_ui_event.type == EventType.TOOL_CALL_END:
                             is_long_running_tool = True
                         logger.debug(f"Event queued: {type(ag_ui_event).__name__} (thread {input.thread_id}, queue size after: {event_queue.qsize()})")
+
+                    # Capture LRO ID remapping from non-partial events.
+                    # The final (persisted) event may carry different function-call
+                    # IDs than the partial event we already emitted to the client.
+                    if has_lro_function_call and not event_partial:
+                        lro_remap = self._extract_lro_id_remap(adk_event, event_translator)
+                        if lro_remap:
+                            await self._store_lro_id_remap(
+                                lro_remap, backend_session_id, app_name, user_id
+                            )
+
                     # Hard stop the execution if we find any long running tool
                     # AND the agent is NOT using ADK's native resumability.
                     # With ResumabilityConfig, ADK handles the pause/resume flow
