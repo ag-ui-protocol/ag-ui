@@ -2,14 +2,14 @@
 import React, { useState, useEffect } from "react";
 import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
-import {
-  CopilotKitProvider,
+import { 
   useAgent,
   UseAgentUpdate,
   CopilotSidebar,
   CopilotChatConfigurationProvider,
 } from "@copilotkit/react-core/v2";
-import { useLangGraphInterrupt } from "@copilotkit/react-core";
+import { CopilotKit,
+useLangGraphInterrupt } from "@copilotkit/react-core";
 import { useMobileView } from "@/utils/use-mobile-view";
 import { useMobileChat } from "@/utils/use-mobile-chat";
 import { useURLParams } from "@/contexts/url-params-context";
@@ -175,7 +175,7 @@ export default function Subgraphs({ params }: SubgraphsProps) {
   const initialLabel = 'Hi! ✈️ Ready to plan an amazing trip? Try saying "Plan a trip to Paris" or "Find me flights to Tokyo"';
 
   return (
-    <CopilotKitProvider
+    <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
     >
@@ -278,7 +278,7 @@ export default function Subgraphs({ params }: SubgraphsProps) {
         )}
       </div>
       </CopilotChatConfigurationProvider>
-    </CopilotKitProvider>
+    </CopilotKit>
   );
 }
 

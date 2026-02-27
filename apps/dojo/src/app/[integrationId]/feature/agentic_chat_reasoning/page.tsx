@@ -2,8 +2,7 @@
 import React, { useState } from "react";
 import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
-import {
-  CopilotKitProvider,
+import { 
   useAgent,
   UseAgentUpdate,
   useFrontendTool,
@@ -20,6 +19,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { CopilotKit } from "@copilotkit/react-core";
 
 interface AgenticChatProps {
   params: Promise<{
@@ -31,12 +31,12 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
   const { integrationId } = React.use(params);
 
   return (
-    <CopilotKitProvider
+    <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
     >
       <Chat />
-    </CopilotKitProvider>
+    </CopilotKit>
   );
 };
 

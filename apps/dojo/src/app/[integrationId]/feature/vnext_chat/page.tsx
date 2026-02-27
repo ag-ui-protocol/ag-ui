@@ -2,7 +2,8 @@
 
 import React from "react";
 import "@copilotkit/react-core/v2/styles.css";
-import { CopilotChat, CopilotKitProvider } from "@copilotkit/react-core/v2";
+import { CopilotChat,   } from "@copilotkit/react-core/v2";
+import { CopilotKit } from "@copilotkit/react-core";
 
 export const dynamic = "force-dynamic";
 
@@ -16,9 +17,9 @@ export default function Page({ params }: PageProps) {
   const { integrationId } = React.use(params);
 
   return (
-    <CopilotKitProvider
+    <CopilotKit
       runtimeUrl={`/api/copilotkitnext/${integrationId}`}
-      showDevConsole="auto"
+      showDevConsole={false}
     >
       <main
         className="flex min-h-screen flex-1 flex-col overflow-hidden"
@@ -26,7 +27,7 @@ export default function Page({ params }: PageProps) {
       >
         <Chat threadId={`${integrationId}-vnext_chat`} />
       </main>
-    </CopilotKitProvider>
+    </CopilotKit>
   );
 }
 

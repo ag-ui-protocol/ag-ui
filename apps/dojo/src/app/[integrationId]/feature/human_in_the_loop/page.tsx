@@ -1,14 +1,14 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import "@copilotkit/react-core/v2/styles.css";
-import {
-  CopilotKitProvider,
+import { 
   useHumanInTheLoop,
   useConfigureSuggestions,
   CopilotChat,
   CopilotChatConfigurationProvider,
 } from "@copilotkit/react-core/v2";
-import { useLangGraphInterrupt } from "@copilotkit/react-core";
+import { CopilotKit,
+useLangGraphInterrupt } from "@copilotkit/react-core";
 import { z } from "zod";
 import { useTheme } from "next-themes";
 
@@ -22,12 +22,12 @@ const HumanInTheLoop: React.FC<HumanInTheLoopProps> = ({ params }) => {
   const { integrationId } = React.use(params);
 
   return (
-    <CopilotKitProvider
+    <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
     >
       <Chat integrationId={integrationId} />
-    </CopilotKitProvider>
+    </CopilotKit>
   );
 };
 

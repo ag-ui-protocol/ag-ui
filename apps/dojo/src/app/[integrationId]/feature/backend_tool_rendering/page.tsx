@@ -2,13 +2,13 @@
 import React from "react";
 import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
-import {
-  CopilotKitProvider,
+import { 
   useRenderTool,
   useConfigureSuggestions,
   CopilotChat,
 } from "@copilotkit/react-core/v2";
 import { z } from "zod";
+import { CopilotKit } from "@copilotkit/react-core";
 
 interface AgenticChatProps {
   params: Promise<{
@@ -20,12 +20,12 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
   const { integrationId } = React.use(params);
 
   return (
-    <CopilotKitProvider
+    <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
     >
       <Chat />
-    </CopilotKitProvider>
+    </CopilotKit>
   );
 };
 

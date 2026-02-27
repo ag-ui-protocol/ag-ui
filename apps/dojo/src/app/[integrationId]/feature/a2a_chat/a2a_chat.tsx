@@ -2,8 +2,7 @@
 import React, { useEffect, useState } from "react";
 import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
-import {
-  CopilotKitProvider,
+import { 
   useAgent,
   UseAgentUpdate,
   useRenderTool,
@@ -12,6 +11,7 @@ import {
 } from "@copilotkit/react-core/v2";
 import { z } from "zod";
 import dedent from "dedent";
+import { CopilotKit } from "@copilotkit/react-core";
 
 interface A2AChatProps {
   params: Promise<{
@@ -24,12 +24,12 @@ const A2AChat: React.FC<A2AChatProps> = ({ params, onNotification }) => {
   const { integrationId } = React.use(params);
 
   return (
-    <CopilotKitProvider
+    <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
     >
       <Chat onNotification={onNotification} />
-    </CopilotKitProvider>
+    </CopilotKit>
   );
 };
 

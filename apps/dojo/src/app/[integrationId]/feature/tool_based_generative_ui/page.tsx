@@ -1,8 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import "@copilotkit/react-core/v2/styles.css";
-import {
-  CopilotKitProvider,
+import { 
   useFrontendTool,
   useConfigureSuggestions,
   CopilotSidebar,
@@ -16,6 +15,7 @@ import {
   CarouselPrevious,
 } from "@/components/ui/carousel";
 import { useURLParams } from "@/contexts/url-params-context";
+import { CopilotKit } from "@copilotkit/react-core";
 
 interface ToolBasedGenerativeUIProps {
   params: Promise<{
@@ -35,13 +35,13 @@ export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIP
   const { chatDefaultOpen } = useURLParams();
 
   return (
-    <CopilotKitProvider
+    <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
     >
       <SidebarWithSuggestions defaultOpen={chatDefaultOpen} />
       <HaikuDisplay />
-    </CopilotKitProvider>
+    </CopilotKit>
   );
 }
 

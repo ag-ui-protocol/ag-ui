@@ -9,8 +9,7 @@ import { diffWords } from "diff";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useState, useRef } from "react";
-import {
-  CopilotKitProvider,
+import { 
   useAgent,
   UseAgentUpdate,
   useHumanInTheLoop,
@@ -22,6 +21,7 @@ import { z } from "zod";
 import { useMobileView } from "@/utils/use-mobile-view";
 import { useMobileChat } from "@/utils/use-mobile-chat";
 import { useURLParams } from "@/contexts/url-params-context";
+import { CopilotKit } from "@copilotkit/react-core";
 
 const extensions = [StarterKit];
 
@@ -43,7 +43,7 @@ export default function PredictiveStateUpdates({ params }: PredictiveStateUpdate
   const initialLabel = "Hi 👋 How can I help with your document?";
 
   return (
-    <CopilotKitProvider
+    <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
     >
@@ -170,7 +170,7 @@ export default function PredictiveStateUpdates({ params }: PredictiveStateUpdate
         )}
         <DocumentEditor />
       </div>
-    </CopilotKitProvider>
+    </CopilotKit>
   );
 }
 

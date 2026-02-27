@@ -1,6 +1,5 @@
 "use client";
-import {
-  CopilotKitProvider,
+import { 
   useAgent,
   UseAgentUpdate,
   useCopilotKit,
@@ -13,6 +12,7 @@ import "./style.css";
 import { useMobileView } from "@/utils/use-mobile-view";
 import { useMobileChat } from "@/utils/use-mobile-chat";
 import { useURLParams } from "@/contexts/url-params-context";
+import { CopilotKit } from "@copilotkit/react-core";
 
 interface SharedStateProps {
   params: Promise<{
@@ -33,7 +33,7 @@ export default function SharedState({ params }: SharedStateProps) {
   const initialLabel = "Hi 👋 How can I help with your recipe?";
 
   return (
-    <CopilotKitProvider
+    <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
     >
@@ -152,7 +152,7 @@ export default function SharedState({ params }: SharedStateProps) {
           />
         )}
       </div>
-    </CopilotKitProvider>
+    </CopilotKit>
   );
 }
 

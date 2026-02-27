@@ -2,14 +2,14 @@
 import React from "react";
 import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
-import {
-  CopilotKitProvider,
+import { 
   useAgent,
   UseAgentUpdate,
   useConfigureSuggestions,
   CopilotChat,
 } from "@copilotkit/react-core/v2";
 import { useTheme } from "next-themes";
+import { CopilotKit } from "@copilotkit/react-core";
 
 interface AgenticGenerativeUIProps {
   params: Promise<{
@@ -20,12 +20,12 @@ interface AgenticGenerativeUIProps {
 const AgenticGenerativeUI: React.FC<AgenticGenerativeUIProps> = ({ params }) => {
   const { integrationId } = React.use(params);
   return (
-    <CopilotKitProvider
+    <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
     >
       <Chat />
-    </CopilotKitProvider>
+    </CopilotKit>
   );
 };
 
