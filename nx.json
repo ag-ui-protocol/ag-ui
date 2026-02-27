@@ -97,6 +97,98 @@
         "^build"
       ],
       "cache": false
+    },
+    "nx-release-publish": {
+      "dependsOn": [
+        "build"
+      ],
+      "options": {
+        "packageRoot": "{projectRoot}"
+      }
+    }
+  },
+  "release": {
+    "versionPlans": {
+      "ignorePatternsForPlanCheck": [
+        "**/*.spec.ts",
+        "**/*.test.ts",
+        "**/__tests__/**",
+        "**/examples/**",
+        "apps/**",
+        "docs/**",
+        "*.md",
+        ".github/**"
+      ]
+    },
+    "groups": {
+      "sdk": {
+        "projects": [
+          "@ag-ui/core",
+          "@ag-ui/client",
+          "@ag-ui/encoder",
+          "@ag-ui/proto",
+          "create-ag-ui-app"
+        ],
+        "projectsRelationship": "fixed",
+        "releaseTag": {
+          "pattern": "v{version}"
+        }
+      },
+      "integrations": {
+        "projects": [
+          "@ag-ui/langgraph",
+          "@ag-ui/a2a",
+          "@ag-ui/vercel-ai-sdk",
+          "@ag-ui/langchain",
+          "@ag-ui/mastra",
+          "@ag-ui/crewai",
+          "@ag-ui/agno",
+          "@ag-ui/llamaindex",
+          "@ag-ui/pydantic-ai",
+          "@ag-ui/aws-strands",
+          "@ag-ui/adk",
+          "@ag-ui/ag2",
+          "@ag-ui/spring-ai",
+          "@ag-ui/server-starter",
+          "@ag-ui/server-starter-all-features"
+        ],
+        "projectsRelationship": "independent",
+        "releaseTag": {
+          "pattern": "{projectName}@{version}"
+        }
+      },
+      "middlewares": {
+        "projects": [
+          "@ag-ui/a2a-middleware",
+          "@ag-ui/mcp-apps-middleware",
+          "@ag-ui/middleware-starter"
+        ],
+        "projectsRelationship": "independent",
+        "releaseTag": {
+          "pattern": "{projectName}@{version}"
+        }
+      }
+    },
+    "version": {
+      "git": {
+        "commit": false,
+        "tag": false
+      }
+    },
+    "changelog": {
+      "workspaceChangelog": false,
+      "projectChangelogs": {
+        "file": "{projectRoot}/CHANGELOG.md",
+        "renderOptions": {
+          "authors": true,
+          "commitReferences": true,
+          "versionTitleDate": true
+        }
+      },
+      "git": {
+        "commit": false,
+        "tag": false
+      }
     }
   }
 }
