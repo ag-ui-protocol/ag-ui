@@ -1128,27 +1128,39 @@ describe("AgentSubscriber", () => {
 
         // This should NOT throw a ReferenceError about process being undefined
         // It should gracefully handle the subscriber error and continue
-        const result = await runSubscribersWithMutation(
-          [errorSubscriber, workingSubscriber],
-          [],
-          {},
-          (subscriber, messages, state) => {
-            if (subscriber.onEvent) {
-              return subscriber.onEvent({
-                event: { type: EventType.TEXT_MESSAGE_START } as any,
-                messages,
-                state,
-                agent: agent,
-                input: {} as RunAgentInput,
-              });
-            }
-          },
-        );
+        let caughtError: Error | undefined;
+        let result: Awaited<ReturnType<typeof runSubscribersWithMutation>> | undefined;
+        try {
+          result = await runSubscribersWithMutation(
+            [errorSubscriber, workingSubscriber],
+            [],
+            {},
+            (subscriber, messages, state) => {
+              if (subscriber.onEvent) {
+                return subscriber.onEvent({
+                  event: { type: EventType.TEXT_MESSAGE_START } as any,
+                  messages,
+                  state,
+                  agent: agent,
+                  input: {} as RunAgentInput,
+                });
+              }
+            },
+          );
+        } catch (e) {
+          caughtError = e as Error;
+        }
+
+        // Explicitly verify no ReferenceError was thrown
+        expect(caughtError).toBeUndefined();
 
         // The error subscriber threw, but processing should continue
         expect(errorSubscriber.onEvent).toHaveBeenCalled();
         expect(workingSubscriber.onEvent).toHaveBeenCalled();
         expect(result).toBeDefined();
+
+        // Verify console.error was called for the subscriber error
+        expect(consoleSpy).toHaveBeenCalled();
 
         consoleSpy.mockRestore();
       } finally {
