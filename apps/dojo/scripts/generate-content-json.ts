@@ -78,11 +78,16 @@ async function getFile(_filePath: string | undefined, _fileName?: string) {
   }
 }
 
+const FEATURE_BASE = path.join(__dirname, "../src/app/[integrationId]/feature");
+
+function resolveFeatureDir(featureId: string): string {
+  const v1Path = path.join(FEATURE_BASE, "(v1)", featureId);
+  if (fs.existsSync(v1Path)) return v1Path;
+  return path.join(FEATURE_BASE, "(v2)", featureId);
+}
+
 async function getFeatureFrontendFiles(featureId: string) {
-  const featurePath = path.join(
-    __dirname,
-    `../src/app/[integrationId]/feature/${featureId as string}`,
-  );
+  const featurePath = resolveFeatureDir(featureId);
   const retrievedFiles = [];
 
   for (const fileName of featureFiles) {
@@ -503,10 +508,7 @@ function validateFeatureReadmes(): boolean {
   const missingReadmes: Array<{ feature: string; integrations: string[] }> = [];
 
   for (const feature of allFeatures) {
-    const readmePath = path.join(
-      __dirname,
-      `../src/app/[integrationId]/feature/${feature}/README.mdx`
-    );
+    const readmePath = path.join(resolveFeatureDir(feature), "README.mdx");
 
     if (!fs.existsSync(readmePath)) {
       // Find which integrations use this feature
@@ -527,7 +529,7 @@ function validateFeatureReadmes(): boolean {
     for (const { feature, integrations } of missingReadmes) {
       console.error(`   - ${feature}`);
       console.error(`     Used by: ${integrations.join(", ")}`);
-      console.error(`     Missing: apps/dojo/src/app/[integrationId]/feature/${feature}/README.mdx`);
+      console.error(`     Missing: ${path.relative(path.join(__dirname, ".."), path.join(resolveFeatureDir(feature), "README.mdx"))}`);
     }
     console.error("");
     console.error("Please create README.mdx files for these features.");
