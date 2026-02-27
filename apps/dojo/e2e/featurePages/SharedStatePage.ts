@@ -37,19 +37,27 @@ export class SharedStatePage {
   }
 
   async loader() {
-    // Wait for the loading indicator to appear (it may already be visible)
-    try {
-      await this.promptResponseLoader.waitFor({ state: "visible", timeout: 10000 });
-    } catch {
-      // Loader may have already appeared and disappeared, continue
-    }
-    // Wait for the loading indicator to disappear (AI response finished)
-    try {
+    // Check if the loading indicator is currently visible
+    const isVisible = await this.promptResponseLoader.isVisible();
+
+    if (isVisible) {
+      // Loader is showing — wait for it to disappear (AI response finished)
       await this.promptResponseLoader.waitFor({ state: "hidden", timeout: 60000 });
-    } catch {
-      // Loader may already be gone
+    } else {
+      // Loader not visible yet — it may appear shortly as the request starts.
+      // Give it a brief window to appear, then proceed if it doesn't.
+      try {
+        await this.promptResponseLoader.waitFor({ state: "visible", timeout: 5000 });
+        // It appeared — now wait for it to disappear
+        await this.promptResponseLoader.waitFor({ state: "hidden", timeout: 60000 });
+      } catch {
+        // Loader never appeared within 5s — response may have completed very
+        // quickly. This is legitimate (fast response), not an error to swallow.
+        console.log("[SharedStatePage.loader] Loading indicator did not appear — response may have completed quickly");
+      }
     }
-    // Additional stabilization wait for content to render
+
+    // Stabilization wait for content to finish rendering
     await this.page.waitForTimeout(2000);
   }
 

@@ -151,15 +151,13 @@ export class SubgraphsPage {
   }
 
   async verifyStaticExperienceData() {
-    // Wait for experiences to load - this can take time as it's the final step in the agent flow
-    // First ensure we're not stuck in "No experiences planned yet" state
-    await expect(this.page.getByText('No experiences planned yet')).not.toBeVisible({ timeout: 20000 }).catch(() => {
-      console.log('Still waiting for experiences to load...');
-    });
-    
+    // Wait for "No experiences planned yet" placeholder to disappear.
+    // This is the final step in the agent flow, so give it generous time.
+    await expect(this.page.getByText('No experiences planned yet')).not.toBeVisible({ timeout: 30000 });
+
     // Wait for actual experience content to appear
     await expect(this.page.locator('.activity-name').first()).toBeVisible({ timeout: 15000 });
-    
+
     // Verify we have meaningful experience content (either static or AI-generated)
     const experienceContent = this.page.locator('.activity-name').first().or(
       this.page.getByText(/Pier 39|Golden Gate Bridge|Swan Oyster Depot|Tartine Bakery/i).first()
