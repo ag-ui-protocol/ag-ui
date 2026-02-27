@@ -244,12 +244,12 @@ export const menuIntegrations = [
   {
     id: "middleware-starter",
     name: "Middleware Starter",
-    features: ["agentic_chat"],
+    features: ["agentic_chat", "v1_agentic_chat"],
   },
   {
     id: "server-starter",
     name: "Server Starter",
-    features: ["agentic_chat"],
+    features: ["agentic_chat", "v1_agentic_chat"],
   },
   {
     id: "server-starter-all-features",

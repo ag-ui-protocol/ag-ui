@@ -2577,6 +2577,20 @@
       "type": "file"
     }
   ],
+  "middleware-starter::v1_agentic_chat": [
+    {
+      "name": "page.tsx",
+      "content": "\"use client\";\nimport React from \"react\";\nimport { CopilotKit } from \"@copilotkit/react-core\";\nimport { CopilotChat } from \"@copilotkit/react-ui\";\nimport \"@copilotkit/react-ui/styles.css\";\n\ninterface V1AgenticChatProps {\n  params: Promise<{\n    integrationId: string;\n  }>;\n}\n\nconst V1AgenticChat: React.FC<V1AgenticChatProps> = ({ params }) => {\n  const { integrationId } = React.use(params);\n\n  return (\n    <CopilotKit\n      runtimeUrl={`/api/copilotkit/${integrationId}`}\n      showDevConsole={false}\n      agent=\"agentic_chat\"\n    >\n      <div className=\"flex justify-center items-center h-full w-full\">\n        <div className=\"h-full w-full md:w-8/10 md:h-8/10 rounded-lg\">\n          <CopilotChat\n            labels={{\n              initial: \"Hi, I'm a v1 agent. Want to chat?\",\n              placeholder: \"Type a message...\",\n            }}\n          />\n        </div>\n      </div>\n    </CopilotKit>\n  );\n};\n\nexport default V1AgenticChat;\n",
+      "language": "typescript",
+      "type": "file"
+    },
+    {
+      "name": "README.mdx",
+      "content": "# 🤖 V1 Agentic Chat\n\n## What This Demo Shows\n\nThis demo verifies **CopilotKit v1 API compatibility**. It uses the original v1\ncomponents (`CopilotKit` provider and `CopilotChat`) to ensure that v1 APIs\ncontinue to work correctly against the current runtime.\n\n1. **V1 Provider**: Uses `CopilotKit` from `@copilotkit/react-core` with the\n   `agent` prop for agent selection\n2. **V1 Chat UI**: Uses `CopilotChat` from `@copilotkit/react-ui` with v1\n   styling\n3. **Same Backend**: Connects to the same runtime endpoint as v2, validating\n   backward compatibility\n\n## How to Interact\n\nThis is a standard chat interface — type a message and the agent will respond\nconversationally, just like the v2 agentic chat demo.\n\n## ✨ V1 Compatibility\n\n**What's happening technically:**\n\n- The v1 `CopilotKit` provider connects to the same `/api/copilotkit/[integration]` endpoint\n- The v1 chat UI renders with v1 CSS classes (`.copilotKitInput`, `.copilotKitAssistantMessage`, etc.)\n- The agent selected via the `agent` prop maps to the same `agentic_chat` backend agent\n- This ensures that applications built with v1 APIs continue to function after runtime upgrades\n",
+      "language": "markdown",
+      "type": "file"
+    }
+  ],
   "server-starter::agentic_chat": [
     {
       "name": "page.tsx",
@@ -2594,6 +2608,20 @@
       "name": "__init__.py",
       "content": "\"\"\"\nExample server for the AG-UI protocol.\n\"\"\"\n\nimport os\nimport uvicorn\nimport uuid\nfrom fastapi import FastAPI, Request\nfrom fastapi.responses import StreamingResponse\nfrom ag_ui.core import (\n    RunAgentInput,\n    EventType,\n    RunStartedEvent,\n    RunFinishedEvent,\n    TextMessageStartEvent,\n    TextMessageContentEvent,\n    TextMessageEndEvent,\n)\nfrom ag_ui.encoder import EventEncoder\n\napp = FastAPI(title=\"AG-UI Endpoint\")\n\n@app.post(\"/\")\nasync def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):\n    \"\"\"Agentic chat endpoint\"\"\"\n    # Get the accept header from the request\n    accept_header = request.headers.get(\"accept\")\n\n    # Create an event encoder to properly format SSE events\n    encoder = EventEncoder(accept=accept_header)\n\n    async def event_generator():\n\n        # Send run started event\n        yield encoder.encode(\n          RunStartedEvent(\n            type=EventType.RUN_STARTED,\n            thread_id=input_data.thread_id,\n            run_id=input_data.run_id\n          ),\n        )\n\n        message_id = str(uuid.uuid4())\n\n        yield encoder.encode(\n            TextMessageStartEvent(\n                type=EventType.TEXT_MESSAGE_START,\n                message_id=message_id,\n                role=\"assistant\"\n            )\n        )\n\n        yield encoder.encode(\n            TextMessageContentEvent(\n                type=EventType.TEXT_MESSAGE_CONTENT,\n                message_id=message_id,\n                delta=\"Hello world!\"\n            )\n        )\n\n        yield encoder.encode(\n            TextMessageEndEvent(\n                type=EventType.TEXT_MESSAGE_END,\n                message_id=message_id\n            )\n        )\n\n        # Send run finished event\n        yield encoder.encode(\n          RunFinishedEvent(\n            type=EventType.RUN_FINISHED,\n            thread_id=input_data.thread_id,\n            run_id=input_data.run_id\n          ),\n        )\n\n    return StreamingResponse(\n        event_generator(),\n        media_type=encoder.get_content_type()\n    )\n\ndef main():\n    \"\"\"Run the uvicorn server.\"\"\"\n    port = int(os.getenv(\"PORT\", \"8000\"))\n    uvicorn.run(\n        \"example_server:app\",\n        host=\"0.0.0.0\",\n        port=port,\n        reload=True\n    )\n",
       "language": "python",
+      "type": "file"
+    }
+  ],
+  "server-starter::v1_agentic_chat": [
+    {
+      "name": "page.tsx",
+      "content": "\"use client\";\nimport React from \"react\";\nimport { CopilotKit } from \"@copilotkit/react-core\";\nimport { CopilotChat } from \"@copilotkit/react-ui\";\nimport \"@copilotkit/react-ui/styles.css\";\n\ninterface V1AgenticChatProps {\n  params: Promise<{\n    integrationId: string;\n  }>;\n}\n\nconst V1AgenticChat: React.FC<V1AgenticChatProps> = ({ params }) => {\n  const { integrationId } = React.use(params);\n\n  return (\n    <CopilotKit\n      runtimeUrl={`/api/copilotkit/${integrationId}`}\n      showDevConsole={false}\n      agent=\"agentic_chat\"\n    >\n      <div className=\"flex justify-center items-center h-full w-full\">\n        <div className=\"h-full w-full md:w-8/10 md:h-8/10 rounded-lg\">\n          <CopilotChat\n            labels={{\n              initial: \"Hi, I'm a v1 agent. Want to chat?\",\n              placeholder: \"Type a message...\",\n            }}\n          />\n        </div>\n      </div>\n    </CopilotKit>\n  );\n};\n\nexport default V1AgenticChat;\n",
+      "language": "typescript",
+      "type": "file"
+    },
+    {
+      "name": "README.mdx",
+      "content": "# 🤖 V1 Agentic Chat\n\n## What This Demo Shows\n\nThis demo verifies **CopilotKit v1 API compatibility**. It uses the original v1\ncomponents (`CopilotKit` provider and `CopilotChat`) to ensure that v1 APIs\ncontinue to work correctly against the current runtime.\n\n1. **V1 Provider**: Uses `CopilotKit` from `@copilotkit/react-core` with the\n   `agent` prop for agent selection\n2. **V1 Chat UI**: Uses `CopilotChat` from `@copilotkit/react-ui` with v1\n   styling\n3. **Same Backend**: Connects to the same runtime endpoint as v2, validating\n   backward compatibility\n\n## How to Interact\n\nThis is a standard chat interface — type a message and the agent will respond\nconversationally, just like the v2 agentic chat demo.\n\n## ✨ V1 Compatibility\n\n**What's happening technically:**\n\n- The v1 `CopilotKit` provider connects to the same `/api/copilotkit/[integration]` endpoint\n- The v1 chat UI renders with v1 CSS classes (`.copilotKitInput`, `.copilotKitAssistantMessage`, etc.)\n- The agent selected via the `agent` prop maps to the same `agentic_chat` backend agent\n- This ensures that applications built with v1 APIs continue to function after runtime upgrades\n",
+      "language": "markdown",
       "type": "file"
     }
   ],
