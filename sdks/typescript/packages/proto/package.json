@@ -23,11 +23,14 @@
     "unlink:global": "pnpm unlink --global"
   },
   "dependencies": {
-    "@ag-ui/core": "workspace:*",
     "@bufbuild/protobuf": "^2.2.5",
     "@protobuf-ts/protoc": "^2.11.1"
   },
+  "peerDependencies": {
+    "@ag-ui/core": ">=0.0.42"
+  },
   "devDependencies": {
+    "@ag-ui/core": "workspace:*",
     "@vitest/coverage-istanbul": "^4.0.18",
     "publint": "^0.3.12",
     "@arethetypeswrong/cli": "^0.17.4",
