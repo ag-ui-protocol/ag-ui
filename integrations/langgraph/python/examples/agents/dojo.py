@@ -19,6 +19,7 @@ from .human_in_the_loop.agent import graph as human_in_the_loop_graph
 from .predictive_state_updates.agent import graph as predictive_state_updates_graph
 from .shared_state.agent import graph as shared_state_graph
 from .subgraphs.agent import graph as subgraphs_graph
+from .a2ui_chat.agent import graph as a2ui_chat_graph
 from .tool_based_generative_ui.agent import graph as tool_based_generative_ui_graph
 
 app = FastAPI(title="LangGraph Dojo Example Server")
@@ -70,6 +71,11 @@ agents = {
         description="A demo of LangGraph subgraphs using a Game Character Creator.",
         graph=subgraphs_graph,
     ),
+    "a2ui_chat": LangGraphAgent(
+        name="a2ui_chat",
+        description="An agent that can render A2UI surfaces.",
+        graph=a2ui_chat_graph,
+    ),
 }
 
 add_langgraph_fastapi_endpoint(
@@ -115,6 +121,10 @@ add_langgraph_fastapi_endpoint(
 
 add_langgraph_fastapi_endpoint(
     app=app, agent=agents["subgraphs"], path="/agent/subgraphs"
+)
+
+add_langgraph_fastapi_endpoint(
+    app=app, agent=agents["a2ui_chat"], path="/agent/a2ui_chat"
 )
 
 

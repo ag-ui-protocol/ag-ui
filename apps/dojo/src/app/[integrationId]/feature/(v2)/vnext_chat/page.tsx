@@ -3,7 +3,7 @@
 import React from "react";
 import "@copilotkit/react-core/v2/styles.css";
 import { CopilotChat,   } from "@copilotkit/react-core/v2";
-import { CopilotKit } from "@copilotkit/react-core";
+import { CopilotKit } from "@copilotkit/react-core"; 
 
 export const dynamic = "force-dynamic";
 

@@ -523,8 +523,23 @@ export const defaultApplyEvents = (
           if (mutation.stopPropagation !== true) {
             const { messages: newMessages } = event as MessagesSnapshotEvent;
 
-            // Replace messages with the snapshot
-            messages = newMessages;
+            // Edit-based merge: update existing messages with snapshot data while
+            // preserving activity messages (which the backend doesn't know about).
+            const snapshotMap = new Map(newMessages.map((m) => [m.id, m]));
+
+            // Step 1 + 2: Keep activity messages as-is, keep messages present in
+            // the snapshot (replaced with snapshot version), drop everything else.
+            messages = messages
+              .filter((m) => m.role === "activity" || snapshotMap.has(m.id))
+              .map((m) => (m.role === "activity" ? m : snapshotMap.get(m.id)!));
+
+            // Step 3: Append messages from the snapshot that we don't have yet.
+            const existingIds = new Set(messages.map((m) => m.id));
+            for (const snapshotMsg of newMessages) {
+              if (!existingIds.has(snapshotMsg.id)) {
+                messages.push(snapshotMsg);
+              }
+            }
 
             applyMutation({ messages });
           }
@@ -607,9 +622,6 @@ export const defaultApplyEvents = (
           const activityEvent = event as ActivityDeltaEvent;
           const existingIndex = messages.findIndex((m) => m.id === activityEvent.messageId);
           if (existingIndex === -1) {
-            console.warn(
-              `ACTIVITY_DELTA: No message found with ID '${activityEvent.messageId}' to apply patch`,
-            );
             return emitUpdates();
           }
 

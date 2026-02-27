@@ -1,5 +1,5 @@
 {
-  "name": "@ag-ui/mcp-apps-middleware",
+  "name": "@ag-ui/a2ui-middleware",
   "author": "Markus Ecker",
   "version": "0.0.2",
   "publishConfig": {
@@ -13,19 +13,14 @@
     "dist/**"
   ],
   "scripts": {
-    "build": "tsdown",
-    "dev": "tsdown --watch",
-    "clean": "git clean -fdX --exclude=\"!.env\"",
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
-    "test:exports": "publint --strict && attw --pack",
     "link:global": "pnpm link --global",
     "unlink:global": "pnpm unlink --global"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "peerDependencies": {
     "@ag-ui/client": ">=0.0.40",
@@ -34,19 +29,9 @@
   "devDependencies": {
     "@ag-ui/client": "workspace:*",
     "@types/node": "^20.11.19",
-    "@vitest/coverage-istanbul": "^4.0.18",
-    "publint": "^0.3.12",
-    "@arethetypeswrong/cli": "^0.17.4",
     "rxjs": "7.8.1",
-    "tsdown": "^0.20.1",
+    "tsup": "^8.0.2",
     "typescript": "^5.3.3",
-    "vitest": "^4.0.18"
-  },
-  "exports": {
-    ".": {
-      "require": "./dist/index.js",
-      "import": "./dist/index.mjs"
-    },
-    "./package.json": "./package.json"
+    "vitest": "^2.0.0"
   }
 }

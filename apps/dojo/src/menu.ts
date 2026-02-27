@@ -47,6 +47,7 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
+      "a2ui_chat",
     ],
   },
   {
@@ -63,6 +64,7 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
+      "a2ui_chat",
     ],
   },
   {
@@ -234,6 +236,11 @@ export const menuIntegrations = [
     id: "a2a-basic",
     name: "A2A (Direct)",
     features: ["vnext_chat"],
+  },
+  {
+    id: "builtin",
+    name: "Built-in Agent",
+    features: ["a2ui_chat"],
   },
   // Disabled until we can support Vercel AI SDK v5
   // {
