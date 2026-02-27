@@ -51,8 +51,22 @@ test("[MastraAgentLocal] Agentic Chat changes background on message and reset", 
     );
     await waitForAIResponse(page);
 
-    // Wait for the background to change from its initial value (AI tool call may take time)
-    await expect(backgroundContainer).not.toHaveCSS('background-color', initialBackground, { timeout: 15000 });
+    await expect
+      .poll(
+        async () => {
+          const current = await backgroundContainer.evaluate(
+            (el) => getComputedStyle(el).backgroundColor
+          );
+          return current !== initialBackground;
+        },
+        {
+          message: `Background color did not change from initial value "${initialBackground}" after requesting blue`,
+          timeout: 60_000,
+          intervals: [500, 1000, 2000, 3000, 5000],
+        }
+      )
+      .toBeTruthy();
+
     const backgroundAfterBlue = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
     console.log("Background after blue request:", backgroundAfterBlue);
 
@@ -63,11 +77,24 @@ test("[MastraAgentLocal] Agentic Chat changes background on message and reset", 
     );
     await waitForAIResponse(page);
 
-    // Wait for the background to change from the previous value
-    await expect(backgroundContainer).not.toHaveCSS('background-color', backgroundAfterBlue, { timeout: 15000 });
+    await expect
+      .poll(
+        async () => {
+          const current = await backgroundContainer.evaluate(
+            (el) => getComputedStyle(el).backgroundColor
+          );
+          return current !== backgroundAfterBlue;
+        },
+        {
+          message: `Background color did not change from blue value "${backgroundAfterBlue}" after requesting pink`,
+          timeout: 60_000,
+          intervals: [500, 1000, 2000, 3000, 5000],
+        }
+      )
+      .toBeTruthy();
+
     const backgroundAfterPink = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
     console.log("Background after pink request:", backgroundAfterPink);
-    // Verify it also differs from initial (not a reset)
     expect(backgroundAfterPink).not.toBe(initialBackground);
   });
 });

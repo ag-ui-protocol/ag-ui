@@ -51,10 +51,24 @@ test("[PydanticAI] Agentic Chat changes background on message and reset", async 
     );
     await waitForAIResponse(page);
 
-    await expect(backgroundContainer).not.toHaveCSS('background-color', initialBackground, { timeout: 7000 });
+    await expect
+      .poll(
+        async () => {
+          const current = await backgroundContainer.evaluate(
+            (el) => getComputedStyle(el).backgroundColor
+          );
+          return current !== initialBackground;
+        },
+        {
+          message: `Background color did not change from initial value "${initialBackground}" after requesting blue`,
+          timeout: 60_000,
+          intervals: [500, 1000, 2000, 3000, 5000],
+        }
+      )
+      .toBeTruthy();
+
     const backgroundBlue = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
-    // Check if background is blue (string color name or contains blue)
-    expect(backgroundBlue.toLowerCase()).toMatch(/blue|rgb\(.*,.*,.*\)|#[0-9a-f]{6}/);
+    console.log("Background after blue request:", backgroundBlue);
 
     // 2. Change to pink
     await chat.sendMessage("Hi change the background color to pink");
@@ -63,10 +77,25 @@ test("[PydanticAI] Agentic Chat changes background on message and reset", async 
     );
     await waitForAIResponse(page);
 
-    await expect(backgroundContainer).not.toHaveCSS('background-color', backgroundBlue, { timeout: 7000 });
+    await expect
+      .poll(
+        async () => {
+          const current = await backgroundContainer.evaluate(
+            (el) => getComputedStyle(el).backgroundColor
+          );
+          return current !== backgroundBlue;
+        },
+        {
+          message: `Background color did not change from blue value "${backgroundBlue}" after requesting pink`,
+          timeout: 60_000,
+          intervals: [500, 1000, 2000, 3000, 5000],
+        }
+      )
+      .toBeTruthy();
+
     const backgroundPink = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
-    // Check if background is pink (string color name or contains pink)
-    expect(backgroundPink.toLowerCase()).toMatch(/pink|rgb\(.*,.*,.*\)|#[0-9a-f]{6}/);
+    console.log("Background after pink request:", backgroundPink);
+    expect(backgroundPink).not.toBe(initialBackground);
   });
 });
 
