@@ -38,6 +38,7 @@ export default function ToolBasedGenerativeUI({ params }: ToolBasedGenerativeUIP
     <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
+      agent="tool_based_generative_ui"
     >
       <SidebarWithSuggestions defaultOpen={chatDefaultOpen} />
       <HaikuDisplay />

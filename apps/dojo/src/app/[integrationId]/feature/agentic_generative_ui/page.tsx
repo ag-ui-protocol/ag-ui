@@ -23,6 +23,7 @@ const AgenticGenerativeUI: React.FC<AgenticGenerativeUIProps> = ({ params }) => 
     <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
+      agent="agentic_generative_ui"
     >
       <Chat />
     </CopilotKit>

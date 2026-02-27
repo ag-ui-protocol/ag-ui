@@ -178,6 +178,7 @@ export default function Subgraphs({ params }: SubgraphsProps) {
     <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
+      agent="subgraphs"
     >
       <CopilotChatConfigurationProvider agentId="subgraphs">
       <div className="travel-planner-container">

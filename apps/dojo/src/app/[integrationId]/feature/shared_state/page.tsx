@@ -36,6 +36,7 @@ export default function SharedState({ params }: SharedStateProps) {
     <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
+      agent="shared_state"
     >
       <div className="min-h-screen w-full flex items-center justify-center">
         <Recipe />

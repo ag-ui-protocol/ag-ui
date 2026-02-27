@@ -20,6 +20,7 @@ export default function Page({ params }: PageProps) {
     <CopilotKit
       runtimeUrl={`/api/copilotkitnext/${integrationId}`}
       showDevConsole={false}
+      agent="vnext_chat"
     >
       <main
         className="flex min-h-screen flex-1 flex-col overflow-hidden"

@@ -23,6 +23,7 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
     <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
+      agent="backend_tool_rendering"
     >
       <Chat />
     </CopilotKit>

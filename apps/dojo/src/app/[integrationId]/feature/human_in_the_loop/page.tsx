@@ -25,6 +25,7 @@ const HumanInTheLoop: React.FC<HumanInTheLoopProps> = ({ params }) => {
     <CopilotKit
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
+      agent="human_in_the_loop"
     >
       <Chat integrationId={integrationId} />
     </CopilotKit>
