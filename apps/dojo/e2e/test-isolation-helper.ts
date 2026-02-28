@@ -117,6 +117,12 @@ export const test = base.extend<{}, {}>({
  * This version checks for actual content in the last assistant message.
  */
 export async function waitForAIResponse(page: Page, timeout: number = 60000) {
+  // Capture current message count so we wait for a genuinely NEW message,
+  // not an existing one that already has content.
+  const currentCount = await page.evaluate(
+    () => document.querySelectorAll(".copilotKitAssistantMessage").length
+  );
+
   // Phase 1: Wait for any loading indicators to disappear
   await page.waitForFunction(
     () => {
@@ -128,18 +134,19 @@ export async function waitForAIResponse(page: Page, timeout: number = 60000) {
     { timeout }
   );
 
-  // Phase 2: Wait for at least one assistant message with actual content.
-  // This catches the case where loading indicators disappear but the
-  // response is empty or hasn't rendered yet.
+  // Phase 2: Wait for a NEW assistant message with actual content.
+  // We require messages.length > currentCount so that stale messages
+  // from a previous exchange don't cause a false "ready" signal.
   await page.waitForFunction(
-    () => {
+    (prevCount: number) => {
       const messages = document.querySelectorAll(
         ".copilotKitAssistantMessage"
       );
-      if (messages.length === 0) return false;
+      if (messages.length <= prevCount) return false;
       const lastMessage = messages[messages.length - 1];
       return (lastMessage?.textContent?.trim().length ?? 0) > 0;
     },
+    currentCount,
     { timeout }
   );
 
