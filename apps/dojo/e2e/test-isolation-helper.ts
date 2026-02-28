@@ -7,12 +7,30 @@ export const test = base.extend<{}, {}>({
     await page.context().clearCookies();
     await page.context().clearPermissions();
 
-    // Fix 6: Monitor for app errors and fail fast instead of timing out.
-    // "Message not found" and similar errors cascade into misleading timeouts.
+    // Monitor for app errors so failed backends surface immediately
+    // instead of manifesting as opaque timeouts.
     const pageErrors: Error[] = [];
+    const networkErrors: string[] = [];
+
     page.on("pageerror", (error) => {
       console.error(`[PageError] ${error.message}`);
       pageErrors.push(error);
+    });
+
+    // Log browser console errors (e.g. CopilotKit runtime logging API failures)
+    page.on("console", (msg) => {
+      if (msg.type() === "error") {
+        console.error(`[BrowserConsole] ${msg.text()}`);
+      }
+    });
+
+    // Log failed network requests to CopilotKit/agent endpoints
+    page.on("response", (response) => {
+      if (response.status() >= 400 && /copilotkit|agui|agent/i.test(response.url())) {
+        const msg = `${response.status()} ${response.url()}`;
+        console.error(`[NetworkError] ${msg}`);
+        networkErrors.push(msg);
+      }
     });
 
     // Add delay to ensure AI services are ready
@@ -20,11 +38,17 @@ export const test = base.extend<{}, {}>({
 
     await use(page);
 
-    // After each test - report collected errors and cleanup
+    // After each test - report collected errors
     if (pageErrors.length > 0) {
       console.warn(
         `[Test Cleanup] ${pageErrors.length} page error(s) during test:`,
         pageErrors.map((e) => e.message)
+      );
+    }
+    if (networkErrors.length > 0) {
+      console.warn(
+        `[Test Cleanup] ${networkErrors.length} network error(s) during test:`,
+        networkErrors
       );
     }
     await page.context().clearCookies();
