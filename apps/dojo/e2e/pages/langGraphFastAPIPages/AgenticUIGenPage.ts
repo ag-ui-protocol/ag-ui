@@ -33,7 +33,7 @@ export class AgenticGenUIPage {
   }
 
   async openChat() {
-    await this.planTaskButton.isVisible();
+    await expect(this.planTaskButton).toBeVisible();
   }
 
   async sendMessage(message: string) {

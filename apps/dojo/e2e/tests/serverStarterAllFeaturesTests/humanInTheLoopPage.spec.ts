@@ -15,7 +15,7 @@ test.describe("Human in the Loop Feature", () => {
       await humanInLoop.openChat();
 
       await humanInLoop.sendMessage("Hi");
-      await humanInLoop.agentGreeting.isVisible();
+      await expect(humanInLoop.agentGreeting).toBeVisible();
       await waitForAIResponse(page);
       await expect(humanInLoop.plan).toBeVisible({ timeout: 10000 });
       await humanInLoop.performSteps();

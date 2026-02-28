@@ -25,7 +25,7 @@ test.describe("Predictive Status Updates Feature", () => {
       await page.waitForTimeout(2000);
       await predictiveStateUpdates.getPredictiveResponse();
       await predictiveStateUpdates.getUserApproval();
-      await predictiveStateUpdates.confirmedChangesResponse.isVisible();
+      await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
       const dragonName = await predictiveStateUpdates.verifyAgentResponse(
         "Atlantis"
       );
@@ -36,7 +36,7 @@ test.describe("Predictive Status Updates Feature", () => {
       await page.waitForTimeout(2000);
       await predictiveStateUpdates.verifyHighlightedText();
       await predictiveStateUpdates.getUserApproval();
-      await predictiveStateUpdates.confirmedChangesResponse.nth(1).isVisible();
+      await expect(predictiveStateUpdates.confirmedChangesResponse.nth(1)).toBeVisible();
       const dragonNameNew = await predictiveStateUpdates.verifyAgentResponse(
         "Lola"
       );
@@ -63,7 +63,7 @@ test.describe("Predictive Status Updates Feature", () => {
       );
       await predictiveStateUpdates.getPredictiveResponse();
       await predictiveStateUpdates.getUserApproval();
-      await predictiveStateUpdates.confirmedChangesResponse.isVisible();
+      await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
       const dragonName = await predictiveStateUpdates.verifyAgentResponse(
         "Atlantis"
       );
@@ -74,7 +74,7 @@ test.describe("Predictive Status Updates Feature", () => {
       await page.waitForTimeout(2000);
       await predictiveStateUpdates.verifyHighlightedText();
       await predictiveStateUpdates.getUserRejection();
-      await predictiveStateUpdates.rejectedChangesResponse.isVisible();
+      await expect(predictiveStateUpdates.rejectedChangesResponse).toBeVisible();
       const dragonNameAfterRejection = await predictiveStateUpdates.verifyAgentResponse(
         "Atlantis"
       );
