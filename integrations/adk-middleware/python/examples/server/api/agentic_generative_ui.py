@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from ag_ui.core import EventType, StateDeltaEvent, StateSnapshotEvent
-from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, AGUIToolset
 from google.adk.agents import LlmAgent
 
 StepStatus = Literal['pending', 'completed']
@@ -116,7 +116,11 @@ agent = LlmAgent(
         again until all the steps in current plan are completed.
         """
     ),
-    tools=[create_plan, update_plan_step],
+    tools=[
+        AGUIToolset(), # Add the tools provided by the AG-UI client,
+        create_plan, 
+        update_plan_step,
+    ],
 )
 
 # Create ADK middleware agent instance

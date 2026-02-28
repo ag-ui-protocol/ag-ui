@@ -27,7 +27,7 @@ class EventType(str, Enum):
     TOOL_CALL_START = "TOOL_CALL_START"
     TOOL_CALL_ARGS = "TOOL_CALL_ARGS"
     TOOL_CALL_END = "TOOL_CALL_END"
-    TOOL_CALL_CHUNK = "TOOL_CALL_CHUNK"
+    TOOL_CALL_CHUNK = "TOOL_CALL_CHUNK" 
     TOOL_CALL_RESULT = "TOOL_CALL_RESULT"
     THINKING_START = "THINKING_START"
     THINKING_END = "THINKING_END"
@@ -43,6 +43,13 @@ class EventType(str, Enum):
     RUN_ERROR = "RUN_ERROR"
     STEP_STARTED = "STEP_STARTED"
     STEP_FINISHED = "STEP_FINISHED"
+    REASONING_START = "REASONING_START"
+    REASONING_MESSAGE_START = "REASONING_MESSAGE_START"
+    REASONING_MESSAGE_CONTENT = "REASONING_MESSAGE_CONTENT"
+    REASONING_MESSAGE_END = "REASONING_MESSAGE_END"
+    REASONING_MESSAGE_CHUNK = "REASONING_MESSAGE_CHUNK"
+    REASONING_END = "REASONING_END"
+    REASONING_ENCRYPTED_VALUE = "REASONING_ENCRYPTED_VALUE"
 
 
 class BaseEvent(ConfiguredBaseModel):
@@ -273,6 +280,74 @@ class StepFinishedEvent(BaseEvent):
     step_name: str
 
 
+# Text message role for reasoning messages (only assistant can reason)
+ReasoningMessageRole = Literal["assistant"]
+
+# Subtype for encrypted value
+ReasoningEncryptedValueSubtype = Literal["tool-call", "message"]
+
+
+class ReasoningStartEvent(BaseEvent):
+    """
+    Event indicating the start of a reasoning phase.
+    """
+    type: Literal[EventType.REASONING_START] = EventType.REASONING_START  # pyright: ignore[reportIncompatibleVariableOverride]
+    message_id: str
+
+
+class ReasoningMessageStartEvent(BaseEvent):
+    """
+    Event indicating the start of a reasoning message.
+    """
+    type: Literal[EventType.REASONING_MESSAGE_START] = EventType.REASONING_MESSAGE_START  # pyright: ignore[reportIncompatibleVariableOverride]
+    message_id: str
+    role: ReasoningMessageRole
+
+
+class ReasoningMessageContentEvent(BaseEvent):
+    """
+    Event containing a piece of reasoning message content.
+    """
+    type: Literal[EventType.REASONING_MESSAGE_CONTENT] = EventType.REASONING_MESSAGE_CONTENT  # pyright: ignore[reportIncompatibleVariableOverride]
+    message_id: str
+    delta: str = Field(min_length=1)
+
+
+class ReasoningMessageEndEvent(BaseEvent):
+    """
+    Event indicating the end of a reasoning message.
+    """
+    type: Literal[EventType.REASONING_MESSAGE_END] = EventType.REASONING_MESSAGE_END  # pyright: ignore[reportIncompatibleVariableOverride]
+    message_id: str
+
+
+class ReasoningMessageChunkEvent(BaseEvent):
+    """
+    Event containing a chunk of reasoning message content.
+    """
+    type: Literal[EventType.REASONING_MESSAGE_CHUNK] = EventType.REASONING_MESSAGE_CHUNK  # pyright: ignore[reportIncompatibleVariableOverride]
+    message_id: Optional[str] = None
+    delta: Optional[str] = None
+
+
+class ReasoningEndEvent(BaseEvent):
+    """
+    Event indicating the end of a reasoning phase.
+    """
+    type: Literal[EventType.REASONING_END] = EventType.REASONING_END  # pyright: ignore[reportIncompatibleVariableOverride]
+    message_id: str
+
+
+class ReasoningEncryptedValueEvent(BaseEvent):
+    """
+    Event containing an encrypted value for a message or tool call.
+    """
+    type: Literal[EventType.REASONING_ENCRYPTED_VALUE] = EventType.REASONING_ENCRYPTED_VALUE  # pyright: ignore[reportIncompatibleVariableOverride]
+    subtype: ReasoningEncryptedValueSubtype
+    entity_id: str
+    encrypted_value: str
+
+
 Event = Annotated[
     Union[
         TextMessageStartEvent,
@@ -296,6 +371,13 @@ Event = Annotated[
         RunErrorEvent,
         StepStartedEvent,
         StepFinishedEvent,
+        ReasoningStartEvent,
+        ReasoningMessageStartEvent,
+        ReasoningMessageContentEvent,
+        ReasoningMessageEndEvent,
+        ReasoningMessageChunkEvent,
+        ReasoningEndEvent,
+        ReasoningEncryptedValueEvent,
     ],
     Field(discriminator="type")
 ]

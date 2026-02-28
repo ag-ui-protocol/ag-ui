@@ -7,6 +7,10 @@ import com.agui.client.agent.AgentStateMutation
 import com.agui.client.agent.AgentSubscriber
 import com.agui.client.agent.AgentSubscriberParams
 import com.agui.client.agent.AgentSubscription
+import com.agui.example.chatapp.data.model.AuthMethod
+import com.agui.example.chatapp.data.model.ClawgUiPairingState
+import com.agui.example.chatapp.data.pairing.ClawgUiPairingService
+import com.agui.example.chatapp.data.pairing.createPairingHttpClient
 import com.agui.core.types.ActivityDeltaEvent
 import com.agui.core.types.ActivityMessage
 import com.agui.core.types.ActivitySnapshotEvent
@@ -76,7 +80,8 @@ class ChatController(
     private val settings: Settings = getPlatformSettings(),
     private val agentRepository: AgentRepository = AgentRepository.getInstance(settings),
     private val authManager: AuthManager = AuthManager(),
-    private val userIdManager: UserIdManager = UserIdManager.getInstance(settings)
+    private val userIdManager: UserIdManager = UserIdManager.getInstance(settings),
+    private val pairingService: ClawgUiPairingService = ClawgUiPairingService(::createPairingHttpClient)
 ) {
 
     private val scope = externalScope ?: MainScope()
@@ -120,6 +125,13 @@ class ChatController(
 
     private suspend fun connectToAgent(agentConfig: AgentConfig) {
         disconnectFromAgent()
+
+        // Check if this is a clawg-ui endpoint that needs pairing
+        if (ClawgUiPairingService.isClawgUiEndpoint(agentConfig.url) &&
+            agentConfig.authMethod is AuthMethod.None) {
+            initiateClawgUiPairing(agentConfig)
+            return
+        }
 
         try {
             val headers = agentConfig.customHeaders.toMutableMap()
@@ -193,6 +205,138 @@ class ChatController(
             )
         }
     }
+
+    // ========== clawg-ui Pairing Methods ==========
+
+    private suspend fun initiateClawgUiPairing(agentConfig: AgentConfig) {
+        _state.update { it.copy(clawgUiPairingState = ClawgUiPairingState.Initiating) }
+
+        pairingService.initiatePairing(agentConfig.url)
+            .onSuccess { response ->
+                val pairing = response.error.pairing!!
+                _state.update {
+                    it.copy(
+                        clawgUiPairingState = ClawgUiPairingState.PendingApproval(
+                            pairingCode = pairing.pairingCode,
+                            bearerToken = pairing.token,
+                            instructions = pairing.instructions
+                                ?: "Share the pairing code with the gateway owner.",
+                            approvalCommand = "openclaw pairing approve clawg-ui ${pairing.pairingCode}"
+                        )
+                    )
+                }
+            }
+            .onFailure { error ->
+                logger.e(error) { "Failed to initiate clawg-ui pairing" }
+                _state.update {
+                    it.copy(
+                        clawgUiPairingState = ClawgUiPairingState.Failed(
+                            error.message ?: "Failed to initiate pairing"
+                        ),
+                        error = "Pairing failed: ${error.message}"
+                    )
+                }
+            }
+    }
+
+    /**
+     * Called when user acknowledges the pairing dialog.
+     * Saves the bearer token and verifies it's approved.
+     */
+    fun completePairing() {
+        val currentPairingState = _state.value.clawgUiPairingState
+        if (currentPairingState !is ClawgUiPairingState.PendingApproval) return
+
+        val agentConfig = _state.value.activeAgent ?: return
+
+        scope.launch {
+            _state.update { it.copy(clawgUiPairingState = ClawgUiPairingState.RetryingConnection) }
+
+            // Update agent config with the bearer token
+            val updatedAgent = agentConfig.copy(
+                authMethod = AuthMethod.BearerToken(currentPairingState.bearerToken)
+            )
+            agentRepository.updateAgent(updatedAgent)
+
+            // Brief delay for persistence
+            delay(500)
+
+            // Check if token is now approved by sending a proper AG-UI request
+            pairingService.isTokenApproved(updatedAgent.url, currentPairingState.bearerToken)
+                .onSuccess { approved ->
+                    if (approved) {
+                        _state.update { it.copy(clawgUiPairingState = ClawgUiPairingState.Idle) }
+                        // Connection will proceed via activeAgent flow update from repository
+                    } else {
+                        _state.update {
+                            it.copy(clawgUiPairingState = ClawgUiPairingState.AwaitingApproval())
+                        }
+                    }
+                }
+                .onFailure { error ->
+                    logger.e(error) { "Failed to verify token approval" }
+                    _state.update {
+                        it.copy(
+                            clawgUiPairingState = ClawgUiPairingState.Failed(
+                                "Failed to verify token: ${error.message}"
+                            )
+                        )
+                    }
+                }
+        }
+    }
+
+    /**
+     * Retry connection after gateway owner approval.
+     */
+    fun retryAfterApproval() {
+        val agentConfig = _state.value.activeAgent ?: return
+
+        scope.launch {
+            _state.update { it.copy(clawgUiPairingState = ClawgUiPairingState.RetryingConnection) }
+
+            val bearerToken = when (val auth = agentConfig.authMethod) {
+                is AuthMethod.BearerToken -> auth.token
+                else -> {
+                    _state.update {
+                        it.copy(clawgUiPairingState = ClawgUiPairingState.Failed("No bearer token configured"))
+                    }
+                    return@launch
+                }
+            }
+
+            pairingService.isTokenApproved(agentConfig.url, bearerToken)
+                .onSuccess { approved ->
+                    if (approved) {
+                        _state.update { it.copy(clawgUiPairingState = ClawgUiPairingState.Idle) }
+                        connectToAgent(agentConfig)
+                    } else {
+                        _state.update {
+                            it.copy(
+                                clawgUiPairingState = ClawgUiPairingState.AwaitingApproval(
+                                    "Still awaiting approval. Ask the gateway owner to run the approval command."
+                                )
+                            )
+                        }
+                    }
+                }
+                .onFailure { error ->
+                    logger.e(error) { "Failed to retry connection" }
+                    _state.update {
+                        it.copy(clawgUiPairingState = ClawgUiPairingState.Failed(error.message ?: "Retry failed"))
+                    }
+                }
+        }
+    }
+
+    /**
+     * Dismiss the pairing dialog without completing.
+     */
+    fun dismissPairing() {
+        _state.update { it.copy(clawgUiPairingState = ClawgUiPairingState.Idle) }
+    }
+
+    // ========== End clawg-ui Pairing Methods ==========
 
     fun sendMessage(content: String) {
         if (content.isBlank() || currentAgent == null || controllerClosed.value) return
@@ -663,7 +807,8 @@ data class ChatState(
     val error: String? = null,
     val background: BackgroundStyle = BackgroundStyle.Default,
     val a2uiSurfaces: Map<String, UiDefinition> = emptyMap(),
-    val a2uiDataModels: Map<String, DataModel> = emptyMap()
+    val a2uiDataModels: Map<String, DataModel> = emptyMap(),
+    val clawgUiPairingState: ClawgUiPairingState = ClawgUiPairingState.Idle
 )
 
 /** Classic chat roles shown in the UI layers. */

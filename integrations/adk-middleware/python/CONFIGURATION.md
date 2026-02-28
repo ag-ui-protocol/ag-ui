@@ -17,13 +17,16 @@ This guide covers all configuration options for the ADK Middleware.
 The ADKAgent class is the main entry point for configuring the middleware. Here are the key parameters:
 
 ```python
-from ag_ui_adk import ADKAgent
+from ag_ui_adk import ADKAgent, AGUIToolset
 from google.adk.agents import Agent
 
 # Create your ADK agent
 my_agent = Agent(
     name="assistant",
     instruction="You are a helpful assistant."
+    tools=[
+        AGUIToolset(), # Add the tools provided by the AG-UI client
+    ]
 )
 
 # Basic middleware configuration
@@ -242,7 +245,10 @@ my_agent = Agent(
     name="assistant",
     model="gemini-2.0-flash",
     instruction="You are a helpful assistant.",
-    tools=[adk_tools.preload_memory_tool.PreloadMemoryTool()]  # Memory tools here
+    tools=[
+        AGUIToolset(), # Add the tools provided by the AG-UI client
+        adk_tools.preload_memory_tool.PreloadMemoryTool(), # Memory tools here
+    ]
 )
 
 # Create middleware with memory service

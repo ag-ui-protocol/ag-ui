@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from fastapi import FastAPI
-from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, AGUIToolset
 from google.adk.agents import LlmAgent
 from google.adk import tools as adk_tools
 import httpx
 import json
+
+# Compatibility shim for PreloadMemoryTool (renamed in newer ADK versions)
+try:
+    PreloadMemoryTool = adk_tools.preload_memory.PreloadMemoryTool
+except AttributeError:
+    PreloadMemoryTool = adk_tools.preload_memory_tool.PreloadMemoryTool
 
 
 def get_weather_condition(code: int) -> str:
@@ -117,7 +123,11 @@ sample_agent = LlmAgent(
 
       Use the get_weather tool to fetch current weather data.
       """,
-    tools=[adk_tools.preload_memory_tool.PreloadMemoryTool(), get_weather],
+    tools=[
+        AGUIToolset(), # Add the tools provided by the AG-UI client
+        PreloadMemoryTool(),
+        get_weather,
+    ],
 )
 
 # Create ADK middleware agent instance

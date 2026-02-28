@@ -12,6 +12,9 @@ dependencies = [
 ]
 authors = [{ name = "Agent Spec team" }]
 
+[tool.ag-ui.scripts]
+test = "python -c \"print('Warning: no tests configured for ag-ui-agent-spec')\""
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

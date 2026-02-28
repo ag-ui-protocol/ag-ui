@@ -10,15 +10,16 @@ import {
   AssistantMessage,
 } from "@ag-ui/core";
 import { Observable, of } from "rxjs";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock uuid module
-jest.mock("uuid", () => ({
-  v4: jest.fn().mockReturnValue("mock-uuid"),
+vi.mock("uuid", () => ({
+  v4: vi.fn().mockReturnValue("mock-uuid"),
 }));
 
 // Mock utils
-jest.mock("@/utils", () => {
-  const actual = jest.requireActual<typeof import("@/utils")>("@/utils");
+vi.mock("@/utils", async () => {
+  const actual = await vi.importActual<typeof import("@/utils")>("@/utils");
   return {
     ...actual,
     structuredClone_: (obj: any) => {
@@ -37,12 +38,12 @@ const waitForAsyncNotifications = async () => {
 };
 
 // Mock the verify and chunks modules
-jest.mock("@/verify", () => ({
-  verifyEvents: jest.fn(() => (source$: Observable<any>) => source$),
+vi.mock("@/verify", () => ({
+  verifyEvents: vi.fn(() => (source$: Observable<any>) => source$),
 }));
 
-jest.mock("@/chunks", () => ({
-  transformChunks: jest.fn(() => (source$: Observable<any>) => source$),
+vi.mock("@/chunks", () => ({
+  transformChunks: vi.fn(() => (source$: Observable<any>) => source$),
 }));
 
 // Create a test agent implementation
@@ -57,7 +58,7 @@ describe("Agent Mutations", () => {
   let mockSubscriber: AgentSubscriber;
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
     agent = new TestAgent({
       threadId: "test-thread",
@@ -72,10 +73,10 @@ describe("Agent Mutations", () => {
     });
 
     mockSubscriber = {
-      onMessagesChanged: jest.fn(),
-      onStateChanged: jest.fn(),
-      onNewMessage: jest.fn(),
-      onNewToolCall: jest.fn(),
+      onMessagesChanged: vi.fn(),
+      onStateChanged: vi.fn(),
+      onNewMessage: vi.fn(),
+      onNewToolCall: vi.fn(),
     };
 
     agent.subscribe(mockSubscriber);
@@ -397,19 +398,19 @@ describe("Agent Mutations", () => {
       const callOrder: string[] = [];
 
       const firstSubscriber: AgentSubscriber = {
-        onNewMessage: jest.fn().mockImplementation(() => {
+        onNewMessage: vi.fn().mockImplementation(() => {
           callOrder.push("first-newMessage");
         }),
-        onMessagesChanged: jest.fn().mockImplementation(() => {
+        onMessagesChanged: vi.fn().mockImplementation(() => {
           callOrder.push("first-messagesChanged");
         }),
       };
 
       const secondSubscriber: AgentSubscriber = {
-        onNewMessage: jest.fn().mockImplementation(() => {
+        onNewMessage: vi.fn().mockImplementation(() => {
           callOrder.push("second-newMessage");
         }),
-        onMessagesChanged: jest.fn().mockImplementation(() => {
+        onMessagesChanged: vi.fn().mockImplementation(() => {
           callOrder.push("second-messagesChanged");
         }),
       };
@@ -445,14 +446,14 @@ describe("Agent Mutations", () => {
   describe("multiple subscribers", () => {
     it("should notify all subscribers for each event", async () => {
       const subscriber2: AgentSubscriber = {
-        onNewMessage: jest.fn(),
-        onMessagesChanged: jest.fn(),
-        onNewToolCall: jest.fn(),
+        onNewMessage: vi.fn(),
+        onMessagesChanged: vi.fn(),
+        onNewToolCall: vi.fn(),
       };
 
       const subscriber3: AgentSubscriber = {
-        onNewMessage: jest.fn(),
-        onMessagesChanged: jest.fn(),
+        onNewMessage: vi.fn(),
+        onMessagesChanged: vi.fn(),
       };
 
       agent.subscribe(subscriber2);

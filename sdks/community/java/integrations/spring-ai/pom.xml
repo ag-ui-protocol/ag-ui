@@ -4,14 +4,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>com.ag-ui</groupId>
-        <artifactId>ag-ui</artifactId>
+        <groupId>com.ag-ui.community</groupId>
+        <artifactId>java-ag-ui</artifactId>
         <version>0.0.1</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>spring-ai</artifactId>
-    <version>${spring-ai.version}</version>
+    <version>1.0.1</version>
 
     <name>AG-UI Spring AI</name>
     <description>AG-UI Spring AI Integration</description>
@@ -39,18 +39,18 @@
 
     <dependencies>
         <dependency>
-            <groupId>com.ag-ui</groupId>
-            <artifactId>core</artifactId>
+            <groupId>com.ag-ui.community</groupId>
+            <artifactId>java-core</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.ag-ui</groupId>
-            <artifactId>json</artifactId>
+            <groupId>com.ag-ui.community</groupId>
+            <artifactId>java-json</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.ag-ui</groupId>
-            <artifactId>server</artifactId>
+            <groupId>com.ag-ui.community</groupId>
+            <artifactId>java-server</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>
         <dependency>
@@ -158,6 +158,13 @@
                         </goals>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-deploy-plugin</artifactId>
+                <configuration>
+                    <skip>false</skip>
+                </configuration>
             </plugin>
         </plugins>
     </build>

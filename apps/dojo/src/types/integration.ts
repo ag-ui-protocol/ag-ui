@@ -11,7 +11,8 @@ export type Feature =
   | "agentic_chat_reasoning"
   | "subgraphs"
   | "a2a_chat"
-  | "vnext_chat";
+  | "vnext_chat"
+  | "a2ui_chat";
 
 export interface MenuIntegrationConfig {
   id: string;

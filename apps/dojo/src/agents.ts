@@ -26,6 +26,9 @@ import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
 import { LangChainAgent } from "@ag-ui/langchain";
 import { LangGraphAgent as CpkLangGraphAgent } from "@copilotkit/runtime/langgraph";
+import { BuiltInAgent } from "@copilotkit/runtime/v2";
+import { A2UIMiddleware, A2UI_PROMPT } from "@ag-ui/a2ui-middleware";
+import { Ag2Agent } from "@ag-ui/ag2";
 
 const envVars = getEnvVars();
 
@@ -90,12 +93,14 @@ export const agentsIntegrations = {
 
     return MastraAgent.getRemoteAgents({
       mastraClient,
+      resourceId: "mastra-agent-remote"
     }) as Promise<Record<"agentic_chat" | "backend_tool_rendering" | "human_in_the_loop" | "tool_based_generative_ui", AbstractAgent>>;
   },
 
   "mastra-agent-local": async () => {
     return MastraAgent.getLocalAgents({
       mastra,
+      resourceId: "mastra-agent-local"
     }) as Record<"agentic_chat" | "backend_tool_rendering" | "human_in_the_loop" | "shared_state" | "tool_based_generative_ui", AbstractAgent>;
   },
 
@@ -127,10 +132,16 @@ export const agentsIntegrations = {
     agentic_chat_reasoning: new LangGraphHttpAgent({
       url: `${envVars.langgraphPythonUrl}/agent/agentic_chat_reasoning`,
     }),
+    // A2UI Chat with middleware
+    a2ui_chat: (() => {
+      const agent = new LangGraphAgent({ deploymentUrl: envVars.langgraphPythonUrl, graphId: "a2ui_chat" });
+      agent.use(new A2UIMiddleware({ injectA2UITool: true }));
+      return agent;
+    })(),
   }),
 
-  "langgraph-fastapi": async () =>
-    mapAgents(
+  "langgraph-fastapi": async () => ({
+    ...mapAgents(
       (path) => new LangGraphHttpAgent({ url: `${envVars.langgraphFastApiUrl}/agent/${path}` }),
       {
         agentic_chat: "agentic_chat",
@@ -144,6 +155,19 @@ export const agentsIntegrations = {
         subgraphs: "subgraphs",
       }
     ),
+    // A2UI Chat with middleware - uses backend tool auto-detection (no injected tool)
+    a2ui_chat: (() => {
+      const agent = new LangGraphHttpAgent({ url: `${envVars.langgraphFastApiUrl}/agent/a2ui_chat` });
+      agent.use(new A2UIMiddleware());
+      return agent;
+    })(),
+    // A2UI Chat with middleware - uses injected frontend tool
+    a2ui_chat_inject: (() => {
+      const agent = new LangGraphHttpAgent({ url: `${envVars.langgraphFastApiUrl}/agent/a2ui_chat` });
+      agent.use(new A2UIMiddleware({ injectA2UITool: true }));
+      return agent;
+    })(),
+  }),
 
   "langgraph-typescript": async () =>
     mapAgents(
@@ -343,4 +367,36 @@ export const agentsIntegrations = {
     ),
     human_in_the_loop: new AWSStrandsAgent({ url: `${envVars.awsStrandsUrl}/human-in-the-loop`, debug: true }),
   }),
+
+  // Built-in Agent with A2UI support
+  builtin: async () => {
+    const systemPrompt = `You are a helpful assistant that can render rich UI surfaces using the A2UI protocol.
+
+When the user asks for visual content (cards, forms, lists, buttons, etc.), use the send_a2ui_json_to_client tool to render A2UI surfaces.
+
+${A2UI_PROMPT}`;
+
+    const builtInAgent = new BuiltInAgent({
+      model: "openai/gpt-4o",
+      prompt: systemPrompt,
+    });
+    builtInAgent.use(new A2UIMiddleware({ injectA2UITool: true }));
+
+    return {
+      a2ui_chat: builtInAgent as unknown as AbstractAgent,
+    };
+  },
+
+  "ag2": async () =>
+    mapAgents(
+      (path) => new Ag2Agent({ url: `${envVars.ag2Url}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        human_in_the_loop: "human_in_the_loop",
+        agentic_generative_ui: "agentic_generative_ui",
+        shared_state: "shared_state",
+        tool_based_generative_ui: "tool_based_generative_ui",
+      }
+    ),
 } satisfies AgentsMap;

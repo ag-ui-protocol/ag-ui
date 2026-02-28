@@ -1,4 +1,5 @@
 type envVars = {
+  ag2Url: string;
   serverStarterUrl: string;
   serverStarterAllFeaturesUrl: string;
   mastraUrl: string;
@@ -33,6 +34,7 @@ export default function getEnvVars(): envVars {
   }
 
   return {
+    ag2Url: process.env.AG2_URL || 'http://localhost:8018',
     serverStarterUrl: process.env.SERVER_STARTER_URL || 'http://localhost:8000',
     serverStarterAllFeaturesUrl: process.env.SERVER_STARTER_ALL_FEATURES_URL || 'http://localhost:8000',
     mastraUrl: process.env.MASTRA_URL || 'http://localhost:4111',

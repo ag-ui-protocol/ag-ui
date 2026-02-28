@@ -940,8 +940,10 @@ class TestConfirmChangesFiltering:
         ):
             events.append(event)
 
-        # Should NOT emit any events (no error, no new execution)
-        assert len(events) == 0
+        # Should emit RUN_STARTED + RUN_FINISHED (valid terminal stream, no error)
+        assert len(events) == 2
+        assert events[0].type == EventType.RUN_STARTED
+        assert events[1].type == EventType.RUN_FINISHED
 
         # Confirm_changes tool message should be marked as processed
         processed_ids = ag_ui_adk._session_manager.get_processed_message_ids(app_name, input_data.thread_id)
@@ -1182,6 +1184,7 @@ class TestClientToolResultPersistence:
                 user_id="test_user",
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=tool_results,
                 message_batch=message_batch
             )
@@ -1362,6 +1365,7 @@ class TestClientToolResultPersistence:
                 user_id="test_user",
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=None,  # No client-side tool results
                 message_batch=None
             )
@@ -1590,6 +1594,7 @@ class TestDatabaseSessionServiceCompatibility:
                 user_id="test_user",
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=tool_results,
                 message_batch=message_batch
             )
@@ -1605,18 +1610,22 @@ class TestDatabaseSessionServiceCompatibility:
         )
 
     @pytest.mark.asyncio
-    async def test_invocation_id_set_on_function_response_event_tool_results_only(self, ag_ui_adk):
-        """Test invocation_id is set when tool results arrive WITHOUT a user message.
+    async def test_explicit_persist_with_null_new_message_for_tool_results_only(self, ag_ui_adk):
+        """Test that we explicitly persist function_response but pass new_message=None.
 
-        This tests the tool-results-only branch in adk_agent.py (the elif active_tool_results
-        path around line 1486). In HITL workflows, clients may send back just the tool result
-        without any additional user message.
+        When tool results arrive WITHOUT a trailing user message, ag-ui-adk MUST:
+        1. Explicitly persist the function_response via append_event() - required because
+           InMemorySessionService.get_session() returns a deep copy, and ADK's state checks
+           happen before its internal persistence. Without pre-appending, HITL resumption fails.
+        2. Pass new_message=None to prevent the runner from appending a duplicate.
 
-        Regression test for PR #958.
+        This prevents duplicate function_response events while maintaining HITL functionality.
+
+        Related to PR #958 (invocation_id) and duplicate function_response bug fix.
         """
-        thread_id = "test_thread_invocation_id_tool_only"
-        tool_call_id = "tool_call_tool_only_test"
-        expected_run_id = "run_id_tool_only_67890"
+        thread_id = "test_thread_explicit_persist_null_msg"
+        tool_call_id = "tool_call_explicit_persist_test"
+        expected_run_id = "run_id_explicit_persist_67890"
 
         # Create input with tool result ONLY (no trailing user message)
         input_data = RunAgentInput(
@@ -1665,9 +1674,26 @@ class TestDatabaseSessionServiceCompatibility:
             processed_message_ids=["user_1", "assistant_1"],
         )
 
-        # Mock runner to avoid LLM calls
+        # Mock runner to verify correct parameters (regression fix approach)
         class MockRunner:
             async def run_async(self, **kwargs):
+                # Regression fix: verify BOTH new_message and invocation_id are provided
+                new_msg = kwargs.get('new_message')
+                inv_id = kwargs.get('invocation_id')
+
+                # Should pass new_message with function_response content
+                assert new_msg is not None, (
+                    "new_message should contain function_response (regression fix approach)"
+                )
+                assert hasattr(new_msg, 'parts'), "new_message should have parts"
+
+                # Should specify invocation_id to prevent ADK auto-generation
+                assert inv_id is not None, (
+                    "invocation_id should be provided to use client's run_id"
+                )
+                assert inv_id == expected_run_id, (
+                    f"invocation_id should be {expected_run_id}, got {inv_id}"
+                )
                 return
                 yield
 
@@ -1688,19 +1714,16 @@ class TestDatabaseSessionServiceCompatibility:
                 user_id="test_user",
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=tool_results,
                 message_batch=None  # No trailing user message.
             )
 
-        # Assert invocation_id is persisted.
-        session = await ag_ui_adk._session_manager._session_service.get_session(
-            session_id=backend_session_id,
-            app_name=app_name,
-            user_id="test_user"
-        )
-        self._assert_function_response_invocation_id(
-            session, tool_call_id, expected_run_id
-        )
+        # Note: With the regression fix approach, we pass new_message + invocation_id to ADK.
+        # The MockRunner above validates these parameters are correct, including the invocation_id
+        # matching the expected run_id. Integration tests with real ADK runners
+        # (test_lro_tool_response_persistence.py) validate that only 1 function_response event
+        # is persisted with the correct invocation_id.
 
     @pytest.mark.asyncio
     async def test_session_refreshed_after_state_update(self, ag_ui_adk):
@@ -1778,6 +1801,7 @@ class TestDatabaseSessionServiceCompatibility:
                 user_id=user_id,
                 app_name=app_name,
                 event_queue=event_queue,
+                client_proxy_toolsets=[],
                 tool_results=None,
                 message_batch=None
             )

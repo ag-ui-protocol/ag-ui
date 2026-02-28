@@ -3,10 +3,11 @@ import { EventType, BaseEvent, RunAgentInput } from "@ag-ui/core";
 import { AbstractAgent } from "../../agent/agent";
 import { Observable, lastValueFrom } from "rxjs";
 import { RunAgentParameters } from "../../agent/types";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock uuid
-jest.mock("uuid", () => ({
-  v4: jest.fn().mockReturnValue("mock-uuid"),
+vi.mock("uuid", () => ({
+  v4: vi.fn().mockReturnValue("mock-uuid"),
 }));
 
 // Create a test agent that extends AbstractAgent
@@ -143,7 +144,7 @@ class ToolCallTestAgent extends AbstractAgent {
 
 describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it("should correctly convert events to legacy format", async () => {
@@ -198,7 +199,7 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
     });
 
     // Spy on the run method
-    const runSpy = jest.spyOn(agent as any, "run");
+    const runSpy = vi.spyOn(agent as any, "run");
 
     // Create config with compatible tool format
     const config: RunAgentParameters = {
@@ -230,7 +231,7 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
     });
 
     // Set up a state snapshot to test agent state in legacy format
-    const runWithStateSnapshot = jest
+    const runWithStateSnapshot = vi
       .fn()
       .mockImplementation((input: RunAgentInput): Observable<BaseEvent> => {
         return new Observable<BaseEvent>((observer) => {
@@ -260,7 +261,7 @@ describe("AbstractAgent.legacy_to_be_removed_runAgentBridged", () => {
       });
 
     // Override the run method for this test
-    jest.spyOn(agent as any, "run").mockImplementation(runWithStateSnapshot);
+    vi.spyOn(agent as any, "run").mockImplementation(runWithStateSnapshot);
 
     // Get the observable that emits legacy events
     const legacy$ = agent.legacy_to_be_removed_runAgentBridged();

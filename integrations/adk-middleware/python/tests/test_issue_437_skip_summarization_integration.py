@@ -22,10 +22,17 @@ Requirements:
 
 import asyncio
 import os
+import sys
 import pytest
 import uuid
 from collections import Counter
 from typing import Dict, List
+
+# Python 3.10 compatibility: asyncio.timeout was added in 3.11
+if sys.version_info >= (3, 11):
+    from asyncio import timeout as asyncio_timeout
+else:
+    from async_timeout import timeout as asyncio_timeout
 
 from ag_ui.core import (
     EventType,
@@ -460,7 +467,7 @@ class TestSkipSummarizationEdgeCases:
         # If infinite loop exists, this will timeout after 60 seconds
         events = []
         try:
-            async with asyncio.timeout(60):  # 60 second timeout
+            async with asyncio_timeout(60):  # 60 second timeout
                 async for event in agent.run(input_data):
                     events.append(event)
         except asyncio.TimeoutError:

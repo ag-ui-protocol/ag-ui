@@ -4,22 +4,25 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.ag-ui</groupId>
-    <artifactId>ag-ui</artifactId>
+    <groupId>com.ag-ui.community</groupId>
+    <artifactId>java-ag-ui</artifactId>
     <version>0.0.1</version>
     <packaging>pom</packaging>
 
     <modules>
         <module>packages/core</module>
         <module>packages/client</module>
-        <module>utils/json</module>
-        <module>packages/http</module>
-        <module>clients/ok-http</module>
-        <module>integrations/spring-ai</module>
-        <module>integrations/langchain4j</module>
         <module>packages/server</module>
-        <module>servers/spring</module>
+        <module>packages/http</module>
+
+        <module>utils/json</module>
+
+        <module>clients/ok-http</module>
         <module>clients/spring-client</module>
+
+        <module>servers/spring</module>
+
+        <module>integrations/spring-ai</module>
         <module>examples/spring-ai-example</module>
     </modules>
 
@@ -28,16 +31,6 @@
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.javadoc.failOnError>false</maven.javadoc.failOnError>
-
-        <!-- SonarCloud configuration -->
-        <sonar.java.coveragePlugin>jacoco</sonar.java.coveragePlugin>
-        <sonar.dynamicAnalysis>reuseReports</sonar.dynamicAnalysis>
-        <sonar.language>java</sonar.language>
-        <sonar.coverage.jacoco.xmlReportPaths>
-            ${project.basedir}/target/site/jacoco-aggregate/jacoco.xml
-        </sonar.coverage.jacoco.xmlReportPaths>
-        <sonar.organization>work-m8</sonar.organization>
-        <sonar.host.url>https://sonarcloud.io</sonar.host.url>
 
         <!-- JaCoCo configuration -->
         <jacoco.version>0.8.13</jacoco.version>
@@ -55,7 +48,7 @@
     </properties>
 
 
-    <url>https://github.com/work-m8/ag-ui-4j</url>
+    <url>https://github.com/ag-ui-protocol/ag-ui</url>
 
     <licenses>
         <license>
@@ -73,9 +66,9 @@
     </developers>
 
     <scm>
-        <connection>scm:git:git://github.com/work-m8/ag-ui-4j.git</connection>
-        <developerConnection>scm:git:ssh://github.com:work-m8/ag-ui-4j.git</developerConnection>
-        <url>https://github.com/work-m8/ag-ui-4j/tree/main</url>
+        <connection>scm:git:git://github.com/ag-ui-protocol/ag-ui.git</connection>
+        <developerConnection>scm:git:ssh://github.com:ag-ui-protocol/ag-ui.git</developerConnection>
+        <url>https://github.com/ag-ui-protocol/ag-ui/tree/main</url>
     </scm>
 
     <repositories>
@@ -91,19 +84,6 @@
             </snapshots>
         </repository>
     </repositories>
-
-    <distributionManagement>
-        <repository>
-            <id>github</id>
-            <name>GitHub Packages</name>
-            <url>https://maven.pkg.github.com/work-m8/ag-ui-4j</url>
-        </repository>
-        <snapshotRepository>
-            <id>github</id>
-            <name>GitHub Packages</name>
-            <url>https://maven.pkg.github.com/work-m8/ag-ui-4j</url>
-        </snapshotRepository>
-    </distributionManagement>
 
     <dependencyManagement>
         <dependencies>
@@ -137,12 +117,6 @@
 
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-source-plugin</artifactId>
-                    <version>${maven-source-plugin.version}</version>
-                </plugin>
-
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-javadoc-plugin</artifactId>
                     <version>${maven-javadoc-plugin.version}</version>
                     <configuration>
@@ -153,12 +127,6 @@
                     </configuration>
                 </plugin>
 
-                <!-- SonarCloud Maven plugin -->
-                <plugin>
-                    <groupId>org.sonarsource.scanner.maven</groupId>
-                    <artifactId>sonar-maven-plugin</artifactId>
-                    <version>${sonar.maven.plugin.version}</version>
-                </plugin>
 
                 <!-- JaCoCo plugin for code coverage -->
                 <plugin>
@@ -200,12 +168,38 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-deploy-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
+
+            <!-- Flatten child POMs -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>flatten-maven-plugin</artifactId>
+                <version>1.5.0</version>
+                <configuration>
+                    <flattenMode>oss</flattenMode>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>flatten</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>flatten</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>
                 <executions>
                     <execution>
                         <id>attach-sources</id>
                         <goals>
-                            <goal>jar</goal>
+                            <goal>jar-no-fork</goal>
                         </goals>
                     </execution>
                 </executions>
@@ -229,6 +223,29 @@
                 <artifactId>versions-maven-plugin</artifactId>
             </plugin>
 
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-gpg-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>sign-artifacts</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>sign</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>0.9.0</version>
+                <extensions>true</extensions>
+                <configuration>
+                    <publishingServerId>mvn-central</publishingServerId>
+                </configuration>
+            </plugin>
 
         </plugins>
     </build>

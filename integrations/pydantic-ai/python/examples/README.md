@@ -31,7 +31,7 @@ Once the server is running, launch the frontend dojo with:
 ```bash
 cd ../../../
 pnpm install
-turbo run dev
+pnpm dev
 ```
 
 and view it at http://localhost:3000.
