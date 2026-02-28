@@ -107,9 +107,14 @@ export class MastraAgent extends AbstractAgent {
               };
             }
 
-            const existingMemory = JSON.parse(
-              (thread.metadata?.workingMemory as string) ?? "{}",
-            );
+            let existingMemory: Record<string, unknown> = {};
+            try {
+              existingMemory = JSON.parse(
+                (thread.metadata?.workingMemory as string) ?? "{}",
+              );
+            } catch {
+              // Working memory may be a non-JSON template (e.g. markdown)
+            }
             const { messages, ...rest } = input.state;
             const workingMemory = JSON.stringify({
               ...existingMemory,
@@ -199,15 +204,24 @@ export class MastraAgent extends AbstractAgent {
                     });
 
                     if (typeof workingMemory === "string") {
-                      const snapshot = JSON.parse(workingMemory);
+                      try {
+                        const snapshot = JSON.parse(workingMemory);
 
-                      if (snapshot && !("$schema" in snapshot)) {
-                        const stateSnapshotEvent: StateSnapshotEvent = {
+                        if (snapshot && !("$schema" in snapshot)) {
+                          const stateSnapshotEvent: StateSnapshotEvent = {
+                            type: EventType.STATE_SNAPSHOT,
+                            snapshot,
+                          };
+
+                          subscriber.next(stateSnapshotEvent);
+                        }
+                      } catch {
+                        // Working memory may be a non-JSON template (e.g. markdown);
+                        // emit it as a raw snapshot value so consumers still receive it
+                        subscriber.next({
                           type: EventType.STATE_SNAPSHOT,
-                          snapshot,
-                        };
-
-                        subscriber.next(stateSnapshotEvent);
+                          snapshot: { workingMemory },
+                        } as StateSnapshotEvent);
                       }
                     }
                   }
