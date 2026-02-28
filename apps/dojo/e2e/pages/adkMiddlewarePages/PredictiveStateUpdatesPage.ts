@@ -54,16 +54,16 @@ export class PredictiveStateUpdatesPage {
   }
 
   async getUserApproval() {
-    await this.userApprovalModal.last().isVisible();
+    await expect(this.userApprovalModal.last()).toBeVisible();
     await this.getButton(this.page, "Confirm");
     const acceptedLabel = this.userApprovalModal.last().locator('text=✓ Accepted');
   }
 
   async getUserRejection() {
-    await this.userApprovalModal.last().isVisible();
+    await expect(this.userApprovalModal.last()).toBeVisible();
     await this.getButton(this.page, "Reject");
     const rejectedLabel = await this.getStatusLabelOfButton(this.page, "✕ Rejected");
-    await rejectedLabel.isVisible();
+    await expect(rejectedLabel).toBeVisible();
   }
 
   async verifyAgentResponse(dragonName) {

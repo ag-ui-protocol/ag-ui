@@ -55,17 +55,17 @@ export class PredictiveStateUpdatesPage {
   }
 
   async getUserApproval() {
-    await this.userApprovalModal.isVisible();
+    await expect(this.userApprovalModal).toBeVisible();
     await this.page.locator('[data-testid="confirm-button"]').click();
     const acceptedLabel = this.page.locator('[data-testid="status-display"]').last();
-    await acceptedLabel.isVisible();
+    await expect(acceptedLabel).toBeVisible();
   }
 
   async getUserRejection() {
-    await this.userApprovalModal.isVisible();
+    await expect(this.userApprovalModal).toBeVisible();
     await this.page.locator('[data-testid="reject-button"]').click();
     const rejectedLabel = this.page.locator('[data-testid="status-display"]').last();
-    await rejectedLabel.isVisible();
+    await expect(rejectedLabel).toBeVisible();
   }
 
   async verifyAgentResponse(dragonName) {

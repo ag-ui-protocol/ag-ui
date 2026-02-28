@@ -42,7 +42,7 @@ export const test = base.extend<{}, {}>({
  *
  * This version checks for actual content in the last assistant message.
  */
-export async function waitForAIResponse(page: Page, timeout: number = 90000) {
+export async function waitForAIResponse(page: Page, timeout: number = 60000) {
   // Phase 1: Wait for any loading indicators to disappear
   await page.waitForFunction(
     () => {
