@@ -17,7 +17,7 @@ test("[LangGraph] Agentic Chat sends and receives a message", async ({
     const chat = new AgenticChatPage(page);
 
     await chat.openChat();
-    await chat.agentGreeting.isVisible;
+    await expect(chat.agentGreeting).toBeVisible();
     await chat.sendMessage("Hi, I am duaa");
 
     await waitForAIResponse(page);

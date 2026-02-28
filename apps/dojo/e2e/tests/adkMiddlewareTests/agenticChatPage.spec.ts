@@ -19,7 +19,7 @@ test.describe("Agentic Chat Feature", () => {
       const chat = new AgenticChatPage(page);
 
       await chat.openChat();
-      await chat.agentGreeting.isVisible;
+      await expect(chat.agentGreeting).toBeVisible();
       await chat.sendMessage("Hello, I am duaa.");
 
       await waitForAIResponse(page);
