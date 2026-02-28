@@ -10,10 +10,9 @@ import { Page, Route } from "@playwright/test";
  *
  * Usage:
  *   const mock = new MockAgent(page);
- *   mock.onMessage("change the background color to blue", [
- *     MockAgent.toolCall("setBackgroundColor", { color: "blue" }),
- *     MockAgent.textMessage("I've changed the background color to blue."),
- *   ]);
+ *   mock.onMessage("background color to blue",
+ *     mock.toolCall("change_background", { background: "blue" })
+ *   );
  *   await mock.install();
  *   // ... run test ...
  *   await mock.uninstall();
@@ -233,26 +232,31 @@ export class MockAgent {
   }
 
   /**
-   * Build a tool call followed by a text message response sequence.
+   * Build a frontend tool call response sequence.
+   *
+   * For frontend tools (registered via useFrontendTool), CopilotKit uses a
+   * multi-run pattern:
+   *   Run 1: Server sends TOOL_CALL events (no TOOL_CALL_RESULT) + RUN_FINISHED
+   *   Client: CopilotKit detects the unresolved tool call, executes the
+   *           frontend handler locally, then makes a follow-up request.
+   *   Run 2: Server responds with text (handled by fallback or another handler).
+   *
+   * IMPORTANT: Do NOT include TOOL_CALL_RESULT in the response — that tells
+   * CopilotKit the tool was already executed server-side and it will skip
+   * calling the frontend handler. Use { once: true } on the handler so the
+   * follow-up request falls through to the fallback.
    */
   toolCall(
     toolName: string,
     args: Record<string, unknown>,
     options: {
-      resultContent?: string;
-      followUpText?: string;
       runId?: string;
     } = {}
   ): ResponseSequence {
     const runId = options.runId ?? this.nextRunId();
     const toolParentMessageId = this.nextMessageId();
     const toolCallId = this.nextToolCallId();
-    const toolResultMessageId = this.nextMessageId();
-    const followUpMessageId = this.nextMessageId();
     const threadId = "mock-thread";
-    const resultContent = options.resultContent ?? "Tool executed successfully";
-    const followUpText =
-      options.followUpText ?? `I've executed ${toolName} for you.`;
 
     return [
       { type: "RUN_STARTED", runId, threadId },
@@ -268,16 +272,6 @@ export class MockAgent {
         delta: JSON.stringify(args),
       },
       { type: "TOOL_CALL_END", toolCallId },
-      {
-        type: "TOOL_CALL_RESULT",
-        messageId: toolResultMessageId,
-        toolCallId,
-        content: resultContent,
-        role: "tool",
-      },
-      { type: "TEXT_MESSAGE_START", messageId: followUpMessageId, role: "assistant" },
-      { type: "TEXT_MESSAGE_CONTENT", messageId: followUpMessageId, delta: followUpText },
-      { type: "TEXT_MESSAGE_END", messageId: followUpMessageId },
       { type: "RUN_FINISHED", runId, threadId },
     ];
   }

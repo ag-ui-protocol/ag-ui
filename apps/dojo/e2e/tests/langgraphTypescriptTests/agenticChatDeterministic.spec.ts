@@ -23,26 +23,26 @@ test.describe("Deterministic Agentic Chat", () => {
   }) => {
     const mock = new MockAgent(page);
 
-    // Configure deterministic responses for color change requests
+    // Configure deterministic responses for color change requests.
+    // { once: true } is required because CopilotKit uses a multi-run pattern
+    // for frontend tools: Run 1 delivers the tool call events, CopilotKit
+    // executes the handler locally, then makes a follow-up request with the
+    // same user message. The follow-up falls through to the fallback.
     mock.onMessage(
       "background color to blue",
-      mock.toolCall("setBackgroundColor", { color: "blue" }, {
-        resultContent: "Background color changed to blue",
-        followUpText: "I've changed the background color to blue for you!",
-      })
+      mock.toolCall("change_background", { background: "blue" }),
+      { once: true }
     );
 
     mock.onMessage(
       "background color to pink",
-      mock.toolCall("setBackgroundColor", { color: "pink" }, {
-        resultContent: "Background color changed to pink",
-        followUpText: "I've changed the background color to pink for you!",
-      })
+      mock.toolCall("change_background", { background: "pink" }),
+      { once: true }
     );
 
-    // Fallback for any other message
+    // Fallback handles CopilotKit's follow-up requests after tool execution
     mock.onAnyMessage(
-      mock.textMessage("Hi! I'm an agent. I can change background colors for you.")
+      mock.textMessage("Done! I've changed the background color for you.")
     );
 
     await mock.install();
@@ -129,7 +129,7 @@ test.describe("Deterministic Agentic Chat", () => {
     mock.onMessage(/hello/i, mock.textMessage("Hello! How can I help you today?"));
 
     // Joke request — returns first joke
-    mock.onMessage(/joke/i, mock.textMessage(jokes[0]!));
+    mock.onMessage(/joke/i, mock.textMessage(jokes[0]!), { once: true });
 
     // Name request
     mock.onMessage(/name/i, mock.textMessage("How about the name Alexander?"));
