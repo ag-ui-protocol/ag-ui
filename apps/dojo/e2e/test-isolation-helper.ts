@@ -54,25 +54,20 @@ export async function waitForAIResponse(page: Page, timeout: number = 90000) {
     { timeout }
   );
 
-  // Phase 2: Verify the last assistant message has actual content.
+  // Phase 2: Wait for at least one assistant message with actual content.
   // This catches the case where loading indicators disappear but the
   // response is empty or hasn't rendered yet.
-  const messageCount = await page
-    .locator(".copilotKitAssistantMessage")
-    .count();
-  if (messageCount > 0) {
-    await page.waitForFunction(
-      () => {
-        const messages = document.querySelectorAll(
-          ".copilotKitAssistantMessage"
-        );
-        if (messages.length === 0) return true;
-        const lastMessage = messages[messages.length - 1];
-        return (lastMessage?.textContent?.trim().length ?? 0) > 0;
-      },
-      { timeout: 30000 }
-    );
-  }
+  await page.waitForFunction(
+    () => {
+      const messages = document.querySelectorAll(
+        ".copilotKitAssistantMessage"
+      );
+      if (messages.length === 0) return false;
+      const lastMessage = messages[messages.length - 1];
+      return (lastMessage?.textContent?.trim().length ?? 0) > 0;
+    },
+    { timeout: 30000 }
+  );
 
   // Phase 3: Stabilization wait for streaming content to finish rendering
   await page.waitForTimeout(2000);

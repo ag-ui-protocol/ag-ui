@@ -26,7 +26,7 @@ test.describe("Deterministic Agentic Chat", () => {
     // Configure deterministic responses for color change requests
     mock.onMessage(
       "background color to blue",
-      MockAgent.toolCall("setBackgroundColor", { color: "blue" }, {
+      mock.toolCall("setBackgroundColor", { color: "blue" }, {
         resultContent: "Background color changed to blue",
         followUpText: "I've changed the background color to blue for you!",
       })
@@ -34,7 +34,7 @@ test.describe("Deterministic Agentic Chat", () => {
 
     mock.onMessage(
       "background color to pink",
-      MockAgent.toolCall("setBackgroundColor", { color: "pink" }, {
+      mock.toolCall("setBackgroundColor", { color: "pink" }, {
         resultContent: "Background color changed to pink",
         followUpText: "I've changed the background color to pink for you!",
       })
@@ -42,7 +42,7 @@ test.describe("Deterministic Agentic Chat", () => {
 
     // Fallback for any other message
     mock.onAnyMessage(
-      MockAgent.textMessage("Hi! I'm an agent. I can change background colors for you.")
+      mock.textMessage("Hi! I'm an agent. I can change background colors for you.")
     );
 
     await mock.install();
@@ -120,23 +120,22 @@ test.describe("Deterministic Agentic Chat", () => {
   test("[LangGraph] Regenerate produces a new response", async ({ page }) => {
     const mock = new MockAgent(page);
 
-    let jokeCount = 0;
     const jokes = [
       "Why did the scarecrow win an award? Because he was outstanding in his field!",
       "What do you call a bear with no teeth? A gummy bear!",
     ];
 
     // First greeting
-    mock.onMessage(/hello/i, MockAgent.textMessage("Hello! How can I help you today?"));
+    mock.onMessage(/hello/i, mock.textMessage("Hello! How can I help you today?"));
 
-    // Joke request — returns different jokes on each call
-    mock.onMessage(/joke/i, MockAgent.textMessage(jokes[0]!));
+    // Joke request — returns first joke
+    mock.onMessage(/joke/i, mock.textMessage(jokes[0]!));
 
     // Name request
-    mock.onMessage(/name/i, MockAgent.textMessage("How about the name Alexander?"));
+    mock.onMessage(/name/i, mock.textMessage("How about the name Alexander?"));
 
     // Fallback for regeneration — returns a different joke
-    mock.onAnyMessage(MockAgent.textMessage(jokes[1]!));
+    mock.onAnyMessage(mock.textMessage(jokes[1]!));
 
     await mock.install();
 

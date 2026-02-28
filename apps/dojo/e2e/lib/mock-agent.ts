@@ -34,30 +34,33 @@ interface MessageHandler {
   used: boolean;
 }
 
-let runCounter = 0;
-let messageCounter = 0;
-let toolCallCounter = 0;
-
-function nextRunId() {
-  return `mock-run-${++runCounter}`;
-}
-
-function nextMessageId() {
-  return `mock-msg-${++messageCounter}`;
-}
-
-function nextToolCallId() {
-  return `mock-tc-${++toolCallCounter}`;
-}
+const ROUTE_PATTERN = /\/api\/copilotkit(next)?\/[^/]+/;
 
 export class MockAgent {
   private page: Page;
   private handlers: MessageHandler[] = [];
   private fallbackResponse: ResponseSequence | null = null;
   private installed = false;
+  private routeHandler: ((route: Route) => Promise<void>) | null = null;
+
+  private runCounter = 0;
+  private messageCounter = 0;
+  private toolCallCounter = 0;
 
   constructor(page: Page) {
     this.page = page;
+  }
+
+  private nextRunId() {
+    return `mock-run-${++this.runCounter}`;
+  }
+
+  private nextMessageId() {
+    return `mock-msg-${++this.messageCounter}`;
+  }
+
+  private nextToolCallId() {
+    return `mock-tc-${++this.toolCallCounter}`;
   }
 
   /**
@@ -90,24 +93,22 @@ export class MockAgent {
    */
   async install(): Promise<void> {
     if (this.installed) return;
-    this.installed = true;
 
-    await this.page.route(
-      // Match both v1 and v2 endpoints
-      /\/api\/copilotkit(next)?\/[^/]+/,
-      async (route: Route) => {
-        const request = route.request();
+    this.routeHandler = async (route: Route) => {
+      const request = route.request();
 
-        // Only intercept POST requests (SSE streams)
-        if (request.method() !== "POST") {
-          await route.continue();
-          return;
-        }
+      // Only intercept POST requests (SSE streams)
+      if (request.method() !== "POST") {
+        await route.continue();
+        return;
+      }
 
+      try {
         let body: string;
         try {
           body = request.postData() ?? "";
-        } catch {
+        } catch (err) {
+          console.warn("[MockAgent] Failed to read postData():", err instanceof Error ? err.message : err);
           body = "";
         }
 
@@ -128,17 +129,24 @@ export class MockAgent {
           },
           body: sseBody,
         });
+      } catch (err) {
+        console.error("[MockAgent] Route handler error:", err instanceof Error ? err.message : err);
+        await route.abort("failed").catch(() => {});
       }
-    );
+    };
+
+    await this.page.route(ROUTE_PATTERN, this.routeHandler);
+    this.installed = true;
   }
 
   /**
    * Remove the route interceptor.
    */
   async uninstall(): Promise<void> {
-    if (!this.installed) return;
+    if (!this.installed || !this.routeHandler) return;
+    await this.page.unroute(ROUTE_PATTERN, this.routeHandler);
+    this.routeHandler = null;
     this.installed = false;
-    await this.page.unroute(/\/api\/copilotkit(next)?\/[^/]+/);
   }
 
   private extractLastUserMessage(body: string): string {
@@ -176,7 +184,7 @@ export class MockAgent {
           : handler.pattern.test(userMessage);
 
       if (matches) {
-        handler.used = true;
+        if (handler.once) handler.used = true;
         return handler.responses;
       }
     }
@@ -186,20 +194,20 @@ export class MockAgent {
     }
 
     // Default: simple acknowledgment
-    return MockAgent.textMessage("I understand. How can I help?");
+    return this.textMessage("I understand. How can I help?");
   }
 
-  // ── Static helpers for building response sequences ──
+  // ── Instance helpers for building response sequences ──
 
   /**
    * Build a text message response sequence.
    */
-  static textMessage(
+  textMessage(
     text: string,
     options: { runId?: string; messageId?: string } = {}
   ): ResponseSequence {
-    const runId = options.runId ?? nextRunId();
-    const messageId = options.messageId ?? nextMessageId();
+    const runId = options.runId ?? this.nextRunId();
+    const messageId = options.messageId ?? this.nextMessageId();
     const threadId = "mock-thread";
 
     return [
@@ -214,7 +222,7 @@ export class MockAgent {
   /**
    * Build a tool call followed by a text message response sequence.
    */
-  static toolCall(
+  toolCall(
     toolName: string,
     args: Record<string, unknown>,
     options: {
@@ -223,9 +231,9 @@ export class MockAgent {
       runId?: string;
     } = {}
   ): ResponseSequence {
-    const runId = options.runId ?? nextRunId();
-    const messageId = nextMessageId();
-    const toolCallId = nextToolCallId();
+    const runId = options.runId ?? this.nextRunId();
+    const messageId = this.nextMessageId();
+    const toolCallId = this.nextToolCallId();
     const threadId = "mock-thread";
     const resultContent = options.resultContent ?? "Tool executed successfully";
     const followUpText =
@@ -247,7 +255,7 @@ export class MockAgent {
       { type: "TOOL_CALL_END", toolCallId },
       {
         type: "TOOL_CALL_RESULT",
-        messageId: nextMessageId(),
+        messageId: this.nextMessageId(),
         toolCallId,
         content: resultContent,
         role: "tool",
