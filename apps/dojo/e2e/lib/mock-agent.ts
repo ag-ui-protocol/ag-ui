@@ -112,8 +112,14 @@ export class MockAgent {
           body = "";
         }
 
-        // Find the user's last message in the request body
+        // Find the user's last message in the request body.
+        // If there's no user message (e.g. CopilotKit initialization request),
+        // pass through to the real backend so the app can boot normally.
         const lastUserMessage = this.extractLastUserMessage(body);
+        if (lastUserMessage === null) {
+          await route.continue();
+          return;
+        }
         const responses = this.findResponse(lastUserMessage);
 
         const sseBody = responses
@@ -149,7 +155,7 @@ export class MockAgent {
     this.installed = false;
   }
 
-  private extractLastUserMessage(body: string): string {
+  private extractLastUserMessage(body: string): string | null {
     try {
       const parsed = JSON.parse(body);
       // CopilotKit v2 format: { body: { messages: [...] } }
@@ -166,12 +172,13 @@ export class MockAgent {
             );
             return textPart?.text ?? "";
           }
+          return ""; // user message exists but content shape is unrecognized
         }
       }
     } catch {
       // Not JSON or unexpected format
     }
-    return "";
+    return null; // no user message found — likely an init request
   }
 
   private findResponse(userMessage: string): ResponseSequence {
