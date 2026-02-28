@@ -165,9 +165,12 @@ test.describe("Deterministic Agentic Chat", () => {
     await page.waitForTimeout(3000);
 
     // With mock agent, the regenerated response should be the fallback
-    // (different joke), proving the regenerate mechanism works
+    // (different joke), proving the regenerate mechanism works.
+    // Unlike live-LLM tests, we CAN assert the text differs because
+    // the mock returns deterministic, distinct responses.
     const newJoke = await chat.getAssistantMessageText(2);
     expect(newJoke.length).toBeGreaterThan(0);
+    expect(newJoke).not.toBe(originalJoke);
 
     await mock.uninstall();
   });

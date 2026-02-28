@@ -193,8 +193,14 @@ export class MockAgent {
       return this.fallbackResponse;
     }
 
-    // Default: simple acknowledgment
-    return this.textMessage("I understand. How can I help?");
+    // Default: simple acknowledgment with stable IDs
+    return [
+      { type: "RUN_STARTED", runId: "mock-run-default", threadId: "mock-thread" },
+      { type: "TEXT_MESSAGE_START", messageId: "mock-msg-default", role: "assistant" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "mock-msg-default", delta: "I understand. How can I help?" },
+      { type: "TEXT_MESSAGE_END", messageId: "mock-msg-default" },
+      { type: "RUN_FINISHED", runId: "mock-run-default", threadId: "mock-thread" },
+    ];
   }
 
   // ── Instance helpers for building response sequences ──
@@ -232,8 +238,10 @@ export class MockAgent {
     } = {}
   ): ResponseSequence {
     const runId = options.runId ?? this.nextRunId();
-    const messageId = this.nextMessageId();
+    const toolParentMessageId = this.nextMessageId();
     const toolCallId = this.nextToolCallId();
+    const toolResultMessageId = this.nextMessageId();
+    const followUpMessageId = this.nextMessageId();
     const threadId = "mock-thread";
     const resultContent = options.resultContent ?? "Tool executed successfully";
     const followUpText =
@@ -245,7 +253,7 @@ export class MockAgent {
         type: "TOOL_CALL_START",
         toolCallId,
         toolCallName: toolName,
-        parentMessageId: messageId,
+        parentMessageId: toolParentMessageId,
       },
       {
         type: "TOOL_CALL_ARGS",
@@ -255,14 +263,14 @@ export class MockAgent {
       { type: "TOOL_CALL_END", toolCallId },
       {
         type: "TOOL_CALL_RESULT",
-        messageId: this.nextMessageId(),
+        messageId: toolResultMessageId,
         toolCallId,
         content: resultContent,
         role: "tool",
       },
-      { type: "TEXT_MESSAGE_START", messageId, role: "assistant" },
-      { type: "TEXT_MESSAGE_CONTENT", messageId, delta: followUpText },
-      { type: "TEXT_MESSAGE_END", messageId },
+      { type: "TEXT_MESSAGE_START", messageId: followUpMessageId, role: "assistant" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: followUpMessageId, delta: followUpText },
+      { type: "TEXT_MESSAGE_END", messageId: followUpMessageId },
       { type: "RUN_FINISHED", runId, threadId },
     ];
   }

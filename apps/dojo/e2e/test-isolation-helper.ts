@@ -66,7 +66,7 @@ export async function waitForAIResponse(page: Page, timeout: number = 90000) {
       const lastMessage = messages[messages.length - 1];
       return (lastMessage?.textContent?.trim().length ?? 0) > 0;
     },
-    { timeout: 30000 }
+    { timeout }
   );
 
   // Phase 3: Stabilization wait for streaming content to finish rendering
