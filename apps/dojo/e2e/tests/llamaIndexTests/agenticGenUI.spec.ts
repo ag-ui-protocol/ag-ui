@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../../test-isolation-helper";
 import { AgenticGenUIPage } from "../../pages/llamaIndexPages/AgenticUIGenPage";
 
 test.describe("Agent Generative UI Feature", () => {
