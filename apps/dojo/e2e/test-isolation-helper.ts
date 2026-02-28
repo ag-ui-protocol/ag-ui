@@ -1,8 +1,53 @@
 import { test as base, Page } from "@playwright/test";
 
+/**
+ * Dump the current state of assistant messages on the page.
+ * Called automatically on test failure so CI logs show what the LLM
+ * actually produced (or didn't produce) instead of just "Element not found".
+ */
+async function dumpPageAIState(page: Page) {
+  try {
+    const state = await page.evaluate(() => {
+      const assistantMsgs = Array.from(
+        document.querySelectorAll(".copilotKitAssistantMessage")
+      );
+      const userMsgs = Array.from(
+        document.querySelectorAll(".copilotKitUserMessage")
+      );
+      return {
+        assistantMessages: assistantMsgs.map((el, i) => ({
+          index: i,
+          text: el.textContent?.trim().slice(0, 200) || "(empty)",
+        })),
+        userMessages: userMsgs.map((el, i) => ({
+          index: i,
+          text: el.textContent?.trim().slice(0, 200) || "(empty)",
+        })),
+        url: window.location.href,
+      };
+    });
+
+    console.log("\n[AI State Dump] URL:", state.url);
+    console.log(
+      `[AI State Dump] ${state.userMessages.length} user message(s), ${state.assistantMessages.length} assistant message(s)`
+    );
+    for (const msg of state.userMessages) {
+      console.log(`  [User ${msg.index}] ${msg.text}`);
+    }
+    for (const msg of state.assistantMessages) {
+      console.log(`  [Assistant ${msg.index}] ${msg.text}`);
+    }
+    if (state.assistantMessages.length === 0) {
+      console.log("  [Assistant] (no messages — LLM may not have responded)");
+    }
+  } catch {
+    console.log("[AI State Dump] Could not read page state (page may have navigated away)");
+  }
+}
+
 // Extend base test with isolation setup and error monitoring
 export const test = base.extend<{}, {}>({
-  page: async ({ page }, use) => {
+  page: async ({ page }, use, testInfo) => {
     // Before each test - ensure clean state
     await page.context().clearCookies();
     await page.context().clearPermissions();
@@ -37,6 +82,11 @@ export const test = base.extend<{}, {}>({
     await page.waitForTimeout(1000);
 
     await use(page);
+
+    // On failure: dump what the LLM actually did so CI logs are actionable
+    if (testInfo.status !== testInfo.expectedStatus) {
+      await dumpPageAIState(page);
+    }
 
     // After each test - report collected errors
     if (pageErrors.length > 0) {
@@ -134,7 +184,8 @@ export async function waitForAssistantMessage(
 export async function retryOnAIFailure<T>(
   operation: () => Promise<T>,
   maxRetries: number = 3,
-  delayMs: number = 5000
+  delayMs: number = 5000,
+  page?: Page
 ): Promise<T> {
   for (let i = 0; i < maxRetries; i++) {
     try {
@@ -159,6 +210,10 @@ export async function retryOnAIFailure<T>(
             i + 2
           }/${maxRetries}) after AI service error: ${errorMsg}`
         );
+        // Dump LLM state before retry so CI logs show what the AI did
+        if (page) {
+          await dumpPageAIState(page);
+        }
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         continue;
       }
