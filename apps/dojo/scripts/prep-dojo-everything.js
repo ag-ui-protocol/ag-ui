@@ -79,8 +79,13 @@ const ALL_TARGETS = {
     name: "LG FastAPI",
     cwd: path.join(integrationsRoot, "langgraph/python/examples"),
   },
+  "langgraph-platform-python": {
+    command: "uv sync",
+    name: "LG Platform Python",
+    cwd: path.join(integrationsRoot, "langgraph/python/examples"),
+  },
   "langgraph-platform-typescript": {
-    command: "pnpm install",
+    command: "pnpm install --no-frozen-lockfile",
     name: "LG Platform TS",
     cwd: path.join(integrationsRoot, "langgraph/typescript/examples"),
   },
@@ -115,12 +120,18 @@ const ALL_TARGETS = {
     cwd: path.join(middlewaresRoot, "a2a-middleware/examples"),
   },
   dojo: {
-    command: "pnpm install --no-frozen-lockfile && npx nx run demo-viewer:build",
+    // In CI, pnpm install is done by the workflow before this script runs.
+    // Locally, we need to ensure deps are installed before building.
+    command: process.env.CI
+      ? "npx nx run demo-viewer:build"
+      : "pnpm install --no-frozen-lockfile && npx nx run demo-viewer:build",
     name: "Dojo",
     cwd: gitRoot,
   },
   "dojo-dev": {
-    command: "pnpm install --no-frozen-lockfile && npx nx run-many -t build --exclude=demo-viewer",
+    command: process.env.CI
+      ? "npx nx run-many -t build --exclude=demo-viewer"
+      : "pnpm install --no-frozen-lockfile && npx nx run-many -t build --exclude=demo-viewer",
     name: "Dojo (dev)",
     cwd: gitRoot,
   },
@@ -162,12 +173,22 @@ async function main() {
 
   // Build procs list, warning on unknown keys
   const procs = [];
+  const seenCwdCommand = new Set();
   for (const key of selectedKeys) {
     const target = ALL_TARGETS[key];
     if (!target) {
       console.warn(`Skipping unknown service: ${key}`);
       continue;
     }
+    // Deduplicate targets that share the same command+cwd to prevent
+    // concurrent writes to the same directory (e.g. langgraph-fastapi
+    // and langgraph-platform-python both run uv sync in the same dir).
+    const dedupKey = `${target.command}::${target.cwd}`;
+    if (seenCwdCommand.has(dedupKey)) {
+      console.log(`Deduplicating ${key} (same command+cwd as a previous target)`);
+      continue;
+    }
+    seenCwdCommand.add(dedupKey);
     procs.push(target);
   }
 
