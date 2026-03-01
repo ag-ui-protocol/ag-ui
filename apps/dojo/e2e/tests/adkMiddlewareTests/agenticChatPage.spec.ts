@@ -18,7 +18,7 @@ test.describe("Agentic Chat Feature", () => {
       const chat = new AgenticChatPage(page);
 
       await chat.openChat();
-      await chat.agentGreeting.waitFor({ state: "visible" });
+      await expect(chat.agentGreeting).toBeVisible();
       await chat.sendMessage("Hello, I am duaa.");
 
       await chat.assertUserMessageVisible("Hello, I am duaa.");
@@ -37,7 +37,7 @@ test.describe("Agentic Chat Feature", () => {
       const chat = new AgenticChatPage(page);
 
       await chat.openChat();
-      await chat.agentGreeting.waitFor({ state: "visible" });
+      await expect(chat.agentGreeting).toBeVisible();
 
       const backgroundContainer = page.locator('[data-testid="background-container"]');
       const getBackground = () => backgroundContainer.evaluate(el => el.style.background);

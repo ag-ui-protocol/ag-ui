@@ -35,7 +35,7 @@ export class AgenticGenUIPage {
   }
 
   async openChat() {
-    await this.planTaskButton.waitFor({ state: "visible" });
+    await expect(this.planTaskButton).toBeVisible();
   }
 
   async sendMessage(message: string) {

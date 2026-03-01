@@ -18,7 +18,7 @@ test("[Agno] Agentic Chat sends and receives a greeting message", async ({
     const chat = new AgenticChatPage(page);
 
     await chat.openChat();
-    await chat.agentGreeting.waitFor({ state: "visible" });
+    await expect(chat.agentGreeting).toBeVisible();
     await chat.sendMessage("Hi");
 
     await chat.assertUserMessageVisible("Hi");
@@ -37,7 +37,7 @@ test("[Agno] Agentic Chat provides stock price information", async ({
     const chat = new AgenticChatPage(page);
 
     await chat.openChat();
-    await chat.agentGreeting.waitFor({ state: "visible" });
+    await expect(chat.agentGreeting).toBeVisible();
 
     // Ask for AAPL stock price
     await chat.sendMessage(appleAsk);
@@ -59,7 +59,7 @@ test("[Agno] Agentic Chat retains memory of previous questions", async ({
 
     const chat = new AgenticChatPage(page);
     await chat.openChat();
-    await chat.agentGreeting.waitFor({ state: "visible" });
+    await expect(chat.agentGreeting).toBeVisible();
 
     // First question — use a simple, deterministic question (no external API)
     await chat.sendMessage("What is the capital of France?");

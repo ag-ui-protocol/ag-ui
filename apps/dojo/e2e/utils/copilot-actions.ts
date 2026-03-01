@@ -44,7 +44,7 @@ export async function sendChatMessage(page: Page, message: string) {
   await input.click();
   await input.fill(message);
   const sendButton = CopilotSelectors.sendButton(page);
-  await sendButton.waitFor({ state: "visible" });
+  await expect(sendButton).toBeVisible();
   await expect(sendButton).toBeEnabled();
   await sendButton.click();
 }

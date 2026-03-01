@@ -34,7 +34,7 @@ export class PredictiveStateUpdatesPage {
   }
 
   async openChat() {
-    await this.agentGreeting.waitFor({ state: "visible" });
+    await expect(this.agentGreeting).toBeVisible();
   }
 
   async sendMessage(message: string) {

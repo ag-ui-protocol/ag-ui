@@ -26,7 +26,7 @@ export class HumanInTheLoopPage {
   }
 
   async openChat() {
-    await this.agentGreeting.waitFor({ state: "visible" });
+    await expect(this.agentGreeting).toBeVisible();
   }
 
   async sendMessage(message: string) {

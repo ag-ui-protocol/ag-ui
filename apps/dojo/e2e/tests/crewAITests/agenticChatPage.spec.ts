@@ -16,7 +16,7 @@ test("[CrewAI] Agentic Chat sends and receives a message", async ({
     const chat = new AgenticChatPage(page);
 
     await chat.openChat();
-    await chat.agentGreeting.waitFor({ state: "visible" });
+    await expect(chat.agentGreeting).toBeVisible();
     await chat.sendMessage("Hi, I am duaa");
 
     await chat.assertUserMessageVisible("Hi, I am duaa");
@@ -35,7 +35,7 @@ test("[CrewAI] Agentic Chat changes background on message and reset", async ({
     const chat = new AgenticChatPage(page);
 
     await chat.openChat();
-    await chat.agentGreeting.waitFor({ state: "visible" });
+    await expect(chat.agentGreeting).toBeVisible();
 
     const backgroundContainer = page.locator('[data-testid="background-container"]');
     const getBackground = () => backgroundContainer.evaluate(el => el.style.background);

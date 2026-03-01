@@ -17,7 +17,7 @@ test("[LangGraph] Agentic Chat sends and receives a message", async ({
     const chat = new AgenticChatPage(page);
 
     await chat.openChat();
-    await chat.agentGreeting.waitFor({ state: "visible" });
+    await expect(chat.agentGreeting).toBeVisible();
     await chat.sendMessage("Hi, I am duaa");
 
     await chat.assertUserMessageVisible("Hi, I am duaa");
@@ -37,7 +37,7 @@ test("[LangGraph] Agentic Chat changes background on message and reset", async (
     const chat = new AgenticChatPage(page);
 
     await chat.openChat();
-    await chat.agentGreeting.waitFor({ state: "visible" });
+    await expect(chat.agentGreeting).toBeVisible();
 
     const backgroundContainer = page.locator('[data-testid="background-container"]');
     const getBackground = () => backgroundContainer.evaluate(el => el.style.background);
@@ -110,7 +110,7 @@ test.skip("[LangGraph Typescript] Agentic Chat regenerates a response", async ({
     const chat = new AgenticChatPage(page);
 
     await chat.openChat();
-    await chat.agentGreeting.waitFor({ state: "visible" });
+    await expect(chat.agentGreeting).toBeVisible();
 
     // Use sendChatMessage + awaitLLMResponseDone to save time budget
     // vs sendAndAwaitResponse (avoids double-waiting on assistant message count).

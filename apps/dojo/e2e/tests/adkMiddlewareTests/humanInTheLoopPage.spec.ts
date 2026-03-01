@@ -48,7 +48,7 @@ test.describe("Human in the Loop Feature", () => {
 
       // Click the predefined "Simple plan" suggestion button
       const simplePlanButton = page.getByRole("button", { name: "Simple plan" });
-      await simplePlanButton.waitFor({ state: "visible" });
+      await expect(simplePlanButton).toBeVisible();
       await simplePlanButton.click();
       await awaitLLMResponseDone(page);
       await expect(humanInLoop.plan).toBeVisible();

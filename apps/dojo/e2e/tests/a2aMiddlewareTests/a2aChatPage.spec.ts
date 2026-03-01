@@ -18,7 +18,7 @@ test.describe("A2A Chat Feature", () => {
 
       await chat.openChat();
       // This should already be handled previously but we just need a base case
-      await chat.mainChatTab.waitFor({ state: "visible" });
+      await expect(chat.mainChatTab).toBeVisible();
     });
   });
 });

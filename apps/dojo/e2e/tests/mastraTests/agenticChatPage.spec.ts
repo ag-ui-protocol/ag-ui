@@ -17,7 +17,7 @@ test("[Mastra] Agentic Chat sends and receives a greeting message", async ({
     const chat = new AgenticChatPage(page);
 
     await chat.openChat();
-    await chat.agentGreeting.waitFor({ state: "visible" });
+    await expect(chat.agentGreeting).toBeVisible();
     await chat.sendMessage("Hi");
 
     await chat.assertUserMessageVisible("Hi");
@@ -36,7 +36,7 @@ test("[Mastra] Agentic Chat provides weather information", async ({
     const chat = new AgenticChatPage(page);
 
     await chat.openChat();
-    await chat.agentGreeting.waitFor({ state: "visible" });
+    await expect(chat.agentGreeting).toBeVisible();
 
     // Ask for Islamabad weather — use sendChatMessage to avoid
     // sendAndAwaitResponse timeout when the weather tool call is slow
@@ -59,7 +59,7 @@ test("[Mastra] Agentic Chat retains memory of previous questions", async ({
 
     const chat = new AgenticChatPage(page);
     await chat.openChat();
-    await chat.agentGreeting.waitFor({ state: "visible" });
+    await expect(chat.agentGreeting).toBeVisible();
 
     // First question about weather — sendChatMessage avoids the
     // sendAndAwaitResponse timeout when the weather tool is slow

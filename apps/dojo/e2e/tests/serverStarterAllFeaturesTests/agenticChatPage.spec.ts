@@ -17,7 +17,7 @@ test("[Server Starter all features] Agentic Chat displays countdown from 10 to 1
 
     const chat = new AgenticChatPage(page);
     await chat.openChat();
-    await chat.agentGreeting.waitFor({ state: "visible" });
+    await expect(chat.agentGreeting).toBeVisible();
     // Use sendChatMessage to avoid sendAndAwaitResponse timeout;
     // the countdown assertion below handles the waiting with its own timeout.
     await sendChatMessage(page, "Hey there");

@@ -24,7 +24,7 @@ export class V1AgenticChatPage {
   }
 
   async waitForReady() {
-    await this.chatInput.waitFor({ state: "visible" });
+    await expect(this.chatInput).toBeVisible();
   }
 
   async sendMessage(message: string) {
