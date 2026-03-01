@@ -1,22 +1,26 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, retryOnAIFailure } from "../../test-isolation-helper";
 import { AgenticGenUIPage } from "../../pages/serverStarterAllFeaturesPages/AgenticUIGenPage";
 
 test.describe("Agent Generative UI Feature", () => {
-// Temporarily disabled because the agent planner UI element is currently missing in CI runs.
-test.skip("[Server Starter all features] should interact with the chat to get a planner on prompt", async ({
+  test.slow();
+
+  // Temporarily disabled because the agent planner UI element is currently missing in CI runs.
+  test.skip("[Server Starter all features] should interact with the chat to get a planner on prompt", async ({
     page,
   }) => {
-    const genUIAgent = new AgenticGenUIPage(page);
+    await retryOnAIFailure(async () => {
+      const genUIAgent = new AgenticGenUIPage(page);
 
-    await page.goto(
-      "/server-starter-all-features/feature/agentic_generative_ui"
-    );
+      await page.goto(
+        "/server-starter-all-features/feature/agentic_generative_ui"
+      );
 
-    await genUIAgent.openChat();
-    await genUIAgent.sendMessage("Hi");
-    await expect(genUIAgent.agentPlannerContainer).toBeVisible();
-    
-    await genUIAgent.plan();
-    await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 8000 });
+      await genUIAgent.openChat();
+      await genUIAgent.sendMessage("Hi");
+      await expect(genUIAgent.agentPlannerContainer).toBeVisible();
+
+      await genUIAgent.plan();
+      await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 8000 });
+    }, 3, 5000, page);
   });
 });
