@@ -144,9 +144,7 @@ export class SubgraphsPage {
   }
 
   async verifyStaticExperienceData() {
-    await expect(this.page.getByText('No experiences planned yet')).not.toBeVisible().catch(() => {
-      console.log('Still waiting for experiences to load...');
-    });
+    await expect(this.page.getByText('No experiences planned yet')).not.toBeVisible({ timeout: 30000 });
 
     await expect(this.page.locator('.activity-name').first()).toBeVisible();
 
