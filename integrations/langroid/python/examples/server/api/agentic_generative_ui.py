@@ -15,6 +15,7 @@ load_dotenv(dotenv_path=env_path)
 
 import langroid as lr
 from langroid.agent import ToolMessage, ChatAgent
+from langroid.language_models import OpenAIChatModel
 from pydantic import BaseModel, Field
 from ag_ui.core import EventType, StateSnapshotEvent, StateDeltaEvent
 from ag_ui_langroid import LangroidAgent, create_langroid_app
@@ -82,7 +83,7 @@ class UpdatePlanStepTool(ToolMessage):
 
 # Configure LLM
 llm_config = lr.language_models.OpenAIGPTConfig(
-    chat_model=lr.language_models.OpenAIChatModel.GPT4o,
+    chat_model=OpenAIChatModel.GPT4_1_MINI,
     api_key=os.getenv("OPENAI_API_KEY"),
     # Make behavior deterministic for demos and e2e tests
     temperature=0.0,

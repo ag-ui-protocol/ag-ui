@@ -34,8 +34,9 @@ class GenerateRecipeTool(ToolMessage):
 
 
 llm_config = OpenAIGPTConfig(
-    chat_model=OpenAIChatModel.GPT4o,
+    chat_model=OpenAIChatModel.GPT4_1_MINI,
     api_key=os.getenv("OPENAI_API_KEY"),
+    temperature=0.0,
 )
 
 
