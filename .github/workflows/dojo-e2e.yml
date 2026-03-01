@@ -13,7 +13,7 @@ on:
       - "sdks/python/**"
       - "sdks/typescript/**"
   pull_request:
-    branches: [main]
+    branches: [main, feat/migrate-dojo-to-v2]
     paths:
       - "apps/dojo/**"
       - "integrations/**"
@@ -165,25 +165,33 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
-      # Cache Python tool caches and virtualenvs; restore only to avoid long saves
-      - name: Cache Python dependencies (restore-only)
-        id: cache-python
-        uses: actions/cache/restore@v4
+      - name: Cache Python dependencies
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/pip
             ~/.cache/pypoetry
             ~/.cache/uv
             **/.venv
-          key: ${{ runner.os }}-pydeps-${{ hashFiles('**/poetry.lock', '**/pyproject.toml') }}
+          key: ${{ runner.os }}-pydeps-${{ matrix.suite }}-${{ hashFiles('**/poetry.lock', '**/pyproject.toml') }}
           restore-keys: |
+            ${{ runner.os }}-pydeps-${{ matrix.suite }}-
             ${{ runner.os }}-pydeps-
+
+      - name: Cache Nx build output
+        uses: actions/cache@v4
+        with:
+          path: .nx/cache
+          key: ${{ runner.os }}-nx-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('sdks/typescript/**/src/**/*.ts', 'sdks/typescript/**/src/**/*.tsx', 'apps/dojo/src/**/*.ts', 'apps/dojo/src/**/*.tsx', 'integrations/**/typescript/src/**/*.ts', 'integrations/**/typescript/src/**/*.tsx') }}
+          restore-keys: |
+            ${{ runner.os }}-nx-${{ hashFiles('**/pnpm-lock.yaml') }}-
+            ${{ runner.os }}-nx-
 
       - name: Cache Next.js build
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/apps/dojo/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('apps/dojo/src/**/*.ts', 'apps/dojo/src/**/*.tsx', 'apps/dojo/src/**/*.js', 'apps/dojo/src/**/*.jsx') }}
           restore-keys: |
             ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
 
@@ -204,21 +212,28 @@ jobs:
         working-directory: apps/dojo
         if: ${{ join(matrix.services, ',') != '' }}
         run: node ./scripts/prep-dojo-everything.js --only ${{ join(matrix.services, ',') }}
-      - name: Cache e2e dependencies
-        id: cache-e2e-deps
+      - name: Cache Playwright browsers
+        id: cache-playwright
         uses: actions/cache@v4
         with:
-          path: |
-            apps/dojo/e2e/node_modules
-            ~/.cache/ms-playwright
-          key: ${{ runner.os }}-dojo-e2e-deps-${{ hashFiles('pnpm-lock.yaml', 'apps/dojo/e2e/package.json') }}
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('apps/dojo/e2e/package.json') }}
           restore-keys: |
-            ${{ runner.os }}-dojo-e2e-deps-
+            ${{ runner.os }}-playwright-
+
       - name: Install e2e dependencies
-        if: ${{ steps.cache-e2e-deps.outputs.cache-hit != 'true' }}
         working-directory: apps/dojo/e2e
-        run: |
-          pnpm install
+        run: pnpm install --ignore-scripts
+
+      - name: Install Playwright browsers
+        working-directory: apps/dojo/e2e
+        if: steps.cache-playwright.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install Playwright system dependencies
+        working-directory: apps/dojo/e2e
+        if: steps.cache-playwright.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
 
       - name: write langgraph env files
         working-directory: integrations/langgraph
