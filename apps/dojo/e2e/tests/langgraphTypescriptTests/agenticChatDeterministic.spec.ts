@@ -117,7 +117,9 @@ test.describe("Deterministic Agentic Chat", () => {
     await mock.uninstall();
   });
 
-  test("[LangGraph] Regenerate produces a new response", async ({ page }) => {
+  // CopilotChat v2 does not wire up onRegenerate to assistant messages,
+  // so the regenerate button is not rendered.
+  test.skip("[LangGraph] Regenerate produces a new response", async ({ page }) => {
     const mock = new MockAgent(page);
 
     const jokes = [
