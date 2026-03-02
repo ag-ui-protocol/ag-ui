@@ -5,7 +5,7 @@ from enum import Enum
 from pydantic import TypeAdapter
 from pydantic_core import PydanticSerializationError
 from typing import List, Any, Dict, Union
-from dataclasses import is_dataclass, asdict
+from dataclasses import is_dataclass, fields as dataclass_fields
 from datetime import date, datetime
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
@@ -364,9 +364,19 @@ def normalize_tool_content(content: Any) -> str:
 def camel_to_snake(name):
     return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
 
+def _shallow_dataclass_dict(obj):
+    """Convert a dataclass to a dict without using copy.deepcopy().
+
+    Unlike dataclasses.asdict(), this performs a shallow extraction of field
+    values, which avoids the TypeError that occurs when fields contain
+    unpicklable objects (e.g. asyncio Futures in MCP tool closures).
+    """
+    return {f.name: getattr(obj, f.name) for f in dataclass_fields(obj)}
+
+
 def json_safe_stringify(o):
     if is_dataclass(o):          # dataclasses like Flight(...)
-        return asdict(o)
+        return _shallow_dataclass_dict(o)
     if hasattr(o, "model_dump"): # pydantic v2
         return o.model_dump()
     if hasattr(o, "dict"):       # pydantic v1
@@ -424,7 +434,7 @@ def make_json_safe(value: Any, _seen: set[int] | None = None) -> Any:
     # --- 5. Dataclasses ----------------------------------------------------
     if is_dataclass(value):
         _seen.add(obj_id)
-        return make_json_safe(asdict(value), _seen)
+        return make_json_safe(_shallow_dataclass_dict(value), _seen)
 
     # --- 6. Pydantic-like models (v2: model_dump) -------------------------
     if hasattr(value, "model_dump") and callable(getattr(value, "model_dump")):
