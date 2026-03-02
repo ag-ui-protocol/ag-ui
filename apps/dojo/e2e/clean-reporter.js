@@ -83,7 +83,7 @@ class CleanReporter {
       "[PageError]",
       "[BrowserConsole]",
       "[Test Cleanup]",
-      "[User ",
+      "[User]",
       "[Assistant ",
     ];
     const stdout = (result.stdout || [])
