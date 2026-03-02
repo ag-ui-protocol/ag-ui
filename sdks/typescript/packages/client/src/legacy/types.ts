@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4-mini";
 
 // Protocol Events
 export const LegacyRuntimeEventTypes = z.enum([
@@ -25,50 +25,50 @@ export const LegacyRuntimeMetaEventName = z.enum([
 ]);
 
 export const LegacyTextMessageStart = z.object({
-  type: z.literal(LegacyRuntimeEventTypes.enum.TextMessageStart),
+  type: z.literal(LegacyRuntimeEventTypes.def.entries.TextMessageStart),
   messageId: z.string(),
-  parentMessageId: z.string().optional(),
-  role: z.string().optional(),
+  parentMessageId: z.optional(z.string()),
+  role: z.optional(z.string()),
 });
 
 export const LegacyTextMessageContent = z.object({
-  type: z.literal(LegacyRuntimeEventTypes.enum.TextMessageContent),
+  type: z.literal(LegacyRuntimeEventTypes.def.entries.TextMessageContent),
   messageId: z.string(),
   content: z.string(),
 });
 
 export const LegacyTextMessageEnd = z.object({
-  type: z.literal(LegacyRuntimeEventTypes.enum.TextMessageEnd),
+  type: z.literal(LegacyRuntimeEventTypes.def.entries.TextMessageEnd),
   messageId: z.string(),
 });
 
 export const LegacyActionExecutionStart = z.object({
-  type: z.literal(LegacyRuntimeEventTypes.enum.ActionExecutionStart),
+  type: z.literal(LegacyRuntimeEventTypes.def.entries.ActionExecutionStart),
   actionExecutionId: z.string(),
   actionName: z.string(),
-  parentMessageId: z.string().optional(),
+  parentMessageId: z.optional(z.string()),
 });
 
 export const LegacyActionExecutionArgs = z.object({
-  type: z.literal(LegacyRuntimeEventTypes.enum.ActionExecutionArgs),
+  type: z.literal(LegacyRuntimeEventTypes.def.entries.ActionExecutionArgs),
   actionExecutionId: z.string(),
   args: z.string(),
 });
 
 export const LegacyActionExecutionEnd = z.object({
-  type: z.literal(LegacyRuntimeEventTypes.enum.ActionExecutionEnd),
+  type: z.literal(LegacyRuntimeEventTypes.def.entries.ActionExecutionEnd),
   actionExecutionId: z.string(),
 });
 
 export const LegacyActionExecutionResult = z.object({
-  type: z.literal(LegacyRuntimeEventTypes.enum.ActionExecutionResult),
+  type: z.literal(LegacyRuntimeEventTypes.def.entries.ActionExecutionResult),
   actionName: z.string(),
   actionExecutionId: z.string(),
   result: z.string(),
 });
 
 export const LegacyAgentStateMessage = z.object({
-  type: z.literal(LegacyRuntimeEventTypes.enum.AgentStateMessage),
+  type: z.literal(LegacyRuntimeEventTypes.def.entries.AgentStateMessage),
   threadId: z.string(),
   agentName: z.string(),
   nodeName: z.string(),
@@ -80,16 +80,16 @@ export const LegacyAgentStateMessage = z.object({
 });
 
 export const LegacyMetaEvent = z.object({
-  type: z.literal(LegacyRuntimeEventTypes.enum.MetaEvent),
+  type: z.literal(LegacyRuntimeEventTypes.def.entries.MetaEvent),
   name: LegacyRuntimeMetaEventName,
   value: z.any(),
 });
 
 
 export const LegacyRunError = z.object({
-  type: z.literal(LegacyRuntimeEventTypes.enum.RunError),
+  type: z.literal(LegacyRuntimeEventTypes.def.entries.RunError),
   message: z.string(),
-  code: z.string().optional(),
+  code: z.optional(z.string()),
 });
 
 export const LegacyRuntimeProtocolEvent = z.discriminatedUnion("type", [
@@ -125,14 +125,14 @@ export const LegacyTextMessageSchema = z.object({
   id: z.string(),
   role: z.string(),
   content: z.string(),
-  parentMessageId: z.string().optional(),
+  parentMessageId: z.optional(z.string()),
 });
 
 export const LegacyActionExecutionMessageSchema = z.object({
   id: z.string(),
   name: z.string(),
   arguments: z.any(),
-  parentMessageId: z.string().optional(),
+  parentMessageId: z.optional(z.string()),
 });
 
 export const LegacyResultMessageSchema = z.object({

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4-mini";
 import {
   ActivityDeltaEvent,
   ActivityDeltaEventProps,
@@ -102,7 +102,7 @@ import {
   ReasoningEncryptedValueEventSchema,
 } from "./events";
 
-const buildEvent = <Schema extends z.ZodTypeAny>(
+const buildEvent = <Schema extends z.ZodMiniType>(
   eventType: EventType,
   schema: Schema,
   props: Omit<z.input<Schema>, "type">,

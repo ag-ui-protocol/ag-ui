@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4-mini";
 import { MessageSchema, StateSchema, RunAgentInputSchema } from "./types";
 
 // Text messages can have any role except "tool"
@@ -60,180 +60,178 @@ export enum EventType {
   REASONING_ENCRYPTED_VALUE = "REASONING_ENCRYPTED_VALUE",
 }
 
-export const BaseEventSchema = z
-  .object({
+export const BaseEventSchema = z.looseObject({
     type: z.nativeEnum(EventType),
-    timestamp: z.number().optional(),
-    rawEvent: z.any().optional(),
+    timestamp: z.optional(z.number()),
+    rawEvent: z.optional(z.any()),
   })
-  .passthrough();
 
-export const TextMessageStartEventSchema = BaseEventSchema.extend({
+export const TextMessageStartEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.TEXT_MESSAGE_START),
   messageId: z.string(),
-  role: TextMessageRoleSchema.default("assistant"),
+  role: z._default(z.optional(TextMessageRoleSchema), "assistant"),
 });
 
-export const TextMessageContentEventSchema = BaseEventSchema.extend({
+export const TextMessageContentEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.TEXT_MESSAGE_CONTENT),
   messageId: z.string(),
-  delta: z.string().refine((s) => s.length > 0, "Delta must not be an empty string"),
+  delta: z.string().check(z.refine((s) => s.length > 0, "Delta must not be an empty string")),
 });
 
-export const TextMessageEndEventSchema = BaseEventSchema.extend({
+export const TextMessageEndEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.TEXT_MESSAGE_END),
   messageId: z.string(),
 });
 
-export const TextMessageChunkEventSchema = BaseEventSchema.extend({
+export const TextMessageChunkEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.TEXT_MESSAGE_CHUNK),
-  messageId: z.string().optional(),
-  role: TextMessageRoleSchema.optional(),
-  delta: z.string().optional(),
+  messageId: z.optional(z.string()),
+  role: z.optional(TextMessageRoleSchema),
+  delta: z.optional(z.string()),
 });
 
 /**
  * @deprecated Use ReasoningMessageStartEventSchema instead. Will be removed in 1.0.0.
  */
-export const ThinkingTextMessageStartEventSchema = BaseEventSchema.extend({
+export const ThinkingTextMessageStartEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.THINKING_TEXT_MESSAGE_START),
 });
 
 /**
  * @deprecated Use ReasoningMessageContentEventSchema instead. Will be removed in 1.0.0.
  */
-export const ThinkingTextMessageContentEventSchema = TextMessageContentEventSchema.omit({
+export const ThinkingTextMessageContentEventSchema = z.extend(z.omit(TextMessageContentEventSchema, {
   messageId: true,
   type: true,
-}).extend({
+}),{
   type: z.literal(EventType.THINKING_TEXT_MESSAGE_CONTENT),
 });
 
 /**
  * @deprecated Use ReasoningMessageEndEventSchema instead. Will be removed in 1.0.0.
  */
-export const ThinkingTextMessageEndEventSchema = BaseEventSchema.extend({
+export const ThinkingTextMessageEndEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.THINKING_TEXT_MESSAGE_END),
 });
 
-export const ToolCallStartEventSchema = BaseEventSchema.extend({
+export const ToolCallStartEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.TOOL_CALL_START),
   toolCallId: z.string(),
   toolCallName: z.string(),
-  parentMessageId: z.string().optional(),
+  parentMessageId: z.optional(z.string()),
 });
 
-export const ToolCallArgsEventSchema = BaseEventSchema.extend({
+export const ToolCallArgsEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.TOOL_CALL_ARGS),
   toolCallId: z.string(),
   delta: z.string(),
 });
 
-export const ToolCallEndEventSchema = BaseEventSchema.extend({
+export const ToolCallEndEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.TOOL_CALL_END),
   toolCallId: z.string(),
 });
 
-export const ToolCallResultEventSchema = BaseEventSchema.extend({
+export const ToolCallResultEventSchema = z.extend(BaseEventSchema,{
   messageId: z.string(),
   type: z.literal(EventType.TOOL_CALL_RESULT),
   toolCallId: z.string(),
   content: z.string(),
-  role: z.literal("tool").optional(),
+  role: z.optional(z.literal("tool")),
 });
 
-export const ToolCallChunkEventSchema = BaseEventSchema.extend({
+export const ToolCallChunkEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.TOOL_CALL_CHUNK),
-  toolCallId: z.string().optional(),
-  toolCallName: z.string().optional(),
-  parentMessageId: z.string().optional(),
-  delta: z.string().optional(),
+  toolCallId: z.optional(z.string()),
+  toolCallName: z.optional(z.string()),
+  parentMessageId: z.optional(z.string()),
+  delta: z.optional(z.string()),
 });
 
 /**
  * @deprecated Use ReasoningStartEventSchema instead. Will be removed in 1.0.0.
  */
-export const ThinkingStartEventSchema = BaseEventSchema.extend({
+export const ThinkingStartEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.THINKING_START),
-  title: z.string().optional(),
+  title: z.optional(z.string()),
 });
 
 /**
  * @deprecated Use ReasoningEndEventSchema instead. Will be removed in 1.0.0.
  */
-export const ThinkingEndEventSchema = BaseEventSchema.extend({
+export const ThinkingEndEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.THINKING_END),
 });
 
-export const StateSnapshotEventSchema = BaseEventSchema.extend({
+export const StateSnapshotEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.STATE_SNAPSHOT),
   snapshot: StateSchema,
 });
 
-export const StateDeltaEventSchema = BaseEventSchema.extend({
+export const StateDeltaEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.STATE_DELTA),
   delta: z.array(z.any()), // JSON Patch (RFC 6902)
 });
 
-export const MessagesSnapshotEventSchema = BaseEventSchema.extend({
+export const MessagesSnapshotEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.MESSAGES_SNAPSHOT),
   messages: z.array(MessageSchema),
 });
 
-export const ActivitySnapshotEventSchema = BaseEventSchema.extend({
+export const ActivitySnapshotEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.ACTIVITY_SNAPSHOT),
   messageId: z.string(),
   activityType: z.string(),
-  content: z.record(z.any()),
-  replace: z.boolean().optional().default(true),
+  content: z.record(z.any(),z.any()),
+  replace: z._default(z.optional(z.boolean()),true),
 });
 
-export const ActivityDeltaEventSchema = BaseEventSchema.extend({
+export const ActivityDeltaEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.ACTIVITY_DELTA),
   messageId: z.string(),
   activityType: z.string(),
   patch: z.array(z.any()),
 });
 
-export const RawEventSchema = BaseEventSchema.extend({
+export const RawEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.RAW),
   event: z.any(),
-  source: z.string().optional(),
+  source: z.optional(z.string()),
 });
 
-export const CustomEventSchema = BaseEventSchema.extend({
+export const CustomEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.CUSTOM),
   name: z.string(),
   value: z.any(),
 });
 
-export const RunStartedEventSchema = BaseEventSchema.extend({
+export const RunStartedEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.RUN_STARTED),
   threadId: z.string(),
   runId: z.string(),
-  parentRunId: z.string().optional(),
-  input: RunAgentInputSchema.optional(),
+  parentRunId: z.optional(z.string()),
+  input: z.optional(RunAgentInputSchema),
 });
 
-export const RunFinishedEventSchema = BaseEventSchema.extend({
+export const RunFinishedEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.RUN_FINISHED),
   threadId: z.string(),
   runId: z.string(),
-  result: z.any().optional(),
+  result: z.optional(z.any()),
 });
 
-export const RunErrorEventSchema = BaseEventSchema.extend({
+export const RunErrorEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.RUN_ERROR),
   message: z.string(),
-  code: z.string().optional(),
+  code: z.optional(z.string()),
 });
 
-export const StepStartedEventSchema = BaseEventSchema.extend({
+export const StepStartedEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.STEP_STARTED),
   stepName: z.string(),
 });
 
-export const StepFinishedEventSchema = BaseEventSchema.extend({
+export const StepFinishedEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.STEP_FINISHED),
   stepName: z.string(),
 });
@@ -244,40 +242,40 @@ export const ReasoningEncryptedValueSubtypeSchema = z.union([
   z.literal("message"),
 ]);
 
-export const ReasoningStartEventSchema = BaseEventSchema.extend({
+export const ReasoningStartEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.REASONING_START),
   messageId: z.string(),
 });
 
-export const ReasoningMessageStartEventSchema = BaseEventSchema.extend({
+export const ReasoningMessageStartEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.REASONING_MESSAGE_START),
   messageId: z.string(),
   role: z.literal("reasoning"),
 });
 
-export const ReasoningMessageContentEventSchema = BaseEventSchema.extend({
+export const ReasoningMessageContentEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.REASONING_MESSAGE_CONTENT),
   messageId: z.string(),
-  delta: z.string().refine((s) => s.length > 0, "Delta must not be an empty string"),
+  delta: z.string().check(z.refine((s) => s.length > 0, "Delta must not be an empty string")),
 });
 
-export const ReasoningMessageEndEventSchema = BaseEventSchema.extend({
+export const ReasoningMessageEndEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.REASONING_MESSAGE_END),
   messageId: z.string(),
 });
 
-export const ReasoningMessageChunkEventSchema = BaseEventSchema.extend({
+export const ReasoningMessageChunkEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.REASONING_MESSAGE_CHUNK),
-  messageId: z.string().optional(),
-  delta: z.string().optional(),
+  messageId: z.optional(z.string()),
+  delta: z.optional(z.string()),
 });
 
-export const ReasoningEndEventSchema = BaseEventSchema.extend({
+export const ReasoningEndEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.REASONING_END),
   messageId: z.string(),
 });
 
-export const ReasoningEncryptedValueEventSchema = BaseEventSchema.extend({
+export const ReasoningEncryptedValueEventSchema = z.extend(BaseEventSchema,{
   type: z.literal(EventType.REASONING_ENCRYPTED_VALUE),
   subtype: ReasoningEncryptedValueSubtypeSchema,
   entityId: z.string(),
@@ -361,7 +359,7 @@ export type AGUIEventByType = {
 export type AGUIEventOf<T extends EventType> = AGUIEventByType[T];
 export type EventPayloadOf<T extends EventType> = Omit<AGUIEventOf<T>, keyof BaseEventFields>;
 
-type EventProps<Schema extends z.ZodTypeAny> = Omit<z.input<Schema>, "type">;
+type EventProps<Schema extends z.ZodMiniType> = Omit<z.input<Schema>, "type">;
 
 export type BaseEventProps = EventProps<typeof BaseEventSchema>;
 

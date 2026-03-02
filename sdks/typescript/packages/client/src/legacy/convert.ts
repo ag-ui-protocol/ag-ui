@@ -97,7 +97,7 @@ export const convertToLegacyEvents =
             const startEvent = event as TextMessageStartEvent;
             return [
               {
-                type: LegacyRuntimeEventTypes.enum.TextMessageStart,
+                type: LegacyRuntimeEventTypes.def.entries.TextMessageStart,
                 messageId: startEvent.messageId,
                 role: startEvent.role,
               } as LegacyTextMessageStart,
@@ -107,7 +107,7 @@ export const convertToLegacyEvents =
             const contentEvent = event as TextMessageContentEvent;
             return [
               {
-                type: LegacyRuntimeEventTypes.enum.TextMessageContent,
+                type: LegacyRuntimeEventTypes.def.entries.TextMessageContent,
                 messageId: contentEvent.messageId,
                 content: contentEvent.delta,
               } as LegacyTextMessageContent,
@@ -117,7 +117,7 @@ export const convertToLegacyEvents =
             const endEvent = event as TextMessageEndEvent;
             return [
               {
-                type: LegacyRuntimeEventTypes.enum.TextMessageEnd,
+                type: LegacyRuntimeEventTypes.def.entries.TextMessageEnd,
                 messageId: endEvent.messageId,
               } as LegacyTextMessageEnd,
             ];
@@ -139,7 +139,7 @@ export const convertToLegacyEvents =
 
             return [
               {
-                type: LegacyRuntimeEventTypes.enum.ActionExecutionStart,
+                type: LegacyRuntimeEventTypes.def.entries.ActionExecutionStart,
                 actionExecutionId: startEvent.toolCallId,
                 actionName: startEvent.toolCallName,
                 parentMessageId: startEvent.parentMessageId,
@@ -192,14 +192,14 @@ export const convertToLegacyEvents =
 
             return [
               {
-                type: LegacyRuntimeEventTypes.enum.ActionExecutionArgs,
+                type: LegacyRuntimeEventTypes.def.entries.ActionExecutionArgs,
                 actionExecutionId: argsEvent.toolCallId,
                 args: argsEvent.delta,
               } as LegacyActionExecutionArgs,
               ...(didUpdateState
                 ? [
                     {
-                      type: LegacyRuntimeEventTypes.enum.AgentStateMessage,
+                      type: LegacyRuntimeEventTypes.def.entries.AgentStateMessage,
                       threadId,
                       agentName,
                       nodeName,
@@ -217,7 +217,7 @@ export const convertToLegacyEvents =
             const endEvent = event as ToolCallEndEvent;
             return [
               {
-                type: LegacyRuntimeEventTypes.enum.ActionExecutionEnd,
+                type: LegacyRuntimeEventTypes.def.entries.ActionExecutionEnd,
                 actionExecutionId: endEvent.toolCallId,
               } as LegacyActionExecutionEnd,
             ];
@@ -226,7 +226,7 @@ export const convertToLegacyEvents =
             const resultEvent = event as ToolCallResultEvent;
             return [
               {
-                type: LegacyRuntimeEventTypes.enum.ActionExecutionResult,
+                type: LegacyRuntimeEventTypes.def.entries.ActionExecutionResult,
                 actionExecutionId: resultEvent.toolCallId,
                 result: resultEvent.content,
                 actionName: toolCallNames[resultEvent.toolCallId] || "unknown",
@@ -250,7 +250,7 @@ export const convertToLegacyEvents =
 
             return [
               {
-                type: LegacyRuntimeEventTypes.enum.MetaEvent,
+                type: LegacyRuntimeEventTypes.def.entries.MetaEvent,
                 name: customEvent.name,
                 value: customEvent.value,
               } as LegacyMetaEvent,
@@ -262,7 +262,7 @@ export const convertToLegacyEvents =
 
             return [
               {
-                type: LegacyRuntimeEventTypes.enum.AgentStateMessage,
+                type: LegacyRuntimeEventTypes.def.entries.AgentStateMessage,
                 threadId,
                 agentName,
                 nodeName,
@@ -284,7 +284,7 @@ export const convertToLegacyEvents =
 
             return [
               {
-                type: LegacyRuntimeEventTypes.enum.AgentStateMessage,
+                type: LegacyRuntimeEventTypes.def.entries.AgentStateMessage,
                 threadId,
                 agentName,
                 nodeName,
@@ -301,7 +301,7 @@ export const convertToLegacyEvents =
             syncedMessages = messagesSnapshot.messages;
             return [
               {
-                type: LegacyRuntimeEventTypes.enum.AgentStateMessage,
+                type: LegacyRuntimeEventTypes.def.entries.AgentStateMessage,
                 threadId,
                 agentName,
                 nodeName,
@@ -332,7 +332,7 @@ export const convertToLegacyEvents =
 
             return [
               {
-                type: LegacyRuntimeEventTypes.enum.AgentStateMessage,
+                type: LegacyRuntimeEventTypes.def.entries.AgentStateMessage,
                 threadId,
                 agentName,
                 nodeName,
@@ -355,7 +355,7 @@ export const convertToLegacyEvents =
             const errorEvent = event as RunErrorEvent;
             return [
               {
-                type: LegacyRuntimeEventTypes.enum.RunError,
+                type: LegacyRuntimeEventTypes.def.entries.RunError,
                 message: errorEvent.message,
                 code: errorEvent.code,
               } as LegacyRunError,
@@ -370,7 +370,7 @@ export const convertToLegacyEvents =
 
             return [
               {
-                type: LegacyRuntimeEventTypes.enum.AgentStateMessage,
+                type: LegacyRuntimeEventTypes.def.entries.AgentStateMessage,
                 threadId,
                 agentName,
                 nodeName,
@@ -388,7 +388,7 @@ export const convertToLegacyEvents =
 
             return [
               {
-                type: LegacyRuntimeEventTypes.enum.AgentStateMessage,
+                type: LegacyRuntimeEventTypes.def.entries.AgentStateMessage,
                 threadId,
                 agentName,
                 nodeName,
