@@ -131,6 +131,8 @@ class LangGraphAgent:
             "reasoning_process": None,
             "node_name": None,
             "has_function_streaming": False,
+            "model_made_tool_call": False,
+            "state_reliable": True,
         }
         self.active_run = INITIAL_ACTIVE_RUN
 
@@ -196,8 +198,13 @@ class LangGraphAgent:
                 if event_type == "on_chain_end" and isinstance(
                         event.get("data", {}).get("output"), dict
                 ):
-                    current_graph_state.update(event["data"]["output"])
-                    exiting_node = self.active_run["node_name"] == current_node_name
+                    output = event["data"]["output"]
+                current_graph_state.update(output)
+                exiting_node = self.active_run["node_name"] == current_node_name
+                # If output contains non-message state keys (e.g. recipe), the
+                # local current_graph_state is reliably up-to-date again.
+                if any(k not in ("messages", "tools", "ag-ui") for k in output):
+                    self.active_run["state_reliable"] = True
 
                 should_exit = should_exit or (
                         event_type == "on_custom_event" and
@@ -208,12 +215,43 @@ class LangGraphAgent:
                     for ev in self.handle_node_change(current_node_name):
                         yield ev
 
-                updated_state = self.active_run.get("manually_emitted_state") or current_graph_state
-                has_state_diff = updated_state != state
-                if exiting_node or (has_state_diff and not self.get_message_in_progress(self.active_run["id"])):
-                    state = updated_state
-                    self.active_run["prev_node_name"] = self.active_run["node_name"]
-                    current_graph_state.update(updated_state)
+                # Track whether the current model turn is making a tool call so we
+            # can suppress the model-node exit snapshot.  The model-node exit
+            # fires *before* the tool runs, so current_graph_state still carries
+            # the previous recipe — emitting it would wipe predict_state progress
+            # on the client.  This applies to every iteration, not just the first.
+            if event_type == LangGraphEventTypes.OnChatModelStream.value:
+                chunk = event.get("data", {}).get("chunk") or {}
+                tool_call_chunks = (
+                    chunk.get("tool_call_chunks") or []
+                    if isinstance(chunk, dict)
+                    else getattr(chunk, "tool_call_chunks", None) or []
+                )
+                if tool_call_chunks:
+                    first = tool_call_chunks[0]
+                    first_name = (
+                        first.get("name") if isinstance(first, dict)
+                        else getattr(first, "name", None)
+                    )
+                    if first_name:
+                        self.active_run["model_made_tool_call"] = True
+
+            updated_state = self.active_run.get("manually_emitted_state") or current_graph_state
+            has_state_diff = updated_state != state
+            if exiting_node or (has_state_diff and not self.get_message_in_progress(self.active_run["id"])):
+                state = updated_state
+                self.active_run["prev_node_name"] = self.active_run["node_name"]
+                current_graph_state.update(updated_state)
+                mmtc = self.active_run.get("model_made_tool_call")
+                state_reliable = self.active_run.get("state_reliable", True)
+                suppressed = exiting_node and (mmtc or not state_reliable)
+                if suppressed:
+                    self.active_run["model_made_tool_call"] = False
+                    if mmtc:
+                        # Tool is about to run via Command — current_graph_state
+                        # won't reflect the update, so state is now unreliable.
+                        self.active_run["state_reliable"] = False
+                else:
                     yield self._dispatch_event(
                         StateSnapshotEvent(
                             type=EventType.STATE_SNAPSHOT,
