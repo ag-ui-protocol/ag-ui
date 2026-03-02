@@ -178,14 +178,7 @@ jobs:
             ${{ runner.os }}-pydeps-${{ matrix.suite }}-
             ${{ runner.os }}-pydeps-
 
-      - name: Cache Nx build output
-        uses: actions/cache@v4
-        with:
-          path: .nx/cache
-          key: ${{ runner.os }}-nx-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('sdks/typescript/**/src/**/*.ts', 'sdks/typescript/**/src/**/*.tsx', 'apps/dojo/src/**/*.ts', 'apps/dojo/src/**/*.tsx', 'integrations/**/typescript/src/**/*.ts', 'integrations/**/typescript/src/**/*.tsx') }}
-          restore-keys: |
-            ${{ runner.os }}-nx-${{ hashFiles('**/pnpm-lock.yaml') }}-
-            ${{ runner.os }}-nx-
+
 
       - name: Cache Next.js build
         uses: actions/cache@v4
