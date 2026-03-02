@@ -3,9 +3,10 @@ Tests to verify that ag-ui-langgraph does not trigger deprecation warnings
 from Pydantic V2 or LangGraph V1.
 """
 
+import inspect
 import unittest
 import warnings
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 from ag_ui.core import RunAgentInput
 from ag_ui_langgraph.agent import LangGraphAgent
@@ -19,36 +20,11 @@ class TestPydanticCopyDeprecation(unittest.TestCase):
         Verify that LangGraphAgent.run() uses model_copy() instead of copy()
         on the RunAgentInput pydantic model, avoiding PydanticDeprecatedSince20.
         """
-        input_obj = RunAgentInput(
-            thread_id="test-thread",
-            run_id="test-run",
-            state={},
-            messages=[],
-            tools=[],
-            context=[],
-            forwarded_props={"someProp": "value"},
-        )
-
-        # Calling .copy(update=...) triggers a DeprecationWarning in Pydantic V2
-        # Calling .model_copy(update=...) does not.
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            result = input_obj.model_copy(update={"forwarded_props": {"some_prop": "value"}})
-            pydantic_warnings = [
-                x for x in w
-                if "copy" in str(x.message).lower() and "deprecated" in str(x.message).lower()
-            ]
-            self.assertEqual(len(pydantic_warnings), 0, "model_copy() should not produce deprecation warnings")
-
-        # Confirm the old .copy() method DOES produce a warning (validates our test approach)
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            _ = input_obj.copy(update={"forwarded_props": {"some_prop": "value"}})
-            pydantic_warnings = [
-                x for x in w
-                if "copy" in str(x.message).lower() and "deprecated" in str(x.message).lower()
-            ]
-            self.assertGreater(len(pydantic_warnings), 0, "copy() should produce a deprecation warning")
+        # Inspect the actual source of LangGraphAgent.run to confirm it calls
+        # model_copy rather than the deprecated .copy() method.
+        source = inspect.getsource(LangGraphAgent.run)
+        self.assertIn("model_copy", source, "LangGraphAgent.run() should use model_copy()")
+        self.assertNotIn(".copy(", source, "LangGraphAgent.run() should not use .copy()")
 
 
 class TestConfigSchemaDeprecation(unittest.TestCase):
@@ -60,7 +36,11 @@ class TestConfigSchemaDeprecation(unittest.TestCase):
         instead of graph.config_schema().schema(), avoiding both
         LangGraphDeprecatedSinceV10 and PydanticDeprecatedSince20.
         """
-        mock_graph = MagicMock()
+        mock_graph = MagicMock(spec=[
+            "get_input_jsonschema",
+            "get_output_jsonschema",
+            "get_config_jsonschema",
+        ])
         mock_graph.get_input_jsonschema.return_value = {
             "properties": {"messages": {}, "input_key": {}}
         }
@@ -70,8 +50,6 @@ class TestConfigSchemaDeprecation(unittest.TestCase):
         mock_graph.get_config_jsonschema.return_value = {
             "properties": {"configurable": {}}
         }
-        # Ensure context_schema is not present (default case)
-        mock_graph.context_schema = None
 
         agent = LangGraphAgent(name="test", graph=mock_graph)
 
@@ -87,10 +65,13 @@ class TestConfigSchemaDeprecation(unittest.TestCase):
                 f"get_schema_keys() should not produce deprecation warnings, got: {[str(x.message) for x in deprecation_warnings]}"
             )
 
-        # Verify get_config_jsonschema was called (not config_schema)
+        # Verify get_config_jsonschema was called
         mock_graph.get_config_jsonschema.assert_called_once()
-        # config_schema should NOT have been called
-        mock_graph.config_schema.assert_not_called()
+
+        # config_schema is not in spec, so accessing it would raise AttributeError,
+        # confirming the code does not fall back to the deprecated path.
+        with self.assertRaises(AttributeError):
+            mock_graph.config_schema  # noqa: B018
 
         # Verify results are correct
         self.assertIn("configurable", schema_keys["config"])
