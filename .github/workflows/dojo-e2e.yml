@@ -13,7 +13,7 @@ on:
       - "sdks/python/**"
       - "sdks/typescript/**"
   pull_request:
-    branches: [main, feat/migrate-dojo-to-v2]
+    branches: [main]
     paths:
       - "apps/dojo/**"
       - "integrations/**"
