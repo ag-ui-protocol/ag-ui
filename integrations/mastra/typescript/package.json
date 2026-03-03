@@ -58,6 +58,7 @@
   "devDependencies": {
     "@ag-ui/core": "workspace:*",
     "@ag-ui/client": "workspace:*",
+    "@ag-ui/encoder": "workspace:*",
     "@copilotkit/runtime": "0.0.0-mme-ag-ui-0-0-46-20260227141603",
     "@copilotkitnext/shared": "0.0.0-mme-ag-ui-0-0-46-20260227141603",
     "@mastra/client-js": "^1.0.1",
