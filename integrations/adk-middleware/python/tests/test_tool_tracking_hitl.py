@@ -293,3 +293,95 @@ class TestHITLToolTracking:
         await adk_middleware._session_manager._cleanup_expired_sessions()
         # Session should not exist due cleanup
         assert adk_middleware._session_manager.get_session_count() == 0
+
+    @pytest.mark.asyncio
+    async def test_stale_pending_tool_calls_cleared_on_session_resumption(
+        self, adk_middleware
+    ):
+        """Test that stale pending_tool_calls are cleared when resuming a session after middleware restart.
+
+        This simulates a pod restart scenario where:
+        1. Session exists in PostgreSQL with pending_tool_calls from before restart
+        2. Middleware's _session_lookup_cache is empty (in-memory, lost on restart)
+        3. When _ensure_session_exists is called, it finds the session but clears stale pending_tool_calls
+        """
+        thread_id = "test_thread_restart"
+        app_name = "test_app"
+        user_id = "test_user"
+
+        # Step 1: Create a session and add pending_tool_calls (simulating state before restart)
+        session, backend_session_id = await adk_middleware._ensure_session_exists(
+            app_name=app_name, user_id=user_id, thread_id=thread_id, initial_state={}
+        )
+
+        # Add stale pending_tool_calls to the session (simulating HITL state before restart)
+        stale_tool_ids = ["stale_tool_1", "stale_tool_2", "stale_tool_3"]
+        await adk_middleware._session_manager.set_state_value(
+            session_id=backend_session_id,
+            app_name=app_name,
+            user_id=user_id,
+            key="pending_tool_calls",
+            value=stale_tool_ids,
+        )
+
+        # Verify pending_tool_calls were set
+        pending_before = await adk_middleware._session_manager.get_state_value(
+            session_id=backend_session_id,
+            app_name=app_name,
+            user_id=user_id,
+            key="pending_tool_calls",
+            default=[],
+        )
+        assert pending_before == stale_tool_ids, "Stale tool calls should be set"
+
+        # Step 2: Simulate middleware restart by clearing the in-memory cache
+        # This is what happens when the pod restarts - _session_lookup_cache is lost
+        adk_middleware._session_lookup_cache.clear()
+
+        # Step 3: Call _ensure_session_exists again (simulating first request after restart)
+        # This should find the existing session and clear stale pending_tool_calls
+        session_after, session_id_after = await adk_middleware._ensure_session_exists(
+            app_name=app_name, user_id=user_id, thread_id=thread_id, initial_state={}
+        )
+
+        # Verify the session_id is the same (session was found, not recreated)
+        assert session_id_after == backend_session_id, "Should resume existing session"
+
+        # Step 4: Verify pending_tool_calls were cleared
+        pending_after = await adk_middleware._session_manager.get_state_value(
+            session_id=backend_session_id,
+            app_name=app_name,
+            user_id=user_id,
+            key="pending_tool_calls",
+            default=[],
+        )
+        assert pending_after == [], "Stale pending_tool_calls should be cleared"
+
+        # Verify has_pending_tool_calls returns False
+        has_pending = await adk_middleware._has_pending_tool_calls(thread_id)
+        assert not has_pending, "Should have no pending tool calls"
+
+    @pytest.mark.asyncio
+    async def test_new_session_has_no_pending_tool_calls_to_clear(self, adk_middleware):
+        """Test that new sessions (not resumptions) work correctly without pending_tool_calls."""
+        thread_id = "brand_new_thread"
+        app_name = "test_app"
+        user_id = "test_user"
+
+        # Create a brand new session (no prior state)
+        session, backend_session_id = await adk_middleware._ensure_session_exists(
+            app_name=app_name, user_id=user_id, thread_id=thread_id, initial_state={}
+        )
+
+        # Verify no pending_tool_calls
+        pending = await adk_middleware._session_manager.get_state_value(
+            session_id=backend_session_id,
+            app_name=app_name,
+            user_id=user_id,
+            key="pending_tool_calls",
+            default=[],
+        )
+        assert pending == [], "New session should have no pending_tool_calls"
+
+        # Verify cache was populated
+        assert thread_id in adk_middleware._session_lookup_cache

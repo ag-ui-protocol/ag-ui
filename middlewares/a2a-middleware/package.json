@@ -10,11 +10,14 @@
     "dist/**"
   ],
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
-    "clean": "rm -rf dist",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "clean": "git clean -fdX --exclude=\"!.env\"",
     "typecheck": "tsc --noEmit",
-    "test": "jest",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "test:exports": "publint --strict && attw --pack",
     "link:global": "pnpm link --global",
     "unlink:global": "pnpm unlink --global"
   },
@@ -29,11 +32,19 @@
   },
   "devDependencies": {
     "@ag-ui/client": "workspace:*",
-    "@types/jest": "^29.5.14",
     "@types/node": "^20.11.19",
-    "jest": "^29.7.0",
-    "ts-jest": "^29.1.2",
-    "tsup": "^8.0.2",
+    "@vitest/coverage-istanbul": "^4.0.18",
+    "publint": "^0.3.12",
+    "@arethetypeswrong/cli": "^0.17.4",
+    "vitest": "^4.0.18",
+    "tsdown": "^0.20.1",
     "typescript": "^5.3.3"
+  },
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
   }
 }

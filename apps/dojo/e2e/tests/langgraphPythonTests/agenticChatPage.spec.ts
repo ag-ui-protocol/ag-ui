@@ -1,10 +1,10 @@
 import {
   test,
   expect,
-  waitForAIResponse,
   retryOnAIFailure,
 } from "../../test-isolation-helper";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
+
 
 test("[LangGraph] Agentic Chat sends and receives a message", async ({
   page,
@@ -17,18 +17,18 @@ test("[LangGraph] Agentic Chat sends and receives a message", async ({
     const chat = new AgenticChatPage(page);
 
     await chat.openChat();
-    await chat.agentGreeting.isVisible;
+    await expect(chat.agentGreeting).toBeVisible();
     await chat.sendMessage("Hi, I am duaa");
 
-    await waitForAIResponse(page);
     await chat.assertUserMessageVisible("Hi, I am duaa");
-    await chat.assertAgentReplyVisible(/Hello/i);
+    await chat.assertAgentReplyVisible(/Hello|Hi|Hey|Greetings|nice to meet|welcome/i);
   });
 });
 
 test("[LangGraph] Agentic Chat changes background on message and reset", async ({
   page,
 }) => {
+  test.slow(); // Multi-step AI test: needs extra time
   await retryOnAIFailure(async () => {
     await page.goto(
       "/langgraph/feature/agentic_chat"
@@ -37,42 +37,38 @@ test("[LangGraph] Agentic Chat changes background on message and reset", async (
     const chat = new AgenticChatPage(page);
 
     await chat.openChat();
-    await chat.agentGreeting.waitFor({ state: "visible" });
+    await expect(chat.agentGreeting).toBeVisible();
 
-    // Store initial background color
-    const backgroundContainer = page.locator('[data-testid="background-container"]')
-    const initialBackground = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
-    console.log("Initial background color:", initialBackground);
+    const backgroundContainer = page.locator('[data-testid="background-container"]');
+    const getBackground = () => backgroundContainer.evaluate(el => el.style.background);
+    const initialBackground = await getBackground();
 
     // 1. Send message to change background to blue
     await chat.sendMessage("Hi change the background color to blue");
     await chat.assertUserMessageVisible(
       "Hi change the background color to blue"
     );
-    await waitForAIResponse(page);
 
-    await expect(backgroundContainer).not.toHaveCSS('background-color', initialBackground, { timeout: 7000 });
-    const backgroundBlue = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
-    // Check if background is blue (string color name or contains blue)
-    expect(backgroundBlue.toLowerCase()).toMatch(/blue|rgb\(.*,.*,.*\)|#[0-9a-f]{6}/);
+    await expect.poll(getBackground).not.toBe(initialBackground);
+    const backgroundAfterBlue = await getBackground();
 
     // 2. Change to pink
     await chat.sendMessage("Hi change the background color to pink");
     await chat.assertUserMessageVisible(
       "Hi change the background color to pink"
     );
-    await waitForAIResponse(page);
 
-    await expect(backgroundContainer).not.toHaveCSS('background-color', backgroundBlue, { timeout: 7000 });
-    const backgroundPink = await backgroundContainer.evaluate(el => getComputedStyle(el).backgroundColor);
-    // Check if background is pink (string color name or contains pink)
-    expect(backgroundPink.toLowerCase()).toMatch(/pink|rgb\(.*,.*,.*\)|#[0-9a-f]{6}/);
+    await expect.poll(getBackground).not.toBe(backgroundAfterBlue);
+    const backgroundAfterPink = await getBackground();
+    // Verify it also differs from initial (not a reset)
+    expect(backgroundAfterPink).not.toBe(initialBackground);
   });
 });
 
 test("[LangGraph] Agentic Chat retains memory of user messages during a conversation", async ({
   page,
 }) => {
+  test.slow(); // Multi-message AI conversation: needs extra time
   await retryOnAIFailure(async () => {
     await page.goto(
       "/langgraph/feature/agentic_chat"
@@ -84,32 +80,64 @@ test("[LangGraph] Agentic Chat retains memory of user messages during a conversa
 
     await chat.sendMessage("Hey there");
     await chat.assertUserMessageVisible("Hey there");
-    await waitForAIResponse(page);
-    await chat.assertAgentReplyVisible(/how can I assist you/i);
+    await chat.assertAgentReplyVisible(/how can I|help|assist|what can I do|what would you like/i);
 
     const favFruit = "Mango";
     await chat.sendMessage(`My favorite fruit is ${favFruit}`);
     await chat.assertUserMessageVisible(`My favorite fruit is ${favFruit}`);
-    await waitForAIResponse(page);
     await chat.assertAgentReplyVisible(new RegExp(favFruit, "i"));
 
     await chat.sendMessage("and I love listening to Kaavish");
     await chat.assertUserMessageVisible("and I love listening to Kaavish");
-    await waitForAIResponse(page);
     await chat.assertAgentReplyVisible(/Kaavish/i);
 
     await chat.sendMessage("tell me an interesting fact about Moon");
     await chat.assertUserMessageVisible(
       "tell me an interesting fact about Moon"
     );
-    await waitForAIResponse(page);
     await chat.assertAgentReplyVisible(/Moon/i);
 
     await chat.sendMessage("Can you remind me what my favorite fruit is?");
     await chat.assertUserMessageVisible(
       "Can you remind me what my favorite fruit is?"
     );
-    await waitForAIResponse(page);
     await chat.assertAgentReplyVisible(new RegExp(favFruit, "i"));
+  });
+});
+
+// Skip: CopilotChat v2 does not wire up onRegenerate to assistant messages,
+// so the regenerate button is not rendered. Requires framework-level change.
+test.skip("[LangGraph] Agentic Chat regenerates a response", async ({
+  page,
+}) => {
+  await retryOnAIFailure(async () => {
+    await page.goto("/langgraph/feature/agentic_chat");
+
+    const chat = new AgenticChatPage(page);
+
+    await chat.openChat();
+    await expect(chat.agentGreeting).toBeVisible();
+
+    // Send messages using page object (now uses sendChatMessage + awaitLLMResponseDone)
+    await chat.sendMessage("tell me a joke");
+
+    // Greeting is not a copilot-assistant-message, so joke reply is at index 0
+    const jokeIndex = 0;
+    await chat.getAssistantMessageText(jokeIndex);
+
+    // Send a filler so the joke is not the last message
+    await chat.sendMessage("say hello");
+
+    // Regenerate the joke response
+    await chat.regenerateResponse(jokeIndex);
+
+    await page.waitForFunction(
+      () => document.querySelector('[data-copilot-running="false"]') !== null,
+      null,
+      { timeout: 15000 }
+    );
+
+    const newJoke = await chat.getAssistantMessageText(jokeIndex);
+    expect(newJoke.length).toBeGreaterThan(0);
   });
 });

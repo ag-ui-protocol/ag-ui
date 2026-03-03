@@ -1,4 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { CopilotSelectors } from '../../utils/copilot-selectors';
+import { sendChatMessage, awaitLLMResponseDone } from '../../utils/copilot-actions';
 
 export class PredictiveStateUpdatesPage {
   readonly page: Page;
@@ -18,31 +20,29 @@ export class PredictiveStateUpdatesPage {
   constructor(page: Page) {
     this.page = page;
     this.agentGreeting = page.getByText("Hi 👋 How can I help with your document?");
-    this.chatInput = page.getByRole('textbox', { name: 'Type a message...' });
-    this.sendButton = page.locator('[data-test-id="copilot-chat-ready"]');
+    this.chatInput = CopilotSelectors.chatTextarea(page);
+    this.sendButton = CopilotSelectors.sendButton(page);
     this.agentResponsePrompt = page.locator('div.tiptap.ProseMirror');
     this.userApprovalModal = page.locator('[data-testid="confirm-changes-modal"]').last();
     this.approveButton = page.getByText('✓ Accepted');
     this.acceptedButton = page.getByText('✓ Accepted');
-    this.confirmedChangesResponse = page.locator('.copilotKitAssistantMessage').last();
-    this.rejectedChangesResponse = page.locator('.copilotKitAssistantMessage').last();
+    this.confirmedChangesResponse = CopilotSelectors.assistantMessages(page).last();
+    this.rejectedChangesResponse = CopilotSelectors.assistantMessages(page).last();
     this.highlights = page.locator('.tiptap em');
-    this.agentMessage = page.locator('.copilotKitAssistantMessage');
-    this.userMessage = page.locator('.copilotKitUserMessage');
+    this.agentMessage = CopilotSelectors.assistantMessages(page);
+    this.userMessage = CopilotSelectors.userMessages(page);
   }
 
-  async openChat() {   
-    await this.agentGreeting.isVisible();
+  async openChat() {
+    await expect(this.agentGreeting).toBeVisible();
   }
 
   async sendMessage(message: string) {
-    await this.chatInput.click();
-    await this.chatInput.fill(message);
-    await this.sendButton.click();
+    await sendChatMessage(this.page, message);
   }
 
   async getPredictiveResponse() {
-    await expect(this.agentResponsePrompt).toBeVisible({ timeout: 10000 });
+    await expect(this.agentResponsePrompt).toBeVisible();
     await this.agentResponsePrompt.click();
   }
 
@@ -55,21 +55,22 @@ export class PredictiveStateUpdatesPage {
   }
 
   async getUserApproval() {
-    await this.userApprovalModal.isVisible();
-    await this.page.locator('[data-testid="confirm-button"]').click();
-    const acceptedLabel = this.page.locator('[data-testid="status-display"]').last();
-    await acceptedLabel.isVisible();
+    const confirmBtn = this.userApprovalModal.locator('[data-testid="confirm-button"]');
+    await expect(confirmBtn).toBeEnabled();
+    await confirmBtn.click();
+    await awaitLLMResponseDone(this.page);
   }
 
   async getUserRejection() {
-    await this.userApprovalModal.isVisible();
-    await this.page.locator('[data-testid="reject-button"]').click();
-    const rejectedLabel = this.page.locator('[data-testid="status-display"]').last();
-    await rejectedLabel.isVisible();
+    const rejectBtn = this.userApprovalModal.locator('[data-testid="reject-button"]');
+    await expect(rejectBtn).toBeEnabled();
+    await rejectBtn.click();
+    await awaitLLMResponseDone(this.page);
   }
 
   async verifyAgentResponse(dragonName) {
-    const paragraphWithName = await this.page.locator(`div.tiptap >> text=${dragonName}`).first();
+    const paragraphWithName = this.page.locator(`div.tiptap >> text=${dragonName}`).first();
+    await expect(paragraphWithName).toBeVisible();
 
     const fullText = await paragraphWithName.textContent();
     if (!fullText) {
@@ -87,7 +88,7 @@ export class PredictiveStateUpdatesPage {
       'div.tiptap em',
       'div.tiptap s'
     ];
-    
+
     let count = 0;
     for (const selector of highlightSelectors) {
       count = await this.page.locator(selector).count();
@@ -95,11 +96,11 @@ export class PredictiveStateUpdatesPage {
         break;
       }
     }
-    
+
     if (count > 0) {
       expect(count).toBeGreaterThan(0);
     } else {
-      const modal = this.page.locator('[data-testid="confirm-changes-modal"]');
+      const modal = this.page.locator('[data-testid="confirm-changes-modal"]').last();
       await expect(modal).toBeVisible();
     }
   }

@@ -4,15 +4,16 @@ import { parseProtoStream } from "../proto";
 import * as proto from "@ag-ui/proto";
 import { BaseEvent, EventType } from "@ag-ui/core";
 import { Subject, of, throwError } from "rxjs";
+import { describe, it, expect, vi, beforeEach, Mock, test } from "vitest";
 
 // Mock dependencies
-jest.mock("../proto", () => ({
-  parseProtoStream: jest.fn(),
+vi.mock("../proto", () => ({
+  parseProtoStream: vi.fn(),
 }));
 
 describe("transformHttpEventStream", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   test("should correctly transform protocol buffer events", () => {
@@ -26,7 +27,7 @@ describe("transformHttpEventStream", () => {
     };
 
     // Mock parseProtoStream to return our test event
-    (parseProtoStream as jest.Mock).mockReturnValue(of(mockBaseEvent));
+    (parseProtoStream as Mock).mockReturnValue(of(mockBaseEvent));
 
     // Create a list to collect emitted events
     const receivedEvents: BaseEvent[] = [];
@@ -90,58 +91,62 @@ describe("transformHttpEventStream", () => {
     expect(receivedError).toBeUndefined();
   });
 
-  test("should handle parseProtoStream errors", (done) => {
-    // Given
-    const mockHttpSource = new Subject<HttpEvent>();
-    const testError = new Error("Test proto parsing error");
+  test("should handle parseProtoStream errors", () => {
+    return new Promise<void>((resolve, reject) => {
+      // Given
+      const mockHttpSource = new Subject<HttpEvent>();
+      const testError = new Error("Test proto parsing error");
 
-    // Mock parseProtoStream to throw an error
-    (parseProtoStream as jest.Mock).mockReturnValue(throwError(() => testError));
+      // Mock parseProtoStream to throw an error
+      (parseProtoStream as Mock).mockReturnValue(throwError(() => testError));
 
-    // When
-    const result$ = transformHttpEventStream(mockHttpSource);
-    result$.subscribe({
-      next: () => {
-        // Should not emit any events
-        fail("Should not emit events when parseProtoStream errors");
-      },
-      error: (err) => {
-        // Then
-        expect(err).toBe(testError);
-        done();
-      },
-    });
+      // When
+      const result$ = transformHttpEventStream(mockHttpSource);
+      result$.subscribe({
+        next: () => {
+          // Should not emit any events
+          reject(new Error("Should not emit events when parseProtoStream errors"));
+        },
+        error: (err) => {
+          // Then
+          expect(err).toBe(testError);
+          resolve();
+        },
+      });
 
-    // Send a HEADERS event with protocol buffer content type
-    mockHttpSource.next({
-      type: HttpEventType.HEADERS,
-      status: 200,
-      headers: new Headers([["content-type", proto.AGUI_MEDIA_TYPE]]),
+      // Send a HEADERS event with protocol buffer content type
+      mockHttpSource.next({
+        type: HttpEventType.HEADERS,
+        status: 200,
+        headers: new Headers([["content-type", proto.AGUI_MEDIA_TYPE]]),
+      });
     });
   });
 
-  test("should error if DATA received before HEADERS", (done) => {
-    // Given
-    const mockHttpSource = new Subject<HttpEvent>();
+  test("should error if DATA received before HEADERS", () => {
+    return new Promise<void>((resolve, reject) => {
+      // Given
+      const mockHttpSource = new Subject<HttpEvent>();
 
-    // When
-    const result$ = transformHttpEventStream(mockHttpSource);
-    result$.subscribe({
-      next: () => {
-        // Should not emit any events
-        fail("Should not emit events when DATA received before HEADERS");
-      },
-      error: (err) => {
-        // Then
-        expect(err.message).toContain("No headers event received before data events");
-        done();
-      },
-    });
+      // When
+      const result$ = transformHttpEventStream(mockHttpSource);
+      result$.subscribe({
+        next: () => {
+          // Should not emit any events
+          reject(new Error("Should not emit events when DATA received before HEADERS"));
+        },
+        error: (err) => {
+          // Then
+          expect(err.message).toContain("No headers event received before data events");
+          resolve();
+        },
+      });
 
-    // Send a DATA event before HEADERS
-    mockHttpSource.next({
-      type: HttpEventType.DATA,
-      data: new Uint8Array([1, 2, 3, 4]),
+      // Send a DATA event before HEADERS
+      mockHttpSource.next({
+        type: HttpEventType.DATA,
+        data: new Uint8Array([1, 2, 3, 4]),
+      });
     });
   });
 });

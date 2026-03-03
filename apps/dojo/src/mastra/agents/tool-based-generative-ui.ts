@@ -8,7 +8,7 @@ export const toolBasedGenerativeUIAgent = new Agent({
   instructions: `
     You are a helpful assistant for creating haikus.
   `,
-  model: "openai/gpt-4o",
+  model: "openai/gpt-4.1-mini",
   tools: {
     generate_haiku: createTool({
       id: "generate_haiku",

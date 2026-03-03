@@ -58,7 +58,7 @@ Once the server is running, launch the frontend Dojo:
 # Option A — run everything from repo root (multiple apps)
 cd ../../../
 pnpm install
-pnpm turbo run dev
+pnpm dev
 
 # Option B — run only Dojo
 cd ag-ui/apps/dojo

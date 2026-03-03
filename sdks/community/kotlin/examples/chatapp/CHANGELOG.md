@@ -5,6 +5,30 @@ All notable changes to the AG-UI-4K Chat App example will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **clawg-ui pairing support** - Automatic device pairing for clawg-ui gateway endpoints
+  - Detects `/v1/clawg-ui` URLs and initiates pairing flow when no Bearer token is configured
+  - Displays pairing dialog with:
+    - Large, copyable pairing code
+    - Instructions for the user
+    - Approval command for gateway owner (e.g., `openclaw pairing approve clawg-ui <code>`)
+  - Automatically saves Bearer token to agent configuration after pairing
+  - Token verification with retry logic for pending approvals
+  - Full state machine: Idle → Initiating → PendingApproval → RetryingConnection → AwaitingApproval/Failed
+
+### New Files
+- `ClawgUiPairingService.kt` - Core pairing protocol implementation
+- `ClawgUiPairingResponse.kt` - Data models for pairing response and state
+- `ClawgUiPairingDialog.kt` - Compose UI dialog for all pairing states
+
+### Technical Details
+- Uses AG-UI SDK types (`RunAgentInput`, `UserMessage`) for token verification
+- Multiplatform-compatible using `kotlinx.datetime.Clock` for timestamps
+- Proper SSE headers (`Accept: text/event-stream`) for AG-UI endpoint compatibility
+- Nested JSON response parsing for server pairing info structure
+
 ## [0.2.5] - 2025-12-29
 
 ### Added

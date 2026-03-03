@@ -1,4 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { CopilotSelectors } from '../utils/copilot-selectors';
+import { sendChatMessage, awaitLLMResponseDone } from '../utils/copilot-actions';
 
 export class HumanInTheLoopPage {
   readonly page: Page;
@@ -15,26 +17,25 @@ export class HumanInTheLoopPage {
     this.page = page;
     this.planTaskButton = page.getByRole('button', { name: 'Human in the loop Plan a task' });
     this.agentGreeting = page.getByText("Hi, I'm an agent specialized in helping you with your tasks. How can I help you?");
-    this.chatInput = page.getByRole('textbox', { name: 'Type a message...' });
-    this.sendButton = page.locator('[data-test-id="copilot-chat-ready"]');
+    this.chatInput = CopilotSelectors.chatTextarea(page);
+    this.sendButton = CopilotSelectors.sendButton(page);
     this.plan = page.getByTestId('select-steps');
     this.performStepsButton = page.getByRole('button', { name: 'Confirm' });
-    this.agentMessage = page.locator('.copilotKitAssistantMessage');
-    this.userMessage = page.locator('.copilotKitUserMessage');
+    this.agentMessage = CopilotSelectors.assistantMessages(page);
+    this.userMessage = CopilotSelectors.userMessages(page);
   }
 
   async openChat() {
-    await this.agentGreeting.isVisible();
+    await expect(this.agentGreeting).toBeVisible();
   }
 
   async sendMessage(message: string) {
-    await this.chatInput.click();
-    await this.chatInput.fill(message);
-    await this.sendButton.click();
+    await sendChatMessage(this.page, message);
+    await awaitLLMResponseDone(this.page);
   }
 
   async selectItemsInPlanner() {
-    await expect(this.plan).toBeVisible({ timeout: 10000 });
+    await expect(this.plan).toBeVisible();
     await this.plan.click();
   }
 
@@ -79,6 +80,7 @@ export class HumanInTheLoopPage {
 
   async performSteps() {
     await this.performStepsButton.click();
+    await this.performStepsButton.waitFor({ state: "hidden" });
   }
 
   async assertAgentReplyVisible(expectedText: RegExp) {

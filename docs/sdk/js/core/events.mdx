@@ -35,6 +35,13 @@ enum EventType {
   RUN_ERROR = "RUN_ERROR",
   STEP_STARTED = "STEP_STARTED",
   STEP_FINISHED = "STEP_FINISHED",
+  REASONING_START = "REASONING_START",
+  REASONING_MESSAGE_START = "REASONING_MESSAGE_START",
+  REASONING_MESSAGE_CONTENT = "REASONING_MESSAGE_CONTENT",
+  REASONING_MESSAGE_END = "REASONING_MESSAGE_END",
+  REASONING_MESSAGE_CHUNK = "REASONING_MESSAGE_CHUNK",
+  REASONING_END = "REASONING_END",
+  REASONING_ENCRYPTED_VALUE = "REASONING_ENCRYPTED_VALUE",
 }
 ```
 
@@ -75,12 +82,12 @@ type RunStartedEvent = BaseEvent & {
 }
 ```
 
-| Property       | Type                          | Description                                                                                                                              |
-| -------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `threadId`     | `string`                      | ID of the conversation thread                                                                                                            |
-| `runId`        | `string`                      | ID of the agent run                                                                                                                      |
-| `parentRunId`  | `string` (optional)           | (Optional) Lineage pointer for branching/time travel. If present, refers to a prior run within the same thread                          |
-| `input`        | `RunAgentInput` (optional)    | (Optional) The exact agent input payload sent to the agent for this run. May omit messages already in history                            |
+| Property      | Type                       | Description                                                                                                    |
+| ------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `threadId`    | `string`                   | ID of the conversation thread                                                                                  |
+| `runId`       | `string`                   | ID of the agent run                                                                                            |
+| `parentRunId` | `string` (optional)        | (Optional) Lineage pointer for branching/time travel. If present, refers to a prior run within the same thread |
+| `input`       | `RunAgentInput` (optional) | (Optional) The exact agent input payload sent to the agent for this run. May omit messages already in history  |
 
 ### RunFinishedEvent
 
@@ -210,12 +217,13 @@ Convenience event that expands to `TextMessageStart` → `TextMessageContent` �
 type TextMessageChunkEvent = BaseEvent & {
   type: EventType.TEXT_MESSAGE_CHUNK
   messageId?: string // required on the first chunk for a message
-  role?: 'developer' | 'system' | 'assistant' | 'user'
+  role?: "developer" | "system" | "assistant" | "user"
   delta?: string
 }
 ```
 
 Behavior
+
 - Omit start/end: The client transforms chunk sequences into the standard
   start/content/end triad, so you don’t need to emit them manually.
 - First chunk requirements: The first chunk for a message must include
@@ -363,12 +371,12 @@ type ActivitySnapshotEvent = BaseEvent & {
 }
 ```
 
-| Property       | Type                   | Description                                             |
-| -------------- | ---------------------- | ------------------------------------------------------- |
-| `messageId`    | `string`               | Identifier for the target `ActivityMessage`             |
-| `activityType` | `string`               | Activity discriminator such as `"PLAN"` or `"SEARCH"`     |
-| `content`      | `Record<string, any>`  | Structured payload describing the full activity state   |
-| `replace`      | `boolean` (optional)   | Defaults to `true`; when `false` the snapshot is ignored if a message with the same ID already exists |
+| Property       | Type                  | Description                                                                                           |
+| -------------- | --------------------- | ----------------------------------------------------------------------------------------------------- |
+| `messageId`    | `string`              | Identifier for the target `ActivityMessage`                                                           |
+| `activityType` | `string`              | Activity discriminator such as `"PLAN"` or `"SEARCH"`                                                 |
+| `content`      | `Record<string, any>` | Structured payload describing the full activity state                                                 |
+| `replace`      | `boolean` (optional)  | Defaults to `true`; when `false` the snapshot is ignored if a message with the same ID already exists |
 
 ### ActivityDeltaEvent
 
@@ -383,11 +391,145 @@ type ActivityDeltaEvent = BaseEvent & {
 }
 ```
 
-| Property       | Type          | Description                                                       |
-| -------------- | ------------- | ----------------------------------------------------------------- |
-| `messageId`    | `string`      | Identifier for the target `ActivityMessage`                      |
-| `activityType` | `string`      | Activity discriminator mirroring the most recent snapshot        |
-| `patch`        | `any[]`       | JSON Patch operations applied to the structured activity payload |
+| Property       | Type     | Description                                                      |
+| -------------- | -------- | ---------------------------------------------------------------- |
+| `messageId`    | `string` | Identifier for the target `ActivityMessage`                      |
+| `activityType` | `string` | Activity discriminator mirroring the most recent snapshot        |
+| `patch`        | `any[]`  | JSON Patch operations applied to the structured activity payload |
+
+## Reasoning Events
+
+These events represent the lifecycle of reasoning/thinking processes within an
+agent. Reasoning events allow agents to expose their internal thought process to
+the frontend, creating `ReasoningMessage` objects that persist in the message
+history with the role `"reasoning"`.
+
+### ReasoningStartEvent
+
+Signals the start of a reasoning phase. This is a pass-through event that
+notifies subscribers but does not create messages.
+
+```typescript
+type ReasoningStartEvent = BaseEvent & {
+  type: EventType.REASONING_START
+  messageId: string
+}
+```
+
+| Property    | Type     | Description                        |
+| ----------- | -------- | ---------------------------------- |
+| `messageId` | `string` | Identifier for the reasoning phase |
+
+### ReasoningMessageStartEvent
+
+Signals the start of a reasoning message. Creates a new `ReasoningMessage` in
+the message history.
+
+```typescript
+type ReasoningMessageStartEvent = BaseEvent & {
+  type: EventType.REASONING_MESSAGE_START
+  messageId: string
+  role: "assistant"
+}
+```
+
+| Property    | Type          | Description                       |
+| ----------- | ------------- | --------------------------------- |
+| `messageId` | `string`      | Unique identifier for the message |
+| `role`      | `"assistant"` | Role is always "assistant"        |
+
+### ReasoningMessageContentEvent
+
+Represents a chunk of content in a streaming reasoning message.
+
+```typescript
+type ReasoningMessageContentEvent = BaseEvent & {
+  type: EventType.REASONING_MESSAGE_CONTENT
+  messageId: string
+  delta: string
+}
+```
+
+| Property    | Type     | Description                                    |
+| ----------- | -------- | ---------------------------------------------- |
+| `messageId` | `string` | Matches the ID from ReasoningMessageStartEvent |
+| `delta`     | `string` | Reasoning content chunk                        |
+
+### ReasoningMessageEndEvent
+
+Signals the end of a reasoning message.
+
+```typescript
+type ReasoningMessageEndEvent = BaseEvent & {
+  type: EventType.REASONING_MESSAGE_END
+  messageId: string
+}
+```
+
+| Property    | Type     | Description                                    |
+| ----------- | -------- | ---------------------------------------------- |
+| `messageId` | `string` | Matches the ID from ReasoningMessageStartEvent |
+
+### ReasoningMessageChunkEvent
+
+Convenience event that expands to `ReasoningMessageStart` →
+`ReasoningMessageContent` → `ReasoningMessageEnd` automatically in the JS/TS
+client.
+
+```typescript
+type ReasoningMessageChunkEvent = BaseEvent & {
+  type: EventType.REASONING_MESSAGE_CHUNK
+  messageId?: string // required on the first chunk for a message
+  delta?: string
+}
+```
+
+Behavior
+
+- Omit start/end: The client transforms chunk sequences into the standard
+  start/content/end triad.
+- First chunk requirements: The first chunk for a message must include
+  `messageId`.
+- Streaming: Subsequent chunks with the same `messageId` emit
+  `ReasoningMessageContent` events. `ReasoningMessageEnd` is emitted
+  automatically when a different message starts or when the stream completes.
+
+### ReasoningEndEvent
+
+Signals the end of a reasoning phase. This is a pass-through event that notifies
+subscribers but does not modify messages.
+
+```typescript
+type ReasoningEndEvent = BaseEvent & {
+  type: EventType.REASONING_END
+  messageId: string
+}
+```
+
+| Property    | Type     | Description                        |
+| ----------- | -------- | ---------------------------------- |
+| `messageId` | `string` | Identifier for the reasoning phase |
+
+### ReasoningEncryptedValueEvent
+
+Attaches an encrypted value to a message or tool call. When this event is
+emitted, it finds the referenced entity by `entityId` and sets its
+`encryptedValue` field.
+
+```typescript
+type ReasoningEncryptedValueEvent = BaseEvent & {
+  type: EventType.REASONING_ENCRYPTED_VALUE
+  subtype: "tool-call" | "message"
+  entityId: string
+  encryptedValue: string
+}
+```
+
+| Property         | Type                       | Description                                        |
+| ---------------- | -------------------------- | -------------------------------------------------- |
+| `subtype`        | `"tool-call" \| "message"` | The type of entity this value belongs to           |
+| `entityId`       | `string`                   | ID of the tool call or message to attach the value |
+| `encryptedValue` | `string`                   | The encrypted value to attach to the entity        |
 
 ## Special Events
 
@@ -425,6 +567,28 @@ type CustomEvent = BaseEvent & {
 | `name`   | `string` | Name of the custom event        |
 | `value`  | `any`    | Value associated with the event |
 
+## Deprecated Events
+
+<Warning>
+  The `THINKING_*` events are deprecated and will be removed in version 1.0.0.
+  New implementations should use `REASONING_*` events instead.
+</Warning>
+
+### Thinking Events (Deprecated)
+
+The following event types are deprecated:
+
+| Deprecated Event                | Replacement                 |
+| ------------------------------- | --------------------------- |
+| `THINKING_START`                | `REASONING_START`           |
+| `THINKING_END`                  | `REASONING_END`             |
+| `THINKING_TEXT_MESSAGE_START`   | `REASONING_MESSAGE_START`   |
+| `THINKING_TEXT_MESSAGE_CONTENT` | `REASONING_MESSAGE_CONTENT` |
+| `THINKING_TEXT_MESSAGE_END`     | `REASONING_MESSAGE_END`     |
+
+See [Reasoning Migration](/concepts/reasoning#migration-from-thinking-events)
+for detailed migration guidance.
+
 ## Event Schemas
 
 The SDK uses Zod schemas to validate events:
@@ -441,6 +605,8 @@ const EventSchemas = z.discriminatedUnion("type", [
   StateSnapshotEventSchema,
   StateDeltaEventSchema,
   MessagesSnapshotEventSchema,
+  ActivitySnapshotEventSchema,
+  ActivityDeltaEventSchema,
   RawEventSchema,
   CustomEventSchema,
   RunStartedEventSchema,
@@ -448,11 +614,19 @@ const EventSchemas = z.discriminatedUnion("type", [
   RunErrorEventSchema,
   StepStartedEventSchema,
   StepFinishedEventSchema,
+  ReasoningStartEventSchema,
+  ReasoningMessageStartEventSchema,
+  ReasoningMessageContentEventSchema,
+  ReasoningMessageEndEventSchema,
+  ReasoningMessageChunkEventSchema,
+  ReasoningEndEventSchema,
+  ReasoningEncryptedValueEventSchema,
 ])
 ```
 
 This allows for runtime validation of events and provides TypeScript type
 inference.
+
 ### ToolCallChunkEvent
 
 Convenience event that expands to `ToolCallStart` → `ToolCallArgs` →
@@ -469,6 +643,7 @@ type ToolCallChunkEvent = BaseEvent & {
 ```
 
 Behavior
+
 - Omit start/end: The client transforms chunk sequences into the standard
   start/args/end triad.
 - First chunk requirements: The first chunk must include both `toolCallId` and

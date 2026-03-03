@@ -16,5 +16,5 @@ Launch the frontend dojo with:
 ```bash
 cd ../../
 pnpm install
-turbo run dev
+pnpm dev
 ```

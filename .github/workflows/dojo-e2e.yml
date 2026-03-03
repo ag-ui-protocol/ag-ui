@@ -1,6 +1,7 @@
 name: e2e
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -165,19 +166,28 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
-      # Cache Python tool caches and virtualenvs; restore only to avoid long saves
-      - name: Cache Python dependencies (restore-only)
-        id: cache-python
-        uses: actions/cache/restore@v4
+      - name: Cache Python dependencies
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/pip
             ~/.cache/pypoetry
             ~/.cache/uv
             **/.venv
-          key: ${{ runner.os }}-pydeps-${{ hashFiles('**/poetry.lock', '**/pyproject.toml') }}
+          key: ${{ runner.os }}-pydeps-${{ matrix.suite }}-${{ hashFiles('**/poetry.lock', '**/pyproject.toml') }}
           restore-keys: |
+            ${{ runner.os }}-pydeps-${{ matrix.suite }}-
             ${{ runner.os }}-pydeps-
+
+
+
+      - name: Cache Next.js build
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/apps/dojo/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('apps/dojo/src/**/*.ts', 'apps/dojo/src/**/*.tsx', 'apps/dojo/src/**/*.js', 'apps/dojo/src/**/*.jsx') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
 
       - name: Install Poetry
         uses: snok/install-poetry@v1
@@ -196,11 +206,28 @@ jobs:
         working-directory: apps/dojo
         if: ${{ join(matrix.services, ',') != '' }}
         run: node ./scripts/prep-dojo-everything.js --only ${{ join(matrix.services, ',') }}
+      - name: Cache Playwright browsers
+        id: cache-playwright
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('apps/dojo/e2e/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
 
       - name: Install e2e dependencies
         working-directory: apps/dojo/e2e
-        run: |
-          pnpm install
+        run: pnpm install --ignore-scripts
+
+      - name: Install Playwright browsers
+        working-directory: apps/dojo/e2e
+        if: steps.cache-playwright.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install Playwright system dependencies
+        working-directory: apps/dojo/e2e
+        if: steps.cache-playwright.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
 
       - name: write langgraph env files
         working-directory: integrations/langgraph

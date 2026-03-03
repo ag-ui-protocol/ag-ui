@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@copilotkit/sdk-js':
-        specifier: 0.0.0-mme-storage-connectors-20260209135941
-        version: 0.0.0-mme-storage-connectors-20260209135941(@ag-ui/core@0.0.42)(@langchain/community@0.0.53(openai@6.15.0(zod@3.25.76)))(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(@langchain/langgraph@1.0.7(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(langchain@1.2.8(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(openai@6.15.0(zod@3.25.76))(zod-to-json-schema@3.24.6(zod@3.25.76)))(typescript@5.8.3)(zod@3.25.76)
+        specifier: 0.0.0-mme-ag-ui-0-0-46-20260227141603
+        version: 0.0.0-mme-ag-ui-0-0-46-20260227141603(@ag-ui/core@0.0.42)(@langchain/community@0.0.53(openai@6.15.0(zod@3.25.76)))(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(@langchain/langgraph@1.0.7(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(langchain@1.2.8(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(openai@6.15.0(zod@3.25.76))(zod-to-json-schema@3.24.6(zod@3.25.76)))(typescript@5.8.3)(zod@3.25.76)
       '@langchain/core':
         specifier: ^1.1.7
         version: 1.1.7(openai@6.15.0(zod@3.25.76))
@@ -48,8 +48,8 @@ packages:
   '@cfworker/json-schema@4.1.1':
     resolution: {integrity: sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og==}
 
-  '@copilotkit/sdk-js@0.0.0-mme-storage-connectors-20260209135941':
-    resolution: {integrity: sha512-VQ6Y9JSi3t5l7ynkvOzSfPLdCnPFGPHkvmVWmoLv11E4Zso53B11fNxMoivMv9jjtAY9MgbFCbS0zhA68M2BqQ==}
+  '@copilotkit/sdk-js@0.0.0-mme-ag-ui-0-0-46-20260227141603':
+    resolution: {integrity: sha512-qwPTcJiGixz5v3u1zWWp3onvvrS5LIjgKPf6XC58/+DJopPY4n5U0DRukVOUbIj+nPNrbfsitkB2IKFMUo3TyA==}
     peerDependencies:
       '@langchain/community': ^0.3.58
       '@langchain/core': '>=0.4.0 <2.0.0'
@@ -58,10 +58,10 @@ packages:
       typescript: ^5.2.3
       zod: ^3.23.3 || ^3.24.0 || ^3.25.0
 
-  '@copilotkit/shared@0.0.0-mme-storage-connectors-20260209135941':
-    resolution: {integrity: sha512-7bjWaSI0vMYZEM3/2iox+KnLofZrhJTRwME6Qh5tnz2eXM78fPZslJO0991thgwsi9YfPQGma7j0YG2adyhUKA==}
+  '@copilotkit/shared@0.0.0-mme-ag-ui-0-0-46-20260227141603':
+    resolution: {integrity: sha512-b29dZR67mDq85v9h4ritwJ3dUVek8UpR4MZ0SHuFgZF7BYzMOGoGleh96H/8Mj1s6hTiQ781NVAPEJ6OiY4FDA==}
     peerDependencies:
-      '@ag-ui/core': 0.0.45-alpha.0
+      '@ag-ui/core': ^0.0.46
 
   '@langchain/community@0.0.53':
     resolution: {integrity: sha512-iFqZPt4MRssGYsQoKSXWJQaYTZCC7WNuilp2JCCs3wKmJK3l6mR0eV+PDrnT+TaDHUVxt/b0rwgM0sOiy0j2jA==}
@@ -790,9 +790,9 @@ snapshots:
 
   '@cfworker/json-schema@4.1.1': {}
 
-  '@copilotkit/sdk-js@0.0.0-mme-storage-connectors-20260209135941(@ag-ui/core@0.0.42)(@langchain/community@0.0.53(openai@6.15.0(zod@3.25.76)))(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(@langchain/langgraph@1.0.7(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(langchain@1.2.8(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(openai@6.15.0(zod@3.25.76))(zod-to-json-schema@3.24.6(zod@3.25.76)))(typescript@5.8.3)(zod@3.25.76)':
+  '@copilotkit/sdk-js@0.0.0-mme-ag-ui-0-0-46-20260227141603(@ag-ui/core@0.0.42)(@langchain/community@0.0.53(openai@6.15.0(zod@3.25.76)))(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(@langchain/langgraph@1.0.7(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76))(langchain@1.2.8(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(openai@6.15.0(zod@3.25.76))(zod-to-json-schema@3.24.6(zod@3.25.76)))(typescript@5.8.3)(zod@3.25.76)':
     dependencies:
-      '@copilotkit/shared': 0.0.0-mme-storage-connectors-20260209135941(@ag-ui/core@0.0.42)
+      '@copilotkit/shared': 0.0.0-mme-ag-ui-0-0-46-20260227141603(@ag-ui/core@0.0.42)
       '@langchain/community': 0.0.53(openai@6.15.0(zod@3.25.76))
       '@langchain/core': 1.1.7(openai@6.15.0(zod@3.25.76))
       '@langchain/langgraph': 1.0.7(@langchain/core@1.1.7(openai@6.15.0(zod@3.25.76)))(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76)
@@ -803,7 +803,7 @@ snapshots:
       - '@ag-ui/core'
       - encoding
 
-  '@copilotkit/shared@0.0.0-mme-storage-connectors-20260209135941(@ag-ui/core@0.0.42)':
+  '@copilotkit/shared@0.0.0-mme-ag-ui-0-0-46-20260227141603(@ag-ui/core@0.0.42)':
     dependencies:
       '@ag-ui/core': 0.0.42
       '@segment/analytics-node': 2.3.0

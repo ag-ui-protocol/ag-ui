@@ -1,9 +1,10 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { CopilotSelectors } from '../../utils/copilot-selectors';
+import { sendChatMessage, awaitLLMResponseDone } from '../../utils/copilot-actions';
 
 export class AgenticGenUIPage {
   readonly page: Page;
   readonly chatInput: Locator;
-  readonly planTaskButton: Locator;
   readonly agentMessage: Locator;
   readonly userMessage: Locator;
   readonly agentGreeting: Locator;
@@ -12,13 +13,11 @@ export class AgenticGenUIPage {
 
   constructor(page: Page) {
     this.page = page;
-    this.planTaskButton = page.getByRole('button', { name: 'Agentic Generative UI' });
-
-    this.chatInput = page.getByRole('textbox', { name: 'Type a message...' });
-    this.sendButton = page.locator('[data-test-id="copilot-chat-ready"]');
-    this.agentMessage = page.locator('.copilotKitAssistantMessage');
-    this.userMessage = page.locator('.copilotKitUserMessage');
-    this.agentGreeting = page.getByText('This agent demonstrates');
+    this.chatInput = CopilotSelectors.chatTextarea(page);
+    this.sendButton = CopilotSelectors.sendButton(page);
+    this.agentMessage = CopilotSelectors.assistantMessages(page);
+    this.userMessage = CopilotSelectors.userMessages(page);
+    this.agentGreeting = page.getByText(/I can help you with anything you need/i);
     this.agentPlannerContainer = page.getByTestId('task-progress');
   }
 
@@ -34,12 +33,13 @@ export class AgenticGenUIPage {
   }
 
   async openChat() {
-    await this.planTaskButton.isVisible();
+    // V2 CopilotChat renders inline (no toggle button), so just wait for it to be ready
+    await expect(this.agentGreeting).toBeVisible();
   }
 
   async sendMessage(message: string) {
-    await this.chatInput.fill(message);
-    await this.page.waitForTimeout(5000)
+    await sendChatMessage(this.page, message);
+    await awaitLLMResponseDone(this.page);
   }
 
   getPlannerButton(name: string | RegExp) {

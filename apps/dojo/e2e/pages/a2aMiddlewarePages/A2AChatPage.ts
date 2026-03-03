@@ -10,6 +10,6 @@ export class A2AChatPage {
   }
 
   async openChat() {
-    await this.mainChatTab.isVisible();
+    await expect(this.mainChatTab).toBeVisible();
   }
 }
