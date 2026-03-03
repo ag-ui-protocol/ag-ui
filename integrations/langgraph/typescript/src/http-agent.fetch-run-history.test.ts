@@ -541,7 +541,7 @@ describe("LangGraphHttpAgent.fetchRunHistory", () => {
       const agent = createTestAgent(checkpointer);
 
       // Suppress console.error for this test
-      const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
       const result = await callFetchRunHistory(agent, { threadId: "thread-1" });
 

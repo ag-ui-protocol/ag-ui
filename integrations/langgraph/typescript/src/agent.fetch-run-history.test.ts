@@ -12,20 +12,20 @@ import { FetchRunHistoryOptions } from "@ag-ui/client";
 function createMockClient(getHistoryResponse: any[]) {
   return {
     threads: {
-      getHistory: jest.fn().mockResolvedValue(getHistoryResponse),
-      get: jest.fn().mockResolvedValue({ thread_id: "test-thread" }),
-      create: jest.fn().mockResolvedValue({ thread_id: "test-thread" }),
-      getState: jest.fn().mockResolvedValue({ values: {} }),
-      updateState: jest.fn().mockResolvedValue({}),
+      getHistory: vi.fn().mockResolvedValue(getHistoryResponse),
+      get: vi.fn().mockResolvedValue({ thread_id: "test-thread" }),
+      create: vi.fn().mockResolvedValue({ thread_id: "test-thread" }),
+      getState: vi.fn().mockResolvedValue({ values: {} }),
+      updateState: vi.fn().mockResolvedValue({}),
     },
     runs: {
-      stream: jest.fn(),
-      cancel: jest.fn(),
+      stream: vi.fn(),
+      cancel: vi.fn(),
     },
     assistants: {
-      search: jest.fn().mockResolvedValue([]),
-      getGraph: jest.fn().mockResolvedValue({ nodes: [], edges: [] }),
-      getSchemas: jest.fn().mockResolvedValue({}),
+      search: vi.fn().mockResolvedValue([]),
+      getGraph: vi.fn().mockResolvedValue({ nodes: [], edges: [] }),
+      getSchemas: vi.fn().mockResolvedValue({}),
     },
   };
 }
@@ -325,13 +325,13 @@ describe("LangGraphAgent.fetchRunHistory", () => {
 
     it("should handle error from client gracefully (returns undefined)", async () => {
       const mockClient = createMockClient([]);
-      mockClient.threads.getHistory = jest
+      mockClient.threads.getHistory = vi
         .fn()
         .mockRejectedValue(new Error("Network error"));
       const agent = createTestAgent(mockClient);
 
       // Suppress console.error for this test
-      const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
       const result = await callFetchRunHistory(agent, { threadId: "thread-1" });
 
@@ -341,7 +341,7 @@ describe("LangGraphAgent.fetchRunHistory", () => {
 
     it("should handle null history response", async () => {
       const mockClient = createMockClient([]);
-      mockClient.threads.getHistory = jest.fn().mockResolvedValue(null);
+      mockClient.threads.getHistory = vi.fn().mockResolvedValue(null);
       const agent = createTestAgent(mockClient);
 
       const result = await callFetchRunHistory(agent, { threadId: "thread-1" });
