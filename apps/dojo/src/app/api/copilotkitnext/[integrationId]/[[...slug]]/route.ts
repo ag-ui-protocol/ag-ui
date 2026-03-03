@@ -5,8 +5,9 @@ import {
 } from "@copilotkitnext/runtime";
 import { handle } from "hono/vercel";
 import type { NextRequest } from "next/server";
-import { BasicAgent } from "@copilotkitnext/agent";
 import type { AbstractAgent } from "@ag-ui/client";
+import { agentsIntegrations } from "@/agents";
+import type { IntegrationId } from "@/menu";
 
 type RouteParams = {
   params: Promise<{
@@ -15,43 +16,74 @@ type RouteParams = {
   }>;
 };
 
-const handlerCache = new Map<string, ReturnType<typeof handle>>();
+const handlerCache = new Map<string, Promise<ReturnType<typeof handle> | null>>();
 
-function getHandler(integrationId: string) {
+async function getHandler(integrationId: string) {
   const cached = handlerCache.get(integrationId);
   if (cached) {
-    return cached;
+    return await cached;
   }
 
-  const defaultAgent = new BasicAgent({
-    model: "openai/gpt-4o",
-  }) as unknown as AbstractAgent; // Cast until upstream marks run() public.
+  const createHandler = (async () => {
+    const getAgents = agentsIntegrations[integrationId as IntegrationId];
+    if (!getAgents) {
+      return null;
+    }
 
-  const runtime = new CopilotRuntime({
-    agents: {
-      default: defaultAgent,
-    },
-    runner: new InMemoryAgentRunner(),
-  });
+    const agents = (await getAgents()) as Record<string, AbstractAgent>;
+    const defaultAgent =
+      agents.vnext_chat ??
+      agents.agentic_chat ??
+      Object.values(agents)[0];
 
-  const app = createCopilotEndpoint({
-    runtime,
-    basePath: `/api/copilotkitnext/${integrationId}`,
-  });
+    if (!defaultAgent) {
+      return null;
+    }
 
-  const handler = handle(app);
-  handlerCache.set(integrationId, handler);
-  return handler;
+    const runtime = new CopilotRuntime({
+      agents: {
+        ...agents,
+        default: defaultAgent,
+      },
+      runner: new InMemoryAgentRunner(),
+    });
+
+    const app = createCopilotEndpoint({
+      runtime,
+      basePath: `/api/copilotkitnext/${integrationId}`,
+    });
+
+    return handle(app);
+  })();
+
+  handlerCache.set(integrationId, createHandler);
+
+  try {
+    const handler = await createHandler;
+    if (!handler) {
+      handlerCache.delete(integrationId);
+    }
+    return handler;
+  } catch (error) {
+    handlerCache.delete(integrationId);
+    throw error;
+  }
 }
 
 export async function GET(request: NextRequest, context: RouteParams) {
   const { integrationId } = await context.params;
-  const handler = getHandler(integrationId);
+  const handler = await getHandler(integrationId);
+  if (!handler) {
+    return new Response("Integration not found", { status: 404 });
+  }
   return handler(request);
 }
 
 export async function POST(request: NextRequest, context: RouteParams) {
   const { integrationId } = await context.params;
-  const handler = getHandler(integrationId);
+  const handler = await getHandler(integrationId);
+  if (!handler) {
+    return new Response("Integration not found", { status: 404 });
+  }
   return handler(request);
 }
