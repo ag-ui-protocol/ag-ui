@@ -27,7 +27,7 @@ export const stateItem = (item: StateItem): StateItem => item;
  * bound config with the LangGraph execution config, so `predict_state`
  * survives into every streaming event.
  */
-export const stateInjectionMiddleware = (...items: StateItem[]) => {
+export const stateStreamingMiddleware = (...items: StateItem[]) => {
   const predictState = items.map((i) => ({
     state_key: i.stateKey,
     tool: i.tool,
@@ -49,7 +49,7 @@ export const stateInjectionMiddleware = (...items: StateItem[]) => {
   };
 
   return createMiddleware({
-    name: "StateInjectionMiddleware",
+    name: "StateStreamingMiddleware",
     wrapModelCall: async (request, handler) => {
       if (!isPreToolCall(request)) {
         return handler(request);
