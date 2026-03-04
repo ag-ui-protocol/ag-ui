@@ -1,0 +1,44 @@
+name: unit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdks/community/go/**"
+      - ".github/workflows/unit-go-sdk.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "sdks/community/go/**"
+      - ".github/workflows/unit-go-sdk.yml"
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.4"
+
+      - name: Setup Go module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        working-directory: sdks/community/go
+        run: go mod download
+
+      - name: Run tests
+        working-directory: sdks/community/go
+        run: go test ./... -v

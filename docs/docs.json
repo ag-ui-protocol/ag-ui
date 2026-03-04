@@ -17,6 +17,7 @@
             "group": "Get Started",
             "pages": [
               "introduction",
+              "agentic-protocols",
               {
                 "group": "Quickstart",
                 "pages": [
@@ -28,10 +29,10 @@
                       "quickstart/server",
                       "quickstart/middleware"
                     ]
-                  }
+                  },
+                  "quickstart/clients"
                 ]
-              },
-              "integrations"
+              }
             ]
           },
           {
@@ -40,18 +41,39 @@
               "concepts/architecture",
               "concepts/events",
               "concepts/agents",
+              "concepts/middleware",
               "concepts/messages",
+              "concepts/reasoning",
               "concepts/state",
-              "concepts/tools"
+              "concepts/serialization",
+              "concepts/tools",
+              "concepts/generative-ui-specs"
+            ]
+          },
+          {
+            "group": "Draft Proposals",
+            "pages": [
+              "drafts/overview",
+              "drafts/multimodal-messages",
+              "drafts/interrupts",
+              "drafts/generative-ui",
+              "drafts/meta-events"
             ]
           },
           {
             "group": "Tutorials",
-            "pages": ["tutorials/cursor", "tutorials/debugging"]
+            "pages": [
+              "tutorials/cursor",
+              "tutorials/debugging"
+            ]
           },
           {
             "group": "Development",
-            "pages": ["development/updates", "development/roadmap", "development/contributing"]
+            "pages": [
+              "development/updates",
+              "development/roadmap",
+              "development/contributing"
+            ]
           }
         ]
       },
@@ -64,11 +86,22 @@
             "pages": [
               {
                 "group": "@ag-ui/core",
-                "pages": ["sdk/js/core/overview", "sdk/js/core/types", "sdk/js/core/events"]
+                "pages": [
+                  "sdk/js/core/overview",
+                  "sdk/js/core/types",
+                  "sdk/js/core/events"
+                ]
               },
               {
                 "group": "@ag-ui/client",
-                "pages": ["sdk/js/client/overview"]
+                "pages": [
+                  "sdk/js/client/overview",
+                  "sdk/js/client/abstract-agent",
+                  "sdk/js/client/http-agent",
+                  "sdk/js/client/middleware",
+                  "sdk/js/client/subscriber",
+                  "sdk/js/client/compaction"
+                ]
               },
               "sdk/js/encoder",
               "sdk/js/proto"
@@ -87,7 +120,9 @@
               },
               {
                 "group": "ag_ui.encoder",
-                "pages": ["sdk/python/encoder/overview"]
+                "pages": [
+                  "sdk/python/encoder/overview"
+                ]
               }
             ]
           }
@@ -131,6 +166,12 @@
       "og:image": "https://raw.githubusercontent.com/ag-ui-protocol/docs/logo/light.png"
     },
     "indexing": "navigable"
+  },
+  "integrations": {
+    "posthog": {
+      "apiKey": "phc_XZdymVYjrph9Mi0xZYGNyCKexxgblXRR1jMENCtdz5Q",
+      "apiHost": "https://eu.posthog.com"
+    }
   },
   "footer": {
     "socials": {

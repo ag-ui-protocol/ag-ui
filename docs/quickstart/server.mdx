@@ -59,7 +59,7 @@ brew install protobuf
 ```
 
 ```bash
-npm i turbo
+npm i nx
 ```
 
 ```bash
@@ -68,11 +68,11 @@ curl -fsSL https://get.pnpm.io/install.sh | sh -
 
 ## Step 1 – Scaffold your server
 
-Start by cloning the repo and navigating to the TypeScript SDK:
+Start by cloning the repo:
 
 ```bash
 git clone git@github.com:ag-ui-protocol/ag-ui.git
-cd ag-ui/typescript-sdk
+cd ag-ui
 ```
 
 Copy the server-starter template to create your OpenAI server:
@@ -174,20 +174,18 @@ Open `apps/dojo/package.json` and add the package `@ag-ui/openai-server`:
 Now let's see your work in action. First, start your Python server:
 
 ```bash
-cd integrations/openai/server/python
+cd integrations/openai-server/server/python
 poetry install && poetry run dev
 ```
 
 In another terminal, start the dojo:
 
 ```bash
-cd typescript-sdk
-
 # Install dependencies
 pnpm install
 
 # Compile the project and run the dojo
-turbo run dev
+pnpm dev
 ```
 
 Head over to [http://localhost:3000](http://localhost:3000) and choose
@@ -197,7 +195,7 @@ world!** for now.
 Here's what's happening with that stub server:
 
 ```python
-# integrations/openai/server/python/example_server/__init__.py
+# integrations/openai-server/server/python/example_server/__init__.py
 @app.post("/")
 async def agentic_chat_endpoint(input_data: RunAgentInput, request: Request):
     """Agentic chat endpoint"""
@@ -268,7 +266,7 @@ OpenAI.
 First, we need the OpenAI SDK:
 
 ```bash
-cd integrations/openai/server/python
+cd integrations/openai-server/server/python
 poetry add openai
 ```
 
@@ -442,7 +440,7 @@ Did you build a custom server that others could reuse? We welcome community
 contributions!
 
 1. Fork the [AG-UI repository](https://github.com/ag-ui-protocol/ag-ui)
-2. Add your package under `typescript-sdk/integrations/`. See
+2. Add your package under `integrations/`. See
    [Contributing](../development/contributing) for more details and naming
    conventions.
 3. Open a pull request describing your use-case and design decisions

@@ -1,0 +1,33 @@
+{
+  "originHash" : "6b700d656a9467e1b1c7a8728e9567d912ebf702943807c297397498a5527fef",
+  "pins" : [
+    {
+      "identity" : "markdownui",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/gonzalezreal/MarkdownUI.git",
+      "state" : {
+        "revision" : "5f613358148239d0292c0cef674a3c2314737f9e",
+        "version" : "2.4.1"
+      }
+    },
+    {
+      "identity" : "networkimage",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/gonzalezreal/NetworkImage",
+      "state" : {
+        "revision" : "2849f5323265386e200484b0d0f896e73c3411b9",
+        "version" : "6.0.1"
+      }
+    },
+    {
+      "identity" : "swift-cmark",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-cmark.git",
+      "state" : {
+        "revision" : "b97d09472e847a416629f026eceae0e2afcfad65",
+        "version" : "0.7.0"
+      }
+    }
+  ],
+  "version" : 3
+}

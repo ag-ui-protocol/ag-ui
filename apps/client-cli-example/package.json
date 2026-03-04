@@ -1,0 +1,28 @@
+{
+  "name": "client-cli-example",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx --watch src/index.ts",
+    "build": "tsc",
+    "clean": "git clean -fdX --exclude=\"!.env\""
+  },
+  "dependencies": {
+    "@ag-ui/client": "workspace:*",
+    "@ag-ui/core": "workspace:*",
+    "@ag-ui/mastra": "workspace:*",
+    "@mastra/client-js": "^1.0.1",
+    "@mastra/core": "^1.0.4",
+    "@mastra/libsql": "^1.0.0",
+    "@mastra/loggers": "^1.0.0",
+    "@mastra/memory": "^1.0.0",
+    "open": "^10.1.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.7.0",
+    "typescript": "^5"
+  }
+}

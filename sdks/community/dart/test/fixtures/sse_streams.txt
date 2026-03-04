@@ -1,0 +1,89 @@
+## Simple Text Message Stream
+data: {"type":"RUN_STARTED","threadId":"thread_01","runId":"run_01"}
+
+data: {"type":"TEXT_MESSAGE_START","messageId":"msg_01","role":"assistant"}
+
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_01","delta":"Hello, "}
+
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_01","delta":"how can I help you today?"}
+
+data: {"type":"TEXT_MESSAGE_END","messageId":"msg_01"}
+
+data: {"type":"RUN_FINISHED","threadId":"thread_01","runId":"run_01"}
+
+## Tool Call Stream
+data: {"type":"RUN_STARTED","threadId":"thread_02","runId":"run_02"}
+
+data: {"type":"TOOL_CALL_START","toolCallId":"tool_01","toolCallName":"search"}
+
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"tool_01","delta":"{\"query\":"}
+
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"tool_01","delta":"\"AG-UI\"}"}
+
+data: {"type":"TOOL_CALL_END","toolCallId":"tool_01"}
+
+data: {"type":"RUN_FINISHED","threadId":"thread_02","runId":"run_02"}
+
+## Heartbeat and Comments
+: ping
+
+data: {"type":"RUN_STARTED","threadId":"thread_03","runId":"run_03"}
+
+: keepalive
+
+data: {"type":"TEXT_MESSAGE_START","messageId":"msg_02"}
+
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_02","delta":"Test"}
+
+: heartbeat
+
+data: {"type":"TEXT_MESSAGE_END","messageId":"msg_02"}
+
+data: {"type":"RUN_FINISHED","threadId":"thread_03","runId":"run_03"}
+
+## Multi-line Data Fields
+data: {"type":"STATE_SNAPSHOT",
+data: "snapshot":{
+data: "count":42,
+data: "name":"test"}}
+
+## With Event IDs and Retry
+id: evt_001
+event: message
+retry: 5000
+data: {"type":"TEXT_MESSAGE_START","messageId":"msg_03"}
+
+id: evt_002
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_03","delta":"Message with ID"}
+
+id: evt_003
+data: {"type":"TEXT_MESSAGE_END","messageId":"msg_03"}
+
+## Malformed Examples
+data: not valid json
+
+data: {"type":"UNKNOWN_EVENT_TYPE"}
+
+data: {"type":"TEXT_MESSAGE_START"}
+
+data: 
+
+data: {"incomplete":
+
+## Empty Lines and Spacing
+
+
+data: {"type":"RUN_STARTED","threadId":"thread_04","runId":"run_04"}
+
+
+data: {"type":"RUN_FINISHED","threadId":"thread_04","runId":"run_04"}
+
+
+## Unicode and Special Characters
+data: {"type":"TEXT_MESSAGE_START","messageId":"msg_04"}
+
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_04","delta":"Hello 你好 🌟 €"}
+
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_04","delta":"Special: \"quotes\", \\backslash\\, \ttab"}
+
+data: {"type":"TEXT_MESSAGE_END","messageId":"msg_04"}

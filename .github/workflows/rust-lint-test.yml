@@ -1,0 +1,59 @@
+name: test
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "crates/**"
+      - ".github/workflows/rust.yml"
+      - "tests/**"
+      - "Cargo.toml"
+      - ".cargo/**"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "sdks/community/rust/crates/**"
+      - "sdks/community/rust/**/tests/**"
+      - "sdks/community/rust/Cargo.toml"
+      - "sdks/community/rust/.cargo/**"
+      - ".github/workflows/rust-lint-test.yml"
+
+defaults:
+  run:
+    working-directory: ./rust
+
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+
+    name: Rust SDK Tests [${{ matrix.os }}]
+    runs-on: ${{ matrix.os }}
+
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Check clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Publish ag-ui-core dry-run
+        run: cargo publish -p ag-ui-core --dry-run
+
+      - name: Publish ag-ui-client dry-run
+        run: cargo publish -p ag-ui-client --dry-run
+
+      - name: Run tests
+        run: cargo test --verbose

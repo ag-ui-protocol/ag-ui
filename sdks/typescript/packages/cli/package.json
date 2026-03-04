@@ -1,0 +1,52 @@
+{
+  "name": "create-ag-ui-app",
+  "author": "Markus Ecker <markus.ecker@gmail.com>",
+  "version": "0.0.47",
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "bin": "./dist/index.mjs",
+  "sideEffects": false,
+  "files": [
+    "dist/**",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "clean": "git clean -fdX --exclude=\"!.env\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "test:exports": "publint --strict && attw --pack",
+    "link:global": "pnpm link --global",
+    "unlink:global": "pnpm unlink --global"
+  },
+  "dependencies": {
+    "@types/inquirer": "^9.0.8",
+    "commander": "^12.1.0",
+    "inquirer": "^12.6.3",
+    "giget": "2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.19",
+    "@vitest/coverage-istanbul": "^4.0.18",
+    "publint": "^0.3.12",
+    "@arethetypeswrong/cli": "^0.17.4",
+    "tsdown": "^0.20.1",
+    "typescript": "^5.3.3",
+    "vitest": "^4.0.18"
+  },
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
+  }
+}

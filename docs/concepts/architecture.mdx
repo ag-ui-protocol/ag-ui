@@ -8,7 +8,35 @@ architecture that enables seamless, efficient communication between front-end
 applications and AI agents. This document covers the core architectural
 components and concepts.
 
-## Overview
+## Design Principles
+
+AG-UI is designed to be lightweight and minimally opinionated, making it easy to
+integrate with a wide range of agent implementations. The protocol's flexibility
+comes from its simple requirements:
+
+1. **Event-Driven Communication**: Agents need to emit any of the 16
+   standardized event types during execution, creating a stream of updates that
+   clients can process.
+
+2. **Bidirectional Interaction**: Agents accept input from users, enabling
+   collaborative workflows where humans and AI work together seamlessly.
+
+The protocol includes a built-in middleware layer that maximizes compatibility
+in two key ways:
+
+- **Flexible Event Structure**: Events don't need to match AG-UI's format
+  exactly—they just need to be AG-UI-compatible. This allows existing agent
+  frameworks to adapt their native event formats with minimal effort.
+
+- **Transport Agnostic**: AG-UI doesn't mandate how events are delivered,
+  supporting various transport mechanisms including Server-Sent Events (SSE),
+  webhooks, WebSockets, and more. This flexibility lets developers choose the
+  transport that best fits their architecture.
+
+This pragmatic approach makes AG-UI easy to adopt without requiring major
+changes to existing agent implementations or frontend applications.
+
+## Architectural Overview
 
 AG-UI follows a client-server architecture that standardizes communication
 between agents and applications:
