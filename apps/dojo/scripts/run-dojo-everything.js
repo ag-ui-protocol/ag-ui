@@ -4,6 +4,10 @@ const { execSync } = require('child_process');
 const path = require('path');
 const concurrently = require('concurrently');
 
+// Pinned: @langchain/langgraph-api@1.1.14 regressed schema extraction, causing
+// worker timeouts on CI runners. Re-evaluate when a newer version fixes the issue.
+const LANGGRAPH_CLI_VERSION = '1.1.13';
+
 // Parse command line arguments
 const args = process.argv.slice(2);
 const showHelp = args.includes('--help') || args.includes('-h');
@@ -49,16 +53,22 @@ const middlewaresRoot = path.join(gitRoot, 'middlewares');
 // Define all runnable services keyed by a stable id
 const ALL_SERVICES = {
   'server-starter': [{
-    command: 'poetry run dev',
+    command: 'uv run dev',
     name: 'Server Starter',
     cwd: path.join(integrationsRoot, 'server-starter/python/examples'),
     env: { PORT: 8000 },
   }],
   'server-starter-all': [{
-    command: 'poetry run dev',
+    command: 'uv run dev',
     name: 'Server AF',
     cwd: path.join(integrationsRoot, 'server-starter-all-features/python/examples'),
     env: { PORT: 8001 },
+  }],
+  'ag2': [{
+    command: 'uv run dev',
+    name: 'AG2',
+    cwd: path.join(integrationsRoot, 'ag2/python/examples'),
+    env: { PORT: 8018 },
   }],
   'agno': [{
     command: 'uv run dev',
@@ -73,22 +83,19 @@ const ALL_SERVICES = {
     env: { PORT: 8003 },
   }],
   'langgraph-fastapi': [{
-    command: 'poetry run dev',
+    command: 'uv run dev',
     name: 'LG FastAPI',
     cwd: path.join(integrationsRoot, 'langgraph/python/examples'),
-    env: {
-      PORT: 8004,
-      POETRY_VIRTUALENVS_IN_PROJECT: 'false',
-    },
+    env: { PORT: 8004 },
   }],
   'langgraph-platform-python': [{
-    command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8005',
+    command: `pnpx @langchain/langgraph-cli@${LANGGRAPH_CLI_VERSION} dev --no-browser --host 127.0.0.1 --port 8005`,
     name: 'LG Platform Py',
     cwd: path.join(integrationsRoot, 'langgraph/python/examples'),
     env: { PORT: 8005 },
   }],
   'langgraph-platform-typescript': [{
-    command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8006',
+    command: `pnpx @langchain/langgraph-cli@${LANGGRAPH_CLI_VERSION} dev --no-browser --host 127.0.0.1 --port 8006`,
     name: 'LG Platform TS',
     cwd: path.join(integrationsRoot, 'langgraph/typescript/examples'),
     env: { PORT: 8006 },
@@ -110,6 +117,12 @@ const ALL_SERVICES = {
     name: 'Pydantic AI',
     cwd: path.join(integrationsRoot, 'pydantic-ai/python/examples'),
     env: { PORT: 8009 },
+  }],
+  'aws-strands': [{
+    command: 'poetry run dev',
+    name: 'AWS Strands',
+    cwd: path.join(integrationsRoot, 'aws-strands/python/examples'),
+    env: { PORT: 8017 },
   }],
   'adk-middleware': [{
     command: 'uv run dev',
@@ -141,12 +154,25 @@ const ALL_SERVICES = {
     cwd: path.join(middlewaresRoot, "a2a-middleware/examples"),
     env: { PORT: 8014 },
   }],
+  'microsoft-agent-framework-python': [{
+    command: 'uv run dev',
+    name: 'Microsoft Agent Framework (Python)',
+    cwd: path.join(integrationsRoot, 'microsoft-agent-framework/python/examples'),
+    env: { PORT: 8015 },
+  }],
+  'microsoft-agent-framework-dotnet': [{
+    command: 'dotnet run --project AGUIDojoServer/AGUIDojoServer.csproj --urls "http://localhost:8889" --no-build',
+    name: 'Microsoft Agent Framework (.NET)',
+    cwd: path.join(integrationsRoot, 'microsoft-agent-framework/dotnet/examples'),
+    env: { PORT: 8016 },
+  }],
   'dojo': [{
     command: 'pnpm run start',
     name: 'Dojo',
     cwd: path.join(gitRoot, 'apps/dojo'),
     env: {
       PORT: 9999,
+      AG2_URL: 'http://localhost:8018',
       SERVER_STARTER_URL: 'http://localhost:8000',
       SERVER_STARTER_ALL_FEATURES_URL: 'http://localhost:8001',
       AGNO_URL: 'http://localhost:8002',
@@ -162,6 +188,33 @@ const ALL_SERVICES = {
       A2A_MIDDLEWARE_FINANCE_URL: 'http://localhost:8012',
       A2A_MIDDLEWARE_IT_URL: 'http://localhost:8013',
       A2A_MIDDLEWARE_ORCHESTRATOR_URL: 'http://localhost:8014',
+      AWS_STRANDS_URL: 'http://localhost:8017',
+      NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: 'cpkdojo.local___CopilotKit Feature Viewer',
+    },
+  }],
+  'dojo-dev': [{
+    command: 'pnpm run dev --filter=demo-viewer...',
+    name: 'Dojo (dev)',
+    cwd: gitRoot,
+    env: {
+      PORT: 9999,
+      AG2_URL: 'http://localhost:8018',
+      SERVER_STARTER_URL: 'http://localhost:8000',
+      SERVER_STARTER_ALL_FEATURES_URL: 'http://localhost:8001',
+      AGNO_URL: 'http://localhost:8002',
+      CREW_AI_URL: 'http://localhost:8003',
+      LANGGRAPH_FAST_API_URL: 'http://localhost:8004',
+      LANGGRAPH_PYTHON_URL: 'http://localhost:8005',
+      LANGGRAPH_TYPESCRIPT_URL: 'http://localhost:8006',
+      LLAMA_INDEX_URL: 'http://localhost:8007',
+      MASTRA_URL: 'http://localhost:8008',
+      PYDANTIC_AI_URL: 'http://localhost:8009',
+      ADK_MIDDLEWARE_URL: 'http://localhost:8010',
+      A2A_MIDDLEWARE_BUILDINGS_MANAGEMENT_URL: 'http://localhost:8011',
+      A2A_MIDDLEWARE_FINANCE_URL: 'http://localhost:8012',
+      A2A_MIDDLEWARE_IT_URL: 'http://localhost:8013',
+      A2A_MIDDLEWARE_ORCHESTRATOR_URL: 'http://localhost:8014',
+      AWS_STRANDS_URL: 'http://localhost:8017',
       NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: 'cpkdojo.local___CopilotKit Feature Viewer',
     },
   }],
@@ -193,6 +246,10 @@ async function main() {
   }
   if (excludeList && excludeList.length) {
     selectedKeys = selectedKeys.filter((k) => !excludeList.includes(k));
+  }
+
+  if (selectedKeys.includes("dojo") && selectedKeys.includes("dojo-dev")) {
+    selectedKeys= selectedKeys.filter(x => x != "dojo-dev");
   }
 
   // Build processes, warn for unknown keys

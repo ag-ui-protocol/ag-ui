@@ -1,13 +1,16 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, retryOnAIFailure } from "../../test-isolation-helper";
+import { awaitLLMResponseDone } from "../../utils/copilot-actions";
 
-test("[Agno] Backend Tool Rendering displays weather cards", async ({ page }) => {
-  // Set shorter default timeout for this test
-  test.setTimeout(30000); // 30 seconds total
-
+test("[Agno] Backend Tool Rendering displays weather cards", async ({
+  page,
+}) => {
+  await retryOnAIFailure(async () => {
   await page.goto("/agno/feature/backend_tool_rendering");
 
   // Verify suggestion buttons are visible
-  await expect(page.getByRole("button", { name: "Weather in San Francisco" })).toBeVisible({
+  await expect(
+    page.getByRole("button", { name: "Weather in San Francisco" }),
+  ).toBeVisible({
     timeout: 5000,
   });
 
@@ -20,10 +23,10 @@ test("[Agno] Backend Tool Rendering displays weather cards", async ({ page }) =>
 
   // Try test ID first, fallback to text
   try {
-    await expect(weatherCard).toBeVisible({ timeout: 10000 });
+    await expect(weatherCard).toBeVisible();
   } catch (e) {
     // Fallback to checking for "Current Weather" text
-    await expect(currentWeatherText.first()).toBeVisible({ timeout: 10000 });
+    await expect(currentWeatherText.first()).toBeVisible();
   }
 
   // Verify weather content is present (use flexible selectors)
@@ -46,9 +49,12 @@ test("[Agno] Backend Tool Rendering displays weather cards", async ({ page }) =>
 
   // Click second suggestion
   await page.getByRole("button", { name: "Weather in New York" }).click();
-  await page.waitForTimeout(2000);
+  await awaitLLMResponseDone(page);
 
   // Verify at least one weather-related element is still visible
-  const weatherElements = await page.getByText(/Weather|Humidity|Wind|Temperature/i).count();
+  const weatherElements = await page
+    .getByText(/Weather|Humidity|Wind|Temperature/i)
+    .count();
   expect(weatherElements).toBeGreaterThan(0);
+  });
 });

@@ -7,6 +7,13 @@ import com.agui.client.agent.AgentStateMutation
 import com.agui.client.agent.AgentSubscriber
 import com.agui.client.agent.AgentSubscriberParams
 import com.agui.client.agent.AgentSubscription
+import com.agui.example.chatapp.data.model.AuthMethod
+import com.agui.example.chatapp.data.model.ClawgUiPairingState
+import com.agui.example.chatapp.data.pairing.ClawgUiPairingService
+import com.agui.example.chatapp.data.pairing.createPairingHttpClient
+import com.agui.core.types.ActivityDeltaEvent
+import com.agui.core.types.ActivityMessage
+import com.agui.core.types.ActivitySnapshotEvent
 import com.agui.core.types.AssistantMessage
 import com.agui.core.types.BaseEvent
 import com.agui.core.types.DeveloperMessage
@@ -27,6 +34,15 @@ import com.agui.core.types.ToolCallEndEvent
 import com.agui.core.types.ToolCallStartEvent
 import com.agui.core.types.ToolMessage
 import com.agui.core.types.UserMessage
+import com.contextable.a2ui4k.data.DataModel
+import com.contextable.a2ui4k.model.DataChangeEvent
+import com.contextable.a2ui4k.model.UiDefinition
+import com.contextable.a2ui4k.model.UiEvent
+import com.contextable.a2ui4k.model.UserActionEvent
+import com.contextable.a2ui4k.state.SurfaceStateManager
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import com.agui.example.chatapp.data.auth.AuthManager
 import com.agui.example.chatapp.data.model.AgentConfig
 import com.agui.example.chatapp.data.repository.AgentRepository
@@ -64,7 +80,8 @@ class ChatController(
     private val settings: Settings = getPlatformSettings(),
     private val agentRepository: AgentRepository = AgentRepository.getInstance(settings),
     private val authManager: AuthManager = AuthManager(),
-    private val userIdManager: UserIdManager = UserIdManager.getInstance(settings)
+    private val userIdManager: UserIdManager = UserIdManager.getInstance(settings),
+    private val pairingService: ClawgUiPairingService = ClawgUiPairingService(::createPairingHttpClient)
 ) {
 
     private val scope = externalScope ?: MainScope()
@@ -83,6 +100,7 @@ class ChatController(
     private val streamingMessageIds = mutableSetOf<String>()
     private val supplementalMessages = linkedMapOf<String, DisplayMessage>()
     private val ephemeralMessages = mutableMapOf<EphemeralType, DisplayMessage>()
+    private val surfaceStateManager = SurfaceStateManager()
     private data class StoredMessage(var message: Message, val displayId: String)
 
     private val messageStore = mutableListOf<StoredMessage>()
@@ -107,6 +125,13 @@ class ChatController(
 
     private suspend fun connectToAgent(agentConfig: AgentConfig) {
         disconnectFromAgent()
+
+        // Check if this is a clawg-ui endpoint that needs pairing
+        if (ClawgUiPairingService.isClawgUiEndpoint(agentConfig.url) &&
+            agentConfig.authMethod is AuthMethod.None) {
+            initiateClawgUiPairing(agentConfig)
+            return
+        }
 
         try {
             val headers = agentConfig.customHeaders.toMutableMap()
@@ -169,15 +194,149 @@ class ChatController(
         messageStore.clear()
         messageIdCounts.clear()
         pendingUserMessages.clear()
+        surfaceStateManager.clear()
 
         _state.update {
             it.copy(
                 isConnected = false,
                 messages = emptyList(),
-                background = BackgroundStyle.Default
+                background = BackgroundStyle.Default,
+                a2uiSurfaces = emptyMap()
             )
         }
     }
+
+    // ========== clawg-ui Pairing Methods ==========
+
+    private suspend fun initiateClawgUiPairing(agentConfig: AgentConfig) {
+        _state.update { it.copy(clawgUiPairingState = ClawgUiPairingState.Initiating) }
+
+        pairingService.initiatePairing(agentConfig.url)
+            .onSuccess { response ->
+                val pairing = response.error.pairing!!
+                _state.update {
+                    it.copy(
+                        clawgUiPairingState = ClawgUiPairingState.PendingApproval(
+                            pairingCode = pairing.pairingCode,
+                            bearerToken = pairing.token,
+                            instructions = pairing.instructions
+                                ?: "Share the pairing code with the gateway owner.",
+                            approvalCommand = "openclaw pairing approve clawg-ui ${pairing.pairingCode}"
+                        )
+                    )
+                }
+            }
+            .onFailure { error ->
+                logger.e(error) { "Failed to initiate clawg-ui pairing" }
+                _state.update {
+                    it.copy(
+                        clawgUiPairingState = ClawgUiPairingState.Failed(
+                            error.message ?: "Failed to initiate pairing"
+                        ),
+                        error = "Pairing failed: ${error.message}"
+                    )
+                }
+            }
+    }
+
+    /**
+     * Called when user acknowledges the pairing dialog.
+     * Saves the bearer token and verifies it's approved.
+     */
+    fun completePairing() {
+        val currentPairingState = _state.value.clawgUiPairingState
+        if (currentPairingState !is ClawgUiPairingState.PendingApproval) return
+
+        val agentConfig = _state.value.activeAgent ?: return
+
+        scope.launch {
+            _state.update { it.copy(clawgUiPairingState = ClawgUiPairingState.RetryingConnection) }
+
+            // Update agent config with the bearer token
+            val updatedAgent = agentConfig.copy(
+                authMethod = AuthMethod.BearerToken(currentPairingState.bearerToken)
+            )
+            agentRepository.updateAgent(updatedAgent)
+
+            // Brief delay for persistence
+            delay(500)
+
+            // Check if token is now approved by sending a proper AG-UI request
+            pairingService.isTokenApproved(updatedAgent.url, currentPairingState.bearerToken)
+                .onSuccess { approved ->
+                    if (approved) {
+                        _state.update { it.copy(clawgUiPairingState = ClawgUiPairingState.Idle) }
+                        // Connection will proceed via activeAgent flow update from repository
+                    } else {
+                        _state.update {
+                            it.copy(clawgUiPairingState = ClawgUiPairingState.AwaitingApproval())
+                        }
+                    }
+                }
+                .onFailure { error ->
+                    logger.e(error) { "Failed to verify token approval" }
+                    _state.update {
+                        it.copy(
+                            clawgUiPairingState = ClawgUiPairingState.Failed(
+                                "Failed to verify token: ${error.message}"
+                            )
+                        )
+                    }
+                }
+        }
+    }
+
+    /**
+     * Retry connection after gateway owner approval.
+     */
+    fun retryAfterApproval() {
+        val agentConfig = _state.value.activeAgent ?: return
+
+        scope.launch {
+            _state.update { it.copy(clawgUiPairingState = ClawgUiPairingState.RetryingConnection) }
+
+            val bearerToken = when (val auth = agentConfig.authMethod) {
+                is AuthMethod.BearerToken -> auth.token
+                else -> {
+                    _state.update {
+                        it.copy(clawgUiPairingState = ClawgUiPairingState.Failed("No bearer token configured"))
+                    }
+                    return@launch
+                }
+            }
+
+            pairingService.isTokenApproved(agentConfig.url, bearerToken)
+                .onSuccess { approved ->
+                    if (approved) {
+                        _state.update { it.copy(clawgUiPairingState = ClawgUiPairingState.Idle) }
+                        connectToAgent(agentConfig)
+                    } else {
+                        _state.update {
+                            it.copy(
+                                clawgUiPairingState = ClawgUiPairingState.AwaitingApproval(
+                                    "Still awaiting approval. Ask the gateway owner to run the approval command."
+                                )
+                            )
+                        }
+                    }
+                }
+                .onFailure { error ->
+                    logger.e(error) { "Failed to retry connection" }
+                    _state.update {
+                        it.copy(clawgUiPairingState = ClawgUiPairingState.Failed(error.message ?: "Retry failed"))
+                    }
+                }
+        }
+    }
+
+    /**
+     * Dismiss the pairing dialog without completing.
+     */
+    fun dismissPairing() {
+        _state.update { it.copy(clawgUiPairingState = ClawgUiPairingState.Idle) }
+    }
+
+    // ========== End clawg-ui Pairing Methods ==========
 
     fun sendMessage(content: String) {
         if (content.isBlank() || currentAgent == null || controllerClosed.value) return
@@ -195,19 +354,101 @@ class ChatController(
         startConversation(trimmed)
     }
 
+    /**
+     * Send an A2UI user action event back to the agent.
+     * This is called when users interact with A2UI surfaces (button clicks, form submissions, etc.).
+     *
+     * ## Protocol Layers (A2UI → AG-UI → A2A)
+     *
+     * This implementation bridges three protocol layers:
+     *
+     * 1. **A2UI Spec** - Defines UI events with `name` field for action identification
+     * 2. **AG-UI** - Uses `forwardedProps` to pass A2UI events through the transport layer
+     * 3. **A2A (Agent-to-Agent)** - The `@ag-ui/a2a` integration converts `forwardedProps.a2uiAction`
+     *    into an A2A DataPart with `mimeType: "application/json+a2ui"`
+     *
+     * ## A2UI ClientEvent Format (per spec)
+     * ```json
+     * {
+     *   "name": "action_name",
+     *   "surfaceId": "default",
+     *   "sourceComponentId": "component-id:item1",
+     *   "timestamp": "2025-12-17T02:00:23.936Z",
+     *   "context": { ... }
+     * }
+     * ```
+     *
+     * ## Known Deviations from A2UI Spec
+     *
+     * 1. **`forwardedProps`** - AG-UI specific mechanism, not part of A2UI or A2A specs.
+     *    The AG-UI A2A integration (`@ag-ui/a2a`) extracts `a2uiAction` from `forwardedProps`
+     *    and creates an A2A DataPart. See: `ag-ui/integrations/a2a/typescript/src/agent.ts`
+     *
+     * 2. **`actionName` vs `name`** - The A2UI spec uses `name`, but CopilotKit's
+     *    `@copilotkit/a2ui-renderer` transforms `action.name` to `actionName` when
+     *    calling its onAction callback. Some demo backends (e.g., `CopilotKit/with-a2a-a2ui`)
+     *    expect `actionName`. We send both for compatibility.
+     *    See: `@copilotkit/a2ui-renderer/dist/A2UIViewer.js` line 97-98
+     */
+    fun sendA2UiAction(event: UiEvent) {
+        // Per A2UI protocol: DataChangeEvent only updates local state (already done by the widget).
+        // Only UserActionEvent (e.g., button clicks) should be sent to the server.
+        if (event !is UserActionEvent) return
+        if (currentAgent == null || controllerClosed.value) return
+
+        // Build forwardedProps with A2UI ClientEvent at root
+        // NOTE: forwardedProps is AG-UI specific. The @ag-ui/a2a integration extracts
+        // a2uiAction and converts it to an A2A DataPart with mimeType "application/json+a2ui"
+        val forwardedProps = buildJsonObject {
+            put("a2uiAction", buildJsonObject {
+                put("userAction", buildJsonObject {
+                    // A2UI spec field
+                    put("name", event.name)
+                    // WORKAROUND: CopilotKit's a2ui-renderer transforms "name" to "actionName".
+                    // Some demo apps expect "actionName" instead of the spec's "name".
+                    // See: @copilotkit/a2ui-renderer/dist/A2UIViewer.js:97-98
+                    put("actionName", event.name)
+                    put("surfaceId", event.surfaceId)
+                    put("sourceComponentId", event.sourceComponentId)
+                    put("timestamp", event.timestamp)
+                    event.context?.let { put("context", it) }
+                })
+            })
+        }
+
+        // Send as an action message with forwardedProps
+        startConversationWithForwardedProps("[A2UI Action]", forwardedProps)
+    }
+
     private fun startConversation(content: String) {
+        startConversationWithForwardedProps(content, null)
+    }
+
+    private fun startConversationWithForwardedProps(content: String, forwardedProps: JsonElement?) {
         currentJob?.cancel()
 
         currentJob = scope.launch {
             _state.update { it.copy(isLoading = true) }
 
             try {
-                currentAgent?.sendMessage(
-                    message = content,
-                    threadId = currentThreadId ?: "default"
-                )?.collect { event ->
+                val eventFlow = if (forwardedProps != null) {
+                    currentAgent?.sendMessageWithForwardedProps(
+                        message = content,
+                        threadId = currentThreadId ?: "default",
+                        forwardedProps = forwardedProps
+                    )
+                } else {
+                    currentAgent?.sendMessage(
+                        message = content,
+                        threadId = currentThreadId ?: "default"
+                    )
+                }
+                eventFlow?.collect { event ->
                     logger.d { "Received event: ${event::class.simpleName}" }
                 }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                // Cancellation is expected when starting a new request - don't show as error
+                logger.d { "Request cancelled" }
             } catch (e: Exception) {
                 logger.e(e) { "Error running agent" }
                 addSupplementalMessage(
@@ -296,13 +537,16 @@ class ChatController(
             content = formatAssistantContent(this),
             isStreaming = streamingMessageIds.contains(id)
         )
-        is UserMessage -> DisplayMessage(
+        is UserMessage -> if (content == "[A2UI Action]") null else DisplayMessage(
             id = id,
             role = MessageRole.USER,
             content = content,
             isStreaming = streamingMessageIds.contains(id)
         )
         is ToolMessage -> null
+        // ActivityMessage doesn't produce a DisplayMessage - A2UI surfaces are
+        // rendered separately from ChatState.a2uiSurfaces
+        is ActivityMessage -> null
     }
 
     private fun formatAssistantContent(message: AssistantMessage): String =
@@ -469,6 +713,18 @@ class ChatController(
             }
             is RunFinishedEvent -> clearAllEphemeralMessages()
             is StateDeltaEvent, is StateSnapshotEvent -> Unit
+            is ActivitySnapshotEvent -> {
+                if (event.activityType == "a2ui-surface") {
+                    surfaceStateManager.processSnapshot(event.messageId, event.content)
+                    updateA2UiSurfaces()
+                }
+            }
+            is ActivityDeltaEvent -> {
+                if (event.activityType == "a2ui-surface") {
+                    surfaceStateManager.processDelta(event.messageId, event.patch)
+                    updateA2UiSurfaces()
+                }
+            }
             else -> Unit
         }
         if (needsRefresh) {
@@ -495,6 +751,19 @@ class ChatController(
             it.copy(messages = supplemental + conversation + pending + ephemerals)
         }
     }
+
+    private fun updateA2UiSurfaces() {
+        val surfaces = surfaceStateManager.getSurfaces()
+        val dataModels = surfaces.keys.mapNotNull { surfaceId ->
+            surfaceStateManager.getDataModel(surfaceId)?.let { surfaceId to it }
+        }.toMap()
+        _state.update { it.copy(a2uiSurfaces = surfaces, a2uiDataModels = dataModels) }
+    }
+
+    /**
+     * Returns the data model for a specific A2UI surface.
+     */
+    fun getA2UiDataModel(surfaceId: String) = surfaceStateManager.getDataModel(surfaceId)
 
     private inner class ControllerAgentSubscriber : AgentSubscriber {
         override suspend fun onRunInitialized(params: AgentSubscriberParams): AgentStateMutation? {
@@ -536,7 +805,10 @@ data class ChatState(
     val isLoading: Boolean = false,
     val isConnected: Boolean = false,
     val error: String? = null,
-    val background: BackgroundStyle = BackgroundStyle.Default
+    val background: BackgroundStyle = BackgroundStyle.Default,
+    val a2uiSurfaces: Map<String, UiDefinition> = emptyMap(),
+    val a2uiDataModels: Map<String, DataModel> = emptyMap(),
+    val clawgUiPairingState: ClawgUiPairingState = ClawgUiPairingState.Idle
 )
 
 /** Classic chat roles shown in the UI layers. */
@@ -557,5 +829,6 @@ data class DisplayMessage(
     val timestamp: Long = Clock.System.now().toEpochMilliseconds(),
     val isStreaming: Boolean = false,
     val ephemeralGroupId: String? = null,
-    val ephemeralType: EphemeralType? = null
+    val ephemeralType: EphemeralType? = null,
+    val surfaceId: String? = null
 )

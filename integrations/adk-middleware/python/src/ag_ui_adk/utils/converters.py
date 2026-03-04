@@ -2,18 +2,122 @@
 
 """Conversion utilities between AG-UI and ADK formats."""
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple, Union
 import json
+import base64
+import binascii
 import logging
 
 from ag_ui.core import (
     Message, UserMessage, AssistantMessage, SystemMessage, ToolMessage,
-    ToolCall, FunctionCall, TextInputContent, BinaryInputContent
+    ToolCall, FunctionCall, TextInputContent, BinaryInputContent, InputContent
 )
 from google.adk.events import Event as ADKEvent
 from google.genai import types
 
 logger = logging.getLogger(__name__)
+
+def _get_text_value(item: Union[dict, TextInputContent]) -> Optional[str]:
+    """Get text value from dict or TextInputContent."""
+    if isinstance(item, TextInputContent):
+        return item.text
+    else:
+        return item.get("text")
+
+def _get_binary_attributes(item: Union[dict, BinaryInputContent]) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """Get binary attributes (data, mime_type, url, id) from dict or BinaryInputContent."""
+    if isinstance(item, BinaryInputContent):
+        return (
+            item.data,
+            item.mime_type,
+            item.url,
+            item.id,
+        )
+    else:
+        return (
+            item.get("data"),
+            item.get("mimeType") or item.get("mime_type"),
+            item.get("url"),
+            item.get("id")
+        )
+
+def _to_binary_part(data: Optional[str], mime_type: Optional[str], url: Optional[str], binary_id: Optional[str]) -> Optional[types.Part]:
+    """Create a types.Part from binary data."""
+    # currently, only data is supported
+    if not data:
+        logger.warning(
+            "BinaryInputContent: data is required; ignoring item without data."
+        )
+        return None
+    
+    if url or binary_id:
+        logger.warning(
+            "BinaryInputContent: only data is supported; ignoring url/id fields."
+        )
+        return None
+
+    if not mime_type:
+        logger.warning("BinaryInputContent: missing mimeType; ignoring.")
+        return None
+
+    try:
+        decoded = base64.b64decode(data, validate=True)
+        return types.Part(
+            inline_data=types.Blob(
+                mime_type=mime_type,
+                data=decoded,
+            )
+        )
+    except (binascii.Error, ValueError) as e:
+        logger.warning("Failed to base64 decode BinaryInputContent.data: %s", e)
+        return None
+
+def _to_text_part(text: Optional[str]) -> Optional[types.Part]:
+    """Create a types.Part from text."""
+    if not text:
+        return None
+    return types.Part(text=text)
+
+def _is_text_content(item: Union[dict, InputContent]) -> bool:
+    is_text_dict = isinstance(item, dict) and item.get("type") == "text"
+    is_text_input_content = isinstance(item, TextInputContent)
+    return is_text_dict or is_text_input_content
+
+def _is_binary_content(item: Union[dict, InputContent]) -> bool:
+    is_binary_dict = isinstance(item, dict) and item.get("type") == "binary"
+    is_binary_input_content = isinstance(item, BinaryInputContent)
+    return is_binary_dict or is_binary_input_content
+
+def convert_message_content_to_parts(content: Optional[Union[str, List[Any]]]) -> List[types.Part]:
+    """Convert AG-UI message content into google.genai types.Part list.
+
+    Supports:
+    - str -> [Part(text=...)]
+    - List[InputContent] -> text parts + binary parts (inline_data only; data/base64 only)
+    - List[dict] -> dict-shaped text/binary items (data/base64 only)
+    """
+    if content is None:
+        return []
+
+    if isinstance(content, str):
+        return [types.Part(text=content)] if content else []
+
+    parts: List[types.Part] = []
+    for item in content:
+        if _is_text_content(item):
+            text_value = _get_text_value(item)
+            part = _to_text_part(text_value)
+            if part:
+                parts.append(part)
+        elif _is_binary_content(item):
+            data, mime_type, url, binary_id = _get_binary_attributes(item)
+            part = _to_binary_part(data, mime_type, url, binary_id)
+            if part:
+                parts.append(part)
+        else:
+            item_type_name = item.get("type") if isinstance(item, dict) else type(item).__name__
+            logger.debug("Ignoring unknown multimodal content item: %s", item_type_name)
+    return parts
 
 
 def convert_ag_ui_messages_to_adk(messages: List[Message]) -> List[ADKEvent]:
@@ -38,11 +142,11 @@ def convert_ag_ui_messages_to_adk(messages: List[Message]) -> List[ADKEvent]:
             
             # Convert content based on message type
             if isinstance(message, (UserMessage, SystemMessage)):
-                flattened_content = flatten_message_content(message.content)
-                if flattened_content:
+                parts = convert_message_content_to_parts(message.content)
+                if parts:
                     event.content = types.Content(
                         role=message.role,
-                        parts=[types.Part(text=flattened_content)]
+                        parts=parts
                     )
 
             elif isinstance(message, AssistantMessage):
@@ -50,7 +154,7 @@ def convert_ag_ui_messages_to_adk(messages: List[Message]) -> List[ADKEvent]:
 
                 # Add text content if present
                 if message.content:
-                    parts.append(types.Part(text=flatten_message_content(message.content)))
+                    parts.extend(convert_message_content_to_parts(message.content))
                 
                 # Add tool calls if present
                 if message.tool_calls:

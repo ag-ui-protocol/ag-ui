@@ -1,4 +1,4 @@
-import { AssistantGraph, Message as LangGraphMessage, } from "@langchain/langgraph-sdk";
+import { AssistantGraph, Message as LangGraphMessage } from "@langchain/langgraph-sdk";
 import { MessageType } from "@langchain/core/messages";
 import { RunAgentInput } from "@ag-ui/core";
 
@@ -50,9 +50,11 @@ export type MessageInProgress = {
   toolCallName?: string | null;
 };
 
-export type ThinkingInProgress = {
+export type ReasoningInProgress = {
   index: number;
   type?: LangGraphReasoning['type'];
+  messageId: string;
+  signature?: string;
 }
 
 export interface RunMetadata {
@@ -65,6 +67,8 @@ export interface RunMetadata {
   threadId?: string;
   graphInfo?: AssistantGraph
   hasFunctionStreaming?: boolean;
+  // True once the platform-assigned run id is known (set from stream metadata)
+  serverRunIdKnown?: boolean;
 }
 
 export type MessagesInProgressRecord = Record<string, MessageInProgress | null>;
@@ -122,5 +126,6 @@ export interface PredictStateTool {
 export interface LangGraphReasoning {
   type: 'text';
   text: string;
-  index: number
+  index: number;
+  signature?: string;
 }

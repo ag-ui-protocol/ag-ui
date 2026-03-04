@@ -7,6 +7,258 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **FIX**: Remap LRO tool-call IDs across SSE streaming partial/final events (#1168)
+  - ADK's `populate_client_function_call_id()` generates different UUIDs for the same function call across partial and final SSE streaming events, breaking HITL workflows
+  - `EventTranslator` now tracks emitted IDs per tool name (`lro_emitted_ids_by_name`) during `translate_lro_function_calls()`
+  - When the non-partial event arrives, `_extract_lro_id_remap()` builds a client-ID → persisted-ID mapping
+  - Remap is stored in session state (`lro_tool_call_id_remap`) so it survives across HTTP requests
+  - `FunctionResponse` construction applies the remap transparently — clients continue using their original IDs
+
+## [0.5.0] - 2026-02-16
+
+### Added
+
+- **NEW**: Streaming function call arguments support for Gemini 3+ models via Vertex AI (#822)
+  - Enables real-time streaming of `TOOL_CALL_ARGS` events as the model generates function call arguments incrementally
+  - Activated via `streaming_function_call_arguments=True` on `ADKAgent` / `ADKAgent.from_app()`
+  - Requires `google-adk >= 1.24.0` (version-gated; emits a warning and disables on older versions)
+  - Requires `stream_function_call_arguments=True` in the model's `GenerateContentConfig` and SSE streaming mode
+  - JSON deltas are emitted as concatenable fragments: clients join all `TOOL_CALL_ARGS.delta` values to reconstruct the complete arguments JSON
+  - Integrates with predictive state updates: `PredictState` CustomEvents are emitted before `TOOL_CALL_START` for configured tools
+  - New `stream_tool_call` field on `PredictStateMapping` defers `TOOL_CALL_END` for LRO/HITL workflows
+  - Final aggregated (non-partial) events are automatically suppressed to prevent duplicate tool call emissions
+  - Confirmed function call IDs are remapped to the streaming ID so `TOOL_CALL_RESULT` uses a consistent ID
+  - No upstream monkey-patches or workarounds required (google/adk-python#4311 is fixed in ADK 1.24.0)
+
+### Deprecated
+
+- **DEPRECATED**: Non-resumable (fire-and-forget) HITL flow via `ADKAgent(adk_agent=...)` with client-side tools
+  - A `DeprecationWarning` is now emitted at runtime when the old-style HITL early-return path is triggered
+  - Use `ADKAgent.from_app()` with `ResumabilityConfig(is_resumable=True)` for human-in-the-loop workflows
+  - The direct constructor remains fully supported for agents without client-side tools (chat-only, backend-tool-only)
+  - See [USAGE.md](./USAGE.md#migrating-to-resumable-hitl) for migration instructions
+
+### Breaking Changes
+
+- **BREAKING**: AG-UI client tools are no longer automatically included in the root agent's toolset (#903)
+  - You must now explicitly add `AGUIToolset` to your agent's tools list to access AG-UI client tools
+  - Tool name conflicts are no longer automatically resolved by removing AG-UI tools
+  - New `AGUIToolset` class provides explicit control over tool inclusion with `tool_filter` and `tool_name_prefix` parameters
+  - This change enables proper support for Orchestrator-style ADK agents where sub-agents need access to client tools
+  - **See the [Migration Guide](./README.md#migrating-from-v04x) in README.md for upgrade instructions**
+  - Huge thanks to **@jplikesbikes** for this contribution!
+
+### Security
+
+- Upgrade vulnerable transitive dependencies: aiohttp (3.13.3), urllib3 (2.6.3), authlib (1.6.6), pyasn1 (0.6.2), mcp (1.25.0), fastapi (0.128.0), starlette (0.49.3)
+
+### Fixed
+
+- **FIXED**: Thought parts separated from text in message history (#1110, #1118, #1124)
+  - `adk_events_to_messages()` was concatenating thought parts (Part.thought=True) with regular text into a single AssistantMessage.content string, causing internal model reasoning to leak into the visible chat when users reloaded sessions
+  - Thought parts are now emitted as ReasoningMessage (role="reasoning") before the AssistantMessage, matching the live streaming behavior where THINKING_* events are already separated from TEXT_MESSAGE events
+  - Thanks to **@lakshminarasimmanv** for identifying and fixing this issue!
+- **FIXED**: Duplicate function_response events when using LongRunningFunctionTool (#1074, #1075)
+  - Eliminated duplicate function_response events that were persisted to session database with different invocation_ids
+  - Fix works for all agent types (simple LlmAgent and composite SequentialAgent/LoopAgent)
+  - Maintains correct invocation_id from client's run_id for DatabaseSessionService compatibility
+  - Preserves HITL resumption functionality for composite agents
+  - Supports stateless client patterns that re-send full message history
+  - Thanks to **@bajayo** for identifying the issue, providing comprehensive tests (529 lines!), and implementing the initial fix
+  - Regression fix ensures compatibility across all agent types and usage patterns
+
+- **FIXED**: Invocation ID handling for HITL resumption with composite agents (#1080)
+  - Fixed "No agent to transfer to" errors when resuming after HITL pauses by conditionally passing `invocation_id` based on root agent type
+  - Composite orchestrators (SequentialAgent, LoopAgent) now correctly receive `invocation_id` in `run_async()` to restore internal state on HITL resumption
+  - Standalone LlmAgents and LlmAgents with transfer targets no longer receive `invocation_id`, preventing ValueError in `_get_subagent_to_resume()`
+  - Deferred `invocation_id` storage to post-run lifecycle to avoid stale session errors with DatabaseSessionService
+  - Tool result submissions with trailing user messages now work correctly without causing ADK resumption errors
+  - Thanks to **@lakshminarasimmanv** for this comprehensive fix!
+- **FIXED**: Reload session on cache miss to populate events (#1021)
+  - `_find_session_by_thread_id()` uses `list_sessions()` which returns metadata only; now reloads via `get_session()` after a cache miss so that session events are available
+  - Thanks to **@lakshminarasimmanv** for this fix!
+- **FIXED**: Duplicate TOOL_CALL event emission for client-side tools with ResumabilityConfig
+  - With `ResumabilityConfig(is_resumable=True)`, ADK emits the same function call from up to
+    three sources (LRO event, confirmed event with a different ID, and ClientProxyTool execution),
+    causing the frontend to render tool call results (e.g., HITL task lists) multiple times
+  - EventTranslator now accepts `client_tool_names` to skip emission for tools owned by
+    `ClientProxyTool`, letting the proxy be the sole emitter for client-side tools
+  - Bidirectional ID tracking between EventTranslator and ClientProxyTool prevents duplicates
+    regardless of execution order
+  - Added 12 regression tests covering LRO, confirmed, partial, and mixed tool call scenarios
+- **FIXED**: Relax Python version constraint to allow Python 3.14 (#973)
+  - Changed `requires-python` from `>=3.9, <3.14` to `>=3.10, <3.15`
+  - Fixed `asyncio.get_event_loop()` deprecation in tests for Python 3.14 compatibility
+  - Added `asyncio.timeout` compatibility shim for Python 3.10 in tests
+- **FIXED**: LRO tool call events now emitted for resumable agents on all ADK versions
+  - Previously, `_is_adk_resumable()` skipped `translate_lro_function_calls` entirely, expecting client_proxy_tool to emit events — this didn't work on ADK < 1.22.0
+  - Now always emits TOOL_CALL_START/ARGS/END for LRO tools; only the early loop exit is gated on non-resumable agents
+- **FIXED**: Stale `pending_tool_calls` no longer block session cleanup after middleware restart (#1051)
+  - When a middleware instance restarts, the in-memory `_session_lookup_cache` is lost but `pending_tool_calls` persists in the database, causing sessions to accumulate indefinitely
+  - Now clears `pending_tool_calls` when resuming a session after a cache miss (indicating middleware restart or failover)
+  - **Note**: This fix assumes sticky sessions (session affinity) are configured at the load balancer level for multi-pod deployments with `DatabaseSessionService`. Without sticky sessions, cache misses are frequent and could prematurely clear valid pending tool calls from active HITL workflows.
+  - Thanks to **@lakshminarasimmanv** for identifying and fixing this issue!
+- **FIXED**: Agent events not persisted to session with `LongRunningFunctionTool` in SSE streaming mode (#1059)
+  - With SSE streaming enabled (default), ADK yields `partial=True` events (not persisted) then `partial=False` events (persisted)
+  - Previously, the middleware returned early when detecting LRO tools, abandoning the runner's async generator before the final non-partial event was consumed, causing ADK to never persist the agent's response
+  - Now continues consuming events until a non-partial event is received, allowing ADK's natural persistence mechanism to complete
+  - Thanks to **@bajayo** for reporting and fixing this issue!
+
+## [0.4.2] - 2026-01-22
+
+### Added
+- **NEW**: Native support for `RunAgentInput.context` in ADK agents (#959)
+  - Context from AG-UI is automatically stored in session state under `_ag_ui_context` key
+  - Accessible in tools via `tool_context.state.get(CONTEXT_STATE_KEY, [])`
+  - Accessible in instruction providers via `ctx.state.get(CONTEXT_STATE_KEY, [])`
+  - For ADK 1.22.0+, context is also available via `RunConfig.custom_metadata['ag_ui_context']`
+  - Follows the pattern established by LangGraph's context handling for cross-framework consistency
+  - `CONTEXT_STATE_KEY` constant exported from package for easy access
+  - See `examples/other/context_usage.py` for usage examples
+- **NEW**: Convert Gemini thought summaries to AG-UI THINKING events (#951)
+  - When using `ThinkingConfig(include_thoughts=True)` with Gemini 2.5+ models, thought summaries are now emitted as THINKING events
+  - Backwards-compatible: gracefully degrades on older google-genai SDK versions without the `part.thought` attribute
+  - No dependency version bumps required - works with existing `google-adk>=1.14.0`
+  - Emits proper event sequence: `THINKING_START` → `THINKING_TEXT_MESSAGE_START/CONTENT/END` → `THINKING_END`
+  - Thinking streams are properly closed when transitioning to regular text output
+- **NEW**: Fine-grained session cleanup configuration via `delete_session_on_cleanup` and `save_session_to_memory_on_cleanup` parameters (#927)
+  - Splits the previous `auto_cleanup` behavior into two independent controls
+  - `delete_session_on_cleanup`: Controls whether sessions are deleted from ADK SessionService during cleanup (default: `True`)
+  - `save_session_to_memory_on_cleanup`: Controls whether sessions are saved to MemoryService before cleanup (default: `True`)
+  - Sessions with `pending_tool_calls` are preserved even when `delete_session_on_cleanup=True`
+  - Parameters exposed on `ADKAgent` constructor and `ADKAgent.from_app()` classmethod
+  - Thanks to @jplikesbikes for the contribution
+- **NEW**: Flexible request state extraction in FastAPI endpoints (#925)
+  - Added `extract_state` parameter to `add_adk_fastapi_endpoint()` and `create_adk_app()` for custom state extraction from requests
+  - Enables extraction of request attributes beyond just headers (e.g., cookies, query params, authentication info)
+  - `extract_headers` parameter has been marked for deprecation in favor of `extract_state`
+  - Thanks to @jplikesbikes for the contribution
+- **NEW**: `add_adk_fastapi_endpoint()` now accepts both `FastAPI` and `APIRouter` objects (#932)
+  - Enables better organization of large FastAPI codebases by allowing routes to be added to APIRouters
+  - The `app` parameter now accepts `FastAPI | APIRouter` types
+  - Note: Using APIRouter may result in different validation error response codes (500 instead of 422 in some edge cases)
+  - Thanks to @jplikesbikes for the contribution
+
+### Fixed
+- **FIXED**: Duplicate `TOOL_CALL_START` events with google-adk >= 1.22.0 (issue #968)
+  - google-adk 1.22.0 enables `PROGRESSIVE_SSE_STREAMING` by default, which sends function call "previews" in partial events
+  - The middleware now skips function calls from `partial=True` events, only processing confirmed calls (`partial=False`)
+  - Backwards-compatible: uses `getattr(adk_event, 'partial', False)` for older google-adk versions without the attribute
+- **FIXED**: `DatabaseSessionService` compatibility for HITL (human-in-the-loop) tool workflows (issue #957)
+  - Added `invocation_id` to FunctionResponse events - required by `DatabaseSessionService` for event tracking
+  - Session is now refreshed after `update_session_state` to prevent "stale session" errors from optimistic locking
+  - Both code paths (tool results with user message, and tool results only) now properly persist events
+  - Thanks to @lakshminarasimmanv for the contribution
+- **FIXED**: Text message events not emitted when non-streaming response includes client function call (issue #906)
+  - In non-streaming mode, when an ADK event contained both text and an LRO (long-running) tool call, text was skipped entirely
+  - Added `translate_text_only()` method to EventTranslator to handle text extraction for LRO events
+  - Modified LRO routing in ADKAgent to emit TEXT_MESSAGE events before TOOL_CALL events
+- **FIXED**: `adk_events_to_messages()` not converting assistant messages from DatabaseSessionService (issue #905)
+  - ADK agents set `author` to the agent's name (e.g., "my_agent"), not "model"
+  - Previous check for `author == "model"` caused assistant messages to be silently dropped
+  - Now treats any non-"user" author as an assistant message
+
+## [0.4.1] - 2026-01-06
+
+### Added
+- **NEW**: Multimodal message support for user messages with inline base64-encoded binary data (#864)
+  - `convert_message_content_to_parts()` function converts AG-UI `TextInputContent` and `BinaryInputContent` to ADK `types.Part` objects
+  - Supports `image/png`, `image/jpeg`, and other MIME types via `inline_data` with base64-decoded bytes
+  - Gracefully ignores unsupported binary content (URL-only, id-only references) with warnings
+  - Invalid base64 data is logged and skipped without crashing
+- **NEW**: Integration tests for multimodal input handling (`test_from_app_with_valid_mime_type`, `test_from_app_with_unsupported_mime_type`)
+- **NEW**: Unit tests for multimodal content conversion in `test_utils_converters.py`
+- **NEW**: `ADKAgent.from_app()` classmethod for creating agents from ADK App instances (#844)
+  - Enables access to App-level features: plugins, resumability, context caching, events compaction
+  - Creates per-request App copies with modified agents using `model_copy()` to preserve all configs
+  - Includes `plugin_close_timeout` parameter (requires ADK 1.19+, silently ignored on older versions)
+  - Runtime detection of ADK version capabilities for forward compatibility
+- **NEW**: Integration tests for `from_app()` functionality (`test_from_app_integration.py`)
+- **DOCUMENTATION**: Added "Using App for Full ADK Features" section to USAGE.md
+
+### Changed
+- **IMPROVED**: Message content conversion now uses `convert_message_content_to_parts()` for multimodal support in `_convert_latest_user_message()` and `convert_ag_ui_messages_to_adk()`
+
+### Fixed
+- **FIXED**: Thread ID to Session ID mapping for VertexAI session services (#870)
+  - AG-UI `thread_id` is now transparently mapped to ADK `session_id` (which may differ, e.g., VertexAI generates numeric IDs)
+  - Backend session IDs never leak to frontend AG-UI events - all events use the original `thread_id`
+  - Session state stores metadata (`_ag_ui_thread_id`, `_ag_ui_app_name`, `_ag_ui_user_id`) for recovery after middleware restarts
+  - `/agents/state` endpoint now accepts optional `appName` and `userId` parameters for explicit session lookup
+  - Processed message tracking now uses `thread_id` as key for consistency
+
+## [0.4.0] - 2025-12-14
+
+### Added
+- **NEW**: Message history retrieval via `adk_events_to_messages()` function to convert ADK session events to AG-UI messages (#640)
+- **NEW**: `emit_messages_snapshot` flag on ADKAgent for optional MESSAGES_SNAPSHOT emission at run end (default: false)
+- **NEW**: Experimental `/agents/state` POST endpoint for on-demand thread state and message history retrieval (#640)
+- **NEW**: HTTP header extraction support in FastAPI endpoint via `extract_headers` parameter (#740)
+- **NEW**: Predictive state updates support for ADK middleware
+- **NEW**: Agentic generative UI agent example (`agentic_generative_ui`)
+- **NEW**: Comprehensive live server integration tests using uvicorn
+
+### Fixed
+- **FIXED**: Client-side tool results now persist to ADK session database for proper history tracking
+- **FIXED**: Improved duplicate detection for Claude and accumulated text streams
+- **FIXED**: Historical tool results no longer re-processed on replay
+- **FIXED**: Skip consolidated text during streaming to prevent duplicates (issue #742)
+- **FIXED**: Route `skip_summarization` events through `translate()` for proper ToolCallResult emission (issue #765)
+- **FIXED**: Emit final text response after backend tool completion
+- **FIXED**: Filter synthetic `confirm_changes` tool results in ADK middleware
+- **FIXED**: Improved event handling and HITL tool processing
+- **FIXED**: Prevent duplicate tool calls when processing tool results
+- **FIXED**: Multi-turn conversation failure with None user_message (issue #769)
+- **FIXED**: Filter empty text events to prevent frontend crash
+
+### Enhanced
+- **TESTING**: Added multi-turn conversation tests (issue #769)
+- **TESTING**: Added comprehensive tests for message history features including live server tests
+- **DOCUMENTATION**: Document thread_id to session_id mapping and initial state handling
+
+## [0.3.6] - 2025-11-20
+
+### Fixed
+- Version bump for PyPI publishing
+
+## [0.3.5] - 2025-11-18
+
+### Fixed
+- Multi-turn conversation failure with None user_message (issue #769)
+
+## [0.3.4] - 2025-11-15
+
+### Fixed
+- Event handling and HITL tool processing improvements
+- Duplicate tool call prevention when processing tool results
+
+## [0.3.3] - 2025-11-14
+
+### Added
+- **Transcript tracking**: ADKAgent now replays unseen transcript messages sequentially and keeps per-session ledgers of processed message IDs so system/user/assistant content is never dropped when HITL tool results arrive out of order.
+- **Tool result validation**: Tool result batches are now checked against pending tool call IDs before being forwarded, and skipped batches are marked processed to prevent repeated replays.
+- **State snapshots**: EventTranslator surfaces ADK `state_snapshot` payloads as AG-UI `StateSnapshotEvent`s so clients receive full session dumps alongside deltas.
+
+### Changed
+- **Message conversion**: `flatten_message_content()` now flattens `TextInputContent`/`BinaryInputContent` payloads before building ADK `Content` objects, allowing complex UI messages to flow through unchanged.
+- **Protocol dependency**: Minimum `ag-ui-protocol` version was bumped to `0.1.10` to align with the new event surface area.
+- **Noise reduction**: Removed verbose diagnostic logging around event translation and stream handling while adding duplicate tool call detection to keep logs actionable.
+
+### Fixed
+- **Tool flows**: Guarding tool batches that have no matching pending tool calls eliminates spurious run errors and keeps processed message IDs consistent; regression tests cover combined tool-result/user-message submissions and state snapshot passthrough.
+
+---
+
+## Historical Releases (from previous repository)
+
+> **Note**: The releases below were versioned when this code resided in a separate repository.
+> Version numbers were reset when the code was integrated into the ag-ui-protocol monorepo.
+> These entries are preserved for historical reference.
+
+---
+
 ## [0.6.0] - 2025-08-07
 
 ### Changed
@@ -154,6 +406,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ENHANCED**: Improved JSON parsing error handling with detailed error information including line/column numbers
 - **ENHANCED**: More specific error codes for better debugging and error reporting
 - **ENHANCED**: Better error messages in tool result processing with specific failure reasons
+
+## [0.3.3] - 2025-11-14
+
+### Added
+- **Transcript tracking**: ADKAgent now replays unseen transcript messages sequentially and keeps per-session ledgers of processed message IDs so system/user/assistant content is never dropped when HITL tool results arrive out of order.
+- **Tool result validation**: Tool result batches are now checked against pending tool call IDs before being forwarded, and skipped batches are marked processed to prevent repeated replays.
+- **State snapshots**: EventTranslator surfaces ADK `state_snapshot` payloads as AG-UI `StateSnapshotEvent`s so clients receive full session dumps alongside deltas.
+
+### Changed
+- **Message conversion**: `flatten_message_content()` now flattens `TextInputContent`/`BinaryInputContent` payloads before building ADK `Content` objects, allowing complex UI messages to flow through unchanged.
+- **Protocol dependency**: Minimum `ag-ui-protocol` version was bumped to `0.1.10` to align with the new event surface area.
+- **Noise reduction**: Removed verbose diagnostic logging around event translation and stream handling while adding duplicate tool call detection to keep logs actionable.
+
+### Fixed
+- **Tool flows**: Guarding tool batches that have no matching pending tool calls eliminates spurious run errors and keeps processed message IDs consistent; regression tests cover combined tool-result/user-message submissions and state snapshot passthrough.
 
 ## [0.3.2] - 2025-07-08
 

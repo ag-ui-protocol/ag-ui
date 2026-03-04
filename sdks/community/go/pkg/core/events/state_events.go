@@ -3,6 +3,8 @@ package events
 import (
 	"encoding/json"
 	"fmt"
+
+	coretypes "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/types"
 )
 
 // validJSONPatchOps contains the valid JSON Patch operations for efficient lookup
@@ -14,6 +16,15 @@ var validJSONPatchOps = map[string]bool{
 	"copy":    true,
 	"test":    true,
 }
+
+// RoleActivity is the role for activity messages
+const RoleActivity = "activity"
+
+type Message = coretypes.Message
+
+type ToolCall = coretypes.ToolCall
+
+type Function = coretypes.FunctionCall
 
 // StateSnapshotEvent contains a complete snapshot of the state
 type StateSnapshotEvent struct {
@@ -119,29 +130,6 @@ func (e *StateDeltaEvent) ToJSON() ([]byte, error) {
 	return json.Marshal(e)
 }
 
-// Message represents a message in the conversation
-type Message struct {
-	ID         string     `json:"id"`
-	Role       string     `json:"role"`
-	Content    *string    `json:"content,omitempty"`
-	Name       *string    `json:"name,omitempty"`
-	ToolCalls  []ToolCall `json:"toolCalls,omitempty"`
-	ToolCallID *string    `json:"toolCallId,omitempty"`
-}
-
-// ToolCall represents a tool call within a message
-type ToolCall struct {
-	ID       string   `json:"id"`
-	Type     string   `json:"type"`
-	Function Function `json:"function"`
-}
-
-// Function represents a function call
-type Function struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
-
 // MessagesSnapshotEvent contains a snapshot of all messages
 type MessagesSnapshotEvent struct {
 	*BaseEvent
@@ -180,6 +168,60 @@ func validateMessage(msg Message) error {
 
 	if msg.Role == "" {
 		return fmt.Errorf("message role field is required")
+	}
+
+	if msg.ActivityType != "" && msg.Role != coretypes.RoleActivity {
+		return fmt.Errorf("activityType is only valid for activity messages")
+	}
+
+	switch msg.Role {
+	case coretypes.RoleDeveloper, coretypes.RoleSystem:
+		if _, ok := msg.ContentString(); !ok {
+			return fmt.Errorf("content field must be a string for %s messages", msg.Role)
+		}
+	case coretypes.RoleAssistant:
+		if msg.Content != nil {
+			if _, ok := msg.ContentString(); !ok {
+				return fmt.Errorf("content field must be a string for assistant messages")
+			}
+		}
+	case coretypes.RoleUser:
+		if _, ok := msg.ContentString(); ok {
+			break
+		}
+		if _, ok := msg.ContentInputContents(); ok {
+			break
+		}
+		return fmt.Errorf("content field must be a string or input content array for user messages")
+	case coretypes.RoleTool:
+		if _, ok := msg.ContentString(); !ok {
+			return fmt.Errorf("content field must be a string for tool messages")
+		}
+		if msg.ToolCallID == "" {
+			return fmt.Errorf("toolCallId field is required for tool messages")
+		}
+	case coretypes.RoleActivity:
+		if msg.ActivityType == "" {
+			return fmt.Errorf("activityType field is required for activity messages")
+		}
+		if _, ok := msg.ContentActivity(); !ok {
+			return fmt.Errorf("content field must be a map for activity messages")
+		}
+	default:
+		return fmt.Errorf("unsupported message role: %s", msg.Role)
+	}
+
+	if msg.Role != coretypes.RoleAssistant && len(msg.ToolCalls) > 0 {
+		return fmt.Errorf("toolCalls are only valid for assistant messages")
+	}
+
+	if msg.Role != coretypes.RoleTool {
+		if msg.ToolCallID != "" {
+			return fmt.Errorf("toolCallId is only valid for tool messages")
+		}
+		if msg.Error != "" {
+			return fmt.Errorf("error is only valid for tool messages")
+		}
 	}
 
 	// Validate tool calls if present

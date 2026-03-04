@@ -24,6 +24,12 @@ import {
   ActivitySnapshotEvent,
   ActivityDeltaEvent,
   ActivityMessage,
+  ReasoningStartEvent,
+  ReasoningMessageStartEvent,
+  ReasoningMessageContentEvent,
+  ReasoningMessageEndEvent,
+  ReasoningEndEvent,
+  ReasoningEncryptedValueEvent,
 } from "@ag-ui/core";
 import { AbstractAgent } from "./agent";
 import { structuredClone_ } from "@/utils";
@@ -149,6 +155,37 @@ export interface AgentSubscriber {
     params: { event: CustomEvent } & AgentSubscriberParams,
   ): MaybePromise<AgentStateMutation | void>;
 
+  // Reasoning events
+  onReasoningStartEvent?(
+    params: { event: ReasoningStartEvent } & AgentSubscriberParams,
+  ): MaybePromise<AgentStateMutation | void>;
+
+  onReasoningMessageStartEvent?(
+    params: { event: ReasoningMessageStartEvent } & AgentSubscriberParams,
+  ): MaybePromise<AgentStateMutation | void>;
+
+  onReasoningMessageContentEvent?(
+    params: {
+      event: ReasoningMessageContentEvent;
+      reasoningMessageBuffer: string;
+    } & AgentSubscriberParams,
+  ): MaybePromise<AgentStateMutation | void>;
+
+  onReasoningMessageEndEvent?(
+    params: {
+      event: ReasoningMessageEndEvent;
+      reasoningMessageBuffer: string;
+    } & AgentSubscriberParams,
+  ): MaybePromise<AgentStateMutation | void>;
+
+  onReasoningEndEvent?(
+    params: { event: ReasoningEndEvent } & AgentSubscriberParams,
+  ): MaybePromise<AgentStateMutation | void>;
+
+  onReasoningEncryptedValueEvent?(
+    params: { event: ReasoningEncryptedValueEvent } & AgentSubscriberParams,
+  ): MaybePromise<AgentStateMutation | void>;
+
   // State changes
   onMessagesChanged?(
     params: Omit<AgentSubscriberParams, "input"> & { input?: RunAgentInput },
@@ -213,7 +250,7 @@ export async function runSubscribersWithMutation(
     } catch (error) {
       // Log subscriber errors but continue processing (silence during tests)
       const isTestEnvironment =
-        process.env.NODE_ENV === "test" || process.env.JEST_WORKER_ID !== undefined;
+        process.env.NODE_ENV === "test" || process.env.VITEST_WORKER_ID !== undefined;
 
       if (!isTestEnvironment) {
         console.error("Subscriber error:", error);

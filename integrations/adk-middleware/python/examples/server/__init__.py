@@ -19,22 +19,24 @@ import os
 
 from .api import (
     agentic_chat_app,
+    agentic_generative_ui_app,
     tool_based_generative_ui_app,
     human_in_the_loop_app,
     shared_state_app,
     backend_tool_rendering_app,
-    # predictive_state_updates_app,
+    predictive_state_updates_app,
 )
 
 app = FastAPI(title='ADK Middleware Demo')
 
 # Include routers instead of mounting apps to show routes in docs
 app.include_router(agentic_chat_app.router, prefix='/chat', tags=['Agentic Chat'])
+app.include_router(agentic_generative_ui_app.router, prefix='/adk-agentic-generative-ui', tags=['Agentic Generative UI'])
 app.include_router(tool_based_generative_ui_app.router, prefix='/adk-tool-based-generative-ui', tags=['Tool Based Generative UI'])
 app.include_router(human_in_the_loop_app.router, prefix='/adk-human-in-loop-agent', tags=['Human in the Loop'])
 app.include_router(shared_state_app.router, prefix='/adk-shared-state-agent', tags=['Shared State'])
 app.include_router(backend_tool_rendering_app.router, prefix='/backend_tool_rendering', tags=['Backend Tool Rendering'])
-# app.include_router(predictive_state_updates_app.router, prefix='/adk-predictive-state-agent', tags=['Predictive State Updates'])
+app.include_router(predictive_state_updates_app.router, prefix='/adk-predictive-state-agent', tags=['Predictive State Updates'])
 
 
 @app.get("/")
@@ -43,11 +45,12 @@ async def root():
         "message": "ADK Middleware is running!",
         "endpoints": {
             "chat": "/chat",
+            "agentic_generative_ui": "/adk-agentic-generative-ui",
             "tool_based_generative_ui": "/adk-tool-based-generative-ui",
             "human_in_the_loop": "/adk-human-in-loop-agent",
             "shared_state": "/adk-shared-state-agent",
             "backend_tool_rendering": "/backend_tool_rendering",
-            # "predictive_state_updates": "/adk-predictive-state-agent",
+            "predictive_state_updates": "/adk-predictive-state-agent",
             "docs": "/docs"
         }
     }
@@ -83,10 +86,11 @@ def main():
     print("Starting ADK Middleware server...")
     print(f"Available endpoints:")
     print(f"  • Chat: http://localhost:{port}/chat")
+    print(f"  • Agentic Generative UI: http://localhost:{port}/adk-agentic-generative-ui")
     print(f"  • Tool Based Generative UI: http://localhost:{port}/adk-tool-based-generative-ui")
     print(f"  • Human in the Loop: http://localhost:{port}/adk-human-in-loop-agent")
     print(f"  • Shared State: http://localhost:{port}/adk-shared-state-agent")
-    # print(f"  • Predictive State Updates: http://localhost:{port}/adk-predictive-state-agent")
+    print(f"  • Predictive State Updates: http://localhost:{port}/adk-predictive-state-agent")
     print(f"  • API docs: http://localhost:{port}/docs")
     uvicorn.run(app, host="0.0.0.0", port=port)
 

@@ -1,29 +1,32 @@
 import os
-import uvicorn
-from fastapi import FastAPI
 
+import uvicorn
 from dotenv import load_dotenv
+from fastapi import FastAPI
 
 load_dotenv()
 
 os.environ["LANGGRAPH_FAST_API"] = "true"
 
 from ag_ui_langgraph import LangGraphAgent, add_langgraph_fastapi_endpoint
+from copilotkit import LangGraphAGUIAgent
+
+from .agentic_chat.agent import graph as agentic_chat_graph
+from .agentic_chat_reasoning.agent import graph as agentic_chat_reasoning_graph
+from .agentic_generative_ui.agent import graph as agentic_generative_ui_graph
+from .backend_tool_rendering.agent import graph as backend_tool_rendering_graph
 from .human_in_the_loop.agent import graph as human_in_the_loop_graph
 from .predictive_state_updates.agent import graph as predictive_state_updates_graph
 from .shared_state.agent import graph as shared_state_graph
-from .tool_based_generative_ui.agent import graph as tool_based_generative_ui_graph
-from .agentic_chat.agent import graph as agentic_chat_graph
-from .agentic_generative_ui.agent import graph as agentic_generative_ui_graph
-from .agentic_chat_reasoning.agent import graph as agentic_chat_reasoning_graph
-from .backend_tool_rendering.agent import graph as backend_tool_rendering_graph
 from .subgraphs.agent import graph as subgraphs_graph
+from .a2ui_chat.agent import graph as a2ui_chat_graph
+from .tool_based_generative_ui.agent import graph as tool_based_generative_ui_graph
 
 app = FastAPI(title="LangGraph Dojo Example Server")
 
 agents = {
     # Register the LangGraph agent using the LangGraphAgent class
-    "agentic_chat": LangGraphAgent(
+    "agentic_chat": LangGraphAGUIAgent(
         name="agentic_chat",
         description="An example for an agentic chat flow using LangGraph.",
         graph=agentic_chat_graph,
@@ -67,6 +70,11 @@ agents = {
         name="subgraphs",
         description="A demo of LangGraph subgraphs using a Game Character Creator.",
         graph=subgraphs_graph,
+    ),
+    "a2ui_chat": LangGraphAgent(
+        name="a2ui_chat",
+        description="An agent that can render A2UI surfaces.",
+        graph=a2ui_chat_graph,
     ),
 }
 
@@ -113,6 +121,10 @@ add_langgraph_fastapi_endpoint(
 
 add_langgraph_fastapi_endpoint(
     app=app, agent=agents["subgraphs"], path="/agent/subgraphs"
+)
+
+add_langgraph_fastapi_endpoint(
+    app=app, agent=agents["a2ui_chat"], path="/agent/a2ui_chat"
 )
 
 

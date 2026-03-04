@@ -32,7 +32,7 @@ Let's get started!
 
 Before we begin, make sure you have:
 
-- [Node.js](https://nodejs.org/) **v18 or later**
+- [Node.js](https://nodejs.org/) **22.13.0 or later**
 - An **OpenAI API key**
 - [pnpm](https://pnpm.io/) package manager
 
@@ -102,16 +102,12 @@ Update your `package.json` scripts:
 
 ```json
 {
-  // ...
-
   "scripts": {
     "start": "tsx src/index.ts",
     "dev": "tsx --watch src/index.ts",
     "build": "tsc",
     "clean": "rm -rf dist"
   }
-
-  // ...
 }
 ```
 
@@ -124,10 +120,10 @@ Install the core AG-UI packages and dependencies:
 pnpm add @ag-ui/client @ag-ui/core @ag-ui/mastra
 
 # Mastra ecosystem packages
-pnpm add @mastra/core @mastra/memory @mastra/libsql
+pnpm add @mastra/core @mastra/client-js @mastra/memory @mastra/libsql
 
-# AI SDK and utilities
-pnpm add @ai-sdk/openai zod@^3.25
+# Mastra peer dependencies
+pnpm add zod
 ```
 
 ## Step 3 – Create your agent
@@ -135,22 +131,24 @@ pnpm add @ai-sdk/openai zod@^3.25
 Let's create a basic conversational agent. Create `src/agent.ts`:
 
 ```typescript
-import { openai } from "@ai-sdk/openai"
 import { Agent } from "@mastra/core/agent"
 import { MastraAgent } from "@ag-ui/mastra"
 import { Memory } from "@mastra/memory"
 import { LibSQLStore } from "@mastra/libsql"
 
 export const agent = new MastraAgent({
+  resourceId: "cliExample",
   agent: new Agent({
+    id: "ag-ui-assistant",
     name: "AG-UI Assistant",
     instructions: `
       You are a helpful AI assistant. Be friendly, conversational, and helpful.
       Answer questions to the best of your ability and engage in natural conversation.
     `,
-    model: openai("gpt-4o"),
+    model: "openai/gpt-4o",
     memory: new Memory({
       storage: new LibSQLStore({
+        id: "storage-memory",
         url: "file:./assistant.db",
       }),
     }),
@@ -354,8 +352,8 @@ export const weatherTool = createTool({
     conditions: z.string(),
     location: z.string(),
   }),
-  execute: async ({ context }) => {
-    return await getWeather(context.location)
+  execute: async (inputData) => {
+    return await getWeather(inputData.location)
   },
 })
 
@@ -518,18 +516,18 @@ export const browserTool = createTool({
   id: "open-browser",
   description: "Open a URL in the default web browser",
   inputSchema: z.object({
-    url: z.string().url().describe("The URL to open"),
+    url: z.url().describe("The URL to open"),
   }),
   outputSchema: z.object({
     success: z.boolean(),
     message: z.string(),
   }),
-  execute: async ({ context }) => {
+  execute: async (inputData) => {
     try {
-      await open(context.url)
+      await open(inputData.url)
       return {
         success: true,
-        message: `Opened ${context.url} in your default browser`,
+        message: `Opened ${inputData.url} in your default browser`,
       }
     } catch (error) {
       return {
@@ -546,7 +544,6 @@ export const browserTool = createTool({
 Update `src/agent.ts` to include both tools:
 
 ```typescript
-import { openai } from "@ai-sdk/openai"
 import { Agent } from "@mastra/core/agent"
 import { MastraAgent } from "@ag-ui/mastra"
 import { Memory } from "@mastra/memory"
@@ -555,7 +552,9 @@ import { weatherTool } from "./tools/weather.tool"
 import { browserTool } from "./tools/browser.tool"
 
 export const agent = new MastraAgent({
+  resourceId: "cliExample",
   agent: new Agent({
+    id: "ag-ui-assistant",
     name: "AG-UI Assistant",
     instructions: `
       You are a helpful assistant with weather and web browsing capabilities.
@@ -570,10 +569,11 @@ export const agent = new MastraAgent({
 
       Be friendly and helpful in all interactions!
     `,
-    model: openai("gpt-4o"),
+    model: "openai/gpt-4o",
     tools: { weatherTool, browserTool }, // Add both tools
     memory: new Memory({
       storage: new LibSQLStore({
+        id: "storage-memory",
         url: "file:./assistant.db",
       }),
     }),

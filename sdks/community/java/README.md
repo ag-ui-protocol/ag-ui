@@ -1,4 +1,4 @@
-# AG-UI-4J
+# AG-UI
 
 <h3><b>Agent User Interaction Protocol for Java</b></h3>
 
@@ -30,6 +30,5 @@
 
 ### Integrations
 - [Spring AI](./integrations/spring-ai/README.md) -> Spring AI server Agent
-- [Langchain4j](./integrations/langchain4j/README.md) -> Langchain4j server Agent
 
 ## 🚀 Quick Start

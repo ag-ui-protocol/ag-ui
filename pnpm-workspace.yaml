@@ -1,7 +1,10 @@
 packages:
-  - "apps/*"
-  - "middlewares/*"
-  - "sdks/typescript/packages/*"
-  - "integrations/*/typescript"
-  - "integrations/community/*/typescript"
-  - "integrations/mastra/typescript/examples"
+  - apps/*
+  - middlewares/*
+  - sdks/typescript/packages/*
+  - integrations/*/typescript
+  - integrations/community/*/typescript
+  - integrations/mastra/typescript/examples
+
+ignoredBuiltDependencies:
+  - nx

@@ -10,17 +10,18 @@ import {
 import * as proto from "@ag-ui/proto";
 import { transformHttpEventStream } from "../http";
 import * as encoder from "@ag-ui/encoder";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const eventEncoder = new encoder.EventEncoder({
   accept: proto.AGUI_MEDIA_TYPE,
 });
 
 // Don't mock the proto package so we can use real encoding/decoding
-jest.unmock("@ag-ui/proto");
+vi.unmock("@ag-ui/proto");
 
 describe("parseProtoStream", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it("should correctly decode protocol buffer events", async () => {

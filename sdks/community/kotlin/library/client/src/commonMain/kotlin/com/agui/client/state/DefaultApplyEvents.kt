@@ -21,6 +21,7 @@ private fun createStreamingMessage(messageId: String, role: Role): Message = whe
     Role.ASSISTANT -> AssistantMessage(id = messageId, content = "")
     Role.USER -> UserMessage(id = messageId, content = "")
     Role.TOOL -> ToolMessage(id = messageId, content = "", toolCallId = messageId)
+    Role.ACTIVITY -> ActivityMessage(id = messageId, activityType = "", activityContent = kotlinx.serialization.json.JsonObject(emptyMap()))
 }
 
 private fun Message.appendDelta(delta: String): Message = when (this) {

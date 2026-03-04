@@ -42,6 +42,7 @@ class HttpAgent(
      */
     override fun run(input: RunAgentInput): Flow<BaseEvent> = channelFlow {
         try {
+            logger.d { "Starting agent run to ${config.url}" }
             client.sse(
                 urlString = config.url,
                 request = {
@@ -61,7 +62,7 @@ class HttpAgent(
                         logger.d { "SSE data: $data" }
                     }
                 }
-                
+
                 // Parse SSE stream
                 sseParser.parseFlow(stringFlow)
                     .collect { event ->
@@ -72,9 +73,26 @@ class HttpAgent(
         } catch (e: CancellationException) {
             logger.d { "Agent run cancelled" }
             throw e
+        } catch (e: SSEClientException) {
+            // Unwrap SSE exception to get the root cause
+            val cause = e.cause
+            val (message, code) = when {
+                cause?.message?.contains("Serializer for class") == true -> {
+                    // This usually means the server returned a non-SSE response (404, JSON error, etc.)
+                    Pair("Server did not return an SSE stream. Check the endpoint URL is correct and the server supports AG-UI protocol.", "INVALID_RESPONSE")
+                }
+                cause is kotlinx.serialization.SerializationException -> {
+                    Pair("Invalid response from server: ${cause.message}", "INVALID_RESPONSE")
+                }
+                else -> {
+                    Pair(e.message ?: "SSE connection error", "SSE_ERROR")
+                }
+            }
+            logger.e(e) { "SSE error: $message" }
+            send(RunErrorEvent(message = message, code = code))
         } catch (e: Exception) {
             logger.e(e) { "Agent run failed: ${e.message}" }
-            
+
             // Emit error event
             send(RunErrorEvent(
                 message = e.message ?: "Unknown error",

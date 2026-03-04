@@ -9,7 +9,8 @@ plugins {
     id("signing")
 }
 
-group = "com.agui"
+// Group and version from gradle.properties
+group = findProperty("group")?.toString() ?: "com.ag-ui.community"
 version = "0.1.0"
 
 repositories {
@@ -154,55 +155,6 @@ android {
         getByName("main") {
             manifest.srcFile("library/src/androidMain/AndroidManifest.xml")
         }
-    }
-}
-
-// Publishing configuration
-publishing {
-    publications {
-        create<MavenPublication>("maven") {
-            groupId = project.group.toString()
-            artifactId = "agui4k"
-            version = project.version.toString()
-            
-            pom {
-                name.set("AGUI4K")
-                description.set("Kotlin Multiplatform implementation of the Agent User Interaction Protocol")
-                url.set("https://github.com/ag-ui-protocol/ag-ui")
-                
-                licenses {
-                    license {
-                        name.set("MIT License")
-                        url.set("https://opensource.org/licenses/MIT")
-                    }
-                }
-                
-                developers {
-                    developer {
-                        id.set("contextablemark")
-                        name.set("Mark Fogle")
-                        email.set("mark@contextable.com")
-                    }
-                }
-                
-                scm {
-                    url.set("https://github.com/ag-ui-protocol/ag-ui")
-                    connection.set("scm:git:git://github.com/ag-ui-protocol/ag-ui.git")
-                    developerConnection.set("scm:git:ssh://github.com:ag-ui-protocol/ag-ui.git")
-                }
-            }
-        }
-    }
-}
-
-// Signing configuration (for Maven Central)
-signing {
-    val signingKey: String? by project
-    val signingPassword: String? by project
-    
-    if (signingKey != null && signingPassword != null) {
-        useInMemoryPgpKeys(signingKey, signingPassword)
-        sign(publishing.publications)
     }
 }
 

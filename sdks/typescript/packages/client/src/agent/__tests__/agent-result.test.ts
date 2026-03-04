@@ -10,17 +10,21 @@ import {
   MessagesSnapshotEvent,
   RunFinishedEvent,
   RunStartedEvent,
+  TextMessageStartEvent,
+  TextMessageContentEvent,
+  TextMessageEndEvent,
 } from "@ag-ui/core";
-import { Observable, of } from "rxjs";
+import { Observable, of, Subject } from "rxjs";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock uuid module
-jest.mock("uuid", () => ({
-  v4: jest.fn().mockReturnValue("mock-uuid"),
+vi.mock("uuid", () => ({
+  v4: vi.fn().mockReturnValue("mock-uuid"),
 }));
 
 // Mock utils
-jest.mock("@/utils", () => {
-  const actual = jest.requireActual<typeof import("@/utils")>("@/utils");
+vi.mock("@/utils", async () => {
+  const actual = await vi.importActual<typeof import("@/utils")>("@/utils");
   return {
     ...actual,
     structuredClone_: (obj: any) => {
@@ -33,12 +37,12 @@ jest.mock("@/utils", () => {
 });
 
 // Mock the verify and chunks modules
-jest.mock("@/verify", () => ({
-  verifyEvents: jest.fn(() => (source$: Observable<any>) => source$),
+vi.mock("@/verify", () => ({
+  verifyEvents: vi.fn(() => (source$: Observable<any>) => source$),
 }));
 
-jest.mock("@/chunks", () => ({
-  transformChunks: jest.fn(() => (source$: Observable<any>) => source$),
+vi.mock("@/chunks", () => ({
+  transformChunks: vi.fn(() => (source$: Observable<any>) => source$),
 }));
 
 // Helper function to wait for async notifications to complete
@@ -59,11 +63,26 @@ class TestAgent extends AbstractAgent {
   }
 }
 
+class StreamingTestAgent extends AbstractAgent {
+  private eventSubject?: Subject<BaseEvent>;
+
+  setEventSubject(subject: Subject<BaseEvent>) {
+    this.eventSubject = subject;
+  }
+
+  run(input: RunAgentInput): Observable<BaseEvent> {
+    if (!this.eventSubject) {
+      throw new Error("eventSubject not set");
+    }
+    return this.eventSubject.asObservable();
+  }
+}
+
 describe("Agent Result", () => {
   let agent: TestAgent;
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
     agent = new TestAgent({
       threadId: "test-thread",
@@ -428,9 +447,9 @@ describe("Agent Result", () => {
   describe("subscriber notifications integration", () => {
     it("should track newMessages without interfering with existing event processing", async () => {
       const mockSubscriber: AgentSubscriber = {
-        onNewMessage: jest.fn(),
-        onMessagesChanged: jest.fn(),
-        onNewToolCall: jest.fn(),
+        onNewMessage: vi.fn(),
+        onMessagesChanged: vi.fn(),
+        onNewToolCall: vi.fn(),
       };
 
       agent.subscribe(mockSubscriber);
@@ -474,9 +493,9 @@ describe("Agent Result", () => {
 
     it("should return empty newMessages when no messages are added", async () => {
       const mockSubscriber: AgentSubscriber = {
-        onNewMessage: jest.fn(),
-        onMessagesChanged: jest.fn(),
-        onNewToolCall: jest.fn(),
+        onNewMessage: vi.fn(),
+        onMessagesChanged: vi.fn(),
+        onNewToolCall: vi.fn(),
       };
 
       agent.subscribe(mockSubscriber);
@@ -544,7 +563,11 @@ describe("Agent Result", () => {
 
       // Should not include the duplicate ID in newMessages
       expect(result.newMessages).toEqual([]);
-      expect(agent.messages).toEqual(allMessages);
+      // Edit-based merge updates existing message in place, no duplicate appended
+      expect(agent.messages).toEqual([
+        { id: "existing-msg-1", role: "user", content: "Updated content" },
+        { id: "existing-msg-2", role: "assistant", content: "Existing message 2" },
+      ]);
     });
 
     it("should handle complex result objects", async () => {
@@ -580,6 +603,159 @@ describe("Agent Result", () => {
 
       expect(result.result).toEqual(complexResult);
       expect(result.result).toMatchObject(complexResult);
+    });
+  });
+
+  describe("run detachment", () => {
+    let streamingAgent: StreamingTestAgent;
+
+    beforeEach(() => {
+      streamingAgent = new StreamingTestAgent({ threadId: "thread-detach" });
+    });
+
+    it("finalizes immediately when detached", async () => {
+      const subject = new Subject<BaseEvent>();
+      streamingAgent.setEventSubject(subject);
+      const onRunFinalized = vi.fn();
+
+      const runPromise = streamingAgent.runAgent({}, { onRunFinalized });
+      await waitForAsyncNotifications();
+
+      subject.next({
+        type: EventType.RUN_STARTED,
+        threadId: "thread-detach",
+        runId: "run-detach",
+      } as RunStartedEvent);
+
+      await streamingAgent.detachActiveRun();
+      await runPromise;
+      subject.complete();
+
+      expect(onRunFinalized).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores events emitted after detaching", async () => {
+      const subject = new Subject<BaseEvent>();
+      streamingAgent.setEventSubject(subject);
+      const onMessagesChanged = vi.fn();
+
+      const runPromise = streamingAgent.runAgent({}, { onMessagesChanged });
+      await waitForAsyncNotifications();
+      const initialMessageCount = streamingAgent.messages.length;
+
+      subject.next({
+        type: EventType.RUN_STARTED,
+        threadId: "thread-detach",
+        runId: "run-detach",
+      } as RunStartedEvent);
+
+      const detachPromise = streamingAgent.detachActiveRun();
+
+      subject.next({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "msg-after-detach",
+        role: "assistant",
+      } as TextMessageStartEvent);
+      subject.next({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "msg-after-detach",
+        delta: "Should be ignored",
+      } as TextMessageContentEvent);
+      subject.next({
+        type: EventType.TEXT_MESSAGE_END,
+        messageId: "msg-after-detach",
+      } as TextMessageEndEvent);
+
+      subject.complete();
+      await Promise.all([detachPromise, runPromise]);
+
+      expect(streamingAgent.messages.length).toBe(initialMessageCount);
+      expect(onMessagesChanged).not.toHaveBeenCalled();
+    });
+
+    it("can start a new run on another thread after detaching", async () => {
+      const firstSubject = new Subject<BaseEvent>();
+      streamingAgent.setEventSubject(firstSubject);
+
+      const firstRunPromise = streamingAgent.runAgent();
+      await waitForAsyncNotifications();
+
+      firstSubject.next({
+        type: EventType.RUN_STARTED,
+        threadId: "thread-detach",
+        runId: "run-1",
+      } as RunStartedEvent);
+
+      await streamingAgent.detachActiveRun();
+      firstSubject.complete();
+      await firstRunPromise;
+
+      streamingAgent.threadId = "thread-detach-2";
+      const secondSubject = new Subject<BaseEvent>();
+      streamingAgent.setEventSubject(secondSubject);
+
+      const secondRunPromise = streamingAgent.runAgent();
+      await waitForAsyncNotifications();
+
+      secondSubject.next({
+        type: EventType.RUN_STARTED,
+        threadId: "thread-detach-2",
+        runId: "run-2",
+      } as RunStartedEvent);
+      secondSubject.next({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "msg-new",
+        role: "assistant",
+      } as TextMessageStartEvent);
+      secondSubject.next({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "msg-new",
+        delta: "hello",
+      } as TextMessageContentEvent);
+      secondSubject.next({
+        type: EventType.TEXT_MESSAGE_END,
+        messageId: "msg-new",
+      } as TextMessageEndEvent);
+      secondSubject.next({
+        type: EventType.RUN_FINISHED,
+        threadId: "thread-detach-2",
+        runId: "run-2",
+      } as RunFinishedEvent);
+      secondSubject.complete();
+
+      await secondRunPromise;
+      await waitForAsyncNotifications();
+
+      expect(streamingAgent.messages.some((message) => message.id === "msg-new")).toBe(true);
+    });
+
+    it("resolve order: detachActiveRun waits for finalize", async () => {
+      const subject = new Subject<BaseEvent>();
+      streamingAgent.setEventSubject(subject);
+      const order: string[] = [];
+
+      const runPromise = streamingAgent.runAgent(
+        {},
+        {
+          onRunFinalized: () => {
+            order.push("finalized");
+          },
+        },
+      );
+      await waitForAsyncNotifications();
+
+      subject.next({
+        type: EventType.RUN_STARTED,
+        threadId: "thread-detach",
+        runId: "run-order",
+      } as RunStartedEvent);
+
+      const detachPromise = streamingAgent.detachActiveRun().then(() => order.push("awaited"));
+      subject.complete();
+
+      await Promise.all([runPromise, detachPromise]);
+
+      expect(order).toEqual(["finalized", "awaited"]);
     });
   });
 });

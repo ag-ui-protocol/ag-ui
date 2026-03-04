@@ -54,6 +54,33 @@ agent = ADKAgent(
 )
 ```
 
+### Thread ID vs Session ID Mapping
+
+The middleware transparently handles the mapping between AG-UI's `thread_id` and ADK's internal `session_id`:
+
+- **AG-UI `thread_id`**: The client-provided identifier (typically a UUID) that uniquely identifies a conversation thread from the frontend perspective
+- **ADK `session_id`**: The backend-generated identifier used by ADK session services (e.g., VertexAI generates numeric IDs)
+
+This mapping is completely transparent to frontend implementations:
+- All AG-UI events (`RUN_STARTED`, `RUN_FINISHED`, etc.) use `thread_id`
+- The middleware internally maintains a mapping from `thread_id` to `session_id`
+- Session state includes metadata (`_ag_ui_thread_id`, `_ag_ui_app_name`, `_ag_ui_user_id`) for recovery after middleware restarts
+
+```python
+# Frontend sends thread_id - the backend session_id is handled internally
+input = RunAgentInput(
+    thread_id="my-uuid-thread-id",  # AG-UI thread identifier
+    run_id="run_001",
+    messages=[UserMessage(id="1", role="user", content="Hello!")],
+    # ...
+)
+
+# Events returned to frontend always use thread_id
+async for event in agent.run(input):
+    # event.thread_id == "my-uuid-thread-id" (not the internal session_id)
+    print(f"Event for thread: {event.thread_id}")
+```
+
 ### Service Configuration
 
 ```python
@@ -74,6 +101,54 @@ agent = ADKAgent(
     use_in_memory_services=False
 )
 ```
+
+### Using App for Full ADK Features
+
+For access to App-level features like resumability, context caching, and plugins,
+use the `from_app()` constructor:
+
+```python
+from google.adk.apps import App
+from google.adk.agents import Agent
+from google.adk.plugins.logging_plugin import LoggingPlugin
+from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+
+# Create ADK App with plugins and configs
+app = App(
+    name="my_assistant",
+    root_agent=Agent(
+        name="assistant",
+        model="gemini-2.5-flash",
+        instruction="You are a helpful assistant.",
+        tools=[
+            AGUIToolset(), # Add the tools provided by the AG-UI client
+        ]
+    ),
+    plugins=[LoggingPlugin()],
+    # resumability_config=ResumabilityConfig(is_resumable=True),  # Optional
+)
+
+# Create ADKAgent from App
+agent = ADKAgent.from_app(
+    app,
+    user_id="demo_user",
+    plugin_close_timeout=10.0,  # Optional, requires ADK 1.19+
+)
+
+# Use with FastAPI
+from fastapi import FastAPI
+fastapi_app = FastAPI()
+add_adk_fastapi_endpoint(fastapi_app, agent, path="/chat")
+```
+
+The `from_app()` constructor enables:
+- **Plugin support**: Use ADK plugins like `LoggingPlugin` for debugging and tracing
+- **Resumability**: Configure pause/resume workflows for long-running operations
+- **Context caching**: Optimize LLM calls with context caching configuration
+- **Events compaction**: Configure how events are compacted in the application
+
+Note: The `plugin_close_timeout` parameter requires ADK 1.19.0 or later. On older
+versions, the parameter is silently ignored.
 
 ### Automatic Session Memory
 
@@ -109,7 +184,10 @@ my_agent = Agent(
     name="assistant",
     model="gemini-2.0-flash", 
     instruction="You are a helpful assistant.",
-    tools=[adk_tools.preload_memory_tool.PreloadMemoryTool()]  # Add memory tools here
+    tools=[
+        AGUIToolset(), # Add the tools provided by the AG-UI client
+        adk_tools.preload_memory_tool.PreloadMemoryTool(), # Add memory tools here
+    ]
 )
 
 # Create middleware with direct agent embedding
@@ -121,7 +199,7 @@ adk_agent = ADKAgent(
 )
 ```
 
-**⚠️ Important**: The `tools` parameter belongs to the ADK agent (like `Agent` or `LlmAgent`), **not** to the `ADKAgent` middleware. The middleware automatically handles any tools defined on the embedded agents.
+**⚠️ Important**: The `tools` parameter belongs to the ADK agent (like `Agent` or `LlmAgent`), **not** to the `ADKAgent` middleware. To add agui client tools, use the `AGUIToolset()` as shown above.
 
 **Testing Memory Workflow:**
 
@@ -172,6 +250,146 @@ async def main():
 asyncio.run(main())
 ```
 
+### Passing Initial State
+
+Pass frontend state to initialize the ADK session before the agent runs:
+
+```python
+input = RunAgentInput(
+    thread_id="session_001",
+    run_id="run_001",
+    state={
+        "selected_document": "doc-456",
+        "user_preferences": {"language": "en", "theme": "dark"},
+        "context": {"project_id": "proj-123"}
+    },
+    messages=[
+        UserMessage(id="1", role="user", content="Summarize the selected document")
+    ],
+    context=[],
+    tools=[],
+    forwarded_props={}
+)
+
+# The agent can now access state.selected_document, state.user_preferences, etc.
+async for event in agent.run(input):
+    print(f"Event: {event.type}")
+```
+
+The `state` field:
+- Initializes ADK session state on first request for a `thread_id`
+- Syncs/merges with existing state on subsequent requests
+- Is accessible to ADK agent tools via `context.session.state`
+
+### Using Context
+
+The `context` field from `RunAgentInput` is automatically passed through to ADK agents.
+Context is useful for providing metadata about the current request (user info, preferences,
+environment details) that the agent can use for personalization.
+
+Context is accessible in two ways:
+
+#### 1. In Tools via Session State
+
+```python
+from google.adk.tools import ToolContext
+from ag_ui_adk import CONTEXT_STATE_KEY
+
+def personalized_tool(tool_context: ToolContext) -> str:
+    """Access context in a tool via session state."""
+    context_items = tool_context.state.get(CONTEXT_STATE_KEY, [])
+
+    user_role = None
+    for item in context_items:
+        if item["description"] == "user_role":
+            user_role = item["value"]
+            break
+
+    if user_role == "admin":
+        return "Welcome, administrator! You have full access."
+    return "Welcome! You have standard access."
+
+# Create agent with the tool
+my_agent = Agent(
+    name="assistant",
+    tools=[personalized_tool]
+)
+```
+
+#### 2. In Instruction Providers via Session State
+
+```python
+from google.adk.agents import LlmAgent
+from google.adk.agents.readonly_context import ReadonlyContext
+from ag_ui_adk import CONTEXT_STATE_KEY
+
+def context_aware_instructions(ctx: ReadonlyContext) -> str:
+    """Dynamic instructions based on context."""
+    instructions = "You are a helpful assistant."
+
+    # Access context from session state
+    context_items = ctx.state.get(CONTEXT_STATE_KEY, [])
+
+    # Find user's preferred language
+    for item in context_items:
+        if item["description"] == "preferred_language":
+            instructions += f"\nRespond in {item['value']}."
+            break
+
+    return instructions
+
+# Create agent with dynamic instructions
+my_agent = LlmAgent(
+    name="assistant",
+    model="gemini-2.0-flash",
+    instruction=context_aware_instructions,  # Callable, not string
+)
+```
+
+#### Example Request with Context
+
+```python
+input = RunAgentInput(
+    thread_id="session_001",
+    run_id="run_001",
+    messages=[
+        UserMessage(id="1", role="user", content="Hello!")
+    ],
+    context=[
+        Context(description="user_role", value="admin"),
+        Context(description="preferred_language", value="Spanish"),
+        Context(description="timezone", value="America/New_York"),
+    ],
+    state={},
+    tools=[],
+    forwarded_props={}
+)
+
+async for event in agent.run(input):
+    print(f"Event: {event.type}")
+```
+
+#### Alternative: Via RunConfig custom_metadata (ADK 1.22.0+)
+
+For users on ADK 1.22.0 or later, context is also available via `RunConfig.custom_metadata`:
+
+```python
+def dynamic_instructions(ctx: ReadonlyContext) -> str:
+    instructions = "You are a helpful assistant."
+
+    # Alternative access via custom_metadata (ADK 1.22.0+)
+    if ctx.run_config and ctx.run_config.custom_metadata:
+        context_items = ctx.run_config.custom_metadata.get('ag_ui_context', [])
+        for item in context_items:
+            instructions += f"\n- {item['description']}: {item['value']}"
+
+    return instructions
+```
+
+**Note:** Session state (`ctx.state.get(CONTEXT_STATE_KEY, [])`) is the recommended approach as it works with all ADK versions and provides a unified access pattern for both tools and instruction providers.
+
+See `examples/other/context_usage.py` for a complete working example.
+
 ### Multi-Agent Setup
 
 ```python
@@ -204,6 +422,41 @@ add_adk_fastapi_endpoint(app, technical_agent_wrapper, path="/agents/technical")
 add_adk_fastapi_endpoint(app, creative_agent_wrapper, path="/agents/creative")
 ```
 
+### Predictive State Updates
+
+Predictive state updates allow the frontend to receive real-time state changes derived from tool call arguments. This is particularly useful for live previews — for example, showing a document update immediately when a tool call completes.
+
+The `predict_state` configuration watches for a specific tool and argument, emitting `CUSTOM` events with `STATE_DELTA` patches that let the frontend render content as soon as the tool call arrives.
+
+#### Basic Setup
+
+```python
+from ag_ui_adk import ADKAgent, PredictStateMapping, AGUIToolset
+from google.adk.agents import LlmAgent
+
+agent = LlmAgent(
+    name="writer",
+    model="gemini-2.0-flash",
+    instruction="Use write_document to write documents.",
+    tools=[write_document, AGUIToolset()],
+)
+
+adk_agent = ADKAgent(
+    adk_agent=agent,
+    app_name="my_app",
+    user_id="user123",
+    predict_state=[
+        PredictStateMapping(
+            state_key="document",          # Frontend state key to update
+            tool="write_document",         # Tool name to watch
+            tool_argument="document",      # Argument to extract
+        )
+    ],
+)
+```
+
+See `examples/server/api/predictive_state_updates.py` for a complete working example.
+
 ## Event Translation
 
 The middleware translates between AG-UI and ADK event formats:
@@ -212,6 +465,149 @@ The middleware translates between AG-UI and ADK event formats:
 |-------------|-----------|-------------|
 | TEXT_MESSAGE_* | Event with content.parts[].text | Text messages |
 | RUN_STARTED/FINISHED | Runner lifecycle | Execution flow |
+
+## Message History Features
+
+### MESSAGES_SNAPSHOT Emission
+
+You can configure the middleware to emit a `MESSAGES_SNAPSHOT` event at the end of each run, containing the full conversation history:
+
+```python
+agent = ADKAgent(
+    adk_agent=my_agent,
+    app_name="my_app",
+    user_id="user123",
+    emit_messages_snapshot=True  # Emit full message history at run end
+)
+```
+
+When enabled, the middleware will:
+1. Extract all events from the ADK session at the end of each run
+2. Convert them to AG-UI message format
+3. Emit a `MESSAGES_SNAPSHOT` event with the complete conversation history
+
+This is useful for clients that need to persist conversation history or for AG-UI protocol compliance.
+
+### Converting ADK Events to Messages
+
+The `adk_events_to_messages()` function is available for direct use if you need to convert ADK session events to AG-UI messages:
+
+```python
+from ag_ui_adk import adk_events_to_messages
+
+# Get events from an ADK session
+session = await session_service.get_session(session_id, app_name, user_id)
+messages = adk_events_to_messages(session.events)
+
+# messages is a list of AG-UI Message objects (UserMessage, AssistantMessage, ToolMessage)
+```
+
+### Experimental: /agents/state Endpoint
+
+**WARNING: This endpoint is experimental and subject to change in future versions.**
+
+When using `add_adk_fastapi_endpoint()`, an additional `POST /agents/state` endpoint is automatically added. This endpoint allows front-end frameworks to retrieve thread state and message history on-demand, without initiating a new agent run.
+
+**Request:**
+```json
+{
+  "threadId": "thread_123",
+  "appName": "my_app",
+  "userId": "user_123",
+  "name": "optional_agent_name",
+  "properties": {}
+}
+```
+
+The `appName` and `userId` parameters are optional if the `ADKAgent` was configured with static values. They are required for session lookup when using dynamic extractors or after middleware restart.
+
+**Response:**
+```json
+{
+  "threadId": "thread_123",
+  "threadExists": true,
+  "state": "{\"key\": \"value\"}",
+  "messages": "[{\"id\": \"1\", \"role\": \"user\", \"content\": \"Hello\"}]"
+}
+```
+
+Note: The `state` and `messages` fields are JSON-stringified for compatibility with front-end frameworks that expect this format.
+
+**Example usage:**
+```python
+import httpx
+
+async def get_thread_history(thread_id: str, app_name: str, user_id: str):
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "http://localhost:8000/agents/state",
+            json={
+                "threadId": thread_id,
+                "appName": app_name,
+                "userId": user_id
+            }
+        )
+        data = response.json()
+        if data["threadExists"]:
+            import json
+            messages = json.loads(data["messages"])
+            state = json.loads(data["state"])
+            return messages, state
+        return [], {}
+```
+
+## Migrating to Resumable HITL
+
+> **Deprecated:** The non-resumable (fire-and-forget) HITL flow triggered by `ADKAgent(adk_agent=...)` with client-side tools is deprecated and will be removed in a future version. Migrate to `ADKAgent.from_app()` with `ResumabilityConfig` for human-in-the-loop workflows.
+
+### Why migrate?
+
+The old-style HITL flow has limitations:
+- **No SequentialAgent position restore** — sub-agent position is lost on resume
+- **Manual FunctionCall persistence** — the middleware must manually persist partial events
+- **Manual pending tool call tracking** — state management is handled by the middleware instead of ADK
+
+With `ResumabilityConfig`, ADK handles all of this natively.
+
+### Before (deprecated for HITL)
+
+```python
+from ag_ui_adk import ADKAgent
+
+agent = ADKAgent(
+    adk_agent=my_agent,  # Works fine for non-HITL agents
+    app_name="my_app",
+    user_id="user123",
+)
+```
+
+> **Note:** `ADKAgent(adk_agent=...)` is still the recommended constructor for agents **without** client-side tools (chat-only, backend-tool-only). Only the HITL path is deprecated.
+
+### After (recommended for HITL)
+
+```python
+from google.adk.apps import App, ResumabilityConfig
+from ag_ui_adk import ADKAgent
+
+app = App(
+    name="my_app",
+    root_agent=my_agent,
+    resumability_config=ResumabilityConfig(is_resumable=True),
+)
+
+agent = ADKAgent.from_app(
+    app,
+    user_id="user123",
+)
+```
+
+### What triggers the deprecation warning?
+
+A `DeprecationWarning` is emitted at runtime when:
+1. The agent encounters a long-running (client-side) tool call, **and**
+2. The agent was created with the direct constructor (`ADKAgent(adk_agent=...)`) rather than `ADKAgent.from_app()`
+
+The warning does not fire for agents without client-side tools.
 
 ## Additional Resources
 

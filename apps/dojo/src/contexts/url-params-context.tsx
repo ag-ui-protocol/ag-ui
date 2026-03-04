@@ -34,22 +34,27 @@ interface URLParamsProviderProps {
   children: ReactNode;
 }
 
-export function URLParamsProvider({ children }: URLParamsProviderProps) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-
-  // Initialize state from URL params
-  const [state, setState] = useState<URLParamsState>(() => ({
+function generateURLParamsState(searchParams: URLSearchParams): URLParamsState {
+  return {
     view: (searchParams.get("view") as View) || "preview",
     sidebarHidden: searchParams.get("sidebar") === "false",
     chatDefaultOpen: searchParams.get("chatDefaultOpen") !== "false",
     frameworkPickerHidden: searchParams.get("frameworkPicker") === "false",
     viewPickerHidden: searchParams.get("viewPicker") === "false",
     featurePickerHidden: searchParams.get("featurePicker") === "false",
+    file: searchParams.get("file") || undefined,
     codeLayout: (searchParams.get("codeLayout") as "sidebar" | "tabs") || "sidebar",
     theme: (searchParams.get("theme") as "light" | "dark") || "light",
-  }));
+  };
+}
+
+export function URLParamsProvider({ children }: URLParamsProviderProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // Initialize state from URL params
+  const [state, setState] = useState<URLParamsState>(() => generateURLParamsState(searchParams));
 
   // Update URL when state changes
   const updateURL = (newState: Partial<URLParamsState>) => {
@@ -137,17 +142,7 @@ export function URLParamsProvider({ children }: URLParamsProviderProps) {
 
   // Sync state with URL changes (e.g., browser back/forward)
   useEffect(() => {
-    const newState: URLParamsState = {
-      view: (searchParams.get("view") as View) || "preview",
-      sidebarHidden: searchParams.get("sidebar") === "false",
-      chatDefaultOpen: searchParams.get("chatDefaultOpen") === "true",
-      frameworkPickerHidden: searchParams.get("frameworkPicker") === "false",
-      viewPickerHidden: searchParams.get("viewPicker") === "false",
-      featurePickerHidden: searchParams.get("featurePicker") === "false",
-      file: searchParams.get("file") || undefined,
-      codeLayout: (searchParams.get("codeLayout") as "sidebar" | "tabs") || "sidebar",
-      theme: (searchParams.get("theme") as "light" | "dark") || "light",
-    };
+    const newState: URLParamsState = generateURLParamsState(searchParams);
 
     setState(newState);
   }, [searchParams]);

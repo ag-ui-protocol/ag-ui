@@ -24,6 +24,8 @@ const (
 	EventTypeStateSnapshot      EventType = "STATE_SNAPSHOT"
 	EventTypeStateDelta         EventType = "STATE_DELTA"
 	EventTypeMessagesSnapshot   EventType = "MESSAGES_SNAPSHOT"
+	EventTypeActivitySnapshot   EventType = "ACTIVITY_SNAPSHOT"
+	EventTypeActivityDelta      EventType = "ACTIVITY_DELTA"
 	EventTypeRaw                EventType = "RAW"
 	EventTypeCustom             EventType = "CUSTOM"
 	EventTypeRunStarted         EventType = "RUN_STARTED"
@@ -57,6 +59,8 @@ var validEventTypes = map[EventType]bool{
 	EventTypeStateSnapshot:              true,
 	EventTypeStateDelta:                 true,
 	EventTypeMessagesSnapshot:           true,
+	EventTypeActivitySnapshot:           true,
+	EventTypeActivityDelta:              true,
 	EventTypeRaw:                        true,
 	EventTypeCustom:                     true,
 	EventTypeRunStarted:                 true,
@@ -318,6 +322,14 @@ func ValidateSequence(events []Event) error {
 			// They represent complete message state at any point in time
 			// Additional validation could be added if needed (e.g., consistency checks)
 
+		case EventTypeActivitySnapshot:
+			// Activity snapshot events are always valid in sequence context
+			// They represent complete activity state at any point in time
+
+		case EventTypeActivityDelta:
+			// Activity delta events are always valid in sequence context
+			// They represent incremental activity changes at any point in time
+
 		case EventTypeRaw:
 			// Raw events are always valid in sequence context
 			// They contain external data that should be passed through
@@ -365,6 +377,8 @@ func EventFromJSON(data []byte) (Event, error) {
 		event = &TextMessageStartEvent{}
 	case EventTypeTextMessageContent:
 		event = &TextMessageContentEvent{}
+	case EventTypeTextMessageChunk:
+		event = &TextMessageChunkEvent{}
 	case EventTypeTextMessageEnd:
 		event = &TextMessageEndEvent{}
 	case EventTypeToolCallStart:
@@ -381,6 +395,10 @@ func EventFromJSON(data []byte) (Event, error) {
 		event = &StateDeltaEvent{}
 	case EventTypeMessagesSnapshot:
 		event = &MessagesSnapshotEvent{}
+	case EventTypeActivitySnapshot:
+		event = &ActivitySnapshotEvent{}
+	case EventTypeActivityDelta:
+		event = &ActivityDeltaEvent{}
 	case EventTypeRaw:
 		event = &RawEvent{}
 	case EventTypeCustom:

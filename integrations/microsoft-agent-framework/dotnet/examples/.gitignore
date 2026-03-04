@@ -1,0 +1,11 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.userprefs
+*.DS_Store
+
+# Environment variables
+.env
+.env.local

@@ -67,7 +67,7 @@ class EventVerifierTest {
         assertFailsWith<AGUIError> {
             events.verifyEvents().toList()
         }.let { error ->
-            assertTrue(error.message!!.contains("Cannot send multiple 'RUN_STARTED' events"))
+            assertTrue(error.message!!.contains("Cannot send 'RUN_STARTED' while a run is still active"))
         }
     }
 
@@ -131,18 +131,35 @@ class EventVerifierTest {
     }
 
     @Test
-    fun testCannotStartMultipleTextMessages() = runTest {
+    fun testConcurrentTextMessagesWithDifferentIds() = runTest {
+        // TypeScript SDK supports concurrent messages with different IDs
         val events = flowOf(
             RunStartedEvent(threadId = "t1", runId = "r1"),
             TextMessageStartEvent(messageId = "m1"),
-            TextMessageStartEvent(messageId = "m2")
+            TextMessageStartEvent(messageId = "m2"),
+            TextMessageContentEvent(messageId = "m1", delta = "Hello"),
+            TextMessageContentEvent(messageId = "m2", delta = "World"),
+            TextMessageEndEvent(messageId = "m1"),
+            TextMessageEndEvent(messageId = "m2"),
+            RunFinishedEvent(threadId = "t1", runId = "r1")
+        )
+
+        val result = events.verifyEvents().toList()
+        assertEquals(8, result.size)
+    }
+
+    @Test
+    fun testCannotStartSameMessageIdTwice() = runTest {
+        val events = flowOf(
+            RunStartedEvent(threadId = "t1", runId = "r1"),
+            TextMessageStartEvent(messageId = "m1"),
+            TextMessageStartEvent(messageId = "m1") // Same ID
         )
 
         val error = assertFailsWith<AGUIError> {
             events.verifyEvents().toList()
         }
-        // The error is caught by the general validation rule, not the specific duplicate text message rule
-        assertTrue(error.message!!.contains("Send 'TEXT_MESSAGE_END' first"))
+        assertTrue(error.message!!.contains("A text message with ID 'm1' is already in progress"))
     }
 
     @Test
@@ -174,48 +191,52 @@ class EventVerifierTest {
     }
 
     @Test
-    fun testMessageIdMismatchInContent() = runTest {
+    fun testContentForNonExistentMessage() = runTest {
+        // With concurrent message support, sending content for a non-started message ID fails
         val events = flowOf(
             RunStartedEvent(threadId = "t1", runId = "r1"),
             TextMessageStartEvent(messageId = "m1"),
-            TextMessageContentEvent(messageId = "m2", delta = "Hello")
+            TextMessageContentEvent(messageId = "m2", delta = "Hello") // m2 not started
         )
 
         assertFailsWith<AGUIError> {
             events.verifyEvents().toList()
         }.let { error ->
-            assertTrue(error.message!!.contains("Message ID mismatch"))
+            assertTrue(error.message!!.contains("No active text message found with ID 'm2'"))
         }
     }
 
     @Test
-    fun testMessageIdMismatchInEnd() = runTest {
+    fun testEndForNonExistentMessage() = runTest {
+        // With concurrent message support, ending a non-started message ID fails
         val events = flowOf(
             RunStartedEvent(threadId = "t1", runId = "r1"),
             TextMessageStartEvent(messageId = "m1"),
-            TextMessageEndEvent(messageId = "m2")
+            TextMessageEndEvent(messageId = "m2") // m2 not started
         )
 
         assertFailsWith<AGUIError> {
             events.verifyEvents().toList()
         }.let { error ->
-            assertTrue(error.message!!.contains("Message ID mismatch"))
+            assertTrue(error.message!!.contains("No active text message found with ID 'm2'"))
         }
     }
 
     @Test
-    fun testCannotSendOtherEventsInsideTextMessage() = runTest {
+    fun testOtherEventsAllowedDuringTextMessage() = runTest {
+        // TypeScript SDK allows other events during active text messages
         val events = flowOf(
             RunStartedEvent(threadId = "t1", runId = "r1"),
             TextMessageStartEvent(messageId = "m1"),
-            ToolCallStartEvent(toolCallId = "t1", toolCallName = "test")
+            ToolCallStartEvent(toolCallId = "t1", toolCallName = "test"),
+            ToolCallEndEvent(toolCallId = "t1"),
+            TextMessageContentEvent(messageId = "m1", delta = "Hello"),
+            TextMessageEndEvent(messageId = "m1"),
+            RunFinishedEvent(threadId = "t1", runId = "r1")
         )
 
-        assertFailsWith<AGUIError> {
-            events.verifyEvents().toList()
-        }.let { error ->
-            assertTrue(error.message!!.contains("Send 'TEXT_MESSAGE_END' first"))
-        }
+        val result = events.verifyEvents().toList()
+        assertEquals(7, result.size)
     }
 
     // ========== Tool Call Tests ==========
@@ -236,17 +257,35 @@ class EventVerifierTest {
     }
 
     @Test
-    fun testCannotStartMultipleToolCalls() = runTest {
+    fun testConcurrentToolCallsWithDifferentIds() = runTest {
+        // TypeScript SDK supports concurrent tool calls with different IDs
         val events = flowOf(
             RunStartedEvent(threadId = "t1", runId = "r1"),
             ToolCallStartEvent(toolCallId = "tc1", toolCallName = "tool1"),
-            ToolCallStartEvent(toolCallId = "tc2", toolCallName = "tool2")
+            ToolCallStartEvent(toolCallId = "tc2", toolCallName = "tool2"),
+            ToolCallArgsEvent(toolCallId = "tc1", delta = "{}"),
+            ToolCallArgsEvent(toolCallId = "tc2", delta = "{}"),
+            ToolCallEndEvent(toolCallId = "tc1"),
+            ToolCallEndEvent(toolCallId = "tc2"),
+            RunFinishedEvent(threadId = "t1", runId = "r1")
+        )
+
+        val result = events.verifyEvents().toList()
+        assertEquals(8, result.size)
+    }
+
+    @Test
+    fun testCannotStartSameToolCallIdTwice() = runTest {
+        val events = flowOf(
+            RunStartedEvent(threadId = "t1", runId = "r1"),
+            ToolCallStartEvent(toolCallId = "tc1", toolCallName = "tool1"),
+            ToolCallStartEvent(toolCallId = "tc1", toolCallName = "tool2") // Same ID
         )
 
         assertFailsWith<AGUIError> {
             events.verifyEvents().toList()
         }.let { error ->
-            assertTrue(error.message!!.contains("A tool call is already in progress"))
+            assertTrue(error.message!!.contains("A tool call with ID 'tc1' is already in progress"))
         }
     }
 
@@ -265,17 +304,18 @@ class EventVerifierTest {
     }
 
     @Test
-    fun testToolCallIdMismatch() = runTest {
+    fun testArgsForNonExistentToolCall() = runTest {
+        // With concurrent tool call support, sending args for a non-started tool call ID fails
         val events = flowOf(
             RunStartedEvent(threadId = "t1", runId = "r1"),
             ToolCallStartEvent(toolCallId = "tc1", toolCallName = "tool1"),
-            ToolCallArgsEvent(toolCallId = "tc2", delta = "{}")
+            ToolCallArgsEvent(toolCallId = "tc2", delta = "{}") // tc2 not started
         )
 
         assertFailsWith<AGUIError> {
             events.verifyEvents().toList()
         }.let { error ->
-            assertTrue(error.message!!.contains("Tool call ID mismatch"))
+            assertTrue(error.message!!.contains("No active tool call found with ID 'tc2'"))
         }
     }
 
@@ -414,7 +454,7 @@ class EventVerifierTest {
         assertFailsWith<AGUIError> {
             events.verifyEvents().toList()
         }.let { error ->
-            assertTrue(error.message!!.contains("Cannot send event type 'THINKING_TEXT_MESSAGE_START' after 'THINKING_TEXT_MESSAGE_START': Send 'THINKING_TEXT_MESSAGE_END' first."))
+            assertTrue(error.message!!.contains("A thinking text message is already in progress"))
         }
     }
 
@@ -449,19 +489,23 @@ class EventVerifierTest {
     }
 
     @Test
-    fun testCannotSendOtherEventsInsideThinkingMessage() = runTest {
+    fun testOtherEventsAllowedDuringThinkingMessage() = runTest {
+        // TypeScript SDK allows other events during active thinking messages
         val events = flowOf(
             RunStartedEvent(threadId = "t1", runId = "r1"),
             ThinkingStartEvent(),
             ThinkingTextMessageStartEvent(),
-            TextMessageStartEvent(messageId = "m1")
+            TextMessageStartEvent(messageId = "m1"),
+            TextMessageContentEvent(messageId = "m1", delta = "Hello"),
+            TextMessageEndEvent(messageId = "m1"),
+            ThinkingTextMessageContentEvent(delta = "thinking..."),
+            ThinkingTextMessageEndEvent(),
+            ThinkingEndEvent(),
+            RunFinishedEvent(threadId = "t1", runId = "r1")
         )
 
-        assertFailsWith<AGUIError> {
-            events.verifyEvents().toList()
-        }.let { error ->
-            assertTrue(error.message!!.contains("Send 'THINKING_TEXT_MESSAGE_END' first"))
-        }
+        val result = events.verifyEvents().toList()
+        assertEquals(10, result.size)
     }
 
     @Test
@@ -590,16 +634,17 @@ class EventVerifierTest {
 
     @Test
     fun testDebugLoggingDoesNotAffectValidation() = runTest {
+        // Now we test with same message ID since concurrent different IDs is allowed
         val events = flowOf(
             RunStartedEvent(threadId = "t1", runId = "r1"),
             TextMessageStartEvent(messageId = "m1"),
-            TextMessageStartEvent(messageId = "m2") // This should still fail
+            TextMessageStartEvent(messageId = "m1") // Same ID should still fail
         )
 
         assertFailsWith<AGUIError> {
             events.verifyEvents(debug = true).toList()
         }.let { error ->
-            assertTrue(error.message!!.contains("Cannot send event type 'TEXT_MESSAGE_START' after 'TEXT_MESSAGE_START': Send 'TEXT_MESSAGE_END' first."))
+            assertTrue(error.message!!.contains("A text message with ID 'm1' is already in progress"))
         }
     }
 

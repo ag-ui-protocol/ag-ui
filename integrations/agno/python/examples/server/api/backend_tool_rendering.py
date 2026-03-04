@@ -3,14 +3,15 @@
 This example shows how to create an Agno Agent with tools (YFinanceTools) and expose it in an AG-UI compatible way.
 """
 
+import json
+
+import httpx
 from agno.agent.agent import Agent
+from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
-from agno.models.openai import OpenAIChat
-from agno.tools.yfinance import YFinanceTools
 from agno.tools import tool
-import httpx
-import json
+from agno.tools.yfinance import YFinanceTools
 
 
 def get_weather_condition(code: int) -> str:
@@ -97,9 +98,9 @@ async def get_weather(location: str) -> str:
         return json.dumps(
             {
                 "temperature": current["temperature_2m"],
-                "feelsLike": current["apparent_temperature"],
+                "feels_like": current["apparent_temperature"],
                 "humidity": current["relative_humidity_2m"],
-                "windSpeed": current["wind_speed_10m"],
+                "wind_speed": current["wind_speed_10m"],
                 "windGust": current["wind_gusts_10m"],
                 "conditions": get_weather_condition(current["weather_code"]),
                 "location": name,
@@ -125,9 +126,6 @@ agent = Agent(
   """,
 )
 
-agent_os = AgentOS(
-    agents=[agent],
-    interfaces=[AGUI(agent=agent)]
-)
+agent_os = AgentOS(agents=[agent], interfaces=[AGUI(agent=agent)])
 
 app = agent_os.get_app()

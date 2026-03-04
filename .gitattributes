@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.mdx text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.jsx text eol=lf
+*.tsx text eol=lf
+*.py text eol=lf

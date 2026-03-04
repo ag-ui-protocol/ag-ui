@@ -7,7 +7,8 @@ import { structuredClone_ } from "@/utils";
 import { compareVersions } from "compare-versions";
 import { catchError, map, tap } from "rxjs/operators";
 import { finalize } from "rxjs/operators";
-import { pipe, Observable, from, of, EMPTY } from "rxjs";
+import { takeUntil } from "rxjs/operators";
+import { pipe, Observable, from, of, EMPTY, Subject } from "rxjs";
 import { verifyEvents } from "@/verify";
 import { convertToLegacyEvents } from "@/legacy/convert";
 import { LegacyRuntimeProtocolEvent } from "@/legacy/types";
@@ -20,6 +21,7 @@ import {
   MiddlewareFunction,
   FunctionMiddleware,
   BackwardCompatibility_0_0_39,
+  BackwardCompatibility_0_0_45,
 } from "@/middleware";
 import packageJson from "../../package.json";
 
@@ -38,6 +40,9 @@ export abstract class AbstractAgent {
   public subscribers: AgentSubscriber[] = [];
   public isRunning: boolean = false;
   private middlewares: Middleware[] = [];
+  // Emits to immediately detach from the active run (stop processing its stream)
+  private activeRunDetach$?: Subject<void>;
+  private activeRunCompletionPromise?: Promise<void>;
 
   get maxVersion() {
     return packageJson.version;
@@ -60,6 +65,12 @@ export abstract class AbstractAgent {
 
     if (compareVersions(this.maxVersion, "0.0.39") <= 0) {
       this.middlewares.unshift(new BackwardCompatibility_0_0_39());
+    }
+
+    // Auto-insert BackwardCompatibility_0_0_45 for backward compatibility
+    // with legacy THINKING events (deprecated, will be removed in 1.0.0)
+    if (compareVersions(this.maxVersion, "0.0.45") <= 0) {
+      this.middlewares.unshift(new BackwardCompatibility_0_0_45());
     }
   }
 
@@ -105,6 +116,13 @@ export abstract class AbstractAgent {
 
       await this.onInitialize(input, subscribers);
 
+      // Per-run detachment signal + completion promise
+      this.activeRunDetach$ = new Subject<void>();
+      let resolveActiveRunCompletion: (() => void) | undefined;
+      this.activeRunCompletionPromise = new Promise<void>((resolve) => {
+        resolveActiveRunCompletion = resolve;
+      });
+
       const pipeline = pipe(
         () => {
           // Build middleware chain using reduceRight so middlewares can intercept runs.
@@ -116,6 +134,8 @@ export abstract class AbstractAgent {
             (nextAgent: AbstractAgent, middleware) =>
               ({
                 run: (i: RunAgentInput) => middleware.run(i, nextAgent),
+                get messages() { return nextAgent.messages; },
+                get state() { return nextAgent.state; },
               }) as AbstractAgent,
             this, // Original agent is the final 'next'
           );
@@ -124,6 +144,8 @@ export abstract class AbstractAgent {
         },
         transformChunks(this.debug),
         verifyEvents(this.debug),
+        // Stop processing immediately when this run is detached
+        (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
         (source$) => this.apply(input, source$, subscribers),
         (source$) => this.processApplyEvents(input, source$, subscribers),
         catchError((error) => {
@@ -133,6 +155,10 @@ export abstract class AbstractAgent {
         finalize(() => {
           this.isRunning = false;
           void this.onFinalize(input, subscribers);
+          resolveActiveRunCompletion?.();
+          resolveActiveRunCompletion = undefined;
+          this.activeRunCompletionPromise = undefined;
+          this.activeRunDetach$ = undefined;
         }),
       );
 
@@ -172,10 +198,19 @@ export abstract class AbstractAgent {
 
       await this.onInitialize(input, subscribers);
 
+      // Per-run detachment signal + completion promise
+      this.activeRunDetach$ = new Subject<void>();
+      let resolveActiveRunCompletion: (() => void) | undefined;
+      this.activeRunCompletionPromise = new Promise<void>((resolve) => {
+        resolveActiveRunCompletion = resolve;
+      });
+
       const pipeline = pipe(
         () => this.connect(input),
         transformChunks(this.debug),
         verifyEvents(this.debug),
+        // Stop processing immediately when this run is detached
+        (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
         (source$) => this.apply(input, source$, subscribers),
         (source$) => this.processApplyEvents(input, source$, subscribers),
         catchError((error) => {
@@ -188,6 +223,10 @@ export abstract class AbstractAgent {
         finalize(() => {
           this.isRunning = false;
           void this.onFinalize(input, subscribers);
+          resolveActiveRunCompletion?.();
+          resolveActiveRunCompletion = undefined;
+          this.activeRunCompletionPromise = undefined;
+          this.activeRunDetach$ = undefined;
         }),
       );
 
@@ -202,6 +241,16 @@ export abstract class AbstractAgent {
   }
 
   public abortRun() {}
+
+  public async detachActiveRun(): Promise<void> {
+    if (!this.activeRunDetach$) {
+      return;
+    }
+    const completion = this.activeRunCompletionPromise ?? Promise.resolve();
+    this.activeRunDetach$.next();
+    this.activeRunDetach$?.complete();
+    await completion;
+  }
 
   protected apply(
     input: RunAgentInput,
@@ -246,9 +295,7 @@ export abstract class AbstractAgent {
 
   protected prepareRunAgentInput(parameters?: RunAgentParameters): RunAgentInput {
     const clonedMessages = structuredClone_(this.messages) as Message[];
-    const messagesWithoutActivity = clonedMessages.filter(
-      (message) => message.role !== "activity",
-    );
+    const messagesWithoutActivity = clonedMessages.filter((message) => message.role !== "activity");
 
     return {
       threadId: this.threadId,
@@ -397,6 +444,7 @@ export abstract class AbstractAgent {
     cloned.debug = this.debug;
     cloned.isRunning = this.isRunning;
     cloned.subscribers = [...this.subscribers];
+    cloned.middlewares = [...this.middlewares];
 
     return cloned;
   }
@@ -536,6 +584,8 @@ export abstract class AbstractAgent {
         (nextAgent: AbstractAgent, middleware) =>
           ({
             run: (i: RunAgentInput) => middleware.run(i, nextAgent),
+            get messages() { return nextAgent.messages; },
+            get state() { return nextAgent.state; },
           }) as AbstractAgent,
         this,
       );

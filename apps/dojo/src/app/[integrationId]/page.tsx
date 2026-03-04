@@ -11,6 +11,9 @@ export async function generateStaticParams() {
   }));
 }
 
+// Return 404 for any params not in generateStaticParams
+export const dynamicParams = false;
+
 interface IntegrationPageProps {
   params: Promise<{
     integrationId: string;

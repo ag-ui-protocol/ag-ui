@@ -9,8 +9,8 @@ export const browserTool = createTool({
     url: z.string().describe("URL to browse"),
   }),
   outputSchema: z.string(),
-  execute: async ({ context }) => {
-    open(context.url);
-    return `Browsed ${context.url}`;
+  execute: async (inputData) => {
+    open(inputData.url);
+    return `Browsed ${inputData.url}`;
   },
 });

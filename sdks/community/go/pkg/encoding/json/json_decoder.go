@@ -239,6 +239,13 @@ func (d *JSONDecoder) createEvent(eventType events.EventType, data []byte) (even
 			event = &e
 		}
 
+	case events.EventTypeTextMessageChunk:
+		var e events.TextMessageChunkEvent
+		err = decoder.Decode(&e)
+		if err == nil {
+			event = &e
+		}
+
 	case events.EventTypeTextMessageContent:
 		var e events.TextMessageContentEvent
 		err = decoder.Decode(&e)
