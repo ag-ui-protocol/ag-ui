@@ -96,6 +96,7 @@ export const menuIntegrations = [
     features: [
       "agentic_chat",
       "v1_agentic_chat",
+      "vnext_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
       "tool_based_generative_ui",
@@ -107,6 +108,7 @@ export const menuIntegrations = [
     features: [
       "agentic_chat",
       "v1_agentic_chat",
+      "vnext_chat",
       "backend_tool_rendering",
       "human_in_the_loop",
       "shared_state",

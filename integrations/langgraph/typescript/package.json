@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/langgraph",
-  "version": "0.0.24",
+  "version": "0.0.25-alpha.0",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -33,7 +33,13 @@
   },
   "peerDependencies": {
     "@ag-ui/core": ">=0.0.42",
-    "@ag-ui/client": ">=0.0.42"
+    "@ag-ui/client": ">=0.0.42",
+    "@langchain/langgraph": "^0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@langchain/langgraph": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@ag-ui/core": "workspace:*",

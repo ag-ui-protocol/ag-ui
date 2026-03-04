@@ -1,6 +1,8 @@
 import type {
   AgentConfig,
   BaseEvent,
+  FetchRunHistoryOptions,
+  FetchRunHistoryResult,
   RunAgentInput,
   RunFinishedEvent,
   RunStartedEvent,
@@ -12,7 +14,7 @@ import type {
   ToolCallStartEvent,
 } from "@ag-ui/client";
 import { AbstractAgent, EventType } from "@ag-ui/client";
-import type { StorageThreadType } from "@mastra/core/memory";
+import type { StorageThreadType, MastraDBMessage } from "@mastra/core/memory";
 import type { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { randomUUID } from "@ag-ui/client";
@@ -20,6 +22,8 @@ import { Observable } from "rxjs";
 import type { MastraClient } from "@mastra/client-js";
 import {
   convertAGUIMessagesToMastra,
+  convertMastraDBMessagesToAGUI,
+  groupMessagesIntoRuns,
   GetLocalAgentsOptions,
   getLocalAgents,
   getRemoteAgents,
@@ -36,6 +40,7 @@ export interface MastraAgentConfig extends AgentConfig {
   agent: LocalMastraAgent | RemoteMastraAgent;
   resourceId: string;
   requestContext?: RequestContext;
+  mastraClient?: MastraClient;
 }
 
 interface MastraAgentStreamOptions {
@@ -55,13 +60,15 @@ export class MastraAgent extends AbstractAgent {
   agent: LocalMastraAgent | RemoteMastraAgent;
   resourceId: string;
   requestContext?: RequestContext;
+  mastraClient?: MastraClient;
 
   constructor(private config: MastraAgentConfig) {
-    const { agent, resourceId, requestContext, ...rest } = config;
+    const { agent, resourceId, requestContext, mastraClient, ...rest } = config;
     super(rest);
     this.agent = agent;
     this.resourceId = resourceId;
     this.requestContext = requestContext ?? new RequestContext();
+    this.mastraClient = mastraClient;
   }
 
   public clone() {
@@ -108,7 +115,7 @@ export class MastraAgent extends AbstractAgent {
             }
 
             const existingMemory = JSON.parse(
-              (thread.metadata?.workingMemory as string) ?? "{}",
+              (thread.metadata?.workingMemory as string) ?? "{}"
             );
             const { messages, ...rest } = input.state;
             const workingMemory = JSON.stringify({
@@ -239,8 +246,51 @@ export class MastraAgent extends AbstractAgent {
     });
   }
 
+  protected async fetchRunHistory(
+    options: FetchRunHistoryOptions,
+  ): Promise<FetchRunHistoryResult | undefined> {
+    try {
+      const { threadId } = options;
+      let mastraMessages: MastraDBMessage[];
+
+      if (this.isLocalMastraAgent(this.agent)) {
+        const memory = await this.agent.getMemory({
+          requestContext: this.requestContext,
+        });
+        if (!memory) {
+          return { runs: [] };
+        }
+        const result = await memory.recall({
+          threadId,
+          resourceId: this.resourceId,
+          perPage: false,
+          orderBy: { field: "createdAt", direction: "ASC" },
+        });
+        mastraMessages = result.messages;
+      } else if (this.mastraClient) {
+        const result = await this.mastraClient.listThreadMessages(threadId, {
+          agentId: this.config.agentId,
+        });
+        mastraMessages = result.messages;
+      } else {
+        return { runs: [] };
+      }
+
+      if (!mastraMessages || mastraMessages.length === 0) {
+        return { runs: [] };
+      }
+
+      const aguiMessages = convertMastraDBMessagesToAGUI(mastraMessages);
+      const runs = groupMessagesIntoRuns(aguiMessages);
+      return { runs };
+    } catch (error) {
+      console.error("Failed to fetch run history:", error);
+      return undefined;
+    }
+  }
+
   isLocalMastraAgent(
-    agent: LocalMastraAgent | RemoteMastraAgent,
+    agent: LocalMastraAgent | RemoteMastraAgent
   ): agent is LocalMastraAgent {
     return "getMemory" in agent;
   }
@@ -260,7 +310,7 @@ export class MastraAgent extends AbstractAgent {
       onToolResultPart,
       onError,
       onRunFinished,
-    }: MastraAgentStreamOptions,
+    }: MastraAgentStreamOptions
   ): Promise<void> {
     const clientTools = tools.reduce(
       (acc, tool) => {
@@ -271,7 +321,7 @@ export class MastraAgent extends AbstractAgent {
         };
         return acc;
       },
-      {} as Record<string, any>,
+      {} as Record<string, any>
     );
     const resourceId = this.resourceId ?? threadId;
 
@@ -392,13 +442,13 @@ export class MastraAgent extends AbstractAgent {
   }
 
   static async getRemoteAgents(
-    options: GetRemoteAgentsOptions,
+    options: GetRemoteAgentsOptions
   ): Promise<Record<string, AbstractAgent>> {
     return getRemoteAgents(options);
   }
 
   static getLocalAgents(
-    options: GetLocalAgentsOptions,
+    options: GetLocalAgentsOptions
   ): Record<string, AbstractAgent> {
     return getLocalAgents(options);
   }

@@ -159,6 +159,13 @@ const agentFilesMapper: Record<
         `/mastra/typescript/examples/src/mastra/agents/agentic-chat.ts`,
       ),
     ],
+    vnext_chat: [
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        `/mastra/typescript/examples/src/mastra/agents/agentic-chat.ts`,
+      ),
+    ],
     backend_tool_rendering: [
       path.join(
         __dirname,
@@ -184,6 +191,7 @@ const agentFilesMapper: Record<
 
   "mastra-agent-local": () => ({
     agentic_chat: [path.join(__dirname, "../src/mastra/agents/agentic-chat.ts")],
+    vnext_chat: [path.join(__dirname, "../src/mastra/agents/agentic-chat.ts")],
     human_in_the_loop: [path.join(__dirname, "../src/mastra/agents/human-in-the-loop.ts")],
     backend_tool_rendering: [path.join(__dirname, "../src/mastra/agents/backend-tool-rendering.ts")],
     shared_state: [path.join(__dirname, "../src/mastra/agents/shared-state.ts")],

@@ -90,21 +90,37 @@ export const agentsIntegrations = {
       baseUrl: envVars.mastraUrl,
     });
 
-    return MastraAgent.getRemoteAgents({
+    const agents = await MastraAgent.getRemoteAgents({
       // Cast needed: pnpm may resolve separate @mastra/client-js installations
       // for dojo vs @ag-ui/mastra, causing nominal type mismatch on private fields
       mastraClient: mastraClient as any,
       resourceId: "mastra-agent-remote"
-    }) as Promise<Record<"agentic_chat" | "backend_tool_rendering" | "human_in_the_loop" | "tool_based_generative_ui", AbstractAgent>>;
+    }) as Record<
+      "agentic_chat" | "backend_tool_rendering" | "human_in_the_loop" | "tool_based_generative_ui",
+      AbstractAgent
+    >;
+
+    return {
+      ...agents,
+      vnext_chat: agents.agentic_chat,
+    };
   },
 
   "mastra-agent-local": async () => {
-    return MastraAgent.getLocalAgents({
+    const agents = MastraAgent.getLocalAgents({
       // Cast needed: pnpm may resolve separate @mastra/core installations
       // for dojo vs @ag-ui/mastra, causing nominal type mismatch on private fields
       mastra: mastra as any,
       resourceId: "mastra-agent-local"
-    }) as Record<"agentic_chat" | "backend_tool_rendering" | "human_in_the_loop" | "shared_state" | "tool_based_generative_ui", AbstractAgent>;
+    }) as Record<
+      "agentic_chat" | "backend_tool_rendering" | "human_in_the_loop" | "shared_state" | "tool_based_generative_ui",
+      AbstractAgent
+    >;
+
+    return {
+      ...agents,
+      vnext_chat: agents.agentic_chat,
+    };
   },
 
   // Disabled until we can support Vercel AI SDK v5
