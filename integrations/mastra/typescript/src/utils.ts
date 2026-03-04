@@ -1,5 +1,6 @@
-import type { InputContent, Message } from "@ag-ui/client";
+import type { InputContent, Message, RunHistory } from "@ag-ui/client";
 import { AbstractAgent } from "@ag-ui/client";
+import type { MastraDBMessage } from "@mastra/core/memory";
 import { MastraClient } from "@mastra/client-js";
 import type { Mastra } from "@mastra/core";
 import type { CoreMessage } from "@mastra/core/llm";
@@ -106,6 +107,7 @@ export async function getRemoteAgents({
         agentId,
         agent,
         resourceId,
+        mastraClient,
       });
 
       return acc;
@@ -186,4 +188,159 @@ export function getNetwork({ mastra, networkId, resourceId, requestContext }: Ge
     resourceId,
     requestContext,
   }) as AbstractAgent;
+}
+
+/**
+ * Converts MastraDBMessage[] (V2 format with content.parts[]) to AG-UI Message[].
+ *
+ * One MastraDBMessage can expand to multiple AG-UI messages. For example, an
+ * assistant message with tool-invocation parts produces an AssistantMessage
+ * (with toolCalls[]) plus a ToolMessage for each completed tool invocation.
+ */
+export function convertMastraDBMessagesToAGUI(
+  messages: MastraDBMessage[],
+): Message[] {
+  const result: Message[] = [];
+
+  for (const msg of messages) {
+    const parts = msg.content?.parts ?? [];
+
+    if (msg.role === "user") {
+      const textParts = parts
+        .filter((p: any) => p.type === "text")
+        .map((p: any) => p.text as string);
+      result.push({
+        id: msg.id,
+        role: "user",
+        content: textParts.join("\n") || "",
+      });
+    } else if (msg.role === "assistant") {
+      const textParts = parts
+        .filter((p: any) => p.type === "text")
+        .map((p: any) => p.text as string);
+      const content = textParts.join("\n") || "";
+
+      // Collect tool invocations from tool-invocation parts
+      const toolInvocationParts = parts.filter(
+        (p: any) => p.type === "tool-invocation",
+      );
+
+      // Also collect from dynamic-tool parts
+      const dynamicToolParts = parts.filter(
+        (p: any) => p.type === "dynamic-tool",
+      );
+
+      const toolCalls: Array<{
+        id: string;
+        type: "function";
+        function: { name: string; arguments: string };
+      }> = [];
+
+      const toolMessages: Message[] = [];
+
+      for (const part of toolInvocationParts) {
+        const inv = (part as any).toolInvocation;
+        if (!inv) continue;
+
+        toolCalls.push({
+          id: inv.toolCallId,
+          type: "function",
+          function: {
+            name: inv.toolName,
+            arguments: JSON.stringify(inv.args ?? {}),
+          },
+        });
+
+        // If the tool invocation has a result, emit a ToolMessage
+        if (inv.state === "result" && inv.result !== undefined) {
+          toolMessages.push({
+            id: inv.toolCallId,
+            role: "tool",
+            toolCallId: inv.toolCallId,
+            content: JSON.stringify(inv.result),
+          });
+        }
+      }
+
+      for (const part of dynamicToolParts) {
+        const dp = part as any;
+        if (!dp.toolCallId) continue;
+
+        toolCalls.push({
+          id: dp.toolCallId,
+          type: "function",
+          function: {
+            name: dp.toolName,
+            arguments: JSON.stringify(dp.input ?? {}),
+          },
+        });
+
+        if (
+          dp.state === "output-available" &&
+          dp.output !== undefined
+        ) {
+          toolMessages.push({
+            id: dp.toolCallId,
+            role: "tool",
+            toolCallId: dp.toolCallId,
+            content: JSON.stringify(dp.output),
+          });
+        }
+      }
+
+      const assistantMsg: Message = {
+        id: msg.id,
+        role: "assistant",
+        content: content || undefined,
+        ...(toolCalls.length > 0 ? { toolCalls } : {}),
+      };
+      result.push(assistantMsg);
+      result.push(...toolMessages);
+    } else if (msg.role === "system") {
+      const textParts = parts
+        .filter((p: any) => p.type === "text")
+        .map((p: any) => p.text as string);
+      result.push({
+        id: msg.id,
+        role: "system",
+        content: textParts.join("\n") || "",
+      });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Groups a flat Message[] into RunHistory[] by splitting on user-message boundaries.
+ * Each run starts with a user message, and its runId is the user message's id.
+ */
+export function groupMessagesIntoRuns(messages: Message[]): RunHistory[] {
+  const runs: RunHistory[] = [];
+  let currentMessages: Message[] = [];
+  let currentRunId: string | null = null;
+
+  for (const msg of messages) {
+    if (msg.role === "user") {
+      // If there are accumulated messages, push the previous run
+      if (currentMessages.length > 0) {
+        runs.push({ runId: currentRunId!, messages: currentMessages });
+      }
+      currentRunId = msg.id;
+      currentMessages = [msg];
+    } else {
+      if (!currentRunId) {
+        // Messages before any user message (e.g., system) — start a run with a generated id
+        currentRunId = msg.id;
+      }
+      currentMessages.push(msg);
+    }
+  }
+
+  // Push the last run
+  if (currentMessages.length > 0) {
+    runs.push({ runId: currentRunId!, messages: currentMessages });
+  }
+
+  return runs;
 }
