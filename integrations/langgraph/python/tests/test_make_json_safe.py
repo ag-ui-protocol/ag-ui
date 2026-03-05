@@ -39,14 +39,8 @@ class TestMakeJsonSafeUnpicklable(unittest.TestCase):
         finally:
             loop.close()
 
-    def test_dataclass_with_asyncio_task(self):
-        """make_json_safe should handle a dataclass containing an asyncio Task."""
-        async def _make_task():
-            loop = asyncio.get_event_loop()
-            future = loop.create_future()
-            future.set_result("done")
-            return future
-
+    def test_dataclass_with_resolved_asyncio_future(self):
+        """make_json_safe should handle a dataclass containing a resolved asyncio Future."""
         loop = asyncio.new_event_loop()
         try:
             future = loop.create_future()
@@ -56,6 +50,35 @@ class TestMakeJsonSafeUnpicklable(unittest.TestCase):
             self.assertIsInstance(result, dict)
             self.assertEqual(result["name"], "task_test")
             self.assertEqual(result["value"], 99)
+        finally:
+            loop.close()
+
+    def test_dataclass_with_gathering_future(self):
+        """make_json_safe should handle a dataclass containing a _GatheringFuture.
+
+        This mirrors the exact crash from issue #1203 where asyncio.gather()
+        creates a _GatheringFuture that cannot be pickled/deep-copied.
+        """
+        loop = asyncio.new_event_loop()
+        try:
+            async def _coro():
+                return "result"
+
+            # asyncio.gather() creates a _GatheringFuture internally
+            gathering = asyncio.gather(_coro(), _coro())
+            obj = UnpicklableDataclass(name="gather_test", value=77, unpicklable=gathering)
+            result = make_json_safe(obj)
+            self.assertIsInstance(result, dict)
+            self.assertEqual(result["name"], "gather_test")
+            self.assertEqual(result["value"], 77)
+            self.assertIn("unpicklable", result)
+
+            # Clean up: cancel the gathering future and drain pending tasks
+            gathering.cancel()
+            try:
+                loop.run_until_complete(gathering)
+            except (asyncio.CancelledError, Exception):
+                pass
         finally:
             loop.close()
 
