@@ -9,6 +9,7 @@ type
     id*: string
     `type`*: string
     function*: FunctionCall
+    encryptedValue*: Option[string]
 
   Role* = enum
     RoleDeveloper = "developer"
@@ -38,12 +39,22 @@ type
     content*: string
     toolCallId*: string
 
+  ActivityMessage* = object of BaseMessage
+    activityType*: string
+    activityContent*: JsonNode
+
+  ReasoningMessage* = object of BaseMessage
+    reasoningType*: Option[string]
+    encryptedValue*: Option[string]
+
   MessageKind* = enum
     MkDeveloper
     MkSystem
     MkAssistant
     MkUser
     MkTool
+    MkActivity
+    MkReasoning
 
   Message* = object
     case kind*: MessageKind
@@ -57,6 +68,10 @@ type
       user*: UserMessage
     of MkTool:
       tool*: ToolMessage
+    of MkActivity:
+      activity*: ActivityMessage
+    of MkReasoning:
+      reasoning*: ReasoningMessage
 
   Context* = object
     description*: string
@@ -70,6 +85,7 @@ type
   RunAgentInput* = object
     threadId*: string
     runId*: string
+    parentRunId*: Option[string]
     state*: JsonNode
     messages*: seq[Message]
     tools*: seq[Tool]
@@ -84,8 +100,8 @@ type
 proc newFunctionCall*(name: string, arguments: string): FunctionCall =
   FunctionCall(name: name, arguments: arguments)
 
-proc newToolCall*(id: string, `type`: string = "function", function: FunctionCall): ToolCall =
-  ToolCall(id: id, `type`: `type`, function: function)
+proc newToolCall*(id: string, `type`: string = "function", function: FunctionCall, encryptedValue: Option[string] = none(string)): ToolCall =
+  ToolCall(id: id, `type`: `type`, function: function, encryptedValue: encryptedValue)
 
 proc newDeveloperMessage*(id: string, content: string, name: Option[string] = none(string)): DeveloperMessage =
   result = DeveloperMessage()
@@ -121,6 +137,23 @@ proc newUserMessage*(id: string, content: string, name: Option[string] = none(st
 proc newToolMessage*(id: string, content: string, toolCallId: string): ToolMessage =
   ToolMessage(id: id, role: RoleTool, content: content, toolCallId: toolCallId)
 
+proc newActivityMessage*(id: string, activityType: string, activityContent: JsonNode, name: Option[string] = none(string)): ActivityMessage =
+  result = ActivityMessage()
+  result.id = id
+  result.role = RoleAssistant
+  result.activityType = activityType
+  result.activityContent = activityContent
+  result.name = name
+
+proc newReasoningMessage*(id: string, content: Option[string] = none(string), reasoningType: Option[string] = none(string), encryptedValue: Option[string] = none(string), name: Option[string] = none(string)): ReasoningMessage =
+  result = ReasoningMessage()
+  result.id = id
+  result.role = RoleAssistant
+  result.content = content
+  result.reasoningType = reasoningType
+  result.encryptedValue = encryptedValue
+  result.name = name
+
 proc newContext*(description: string, value: string): Context =
   Context(description: description, value: value)
 
@@ -129,10 +162,12 @@ proc newTool*(name: string, description: string, parameters: JsonNode): Tool =
 
 proc newRunAgentInput*(threadId: string, runId: string, state: JsonNode,
                        messages: seq[Message], tools: seq[Tool], 
-                       context: seq[Context], forwardedProps: JsonNode): RunAgentInput =
+                       context: seq[Context], forwardedProps: JsonNode,
+                       parentRunId: Option[string] = none(string)): RunAgentInput =
   RunAgentInput(
     threadId: threadId,
     runId: runId,
+    parentRunId: parentRunId,
     state: state,
     messages: messages,
     tools: tools,
@@ -148,11 +183,13 @@ proc toJson*(fc: FunctionCall): JsonNode =
   }
 
 proc toJson*(tc: ToolCall): JsonNode =
-  %*{
+  result = %*{
     "id": tc.id,
     "type": tc.`type`,
     "function": tc.function.toJson()
   }
+  if tc.encryptedValue.isSome:
+    result["encryptedValue"] = %tc.encryptedValue.get
 
 proc toJson*(msg: BaseMessage): JsonNode =
   result = %*{
@@ -165,34 +202,13 @@ proc toJson*(msg: BaseMessage): JsonNode =
     result["name"] = %msg.name.get
 
 proc toJson*(msg: DeveloperMessage): JsonNode =
-  result = %*{
-    "id": msg.id,
-    "role": $msg.role
-  }
-  if msg.content.isSome:
-    result["content"] = %msg.content.get
-  if msg.name.isSome:
-    result["name"] = %msg.name.get
+  result = toJson(BaseMessage(msg))
 
 proc toJson*(msg: SystemMessage): JsonNode =
-  result = %*{
-    "id": msg.id,
-    "role": $msg.role
-  }
-  if msg.content.isSome:
-    result["content"] = %msg.content.get
-  if msg.name.isSome:
-    result["name"] = %msg.name.get
+  result = toJson(BaseMessage(msg))
 
 proc toJson*(msg: AssistantMessage): JsonNode =
-  result = %*{
-    "id": msg.id,
-    "role": $msg.role
-  }
-  if msg.content.isSome:
-    result["content"] = %msg.content.get
-  if msg.name.isSome:
-    result["name"] = %msg.name.get
+  result = toJson(BaseMessage(msg))
   if msg.toolCalls.isSome:
     let toolCallsJson = newJArray()
     for tc in msg.toolCalls.get:
@@ -200,14 +216,7 @@ proc toJson*(msg: AssistantMessage): JsonNode =
     result["toolCalls"] = toolCallsJson
 
 proc toJson*(msg: UserMessage): JsonNode =
-  result = %*{
-    "id": msg.id,
-    "role": $msg.role
-  }
-  if msg.content.isSome:
-    result["content"] = %msg.content.get
-  if msg.name.isSome:
-    result["name"] = %msg.name.get
+  result = toJson(BaseMessage(msg))
 
 proc toJson*(msg: ToolMessage): JsonNode =
   %*{
@@ -216,6 +225,18 @@ proc toJson*(msg: ToolMessage): JsonNode =
     "content": msg.content,
     "toolCallId": msg.toolCallId
   }
+
+proc toJson*(msg: ActivityMessage): JsonNode =
+  result = toJson(BaseMessage(msg))
+  result["activityType"] = %msg.activityType
+  result["activityContent"] = msg.activityContent
+
+proc toJson*(msg: ReasoningMessage): JsonNode =
+  result = toJson(BaseMessage(msg))
+  if msg.reasoningType.isSome:
+    result["reasoningType"] = %msg.reasoningType.get
+  if msg.encryptedValue.isSome:
+    result["encryptedValue"] = %msg.encryptedValue.get
 
 proc toJson*(msg: Message): JsonNode =
   case msg.kind
@@ -229,6 +250,10 @@ proc toJson*(msg: Message): JsonNode =
     msg.user.toJson()
   of MkTool:
     msg.tool.toJson()
+  of MkActivity:
+    msg.activity.toJson()
+  of MkReasoning:
+    msg.reasoning.toJson()
 
 proc toJson*(ctx: Context): JsonNode =
   %*{
@@ -250,6 +275,9 @@ proc toJson*(input: RunAgentInput): JsonNode =
     "state": input.state,
     "forwardedProps": input.forwardedProps
   }
+  if input.parentRunId.isSome:
+    result["parentRunId"] = %input.parentRunId.get
+
   let messagesJson = newJArray()
   for msg in input.messages:
     messagesJson.add(msg.toJson())
@@ -273,11 +301,13 @@ proc fromJson*(json: JsonNode, T: typedesc[FunctionCall]): FunctionCall =
   )
 
 proc fromJson*(json: JsonNode, T: typedesc[ToolCall]): ToolCall =
-  ToolCall(
+  result = ToolCall(
     id: json["id"].getStr,
     `type`: json["type"].getStr,
     function: fromJson(json["function"], FunctionCall)
   )
+  if json.hasKey("encryptedValue"):
+    result.encryptedValue = some(json["encryptedValue"].getStr)
 
 proc fromJson*(json: JsonNode, T: typedesc[Context]): Context =
   Context(
@@ -341,6 +371,31 @@ proc fromJson*(json: JsonNode, T: typedesc[ToolMessage]): ToolMessage =
     toolCallId: json["toolCallId"].getStr
   )
 
+proc fromJson*(json: JsonNode, T: typedesc[ActivityMessage]): ActivityMessage =
+  result = ActivityMessage()
+  result.id = json["id"].getStr
+  result.role = RoleAssistant
+  result.activityType = json["activityType"].getStr
+  result.activityContent = json["activityContent"]
+  if json.hasKey("content"):
+    result.content = some(json["content"].getStr)
+  if json.hasKey("name"):
+    result.name = some(json["name"].getStr)
+
+proc fromJson*(json: JsonNode, T: typedesc[ReasoningMessage]): ReasoningMessage =
+  result = ReasoningMessage()
+  result.id = json["id"].getStr
+  result.role = RoleAssistant
+  if json.hasKey("content"):
+    result.content = some(json["content"].getStr)
+  if json.hasKey("reasoningType"):
+    result.reasoningType = some(json["reasoningType"].getStr)
+  if json.hasKey("encryptedValue"):
+    result.encryptedValue = some(json["encryptedValue"].getStr)
+  if json.hasKey("name"):
+    result.name = some(json["name"].getStr)
+
 # Export commonly used procs
 export toJson, fromJson, newFunctionCall, newToolCall, newDeveloperMessage, newSystemMessage,
-       newAssistantMessage, newUserMessage, newToolMessage, newContext, newTool, newRunAgentInput
+       newAssistantMessage, newUserMessage, newToolMessage, newActivityMessage, newReasoningMessage, 
+       newContext, newTool, newRunAgentInput

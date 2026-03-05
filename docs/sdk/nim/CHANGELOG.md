@@ -1,27 +1,25 @@
 # AG-UI Nim SDK Changes
 
-## Unreleased [Current Development]
+## Unreleased [2026-03-06]
 
 ### Added
-- Added validation for all 16 standard event types
-- Added proper handling for chunk events (TextMessageChunk, ToolCallChunk)
-- Added validation for complex objects with optional fields
-- Added optional field validation helpers (validateOptionalString, validateOptionalInt64, validateOptionalBool)
-- Added tests for the validation module (test_validation.nim, test_complex_validation.nim)
-- Added comprehensive validation for complex object types:
-  - JSON Schema validation for tool parameters
-  - RFC 6902 validation for JSON Patch operations
-  - Function call argument validation with JSON syntax checking
-  - Proper validation for nested structures
-- Fixed and integrated stream utilities with working tests
+- **Protocol Completeness**: Updated types and events to achieve full parity with the AG-UI protocol (matching Python SDK).
+  - Added `parent_run_id` and `input` fields to `RunStartedEvent` and `RunAgentInput`.
+  - Added `result` field to `RunFinishedEvent`.
+  - Added `encrypted_value` to `ToolCall`, `ActivityMessage`, and `ReasoningMessage`.
+  - Implemented `ActivityMessage` and `ReasoningMessage` types.
+- **Environment Management**: Added `mise.toml` to manage Nim versioning (pinned to `2.2.8`).
+
+### Changed
+- **Toolchain Upgrade**: Upgraded Nim version from `1.6.0` to `2.2.8`.
+- **CI/CD Improvements**: 
+  - Updated GitHub Actions workflow (`unit-nim-sdk.yml`) to use `mise` for environment setup.
+  - Pinned GitHub Actions to specific commit SHAs for enhanced security.
+- **Repository Cleanup**: Removed build artifacts, binary files, and internal/AI working files (`TODO.md`, `CLAUDE.md`, etc.) from the repository.
+- **Git Hygiene**: Updated root `.gitignore` to exclude `sdks/build/` and cleared existing binaries from git history.
 
 ### Fixed
-- Fixed import paths in stream utilities (changed ../types to ./types)
-- Fixed type mismatches in validation functions (content vs delta field names)
-- Fixed timestamp handling for events (using int64 instead of int)
-- Fixed the validateEvent function to handle all event types correctly
-- Fixed the validateRunAgentInput function to better handle optional fields
-- Fixed error reporting with more detailed path information
+- Fixed missing optional fields in JSON serialization/deserialization for core types.
 
 ### Changed
 - Updated TODO.md to reflect current status and progress

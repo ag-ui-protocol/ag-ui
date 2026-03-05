@@ -125,10 +125,13 @@ type
   RunStartedEvent* = object of BaseEvent
     threadId*: string
     runId*: string
+    parentRunId*: Option[string]
+    input*: Option[RunAgentInput]
 
   RunFinishedEvent* = object of BaseEvent
     threadId*: string
     runId*: string
+    result*: Option[JsonNode]
 
   RunErrorEvent* = object of BaseEvent
     message*: string
@@ -381,22 +384,28 @@ proc newCustomEvent*(name: string, value: JsonNode,
   result.rawEvent = rawEvent
 
 proc newRunStartedEvent*(threadId: string, runId: string,
+                         parentRunId: Option[string] = none(string),
+                         input: Option[RunAgentInput] = none(RunAgentInput),
                          timestamp: Option[int64] = none(int64),
                          rawEvent: Option[JsonNode] = none(JsonNode)): RunStartedEvent =
   result = RunStartedEvent()
   result.`type` = RUN_STARTED
   result.threadId = threadId
   result.runId = runId
+  result.parentRunId = parentRunId
+  result.input = input
   result.timestamp = timestamp
   result.rawEvent = rawEvent
 
 proc newRunFinishedEvent*(threadId: string, runId: string,
+                          result_data: Option[JsonNode] = none(JsonNode),
                           timestamp: Option[int64] = none(int64),
                           rawEvent: Option[JsonNode] = none(JsonNode)): RunFinishedEvent =
   result = RunFinishedEvent()
   result.`type` = RUN_FINISHED
   result.threadId = threadId
   result.runId = runId
+  result.result = result_data
   result.timestamp = timestamp
   result.rawEvent = rawEvent
 
@@ -580,6 +589,10 @@ proc toJson*(event: RunStartedEvent): JsonNode =
     "threadId": event.threadId,
     "runId": event.runId
   }
+  if event.parentRunId.isSome:
+    result["parentRunId"] = %event.parentRunId.get
+  if event.input.isSome:
+    result["input"] = event.input.get.toJson()
   addBaseFields(result, event)
 
 proc toJson*(event: RunFinishedEvent): JsonNode =
@@ -587,6 +600,8 @@ proc toJson*(event: RunFinishedEvent): JsonNode =
     "threadId": event.threadId,
     "runId": event.runId
   }
+  if event.result.isSome:
+    result["result"] = event.result.get
   addBaseFields(result, event)
 
 proc toJson*(event: RunErrorEvent): JsonNode =

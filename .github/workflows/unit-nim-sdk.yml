@@ -18,12 +18,15 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
-      - name: Setup Nim
-        uses: jason-v-p/setup-nim-action@v1
+      - name: Install mise
+        uses: jdx/mise-action@v2
         with:
-          nim-version: '1.6.0'
+          version: latest
+          install: true
+          cache: true
+          directory: sdks/nim
 
       - name: Install dependencies
         working-directory: sdks/nim

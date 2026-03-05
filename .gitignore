@@ -25,3 +25,5 @@ node_modules
 *.egg-info
 
 **/python/**/__pycache__/
+
+sdks/build/
