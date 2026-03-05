@@ -3,10 +3,10 @@ Tests to verify that ag-ui-langgraph does not trigger deprecation warnings
 from Pydantic V2 or LangGraph V1.
 """
 
-import inspect
+import asyncio
 import unittest
 import warnings
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock, patch
 
 from ag_ui.core import RunAgentInput
 from ag_ui_langgraph.agent import LangGraphAgent
@@ -15,16 +15,57 @@ from ag_ui_langgraph.agent import LangGraphAgent
 class TestPydanticCopyDeprecation(unittest.TestCase):
     """Test that RunAgentInput.copy() deprecation is resolved."""
 
-    def test_run_uses_model_copy_not_copy(self):
+    def test_run_uses_model_copy_not_deprecated_copy(self):
         """
-        Verify that LangGraphAgent.run() uses model_copy() instead of copy()
-        on the RunAgentInput pydantic model, avoiding PydanticDeprecatedSince20.
+        Verify that LangGraphAgent.run() uses model_copy() at runtime,
+        not the deprecated .copy(), by checking for deprecation warnings.
         """
-        # Inspect the actual source of LangGraphAgent.run to confirm it calls
-        # model_copy rather than the deprecated .copy() method.
-        source = inspect.getsource(LangGraphAgent.run)
-        self.assertIn("model_copy", source, "LangGraphAgent.run() should use model_copy()")
-        self.assertNotIn(".copy(", source, "LangGraphAgent.run() should not use .copy()")
+        mock_graph = MagicMock()
+        mock_graph.get_input_jsonschema.return_value = {"properties": {"messages": {}}}
+        mock_graph.get_output_jsonschema.return_value = {"properties": {"messages": {}}}
+        mock_graph.get_config_jsonschema.return_value = {"properties": {}}
+
+        # Mock astream_events to return an empty async iterator
+        async def _empty_stream(*args, **kwargs):
+            return
+            yield  # noqa: unreachable — makes this an async generator
+
+        mock_graph.astream_events = _empty_stream
+
+        agent = LangGraphAgent(name="test", graph=mock_graph)
+
+        input_data = RunAgentInput(
+            thread_id="test-thread",
+            run_id="test-run",
+            state={},
+            messages=[],
+            tools=[],
+            context=[],
+            forwarded_props={},
+        )
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            loop = asyncio.new_event_loop()
+            try:
+                async def _run():
+                    async for _ in agent.run(input_data):
+                        pass
+                loop.run_until_complete(_run())
+            except Exception:
+                pass  # We only care about deprecation warnings
+            finally:
+                loop.close()
+
+            copy_warnings = [
+                x for x in w
+                if "deprecated" in str(x.message).lower()
+                and "copy" in str(x.message).lower()
+            ]
+            self.assertEqual(
+                len(copy_warnings), 0,
+                f"run() should not produce .copy() deprecation warnings, got: {[str(x.message) for x in copy_warnings]}"
+            )
 
 
 class TestConfigSchemaDeprecation(unittest.TestCase):
@@ -119,9 +160,14 @@ class TestConfigSchemaDeprecation(unittest.TestCase):
     def test_get_schema_keys_handles_no_context_schema(self):
         """
         Verify that get_schema_keys() handles the case where
-        get_context_jsonschema returns None.
+        get_context_jsonschema does not exist on the graph object.
+        Uses spec= to ensure hasattr properly returns False.
         """
-        mock_graph = MagicMock()
+        mock_graph = MagicMock(spec=[
+            "get_input_jsonschema",
+            "get_output_jsonschema",
+            "get_config_jsonschema",
+        ])
         mock_graph.get_input_jsonschema.return_value = {
             "properties": {"messages": {}}
         }
@@ -131,12 +177,47 @@ class TestConfigSchemaDeprecation(unittest.TestCase):
         mock_graph.get_config_jsonschema.return_value = {
             "properties": {"configurable": {}}
         }
-        mock_graph.get_context_jsonschema.return_value = None
+
+        # Confirm hasattr returns False for get_context_jsonschema
+        self.assertFalse(hasattr(mock_graph, "get_context_jsonschema"))
 
         agent = LangGraphAgent(name="test", graph=mock_graph)
         schema_keys = agent.get_schema_keys({})
 
         self.assertEqual(schema_keys["context"], [])
+
+    def test_get_schema_keys_fallback_for_old_langgraph(self):
+        """
+        Verify backward compatibility: when get_config_jsonschema does not exist,
+        falls back to config_schema().schema() for older LangGraph versions.
+        """
+        mock_schema = MagicMock()
+        mock_schema.schema.return_value = {
+            "properties": {"configurable": {}}
+        }
+
+        mock_graph = MagicMock(spec=[
+            "get_input_jsonschema",
+            "get_output_jsonschema",
+            "config_schema",
+        ])
+        mock_graph.get_input_jsonschema.return_value = {
+            "properties": {"messages": {}}
+        }
+        mock_graph.get_output_jsonschema.return_value = {
+            "properties": {"messages": {}}
+        }
+        mock_graph.config_schema.return_value = mock_schema
+
+        # Confirm the new API is not available
+        self.assertFalse(hasattr(mock_graph, "get_config_jsonschema"))
+
+        agent = LangGraphAgent(name="test", graph=mock_graph)
+        schema_keys = agent.get_schema_keys({})
+
+        # Should have used the fallback
+        mock_graph.config_schema.assert_called_once()
+        self.assertIn("configurable", schema_keys["config"])
 
 
 if __name__ == "__main__":
