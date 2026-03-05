@@ -157,6 +157,31 @@ class TestConfigSchemaDeprecation(unittest.TestCase):
         self.assertIn("user_id", schema_keys["context"])
         self.assertIn("session", schema_keys["context"])
 
+    def test_get_schema_keys_handles_context_jsonschema_returns_none(self):
+        """
+        Verify that get_schema_keys() handles the case where
+        get_context_jsonschema exists but returns None.
+        """
+        mock_graph = MagicMock()
+        mock_graph.get_input_jsonschema.return_value = {
+            "properties": {"messages": {}}
+        }
+        mock_graph.get_output_jsonschema.return_value = {
+            "properties": {"messages": {}}
+        }
+        mock_graph.get_config_jsonschema.return_value = {
+            "properties": {"configurable": {}}
+        }
+        mock_graph.get_context_jsonschema.return_value = None
+
+        agent = LangGraphAgent(name="test", graph=mock_graph)
+        schema_keys = agent.get_schema_keys({})
+
+        # get_context_jsonschema was called
+        mock_graph.get_context_jsonschema.assert_called_once()
+        # But since it returned None, context keys should be empty
+        self.assertEqual(schema_keys["context"], [])
+
     def test_get_schema_keys_handles_no_context_schema(self):
         """
         Verify that get_schema_keys() handles the case where
