@@ -421,7 +421,10 @@ class LangGraphAgent:
         try:
             input_schema = self.graph.get_input_jsonschema(config)
             output_schema = self.graph.get_output_jsonschema(config)
-            config_schema = self.graph.get_config_jsonschema()
+            if hasattr(self.graph, "get_config_jsonschema"):
+                config_schema = self.graph.get_config_jsonschema()
+            else:
+                config_schema = self.graph.config_schema().schema()
 
             input_schema_keys = list(input_schema["properties"].keys()) if "properties" in input_schema else []
             output_schema_keys = list(output_schema["properties"].keys()) if "properties" in output_schema else []
