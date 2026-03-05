@@ -123,5 +123,46 @@ class TestToolMessageNameNone(unittest.TestCase):
         self.assertEqual(start_events[0].tool_call_name, "explicit_tool_name")
 
 
+    def test_tool_message_name_none_and_event_name_missing(self):
+        """When both tool_msg.name and event['name'] are missing, should fall back to empty string.
+
+        This covers the edge case where the event metadata also lacks a 'name' key,
+        hitting the final '' fallback in: tool_msg.name or event.get('name', '')
+        """
+        tool_msg = ToolMessage(
+            content="Done.",
+            tool_call_id="call-789",
+            # name is intentionally NOT set - defaults to None
+        )
+        self.assertIsNone(tool_msg.name)
+
+        command = Command(update={"messages": [tool_msg]})
+        # Create event WITHOUT a 'name' key
+        event = {
+            "event": "on_tool_end",
+            "data": {
+                "output": command,
+                "input": {"arg1": "value1"},
+            },
+            "metadata": {},
+            "tags": [],
+            "run_id": "test-run-id",
+        }
+
+        agent = _make_agent()
+        state = {}
+
+        # This should NOT crash - should fall back to empty string
+        events = _collect_events(agent._handle_single_event(event, state))
+
+        start_events = [
+            e for e in events
+            if isinstance(e, ToolCallStartEvent)
+        ]
+        self.assertEqual(len(start_events), 1)
+        # Should fall back to empty string
+        self.assertEqual(start_events[0].tool_call_name, "")
+
+
 if __name__ == "__main__":
     unittest.main()
