@@ -33,6 +33,6 @@ __all__ = [
     "LangGraphPlatformMessage",
     "PredictStateTool",
     "add_langgraph_fastapi_endpoint",
-    "StateStreamingMiddleware"
+    "StateStreamingMiddleware",
     "StateItem"
 ]
