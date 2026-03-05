@@ -133,6 +133,10 @@ jobs:
             test_path: tests/awsStrandsTests
             services: ["dojo", "aws-strands"]
             wait_on: http://localhost:9999,tcp:localhost:8017
+          - suite: dify
+            test_path: tests/difyTests
+            services: ["dojo"]
+            wait_on: http://localhost:9999
           # - suite: vercel-ai-sdk
           #   test_path: tests/vercelAISdkTests
           #   services: ["dojo"]
@@ -220,6 +224,8 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          DIFY_API_KEY: ${{ secrets.DIFY_API_KEY }}
+          DIFY_API_BASE_URL: ${{ secrets.DIFY_API_BASE_URL }}
         if: ${{ join(matrix.services, ',') != '' && contains(join(matrix.services, ','), 'dojo') }}
         with:
           run: |
@@ -230,6 +236,7 @@ jobs:
 
       - name: Run tests – ${{ matrix.suite }}
         working-directory: apps/dojo/e2e
+        if: ${{ matrix.suite != 'dify' || secrets.DIFY_API_KEY != '' }}
         env:
           BASE_URL: http://localhost:9999
           PLAYWRIGHT_SUITE: ${{ matrix.suite }}
