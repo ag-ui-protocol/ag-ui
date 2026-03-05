@@ -110,6 +110,16 @@ Each framework integration follows a similar pattern:
 - The AG-UI Dojo app showcases all protocol features with live examples
 
 
+## Bug Fix Workflow, Skills, and Guardrails
+
+All bug fix workflow instructions, custom skill definitions, and operational guardrails are maintained on the team's Notion page. Before starting any bug fix, triage, or code review task, read the source of truth:
+
+**Notion page ID**: `2e63aa38185280648a35dc4f43a80749`
+
+Fetch this page using the Notion MCP tool to get the current workflow steps, skills (e.g., `/triage`, `/reproduce`, `/bug-fix`, `/code-review`), constraints, and "What Claude Should Never Do" guardrails.
+
+This requires the Notion MCP tool to be configured. If it is not available, ask the user to enable it before proceeding with bug fix work.
+
 <!-- nx configuration start-->
 <!-- Leave the start & end comments to automatically receive updates. -->
 
