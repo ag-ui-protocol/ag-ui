@@ -14,24 +14,22 @@ os.environ["OTEL_SDK_DISABLED"] = "true"
 os.environ["OTEL_PYTHON_DISABLED_INSTRUMENTATIONS"] = "all"
 
 from strands import Agent, tool
-from strands.models.gemini import GeminiModel
+from strands.models.openai import OpenAIModel
 from ag_ui_strands import StrandsAgent, create_strands_app
 
 # Load environment variables from .env file
 env_path = Path(__file__).parent.parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
-# Use Gemini model
-model = GeminiModel(
+# Use OpenAI model (routed to LLMock via OPENAI_BASE_URL)
+model = OpenAIModel(
     client_args={
-        "api_key": os.getenv("GOOGLE_API_KEY", "your-api-key-here"),
+        "api_key": os.getenv("OPENAI_API_KEY", "sk-mock"),
     },
-    model_id="gemini-2.5-flash",
+    model_id="gpt-4o",
     params={
         "temperature": 0.7,
-        "max_output_tokens": 2048,
-        "top_p": 0.9,
-        "top_k": 40
+        "max_tokens": 2048,
     }
 )
 
