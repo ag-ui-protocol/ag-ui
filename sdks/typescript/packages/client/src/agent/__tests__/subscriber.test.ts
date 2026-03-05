@@ -1104,6 +1104,70 @@ describe("AgentSubscriber", () => {
       expect(errorSubscriber.onTextMessageStartEvent).toHaveBeenCalled();
       expect(workingSubscriber.onTextMessageStartEvent).toHaveBeenCalled();
     });
+
+    test("should not crash when process is undefined (browser environment) and a subscriber throws", async () => {
+      // Save original process reference
+      const originalProcess = globalThis.process;
+
+      try {
+        // Simulate a browser environment where process is not defined
+        // @ts-expect-error - intentionally removing process to simulate browser
+        delete globalThis.process;
+
+        const errorSubscriber: AgentSubscriber = {
+          onEvent: vi.fn().mockImplementation(() => {
+            throw new Error("Subscriber error in browser");
+          }),
+        };
+
+        const workingSubscriber: AgentSubscriber = {
+          onEvent: vi.fn(),
+        };
+
+        const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        // This should NOT throw a ReferenceError about process being undefined
+        // It should gracefully handle the subscriber error and continue
+        let caughtError: Error | undefined;
+        let result: Awaited<ReturnType<typeof runSubscribersWithMutation>> | undefined;
+        try {
+          result = await runSubscribersWithMutation(
+            [errorSubscriber, workingSubscriber],
+            [],
+            {},
+            (subscriber, messages, state) => {
+              if (subscriber.onEvent) {
+                return subscriber.onEvent({
+                  event: { type: EventType.TEXT_MESSAGE_START } as any,
+                  messages,
+                  state,
+                  agent: agent,
+                  input: {} as RunAgentInput,
+                });
+              }
+            },
+          );
+        } catch (e) {
+          caughtError = e as Error;
+        }
+
+        // Explicitly verify no ReferenceError was thrown
+        expect(caughtError).toBeUndefined();
+
+        // The error subscriber threw, but processing should continue
+        expect(errorSubscriber.onEvent).toHaveBeenCalled();
+        expect(workingSubscriber.onEvent).toHaveBeenCalled();
+        expect(result).toBeDefined();
+
+        // Verify console.error was called for the subscriber error
+        expect(consoleSpy).toHaveBeenCalled();
+
+        consoleSpy.mockRestore();
+      } finally {
+        // Restore process
+        globalThis.process = originalProcess;
+      }
+    });
   });
 
   describe("Realistic Event Sequences", () => {
@@ -1550,12 +1614,8 @@ describe("AgentSubscriber", () => {
           }),
         };
 
-        await runSubscribersWithMutation(
-          [subscriber],
-          [],
-          mutableState,
-          (sub, messages, state) =>
-            (sub as { onRunInitialized: Function }).onRunInitialized({ messages, state }),
+        await runSubscribersWithMutation([subscriber], [], mutableState, (sub, messages, state) =>
+          (sub as { onRunInitialized: Function }).onRunInitialized({ messages, state }),
         );
 
         // If we reach here, no ReferenceError was thrown — the guard works.
