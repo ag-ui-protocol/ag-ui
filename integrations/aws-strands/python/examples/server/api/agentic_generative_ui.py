@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from strands import Agent, tool
-from strands.models.openai import OpenAIModel
+from strands.models.gemini import GeminiModel
 from ag_ui.core import (
     EventType,
     StateSnapshotEvent,
@@ -40,15 +40,17 @@ os.environ["OTEL_PYTHON_DISABLED_INSTRUMENTATIONS"] = "all"
 env_path = Path(__file__).parent.parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
-# Use OpenAI model (routed to LLMock via OPENAI_BASE_URL)
-model = OpenAIModel(
+# Use Gemini model
+model = GeminiModel(
     client_args={
-        "api_key": os.getenv("OPENAI_API_KEY", "sk-mock"),
+        "api_key": os.getenv("GOOGLE_API_KEY", "your-api-key-here"),
     },
-    model_id="gpt-4o",
+    model_id="gemini-2.5-flash",
     params={
         "temperature": 0.3,
-        "max_tokens": 1024,
+        "max_output_tokens": 1024,
+        "top_p": 0.9,
+        "top_k": 40
     }
 )
 

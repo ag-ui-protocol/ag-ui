@@ -18,7 +18,7 @@ export async function setupLLMock(): Promise<void> {
   type MsgArray = Array<{ role: string; content?: string | ContentPart[] }>;
 
   // Extract text from message content — handles both string and array-of-parts
-  // (Strands OpenAI SDK sends content as [{type: "text", text: "..."}])
+  // (Strands SDK sends content as [{type: "text", text: "..."}])
   const textOf = (content?: string | ContentPart[]): string => {
     if (typeof content === "string") return content;
     if (Array.isArray(content)) {
@@ -262,7 +262,7 @@ export async function setupLLMock(): Promise<void> {
   // Shared state: ADK/Strands use generate_recipe (not updateWorkingMemory).
   // The JSON fixture in shared-state.json returns updateWorkingMemory which
   // only works for CopilotKit frameworks (Agno/LangGraph). These predicate
-  // fixtures fire first for ADK (Gemini model) and Strands (OpenAI model).
+  // fixtures fire first for ADK and Strands (which both register generate_recipe).
   const recipeData = {
     title: "Pasta Aglio e Olio",
     skill_level: "Intermediate",
@@ -284,21 +284,25 @@ export async function setupLLMock(): Promise<void> {
     ],
     changes: "",
   };
-  // Strands (OpenAI model) — nested {recipe: {...}} argument format
+  // Strands/CrewAI/LangGraph: generate_recipe(recipe: Recipe) — nested {recipe: {...}} args.
+  // These frameworks wrap recipe data under a "recipe" key. Discriminate from ADK
+  // (flat args) via two signals: (1) tool schema has parameters.properties.recipe
+  // (available in OpenAI-format requests), or (2) system prompt contains
+  // "helpful recipe assistant" (Strands — whose Gemini SDK omits parameter
+  // schemas from functionDeclarations).
   mockServer.addFixture({
     match: {
-      predicate: (req: {
-        messages: MsgArray;
-        tools?: any[];
-        model?: string;
-      }) => {
+      predicate: (req: { messages: MsgArray; tools?: any[] }) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
-        const hasRecipeTool = req.tools?.some(
+        const recipeTool = req.tools?.find(
           (t: any) => t.function?.name === "generate_recipe",
         );
+        const hasNestedRecipeParam =
+          !!recipeTool?.function?.parameters?.properties?.recipe;
         return (
-          !!hasRecipeTool &&
-          !!req.model?.startsWith("gpt") &&
+          !!recipeTool &&
+          (hasNestedRecipeParam ||
+            sysIncludes(req.messages, "helpful recipe assistant")) &&
           textOf(lastUser?.content).includes("pasta recipe")
         );
       },
@@ -312,21 +316,21 @@ export async function setupLLMock(): Promise<void> {
       ],
     },
   });
-  // ADK (Gemini model) — flat argument format (no wrapping recipe key)
+  // ADK: generate_recipe(skill_level, title, ...) — flat argument format.
+  // Falls through when neither tool schema nor system prompt indicates nested args.
   mockServer.addFixture({
     match: {
-      predicate: (req: {
-        messages: MsgArray;
-        tools?: any[];
-        model?: string;
-      }) => {
+      predicate: (req: { messages: MsgArray; tools?: any[] }) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
-        const hasRecipeTool = req.tools?.some(
+        const recipeTool = req.tools?.find(
           (t: any) => t.function?.name === "generate_recipe",
         );
+        const hasNestedRecipeParam =
+          !!recipeTool?.function?.parameters?.properties?.recipe;
         return (
-          !!hasRecipeTool &&
-          !!req.model?.startsWith("gemini") &&
+          !!recipeTool &&
+          !hasNestedRecipeParam &&
+          !sysIncludes(req.messages, "helpful recipe assistant") &&
           textOf(lastUser?.content).includes("pasta recipe")
         );
       },

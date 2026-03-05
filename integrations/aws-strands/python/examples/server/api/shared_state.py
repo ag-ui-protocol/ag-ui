@@ -6,7 +6,7 @@ from typing import Dict, Any, List
 from enum import Enum
 from pydantic import BaseModel, Field
 from strands import Agent, tool
-from strands.models.openai import OpenAIModel
+from strands.models.gemini import GeminiModel
 from ag_ui_strands import StrandsAgent, create_strands_app, StrandsAgentConfig, ToolBehavior
 
 
@@ -134,14 +134,16 @@ shared_state_config = StrandsAgentConfig(
 
 
 # Create the Strands agent
-model = OpenAIModel(
+model = GeminiModel(
     client_args={
-        "api_key": os.getenv("OPENAI_API_KEY", "sk-mock"),
+        "api_key": os.getenv("GOOGLE_API_KEY", "your-api-key-here"),
     },
-    model_id="gpt-4o",
+    model_id="gemini-2.5-flash",
     params={
         "temperature": 0.7,
-        "max_tokens": 2048,
+        "max_output_tokens": 2048,
+        "top_p": 0.9,
+        "top_k": 40
     }
 )
 
