@@ -11,13 +11,15 @@ async function dumpPageAIState(page: Page) {
     const state = await page.evaluate(() => {
       // Use data-testid selectors (work with both V1 and V2 CopilotChat)
       const assistantMsgs = Array.from(
-        document.querySelectorAll('[data-testid="copilot-assistant-message"]')
+        document.querySelectorAll('[data-testid="copilot-assistant-message"]'),
       );
       const userMsgs = Array.from(
-        document.querySelectorAll('[data-testid="copilot-user-message"]')
+        document.querySelectorAll('[data-testid="copilot-user-message"]'),
       );
-      const chatContainer = document.querySelector('[data-testid="copilot-chat"]');
-      const isRunning = chatContainer?.getAttribute('data-copilot-running');
+      const chatContainer = document.querySelector(
+        '[data-testid="copilot-chat"]',
+      );
+      const isRunning = chatContainer?.getAttribute("data-copilot-running");
       return {
         assistantMessages: assistantMsgs.map((el, i) => ({
           index: i,
@@ -33,12 +35,13 @@ async function dumpPageAIState(page: Page) {
       };
     });
 
+    // Use console.log so clean-reporter surfaces diagnostic prefixes in CI output
     console.log("\n[AI State Dump] URL:", state.url);
     console.log(
-      `[AI State Dump] Chat container: ${state.chatContainerFound ? "found" : "NOT FOUND"}, copilot-running: ${state.copilotRunning ?? "N/A"}`
+      `[AI State Dump] Chat container: ${state.chatContainerFound ? "found" : "NOT FOUND"}, copilot-running: ${state.copilotRunning ?? "N/A"}`,
     );
     console.log(
-      `[AI State Dump] ${state.userMessages.length} user message(s), ${state.assistantMessages.length} assistant message(s)`
+      `[AI State Dump] ${state.userMessages.length} user message(s), ${state.assistantMessages.length} assistant message(s)`,
     );
     for (const msg of state.userMessages) {
       console.log(`  [User ${msg.index}] ${msg.text}`);
@@ -50,7 +53,9 @@ async function dumpPageAIState(page: Page) {
       console.log("  [Assistant] (no messages — LLM may not have responded)");
     }
   } catch {
-    console.log("[AI State Dump] Could not read page state (page may have navigated away)");
+    console.log(
+      "[AI State Dump] Could not read page state (page may have navigated away)",
+    );
   }
 }
 
@@ -80,7 +85,10 @@ export const test = base.extend<{}, {}>({
 
     // Log failed network requests to CopilotKit/agent endpoints
     page.on("response", (response) => {
-      if (response.status() >= 400 && /copilotkit|agui|agent/i.test(response.url())) {
+      if (
+        response.status() >= 400 &&
+        /copilotkit|agui|agent/i.test(response.url())
+      ) {
         const msg = `${response.status()} ${response.url()}`;
         console.error(`[NetworkError] ${msg}`);
         networkErrors.push(msg);
@@ -98,13 +106,13 @@ export const test = base.extend<{}, {}>({
     if (pageErrors.length > 0) {
       console.warn(
         `[Test Cleanup] ${pageErrors.length} page error(s) during test:`,
-        pageErrors.map((e) => e.message)
+        pageErrors.map((e) => e.message),
       );
     }
     if (networkErrors.length > 0) {
       console.warn(
         `[Test Cleanup] ${networkErrors.length} network error(s) during test:`,
-        networkErrors
+        networkErrors,
       );
     }
     await page.context().clearCookies();
@@ -129,72 +137,24 @@ export async function waitForAssistantMessage(
     minMessages?: number;
     timeout?: number;
     stabilizationMs?: number;
-  } = {}
+  } = {},
 ) {
-  const {
-    minMessages = 1,
-    timeout = 90000,
-    stabilizationMs = 2000,
-  } = options;
+  const { minMessages = 1, timeout = 30_000, stabilizationMs = 500 } = options;
 
   await page.waitForFunction(
     (min: number) => {
       const messages = document.querySelectorAll(
-        '[data-testid="copilot-assistant-message"]'
+        '[data-testid="copilot-assistant-message"]',
       );
       if (messages.length < min) return false;
       const lastMessage = messages[messages.length - 1];
       return (lastMessage?.textContent?.trim().length ?? 0) > 0;
     },
     minMessages,
-    { timeout }
+    { timeout },
   );
 
   await page.waitForTimeout(stabilizationMs);
-}
-
-export async function retryOnAIFailure<T>(
-  operation: () => Promise<T>,
-  maxRetries: number = 3,
-  delayMs: number = 5000,
-  page?: Page
-): Promise<T> {
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      return await operation();
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-
-      // Check if this is an AI service error we should retry
-      const shouldRetry =
-        errorMsg.includes("timeout") ||
-        errorMsg.includes("Timeout") ||
-        errorMsg.includes("rate limit") ||
-        errorMsg.includes("503") ||
-        errorMsg.includes("502") ||
-        errorMsg.includes("AI response") ||
-        errorMsg.includes("network") ||
-        errorMsg.includes("Message not found");
-
-      if (shouldRetry && i < maxRetries - 1) {
-        console.log(
-          `Retrying operation (attempt ${
-            i + 2
-          }/${maxRetries}) after AI service error: ${errorMsg}`
-        );
-        // Dump LLM state before retry so CI logs show what the AI did
-        if (page) {
-          await dumpPageAIState(page);
-        }
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        continue;
-      }
-
-      throw error;
-    }
-  }
-
-  throw new Error("Max retries exceeded");
 }
 
 export { expect } from "@playwright/test";
