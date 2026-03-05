@@ -77,7 +77,7 @@ jobs:
           - suite: a2a-middleware
             test_path: tests/a2aMiddlewareTests
             services: ["dojo", "a2a-middleware"]
-            wait_on: http://localhost:9999,tcp:localhost:8011,tcp:localhost:8012,tcp:localhost:8013,tcp:localhost:8014
+            wait_on: http://localhost:9999,http-get://localhost:8011/.well-known/agent.json,http-get://localhost:8012/.well-known/agent.json,http-get://localhost:8013/.well-known/agent.json,http-get://localhost:8014/openapi.json
           - suite: adk-middleware
             test_path: tests/adkMiddlewareTests
             services: ["dojo", "adk-middleware"]
@@ -178,8 +178,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pydeps-${{ matrix.suite }}-
             ${{ runner.os }}-pydeps-
-
-
 
       - name: Cache Next.js build
         uses: actions/cache@v4
