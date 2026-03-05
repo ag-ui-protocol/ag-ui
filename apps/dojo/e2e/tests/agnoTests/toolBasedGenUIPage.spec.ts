@@ -1,12 +1,9 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../../test-isolation-helper";
 import { ToolBaseGenUIPage } from "../../featurePages/ToolBaseGenUIPage";
 
-const pageURL =
-  "/agno/feature/tool_based_generative_ui";
+const pageURL = "/agno/feature/tool_based_generative_ui";
 
-test('[Agno] Haiku generation and display verification', async ({
-  page,
-}) => {
+test("[Agno] Haiku generation and display verification", async ({ page }) => {
   await page.goto(pageURL);
 
   const genAIAgent = new ToolBaseGenUIPage(page);
@@ -17,7 +14,7 @@ test('[Agno] Haiku generation and display verification', async ({
   await genAIAgent.checkHaikuDisplay(page);
 });
 
-test('[Agno] Haiku generation and UI consistency for two different prompts', async ({
+test("[Agno] Haiku generation and UI consistency for two different prompts", async ({
   page,
 }) => {
   await page.goto(pageURL);
