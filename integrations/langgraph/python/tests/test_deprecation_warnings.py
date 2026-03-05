@@ -6,7 +6,7 @@ from Pydantic V2 or LangGraph V1.
 import asyncio
 import unittest
 import warnings
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock
 
 from ag_ui.core import RunAgentInput
 from ag_ui_langgraph.agent import LangGraphAgent
@@ -218,6 +218,46 @@ class TestConfigSchemaDeprecation(unittest.TestCase):
         # Should have used the fallback
         mock_graph.config_schema.assert_called_once()
         self.assertIn("configurable", schema_keys["config"])
+
+
+    def test_get_schema_keys_context_fallback_for_old_langgraph(self):
+        """
+        Verify backward compatibility: when get_context_jsonschema does not exist
+        but context_schema does, falls back to context_schema().schema().
+        """
+        mock_context_schema = MagicMock()
+        mock_context_schema.schema.return_value = {
+            "properties": {"user_id": {}, "session": {}}
+        }
+
+        mock_graph = MagicMock(spec=[
+            "get_input_jsonschema",
+            "get_output_jsonschema",
+            "get_config_jsonschema",
+            "context_schema",
+        ])
+        mock_graph.get_input_jsonschema.return_value = {
+            "properties": {"messages": {}}
+        }
+        mock_graph.get_output_jsonschema.return_value = {
+            "properties": {"messages": {}}
+        }
+        mock_graph.get_config_jsonschema.return_value = {
+            "properties": {"configurable": {}}
+        }
+        mock_graph.context_schema.return_value = mock_context_schema
+
+        # Confirm the new API is not available but old one is
+        self.assertFalse(hasattr(mock_graph, "get_context_jsonschema"))
+        self.assertTrue(hasattr(mock_graph, "context_schema"))
+
+        agent = LangGraphAgent(name="test", graph=mock_graph)
+        schema_keys = agent.get_schema_keys({})
+
+        # Should have used the fallback
+        mock_graph.context_schema.assert_called()
+        self.assertIn("user_id", schema_keys["context"])
+        self.assertIn("session", schema_keys["context"])
 
 
 if __name__ == "__main__":

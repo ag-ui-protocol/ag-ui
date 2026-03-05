@@ -552,6 +552,9 @@ class LangGraphAgent:
                 context_schema = self.graph.get_context_jsonschema()
                 if context_schema is not None:
                     context_schema_keys = list(context_schema["properties"].keys()) if "properties" in context_schema else []
+            elif hasattr(self.graph, "context_schema") and self.graph.context_schema is not None:
+                context_schema = self.graph.context_schema().schema()
+                context_schema_keys = list(context_schema["properties"].keys()) if "properties" in context_schema else []
 
 
             return {
