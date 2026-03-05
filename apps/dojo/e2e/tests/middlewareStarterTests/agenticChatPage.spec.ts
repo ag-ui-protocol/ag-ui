@@ -1,23 +1,13 @@
-import {
-  test,
-  expect,
-  retryOnAIFailure,
-} from "../../test-isolation-helper";
+import { test, expect } from "../../test-isolation-helper";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
 
-test("[Middleware Starter] Testing Agentic Chat", async ({
-  page,
-}) => {
-  await retryOnAIFailure(async () => {
-    await page.goto(
-      "/middleware-starter/feature/agentic_chat"
-    );
+test("[Middleware Starter] Testing Agentic Chat", async ({ page }) => {
+  await page.goto("/middleware-starter/feature/agentic_chat");
 
-    const chat = new AgenticChatPage(page);
-    await chat.openChat();
-    await expect(chat.agentGreeting).toBeVisible();
-    await chat.sendMessage("Hey there");
-    await chat.assertUserMessageVisible("Hey there");
-    await chat.assertAgentReplyVisible(/Hello world!/i);
-  });
+  const chat = new AgenticChatPage(page);
+  await chat.openChat();
+  await expect(chat.agentGreeting).toBeVisible();
+  await chat.sendMessage("Hey there");
+  await chat.assertUserMessageVisible("Hey there");
+  await chat.assertAgentReplyVisible(/Hello world!/i);
 });

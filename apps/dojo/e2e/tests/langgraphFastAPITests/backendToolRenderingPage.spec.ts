@@ -1,12 +1,15 @@
-import { test, expect, retryOnAIFailure } from "../../test-isolation-helper";
+import { test, expect } from "../../test-isolation-helper";
 import { awaitLLMResponseDone } from "../../utils/copilot-actions";
 
-test("[LanggraphFastAPI] Backend Tool Rendering displays weather cards", async ({ page }) => {
-  await retryOnAIFailure(async () => {
+test("[LanggraphFastAPI] Backend Tool Rendering displays weather cards", async ({
+  page,
+}) => {
   await page.goto("/langgraph-fastapi/feature/backend_tool_rendering");
 
   // Verify suggestion buttons are visible
-  await expect(page.getByRole("button", { name: "Weather in San Francisco" })).toBeVisible({
+  await expect(
+    page.getByRole("button", { name: "Weather in San Francisco" }),
+  ).toBeVisible({
     timeout: 5000,
   });
 
@@ -48,7 +51,8 @@ test("[LanggraphFastAPI] Backend Tool Rendering displays weather cards", async (
   await awaitLLMResponseDone(page);
 
   // Verify at least one weather-related element is still visible
-  const weatherElements = await page.getByText(/Weather|Humidity|Wind|Temperature/i).count();
+  const weatherElements = await page
+    .getByText(/Weather|Humidity|Wind|Temperature/i)
+    .count();
   expect(weatherElements).toBeGreaterThan(0);
-  });
 });

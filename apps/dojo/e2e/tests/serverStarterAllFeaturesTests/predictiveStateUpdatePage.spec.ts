@@ -1,66 +1,64 @@
-import { test, expect, retryOnAIFailure, } from "../../test-isolation-helper";
+import { test, expect } from "../../test-isolation-helper";
 import { PredictiveStateUpdatesPage } from "../../pages/serverStarterAllFeaturesPages/PredictiveStateUpdatesPage";
 
 test.describe("Predictive Status Updates Feature", () => {
-  test.slow(); // Multi-step AI test: needs extra time for retries
-
   // The server-starter-all backend is a mock that streams write_document_local
   // + confirm_changes tool calls. The confirm_changes HiTL modal works, but the
-  // predictive state mechanism (PredictState custom event → editor content) does
+  // predictive state mechanism (PredictState custom event -> editor content) does
   // not populate the TipTap editor in the current framework version. These tests
   // verify the HiTL confirm/reject flow works end-to-end.
 
-  test("[Server Starter all features] should interact with agent and approve asked changes", async ({ page, }) => {
-    await retryOnAIFailure(async () => {
-      const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);
+  test("[Server Starter all features] should interact with agent and approve asked changes", async ({
+    page,
+  }) => {
+    const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);
 
-      await page.goto(
-        "/server-starter-all-features/feature/predictive_state_updates"
-      );
+    await page.goto(
+      "/server-starter-all-features/feature/predictive_state_updates",
+    );
 
-      await predictiveStateUpdates.openChat();
+    await predictiveStateUpdates.openChat();
 
-      await predictiveStateUpdates.sendMessage("Write a story");
+    await predictiveStateUpdates.sendMessage("Write a story");
 
-      // The mock backend sends confirm_changes tool call → HiTL modal appears
-      await predictiveStateUpdates.getPredictiveResponse();
-      await predictiveStateUpdates.getUserApproval();
+    // The mock backend sends confirm_changes tool call -> HiTL modal appears
+    await predictiveStateUpdates.getPredictiveResponse();
+    await predictiveStateUpdates.getUserApproval();
 
-      // After approval the agent responds with a confirmation message
-      await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
+    // After approval the agent responds with a confirmation message
+    await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
 
-      // Send a follow-up message – triggers another round of tool calls
-      await predictiveStateUpdates.sendMessage("Update the story");
+    // Send a follow-up message - triggers another round of tool calls
+    await predictiveStateUpdates.sendMessage("Update the story");
 
-      await predictiveStateUpdates.verifyHighlightedText();
-      await predictiveStateUpdates.getUserApproval();
-      await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
-    });
+    await predictiveStateUpdates.verifyHighlightedText();
+    await predictiveStateUpdates.getUserApproval();
+    await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
   });
 
-  test("[Server Starter all features] should interact with agent and reject asked changes", async ({ page, }) => {
-    await retryOnAIFailure(async () => {
-      const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);
+  test("[Server Starter all features] should interact with agent and reject asked changes", async ({
+    page,
+  }) => {
+    const predictiveStateUpdates = new PredictiveStateUpdatesPage(page);
 
-      await page.goto(
-        "/server-starter-all-features/feature/predictive_state_updates"
-      );
+    await page.goto(
+      "/server-starter-all-features/feature/predictive_state_updates",
+    );
 
-      await predictiveStateUpdates.openChat();
+    await predictiveStateUpdates.openChat();
 
-      await predictiveStateUpdates.sendMessage("Write a story");
+    await predictiveStateUpdates.sendMessage("Write a story");
 
-      // First round: approve to establish baseline
-      await predictiveStateUpdates.getPredictiveResponse();
-      await predictiveStateUpdates.getUserApproval();
-      await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
+    // First round: approve to establish baseline
+    await predictiveStateUpdates.getPredictiveResponse();
+    await predictiveStateUpdates.getUserApproval();
+    await expect(predictiveStateUpdates.confirmedChangesResponse).toBeVisible();
 
-      // Second round: reject the changes
-      await predictiveStateUpdates.sendMessage("Update the story");
+    // Second round: reject the changes
+    await predictiveStateUpdates.sendMessage("Update the story");
 
-      await predictiveStateUpdates.verifyHighlightedText();
-      await predictiveStateUpdates.getUserRejection();
-      await expect(predictiveStateUpdates.rejectedChangesResponse).toBeVisible();
-    });
+    await predictiveStateUpdates.verifyHighlightedText();
+    await predictiveStateUpdates.getUserRejection();
+    await expect(predictiveStateUpdates.rejectedChangesResponse).toBeVisible();
   });
 });
