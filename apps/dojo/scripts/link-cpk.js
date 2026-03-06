@@ -6,8 +6,23 @@ const path = require("path");
 const cpkPath = process.argv[2] || "./CopilotKit/packages";
 
 if (!fs.existsSync(cpkPath)) {
-  console.error(`copilot kit repo path ${cpkPath} does not exist`);
+  console.error(`CopilotKit packages path ${cpkPath} does not exist`);
   process.exit(1);
+}
+
+// Detect whether we got a packages root (has v1/ and v2/ subdirs) or a direct V1 path.
+const hasV1Subdir = fs.existsSync(path.join(cpkPath, "v1"));
+const hasV2Subdir = fs.existsSync(path.join(cpkPath, "v2"));
+const isPackagesRoot = hasV1Subdir && hasV2Subdir;
+
+// Build namespace → directory mapping
+const namespaceDirs = {};
+if (isPackagesRoot) {
+  namespaceDirs["@copilotkit/"] = path.join(cpkPath, "v1");
+  namespaceDirs["@copilotkitnext/"] = path.join(cpkPath, "v2");
+} else {
+  // Backward compat: single path = V1 only (original behavior)
+  namespaceDirs["@copilotkit/"] = cpkPath;
 }
 
 const gitRoot = execSync("git rev-parse --show-toplevel", {
@@ -15,36 +30,48 @@ const gitRoot = execSync("git rev-parse --show-toplevel", {
   cwd: __dirname,
 }).trim();
 const dojoDir = path.join(gitRoot, "apps/dojo");
-const cpkPackageDir = path.join(cpkPath);
-const relative = `./${path.relative(dojoDir, cpkPackageDir)}`;
 
 function linkCopilotKit() {
   const pkgPath = path.join(dojoDir, "package.json");
   const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-  const packages = Object.keys(pkg.dependencies).filter((pkg) =>
-    pkg.startsWith("@copilotkit/"),
-  );
 
-  success = true;
-  packages.forEach((packageName) => {
-    const packageFolderName = packageName.replace("@copilotkit/", "");
+  let success = true;
 
-    if (!fs.existsSync(path.join(cpkPackageDir, packageFolderName))) {
-      console.error(
-        `Package ${packageName} does not exist in ${cpkPackageDir}!!`,
-      );
-      success = false;
-    }
+  for (const [prefix, pkgDir] of Object.entries(namespaceDirs)) {
+    const relative = `./${path.relative(dojoDir, pkgDir)}`;
+    const packages = Object.keys(pkg.dependencies).filter((dep) =>
+      dep.startsWith(prefix),
+    );
 
-    pkg.dependencies[packageName] = path.join(relative, packageFolderName);
-  });
+    packages.forEach((packageName) => {
+      const folderName = packageName.replace(prefix, "");
+
+      if (!fs.existsSync(path.join(pkgDir, folderName))) {
+        console.error(
+          `Package ${packageName} does not exist in ${pkgDir}`,
+        );
+        success = false;
+        return;
+      }
+
+      pkg.dependencies[packageName] = path.join(relative, folderName);
+    });
+  }
 
   if (!success) {
-    console.error("One or more packages do not exist in the copilot kit repo!");
+    console.error("One or more packages do not exist in the CopilotKit repo!");
     process.exit(1);
   }
 
   fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
+
+  // Summary
+  for (const [prefix, pkgDir] of Object.entries(namespaceDirs)) {
+    const count = Object.keys(pkg.dependencies).filter((d) =>
+      d.startsWith(prefix),
+    ).length;
+    console.log(`Linked ${count} ${prefix}* packages from ${pkgDir}`);
+  }
 }
 
 linkCopilotKit();

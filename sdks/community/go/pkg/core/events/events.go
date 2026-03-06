@@ -6,11 +6,10 @@ import (
 	"time"
 )
 
-// EventType represents the type of AG-UI event
+// EventType represents the type of AG-UI event.
 type EventType string
 
-// AG-UI Event Type constants - matching the protocol specification
-// TODO: Verify nothing has been hallucinated here
+// Event type constants match the AG-UI protocol specification.
 const (
 	EventTypeTextMessageStart   EventType = "TEXT_MESSAGE_START"
 	EventTypeTextMessageContent EventType = "TEXT_MESSAGE_CONTENT"
@@ -34,12 +33,39 @@ const (
 	EventTypeStepStarted        EventType = "STEP_STARTED"
 	EventTypeStepFinished       EventType = "STEP_FINISHED"
 
-	// Thinking events for reasoning phase support
-	EventTypeThinkingStart              EventType = "THINKING_START"
-	EventTypeThinkingEnd                EventType = "THINKING_END"
-	EventTypeThinkingTextMessageStart   EventType = "THINKING_TEXT_MESSAGE_START"
+	// Thinking events are kept for backward compatibility.
+	// Deprecated: Use the REASONING_* event types instead.
+	// EventTypeThinkingStart indicates the start of a thinking phase.
+	// Deprecated: Use EventTypeReasoningStart instead.
+	EventTypeThinkingStart EventType = "THINKING_START"
+	// EventTypeThinkingEnd indicates the end of a thinking phase.
+	// Deprecated: Use EventTypeReasoningEnd instead.
+	EventTypeThinkingEnd EventType = "THINKING_END"
+	// EventTypeThinkingTextMessageStart indicates the start of a thinking text message.
+	// Deprecated: Use EventTypeReasoningMessageStart instead.
+	EventTypeThinkingTextMessageStart EventType = "THINKING_TEXT_MESSAGE_START"
+	// EventTypeThinkingTextMessageContent contains streaming thinking text content.
+	// Deprecated: Use EventTypeReasoningMessageContent instead.
 	EventTypeThinkingTextMessageContent EventType = "THINKING_TEXT_MESSAGE_CONTENT"
-	EventTypeThinkingTextMessageEnd     EventType = "THINKING_TEXT_MESSAGE_END"
+	// EventTypeThinkingTextMessageEnd indicates the end of a thinking text message.
+	// Deprecated: Use EventTypeReasoningMessageEnd instead.
+	EventTypeThinkingTextMessageEnd EventType = "THINKING_TEXT_MESSAGE_END"
+
+	// Reasoning events support the reasoning message lifecycle.
+	// EventTypeReasoningStart marks the start of a reasoning phase.
+	EventTypeReasoningStart              EventType = "REASONING_START"
+	// EventTypeReasoningMessageStart signals the start of a reasoning message.
+	EventTypeReasoningMessageStart       EventType = "REASONING_MESSAGE_START"
+	// EventTypeReasoningMessageContent represents a chunk of reasoning message content.
+	EventTypeReasoningMessageContent     EventType = "REASONING_MESSAGE_CONTENT"
+	// EventTypeReasoningMessageEnd signals the end of a reasoning message.
+	EventTypeReasoningMessageEnd         EventType = "REASONING_MESSAGE_END"
+	// EventTypeReasoningMessageChunk is a convenience event that streams reasoning message chunks.
+	EventTypeReasoningMessageChunk       EventType = "REASONING_MESSAGE_CHUNK"
+	// EventTypeReasoningEnd marks the end of a reasoning phase.
+	EventTypeReasoningEnd                EventType = "REASONING_END"
+	// EventTypeReasoningEncryptedValue attaches an encrypted reasoning value.
+	EventTypeReasoningEncryptedValue     EventType = "REASONING_ENCRYPTED_VALUE"
 
 	// EventTypeUnknown represents an unrecognized event type
 	EventTypeUnknown EventType = "UNKNOWN"
@@ -73,6 +99,13 @@ var validEventTypes = map[EventType]bool{
 	EventTypeThinkingTextMessageStart:   true,
 	EventTypeThinkingTextMessageContent: true,
 	EventTypeThinkingTextMessageEnd:     true,
+	EventTypeReasoningStart:             true,
+	EventTypeReasoningMessageStart:      true,
+	EventTypeReasoningMessageContent:    true,
+	EventTypeReasoningMessageEnd:        true,
+	EventTypeReasoningMessageChunk:      true,
+	EventTypeReasoningEnd:               true,
+	EventTypeReasoningEncryptedValue:    true,
 }
 
 // Event defines the common interface for all AG-UI events
@@ -201,6 +234,7 @@ func ValidateSequence(events []Event) error {
 	// Track active runs, messages, tool calls, and steps
 	activeRuns := make(map[string]bool)
 	activeMessages := make(map[string]bool)
+	activeReasoningMessages := make(map[string]bool)
 	activeToolCalls := make(map[string]bool)
 	activeSteps := make(map[string]bool)
 	finishedRuns := make(map[string]bool)
@@ -283,6 +317,9 @@ func ValidateSequence(events []Event) error {
 				delete(activeMessages, msgEvent.MessageID)
 			}
 
+		case EventTypeTextMessageChunk:
+			// Chunk events are always valid in sequence context.
+
 		case EventTypeToolCallStart:
 			if toolEvent, ok := event.(*ToolCallStartEvent); ok {
 				if activeToolCalls[toolEvent.ToolCallID] {
@@ -306,6 +343,50 @@ func ValidateSequence(events []Event) error {
 				}
 				delete(activeToolCalls, toolEvent.ToolCallID)
 			}
+
+		case EventTypeToolCallChunk:
+			// Chunk events are always valid in sequence context.
+
+		case EventTypeToolCallResult:
+			// Tool call result events are always valid in sequence context.
+
+		case EventTypeThinkingStart, EventTypeThinkingEnd, EventTypeThinkingTextMessageStart, EventTypeThinkingTextMessageContent, EventTypeThinkingTextMessageEnd:
+			// Thinking events are always valid in sequence context.
+
+		case EventTypeReasoningStart:
+			// Reasoning events are always valid in sequence context.
+
+		case EventTypeReasoningMessageStart:
+			if msgEvent, ok := event.(*ReasoningMessageStartEvent); ok {
+				if activeReasoningMessages[msgEvent.MessageID] {
+					return fmt.Errorf("reasoning message %s already started", msgEvent.MessageID)
+				}
+				activeReasoningMessages[msgEvent.MessageID] = true
+			}
+
+		case EventTypeReasoningMessageContent:
+			if msgEvent, ok := event.(*ReasoningMessageContentEvent); ok {
+				if !activeReasoningMessages[msgEvent.MessageID] {
+					return fmt.Errorf("cannot add content to reasoning message %s that was not started", msgEvent.MessageID)
+				}
+			}
+
+		case EventTypeReasoningMessageEnd:
+			if msgEvent, ok := event.(*ReasoningMessageEndEvent); ok {
+				if !activeReasoningMessages[msgEvent.MessageID] {
+					return fmt.Errorf("cannot end reasoning message %s that was not started", msgEvent.MessageID)
+				}
+				delete(activeReasoningMessages, msgEvent.MessageID)
+			}
+
+		case EventTypeReasoningMessageChunk:
+			// Chunk events are always valid in sequence context.
+
+		case EventTypeReasoningEncryptedValue:
+			// Encrypted value events are always valid in sequence context.
+
+		case EventTypeReasoningEnd:
+			// Reasoning events are always valid in sequence context.
 
 		case EventTypeStateSnapshot:
 			// State snapshot events are always valid in sequence context
@@ -403,6 +484,20 @@ func EventFromJSON(data []byte) (Event, error) {
 		event = &RawEvent{}
 	case EventTypeCustom:
 		event = &CustomEvent{}
+	case EventTypeReasoningStart:
+		event = &ReasoningStartEvent{}
+	case EventTypeReasoningMessageStart:
+		event = &ReasoningMessageStartEvent{}
+	case EventTypeReasoningMessageContent:
+		event = &ReasoningMessageContentEvent{}
+	case EventTypeReasoningMessageEnd:
+		event = &ReasoningMessageEndEvent{}
+	case EventTypeReasoningMessageChunk:
+		event = &ReasoningMessageChunkEvent{}
+	case EventTypeReasoningEnd:
+		event = &ReasoningEndEvent{}
+	case EventTypeReasoningEncryptedValue:
+		event = &ReasoningEncryptedValueEvent{}
 	default:
 		return nil, fmt.Errorf("unknown event type: %s", base.Type)
 	}

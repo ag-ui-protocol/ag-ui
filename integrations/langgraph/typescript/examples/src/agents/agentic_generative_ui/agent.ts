@@ -60,14 +60,10 @@ type AgentState = typeof AgentStateAnnotation.State;
 async function startFlow(state: AgentState, config?: RunnableConfig) {
   /**
    * This is the entry point for the flow.
+   * Always clear steps so old steps from previous runs don't persist.
    */
-
-  if (!state.steps) {
-    state.steps = [];
-  }
-
   return {
-    steps: state.steps || []
+    steps: []
   };
 }
 
@@ -151,7 +147,7 @@ async function chatNode(state: AgentState, config?: RunnableConfig) {
       }
       
       return new Command({
-        goto: "start_flow",
+        goto: "chat_node",
         update: {
           messages: updatedMessages,
           steps: state.steps

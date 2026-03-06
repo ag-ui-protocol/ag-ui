@@ -1,11 +1,16 @@
 import type { AbstractAgent } from "@ag-ui/client";
 import type { FeatureFor, IntegrationId } from "./integration";
 
+/** Features that are UI-only and don't require a backend agent entry */
+type UIOnlyFeature = "v1_agentic_chat";
+
 /**
  * Base type requiring all menu integrations with their specific features.
+ * UI-only features (like v1_agentic_chat) are excluded since they reuse
+ * existing backend agents and only differ in the frontend rendering.
  */
 export type MenuAgentsMap = {
-  [K in IntegrationId]: () => Promise<{ [P in FeatureFor<K>]: AbstractAgent }>;
+  [K in IntegrationId]: () => Promise<{ [P in Exclude<FeatureFor<K>, UIOnlyFeature>]: AbstractAgent }>;
 };
 
 /**

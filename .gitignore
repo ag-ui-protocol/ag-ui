@@ -1,4 +1,5 @@
 **/.claude/settings.local.json
+.claude/worktrees
 
 # Test coverage
 coverage/
@@ -21,3 +22,19 @@ node_modules
 .pnpm-store
 
 **/.poetry-cache
+*.egg-info
+
+**/python/**/__pycache__/
+
+# Build artifacts and binaries
+**/build/
+*.dSYM/
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.obj
+*.a
+*.lib
+*.wasm

@@ -50,14 +50,19 @@ const middlewaresRoot = path.join(gitRoot, "middlewares");
 // Define all prep targets keyed by a stable id
 const ALL_TARGETS = {
   "server-starter": {
-    command: "poetry install",
+    command: "uv sync",
     name: "Server Starter",
     cwd: path.join(integrationsRoot, "server-starter/python/examples"),
   },
   "server-starter-all": {
-    command: "poetry install",
+    command: "uv sync",
     name: "Server AF",
     cwd: path.join(integrationsRoot, "server-starter-all-features/python/examples"),
+  },
+  ag2: {
+    command: "uv sync",
+    name: "AG2",
+    cwd: path.join(integrationsRoot, "ag2/python/examples"),
   },
   agno: {
     command: "uv sync",
@@ -70,12 +75,9 @@ const ALL_TARGETS = {
     cwd: path.join(integrationsRoot, "crew-ai/python"),
   },
   "langgraph-fastapi": {
-    command: "poetry install",
+    command: "uv sync",
     name: "LG FastAPI",
     cwd: path.join(integrationsRoot, "langgraph/python/examples"),
-    env: {
-      POETRY_VIRTUALENVS_IN_PROJECT: "false",
-    },
   },
   "langgraph-platform-typescript": {
     command: "pnpm install",
@@ -173,7 +175,37 @@ async function main() {
     printDryRunServices(procs);
   }
 
-  const { result } = concurrently(procs);
+  // Separate pnpm targets from others to avoid concurrent install races.
+  // Multiple pnpm installs within the same workspace race on the shared
+  // node_modules/.pnpm/ directory, causing ENOENT errors.
+  const pnpmProcs = [];
+  const otherProcs = [];
+
+  for (const proc of procs) {
+    if (proc.command.startsWith("pnpm")) {
+      pnpmProcs.push(proc);
+    } else {
+      otherProcs.push(proc);
+    }
+  }
+
+  // Run pnpm targets sequentially to avoid races on shared node_modules
+  for (const proc of pnpmProcs) {
+    console.log(`\n=== [${proc.name}] ${proc.command} ===`);
+    try {
+      execSync(proc.command, { cwd: proc.cwd, stdio: "inherit" });
+    } catch (err) {
+      console.error(`[${proc.name}] Failed: ${err.message}`);
+      process.exit(1);
+    }
+  }
+
+  // Run remaining targets concurrently (uv, poetry, dotnet — all independent)
+  if (otherProcs.length === 0) {
+    process.exit(0);
+  }
+
+  const { result } = concurrently(otherProcs);
 
   result
     .then(() => process.exit(0))

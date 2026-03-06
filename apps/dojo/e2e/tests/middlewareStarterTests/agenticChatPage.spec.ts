@@ -1,7 +1,6 @@
 import {
   test,
   expect,
-  waitForAIResponse,
   retryOnAIFailure,
 } from "../../test-isolation-helper";
 import { AgenticChatPage } from "../../featurePages/AgenticChatPage";
@@ -16,10 +15,9 @@ test("[Middleware Starter] Testing Agentic Chat", async ({
 
     const chat = new AgenticChatPage(page);
     await chat.openChat();
-    await chat.agentGreeting.waitFor({ state: "visible" });
+    await expect(chat.agentGreeting).toBeVisible();
     await chat.sendMessage("Hey there");
     await chat.assertUserMessageVisible("Hey there");
-    await waitForAIResponse(page);
     await chat.assertAgentReplyVisible(/Hello world!/i);
   });
 });

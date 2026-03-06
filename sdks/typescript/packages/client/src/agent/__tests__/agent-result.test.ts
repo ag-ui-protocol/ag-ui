@@ -563,7 +563,11 @@ describe("Agent Result", () => {
 
       // Should not include the duplicate ID in newMessages
       expect(result.newMessages).toEqual([]);
-      expect(agent.messages).toEqual(allMessages);
+      // Edit-based merge updates existing message in place, no duplicate appended
+      expect(agent.messages).toEqual([
+        { id: "existing-msg-1", role: "user", content: "Updated content" },
+        { id: "existing-msg-2", role: "assistant", content: "Existing message 2" },
+      ]);
     });
 
     it("should handle complex result objects", async () => {

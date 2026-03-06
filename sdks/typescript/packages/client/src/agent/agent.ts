@@ -134,6 +134,8 @@ export abstract class AbstractAgent {
             (nextAgent: AbstractAgent, middleware) =>
               ({
                 run: (i: RunAgentInput) => middleware.run(i, nextAgent),
+                get messages() { return nextAgent.messages; },
+                get state() { return nextAgent.state; },
               }) as AbstractAgent,
             this, // Original agent is the final 'next'
           );
@@ -582,6 +584,8 @@ export abstract class AbstractAgent {
         (nextAgent: AbstractAgent, middleware) =>
           ({
             run: (i: RunAgentInput) => middleware.run(i, nextAgent),
+            get messages() { return nextAgent.messages; },
+            get state() { return nextAgent.state; },
           }) as AbstractAgent,
         this,
       );

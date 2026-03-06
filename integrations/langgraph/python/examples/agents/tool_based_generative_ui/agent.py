@@ -32,7 +32,7 @@ async def chat_node(state: AgentState, config: RunnableConfig) -> Command[Litera
     https://www.perplexity.ai/search/react-agents-NcXLQhreS0WDzpVaS4m9Cg
     """
 
-    model = ChatOpenAI(model="gpt-4o")
+    model = ChatOpenAI(model="gpt-4.1-mini")
 
     model_with_tools = model.bind_tools(
         [
