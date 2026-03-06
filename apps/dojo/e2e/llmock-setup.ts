@@ -1,9 +1,4 @@
-import {
-  LLMock,
-  type ChatCompletionRequest,
-  type ChatMessage,
-  type ToolDefinition,
-} from "@copilotkit/llmock";
+import { LLMock, type ChatMessage } from "@copilotkit/llmock";
 import * as path from "node:path";
 
 const MOCK_PORT = 5555;
@@ -40,10 +35,10 @@ export async function setupLLMock(): Promise<void> {
   // Perform Steps). These predicate fixtures MUST come before loadFixtureFile.
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) => {
+      predicate: (req) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
         const hasLangGraphTool = req.tools?.some(
-          (t: ToolDefinition) => t.function.name === "plan_execution_steps",
+          (t) => t.function.name === "plan_execution_steps",
         );
         return (
           !!hasLangGraphTool &&
@@ -68,10 +63,10 @@ export async function setupLLMock(): Promise<void> {
   });
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) => {
+      predicate: (req) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
         const hasLangGraphTool = req.tools?.some(
-          (t: ToolDefinition) => t.function.name === "plan_execution_steps",
+          (t) => t.function.name === "plan_execution_steps",
         );
         return (
           !!hasLangGraphTool &&
@@ -126,7 +121,7 @@ export async function setupLLMock(): Promise<void> {
   // Supervisor: no flights yet → route to flights_agent
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) =>
+      predicate: (req) =>
         sysIncludes(req.messages, "Flights found: false"),
     },
     ...supervisorRoute("flights_agent", "Let me find flights for you!"),
@@ -134,7 +129,7 @@ export async function setupLLMock(): Promise<void> {
   // Supervisor: flights found, no hotels → route to hotels_agent
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) =>
+      predicate: (req) =>
         sysIncludes(req.messages, "Flights found: true") &&
         sysIncludes(req.messages, "Hotels found: false"),
     },
@@ -149,7 +144,7 @@ export async function setupLLMock(): Promise<void> {
   // response text is already in the messages.
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) => {
+      predicate: (req) => {
         const experiencesDone = req.messages.some(
           (m) =>
             m.role === "assistant" &&
@@ -168,7 +163,7 @@ export async function setupLLMock(): Promise<void> {
   // Supervisor: all agents completed → route to complete
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) => {
+      predicate: (req) => {
         const experiencesDone = req.messages.some(
           (m) =>
             m.role === "assistant" &&
@@ -184,7 +179,7 @@ export async function setupLLMock(): Promise<void> {
   // Experiences agent's own ChatOpenAI call — returns generic text
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) =>
+      predicate: (req) =>
         sysIncludes(req.messages, "You are the experiences agent"),
     },
     response: {
@@ -198,10 +193,10 @@ export async function setupLLMock(): Promise<void> {
   // Strands tool name in the request and return the correct tool call.
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) => {
+      predicate: (req) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
         const hasStrandsTool = req.tools?.some(
-          (t: ToolDefinition) => t.function.name === "plan_task_steps",
+          (t) => t.function.name === "plan_task_steps",
         );
         return (
           !!hasStrandsTool &&
@@ -232,10 +227,10 @@ export async function setupLLMock(): Promise<void> {
   });
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) => {
+      predicate: (req) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
         const hasStrandsTool = req.tools?.some(
-          (t: ToolDefinition) => t.function.name === "plan_task_steps",
+          (t) => t.function.name === "plan_task_steps",
         );
         return (
           !!hasStrandsTool && textOf(lastUser?.content).includes("Go to Mars")
@@ -294,10 +289,10 @@ export async function setupLLMock(): Promise<void> {
   // schemas from functionDeclarations).
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) => {
+      predicate: (req) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
         const recipeTool = req.tools?.find(
-          (t: ToolDefinition) => t.function.name === "generate_recipe",
+          (t) => t.function.name === "generate_recipe",
         );
         const hasNestedRecipeParam = !!(
           (recipeTool?.function.parameters as Record<string, unknown>)
@@ -324,10 +319,10 @@ export async function setupLLMock(): Promise<void> {
   // Falls through when neither tool schema nor system prompt indicates nested args.
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) => {
+      predicate: (req) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
         const recipeTool = req.tools?.find(
-          (t: ToolDefinition) => t.function.name === "generate_recipe",
+          (t) => t.function.name === "generate_recipe",
         );
         const hasNestedRecipeParam = !!(
           (recipeTool?.function.parameters as Record<string, unknown>)
@@ -376,10 +371,10 @@ export async function setupLLMock(): Promise<void> {
   };
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) => {
+      predicate: (req) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
         const hasPydanticTool = req.tools?.some(
-          (t: ToolDefinition) => t.function.name === "display_recipe",
+          (t) => t.function.name === "display_recipe",
         );
         return (
           !!hasPydanticTool &&
@@ -402,10 +397,10 @@ export async function setupLLMock(): Promise<void> {
   // Pydantic AI tool name and return the correct tool call.
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) => {
+      predicate: (req) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
         const hasPydanticTool = req.tools?.some(
-          (t: ToolDefinition) => t.function.name === "create_plan",
+          (t) => t.function.name === "create_plan",
         );
         return (
           !!hasPydanticTool &&
@@ -431,10 +426,10 @@ export async function setupLLMock(): Promise<void> {
   });
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) => {
+      predicate: (req) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
         const hasPydanticTool = req.tools?.some(
-          (t: ToolDefinition) => t.function.name === "create_plan",
+          (t) => t.function.name === "create_plan",
         );
         return (
           !!hasPydanticTool && textOf(lastUser?.content).includes("Go to Mars")
@@ -465,10 +460,10 @@ export async function setupLLMock(): Promise<void> {
   // function parameter name as the top-level key.
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) => {
+      predicate: (req) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
         const hasLlamaIndexTool = req.tools?.some(
-          (t: ToolDefinition) => t.function.name === "run_task",
+          (t) => t.function.name === "run_task",
         );
         return (
           !!hasLlamaIndexTool &&
@@ -496,10 +491,10 @@ export async function setupLLMock(): Promise<void> {
   });
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) => {
+      predicate: (req) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
         const hasLlamaIndexTool = req.tools?.some(
-          (t: ToolDefinition) => t.function.name === "run_task",
+          (t) => t.function.name === "run_task",
         );
         return (
           !!hasLlamaIndexTool &&
@@ -532,10 +527,10 @@ export async function setupLLMock(): Promise<void> {
   // or changes). Arguments are wrapped in {"recipe": {...}}.
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) => {
+      predicate: (req) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
         const hasLlamaIndexTool = req.tools?.some(
-          (t: ToolDefinition) => t.function.name === "update_recipe",
+          (t) => t.function.name === "update_recipe",
         );
         return (
           !!hasLlamaIndexTool &&
@@ -569,7 +564,7 @@ export async function setupLLMock(): Promise<void> {
   // Prepend so it matches before substring-based fixtures on follow-up requests
   mockServer.prependFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) => {
+      predicate: (req) => {
         const last = req.messages[req.messages.length - 1];
         return last?.role === "tool";
       },
@@ -582,11 +577,11 @@ export async function setupLLMock(): Promise<void> {
   // Log unmatched requests for debugging fixture mismatches.
   mockServer.addFixture({
     match: {
-      predicate: (req: ChatCompletionRequest) => {
+      predicate: (req) => {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
         const userText = lastUser ? textOf(lastUser.content) : "(no user msg)";
         const toolNames =
-          req.tools?.map((t: ToolDefinition) => t.function.name).join(",") ||
+          req.tools?.map((t) => t.function.name).join(",") ||
           "(no tools)";
         const contentType = lastUser ? typeof lastUser.content : "N/A";
         const contentSample = lastUser
