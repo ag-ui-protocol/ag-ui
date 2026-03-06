@@ -2,10 +2,11 @@
 import React, { useState } from "react";
 import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
-import { 
+import {
   useAgent,
   UseAgentUpdate,
   useFrontendTool,
+  useConfigureSuggestions,
   CopilotChat,
 } from "@copilotkit/react-core/v2";
 import { z } from "zod";
@@ -61,6 +62,20 @@ const Chat = () => {
     agent.setState({ model });
   };
 
+  useConfigureSuggestions({
+    suggestions: [
+      {
+        title: "Change background",
+        message: "Change the background to something new.",
+      },
+      {
+        title: "Generate sonnet",
+        message: "Write a short sonnet about AI.",
+      },
+    ],
+    available: "always",
+  });
+
   useFrontendTool({
     agentId: "agentic_chat_reasoning",
     name: "change_background",
@@ -114,7 +129,6 @@ const Chat = () => {
           <CopilotChat
             agentId="agentic_chat_reasoning"
             className="h-full rounded-2xl"
-            labels={{ welcomeMessageText: "Hi, I'm an agent. Want to chat?" }}
           />
         </div>
       </div>

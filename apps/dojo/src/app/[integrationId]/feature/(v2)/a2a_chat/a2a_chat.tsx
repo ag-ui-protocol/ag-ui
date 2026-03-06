@@ -2,11 +2,12 @@
 import React, { useEffect, useState } from "react";
 import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
-import { 
+import {
   useAgent,
   UseAgentUpdate,
   useRenderTool,
   useHumanInTheLoop,
+  useConfigureSuggestions,
   CopilotChat,
 } from "@copilotkit/react-core/v2";
 import { z } from "zod";
@@ -98,6 +99,20 @@ const Message = ({ from, to, message, color }: MessageProps) => {
 };
 
 const Chat = ({ onNotification }: { onNotification?: () => void }) => {
+  useConfigureSuggestions({
+    suggestions: [
+      {
+        title: "Find a desk",
+        message: "Help me find a desk near my teammates.",
+      },
+      {
+        title: "Check availability",
+        message: "What desks are available right now?",
+      },
+    ],
+    available: "always",
+  });
+
   const { agent } = useAgent({
     agentId: "a2a_chat",
     updates: [UseAgentUpdate.OnMessagesChanged, UseAgentUpdate.OnRunStatusChanged],
@@ -355,7 +370,6 @@ const Chat = ({ onNotification }: { onNotification?: () => void }) => {
         <CopilotChat
           agentId="a2a_chat"
           className="h-full rounded-2xl"
-          labels={{ welcomeMessageText: "Hi, I'm an agent. Want to chat?" }}
         />
       </div>
     </div>

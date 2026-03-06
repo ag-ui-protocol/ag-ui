@@ -27,3 +27,15 @@ node_modules
 **/python/**/__pycache__/
 
 sdks/build/
+# Build artifacts and binaries
+**/build/
+*.dSYM/
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.obj
+*.a
+*.lib
+*.wasm

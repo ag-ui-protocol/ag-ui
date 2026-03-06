@@ -2,7 +2,7 @@
 
 import React from "react";
 import "@copilotkit/react-core/v2/styles.css";
-import { CopilotChat,   } from "@copilotkit/react-core/v2";
+import { CopilotChat, useConfigureSuggestions } from "@copilotkit/react-core/v2";
 import { CopilotKit } from "@copilotkit/react-core"; 
 
 export const dynamic = "force-dynamic";
@@ -33,6 +33,20 @@ export default function Page({ params }: PageProps) {
 }
 
 function Chat({ threadId }: { threadId: string }) {
+  useConfigureSuggestions({
+    suggestions: [
+      {
+        title: "Tell a joke",
+        message: "Tell me a funny programming joke.",
+      },
+      {
+        title: "Explain something",
+        message: "Explain how the internet works in simple terms.",
+      },
+    ],
+    available: "always",
+  });
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <CopilotChat style={{ flex: 1, minHeight: "100%" }} threadId={threadId} />
