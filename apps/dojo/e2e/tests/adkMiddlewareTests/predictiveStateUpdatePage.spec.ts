@@ -1,8 +1,7 @@
 import { test, expect } from "../../test-isolation-helper";
 import { PredictiveStateUpdatesPage } from "../../pages/adkMiddlewarePages/PredictiveStateUpdatesPage";
 
-// TODO: Re-enable when ADK middleware agent is uncommented in agents.ts and menu.ts
-test.describe.skip("Predictive State Updates Feature", () => {
+test.describe("Predictive State Updates Feature", () => {
   test("[ADK Middleware] should interact with agent and approve asked changes", async ({
     page,
   }) => {
