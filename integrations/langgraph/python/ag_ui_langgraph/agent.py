@@ -234,7 +234,12 @@ class LangGraphAgent:
                         else getattr(first, "name", None)
                     )
                     if first_name:
-                        self.active_run["model_made_tool_call"] = True
+                        predict_state_meta = event.get("metadata", {}).get("predict_state", [])
+                        tool_used_to_predict_state = any(
+                            p.get("tool") == first_name for p in predict_state_meta
+                        )
+                        if tool_used_to_predict_state:
+                            self.active_run["model_made_tool_call"] = True
 
             updated_state = self.active_run.get("manually_emitted_state") or current_graph_state
             has_state_diff = updated_state != state

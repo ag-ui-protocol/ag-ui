@@ -168,5 +168,45 @@ class TestSnapshotSuppressionCondition(unittest.TestCase):
         self.assertFalse(self._suppressed(exiting_node=False, model_made_tool_call=False))
 
 
+class TestModelMadeToolCallMetadataCheck(unittest.TestCase):
+    """
+    Verifies that model_made_tool_call is only set when the tool name appears
+    in the predict_state metadata — not for arbitrary tool calls.
+
+    This mirrors the TypeScript behaviour where hasPredictState is only set
+    when the streaming tool call matches a tool listed in
+    event.metadata["predict_state"].
+    """
+
+    def _should_set_model_made_tool_call(self, tool_name, predict_state_meta):
+        """Mirrors the agent.py logic for setting model_made_tool_call."""
+        return any(p.get("tool") == tool_name for p in predict_state_meta)
+
+    def test_sets_flag_when_tool_matches_predict_state(self):
+        meta = [{"tool": "write_recipe", "state_key": "recipe", "tool_argument": "draft"}]
+        self.assertTrue(self._should_set_model_made_tool_call("write_recipe", meta))
+
+    def test_does_not_set_flag_for_unrelated_tool(self):
+        meta = [{"tool": "write_recipe", "state_key": "recipe", "tool_argument": "draft"}]
+        self.assertFalse(self._should_set_model_made_tool_call("search_web", meta))
+
+    def test_does_not_set_flag_when_predict_state_meta_empty(self):
+        self.assertFalse(self._should_set_model_made_tool_call("any_tool", []))
+
+    def test_does_not_set_flag_when_no_predict_state_metadata(self):
+        # Simulates event.get("metadata", {}).get("predict_state", []) == []
+        event_metadata = {}
+        predict_state_meta = event_metadata.get("predict_state", [])
+        self.assertFalse(self._should_set_model_made_tool_call("any_tool", predict_state_meta))
+
+    def test_sets_flag_when_tool_matches_one_of_multiple(self):
+        meta = [
+            {"tool": "write_recipe", "state_key": "recipe", "tool_argument": "draft"},
+            {"tool": "update_title", "state_key": "title", "tool_argument": "text"},
+        ]
+        self.assertTrue(self._should_set_model_made_tool_call("update_title", meta))
+        self.assertFalse(self._should_set_model_made_tool_call("search_web", meta))
+
+
 if __name__ == "__main__":
     unittest.main()
