@@ -33,7 +33,22 @@ from google.adk.auth.credential_service.in_memory_credential_service import InMe
 from google.genai import types
 
 from .event_translator import EventTranslator, adk_events_to_messages
-from .session_manager import SessionManager, CONTEXT_STATE_KEY, INVOCATION_ID_STATE_KEY
+from .session_manager import (
+    SessionManager, CONTEXT_STATE_KEY, INVOCATION_ID_STATE_KEY,
+    THREAD_ID_STATE_KEY, APP_NAME_STATE_KEY, USER_ID_STATE_KEY,
+)
+
+# Session-state keys managed exclusively by the backend.  These must never be
+# overwritten by stale ``input.state`` values sent back from the frontend,
+# otherwise internal metadata (e.g. LRO ID remaps) is lost between requests.
+_INTERNAL_STATE_KEYS = frozenset({
+    "lro_tool_call_id_remap",
+    CONTEXT_STATE_KEY,
+    THREAD_ID_STATE_KEY,
+    APP_NAME_STATE_KEY,
+    USER_ID_STATE_KEY,
+    INVOCATION_ID_STATE_KEY,
+})
 from .execution_state import ExecutionState
 from .client_proxy_toolset import ClientProxyToolset
 from .config import PredictStateMapping
@@ -1683,6 +1698,11 @@ class ADKAgent:
             # Context from RunAgentInput is stored under _ag_ui_context key,
             # making it accessible via tool_context.state['_ag_ui_context']
             state_with_context = dict(input.state) if input.state else {}
+            # Strip backend-managed keys so stale frontend state cannot
+            # overwrite internal metadata (e.g. lro_tool_call_id_remap).
+            # See: https://github.com/ag-ui-protocol/ag-ui/issues/1168
+            for key in _INTERNAL_STATE_KEYS:
+                state_with_context.pop(key, None)
             if input.context:
                 state_with_context[CONTEXT_STATE_KEY] = [
                     {"description": ctx.description, "value": ctx.value}

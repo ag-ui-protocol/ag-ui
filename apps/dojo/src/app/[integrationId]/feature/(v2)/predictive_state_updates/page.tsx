@@ -40,7 +40,6 @@ export default function PredictiveStateUpdates({ params }: PredictiveStateUpdate
     useMobileChat(defaultChatHeight);
   const chatTitle = "AI Document Editor";
   const chatDescription = "Ask me to create or edit a document";
-  const initialLabel = "Hi 👋 How can I help with your document?";
 
   return (
     <CopilotKit
@@ -147,9 +146,6 @@ export default function PredictiveStateUpdates({ params }: PredictiveStateUpdate
                 <CopilotChat
                   agentId="predictive_state_updates"
                   className="h-full flex flex-col"
-                  labels={{
-                    welcomeMessageText: initialLabel,
-                  }}
                 />
               </div>
             </div>
@@ -165,7 +161,6 @@ export default function PredictiveStateUpdates({ params }: PredictiveStateUpdate
             defaultOpen={chatDefaultOpen}
             labels={{
               modalHeaderTitle: chatTitle,
-              welcomeMessageText: initialLabel,
             }}
           />
         )}

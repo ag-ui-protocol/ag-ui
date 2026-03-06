@@ -55,6 +55,28 @@ func TestMessageMarshalUnmarshal_Activity(t *testing.T) {
 	assert.Equal(t, "working", content["status"])
 }
 
+func TestMessageMarshalUnmarshal_Reasoning(t *testing.T) {
+	msg := Message{
+		ID:             "reasoning-1",
+		Role:           coretypes.RoleReasoning,
+		Content:        "summary",
+		EncryptedValue: "enc-reasoning-1",
+	}
+
+	data, err := json.Marshal(msg)
+	require.NoError(t, err)
+
+	var decoded Message
+	require.NoError(t, json.Unmarshal(data, &decoded))
+
+	assert.Equal(t, "reasoning-1", decoded.ID)
+	assert.Equal(t, coretypes.RoleReasoning, decoded.Role)
+	assert.Equal(t, "enc-reasoning-1", decoded.EncryptedValue)
+	content, ok := decoded.ContentString()
+	require.True(t, ok)
+	assert.Equal(t, "summary", content)
+}
+
 func TestValidateMessage_NonActivityRejectsActivityFields(t *testing.T) {
 	msg := Message{
 		ID:           "msg-1",
@@ -120,6 +142,19 @@ func TestValidateMessage_AssistantContentMustBeStringWhenPresent(t *testing.T) {
 	assert.NoError(t, validateMessage(msg))
 }
 
+func TestValidateMessage_ReasoningRequiresStringContent(t *testing.T) {
+	msg := Message{
+		ID:      "reasoning-1",
+		Role:    coretypes.RoleReasoning,
+		Content: "summary",
+	}
+
+	assert.NoError(t, validateMessage(msg))
+
+	msg.Content = map[string]any{"unexpected": true}
+	assert.Error(t, validateMessage(msg))
+}
+
 func TestValidateMessage_ToolRequiresToolCallIDAndStringContent(t *testing.T) {
 	msg := Message{
 		ID:      "msg-1",
@@ -137,10 +172,11 @@ func TestValidateMessage_ToolRequiresToolCallIDAndStringContent(t *testing.T) {
 
 func TestMessageMarshalJSON_IncludesOptionalFields_Assistant(t *testing.T) {
 	msg := Message{
-		ID:      "msg-1",
-		Role:    "assistant",
-		Content: "hello",
-		Name:    "bob",
+		ID:               "msg-1",
+		Role:             "assistant",
+		Content:          "hello",
+		Name:             "bob",
+		EncryptedContent: "enc-content-msg-1",
 		ToolCalls: []ToolCall{
 			{
 				ID:   "tool-1",
@@ -163,6 +199,7 @@ func TestMessageMarshalJSON_IncludesOptionalFields_Assistant(t *testing.T) {
 	assert.Equal(t, "assistant", decoded["role"])
 	assert.Equal(t, "hello", decoded["content"])
 	assert.Equal(t, "bob", decoded["name"])
+	assert.Equal(t, "enc-content-msg-1", decoded["encryptedContent"])
 	toolCalls, ok := decoded["toolCalls"].([]any)
 	require.True(t, ok)
 	assert.Len(t, toolCalls, 1)

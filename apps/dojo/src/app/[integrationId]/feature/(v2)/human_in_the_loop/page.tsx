@@ -376,10 +376,6 @@ const ChatContent = () => {
         <CopilotChat
           agentId="human_in_the_loop"
           className="h-full rounded-2xl max-w-6xl mx-auto"
-          labels={{
-            welcomeMessageText:
-              "Hi, I'm an agent specialized in helping you with your tasks. How can I help you?",
-          }}
         />
       </div>
     </div>

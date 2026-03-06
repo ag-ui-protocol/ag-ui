@@ -1,6 +1,7 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { CopilotSelectors } from '../../utils/copilot-selectors';
 import { sendChatMessage, awaitLLMResponseDone } from '../../utils/copilot-actions';
+import { DEFAULT_WELCOME_MESSAGE } from '../../lib/constants';
 
 export class HumanInLoopPage {
   readonly page: Page;
@@ -17,7 +18,7 @@ export class HumanInLoopPage {
     this.chatInput = CopilotSelectors.chatTextarea(page);
     this.sendButton = CopilotSelectors.sendButton(page);
     // V2 CopilotChat renders inline with this welcome text
-    this.agentGreeting = page.getByText(/I'm an agent specialized in helping you with your tasks/i);
+    this.agentGreeting = page.getByText(DEFAULT_WELCOME_MESSAGE);
     this.plan = page.getByTestId('select-steps');
     this.performStepsButton = page.getByRole('button', { name: '✨Perform Steps' });
     this.agentMessage = CopilotSelectors.assistantMessages(page);

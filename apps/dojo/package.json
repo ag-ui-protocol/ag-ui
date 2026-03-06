@@ -33,7 +33,7 @@
     "@ag-ui/server-starter-all-features": "workspace:*",
     "@ag-ui/spring-ai": "workspace:*",
     "@ag-ui/vercel-ai-sdk": "workspace:*",
-    "@ai-sdk/openai": "^2.0.42",
+    "@ai-sdk/openai": "^3.0.36",
     "@copilotkit/react-core": "0.0.0-mme-ag-ui-0-0-46-20260227141603",
     "@copilotkit/react-ui": "0.0.0-mme-ag-ui-0-0-46-20260227141603",
     "@copilotkit/runtime": "0.0.0-mme-ag-ui-0-0-46-20260227141603",

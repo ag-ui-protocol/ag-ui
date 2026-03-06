@@ -513,6 +513,301 @@ class TestFunctionResponseRemapping:
         )
 
 
+class TestMultiRoundLroStatePoisoning:
+    """Regression tests for state poisoning across multiple HITL rounds.
+
+    When the frontend sends back ``input.state`` containing stale
+    ``lro_tool_call_id_remap`` data, the backend must not let it overwrite
+    the fresh remap stored during the current run.  Without the fix, the
+    second HITL tool call in a session fails because the remap is lost.
+
+    See: https://github.com/ag-ui-protocol/ag-ui/issues/1168 (decster's report)
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset_session_manager(self):
+        SessionManager.reset_instance()
+        yield
+        SessionManager.reset_instance()
+
+    @pytest.fixture
+    def sample_tool(self):
+        return AGUITool(
+            name="client_tool",
+            description="A client-side tool",
+            parameters={
+                "type": "object",
+                "properties": {"action": {"type": "string"}},
+            },
+        )
+
+    @staticmethod
+    def _create_lro_event(partial, fc_id, fc_name="client_tool", invocation_id="inv"):
+        fc = MagicMock()
+        fc.id = fc_id
+        fc.name = fc_name
+        fc.args = {"action": "test"}
+        part = MagicMock()
+        part.text = None
+        part.function_call = fc
+        evt = MagicMock()
+        evt.author = "assistant"
+        evt.content = MagicMock()
+        evt.content.parts = [part]
+        evt.partial = partial
+        evt.turn_complete = not partial
+        evt.is_final_response = MagicMock(return_value=not partial)
+        evt.get_function_calls = MagicMock(return_value=[fc])
+        evt.get_function_responses = MagicMock(return_value=[])
+        evt.long_running_tool_ids = [fc_id]
+        evt.invocation_id = invocation_id
+        return evt
+
+    @staticmethod
+    def _create_text_event(text="Done", invocation_id="inv"):
+        text_part = MagicMock()
+        text_part.text = text
+        text_part.function_call = None
+        evt = MagicMock()
+        evt.author = "assistant"
+        evt.content = MagicMock()
+        evt.content.parts = [text_part]
+        evt.partial = False
+        evt.turn_complete = True
+        evt.is_final_response = MagicMock(return_value=True)
+        evt.get_function_calls = MagicMock(return_value=[])
+        evt.get_function_responses = MagicMock(return_value=[])
+        evt.long_running_tool_ids = []
+        evt.invocation_id = invocation_id
+        return evt
+
+    @pytest.mark.asyncio
+    async def test_second_hitl_tool_call_not_poisoned_by_stale_state(self, sample_tool):
+        """Two sequential HITL round-trips must both succeed.
+
+        Reproduces the exact scenario from issue #1168:
+        1. Run 1: LRO with partial-id-1 → final-id-1
+        2. Resume 1: tool result with partial-id-1 (remapped to final-id-1) — works
+        3. Run 2: LRO with partial-id-2 → final-id-2
+        4. Resume 2: tool result with partial-id-2 — MUST remap to final-id-2
+           (previously failed because stale frontend state overwrote the remap)
+        """
+        from google.adk.agents import Agent
+
+        mock_agent = MagicMock(spec=Agent)
+        mock_agent.name = "test_agent"
+        mock_agent.model_copy = MagicMock(return_value=mock_agent)
+
+        adk = ADKAgent(adk_agent=mock_agent, app_name="test_app", user_id="u1")
+        thread_id = f"thread_{uuid.uuid4().hex[:8]}"
+
+        partial_id_1 = "adk-partial-1111"
+        final_id_1 = "adk-final-1111"
+        partial_id_2 = "adk-partial-2222"
+        final_id_2 = "adk-final-2222"
+
+        # === Run 1: first LRO tool call ===
+        async def mock_run1(**kwargs):
+            yield self._create_lro_event(True, partial_id_1, invocation_id="inv-1")
+            yield self._create_lro_event(False, final_id_1, invocation_id="inv-1")
+
+        mock_runner1 = MagicMock()
+        mock_runner1.run_async = mock_run1
+
+        run1_input = RunAgentInput(
+            thread_id=thread_id, run_id="run-1",
+            messages=[UserMessage(id="u1", role="user", content="Do thing 1")],
+            tools=[sample_tool], context=[], state={}, forwarded_props={},
+        )
+
+        with patch.object(adk, "_create_runner", return_value=mock_runner1):
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                run1_events = [e async for e in adk.run(run1_input)]
+
+        # Verify remap was stored
+        metadata = adk._get_session_metadata(thread_id)
+        session_id, app_name, user_id = metadata
+        remap1 = await adk._get_lro_id_remap(session_id, app_name, user_id)
+        assert remap1.get(partial_id_1) == final_id_1
+
+        # === Resume 1: submit tool result with partial-id-1 ===
+        # Simulate frontend sending back stale state that includes the remap
+        stale_state_from_frontend = {"lro_tool_call_id_remap": {partial_id_1: final_id_1}}
+
+        captured_ids_resume1 = []
+
+        async def mock_resume1(**kwargs):
+            new_msg = kwargs.get("new_message")
+            if new_msg and hasattr(new_msg, "parts"):
+                for part in new_msg.parts:
+                    if hasattr(part, "function_response") and part.function_response:
+                        captured_ids_resume1.append(part.function_response.id)
+            yield self._create_text_event("Done 1", invocation_id="inv-1-resume")
+
+        mock_runner_resume1 = MagicMock()
+        mock_runner_resume1.run_async = mock_resume1
+
+        resume1_input = RunAgentInput(
+            thread_id=thread_id, run_id="run-1-resume",
+            messages=[
+                UserMessage(id="u1", role="user", content="Do thing 1"),
+                AssistantMessage(id="a1", role="assistant", content="",
+                    tool_calls=[ToolCall(id=partial_id_1, type="function",
+                        function=FunctionCall(name="client_tool", arguments='{"action": "test"}'))]),
+                ToolMessage(id="t1", role="tool", tool_call_id=partial_id_1, content='{"ok": true}'),
+            ],
+            tools=[sample_tool], context=[],
+            state=stale_state_from_frontend,  # <-- stale state from frontend!
+            forwarded_props={},
+        )
+
+        with patch.object(adk, "_create_runner", return_value=mock_runner_resume1):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                resume1_events = [e async for e in adk.run(resume1_input)]
+
+        assert captured_ids_resume1 == [final_id_1], (
+            f"Resume 1 should have remapped {partial_id_1} -> {final_id_1}"
+        )
+
+        # === Run 2: second LRO tool call ===
+        async def mock_run2(**kwargs):
+            yield self._create_lro_event(True, partial_id_2, invocation_id="inv-2")
+            yield self._create_lro_event(False, final_id_2, invocation_id="inv-2")
+
+        mock_runner2 = MagicMock()
+        mock_runner2.run_async = mock_run2
+
+        # Frontend sends back stale state again (still has the old consumed remap)
+        stale_state_run2 = {"lro_tool_call_id_remap": {}}
+
+        run2_input = RunAgentInput(
+            thread_id=thread_id, run_id="run-2",
+            messages=[
+                UserMessage(id="u1", role="user", content="Do thing 1"),
+                AssistantMessage(id="a1", role="assistant", content="Done 1"),
+                UserMessage(id="u2", role="user", content="Do thing 2"),
+            ],
+            tools=[sample_tool], context=[],
+            state=stale_state_run2,  # <-- stale state that would overwrite new remap
+            forwarded_props={},
+        )
+
+        with patch.object(adk, "_create_runner", return_value=mock_runner2):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                run2_events = [e async for e in adk.run(run2_input)]
+
+        # Verify second remap was stored (not overwritten by stale state)
+        remap2 = await adk._get_lro_id_remap(session_id, app_name, user_id)
+        assert remap2.get(partial_id_2) == final_id_2, (
+            f"Second LRO remap should be {partial_id_2} -> {final_id_2}, "
+            f"but got: {remap2}. Stale frontend state likely overwrote it."
+        )
+
+        # === Resume 2: submit tool result with partial-id-2 ===
+        captured_ids_resume2 = []
+
+        async def mock_resume2(**kwargs):
+            new_msg = kwargs.get("new_message")
+            if new_msg and hasattr(new_msg, "parts"):
+                for part in new_msg.parts:
+                    if hasattr(part, "function_response") and part.function_response:
+                        captured_ids_resume2.append(part.function_response.id)
+            yield self._create_text_event("Done 2", invocation_id="inv-2-resume")
+
+        mock_runner_resume2 = MagicMock()
+        mock_runner_resume2.run_async = mock_resume2
+
+        # Frontend again sends stale state (empty remap or old data)
+        stale_state_resume2 = {"lro_tool_call_id_remap": {partial_id_1: final_id_1}}
+
+        resume2_input = RunAgentInput(
+            thread_id=thread_id, run_id="run-2-resume",
+            messages=[
+                UserMessage(id="u2", role="user", content="Do thing 2"),
+                AssistantMessage(id="a2", role="assistant", content="",
+                    tool_calls=[ToolCall(id=partial_id_2, type="function",
+                        function=FunctionCall(name="client_tool", arguments='{"action": "test"}'))]),
+                ToolMessage(id="t2", role="tool", tool_call_id=partial_id_2, content='{"ok": true}'),
+            ],
+            tools=[sample_tool], context=[],
+            state=stale_state_resume2,  # <-- stale state: old remap, missing new remap!
+            forwarded_props={},
+        )
+
+        with patch.object(adk, "_create_runner", return_value=mock_runner_resume2):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                resume2_events = [e async for e in adk.run(resume2_input)]
+
+        # CRITICAL: The second resume must use the correct remapped ID
+        assert captured_ids_resume2 == [final_id_2], (
+            f"Resume 2 should have remapped {partial_id_2} -> {final_id_2}, "
+            f"but got {captured_ids_resume2}. "
+            f"State poisoning from stale frontend state caused remap loss!"
+        )
+
+    @pytest.mark.asyncio
+    async def test_internal_state_keys_stripped_from_input(self, sample_tool):
+        """Verify that _INTERNAL_STATE_KEYS are stripped from input.state
+        before being applied to the session."""
+        from ag_ui_adk.adk_agent import _INTERNAL_STATE_KEYS
+        from google.adk.agents import Agent
+
+        mock_agent = MagicMock(spec=Agent)
+        mock_agent.name = "test_agent"
+        mock_agent.model_copy = MagicMock(return_value=mock_agent)
+
+        adk = ADKAgent(adk_agent=mock_agent, app_name="test_app", user_id="u1")
+        thread_id = f"thread_{uuid.uuid4().hex[:8]}"
+
+        # Pre-store a remap in the session
+        session, session_id = await adk._ensure_session_exists(
+            "test_app", "u1", thread_id, {}
+        )
+        await adk._store_lro_id_remap(
+            {"real-partial": "real-final"}, session_id, "test_app", "u1"
+        )
+
+        # Simulate a request where frontend sends back stale internal state
+        poisoned_state = {
+            "lro_tool_call_id_remap": {"stale-partial": "stale-final"},
+            "_ag_ui_context": "stale-context",
+            "_ag_ui_thread_id": "wrong-thread",
+            "user_visible_key": "user-value",  # This should NOT be stripped
+        }
+
+        async def mock_run(**kwargs):
+            yield self._create_text_event("ok")
+
+        mock_runner = MagicMock()
+        mock_runner.run_async = mock_run
+
+        input_data = RunAgentInput(
+            thread_id=thread_id, run_id="run-test",
+            messages=[UserMessage(id="u1", role="user", content="test")],
+            tools=[], context=[], state=poisoned_state, forwarded_props={},
+        )
+
+        with patch.object(adk, "_create_runner", return_value=mock_runner):
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                [e async for e in adk.run(input_data)]
+
+        # The real remap should survive (not overwritten by stale data)
+        remap = await adk._get_lro_id_remap(session_id, "test_app", "u1")
+        assert "real-partial" in remap, (
+            f"Backend remap was overwritten by stale frontend state. Got: {remap}"
+        )
+        assert "stale-partial" not in remap, (
+            f"Stale frontend remap leaked into backend state. Got: {remap}"
+        )
+
+
 # =============================================================================
 # Integration Tests — Require Google AI or Vertex AI auth
 # =============================================================================

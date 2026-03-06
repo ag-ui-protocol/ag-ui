@@ -1,6 +1,7 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { CopilotSelectors } from '../utils/copilot-selectors';
 import { sendChatMessage, awaitLLMResponseDone } from '../utils/copilot-actions';
+import { DEFAULT_WELCOME_MESSAGE } from '../lib/constants';
 
 export class HumanInTheLoopPage {
   readonly page: Page;
@@ -16,7 +17,7 @@ export class HumanInTheLoopPage {
   constructor(page: Page) {
     this.page = page;
     this.planTaskButton = page.getByRole('button', { name: 'Human in the loop Plan a task' });
-    this.agentGreeting = page.getByText("Hi, I'm an agent specialized in helping you with your tasks. How can I help you?");
+    this.agentGreeting = page.getByText(DEFAULT_WELCOME_MESSAGE);
     this.chatInput = CopilotSelectors.chatTextarea(page);
     this.sendButton = CopilotSelectors.sendButton(page);
     this.plan = page.getByTestId('select-steps');

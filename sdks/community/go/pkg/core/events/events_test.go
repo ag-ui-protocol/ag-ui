@@ -538,6 +538,30 @@ func TestEventSequenceValidation(t *testing.T) {
 		assert.NoError(t, ValidateSequence(events))
 	})
 
+	t.Run("ValidSequence_ReasoningMessageLifecycle", func(t *testing.T) {
+		events := []Event{
+			NewReasoningStartEvent("reasoning-1"),
+			NewReasoningMessageStartEvent("reasoning-msg-1", "assistant"),
+			NewReasoningMessageContentEvent("reasoning-msg-1", "Thinking..."),
+			NewReasoningMessageEndEvent("reasoning-msg-1"),
+			NewReasoningEncryptedValueEvent(ReasoningEncryptedValueSubtypeMessage, "reasoning-msg-1", "encrypted-reasoning"),
+			NewReasoningEndEvent("reasoning-1"),
+		}
+
+		assert.NoError(t, ValidateSequence(events))
+	})
+
+	t.Run("ValidSequence_AllowsChunkAndResultEvents", func(t *testing.T) {
+		events := []Event{
+			NewTextMessageChunkEvent(nil, nil, nil).WithChunkMessageID("msg-1").WithChunkDelta("Hello"),
+			NewToolCallChunkEvent().WithToolCallChunkID("tool-1").WithToolCallChunkDelta("{\"location\":\"SF\"}"),
+			NewToolCallResultEvent("msg-1", "tool-1", "ok"),
+			NewReasoningMessageChunkEvent(nil, nil).WithChunkMessageID("reasoning-msg-1").WithChunkDelta("Thinking..."),
+		}
+
+		assert.NoError(t, ValidateSequence(events))
+	})
+
 	t.Run("InvalidSequence_DuplicateRunStart", func(t *testing.T) {
 		events := []Event{
 			NewRunStartedEvent("thread-1", "run-1"),
@@ -582,6 +606,31 @@ func TestEventSequenceValidation(t *testing.T) {
 		assert.Error(t, ValidateSequence(events))
 	})
 
+	t.Run("InvalidSequence_DuplicateReasoningMessageStart", func(t *testing.T) {
+		events := []Event{
+			NewReasoningMessageStartEvent("reasoning-msg-1", "assistant"),
+			NewReasoningMessageStartEvent("reasoning-msg-1", "assistant"),
+		}
+
+		assert.Error(t, ValidateSequence(events))
+	})
+
+	t.Run("InvalidSequence_ContentWithoutReasoningMessageStart", func(t *testing.T) {
+		events := []Event{
+			NewReasoningMessageContentEvent("reasoning-msg-1", "Thinking..."),
+		}
+
+		assert.Error(t, ValidateSequence(events))
+	})
+
+	t.Run("InvalidSequence_EndNonExistentReasoningMessage", func(t *testing.T) {
+		events := []Event{
+			NewReasoningMessageEndEvent("reasoning-msg-1"),
+		}
+
+		assert.Error(t, ValidateSequence(events))
+	})
+
 	t.Run("InvalidSequence_DuplicateToolCallStart", func(t *testing.T) {
 		events := []Event{
 			NewToolCallStartEvent("tool-1", "get_weather"),
@@ -609,6 +658,12 @@ func TestJSONSerialization(t *testing.T) {
 			NewTextMessageContentEvent("msg-1", "Hello"),
 			NewTextMessageChunkEvent(strPtr("msg-1"), strPtr("assistant"), strPtr("Chunk")),
 			NewToolCallStartEvent("tool-1", "get_weather", WithParentMessageID("msg-1")),
+			NewReasoningStartEvent("reasoning-1"),
+			NewReasoningMessageStartEvent("reasoning-msg-1", "assistant"),
+			NewReasoningMessageContentEvent("reasoning-msg-1", "Thinking..."),
+			NewReasoningMessageEndEvent("reasoning-msg-1"),
+			NewReasoningEncryptedValueEvent(ReasoningEncryptedValueSubtypeMessage, "reasoning-msg-1", "encrypted-reasoning"),
+			NewReasoningEndEvent("reasoning-1"),
 			NewStateSnapshotEvent(map[string]any{"counter": 42}),
 			NewActivitySnapshotEvent("activity-1", "PLAN", map[string]any{"status": "draft"}),
 			NewActivityDeltaEvent("activity-1", "PLAN", []JSONPatchOperation{{Op: "replace", Path: "/status", Value: "done"}}),

@@ -1,6 +1,7 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { CopilotSelectors } from '../../utils/copilot-selectors';
 import { sendChatMessage, awaitLLMResponseDone } from '../../utils/copilot-actions';
+import { DEFAULT_WELCOME_MESSAGE } from '../../lib/constants';
 
 export class AgenticGenUIPage {
   readonly page: Page;
@@ -17,7 +18,7 @@ export class AgenticGenUIPage {
     this.sendButton = CopilotSelectors.sendButton(page);
     this.agentMessage = CopilotSelectors.assistantMessages(page);
     this.userMessage = CopilotSelectors.userMessages(page);
-    this.agentGreeting = page.getByText(/I can help you with anything you need/i);
+    this.agentGreeting = page.getByText(DEFAULT_WELCOME_MESSAGE);
     this.agentPlannerContainer = page.getByTestId('task-progress');
   }
 
