@@ -17,7 +17,8 @@ vi.mock("langchain", () => ({
 }));
 
 import { stateStreamingMiddleware, stateItem } from "./state-streaming";
-import { HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
+import { BaseMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
+import { ModelRequest } from "langchain";
 
 /** Minimal mock of request.model — only withConfig is exercised. */
 function makeMockModel() {
@@ -27,18 +28,20 @@ function makeMockModel() {
 }
 
 /** Build a minimal ModelRequest-shaped object for testing. */
-function makeRequest(messages: unknown[]) {
+function makeRequest(messages: BaseMessage[]) {
   const { model, modelWithConfig } = makeMockModel();
   return {
     request: {
       messages,
-      model,
+      // For mocking we are ok with casting
+      model: model as unknown as ModelRequest["model"],
       systemPrompt: "",
       systemMessage: new SystemMessage(""),
-      state: {},
+      // For mocking we are ok with casting
+      state: {} as ModelRequest["state"],
       runtime: {},
       tools: [],
-    } as any,
+    } satisfies ModelRequest,
     model,
     modelWithConfig,
   };
