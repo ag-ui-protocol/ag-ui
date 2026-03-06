@@ -64,5 +64,12 @@
   "private": false,
   "publishConfig": {
     "access": "public"
+  },
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
   }
 }
