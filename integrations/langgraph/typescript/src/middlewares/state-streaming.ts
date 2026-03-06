@@ -3,7 +3,7 @@
  */
 
 import { createMiddleware } from "langchain";
-import { ToolMessage } from "@langchain/core/messages";
+import { BaseMessage, ToolMessage } from "@langchain/core/messages";
 
 export interface StateItem {
   stateKey: string;
@@ -41,9 +41,8 @@ export const stateStreamingMiddleware = (...items: StateItem[]) => {
    * predict_state in that case would re-trigger streaming if the model
    * decides to call the same tool again, producing a duplicate stream.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const isPreToolCall = (request: any): boolean => {
-    const msgs: unknown[] = request?.messages ?? [];
+  const isPreToolCall = (request: { messages?: BaseMessage[] }): boolean => {
+    const msgs = request?.messages ?? [];
     if (msgs.length === 0) return true;
     return !(msgs[msgs.length - 1] instanceof ToolMessage);
   };
@@ -54,8 +53,7 @@ export const stateStreamingMiddleware = (...items: StateItem[]) => {
       if (!isPreToolCall(request)) {
         return handler(request);
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const modelWithState = (request.model as any).withConfig({
+      const modelWithState = request.model.withConfig({
         metadata: { predict_state: predictState },
       });
       return handler({ ...request, model: modelWithState });
