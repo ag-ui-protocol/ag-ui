@@ -123,6 +123,52 @@ describe("stateStreamingMiddleware", () => {
     });
   });
 
+  describe("hasPredictState metadata check", () => {
+    /**
+     * The agent sets hasPredictState only when the streaming tool call's name
+     * appears in event.metadata["predict_state"].  Mirrors the Python
+     * model_made_tool_call metadata-awareness added in agent.py.
+     *
+     * Logic (from agent.ts):
+     *   const toolCallUsedToPredictState = event.metadata["predict_state"]?.some(
+     *     (p) => p.tool === toolCallData?.name,
+     *   );
+     */
+    const toolCallUsedToPredictState = (
+      toolName: string | undefined,
+      predictStateMeta: Array<{ tool: string }> | undefined,
+    ) => predictStateMeta?.some((p) => p.tool === toolName) ?? false;
+
+    it("returns true when tool name matches a predict_state entry", () => {
+      const meta = [{ tool: "write_recipe" }];
+      expect(toolCallUsedToPredictState("write_recipe", meta)).toBe(true);
+    });
+
+    it("returns false for an unrelated tool", () => {
+      const meta = [{ tool: "write_recipe" }];
+      expect(toolCallUsedToPredictState("search_web", meta)).toBe(false);
+    });
+
+    it("returns false when predict_state metadata is empty", () => {
+      expect(toolCallUsedToPredictState("write_recipe", [])).toBe(false);
+    });
+
+    it("returns false when predict_state metadata is absent", () => {
+      expect(toolCallUsedToPredictState("write_recipe", undefined)).toBe(false);
+    });
+
+    it("returns false when tool name is undefined (non-name chunk)", () => {
+      const meta = [{ tool: "write_recipe" }];
+      expect(toolCallUsedToPredictState(undefined, meta)).toBe(false);
+    });
+
+    it("matches one of multiple predict_state entries", () => {
+      const meta = [{ tool: "write_recipe" }, { tool: "update_title" }];
+      expect(toolCallUsedToPredictState("update_title", meta)).toBe(true);
+      expect(toolCallUsedToPredictState("search_web", meta)).toBe(false);
+    });
+  });
+
   describe("snapshot suppression condition", () => {
     /**
      * The TypeScript agent suppresses a STATE_SNAPSHOT on node exit when

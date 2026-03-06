@@ -1,9 +1,25 @@
 """Tests for StateStreamingMiddleware and snapshot suppression logic."""
 import asyncio
+import importlib.util
+import os
+import sys
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
 
 from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
+from langchain_core.runnables.config import var_child_runnable_config
+
+# Load state_streaming.py directly to avoid triggering ag_ui_langgraph/__init__.py,
+# which pulls in agent.py and may fail if ag_ui.core is not fully up-to-date.
+_STATE_STREAMING_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "..", "ag_ui_langgraph", "middlewares", "state_streaming.py",
+)
+_ss_spec = importlib.util.spec_from_file_location("_state_streaming", _STATE_STREAMING_PATH)
+_ss_mod = importlib.util.module_from_spec(_ss_spec)
+_ss_spec.loader.exec_module(_ss_mod)
+
+_with_intermediate_state = _ss_mod._with_intermediate_state
 
 try:
     from ag_ui_langgraph.middlewares.state_streaming import StateStreamingMiddleware, StateItem
@@ -134,6 +150,106 @@ class TestWrapModelCall(unittest.TestCase):
                 {"state_key": "other_state", "tool": "other_tool", "tool_argument": "other_arg"},
             ],
         )
+
+
+class TestWithIntermediateState(unittest.TestCase):
+    """Unit tests for the _with_intermediate_state config helper."""
+
+    def test_adds_predict_state_to_empty_config(self):
+        items = [{"tool": "my_tool", "state_key": "s", "tool_argument": "a"}]
+        result = _with_intermediate_state({}, items)
+        self.assertEqual(result["metadata"]["predict_state"], items)
+
+    def test_merges_with_existing_metadata(self):
+        items = [{"tool": "my_tool", "state_key": "s", "tool_argument": "a"}]
+        result = _with_intermediate_state({"metadata": {"existing": "value"}}, items)
+        self.assertEqual(result["metadata"]["existing"], "value")
+        self.assertEqual(result["metadata"]["predict_state"], items)
+
+    def test_does_not_mutate_original_config(self):
+        config = {"metadata": {"x": 1}}
+        items = [{"tool": "t", "state_key": "s", "tool_argument": "a"}]
+        _with_intermediate_state(config, items)
+        self.assertNotIn("predict_state", config["metadata"])
+
+
+class TestWrapModelCallConfigInjection(unittest.TestCase):
+    """Tests that wrap_model_call injects predict_state into var_child_runnable_config.
+
+    Uses patch to bypass the langchain>=1.2.0 availability guard so these tests
+    always run, even when AgentMiddleware is not installed.
+    """
+
+    def _make_middleware(self):
+        # Patch on the directly-loaded module to bypass the availability guard.
+        with patch.object(_ss_mod, "_MIDDLEWARE_AVAILABLE", True):
+            return _ss_mod.StateStreamingMiddleware(
+                _ss_mod.StateItem(state_key="recipe", tool="write_recipe", tool_argument="draft")
+            )
+
+    def test_predict_state_injected_pre_tool_call(self):
+        """predict_state metadata is set in the config var when last msg is not ToolMessage."""
+        middleware = self._make_middleware()
+        req = MagicMock()
+        req.messages = [HumanMessage(content="hello")]
+
+        captured = {}
+        def handler(request):
+            captured["meta"] = (var_child_runnable_config.get() or {}).get("metadata", {})
+            return MagicMock()
+
+        middleware.wrap_model_call(req, handler)
+
+        self.assertIn("predict_state", captured["meta"])
+        tools = [p["tool"] for p in captured["meta"]["predict_state"]]
+        self.assertIn("write_recipe", tools)
+
+    def test_predict_state_not_injected_post_tool_call(self):
+        """predict_state metadata is NOT set when last message is a ToolMessage."""
+        middleware = self._make_middleware()
+        req = MagicMock()
+        req.messages = [ToolMessage(content="result", tool_call_id="tc1")]
+
+        captured = {}
+        def handler(request):
+            captured["meta"] = (var_child_runnable_config.get() or {}).get("metadata", {})
+            return MagicMock()
+
+        middleware.wrap_model_call(req, handler)
+
+        self.assertNotIn("predict_state", captured["meta"])
+
+    def test_predict_state_injected_async_pre_tool_call(self):
+        """Async: predict_state metadata is set when last msg is not ToolMessage."""
+        middleware = self._make_middleware()
+        req = MagicMock()
+        req.messages = [HumanMessage(content="hello")]
+
+        captured = {}
+        async def handler(request):
+            captured["meta"] = (var_child_runnable_config.get() or {}).get("metadata", {})
+            return MagicMock()
+
+        asyncio.run(middleware.awrap_model_call(req, handler))
+
+        self.assertIn("predict_state", captured["meta"])
+        tools = [p["tool"] for p in captured["meta"]["predict_state"]]
+        self.assertIn("write_recipe", tools)
+
+    def test_predict_state_not_injected_async_post_tool_call(self):
+        """Async: predict_state metadata is NOT set when last message is a ToolMessage."""
+        middleware = self._make_middleware()
+        req = MagicMock()
+        req.messages = [ToolMessage(content="result", tool_call_id="tc1")]
+
+        captured = {}
+        async def handler(request):
+            captured["meta"] = (var_child_runnable_config.get() or {}).get("metadata", {})
+            return MagicMock()
+
+        asyncio.run(middleware.awrap_model_call(req, handler))
+
+        self.assertNotIn("predict_state", captured["meta"])
 
 
 class TestSnapshotSuppressionCondition(unittest.TestCase):
