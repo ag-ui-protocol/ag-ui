@@ -3,6 +3,7 @@ A demo of Gomoku (Five in a Row) agent with shared state between the agent and C
 """
 
 import json
+import os
 from typing import Dict, List, Any, Optional
 
 from langchain_core.runnables import RunnableConfig
@@ -350,4 +351,11 @@ workflow.set_entry_point("start_flow")
 workflow.add_edge(START, "start_flow")
 workflow.add_edge("start_flow", "chat_node")
 workflow.add_edge("chat_node", END)
-gomoku_graph = workflow.compile() 
+
+is_fast_api = os.environ.get("LANGGRAPH_FAST_API", "false").lower() == "true"
+if is_fast_api:
+    from langgraph.checkpoint.memory import MemorySaver
+    memory = MemorySaver()
+    gomoku_graph = workflow.compile(checkpointer=memory)
+else:
+    gomoku_graph = workflow.compile()
