@@ -21,6 +21,7 @@ from .shared_state.agent import graph as shared_state_graph
 from .subgraphs.agent import graph as subgraphs_graph
 from .a2ui_chat.agent import graph as a2ui_chat_graph
 from .tool_based_generative_ui.agent import graph as tool_based_generative_ui_graph
+from .gomoku.agent import gomoku_graph
 
 app = FastAPI(title="LangGraph Dojo Example Server")
 
@@ -76,6 +77,11 @@ agents = {
         description="An agent that can render A2UI surfaces.",
         graph=a2ui_chat_graph,
     ),
+    "gomoku": LangGraphAgent(
+        name="gomoku",
+        description="A Gomoku (Five in a Row) game agent.",
+        graph=gomoku_graph,
+    ),
 }
 
 add_langgraph_fastapi_endpoint(
@@ -125,6 +131,10 @@ add_langgraph_fastapi_endpoint(
 
 add_langgraph_fastapi_endpoint(
     app=app, agent=agents["a2ui_chat"], path="/agent/a2ui_chat"
+)
+
+add_langgraph_fastapi_endpoint(
+    app=app, agent=agents["gomoku"], path="/agent/gomoku"
 )
 
 

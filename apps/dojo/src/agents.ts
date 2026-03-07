@@ -154,6 +154,7 @@ export const agentsIntegrations = {
         tool_based_generative_ui: "tool_based_generative_ui",
         agentic_chat_reasoning: "agentic_chat_reasoning",
         subgraphs: "subgraphs",
+        gomoku: "gomoku",
       }
     ),
     // A2UI Chat with middleware - uses backend tool auto-detection (no injected tool)
