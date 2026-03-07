@@ -76,7 +76,8 @@ function GomokuGame() {
   });
   const { copilotkit } = useCopilotKit();
 
-  const agentState = (agent.state as GomokuState | undefined) ?? INITIAL_STATE;
+  const rawState = agent.state as GomokuState | undefined;
+  const agentState: GomokuState = rawState?.board ? rawState : INITIAL_STATE;
   const isLoading = agent.isRunning;
 
   const [showModal, setShowModal] = useState(false);
