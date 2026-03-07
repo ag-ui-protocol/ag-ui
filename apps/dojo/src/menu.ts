@@ -50,6 +50,9 @@ export const menuIntegrations = [
       "a2ui_chat",
       "gomoku",
     ],
+  },
+  {
+    id: "langgraph-fastapi",
     name: "LangGraph (FastAPI)",
     features: [
       "agentic_chat",

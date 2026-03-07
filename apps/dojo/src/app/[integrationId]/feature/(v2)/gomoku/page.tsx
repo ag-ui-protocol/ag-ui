@@ -1,10 +1,13 @@
 "use client";
-import { CopilotKit, useCoAgent, useCopilotChat } from "@copilotkit/react-core";
-import { CopilotSidebar } from "@copilotkit/react-ui";
+import {
+  useAgent,
+  useCopilotKit,
+  CopilotSidebar,
+} from "@copilotkit/react-core/v2";
+import { CopilotKit } from "@copilotkit/react-core";
 import React, { useState } from "react";
-import "@copilotkit/react-ui/styles.css";
+import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
-import { Role, TextMessage } from "@copilotkit/runtime-client-gql";
 
 const BOARD_SIZE = 11;
 const EMPTY = 0;
@@ -56,12 +59,11 @@ export default function GomokuPage({ params }: { params: Promise<{ integrationId
       <div className="gomoku-page">
         <GomokuGame />
         <CopilotSidebar
+          agentId="gomoku"
           defaultOpen={true}
           labels={{
-            title: "Gomoku AI Assistant",
-            initial: "Welcome to Gomoku! Let's play a game.",
+            modalHeaderTitle: "Gomoku AI Assistant",
           }}
-          clickOutsideToClose={false}
         />
       </div>
     </CopilotKit>
@@ -69,11 +71,14 @@ export default function GomokuPage({ params }: { params: Promise<{ integrationId
 }
 
 function GomokuGame() {
-  const { state: agentState, setState: setAgentState } = useCoAgent<GomokuState>({
-    name: "gomoku",
-    initialState: INITIAL_STATE,
+  const { agent } = useAgent({
+    agentId: "gomoku",
   });
-  const { appendMessage, isLoading } = useCopilotChat();
+  const { copilotkit } = useCopilotKit();
+
+  const agentState = (agent.state as GomokuState | undefined) ?? INITIAL_STATE;
+  const isLoading = agent.isRunning;
+
   const [showModal, setShowModal] = useState(false);
   const [zenMsg, setZenMsg] = useState("");
   const [zenEmoji, setZenEmoji] = useState("");
@@ -92,31 +97,29 @@ function GomokuGame() {
     }
   }, [agentState?.winner]);
 
-  if (!agentState) {
-    return <div>Loading...</div>;
-  }
-
   const handleCellClick = (row: number, col: number) => {
     if (!isLoading && !agentState.winner && agentState.board[row][col] === EMPTY) {
-      setAgentState(prevState => ({
-        ...prevState!,
+      const newBoard = agentState.board.map((rowArr, r) =>
+        rowArr.map((cell, c) => (r === row && c === col ? agentState.current_player : cell)),
+      );
+      const newState: GomokuState = {
+        ...agentState,
         last_move: { row, col },
-        board: prevState!.board.map((rowArr, r) =>
-          rowArr.map((_, c) => (r === row && c === col ? prevState!.current_player : _)),
-        ),
-        current_player: prevState!.current_player === BLACK ? WHITE : BLACK,
-      }));
+        board: newBoard,
+        current_player: agentState.current_player === BLACK ? WHITE : BLACK,
+      };
+      agent.setState(newState);
 
       const randomMessage = USER_MESSAGES[Math.floor(Math.random() * USER_MESSAGES.length)]
         .replace("{row}", row.toString())
         .replace("{col}", col.toString());
 
-      appendMessage(
-        new TextMessage({
-          content: randomMessage,
-          role: Role.User,
-        }),
-      );
+      agent.addMessage({
+        id: crypto.randomUUID(),
+        role: "user",
+        content: randomMessage,
+      });
+      copilotkit.runAgent({ agent });
     }
   };
 
@@ -144,7 +147,7 @@ function GomokuGame() {
       <div className="gomoku-status">
         {agentState.winner !== EMPTY
           ? `Winner: ${agentState.winner === BLACK ? "Black (You)" : "White (AI)"}`
-          : isLoading 
+          : isLoading
             ? "AI is thinking..."
             : `Current Player: ${agentState.current_player === BLACK ? "Black (You)" : "White (AI)"}`}
       </div>
@@ -164,7 +167,7 @@ function GomokuGame() {
       {agentState.winner !== EMPTY && (
         <button
           className="zen-restart-btn"
-          onClick={() => setAgentState(INITIAL_STATE)}
+          onClick={() => agent.setState(INITIAL_STATE)}
         >
           Play Again 🍵
         </button>
@@ -172,4 +175,4 @@ function GomokuGame() {
       <div className="zen-footer">{footerQuote}</div>
     </div>
   );
-} 
+}
