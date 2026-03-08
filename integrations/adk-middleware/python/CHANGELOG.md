@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIX**: Replace deep copy with shallow copy to support McpToolset (#1264)
+  - `ADKAgent.model_copy(deep=True)` fails when the ADK agent tree contains tools with unpicklable attributes (e.g. `McpToolset.errlog = sys.stderr`)
+  - Replaced with a recursive shallow copy (`_shallow_copy_agent_tree`) that isolates only the fields modified per-execution (`instruction`, `tools`, `sub_agents`) while sharing tool objects by reference
+  - Adds regression test with a mock `UnpicklableToolset` to prevent future breakage
+
 - **FIX**: Update PyPI metadata and lockfile for adk-middleware package (#1263)
   - Added `description` field to `pyproject.toml` for proper PyPI display
   - Added `license = "MIT"` designation
