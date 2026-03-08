@@ -208,7 +208,6 @@ export abstract class AbstractAgent {
       const pipeline = pipe(
         () => this.connect(input),
         transformChunks(this.debug),
-        verifyEvents(this.debug),
         // Stop processing immediately when this run is detached
         (source$) => source$.pipe(takeUntil(this.activeRunDetach$!)),
         (source$) => this.apply(input, source$, subscribers),
