@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **FIX**: Replace deep copy with shallow copy to support McpToolset (#1264)
+  - `ADKAgent.model_copy(deep=True)` fails when the ADK agent tree contains tools with unpicklable attributes (e.g. `McpToolset.errlog = sys.stderr`)
+  - Replaced with a recursive shallow copy (`_shallow_copy_agent_tree`) that isolates only the fields modified per-execution (`instruction`, `tools`, `sub_agents`) while sharing tool objects by reference
+  - Adds regression test with a mock `UnpicklableToolset` to prevent future breakage
+
+- **FIX**: Update PyPI metadata and lockfile for adk-middleware package (#1263)
+  - Added `description` field to `pyproject.toml` for proper PyPI display
+  - Added `license = "MIT"` designation
+  - Added `project.urls` section with Homepage and Issues links
+  - Expanded `uv_build` version constraint from `<0.9` to `<0.11`
+  - Added `pytest-xdist` as a dev dependency for faster parallel test execution
+  - Regenerated `uv.lock` with updated Python version bounds
+  - Thanks to **@rcleveng** for this contribution!
+
 ## [0.5.1] - 2026-03-05
 
 ### Fixed

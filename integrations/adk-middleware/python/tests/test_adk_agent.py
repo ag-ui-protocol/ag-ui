@@ -967,6 +967,117 @@ class TestADKAgent:
             assert isinstance(agent_under_test.sub_agents[1].tools[0], ClientProxyToolset)
             assert agent_under_test.sub_agents[1].tools[0].tool_filter == ['goodbye_tool']
 
+    @pytest.mark.asyncio
+    async def test_non_deepcopyable_tool_does_not_crash(self):
+        """Agents with non-deep-copyable tools (e.g. McpToolset) must not crash.
+
+        Regression test for https://github.com/ag-ui-protocol/ag-ui/issues/1264
+        """
+        import sys
+        from google.adk.tools.base_toolset import BaseToolset as ADKBaseToolset
+
+        class UnpicklableToolset(ADKBaseToolset):
+            """Mock toolset that holds an unpicklable attribute like McpToolset."""
+            def __init__(self):
+                super().__init__()
+                self.errlog = sys.stderr  # _io.TextIOWrapper – cannot be pickled
+
+            async def get_tools(self, readonly_context=None):
+                return []
+
+        unpicklable = UnpicklableToolset()
+
+        root_agent = Agent(
+            name="root_agent",
+            instruction="Root agent",
+            tools=[AGUIToolset(), unpicklable],
+        )
+
+        with patch.object(ADKAgent, "_run_adk_in_background") as submethod_mocked:
+            adk_agent = ADKAgent(
+                adk_agent=root_agent,
+                app_name="test_app",
+                user_id="test_user",
+                use_in_memory_services=True,
+            )
+            input = RunAgentInput(
+                thread_id="test_thread",
+                run_id="test_run",
+                messages=[
+                    UserMessage(id="msg_1", role="user", content="Hello")
+                ],
+                context=[],
+                state={},
+                tools=[],
+                forwarded_props={},
+            )
+            # Should not raise TypeError: cannot pickle 'TextIOWrapper' instances
+            async for e in adk_agent.run(input):
+                if not isinstance(e, RunStartedEvent):
+                    break
+
+            submethod_mocked.assert_called_once()
+            agent_under_test = submethod_mocked.call_args.kwargs['adk_agent']
+
+            # The unpicklable toolset should be preserved (shared by reference)
+            non_proxy_tools = [
+                t for t in agent_under_test.tools
+                if not isinstance(t, ClientProxyToolset)
+            ]
+            assert len(non_proxy_tools) == 1
+            assert non_proxy_tools[0] is unpicklable
+            assert non_proxy_tools[0].errlog is sys.stderr
+
+    @pytest.mark.asyncio
+    async def test_original_agent_not_mutated_after_run(self):
+        """Running the agent must not mutate the original ADK agent."""
+        root_agent = Agent(
+            name="root_agent",
+            instruction="Original instruction",
+            tools=[AGUIToolset()],
+            sub_agents=[
+                Agent(
+                    name="child",
+                    instruction="Child instruction",
+                    tools=[AGUIToolset(tool_filter=['child_tool'])],
+                )
+            ],
+        )
+        original_instruction = root_agent.instruction
+        original_tools = list(root_agent.tools)
+        original_child_tools = list(root_agent.sub_agents[0].tools)
+
+        with patch.object(ADKAgent, "_run_adk_in_background"):
+            adk_agent = ADKAgent(
+                adk_agent=root_agent,
+                app_name="test_app",
+                user_id="test_user",
+                use_in_memory_services=True,
+            )
+            input = RunAgentInput(
+                thread_id="test_thread",
+                run_id="test_run",
+                messages=[
+                    SystemMessage(id="sys_1", role="system", content="Extra instruction"),
+                    UserMessage(id="msg_1", role="user", content="Hello"),
+                ],
+                context=[],
+                state={},
+                tools=[],
+                forwarded_props={},
+            )
+            async for e in adk_agent.run(input):
+                if not isinstance(e, RunStartedEvent):
+                    break
+
+        # Original agent must be unmodified
+        assert root_agent.instruction == original_instruction
+        assert root_agent.tools == original_tools
+        assert all(isinstance(t, AGUIToolset) for t in root_agent.tools)
+        assert root_agent.sub_agents[0].tools == original_child_tools
+        assert all(isinstance(t, AGUIToolset) for t in root_agent.sub_agents[0].tools)
+
+
 class TestThreadIdSessionIdMapping:
     """Test cases for thread_id to session_id mapping and initial state."""
 

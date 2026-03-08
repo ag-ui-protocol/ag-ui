@@ -25,3 +25,16 @@ node_modules
 *.egg-info
 
 **/python/**/__pycache__/
+
+# Build artifacts and binaries
+**/build/
+*.dSYM/
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.obj
+*.a
+*.lib
+*.wasm
