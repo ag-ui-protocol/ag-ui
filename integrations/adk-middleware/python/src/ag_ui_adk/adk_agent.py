@@ -107,6 +107,9 @@ class ADKAgent:
 
         # Streaming function call arguments (Gemini 3+ via Vertex AI)
         streaming_function_call_arguments: bool = False,
+
+        # Session identity
+        use_thread_id_as_session_id: bool = False,
     ):
         """Initialize the ADKAgent.
 
@@ -146,6 +149,10 @@ class ADKAgent:
                 partial arguments, allowing the UI to show progressive updates.
                 Requires google-adk >= 1.24.0 and stream_function_call_arguments=True
                 in the model's GenerateContentConfig. Defaults to False.
+            use_thread_id_as_session_id: When True, use the AG-UI thread_id directly
+                as the ADK session_id instead of letting the backend generate one.
+                Eliminates the O(n) list_sessions scan for session recovery after
+                middleware restarts. Defaults to False for backward compatibility.
 
             Note:
             If delete_session_on_cleanup=False but save_session_to_memory_on_cleanup=True, sessions will accumulate in SessionService but still be saved to memory on cleanup.
@@ -189,7 +196,8 @@ class ADKAgent:
             cleanup_interval_seconds=cleanup_interval_seconds,
             max_sessions_per_user=max_sessions_per_user,
             delete_session_on_cleanup=delete_session_on_cleanup,
-            save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup
+            save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup,
+            use_thread_id_as_session_id=use_thread_id_as_session_id,
         )
         
         # Tool execution tracking
@@ -301,6 +309,8 @@ class ADKAgent:
         predict_state: Optional[Iterable[PredictStateMapping]] = None,
         emit_messages_snapshot: bool = False,
         streaming_function_call_arguments: bool = False,
+        # Session identity
+        use_thread_id_as_session_id: bool = False,
     ) -> "ADKAgent":
         """Create ADKAgent from an ADK App instance.
 
@@ -334,6 +344,8 @@ class ADKAgent:
             emit_messages_snapshot: Whether to emit MessagesSnapshotEvent at end of runs
             streaming_function_call_arguments: Whether to enable streaming of function
                 call arguments from Gemini 3+ models. Requires google-adk >= 1.24.0.
+            use_thread_id_as_session_id: When True, use the AG-UI thread_id directly
+                as the ADK session_id. See ADKAgent.__init__ for details.
 
         Returns:
             ADKAgent instance configured to use the App
@@ -377,6 +389,7 @@ class ADKAgent:
             predict_state=predict_state,
             emit_messages_snapshot=emit_messages_snapshot,
             streaming_function_call_arguments=streaming_function_call_arguments,
+            use_thread_id_as_session_id=use_thread_id_as_session_id,
         )
         # Store App for per-request App creation with modified agents
         instance._app = app

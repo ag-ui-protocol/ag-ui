@@ -47,9 +47,10 @@ class SessionManager:
         max_sessions_per_user: Optional[int] = None,
         delete_session_on_cleanup: bool = True,
         save_session_to_memory_on_cleanup: bool = True,
+        use_thread_id_as_session_id: bool = False,
     ):
         """Initialize the session manager.
-        
+
         Args:
             session_service: ADK session service (required on first initialization)
             memory_service: Optional ADK memory service for automatic session memory
@@ -58,6 +59,12 @@ class SessionManager:
             max_sessions_per_user: Maximum concurrent sessions per user (None = unlimited)
             delete_session_on_cleanup: Whether to delete sessions on cleanup
             save_session_to_memory_on_cleanup: Whether to save sessions to memory on cleanup
+            use_thread_id_as_session_id: When True, use the AG-UI thread_id directly as
+                the ADK session_id instead of letting the backend generate one. This
+                eliminates the O(n) list_sessions scan needed to recover thread-to-session
+                mappings after middleware restarts, replacing it with a direct O(1) lookup.
+                Recommended for InMemorySessionService and backends that accept
+                caller-provided session IDs.
         """
         if self._initialized:
             return
@@ -73,7 +80,8 @@ class SessionManager:
         self._max_per_user = max_sessions_per_user
         self._delete_session_on_cleanup = delete_session_on_cleanup
         self._save_session_to_memory_on_cleanup = save_session_to_memory_on_cleanup
-        
+        self._use_thread_id_as_session_id = use_thread_id_as_session_id
+
         # Minimal tracking: just keys and user counts
         self._session_keys: Set[str] = set()  # "app_name:session_id" keys
         self._user_sessions: Dict[str, Set[str]] = {}  # user_id -> set of session_keys
@@ -87,7 +95,8 @@ class SessionManager:
             f"timeout: {session_timeout_seconds}s, "
             f"cleanup: {cleanup_interval_seconds}s, "
             f"max/user: {max_sessions_per_user or 'unlimited'}, "
-            f"memory: {'enabled' if memory_service else 'disabled'}"
+            f"memory: {'enabled' if memory_service else 'disabled'}, "
+            f"thread_id_as_session_id: {use_thread_id_as_session_id}"
         )
     
     @classmethod
@@ -135,43 +144,102 @@ class SessionManager:
                 # Remove oldest session for this user
                 await self._remove_oldest_user_session(user_id)
 
-        # Try to find existing session by thread_id in state
-        session = await self._find_session_by_thread_id(app_name, user_id, thread_id)
-        if session:
-            session_key = self._make_session_key(app_name, session.id)
-            self._track_session(session_key, user_id)
-            logger.debug(f"Retrieved existing session for thread {thread_id}: {session.id}")
+        if self._use_thread_id_as_session_id:
+            session, backend_session_id = await self._get_or_create_by_thread_id(
+                thread_id=thread_id,
+                app_name=app_name,
+                user_id=user_id,
+                initial_state=initial_state,
+            )
+        else:
+            session, backend_session_id = await self._get_or_create_by_scan(
+                thread_id=thread_id,
+                app_name=app_name,
+                user_id=user_id,
+                initial_state=initial_state,
+            )
 
-            # Start cleanup
-            if not self._cleanup_task:
-                self._start_cleanup_task()
-
-            return session, session.id
-
-        # Create new session - always let backend generate session_id
-        # Store AG-UI metadata in state for recovery after restart
-        state = {
-            **(initial_state or {}),
-            THREAD_ID_STATE_KEY: thread_id,
-            APP_NAME_STATE_KEY: app_name,
-            USER_ID_STATE_KEY: user_id
-        }
-
-        session = await self._session_service.create_session(
-            user_id=user_id,
-            app_name=app_name,
-            state=state
-            # Note: session_id intentionally omitted - let backend generate it
-        )
-
-        session_key = self._make_session_key(app_name, session.id)
+        session_key = self._make_session_key(app_name, backend_session_id)
         self._track_session(session_key, user_id)
-        logger.info(f"Created new session for thread {thread_id}: {session.id}")
 
         # Start cleanup
         if not self._cleanup_task:
             self._start_cleanup_task()
 
+        return session, backend_session_id
+
+    async def _get_or_create_by_thread_id(
+        self,
+        thread_id: str,
+        app_name: str,
+        user_id: str,
+        initial_state: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Any, str]:
+        """Direct O(1) lookup: use thread_id as session_id.
+
+        Tries get_session(session_id=thread_id) first. If the session does not
+        exist, creates one with session_id=thread_id. Handles race conditions
+        where two concurrent requests both attempt to create the same session.
+        """
+        # Direct lookup - O(1)
+        session = await self.get_session(thread_id, app_name, user_id)
+        if session:
+            logger.debug(f"Direct lookup hit for thread {thread_id}")
+            return session, thread_id
+
+        # Create with thread_id as session_id
+        state = {
+            **(initial_state or {}),
+            THREAD_ID_STATE_KEY: thread_id,
+            APP_NAME_STATE_KEY: app_name,
+            USER_ID_STATE_KEY: user_id,
+        }
+
+        try:
+            session = await self._session_service.create_session(
+                user_id=user_id,
+                app_name=app_name,
+                state=state,
+                session_id=thread_id,
+            )
+            logger.info(f"Created session with thread_id as session_id: {thread_id}")
+            return session, thread_id
+        except Exception as e:
+            # Race condition: another request created the session first
+            logger.debug(f"Create failed (likely race), retrying lookup: {e}")
+            session = await self.get_session(thread_id, app_name, user_id)
+            if session:
+                return session, thread_id
+            raise
+
+    async def _get_or_create_by_scan(
+        self,
+        thread_id: str,
+        app_name: str,
+        user_id: str,
+        initial_state: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Any, str]:
+        """Original O(n) scan path: search state for matching thread_id."""
+        # Try to find existing session by thread_id in state
+        session = await self._find_session_by_thread_id(app_name, user_id, thread_id)
+        if session:
+            logger.debug(f"Retrieved existing session for thread {thread_id}: {session.id}")
+            return session, session.id
+
+        # Create new session - let backend generate session_id
+        state = {
+            **(initial_state or {}),
+            THREAD_ID_STATE_KEY: thread_id,
+            APP_NAME_STATE_KEY: app_name,
+            USER_ID_STATE_KEY: user_id,
+        }
+
+        session = await self._session_service.create_session(
+            user_id=user_id,
+            app_name=app_name,
+            state=state,
+        )
+        logger.info(f"Created new session for thread {thread_id}: {session.id}")
         return session, session.id
 
     async def _find_session_by_thread_id(
