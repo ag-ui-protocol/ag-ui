@@ -1,23 +1,24 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../../test-isolation-helper";
 import { AgenticGenUIPage } from "../../pages/serverStarterAllFeaturesPages/AgenticUIGenPage";
 
 test.describe("Agent Generative UI Feature", () => {
-// Temporarily disabled because the agent planner UI element is currently missing in CI runs.
-test.skip("[Server Starter all features] should interact with the chat to get a planner on prompt", async ({
+  // Temporarily disabled because the agent planner UI element is currently missing in CI runs.
+  test.skip("[Server Starter all features] should interact with the chat to get a planner on prompt", async ({
     page,
   }) => {
     const genUIAgent = new AgenticGenUIPage(page);
 
     await page.goto(
-      "/server-starter-all-features/feature/agentic_generative_ui"
+      "/server-starter-all-features/feature/agentic_generative_ui",
     );
 
     await genUIAgent.openChat();
     await genUIAgent.sendMessage("Hi");
-    await genUIAgent.sendButton.click();
-    await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 15000 });
-    
+    await expect(genUIAgent.agentPlannerContainer).toBeVisible();
+
     await genUIAgent.plan();
-    await expect(genUIAgent.agentPlannerContainer).toBeVisible({ timeout: 8000 });
+    await expect(genUIAgent.agentPlannerContainer).toBeVisible({
+      timeout: 8000,
+    });
   });
 });

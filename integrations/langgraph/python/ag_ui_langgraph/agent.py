@@ -488,7 +488,11 @@ class LangGraphAgent:
             "ag-ui": {
                 "tools": unique_tools,
                 "context": input.context or []
-            }
+            },
+            "copilotkit": {
+                **state.get("copilotkit", {}),
+                "actions": unique_tools,
+            },
         }
 
     def get_state_snapshot(self, state: State) -> State:

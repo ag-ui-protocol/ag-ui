@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **NEW**: `use_thread_id_as_session_id` option for `ADKAgent` and `SessionManager`
+  - When enabled, uses the AG-UI `thread_id` directly as the ADK `session_id` instead of letting the backend generate one
+  - Eliminates the O(n) `list_sessions` scan needed to recover thread-to-session mappings after middleware restarts, replacing it with a direct O(1) `get_session` lookup
+  - Opt-in via `use_thread_id_as_session_id=True` on `ADKAgent()` or `ADKAgent.from_app()` — defaults to `False` for backward compatibility
+  - Refactors `SessionManager.get_or_create_session` into two clear paths: `_get_or_create_by_thread_id` (direct lookup with race-condition handling) and `_get_or_create_by_scan` (original scan path)
+  - Note: Not compatible with `VertexAiSessionService` which rejects caller-provided session IDs
+
+- **NEW**: Vertex AI session service test coverage (`test_vertex_session_service.py`)
+  - 10 mock-based tests using `MockVertexAiSessionService` that faithfully replicates Vertex behaviour (generates numeric IDs, rejects custom `session_id`)
+  - 4 live integration tests against a real Vertex AI Agent Engine (skipped unless `VERTEX_REASONING_ENGINE_ID` is set)
+  - Covers session CRUD, scan-based recovery, multi-turn reuse, and `use_thread_id_as_session_id` error propagation
+
+### Fixed
+
+- **FIX**: Replace deep copy with shallow copy to support McpToolset (#1264)
+  - `ADKAgent.model_copy(deep=True)` fails when the ADK agent tree contains tools with unpicklable attributes (e.g. `McpToolset.errlog = sys.stderr`)
+  - Replaced with a recursive shallow copy (`_shallow_copy_agent_tree`) that isolates only the fields modified per-execution (`instruction`, `tools`, `sub_agents`) while sharing tool objects by reference
+  - Adds regression test with a mock `UnpicklableToolset` to prevent future breakage
+
+- **FIX**: Update PyPI metadata and lockfile for adk-middleware package (#1263)
+  - Added `description` field to `pyproject.toml` for proper PyPI display
+  - Added `license = "MIT"` designation
+  - Added `project.urls` section with Homepage and Issues links
+  - Expanded `uv_build` version constraint from `<0.9` to `<0.11`
+  - Added `pytest-xdist` as a dev dependency for faster parallel test execution
+  - Regenerated `uv.lock` with updated Python version bounds
+  - Thanks to **@rcleveng** for this contribution!
+
+## [0.5.1] - 2026-03-05
+
+### Fixed
+
+- **FIX**: Remap LRO tool-call IDs across SSE streaming partial/final events (#1168)
+  - ADK's `populate_client_function_call_id()` generates different UUIDs for the same function call across partial and final SSE streaming events, breaking HITL workflows
+  - `EventTranslator` now tracks emitted IDs per tool name (`lro_emitted_ids_by_name`) during `translate_lro_function_calls()`
+  - When the non-partial event arrives, `_extract_lro_id_remap()` builds a client-ID → persisted-ID mapping
+  - Remap is stored in session state (`lro_tool_call_id_remap`) so it survives across HTTP requests
+  - `FunctionResponse` construction applies the remap transparently — clients continue using their original IDs
+
+- **FIX**: Prevent stale frontend state from overwriting backend-managed session metadata (#1168)
+  - Internal state keys (e.g. `lro_tool_call_id_remap`, `_ag_ui_*`) are now stripped from `input.state` before syncing to the backend session
+  - Fixes "state poisoning" bug where the second and subsequent HITL tool calls in a session would fail because the frontend sent back stale remap data that overwrote the fresh remap stored during the current run
+  - Defines `_INTERNAL_STATE_KEYS` frozenset for clear, maintainable separation of backend-managed vs user-visible state
+
 ## [0.5.0] - 2026-02-16
 
 ### Added

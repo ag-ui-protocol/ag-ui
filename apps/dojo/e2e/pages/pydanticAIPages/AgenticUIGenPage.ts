@@ -1,4 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { CopilotSelectors } from '../../utils/copilot-selectors';
+import { sendChatMessage, awaitLLMResponseDone } from '../../utils/copilot-actions';
 
 export class AgenticGenUIPage {
   readonly page: Page;
@@ -13,10 +15,10 @@ export class AgenticGenUIPage {
   constructor(page: Page) {
     this.page = page;
     this.planTaskButton = page.getByRole('button', { name: 'Agentic Generative UI' });
-    this.chatInput = page.getByRole('textbox', { name: 'Type a message...' });
-    this.sendButton = page.locator('[data-test-id="copilot-chat-ready"]');
-    this.agentMessage = page.locator('.copilotKitAssistantMessage');
-    this.userMessage = page.locator('.copilotKitUserMessage');
+    this.chatInput = CopilotSelectors.chatTextarea(page);
+    this.sendButton = CopilotSelectors.sendButton(page);
+    this.agentMessage = CopilotSelectors.assistantMessages(page);
+    this.userMessage = CopilotSelectors.userMessages(page);
     this.agentGreeting = page.getByText('This agent demonstrates');
     this.agentPlannerContainer = page.getByTestId('task-progress');
   }
@@ -33,12 +35,12 @@ export class AgenticGenUIPage {
   }
 
   async openChat() {
-    await this.planTaskButton.isVisible();
+    await expect(this.planTaskButton).toBeVisible();
   }
 
   async sendMessage(message: string) {
-    await this.chatInput.fill(message);
-    await this.page.waitForTimeout(5000)
+    await sendChatMessage(this.page, message);
+    await awaitLLMResponseDone(this.page);
   }
 
   getPlannerButton(name: string | RegExp) {
@@ -47,20 +49,19 @@ export class AgenticGenUIPage {
 
   async assertAgentReplyVisible(expectedText: RegExp | RegExp[]) {
     const expectedTexts = Array.isArray(expectedText) ? expectedText : [expectedText];
-    for (const expectedText1 of expectedTexts) {
+    let lastError: unknown = null;
+    for (const pattern of expectedTexts) {
       try {
-        const agentMessage = this.page.locator(".copilotKitAssistantMessage", {
-          hasText: expectedText1
+        const agentMessage = CopilotSelectors.assistantMessages(this.page).filter({
+          hasText: pattern
         });
-        await expect(agentMessage.last()).toBeVisible({ timeout: 10000 });
+        await expect(agentMessage.last()).toBeVisible();
+        return; // At least one pattern matched, succeed
       } catch (error) {
-        console.log(`Did not work for ${expectedText1}`)
-        // Allow test to pass if at least one expectedText matches
-        if (expectedText1 === expectedTexts[expectedTexts.length - 1]) {
-          throw error;
-        }
+        lastError = error;
       }
     }
+    throw lastError; // No pattern matched
   }
 
   async getUserText(textOrRegex) {

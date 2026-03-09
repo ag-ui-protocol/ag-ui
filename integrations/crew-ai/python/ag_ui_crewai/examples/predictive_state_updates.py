@@ -5,7 +5,7 @@ A demo of predictive state updates.
 import json
 import uuid
 from typing import Optional
-from litellm import completion
+from litellm import acompletion
 from crewai.flow.flow import Flow, start, router, listen
 from ..sdk import (
   copilotkit_stream, 
@@ -84,7 +84,7 @@ class PredictiveStateUpdatesFlow(Flow[AgentState]):
         #    Note: In order to stream the response, wrap the completion call in
         #    copilotkit_stream and set stream=True.
         response = await copilotkit_stream(
-            completion(
+            await acompletion(
 
                 # 2.1 Specify the model to use
                 model="openai/gpt-4o",

@@ -147,7 +147,7 @@ async def copilotkit_stream(response):
 
     ```python
     response = await copilotkit_stream(
-        completion(
+        await acompletion(
             model="openai/gpt-4o",
             messages=messages,
             tools=tools,

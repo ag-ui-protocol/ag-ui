@@ -11,7 +11,7 @@ from crewai.cli.crew_chat import (
   build_system_message as crew_chat_build_system_message,
   create_tool_function as crew_chat_create_tool_function
 )
-from litellm import completion
+from litellm import acompletion
 from .sdk import (
   copilotkit_stream,
   copilotkit_exit,
@@ -90,7 +90,7 @@ class ChatWithCrewFlow(Flow):
         tools += [self.crew_tool_schema, CREW_EXIT_TOOL]
 
         response = await copilotkit_stream(
-            completion(
+            await acompletion(
                 model=self.crew.chat_llm,
                 messages=messages,
                 tools=tools,
@@ -132,7 +132,7 @@ class ChatWithCrewFlow(Flow):
                 })
 
                 response = await copilotkit_stream(
-                    completion( # pylint: disable=too-many-arguments
+                    await acompletion( # pylint: disable=too-many-arguments
                         model=self.crew.chat_llm,
                         messages = [
                             {

@@ -1,91 +1,54 @@
-import { test, expect, waitForAIResponse, retryOnAIFailure } from "../../test-isolation-helper";
+import { test, expect } from "../../test-isolation-helper";
 import { HumanInLoopPage } from "../../pages/awsStrandsPages/HumanInLoopPage";
 
 test.describe("Human in the Loop Feature", () => {
   test("[Strands] should interact with the chat and perform steps", async ({
     page,
   }) => {
-    await retryOnAIFailure(async () => {
-      const humanInLoop = new HumanInLoopPage(page);
+    const humanInLoop = new HumanInLoopPage(page);
 
-      await page.goto(
-        "/aws-strands/feature/human_in_the_loop"
-      );
+    await page.goto("/aws-strands/feature/human_in_the_loop");
 
-      await humanInLoop.openChat();
+    await humanInLoop.openChat();
 
-      await humanInLoop.sendMessage("Hi");
-      await humanInLoop.agentGreeting.isVisible();
+    await humanInLoop.sendMessage("Hi");
 
-      await humanInLoop.sendMessage(
-        "Give me a plan to make brownies, there should be only one step with eggs and one step with oven, this is a strict requirement so adhere"
-      );
-      await waitForAIResponse(page);
-      await expect(humanInLoop.plan).toBeVisible({ timeout: 10000 });
+    await humanInLoop.sendMessage(
+      "Give me a plan to make brownies, there should be only one step with eggs and one step with oven, this is a strict requirement so adhere",
+    );
+    await expect(humanInLoop.plan).toBeVisible();
 
-      const itemText = "eggs";
-      await page.waitForTimeout(5000);
-      await humanInLoop.uncheckItem(itemText);
-      await humanInLoop.performSteps();
+    const itemText = "eggs";
+    await humanInLoop.uncheckItem(itemText);
+    await humanInLoop.performStepsAndAwait();
 
-      await page.waitForFunction(
-        () => {
-          const messages = Array.from(document.querySelectorAll('.copilotKitAssistantMessage'));
-          const lastMessage = messages[messages.length - 1];
-          const content = lastMessage?.textContent?.trim() || '';
-          return messages.length >= 3 && content.length > 0;
-        },
-        { timeout: 30000 }
-      );
-
-      await humanInLoop.sendMessage(
-        `Does the planner include ${itemText}? ⚠️ Reply with only words 'Yes' or 'No' (no explanation, no punctuation).`
-      );
-      await waitForAIResponse(page);
-    });
+    await humanInLoop.sendMessage(
+      `Does the planner include ${itemText}? ⚠️ Reply with only words 'Yes' or 'No' (no explanation, no punctuation).`,
+    );
   });
 
   test("[Strands] should interact with the chat using predefined prompts and perform steps", async ({
     page,
   }) => {
-    await retryOnAIFailure(async () => {
-      const humanInLoop = new HumanInLoopPage(page);
+    const humanInLoop = new HumanInLoopPage(page);
 
-      await page.goto(
-        "/aws-strands/feature/human_in_the_loop"
-      );
+    await page.goto("/aws-strands/feature/human_in_the_loop");
 
-      await humanInLoop.openChat();
+    await humanInLoop.openChat();
 
-      await humanInLoop.sendMessage("Hi");
-      await humanInLoop.agentGreeting.isVisible();
-      await humanInLoop.sendMessage(
-        "Plan a mission to Mars with the first step being Start The Planning"
-      );
-      await waitForAIResponse(page);
-      await expect(humanInLoop.plan).toBeVisible({ timeout: 10000 });
+    await humanInLoop.sendMessage("Hi");
+    await humanInLoop.sendMessage(
+      "Plan a mission to Mars with the first step being Start The Planning",
+    );
+    await expect(humanInLoop.plan).toBeVisible();
 
-      const uncheckedItem = "Start The Planning";
+    const uncheckedItem = "Start The Planning";
 
-      await page.waitForTimeout(5000);
-      await humanInLoop.uncheckItem(uncheckedItem);
-      await humanInLoop.performSteps();
+    await humanInLoop.uncheckItem(uncheckedItem);
+    await humanInLoop.performStepsAndAwait();
 
-      await page.waitForFunction(
-        () => {
-          const messages = Array.from(document.querySelectorAll('.copilotKitAssistantMessage'));
-          const lastMessage = messages[messages.length - 1];
-          const content = lastMessage?.textContent?.trim() || '';
-
-          return messages.length >= 3 && content.length > 0;
-        },
-        { timeout: 30000 }
-      );
-
-      await humanInLoop.sendMessage(
-        `Does the planner include ${uncheckedItem}? ⚠️ Reply with only words 'Yes' or 'No' (no explanation, no punctuation).`
-      );
-      await waitForAIResponse(page);
-    });
+    await humanInLoop.sendMessage(
+      `Does the planner include ${uncheckedItem}? ⚠️ Reply with only words 'Yes' or 'No' (no explanation, no punctuation).`,
+    );
   });
 });

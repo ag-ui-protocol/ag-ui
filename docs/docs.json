@@ -57,7 +57,8 @@
               "drafts/multimodal-messages",
               "drafts/interrupts",
               "drafts/generative-ui",
-              "drafts/meta-events"
+              "drafts/meta-events",
+              "drafts/agent-capabilities"
             ]
           },
           {

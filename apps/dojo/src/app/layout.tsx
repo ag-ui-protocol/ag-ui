@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import "@copilotkit/react-ui/styles.css";
+import "@copilotkit/react-core/v2/styles.css";
 import { ThemeWrapper } from "@/components/theme-wrapper";
 import { MainLayout } from "@/components/layout/main-layout";
 import { URLParamsProvider } from "@/contexts/url-params-context";

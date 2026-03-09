@@ -180,7 +180,37 @@ async function main() {
     printDryRunServices(procs);
   }
 
-  const { result } = concurrently(procs);
+  // Separate pnpm targets from others to avoid concurrent install races.
+  // Multiple pnpm installs within the same workspace race on the shared
+  // node_modules/.pnpm/ directory, causing ENOENT errors.
+  const pnpmProcs = [];
+  const otherProcs = [];
+
+  for (const proc of procs) {
+    if (proc.command.startsWith("pnpm")) {
+      pnpmProcs.push(proc);
+    } else {
+      otherProcs.push(proc);
+    }
+  }
+
+  // Run pnpm targets sequentially to avoid races on shared node_modules
+  for (const proc of pnpmProcs) {
+    console.log(`\n=== [${proc.name}] ${proc.command} ===`);
+    try {
+      execSync(proc.command, { cwd: proc.cwd, stdio: "inherit" });
+    } catch (err) {
+      console.error(`[${proc.name}] Failed: ${err.message}`);
+      process.exit(1);
+    }
+  }
+
+  // Run remaining targets concurrently (uv, poetry, dotnet — all independent)
+  if (otherProcs.length === 0) {
+    process.exit(0);
+  }
+
+  const { result } = concurrently(otherProcs);
 
   result
     .then(() => process.exit(0))
