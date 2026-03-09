@@ -121,6 +121,14 @@ const ALL_SERVICES = {
       env: { PORT: 8006 },
     },
   ],
+  langroid: [
+    {
+      command: "uv run dev",
+      name: "Langroid",
+      cwd: path.join(integrationsRoot, "langroid/python/examples"),
+      env: { PORT: 8018 },
+    },
+  ],
   "llama-index": [
     {
       command: "uv run dev",
@@ -236,6 +244,7 @@ const ALL_SERVICES = {
         AWS_STRANDS_URL: "http://localhost:8017",
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",
+        LANGROID_URL: "http://localhost:8018",
       },
     },
   ],
@@ -265,6 +274,7 @@ const ALL_SERVICES = {
         AWS_STRANDS_URL: "http://localhost:8017",
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",
+        LANGROID_URL: "http://localhost:8018",
       },
     },
   ],
