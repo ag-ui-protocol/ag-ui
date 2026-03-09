@@ -256,27 +256,41 @@ export const agentsIntegrations = {
 
   "agent-spec-langgraph": async () =>
     mapAgents(
-      (path) => new HttpAgent({
-        url: `${envVars.agentSpecUrl}/langgraph/${path}`,
-      }),
+      (path) => {
+        const agent = new HttpAgent({
+          url: `${envVars.agentSpecUrl}/langgraph/${path}`,
+        });
+        if (path === "a2ui_chat") {
+          agent.use(new A2UIMiddleware({ injectA2UITool: true }));
+        }
+        return agent;
+      },
       {
         agentic_chat: "agentic_chat",
         backend_tool_rendering: "backend_tool_rendering",
         human_in_the_loop: "human_in_the_loop",
         tool_based_generative_ui: "tool_based_generative_ui",
+        a2ui_chat: "a2ui_chat",
       }
     ),
 
   "agent-spec-wayflow": async () =>
     mapAgents(
-      (path) => new HttpAgent({
-        url: `${envVars.agentSpecUrl}/wayflow/${path}`,
-      }),
+      (path) => {
+        const agent = new HttpAgent({
+          url: `${envVars.agentSpecUrl}/wayflow/${path}`,
+        });
+        if (path === "a2ui_chat") {
+          agent.use(new A2UIMiddleware({ injectA2UITool: true }));
+        }
+        return agent;
+      },
       {
         agentic_chat: "agentic_chat",
         backend_tool_rendering: "backend_tool_rendering",
         tool_based_generative_ui: "tool_based_generative_ui",
         human_in_the_loop: "human_in_the_loop",
+        a2ui_chat: "a2ui_chat",
       }
     ),
 

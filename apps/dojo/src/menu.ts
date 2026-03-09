@@ -21,6 +21,7 @@ export const menuIntegrations = [
       "backend_tool_rendering",
       "human_in_the_loop",
       "tool_based_generative_ui",
+      "a2ui_chat",
     ],
   },
   {
@@ -32,6 +33,7 @@ export const menuIntegrations = [
       "backend_tool_rendering",
       "human_in_the_loop",
       "tool_based_generative_ui",
+      "a2ui_chat",
     ],
   },
   {
