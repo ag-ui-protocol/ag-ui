@@ -77,7 +77,7 @@ const ALL_SERVICES = {
     env: { PORT: 8002 },
   }],
   'crew-ai': [{
-    command: 'poetry run dev',
+    command: 'uv run dev',
     name: 'CrewAI',
     cwd: path.join(integrationsRoot, 'crew-ai/python'),
     env: { PORT: 8003 },
@@ -119,7 +119,7 @@ const ALL_SERVICES = {
     env: { PORT: 8009 },
   }],
   'aws-strands': [{
-    command: 'poetry run dev',
+    command: 'uv run dev',
     name: 'AWS Strands',
     cwd: path.join(integrationsRoot, 'aws-strands/python/examples'),
     env: { PORT: 8017 },

@@ -1,23 +1,30 @@
-[tool.poetry]
+[project]
 name = "aws-strands-server"
 version = "0.1.0"
 description = "Strands integration server for AG-UI using OpenAI models"
-authors = ["AG-UI Contributors"]
+authors = [
+    { name = "AG-UI Contributors" }
+]
 readme = "README.md"
-packages = [{ include = "server" }]
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "ag-ui-protocol>=0.1.10",
+    "fastapi>=0.115.12",
+    "uvicorn>=0.34.3",
+    "strands-agents[gemini]>=1.15.0",
+    "strands-agents-tools>=0.2.14",
+    "ag-ui-strands",
+]
 
-[tool.poetry.dependencies]
-python = "<3.14,>=3.12"
-ag-ui-protocol = "^0.1.10"
-fastapi = "^0.115.12"
-uvicorn = "^0.34.3"
-strands-agents = {extras = ["gemini"], version = "^1.15.0"}
-strands-agents-tools = "^0.2.14"
-ag_ui_strands = {path = "..", develop = true}
+[tool.uv.sources]
+ag-ui-strands = { path = ".." }
+
+[project.scripts]
+dev = "server:main"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.poetry.scripts]
-dev = "server:main"
+[tool.hatch.build.targets.wheel]
+packages = ["server"]

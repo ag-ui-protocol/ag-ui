@@ -11,6 +11,9 @@ dependencies = [
     "strands-agents>=1.15.0",
 ]
 
+[tool.ag-ui.scripts]
+test = "python -c \"print('Warning: no tests configured for ag_ui_strands')\""
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
