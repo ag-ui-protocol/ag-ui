@@ -36,7 +36,7 @@ agent_config = lr.ChatAgentConfig(
     system_message="""You are a helpful assistant. 
 When you change the background, always confirm the action to the user with a friendly message like 'I've changed the background to [color/gradient] for you!' or similar.""",
     use_tools=True,
-    use_functions_api=False,
+    use_functions_api=True,
 )
 
 chat_agent = lr.ChatAgent(agent_config)
@@ -54,6 +54,20 @@ agui_agent = LangroidAgent(
     name="agentic_chat",
     description="Simple conversational Langroid agent with frontend tools",
 )
+
+# DEBUG: Wrap the agent's run method to add logging
+import sys
+_original_run = agui_agent.run
+async def _debug_run(input_data):
+    print(f"[DEBUG] agentic_chat run called, user_msg={input_data.messages[-1].content if input_data.messages else 'none'}", file=sys.stderr, flush=True)
+    print(f"[DEBUG] tools={[t.get('name') if isinstance(t, dict) else getattr(t, 'name', '?') for t in (input_data.tools or [])]}", file=sys.stderr, flush=True)
+    event_count = 0
+    async for event in _original_run(input_data):
+        event_count += 1
+        print(f"[DEBUG] Event #{event_count}: {event.type} - {str(event)[:200]}", file=sys.stderr, flush=True)
+        yield event
+    print(f"[DEBUG] Total events: {event_count}", file=sys.stderr, flush=True)
+agui_agent.run = _debug_run
 
 app = create_langroid_app(agui_agent, "/")
 

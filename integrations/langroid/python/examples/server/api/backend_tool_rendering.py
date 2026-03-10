@@ -62,7 +62,7 @@ agent_config = lr.ChatAgentConfig(
     - After calling a tool, provide a brief natural-language summary that is fully consistent with the tool result.
     """,
     use_tools=True,
-    use_functions_api=False,
+    use_functions_api=True,
 )
 
 

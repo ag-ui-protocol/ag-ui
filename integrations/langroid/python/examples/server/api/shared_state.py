@@ -99,7 +99,7 @@ agent_config = ChatAgentConfig(
 
 Be creative and helpful!""",
     use_tools=True,
-    use_functions_api=False,
+    use_functions_api=True,
 )
 
 chat_agent = RecipeAssistantAgent(agent_config)

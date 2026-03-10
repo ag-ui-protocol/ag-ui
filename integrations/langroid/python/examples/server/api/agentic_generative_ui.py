@@ -109,7 +109,7 @@ agent_config = lr.ChatAgentConfig(
         - User: "mark step 3 as complete" → Use update_plan_step to update the status
     """),
     use_tools=True,
-    use_functions_api=False,
+    use_functions_api=True,
 )
 
 

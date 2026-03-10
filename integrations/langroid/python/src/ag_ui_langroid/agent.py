@@ -148,7 +148,16 @@ class LangroidAgent:
                 
                 llm_response_input = "" if has_pending_tool_result else user_message
                 llm_response = actual_agent.llm_response(llm_response_input)
-                
+
+                # DEBUG: Log full llm_response details
+                logger.warning(f"🔍 DEBUG llm_response type={type(llm_response).__name__}")
+                if llm_response is not None:
+                    logger.warning(f"🔍 DEBUG llm_response.content={getattr(llm_response, 'content', 'N/A')!r:.200}")
+                    logger.warning(f"🔍 DEBUG llm_response.tool_messages={getattr(llm_response, 'tool_messages', 'N/A')!r:.200}")
+                    logger.warning(f"🔍 DEBUG llm_response.oai_tool_calls={getattr(llm_response, 'oai_tool_calls', 'N/A')!r:.200}")
+                    logger.warning(f"🔍 DEBUG llm_response.function_call={getattr(llm_response, 'function_call', 'N/A')!r:.200}")
+                    logger.warning(f"🔍 DEBUG message_history last 3: {[str(m)[:100] for m in (actual_agent.message_history[-3:] if hasattr(actual_agent, 'message_history') else [])]}")
+
                 if llm_response is None:
                     yield RunErrorEvent(
                         type=EventType.RUN_ERROR,
@@ -173,7 +182,54 @@ class LangroidAgent:
                     tool_call_detected = True
                     tool_call_message = llm_response
                     logger.info(f"✅ Response IS a ToolMessage: request={llm_response.request}")
-                
+
+                # Check for OpenAI tool calls on ChatDocument (when use_functions_api=True)
+                if not tool_call_detected and hasattr(llm_response, "oai_tool_calls") and llm_response.oai_tool_calls:
+                    oai_tc = llm_response.oai_tool_calls[0]  # Take the first tool call
+                    if hasattr(oai_tc, "function") and oai_tc.function:
+                        tool_name = oai_tc.function.name
+                        tool_args = oai_tc.function.arguments
+                        if isinstance(tool_args, str):
+                            try:
+                                tool_args = json.loads(tool_args)
+                            except json.JSONDecodeError:
+                                pass
+
+                        # Try to construct the proper Langroid ToolMessage class
+                        # so backend tool handlers receive the correct type
+                        tool_msg = None
+                        if isinstance(tool_args, dict) and hasattr(actual_agent, '_get_tool_list'):
+                            try:
+                                for tool_cls in actual_agent._get_tool_list():
+                                    if hasattr(tool_cls, 'default_value') and callable(tool_cls.default_value):
+                                        req_val = tool_cls.default_value("request")
+                                    elif hasattr(tool_cls, 'model_fields') and "request" in tool_cls.model_fields:
+                                        req_val = tool_cls.model_fields["request"].default
+                                    else:
+                                        continue
+                                    if req_val == tool_name:
+                                        tool_msg = tool_cls(**tool_args)
+                                        break
+                            except Exception as e:
+                                logger.warning(f"Could not construct ToolMessage for {tool_name}: {e}")
+
+                        if tool_msg is None:
+                            # Fallback: create a simple object with the right attributes
+                            class _OaiToolCall:
+                                def __init__(self, request, **kwargs):
+                                    self.request = request
+                                    self.purpose = ""
+                                    for k, v in kwargs.items():
+                                        setattr(self, k, v)
+                            if isinstance(tool_args, dict):
+                                tool_msg = _OaiToolCall(request=tool_name, **tool_args)
+                            else:
+                                tool_msg = _OaiToolCall(request=tool_name)
+
+                        tool_call_message = tool_msg
+                        tool_call_detected = True
+                        logger.info(f"✅ OpenAI tool call detected: name={tool_name}, args={tool_args}, msg_type={type(tool_msg).__name__}")
+
                 if has_pending_tool_result:
                     logger.info("⏭️ Skipping tool detection - last message is a tool result, will only generate text response")
                 elif not tool_call_detected:
