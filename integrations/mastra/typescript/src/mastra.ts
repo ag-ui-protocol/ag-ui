@@ -107,9 +107,14 @@ export class MastraAgent extends AbstractAgent {
               };
             }
 
-            const existingMemory = JSON.parse(
-              (thread.metadata?.workingMemory as string) ?? "{}",
-            );
+            let existingMemory: Record<string, any> = {};
+            try {
+              existingMemory = JSON.parse(
+                (thread.metadata?.workingMemory as string) ?? "{}",
+              );
+            } catch {
+              // Working memory metadata is not valid JSON - start fresh
+            }
             const { messages, ...rest } = input.state;
             const workingMemory = JSON.stringify({
               ...existingMemory,
@@ -199,7 +204,14 @@ export class MastraAgent extends AbstractAgent {
                     });
 
                     if (typeof workingMemory === "string") {
-                      const snapshot = JSON.parse(workingMemory);
+                      let snapshot: Record<string, any> | null = null;
+                      try {
+                        snapshot = JSON.parse(workingMemory);
+                      } catch {
+                        // Working memory is not valid JSON (e.g. markdown template)
+                        // Wrap it so the client still receives the state
+                        snapshot = { workingMemory };
+                      }
 
                       if (snapshot && !("$schema" in snapshot)) {
                         const stateSnapshotEvent: StateSnapshotEvent = {
