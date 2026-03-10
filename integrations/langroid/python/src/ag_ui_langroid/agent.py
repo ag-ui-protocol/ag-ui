@@ -149,15 +149,6 @@ class LangroidAgent:
                 llm_response_input = "" if has_pending_tool_result else user_message
                 llm_response = actual_agent.llm_response(llm_response_input)
 
-                # DEBUG: Log full llm_response details
-                logger.warning(f"🔍 DEBUG llm_response type={type(llm_response).__name__}")
-                if llm_response is not None:
-                    logger.warning(f"🔍 DEBUG llm_response.content={getattr(llm_response, 'content', 'N/A')!r:.200}")
-                    logger.warning(f"🔍 DEBUG llm_response.tool_messages={getattr(llm_response, 'tool_messages', 'N/A')!r:.200}")
-                    logger.warning(f"🔍 DEBUG llm_response.oai_tool_calls={getattr(llm_response, 'oai_tool_calls', 'N/A')!r:.200}")
-                    logger.warning(f"🔍 DEBUG llm_response.function_call={getattr(llm_response, 'function_call', 'N/A')!r:.200}")
-                    logger.warning(f"🔍 DEBUG message_history last 3: {[str(m)[:100] for m in (actual_agent.message_history[-3:] if hasattr(actual_agent, 'message_history') else [])]}")
-
                 if llm_response is None:
                     if has_pending_tool_result:
                         # Follow-up after frontend tool execution — Langroid
