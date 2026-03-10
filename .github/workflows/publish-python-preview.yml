@@ -52,7 +52,7 @@ jobs:
           ls -1 dist-preview/
           uv publish \
             --publish-url https://test.pypi.org/legacy/ \
-            --skip-existing \
+            --check-url https://test.pypi.org/simple/ \
             dist-preview/*
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
