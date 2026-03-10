@@ -159,6 +159,34 @@ class LangroidAgent:
                     logger.warning(f"🔍 DEBUG message_history last 3: {[str(m)[:100] for m in (actual_agent.message_history[-3:] if hasattr(actual_agent, 'message_history') else [])]}")
 
                 if llm_response is None:
+                    if has_pending_tool_result:
+                        # Follow-up after frontend tool execution — Langroid
+                        # returns None because the pending tool call in its
+                        # internal history was never resolved locally.  Emit a
+                        # synthetic acknowledgment so CopilotKit sees a clean
+                        # run completion instead of an error.
+                        logger.info("⏭️ llm_response returned None on follow-up after tool result — emitting synthetic acknowledgment")
+                        ack_message_id = str(uuid.uuid4())
+                        yield TextMessageStartEvent(
+                            type=EventType.TEXT_MESSAGE_START,
+                            message_id=ack_message_id,
+                            role="assistant",
+                        )
+                        yield TextMessageContentEvent(
+                            type=EventType.TEXT_MESSAGE_CONTENT,
+                            message_id=ack_message_id,
+                            delta="Done!",
+                        )
+                        yield TextMessageEndEvent(
+                            type=EventType.TEXT_MESSAGE_END,
+                            message_id=ack_message_id,
+                        )
+                        yield RunFinishedEvent(
+                            type=EventType.RUN_FINISHED,
+                            thread_id=input_data.thread_id,
+                            run_id=input_data.run_id,
+                        )
+                        return
                     yield RunErrorEvent(
                         type=EventType.RUN_ERROR,
                         message="Agent returned None",
@@ -976,7 +1004,18 @@ class LangroidAgent:
             )
 
     def _get_agent_instance(self) -> Any:
-        """Get agent instance for current thread."""
+        """Get a fresh agent instance for a new thread.
+
+        Each thread needs its own copy so that Langroid's internal
+        message history doesn't leak between unrelated conversations.
+        Uses Langroid's built-in clone() which creates a new agent/task
+        with empty message history (avoids deepcopy issues with thread
+        locks in the httpx/OpenAI client).
+        """
+        if hasattr(self._agent, "clone"):
+            return self._agent.clone(0)
+        # Fallback: return the original agent if clone isn't available
+        logger.warning("Agent does not support clone() — returning shared instance")
         return self._agent
 
     def _extract_user_message(self, messages: Optional[List[Any]]) -> str:

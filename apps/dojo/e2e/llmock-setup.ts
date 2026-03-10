@@ -453,6 +453,94 @@ export async function setupLLMock(): Promise<void> {
     },
   });
 
+  // Langroid agentic gen UI: Langroid embeds tool definitions in the system
+  // message text (TOOL: create_plan) instead of using the OpenAI tools array.
+  // Detect via system message content since req.tools will be empty.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        const hasLangroidTool = sysIncludes(req.messages, "TOOL: create_plan");
+        return (
+          !!hasLangroidTool &&
+          textOf(lastUser?.content).includes("plan to make brownies")
+        );
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "create_plan",
+          arguments: JSON.stringify({
+            request: "create_plan",
+            steps: [
+              "Gather ingredients",
+              "Melt butter and mix with cocoa",
+              "Add eggs and flour",
+              "Bake at 350F for 25 min",
+            ],
+          }),
+        },
+      ],
+    },
+  });
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        const hasLangroidTool = sysIncludes(req.messages, "TOOL: create_plan");
+        return (
+          !!hasLangroidTool && textOf(lastUser?.content).includes("Go to Mars")
+        );
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "create_plan",
+          arguments: JSON.stringify({
+            request: "create_plan",
+            steps: [
+              "Design spacecraft",
+              "Assemble crew",
+              "Launch from Earth",
+              "Land on Mars",
+            ],
+          }),
+        },
+      ],
+    },
+  });
+
+  // Langroid shared state: Langroid embeds generate_recipe in the system message.
+  // The recipe arg is nested under "recipe" key like Strands/CrewAI/LangGraph.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        const hasLangroidTool = sysIncludes(
+          req.messages,
+          "TOOL: generate_recipe",
+        );
+        return (
+          !!hasLangroidTool &&
+          textOf(lastUser?.content).includes("pasta recipe")
+        );
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "generate_recipe",
+          arguments: JSON.stringify({
+            request: "generate_recipe",
+            recipe: recipeData,
+          }),
+        },
+      ],
+    },
+  });
+
   // LlamaIndex agentic gen UI: the agent registers run_task (a backend tool),
   // not generate_task_steps_generative_ui. The run_task tool takes a Task
   // model with steps: list[Step], where each Step has a description string.
