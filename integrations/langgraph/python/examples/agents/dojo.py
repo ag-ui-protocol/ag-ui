@@ -11,16 +11,16 @@ os.environ["LANGGRAPH_FAST_API"] = "true"
 from ag_ui_langgraph import LangGraphAgent, add_langgraph_fastapi_endpoint
 from copilotkit import LangGraphAGUIAgent
 
-from .agentic_chat.agent import graph as agentic_chat_graph
-from .agentic_chat_reasoning.agent import graph as agentic_chat_reasoning_graph
-from .agentic_generative_ui.agent import graph as agentic_generative_ui_graph
-from .backend_tool_rendering.agent import graph as backend_tool_rendering_graph
-from .human_in_the_loop.agent import graph as human_in_the_loop_graph
-from .predictive_state_updates.agent import graph as predictive_state_updates_graph
-from .shared_state.agent import graph as shared_state_graph
-from .subgraphs.agent import graph as subgraphs_graph
-from .a2ui_chat.agent import graph as a2ui_chat_graph
-from .tool_based_generative_ui.agent import graph as tool_based_generative_ui_graph
+from agents.agentic_chat.agent import graph as agentic_chat_graph
+from agents.agentic_chat_reasoning.agent import graph as agentic_chat_reasoning_graph
+from agents.agentic_generative_ui.agent import graph as agentic_generative_ui_graph
+from agents.backend_tool_rendering.agent import graph as backend_tool_rendering_graph
+from agents.human_in_the_loop.agent import graph as human_in_the_loop_graph
+from agents.predictive_state_updates.agent import graph as predictive_state_updates_graph
+from agents.shared_state.agent import graph as shared_state_graph
+from agents.subgraphs.agent import graph as subgraphs_graph
+from agents.a2ui_chat.agent import graph as a2ui_chat_graph
+from agents.tool_based_generative_ui.agent import graph as tool_based_generative_ui_graph
 
 app = FastAPI(title="LangGraph Dojo Example Server")
 
@@ -132,3 +132,7 @@ def main():
     """Run the uvicorn server."""
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run("agents.dojo:app", host="0.0.0.0", port=port, reload=True)
+
+
+if __name__ == "__main__":
+    main()
