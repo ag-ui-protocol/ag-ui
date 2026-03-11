@@ -251,6 +251,46 @@ class TestWrapModelCallConfigInjection(unittest.TestCase):
 
         self.assertNotIn("predict_state", captured["meta"])
 
+    def test_config_var_reset_after_handler_exception(self):
+        """var_child_runnable_config is reset even when the handler raises."""
+        middleware = self._make_middleware()
+        req = MagicMock()
+        req.messages = [HumanMessage(content="hello")]
+
+        def raising_handler(request):
+            raise RuntimeError("handler failed")
+
+        with self.assertRaises(RuntimeError):
+            middleware.wrap_model_call(req, raising_handler)
+
+        # The context variable must be restored — predict_state should not leak.
+        meta = (var_child_runnable_config.get() or {}).get("metadata", {})
+        self.assertNotIn("predict_state", meta)
+
+    def test_config_var_reset_after_async_handler_exception(self):
+        """var_child_runnable_config is reset even when the async handler raises."""
+        middleware = self._make_middleware()
+        req = MagicMock()
+        req.messages = [HumanMessage(content="hello")]
+
+        async def raising_handler(request):
+            raise RuntimeError("async handler failed")
+
+        with self.assertRaises(RuntimeError):
+            asyncio.run(middleware.awrap_model_call(req, raising_handler))
+
+        meta = (var_child_runnable_config.get() or {}).get("metadata", {})
+        self.assertNotIn("predict_state", meta)
+
+    def test_instantiation_raises_when_middleware_unavailable(self):
+        """StateStreamingMiddleware raises ImportError on instantiation when langchain<1.2.0."""
+        with patch.object(_ss_mod, "_MIDDLEWARE_AVAILABLE", False):
+            with self.assertRaises(ImportError) as ctx:
+                _ss_mod.StateStreamingMiddleware(
+                    _ss_mod.StateItem(state_key="s", tool="t", tool_argument="a")
+                )
+        self.assertIn("langchain>=1.2.0", str(ctx.exception))
+
 
 class TestSnapshotSuppressionCondition(unittest.TestCase):
     """

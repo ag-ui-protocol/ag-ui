@@ -201,8 +201,9 @@ class LangGraphAgent:
                     output = event["data"]["output"]
                 current_graph_state.update(output)
                 exiting_node = self.active_run["node_name"] == current_node_name
-                # If output contains non-message state keys (e.g. recipe), the
-                # local current_graph_state is reliably up-to-date again.
+                # If output contains any key outside the protocol-internal set
+                # ("messages", "tools", "ag-ui"), the local current_graph_state
+                # is reliably up-to-date again.
                 if any(k not in ("messages", "tools", "ag-ui") for k in output):
                     self.active_run["state_reliable"] = True
 
@@ -215,11 +216,14 @@ class LangGraphAgent:
                     for ev in self.handle_node_change(current_node_name):
                         yield ev
 
-                # Track whether the current model turn is making a tool call so we
-            # can suppress the model-node exit snapshot.  The model-node exit
-            # fires *before* the tool runs, so current_graph_state still carries
-            # the previous recipe — emitting it would wipe predict_state progress
-            # on the client.  This applies to every iteration, not just the first.
+                # Track whether the current model turn is making a predict_state tool
+            # call so we can suppress the model-node exit snapshot.  The model-node
+            # exit fires *before* the tool runs, so current_graph_state still
+            # carries the previous value — emitting it would wipe predict_state
+            # progress on the client.  This applies to every iteration, not just
+            # the first.  Note: _handle_single_event uses the same predict_state
+            # metadata check to emit the PredictState custom event — keep both
+            # sites in sync if the check logic changes.
             if event_type == LangGraphEventTypes.OnChatModelStream.value:
                 chunk = event.get("data", {}).get("chunk") or {}
                 tool_call_chunks = (
@@ -253,8 +257,9 @@ class LangGraphAgent:
                 if suppressed:
                     self.active_run["model_made_tool_call"] = False
                     if mmtc:
-                        # Tool is about to run via Command — current_graph_state
-                        # won't reflect the update, so state is now unreliable.
+                        # A predict_state tool call was detected — the tool has
+                        # not yet run, so current_graph_state does not yet reflect
+                        # the forthcoming state update.
                         self.active_run["state_reliable"] = False
                 else:
                     yield self._dispatch_event(
@@ -642,7 +647,7 @@ class LangGraphAgent:
             current_stream = self.get_message_in_progress(self.active_run["id"])
             has_current_stream = bool(current_stream and current_stream.get("id"))
             tool_call_data = event["data"]["chunk"].tool_call_chunks[0] if event["data"]["chunk"].tool_call_chunks else None
-            predict_state_metadata = event["metadata"].get("predict_state", [])
+            predict_state_metadata = event.get("metadata", {}).get("predict_state", [])
             tool_call_used_to_predict_state = False
             if tool_call_data and tool_call_data.get("name") and predict_state_metadata:
                 tool_call_used_to_predict_state = any(
@@ -856,6 +861,10 @@ class LangGraphAgent:
             )
 
         elif event_type == LangGraphEventTypes.OnToolEnd:
+            # The tool has finished — clear the flag so future snapshots are not
+            # incorrectly suppressed.  Mirrors TypeScript: hasPredictState = false
+            # on OnToolEnd (agent.ts line 879).
+            self.active_run["model_made_tool_call"] = False
             tool_call_output = event["data"]["output"]
 
             if isinstance(tool_call_output, Command):

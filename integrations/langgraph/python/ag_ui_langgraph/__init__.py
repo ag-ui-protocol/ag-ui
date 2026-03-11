@@ -15,7 +15,14 @@ from .types import (
     PredictStateTool
 )
 from .endpoint import add_langgraph_fastapi_endpoint
-from .middlewares.state_streaming import StateStreamingMiddleware, StateItem
+try:
+    from .middlewares.state_streaming import (
+        StateStreamingMiddleware,
+        StateItem,
+        _MIDDLEWARE_AVAILABLE as _STATE_STREAMING_AVAILABLE,
+    )
+except ImportError:
+    _STATE_STREAMING_AVAILABLE = False
 
 __all__ = [
     "LangGraphAgent",
@@ -33,6 +40,5 @@ __all__ = [
     "LangGraphPlatformMessage",
     "PredictStateTool",
     "add_langgraph_fastapi_endpoint",
-    "StateStreamingMiddleware",
-    "StateItem"
+    *( ["StateStreamingMiddleware", "StateItem"] if _STATE_STREAMING_AVAILABLE else []),
 ]

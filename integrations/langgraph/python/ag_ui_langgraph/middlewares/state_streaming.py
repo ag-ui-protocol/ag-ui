@@ -1,5 +1,5 @@
 """
-Custom middleware helpers for CopilotKit agents.
+Custom middleware helpers for ag-ui LangGraph agents.
 """
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
@@ -21,7 +21,7 @@ def _with_intermediate_state(config: dict, emit_intermediate_state: list) -> dic
     return {**config, "metadata": metadata}
 
 
-@dataclass
+@dataclass(frozen=True)
 class StateItem:
     state_key: str
     tool: str
@@ -40,7 +40,7 @@ class StateStreamingMiddleware(AgentMiddleware):
         ]
 
     def _is_pre_tool_call(self, request: ModelRequest) -> bool:
-        """Return True if this model call may generate the initial tool call.
+        """Return True if this model call precedes a tool call for the current turn.
 
         When the last message is a ToolMessage the tool has already run and the
         model is being called for a follow-up response.  Injecting

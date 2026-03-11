@@ -2,12 +2,11 @@
  * Tests for stateStreamingMiddleware.
  *
  * `langchain` (the main package) requires a @langchain/core peer that exports
- * ./utils/context (added in ~0.3.40+).  The devDependency here resolves to
- * @langchain/core@0.3.80, which is compatible, but the pnpm workspace may
- * hoist a different version.  To keep the test self-contained we mock the
- * `langchain` module so `createMiddleware` simply returns its config argument —
- * the actual logic under test lives in the wrapModelCall closure, not in
- * langchain's middleware runtime.
+ * ./utils/context (added in ~0.3.40+).  The pnpm workspace may hoist a different
+ * version than what is declared in devDependencies (see package.json).  To keep
+ * the test self-contained we mock the `langchain` module so `createMiddleware`
+ * simply returns its config argument — the actual logic under test lives in the
+ * wrapModelCall closure, not in langchain's middleware runtime.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -131,11 +130,8 @@ describe("stateStreamingMiddleware", () => {
      * The agent sets hasPredictState only when the streaming tool call's name
      * appears in event.metadata["predict_state"].  Mirrors the Python
      * model_made_tool_call metadata-awareness added in agent.py.
-     *
-     * Logic (from agent.ts):
-     *   const toolCallUsedToPredictState = event.metadata["predict_state"]?.some(
-     *     (p) => p.tool === toolCallData?.name,
-     *   );
+     * See agent.ts for the live implementation — the lambda below isolates the
+     * same logic for regression testing without a full LangGraph stack.
      */
     const toolCallUsedToPredictState = (
       toolName: string | undefined,
@@ -179,11 +175,14 @@ describe("stateStreamingMiddleware", () => {
      * tool call that matches a predict_state item). This avoids overwriting
      * optimistic UI state that was already pushed to the client.
      *
-     * The condition (from agent.ts) is:
+     * The suppression sub-expression (from agent.ts line 563) is:
      *   !(exitingNode && hasPredictState)
      *
-     * We document and verify the boolean table here so regressions are caught
-     * without requiring a full LangGraph stack.
+     * Note: this is only the innermost guard; the full emission condition also
+     * requires (hasStateDiff || prevNodeName != nodeName || exitingNode) and
+     * no message in progress.  We isolate this sub-expression here so regressions
+     * are caught without a full LangGraph stack.  The lambda below is an
+     * intentional local re-statement of agent.ts line 563 — it is NOT dead code.
      */
     it("suppresses snapshot when exiting node AND hasPredictState is true", () => {
       const shouldEmit = (exitingNode: boolean, hasPredictState: boolean) =>

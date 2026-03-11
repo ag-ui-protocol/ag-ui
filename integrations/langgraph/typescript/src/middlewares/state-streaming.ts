@@ -1,5 +1,5 @@
 /**
- * Custom middleware helpers for CopilotKit agents.
+ * Custom middleware helpers for ag-ui LangGraph agents.
  */
 
 import { createMiddleware } from "langchain";
