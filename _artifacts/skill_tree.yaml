@@ -1,0 +1,263 @@
+# skills/_artifacts/skill_tree.yaml
+library:
+  name: 'ag-ui'
+  version: '0.0.47'
+  repository: 'https://github.com/ag-ui-protocol/ag-ui'
+  description: 'Open, lightweight, event-based protocol that standardizes how AI agent backends communicate with user-facing applications.'
+generated_from:
+  domain_map: '_artifacts/domain_map.yaml'
+  skill_spec: '_artifacts/skill_spec.md'
+generated_at: '2026-03-11'
+
+skills:
+  - name: 'Implement AbstractAgent'
+    slug: 'agui-implement-abstract-agent'
+    type: 'core'
+    domain: 'implementing-agents'
+    path: 'sdks/typescript/packages/client/skills/agui-implement-abstract-agent/SKILL.md'
+    package: 'sdks/typescript/packages/client'
+    description: >
+      Implement the AbstractAgent interface for a new framework by subclassing
+      AbstractAgent, returning an Observable<BaseEvent> from run(), emitting events
+      in correct lifecycle order, and converting framework messages to AG-UI format.
+    requires: []
+    sources:
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/client/src/agent/agent.ts'
+      - 'ag-ui-protocol/ag-ui:docs/concepts/agents.mdx'
+      - 'ag-ui-protocol/ag-ui:integrations/mastra/typescript/src/mastra.ts'
+
+  - name: 'HTTP Agent Setup'
+    slug: 'agui-http-agent-setup'
+    type: 'core'
+    domain: 'implementing-agents'
+    path: 'sdks/typescript/packages/client/skills/agui-http-agent-setup/SKILL.md'
+    package: 'sdks/typescript/packages/client'
+    description: >
+      Use the HttpAgent class to connect to a remote AG-UI agent endpoint via SSE.
+      Configure url, headers, authentication, AbortController cancellation, and
+      subscriber callbacks for event handling.
+    requires:
+      - 'agui-implement-abstract-agent'
+    sources:
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/client/src/agent/http.ts'
+      - 'ag-ui-protocol/ag-ui:docs/sdk/js/client/http-agent.mdx'
+
+  - name: 'Run Lifecycle'
+    slug: 'agui-run-lifecycle'
+    type: 'core'
+    domain: 'event-streaming'
+    path: 'sdks/typescript/packages/core/skills/agui-run-lifecycle/SKILL.md'
+    package: 'sdks/typescript/packages/core'
+    description: >
+      Manage the agent run lifecycle with RUN_STARTED, RUN_FINISHED, RUN_ERROR events.
+      Track steps with STEP_STARTED/STEP_FINISHED. Handle multiple sequential runs
+      in one stream with parentRunId lineage. Strict event ordering enforced by verifier.
+    requires: []
+    sources:
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/core/src/events.ts'
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/client/src/verify/verify.ts'
+      - 'ag-ui-protocol/ag-ui:docs/concepts/events.mdx'
+
+  - name: 'Text Message Events'
+    slug: 'agui-text-message-events'
+    type: 'core'
+    domain: 'event-streaming'
+    path: 'sdks/typescript/packages/core/skills/agui-text-message-events/SKILL.md'
+    package: 'sdks/typescript/packages/core'
+    description: >
+      Emit and handle streaming text messages using TEXT_MESSAGE_START, TEXT_MESSAGE_CONTENT,
+      TEXT_MESSAGE_END events or the TEXT_MESSAGE_CHUNK convenience event. Manage messageId
+      consistency, non-empty delta validation, and message role types.
+    requires:
+      - 'agui-run-lifecycle'
+    sources:
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/core/src/events.ts'
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/client/src/chunks/transform.ts'
+      - 'ag-ui-protocol/ag-ui:docs/concepts/events.mdx'
+
+  - name: 'Tool Calling Events'
+    slug: 'agui-tool-calling-events'
+    type: 'core'
+    domain: 'tool-integration'
+    path: 'sdks/typescript/packages/core/skills/agui-tool-calling-events/SKILL.md'
+    package: 'sdks/typescript/packages/core'
+    description: >
+      Implement tool call lifecycle: TOOL_CALL_START, TOOL_CALL_ARGS (JSON string fragments),
+      TOOL_CALL_END, TOOL_CALL_RESULT. Define frontend tools with JSON Schema parameters.
+      Use TOOL_CALL_CHUNK convenience event. Handle toolCallId consistency and result linking.
+    requires:
+      - 'agui-run-lifecycle'
+    sources:
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/core/src/events.ts'
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/client/src/chunks/transform.ts'
+      - 'ag-ui-protocol/ag-ui:docs/concepts/tools.mdx'
+
+  - name: 'Human-in-the-Loop'
+    slug: 'agui-human-in-the-loop'
+    type: 'core'
+    domain: 'tool-integration'
+    path: 'sdks/typescript/packages/core/skills/agui-human-in-the-loop/SKILL.md'
+    package: 'sdks/typescript/packages/core'
+    description: >
+      Add human-in-the-loop collaboration using tool calls for approvals, interventions,
+      and feedback. Frontend-defined tools executed by frontend, results returned to agent.
+      Declare HumanInTheLoopCapabilities for discovery.
+    requires:
+      - 'agui-tool-calling-events'
+    sources:
+      - 'ag-ui-protocol/ag-ui:docs/concepts/tools.mdx'
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/core/src/capabilities.ts'
+
+  - name: 'Capability Events'
+    slug: 'agui-capability-events'
+    type: 'core'
+    domain: 'advanced-features'
+    path: 'sdks/typescript/packages/core/skills/agui-capability-events/SKILL.md'
+    package: 'sdks/typescript/packages/core'
+    description: >
+      Declare agent capabilities via optional getCapabilities() method. AgentCapabilities
+      covers identity, transport, tools, output, state, multiAgent, reasoning, multimodal,
+      execution, humanInTheLoop, and custom categories. Absent = unknown convention.
+    requires: []
+    sources:
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/core/src/capabilities.ts'
+      - 'ag-ui-protocol/ag-ui:docs/concepts/capabilities.mdx'
+    references:
+      - 'references/capability-categories.md'
+
+  - name: 'Reasoning Events'
+    slug: 'agui-reasoning-events'
+    type: 'core'
+    domain: 'advanced-features'
+    path: 'sdks/typescript/packages/core/skills/agui-reasoning-events/SKILL.md'
+    package: 'sdks/typescript/packages/core'
+    description: >
+      Surface LLM reasoning with REASONING_START/END, REASONING_MESSAGE_START/CONTENT/END,
+      REASONING_MESSAGE_CHUNK, and REASONING_ENCRYPTED_VALUE events. Support ZDR compliance
+      via encrypted reasoning values. Migrate from deprecated THINKING_* events.
+    requires:
+      - 'agui-run-lifecycle'
+    sources:
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/core/src/events.ts'
+      - 'ag-ui-protocol/ag-ui:docs/concepts/reasoning.mdx'
+
+  - name: 'State Synchronization'
+    slug: 'agui-state-synchronization'
+    type: 'core'
+    domain: 'state-and-messages'
+    path: 'sdks/typescript/packages/core/skills/agui-state-synchronization/SKILL.md'
+    package: 'sdks/typescript/packages/core'
+    description: >
+      Synchronize state with STATE_SNAPSHOT (complete replace) and STATE_DELTA (JSON Patch
+      RFC 6902 incremental updates). Manage MESSAGES_SNAPSHOT for conversation history.
+      State is a flexible metadata channel for config, IDs, and internal data.
+    requires:
+      - 'agui-run-lifecycle'
+    sources:
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/core/src/events.ts'
+      - 'ag-ui-protocol/ag-ui:docs/concepts/state.mdx'
+    references:
+      - 'references/json-patch-operations.md'
+
+  - name: 'Middleware'
+    slug: 'agui-middleware'
+    type: 'core'
+    domain: 'middleware-and-transport'
+    path: 'sdks/typescript/packages/client/skills/agui-middleware/SKILL.md'
+    package: 'sdks/typescript/packages/client'
+    description: >
+      Create middleware to transform, filter, and augment event streams. Function-based
+      MiddlewareFunction or class-based Middleware with runNext()/runNextWithState() helpers.
+      Built-in FilterToolCallsMiddleware. Middleware runs in runAgent() only, not connectAgent().
+    requires:
+      - 'agui-implement-abstract-agent'
+    sources:
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/client/src/middleware/middleware.ts'
+      - 'ag-ui-protocol/ag-ui:docs/concepts/middleware.mdx'
+
+  - name: 'Activity Events'
+    slug: 'agui-activity-events'
+    type: 'core'
+    domain: 'advanced-features'
+    path: 'sdks/typescript/packages/core/skills/agui-activity-events/SKILL.md'
+    package: 'sdks/typescript/packages/core'
+    description: >
+      Use ACTIVITY_SNAPSHOT and ACTIVITY_DELTA events for frontend-only UI elements:
+      loading indicators, progress bars, status updates. ActivityMessage with activityType
+      discriminator. Frontend-only — never forwarded to agent. Replace flag controls update behavior.
+    requires:
+      - 'agui-run-lifecycle'
+    sources:
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/core/src/events.ts'
+      - 'ag-ui-protocol/ag-ui:docs/concepts/events.mdx'
+      - 'ag-ui-protocol/ag-ui:docs/concepts/messages.mdx'
+
+  - name: 'Custom and Raw Events'
+    slug: 'agui-custom-and-raw-events'
+    type: 'core'
+    domain: 'event-streaming'
+    path: 'sdks/typescript/packages/core/skills/agui-custom-and-raw-events/SKILL.md'
+    package: 'sdks/typescript/packages/core'
+    description: >
+      Handle RAW events from external systems (arbitrary structure, source attribution)
+      and CUSTOM application-defined events (name + value). Use only for truly app-specific
+      needs — standard event types for interoperable features.
+    requires:
+      - 'agui-run-lifecycle'
+    sources:
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/core/src/events.ts'
+      - 'ag-ui-protocol/ag-ui:docs/concepts/events.mdx'
+
+  - name: 'Serialization'
+    slug: 'agui-serialization'
+    type: 'core'
+    domain: 'state-and-messages'
+    path: 'sdks/typescript/packages/client/skills/agui-serialization/SKILL.md'
+    package: 'sdks/typescript/packages/client'
+    description: >
+      Persist event streams via JSON serialization. Compact verbose histories by collapsing
+      TEXT_MESSAGE_* to MESSAGES_SNAPSHOT and STATE_DELTA chains to STATE_SNAPSHOT.
+      Branch from any prior run via parentRunId. Normalize input to deduplicate messages.
+    requires:
+      - 'agui-state-synchronization'
+    sources:
+      - 'ag-ui-protocol/ag-ui:docs/concepts/serialization.mdx'
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/client/src/apply/default.ts'
+
+  - name: 'Event Encoding'
+    slug: 'agui-event-encoding'
+    type: 'core'
+    domain: 'middleware-and-transport'
+    path: 'sdks/typescript/packages/encoder/skills/agui-event-encoding/SKILL.md'
+    package: 'sdks/typescript/packages/encoder'
+    description: >
+      Encode and decode AG-UI events for transport. EventEncoder with Accept header
+      negotiation. SSE text encoding (recommended default) and protobuf binary encoding
+      via @ag-ui/proto. Content-Type handling with encoder.get_content_type().
+    requires: []
+    sources:
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/encoder/src'
+      - 'ag-ui-protocol/ag-ui:sdks/typescript/packages/proto/src'
+      - 'ag-ui-protocol/ag-ui:docs/quickstart/server.mdx'
+    subsystems:
+      - 'SSE text encoder'
+      - 'Protobuf binary encoder'
+
+  - name: 'Generative UI'
+    slug: 'agui-generative-ui'
+    type: 'composition'
+    domain: 'advanced-features'
+    path: 'sdks/typescript/packages/core/skills/agui-generative-ui/SKILL.md'
+    package: 'sdks/typescript/packages/core'
+    description: >
+      Integrate generative UI specifications (A2UI, Open-JSON-UI, MCP-UI/MCP Apps) with
+      AG-UI as the bidirectional transport layer. AG-UI carries UI payloads but does not
+      define the UI format itself. Use CUSTOM events for custom UI components.
+    requires:
+      - 'agui-custom-and-raw-events'
+    sources:
+      - 'ag-ui-protocol/ag-ui:docs/concepts/generative-ui-specs.mdx'
+    subsystems:
+      - 'A2UI (Google)'
+      - 'Open-JSON-UI (OpenAI)'
+      - 'MCP-UI (Microsoft + Shopify)'
