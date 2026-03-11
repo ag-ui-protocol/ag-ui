@@ -46,7 +46,7 @@
     "README.md",
     "skills",
     "bin",
-    "!skills/_artifacts"
+    "!skills/.artifacts"
   ],
   "bin": {
     "intent": "./bin/intent.mjs"

@@ -1,12 +1,12 @@
-# skills/_artifacts/skill_tree.yaml
+# skills/.artifacts/skill_tree.yaml
 library:
   name: 'ag-ui'
   version: '0.0.47'
   repository: 'https://github.com/ag-ui-protocol/ag-ui'
   description: 'Open, lightweight, event-based protocol that standardizes how AI agent backends communicate with user-facing applications.'
 generated_from:
-  domain_map: '_artifacts/domain_map.yaml'
-  skill_spec: '_artifacts/skill_spec.md'
+  domain_map: '.artifacts/domain_map.yaml'
+  skill_spec: '.artifacts/skill_spec.md'
 generated_at: '2026-03-11'
 
 skills:

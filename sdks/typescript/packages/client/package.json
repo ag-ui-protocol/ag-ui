@@ -15,7 +15,7 @@
     "README.md",
     "skills",
     "bin",
-    "!skills/_artifacts"
+    "!skills/.artifacts"
   ],
   "scripts": {
     "build": "tsdown",
