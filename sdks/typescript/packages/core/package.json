@@ -42,6 +42,8 @@
     "./package.json": "./package.json"
   },
   "files": [
+    "dist/**",
+    "README.md",
     "skills",
     "bin",
     "!skills/_artifacts"
