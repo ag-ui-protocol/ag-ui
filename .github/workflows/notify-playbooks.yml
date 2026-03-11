@@ -1,0 +1,52 @@
+# notify-intent.yml — Drop this into your library repo's .github/workflows/
+#
+# Fires a repository_dispatch event to TanStack/intent whenever docs or
+# source files change on merge to main. This triggers the skill staleness
+# check workflow in the intent repo.
+#
+# Requirements:
+#   - A fine-grained PAT with contents:write on TanStack/intent stored
+#     as the INTENT_NOTIFY_TOKEN repository secret.
+#
+# Template variables (replaced by `intent setup`):
+#   ag-ui  — e.g. @tanstack/query
+#   docs/**     — e.g. docs/**
+#   packages/ag-ui/src/**      — e.g. packages/query-core/src/**
+
+name: Notify Intent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'packages/ag-ui/src/**'
+
+jobs:
+  notify:
+    name: Notify TanStack Intent
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Collect changed files
+        id: changes
+        run: |
+          FILES=$(git diff --name-only HEAD~1 HEAD | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch to intent repo
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.INTENT_NOTIFY_TOKEN }}
+          repository: TanStack/intent
+          event-type: skill-check
+          client-payload: |
+            {
+              "package": "ag-ui",
+              "sha": "${{ github.sha }}",
+              "changed_files": ${{ steps.changes.outputs.files }}
+            }
