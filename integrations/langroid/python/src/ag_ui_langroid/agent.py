@@ -397,14 +397,22 @@ class LangroidAgent:
                             )
                             
                             logger.info(f"✅ Frontend tool {tool_name} events emitted - CopilotKit will execute tool automatically")
-                            # Emit RunFinishedEvent to signal run completion - CopilotKit will execute the tool when it receives ToolCallEndEvent
+
+                            # Patch Langroid's message history: add a
+                            # synthetic tool result so the unresolved
+                            # tool_call doesn't poison subsequent LLM
+                            # requests on this thread (the OpenAI API
+                            # requires every tool_call to have a matching
+                            # tool result).
+                            self._patch_pending_tool_call(actual_agent, tool_name)
+
                             yield RunFinishedEvent(
                                 type=EventType.RUN_FINISHED,
                                 thread_id=input_data.thread_id,
                                 run_id=input_data.run_id,
                             )
                             return
-                        
+
                         else:
                             yield ToolCallStartEvent(
                                 type=EventType.TOOL_CALL_START,
@@ -832,14 +840,16 @@ class LangroidAgent:
                             )
                             
                             logger.info(f"✅ Frontend tool {tool_name} events emitted - CopilotKit will execute tool automatically")
-                            # Emit RunFinishedEvent to signal run completion - CopilotKit will execute the tool when it receives ToolCallEndEvent
+
+                            self._patch_pending_tool_call(actual_agent, tool_name)
+
                             yield RunFinishedEvent(
                                 type=EventType.RUN_FINISHED,
                                 thread_id=input_data.thread_id,
                                 run_id=input_data.run_id,
                             )
                             return
-                        
+
                         yield ToolCallStartEvent(
                             type=EventType.TOOL_CALL_START,
                             tool_call_id=tool_call_id,
@@ -993,6 +1003,50 @@ class LangroidAgent:
                 message=str(e),
                 code="LANGROID_ERROR",
             )
+
+    @staticmethod
+    def _patch_pending_tool_call(agent: Any, tool_name: str) -> None:
+        """Add a synthetic tool result to the agent's message history.
+
+        After emitting a frontend tool call, Langroid's history contains an
+        assistant message with oai_tool_calls but no matching tool result.
+        The OpenAI API requires every tool_call to have a corresponding tool
+        result — without one, subsequent requests on this thread will include
+        the dangling tool_call and LLMock's tool-result catch-all will match
+        instead of the intended fixture.
+        """
+        if not hasattr(agent, "message_history"):
+            return
+        history = agent.message_history
+        for i in range(len(history) - 1, -1, -1):
+            msg = history[i]
+            has_tool_calls = (hasattr(msg, "tool_calls") and msg.tool_calls) or (hasattr(msg, "oai_tool_calls") and msg.oai_tool_calls)
+            if has_tool_calls:
+                tool_calls_list = msg.tool_calls if (hasattr(msg, "tool_calls") and msg.tool_calls) else msg.oai_tool_calls
+                tc_id = getattr(tool_calls_list[0], "id", "") if tool_calls_list else ""
+                try:
+                    from langroid.language_models.base import LLMMessage, Role
+                    history.append(LLMMessage(
+                        role=Role.TOOL,
+                        content="Done",
+                        tool_call_id=tc_id,
+                    ))
+                    logger.info(f"Patched history: added synthetic tool result for {tool_name} (call_id={tc_id})")
+                    # Also clear Langroid's pending tool call tracking.
+                    # Langroid uses agent.oai_tool_calls to decide whether
+                    # the next llm_response() input should be converted to
+                    # role=TOOL instead of role=USER.  Without clearing this
+                    # list, subsequent user messages get mis-classified as
+                    # tool results.
+                    if hasattr(agent, "oai_tool_calls"):
+                        agent.oai_tool_calls = [
+                            t for t in agent.oai_tool_calls
+                            if getattr(t, "id", None) != tc_id
+                        ]
+                        logger.info(f"Cleared pending oai_tool_calls for {tc_id}, remaining: {len(agent.oai_tool_calls)}")
+                except Exception as e:
+                    logger.warning(f"Could not add synthetic tool result: {e}")
+                break
 
     def _get_agent_instance(self) -> Any:
         """Get a fresh agent instance for a new thread.
