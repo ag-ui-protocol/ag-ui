@@ -90,12 +90,73 @@ export async function setupLLMock(): Promise<void> {
     },
   });
 
+  // Claude Agent SDK HITL: same pattern as LangGraph above. The CLI registers
+  // tools as mcp__ag_ui__generate_task_steps. The JSON fixture returns bare
+  // generate_task_steps which the TS CLI resolves, but the Python CLI needs the
+  // exact MCP-prefixed name. These predicate fixtures fire before the JSON ones.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        const hasClaudeSdkTool = req.tools?.some(
+          (t) => t.function.name.endsWith("__generate_task_steps"),
+        );
+        return (
+          !!hasClaudeSdkTool &&
+          textOf(lastUser?.content).includes("one step with eggs")
+        );
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "mcp__ag_ui__generate_task_steps",
+          arguments: JSON.stringify({
+            steps: [
+              { description: "Crack eggs into bowl", status: "enabled" },
+              { description: "Preheat oven to 350F", status: "enabled" },
+              { description: "Mix and bake for 25 min", status: "enabled" },
+            ],
+          }),
+        },
+      ],
+    },
+  });
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        const hasClaudeSdkTool = req.tools?.some(
+          (t) => t.function.name.endsWith("__generate_task_steps"),
+        );
+        return (
+          !!hasClaudeSdkTool &&
+          textOf(lastUser?.content).includes("Start The Planning")
+        );
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "mcp__ag_ui__generate_task_steps",
+          arguments: JSON.stringify({
+            steps: [
+              { description: "Start The Planning", status: "enabled" },
+              { description: "Design spacecraft", status: "enabled" },
+              { description: "Launch mission", status: "enabled" },
+            ],
+          }),
+        },
+      ],
+    },
+  });
+
   // Load HITL fixtures — they share a "plan to make brownies" substring
   // with agentic-gen-ui fixtures, and first-match-wins. By loading HITL first,
   // "one step with eggs" matches HITL tests before "plan to make brownies"
   // matches the agenticGenUI fixture (which returns the wrong tool name).
-  // NOTE: LangGraph predicate fixtures above take priority over these for
-  // requests containing plan_execution_steps in the tools list.
+  // NOTE: LangGraph and Claude SDK predicate fixtures above take priority
+  // over these for requests containing their specific tool names.
   mockServer.loadFixtureFile(path.join(FIXTURES_DIR, "human-in-the-loop.json"));
 
   const sysContent = (msgs: ChatMessage[]) =>
@@ -633,6 +694,36 @@ export async function setupLLMock(): Promise<void> {
           arguments: JSON.stringify({
             recipe: pydanticRecipeData,
           }),
+        },
+      ],
+    },
+  });
+
+  // Claude Agent SDK shared state: the adapter registers ag_ui_update_state
+  // via an MCP server named "ag_ui", so the CLI sends the tool as
+  // mcp__ag_ui__ag_ui_update_state. Match both bare and MCP-prefixed names.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) => {
+        const lastUser = req.messages.filter((m) => m.role === "user").pop();
+        const hasClaudeSdkTool = req.tools?.some(
+          (t) =>
+            t.function.name === "ag_ui_update_state" ||
+            t.function.name.endsWith("__ag_ui_update_state"),
+        );
+        return (
+          !!hasClaudeSdkTool &&
+          textOf(lastUser?.content).includes("pasta recipe")
+        );
+      },
+    },
+    response: {
+      toolCalls: [
+        {
+          // Use MCP-prefixed name so the CLI can route it to the right tool.
+          // The Python Claude SDK CLI requires exact name matching.
+          name: "mcp__ag_ui__ag_ui_update_state",
+          arguments: JSON.stringify({ state_updates: { recipe: recipeData } }),
         },
       ],
     },

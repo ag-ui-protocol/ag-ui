@@ -151,7 +151,6 @@ export const agentsIntegrations = {
         predictive_state_updates: "predictive_state_updates",
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
-        agentic_chat_reasoning: "agentic_chat_reasoning",
         subgraphs: "subgraphs",
       }
     ),
@@ -411,6 +410,7 @@ ${A2UI_PROMPT}`;
       }
     ),
 
+
   langroid: async () =>
     mapAgents(
       (path) => new LangroidHttpAgent({ url: `${envVars.langroidUrl}/${path}/` }),
@@ -419,6 +419,30 @@ ${A2UI_PROMPT}`;
         backend_tool_rendering: "backend_tool_rendering",
         agentic_generative_ui: "agentic_generative_ui",
         shared_state: "shared_state",
+      }
+    ),
+
+  "claude-agent-sdk-python": async () =>
+    mapAgents(
+      (path) => new HttpAgent({ url: `${envVars.claudeAgentSdkPythonUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        shared_state: "shared_state",
+        human_in_the_loop: "human_in_the_loop",
+        tool_based_generative_ui: "tool_based_generative_ui",
+      }
+    ),
+
+  "claude-agent-sdk-typescript": async () =>
+    mapAgents(
+      (path) => new HttpAgent({ url: `${envVars.claudeAgentSdkTypescriptUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        shared_state: "shared_state",
+        human_in_the_loop: "human_in_the_loop",
+        tool_based_generative_ui: "tool_based_generative_ui",
       }
     ),
 } satisfies AgentsMap;

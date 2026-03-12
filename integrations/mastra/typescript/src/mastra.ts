@@ -90,7 +90,7 @@ export class MastraAgent extends AbstractAgent {
           if (
             memory &&
             input.state &&
-            Object.keys(input.state || {}).length > 0
+            Object.keys(input.state).length > 0
           ) {
             let thread: StorageThreadType | null = await memory.getThreadById({
               threadId: input.threadId,

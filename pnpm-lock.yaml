@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  langium: 3.2.0
+
 importers:
 
   .:
@@ -90,6 +93,9 @@ importers:
       '@ag-ui/aws-strands':
         specifier: workspace:*
         version: link:../../integrations/aws-strands/typescript
+      '@ag-ui/claude-agent-sdk':
+        specifier: workspace:*
+        version: link:../../integrations/claude-agent-sdk/typescript
       '@ag-ui/client':
         specifier: workspace:*
         version: 0.0.46
@@ -141,6 +147,9 @@ importers:
       '@ai-sdk/openai':
         specifier: ^3.0.36
         version: 3.0.41(zod@3.25.76)
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: ^0.2.58
+        version: 0.2.72(zod@3.25.76)
       '@copilotkit/a2ui-renderer':
         specifier: 0.0.0-mme-ag-ui-0-0-46-20260227141603
         version: 0.0.0-mme-ag-ui-0-0-46-20260227141603(@copilotkit/react-core@0.0.0-mme-ag-ui-0-0-46-20260227141603(3449297d4f8b736e5f5587425c70d3dd))(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(signal-polyfill@0.2.2)
@@ -519,6 +528,43 @@ importers:
       vitest:
         specifier: ^4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.2)
+
+  integrations/claude-agent-sdk/typescript:
+    dependencies:
+      '@anthropic-ai/sdk':
+        specifier: '>=0.50.0'
+        version: 0.57.0
+      rxjs:
+        specifier: 7.8.1
+        version: 7.8.1
+      zod:
+        specifier: '>=3.0.0'
+        version: 3.25.76
+    devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../sdks/typescript/packages/core
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: ^0.2.58
+        version: 0.2.72(zod@3.25.76)
+      '@types/node':
+        specifier: ^20.11.19
+        version: 20.19.37
+      tsup:
+        specifier: ^8.0.2
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.2)
+      tsx:
+        specifier: ^4.20.6
+        version: 4.20.6
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.37)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.2)
 
   integrations/community/spring-ai/typescript:
     dependencies:
@@ -1430,6 +1476,12 @@ packages:
 
   '@antfu/utils@9.3.0':
     resolution: {integrity: sha512-9hFT4RauhcUzqOE4f1+frMKLZrgNog5b06I7VmZQV1BkvwvqrbC8EBZf3L1eEL2AKb6rNKjER0sEvJiSP1FXEA==}
+
+  '@anthropic-ai/claude-agent-sdk@0.2.72':
+    resolution: {integrity: sha512-GR3QaLRCoWO5DkRknaaCH6zzmUNZ3E6VckEKNE7EO5R7qDBexQe9tDKag257pji2NenTrnBDMxznoZrhNCRTzA==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      zod: ^4.0.0
 
   '@anthropic-ai/sdk@0.57.0':
     resolution: {integrity: sha512-z5LMy0MWu0+w2hflUgj4RlJr1R+0BxKXL7ldXTO8FasU8fu599STghO+QKwId2dAD0d464aHtU+ChWuRHw4FNw==}
@@ -8200,8 +8252,8 @@ packages:
       typeorm:
         optional: true
 
-  langium@3.3.1:
-    resolution: {integrity: sha512-QJv/h939gDpvT+9SiLVlY7tZC3xB2qK57v0J04Sh9wpMb6MP1q8gB21L3WIo8T5P1MSMg3Ep14L7KkDCFG3y4w==}
+  langium@3.2.0:
+    resolution: {integrity: sha512-HxAPgCVC7X+dCN99QKlZMEoaLW4s/mt0IImYrP6ooEBOMh8lJYdFNNSpJ5NIOE+WFwQd3xa2phTJDmJhOWVR7A==}
     engines: {node: '>=16.0.0'}
 
   langsmith@0.3.74:
@@ -11395,8 +11447,21 @@ snapshots:
 
   '@antfu/utils@9.3.0': {}
 
-  '@anthropic-ai/sdk@0.57.0':
-    optional: true
+  '@anthropic-ai/claude-agent-sdk@0.2.72(zod@3.25.76)':
+    dependencies:
+      zod: 3.25.76
+    optionalDependencies:
+      '@img/sharp-darwin-arm64': 0.34.5
+      '@img/sharp-darwin-x64': 0.34.5
+      '@img/sharp-linux-arm': 0.34.5
+      '@img/sharp-linux-arm64': 0.34.5
+      '@img/sharp-linux-x64': 0.34.5
+      '@img/sharp-linuxmusl-arm64': 0.34.5
+      '@img/sharp-linuxmusl-x64': 0.34.5
+      '@img/sharp-win32-arm64': 0.34.5
+      '@img/sharp-win32-x64': 0.34.5
+
+  '@anthropic-ai/sdk@0.57.0': {}
 
   '@arethetypeswrong/cli@0.17.4':
     dependencies:
@@ -14397,7 +14462,7 @@ snapshots:
 
   '@mermaid-js/parser@0.6.3':
     dependencies:
-      langium: 3.3.1
+      langium: 3.2.0
 
   '@modelcontextprotocol/sdk@1.20.0':
     dependencies:
@@ -16297,7 +16362,7 @@ snapshots:
   '@types/body-parser@1.19.6':
     dependencies:
       '@types/connect': 3.4.38
-      '@types/node': 20.19.21
+      '@types/node': 20.19.37
 
   '@types/chai@5.2.3':
     dependencies:
@@ -16306,11 +16371,11 @@ snapshots:
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 20.19.21
+      '@types/node': 20.19.37
 
   '@types/cors@2.8.19':
     dependencies:
-      '@types/node': 20.19.21
+      '@types/node': 20.19.37
 
   '@types/d3-array@3.2.2': {}
 
@@ -16447,7 +16512,7 @@ snapshots:
 
   '@types/express-serve-static-core@4.19.7':
     dependencies:
-      '@types/node': 20.19.21
+      '@types/node': 20.19.37
       '@types/qs': 6.14.0
       '@types/range-parser': 1.2.7
       '@types/send': 1.2.0
@@ -16528,7 +16593,7 @@ snapshots:
 
   '@types/node-fetch@2.6.13':
     dependencies:
-      '@types/node': 20.19.21
+      '@types/node': 20.19.37
       form-data: 4.0.4
 
   '@types/node@18.19.130':
@@ -16542,7 +16607,6 @@ snapshots:
   '@types/node@20.19.37':
     dependencies:
       undici-types: 6.21.0
-    optional: true
 
   '@types/prop-types@15.7.15': {}
 
@@ -16567,23 +16631,23 @@ snapshots:
   '@types/send@0.17.5':
     dependencies:
       '@types/mime': 1.3.5
-      '@types/node': 20.19.21
+      '@types/node': 20.19.37
 
   '@types/send@1.2.0':
     dependencies:
-      '@types/node': 20.19.21
+      '@types/node': 20.19.37
 
   '@types/serve-static@1.15.9':
     dependencies:
       '@types/http-errors': 2.0.5
-      '@types/node': 20.19.21
+      '@types/node': 20.19.37
       '@types/send': 0.17.5
 
   '@types/stack-utils@2.0.3': {}
 
   '@types/through@0.0.33':
     dependencies:
-      '@types/node': 20.19.21
+      '@types/node': 20.19.37
 
   '@types/trusted-types@2.0.7': {}
 
@@ -16599,7 +16663,7 @@ snapshots:
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 20.19.21
+      '@types/node': 20.19.37
 
   '@types/yargs-parser@21.0.3': {}
 
@@ -20118,7 +20182,7 @@ snapshots:
       - ws
     optional: true
 
-  langium@3.3.1:
+  langium@3.2.0:
     dependencies:
       chevrotain: 11.0.3
       chevrotain-allstar: 0.3.1(chevrotain@11.0.3)
@@ -23302,7 +23366,7 @@ snapshots:
   type-graphql@2.0.0-rc.1(class-validator@0.14.2)(graphql-scalars@1.24.2(graphql@16.11.0))(graphql@16.11.0):
     dependencies:
       '@graphql-yoga/subscription': 5.0.5
-      '@types/node': 20.19.21
+      '@types/node': 20.19.37
       '@types/semver': 7.7.1
       graphql: 16.11.0
       graphql-query-complexity: 0.12.0(graphql@16.11.0)

@@ -87,6 +87,14 @@
     {
       "match": { "userMessage": "Hi" },
       "response": { "content": "Hello! How can I assist you today?" }
+    },
+    {
+      "match": { "userMessage": "my name is Alex" },
+      "response": { "content": "Hello Alex! Nice to meet you. How can I help you today?" }
+    },
+    {
+      "match": { "userMessage": "What is my name" },
+      "response": { "content": "Your name is Alex!" }
     }
   ]
 }

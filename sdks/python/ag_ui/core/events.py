@@ -282,8 +282,8 @@ class StepFinishedEvent(BaseEvent):
     step_name: str
 
 
-# Text message role for reasoning messages (only assistant can reason)
-ReasoningMessageRole = Literal["assistant"]
+# Text message role for reasoning messages (aligned with ReasoningMessage.role)
+ReasoningMessageRole = Literal["reasoning"]
 
 # Subtype for encrypted value
 ReasoningEncryptedValueSubtype = Literal["tool-call", "message"]
