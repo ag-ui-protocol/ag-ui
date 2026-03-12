@@ -142,9 +142,14 @@ defmodule AgUi.State.Manager do
 
   defp apply_operation(state, %{"op" => "test", "path" => path, "value" => expected}) do
     case get_at_path(state, parse_path(path)) do
-      {:ok, ^expected} -> {:ok, state}
-      {:ok, actual} -> {:error, "test failed: expected #{inspect(expected)}, got #{inspect(actual)}"}
-      {:error, _} = err -> err
+      {:ok, ^expected} ->
+        {:ok, state}
+
+      {:ok, actual} ->
+        {:error, "test failed: expected #{inspect(expected)}, got #{inspect(actual)}"}
+
+      {:error, _} = err ->
+        err
     end
   end
 

@@ -75,7 +75,8 @@ defmodule AgUi.Client.HttpAgent do
   end
 
   @doc "Returns the current connection status."
-  @spec status(GenServer.server()) :: :disconnected | :connecting | :connected | :finished | :error
+  @spec status(GenServer.server()) ::
+          :disconnected | :connecting | :connected | :finished | :error
   def status(server) do
     GenServer.call(server, :status)
   end
@@ -187,7 +188,8 @@ defmodule AgUi.Client.HttpAgent do
 
   defp do_sse_request(parent, url, headers, body) do
     # Convert headers for :httpc
-    httpc_headers = Enum.map(headers, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
+    httpc_headers =
+      Enum.map(headers, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
 
     request =
       if body do
@@ -198,7 +200,10 @@ defmodule AgUi.Client.HttpAgent do
 
     http_method = if body, do: :post, else: :get
 
-    case :httpc.request(http_method, request, [{:timeout, 30_000}], [{:body_format, :binary}, {:sync, true}]) do
+    case :httpc.request(http_method, request, [{:timeout, 30_000}], [
+           {:body_format, :binary},
+           {:sync, true}
+         ]) do
       {:ok, {{_, 200, _}, _resp_headers, resp_body}} ->
         send(parent, {:sse_data, IO.iodata_to_binary(resp_body)})
         send(parent, {:sse_done, self()})

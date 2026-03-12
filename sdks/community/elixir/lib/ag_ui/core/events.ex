@@ -64,16 +64,38 @@ defmodule AgUi.Core.Events do
     def reasoning_encrypted_value, do: "REASONING_ENCRYPTED_VALUE"
 
     @all_types [
-      "TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_END", "TEXT_MESSAGE_CHUNK",
-      "THINKING_TEXT_MESSAGE_START", "THINKING_TEXT_MESSAGE_CONTENT", "THINKING_TEXT_MESSAGE_END",
-      "TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END", "TOOL_CALL_CHUNK", "TOOL_CALL_RESULT",
-      "THINKING_START", "THINKING_END",
-      "STATE_SNAPSHOT", "STATE_DELTA", "MESSAGES_SNAPSHOT",
-      "ACTIVITY_SNAPSHOT", "ACTIVITY_DELTA",
-      "RAW", "CUSTOM",
-      "RUN_STARTED", "RUN_FINISHED", "RUN_ERROR", "STEP_STARTED", "STEP_FINISHED",
-      "REASONING_START", "REASONING_MESSAGE_START", "REASONING_MESSAGE_CONTENT",
-      "REASONING_MESSAGE_END", "REASONING_MESSAGE_CHUNK", "REASONING_END",
+      "TEXT_MESSAGE_START",
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_END",
+      "TEXT_MESSAGE_CHUNK",
+      "THINKING_TEXT_MESSAGE_START",
+      "THINKING_TEXT_MESSAGE_CONTENT",
+      "THINKING_TEXT_MESSAGE_END",
+      "TOOL_CALL_START",
+      "TOOL_CALL_ARGS",
+      "TOOL_CALL_END",
+      "TOOL_CALL_CHUNK",
+      "TOOL_CALL_RESULT",
+      "THINKING_START",
+      "THINKING_END",
+      "STATE_SNAPSHOT",
+      "STATE_DELTA",
+      "MESSAGES_SNAPSHOT",
+      "ACTIVITY_SNAPSHOT",
+      "ACTIVITY_DELTA",
+      "RAW",
+      "CUSTOM",
+      "RUN_STARTED",
+      "RUN_FINISHED",
+      "RUN_ERROR",
+      "STEP_STARTED",
+      "STEP_FINISHED",
+      "REASONING_START",
+      "REASONING_MESSAGE_START",
+      "REASONING_MESSAGE_CONTENT",
+      "REASONING_MESSAGE_END",
+      "REASONING_MESSAGE_CHUNK",
+      "REASONING_END",
       "REASONING_ENCRYPTED_VALUE"
     ]
 
@@ -102,8 +124,13 @@ defmodule AgUi.Core.Events do
     @moduledoc "Signals the start of an agent run."
     @enforce_keys [:thread_id, :run_id]
     defstruct [
-      :thread_id, :run_id, :parent_run_id, :input,
-      type: "RUN_STARTED", timestamp: nil, raw_event: nil
+      :thread_id,
+      :run_id,
+      :parent_run_id,
+      :input,
+      type: "RUN_STARTED",
+      timestamp: nil,
+      raw_event: nil
     ]
 
     @type t :: %__MODULE__{
@@ -121,8 +148,12 @@ defmodule AgUi.Core.Events do
     @moduledoc "Signals the successful completion of an agent run."
     @enforce_keys [:thread_id, :run_id]
     defstruct [
-      :thread_id, :run_id, :result,
-      type: "RUN_FINISHED", timestamp: nil, raw_event: nil
+      :thread_id,
+      :run_id,
+      :result,
+      type: "RUN_FINISHED",
+      timestamp: nil,
+      raw_event: nil
     ]
 
     @type t :: %__MODULE__{
@@ -139,8 +170,11 @@ defmodule AgUi.Core.Events do
     @moduledoc "Signals an error during an agent run."
     @enforce_keys [:message]
     defstruct [
-      :message, :code,
-      type: "RUN_ERROR", timestamp: nil, raw_event: nil
+      :message,
+      :code,
+      type: "RUN_ERROR",
+      timestamp: nil,
+      raw_event: nil
     ]
 
     @type t :: %__MODULE__{
@@ -184,8 +218,12 @@ defmodule AgUi.Core.Events do
     @moduledoc "Signals the start of a text message."
     @enforce_keys [:message_id]
     defstruct [
-      :message_id, :name,
-      role: "assistant", type: "TEXT_MESSAGE_START", timestamp: nil, raw_event: nil
+      :message_id,
+      :name,
+      role: "assistant",
+      type: "TEXT_MESSAGE_START",
+      timestamp: nil,
+      raw_event: nil
     ]
 
     @type t :: %__MODULE__{
@@ -228,8 +266,13 @@ defmodule AgUi.Core.Events do
   defmodule TextMessageChunk do
     @moduledoc "Convenience event that auto-expands to Start/Content/End."
     defstruct [
-      :message_id, :role, :delta, :name,
-      type: "TEXT_MESSAGE_CHUNK", timestamp: nil, raw_event: nil
+      :message_id,
+      :role,
+      :delta,
+      :name,
+      type: "TEXT_MESSAGE_CHUNK",
+      timestamp: nil,
+      raw_event: nil
     ]
 
     @type t :: %__MODULE__{
@@ -247,7 +290,7 @@ defmodule AgUi.Core.Events do
 
   defmodule ThinkingTextMessageStart do
     @moduledoc "Signals the start of a thinking text message."
-    defstruct [type: "THINKING_TEXT_MESSAGE_START", timestamp: nil, raw_event: nil]
+    defstruct type: "THINKING_TEXT_MESSAGE_START", timestamp: nil, raw_event: nil
   end
 
   defmodule ThinkingTextMessageContent do
@@ -258,7 +301,7 @@ defmodule AgUi.Core.Events do
 
   defmodule ThinkingTextMessageEnd do
     @moduledoc "Signals the end of a thinking text message."
-    defstruct [type: "THINKING_TEXT_MESSAGE_END", timestamp: nil, raw_event: nil]
+    defstruct type: "THINKING_TEXT_MESSAGE_END", timestamp: nil, raw_event: nil
   end
 
   # -- Tool Call Events -------------------------------------------------------
@@ -267,8 +310,12 @@ defmodule AgUi.Core.Events do
     @moduledoc "Signals the start of a tool call."
     @enforce_keys [:tool_call_id, :tool_call_name]
     defstruct [
-      :tool_call_id, :tool_call_name, :parent_message_id,
-      type: "TOOL_CALL_START", timestamp: nil, raw_event: nil
+      :tool_call_id,
+      :tool_call_name,
+      :parent_message_id,
+      type: "TOOL_CALL_START",
+      timestamp: nil,
+      raw_event: nil
     ]
 
     @type t :: %__MODULE__{
@@ -311,8 +358,13 @@ defmodule AgUi.Core.Events do
   defmodule ToolCallChunk do
     @moduledoc "Convenience event for tool calls without explicit Start/End."
     defstruct [
-      :tool_call_id, :tool_call_name, :parent_message_id, :delta,
-      type: "TOOL_CALL_CHUNK", timestamp: nil, raw_event: nil
+      :tool_call_id,
+      :tool_call_name,
+      :parent_message_id,
+      :delta,
+      type: "TOOL_CALL_CHUNK",
+      timestamp: nil,
+      raw_event: nil
     ]
 
     @type t :: %__MODULE__{
@@ -330,8 +382,13 @@ defmodule AgUi.Core.Events do
     @moduledoc "Delivers the result of a tool call execution."
     @enforce_keys [:message_id, :tool_call_id, :content]
     defstruct [
-      :message_id, :tool_call_id, :content, :role,
-      type: "TOOL_CALL_RESULT", timestamp: nil, raw_event: nil
+      :message_id,
+      :tool_call_id,
+      :content,
+      :role,
+      type: "TOOL_CALL_RESULT",
+      timestamp: nil,
+      raw_event: nil
     ]
 
     @type t :: %__MODULE__{
@@ -354,7 +411,7 @@ defmodule AgUi.Core.Events do
 
   defmodule ThinkingEnd do
     @moduledoc "Signals the end of a thinking step."
-    defstruct [type: "THINKING_END", timestamp: nil, raw_event: nil]
+    defstruct type: "THINKING_END", timestamp: nil, raw_event: nil
   end
 
   # -- State Management Events ------------------------------------------------
@@ -404,8 +461,13 @@ defmodule AgUi.Core.Events do
     @moduledoc "Delivers a complete snapshot of an activity message."
     @enforce_keys [:message_id, :activity_type, :content]
     defstruct [
-      :message_id, :activity_type, :content,
-      replace: true, type: "ACTIVITY_SNAPSHOT", timestamp: nil, raw_event: nil
+      :message_id,
+      :activity_type,
+      :content,
+      replace: true,
+      type: "ACTIVITY_SNAPSHOT",
+      timestamp: nil,
+      raw_event: nil
     ]
 
     @type t :: %__MODULE__{
@@ -423,8 +485,12 @@ defmodule AgUi.Core.Events do
     @moduledoc "Applies JSON Patch updates to an activity message."
     @enforce_keys [:message_id, :activity_type, :patch]
     defstruct [
-      :message_id, :activity_type, :patch,
-      type: "ACTIVITY_DELTA", timestamp: nil, raw_event: nil
+      :message_id,
+      :activity_type,
+      :patch,
+      type: "ACTIVITY_DELTA",
+      timestamp: nil,
+      raw_event: nil
     ]
 
     @type t :: %__MODULE__{
@@ -448,13 +514,25 @@ defmodule AgUi.Core.Events do
   defmodule ReasoningMessageStart do
     @moduledoc "Signals the start of a reasoning message."
     @enforce_keys [:message_id]
-    defstruct [:message_id, role: "reasoning", type: "REASONING_MESSAGE_START", timestamp: nil, raw_event: nil]
+    defstruct [
+      :message_id,
+      role: "reasoning",
+      type: "REASONING_MESSAGE_START",
+      timestamp: nil,
+      raw_event: nil
+    ]
   end
 
   defmodule ReasoningMessageContent do
     @moduledoc "Delivers a piece of reasoning message content."
     @enforce_keys [:message_id, :delta]
-    defstruct [:message_id, :delta, type: "REASONING_MESSAGE_CONTENT", timestamp: nil, raw_event: nil]
+    defstruct [
+      :message_id,
+      :delta,
+      type: "REASONING_MESSAGE_CONTENT",
+      timestamp: nil,
+      raw_event: nil
+    ]
   end
 
   defmodule ReasoningMessageEnd do
@@ -465,7 +543,13 @@ defmodule AgUi.Core.Events do
 
   defmodule ReasoningMessageChunk do
     @moduledoc "Convenience event for reasoning messages."
-    defstruct [:message_id, :delta, type: "REASONING_MESSAGE_CHUNK", timestamp: nil, raw_event: nil]
+    defstruct [
+      :message_id,
+      :delta,
+      type: "REASONING_MESSAGE_CHUNK",
+      timestamp: nil,
+      raw_event: nil
+    ]
   end
 
   defmodule ReasoningEnd do
@@ -478,8 +562,12 @@ defmodule AgUi.Core.Events do
     @moduledoc "Attaches encrypted chain-of-thought to a message or tool call."
     @enforce_keys [:subtype, :entity_id, :encrypted_value]
     defstruct [
-      :subtype, :entity_id, :encrypted_value,
-      type: "REASONING_ENCRYPTED_VALUE", timestamp: nil, raw_event: nil
+      :subtype,
+      :entity_id,
+      :encrypted_value,
+      type: "REASONING_ENCRYPTED_VALUE",
+      timestamp: nil,
+      raw_event: nil
     ]
 
     @type t :: %__MODULE__{

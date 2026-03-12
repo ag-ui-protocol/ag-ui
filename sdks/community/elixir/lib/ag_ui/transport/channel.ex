@@ -46,19 +46,21 @@ defmodule AgUi.Transport.Channel do
       end
 
       def join("ag_ui:agent:" <> agent_id, _params, socket) do
-        socket = assign(socket, :ag_ui_filter, fn event ->
-          Map.get(event, :run_id) == agent_id or
-          Map.get(event, :thread_id) == agent_id
-        end)
+        socket =
+          assign(socket, :ag_ui_filter, fn event ->
+            Map.get(event, :run_id) == agent_id or
+              Map.get(event, :thread_id) == agent_id
+          end)
 
         send(self(), :subscribe_ag_ui)
         {:ok, socket}
       end
 
       def join("ag_ui:thread:" <> thread_id, _params, socket) do
-        socket = assign(socket, :ag_ui_filter, fn event ->
-          Map.get(event, :thread_id) == thread_id
-        end)
+        socket =
+          assign(socket, :ag_ui_filter, fn event ->
+            Map.get(event, :thread_id) == thread_id
+          end)
 
         send(self(), :subscribe_ag_ui)
         {:ok, socket}
@@ -92,7 +94,7 @@ defmodule AgUi.Transport.Channel do
       defp build_filter(%{"agent_id" => agent_id}) when is_binary(agent_id) do
         fn event ->
           Map.get(event, :run_id) == agent_id or
-          Map.get(event, :thread_id) == agent_id
+            Map.get(event, :thread_id) == agent_id
         end
       end
 

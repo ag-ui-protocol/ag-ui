@@ -34,13 +34,15 @@ defmodule AgUi.Middleware.Pipeline do
 
   @doc "Adds a named middleware function to the pipeline."
   @spec add(t(), atom(), middleware_fn()) :: t()
-  def add(%__MODULE__{steps: steps} = pipeline, name, fun) when is_atom(name) and is_function(fun, 1) do
+  def add(%__MODULE__{steps: steps} = pipeline, name, fun)
+      when is_atom(name) and is_function(fun, 1) do
     %{pipeline | steps: steps ++ [{name, fun}]}
   end
 
   @doc "Prepends a named middleware function to the pipeline."
   @spec prepend(t(), atom(), middleware_fn()) :: t()
-  def prepend(%__MODULE__{steps: steps} = pipeline, name, fun) when is_atom(name) and is_function(fun, 1) do
+  def prepend(%__MODULE__{steps: steps} = pipeline, name, fun)
+      when is_atom(name) and is_function(fun, 1) do
     %{pipeline | steps: [{name, fun} | steps]}
   end
 

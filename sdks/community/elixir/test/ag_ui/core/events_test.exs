@@ -2,18 +2,39 @@ defmodule AgUi.Core.EventsTest do
   use ExUnit.Case, async: true
 
   alias AgUi.Core.Events
+
   alias AgUi.Core.Events.{
     EventType,
-    RunStarted, RunFinished, RunError,
-    StepStarted, StepFinished,
-    TextMessageStart, TextMessageContent, TextMessageEnd, TextMessageChunk,
-    ThinkingTextMessageStart, ThinkingTextMessageContent, ThinkingTextMessageEnd,
-    ToolCallStart, ToolCallArgs, ToolCallEnd, ToolCallResult,
-    StateSnapshot, StateDelta, MessagesSnapshot,
-    ActivitySnapshot, ActivityDelta,
-    ReasoningStart, ReasoningMessageStart, ReasoningMessageContent,
-    ReasoningMessageEnd, ReasoningMessageChunk, ReasoningEnd, ReasoningEncryptedValue,
-    Raw, Custom
+    RunStarted,
+    RunFinished,
+    RunError,
+    StepStarted,
+    StepFinished,
+    TextMessageStart,
+    TextMessageContent,
+    TextMessageEnd,
+    TextMessageChunk,
+    ThinkingTextMessageStart,
+    ThinkingTextMessageContent,
+    ThinkingTextMessageEnd,
+    ToolCallStart,
+    ToolCallArgs,
+    ToolCallEnd,
+    ToolCallResult,
+    StateSnapshot,
+    StateDelta,
+    MessagesSnapshot,
+    ActivitySnapshot,
+    ActivityDelta,
+    ReasoningStart,
+    ReasoningMessageStart,
+    ReasoningMessageContent,
+    ReasoningMessageEnd,
+    ReasoningMessageChunk,
+    ReasoningEnd,
+    ReasoningEncryptedValue,
+    Raw,
+    Custom
   }
 
   # -- EventType --------------------------------------------------------------
@@ -130,7 +151,10 @@ defmodule AgUi.Core.EventsTest do
   describe "ThinkingTextMessage events" do
     test "creates start/content/end" do
       assert %ThinkingTextMessageStart{}.type == "THINKING_TEXT_MESSAGE_START"
-      assert %ThinkingTextMessageContent{delta: "thinking..."}.type == "THINKING_TEXT_MESSAGE_CONTENT"
+
+      assert %ThinkingTextMessageContent{delta: "thinking..."}.type ==
+               "THINKING_TEXT_MESSAGE_CONTENT"
+
       assert %ThinkingTextMessageEnd{}.type == "THINKING_TEXT_MESSAGE_END"
     end
   end
@@ -216,6 +240,7 @@ defmodule AgUi.Core.EventsTest do
         activity_type: "PLAN",
         patch: [%{"op" => "add", "path" => "/step", "value" => "done"}]
       }
+
       assert event.type == "ACTIVITY_DELTA"
     end
   end
@@ -226,7 +251,10 @@ defmodule AgUi.Core.EventsTest do
     test "full reasoning lifecycle" do
       assert %ReasoningStart{message_id: "m1"}.type == "REASONING_START"
       assert %ReasoningMessageStart{message_id: "m1"}.role == "reasoning"
-      assert %ReasoningMessageContent{message_id: "m1", delta: "think..."}.type == "REASONING_MESSAGE_CONTENT"
+
+      assert %ReasoningMessageContent{message_id: "m1", delta: "think..."}.type ==
+               "REASONING_MESSAGE_CONTENT"
+
       assert %ReasoningMessageEnd{message_id: "m1"}.type == "REASONING_MESSAGE_END"
       assert %ReasoningEnd{message_id: "m1"}.type == "REASONING_END"
     end
@@ -237,7 +265,12 @@ defmodule AgUi.Core.EventsTest do
     end
 
     test "ReasoningEncryptedValue" do
-      event = %ReasoningEncryptedValue{subtype: "message", entity_id: "m1", encrypted_value: "enc..."}
+      event = %ReasoningEncryptedValue{
+        subtype: "message",
+        entity_id: "m1",
+        encrypted_value: "enc..."
+      }
+
       assert event.type == "REASONING_ENCRYPTED_VALUE"
     end
   end
