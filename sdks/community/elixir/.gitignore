@@ -1,0 +1,42 @@
+# Elixir/Mix build artifacts
+/_build/
+/deps/
+/doc/
+*.ez
+*.beam
+
+# Hex package tarball
+ag_ui-*.tar
+
+# Generated on crash dump
+erl_crash.dump
+
+# Test coverage
+/cover/
+
+# Temporary files
+/tmp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Claude Code artifacts
+.claude/
+.claude-*
+CLAUDE.md
+*.claude.md
+.force/
+lessons/
+.hook_state/
+
+# Environment
+.env
+.env.*
