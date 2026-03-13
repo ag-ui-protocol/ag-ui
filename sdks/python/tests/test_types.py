@@ -1,4 +1,5 @@
 import unittest
+import warnings
 from pydantic import ValidationError
 from pydantic import TypeAdapter
 
@@ -756,6 +757,38 @@ class TestBaseTypes(unittest.TestCase):
         self.assertEqual(
             deserialized.state["session"]["user"]["preferences"]["filters"],
             ["important", "urgent"]
+        )
+
+
+    def test_no_unsupported_field_attribute_warnings_on_schema_generation(self):
+        """Test that generating a JSON schema for RunAgentInput does not emit
+        UnsupportedFieldAttributeWarning.
+
+        Regression test for https://github.com/ag-ui-protocol/ag-ui/issues/1162.
+        When RunAgentInput is used as a FastAPI endpoint parameter, Pydantic
+        internally builds a JSON schema via TypeAdapter. If the discriminated
+        union type aliases (Message, InputContent) use Field(discriminator=...)
+        together with an alias_generator, Pydantic emits
+        UnsupportedFieldAttributeWarning for every alias-generated field.
+        """
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+
+            # This mirrors what FastAPI does when it encounters RunAgentInput
+            # as a request body parameter: it creates a TypeAdapter and
+            # generates the JSON schema for OpenAPI docs.
+            ta = TypeAdapter(RunAgentInput)
+            ta.json_schema()
+
+        field_attr_warnings = [
+            w for w in caught
+            if "UnsupportedFieldAttribute" in w.category.__name__
+        ]
+        self.assertEqual(
+            len(field_attr_warnings),
+            0,
+            f"Expected no UnsupportedFieldAttributeWarning but got {len(field_attr_warnings)}: "
+            + "; ".join(str(w.message) for w in field_attr_warnings),
         )
 
 
