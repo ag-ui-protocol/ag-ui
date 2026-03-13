@@ -22,7 +22,6 @@
 
         <module>servers/spring</module>
 
-        <module>integrations/spring-ai</module>
     </modules>
 
     <properties>
