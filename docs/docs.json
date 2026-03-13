@@ -90,6 +90,7 @@
                 "pages": [
                   "sdk/js/core/overview",
                   "sdk/js/core/types",
+                  "sdk/js/core/multimodal-inputs",
                   "sdk/js/core/events"
                 ]
               },
@@ -116,6 +117,7 @@
                 "pages": [
                   "sdk/python/core/overview",
                   "sdk/python/core/types",
+                  "sdk/python/core/multimodal-inputs",
                   "sdk/python/core/events"
                 ]
               },

@@ -2,6 +2,172 @@ import { BaseEvent, AGUIEvent, EventSchemas, EventType, Message } from "@ag-ui/c
 import * as protoEvents from "./generated/events";
 import * as protoPatch from "./generated/patch";
 
+const toProtoSource = (source: any): any => {
+  if (!source || typeof source !== "object") {
+    return undefined;
+  }
+
+  if (source.type === "data") {
+    return {
+      data: {
+        value: source.value,
+        mimeType: source.mimeType,
+      },
+    };
+  }
+
+  if (source.type === "url") {
+    return {
+      url: {
+        value: source.value,
+        mimeType: source.mimeType,
+      },
+    };
+  }
+
+  return undefined;
+};
+
+const toProtoContentPart = (part: any): any => {
+  if (!part || typeof part !== "object") {
+    return undefined;
+  }
+
+  switch (part.type) {
+    case "text":
+      return {
+        text: {
+          text: part.text,
+        },
+      };
+    case "image":
+      return {
+        image: {
+          source: toProtoSource(part.source),
+          metadata: part.metadata,
+        },
+      };
+    case "audio":
+      return {
+        audio: {
+          source: toProtoSource(part.source),
+          metadata: part.metadata,
+        },
+      };
+    case "video":
+      return {
+        video: {
+          source: toProtoSource(part.source),
+          metadata: part.metadata,
+        },
+      };
+    case "document":
+      return {
+        document: {
+          source: toProtoSource(part.source),
+          metadata: part.metadata,
+        },
+      };
+    case "binary": {
+      const source = part.data
+        ? { data: { value: part.data, mimeType: part.mimeType } }
+        : part.url
+          ? { url: { value: part.url, mimeType: part.mimeType } }
+          : part.id
+            ? { url: { value: part.id, mimeType: part.mimeType } }
+            : undefined;
+
+      if (!source) {
+        return undefined;
+      }
+
+      return {
+        document: {
+          source,
+          metadata: {
+            legacyBinary: true,
+            filename: part.filename,
+            id: part.id,
+          },
+        },
+      };
+    }
+    default:
+      return undefined;
+  }
+};
+
+const fromProtoSource = (source: any): any => {
+  if (!source || typeof source !== "object") {
+    return undefined;
+  }
+
+  if (source.data) {
+    return {
+      type: "data",
+      value: source.data.value,
+      mimeType: source.data.mimeType,
+    };
+  }
+
+  if (source.url) {
+    return {
+      type: "url",
+      value: source.url.value,
+      mimeType: source.url.mimeType,
+    };
+  }
+
+  return undefined;
+};
+
+const fromProtoContentPart = (part: any): any => {
+  if (!part || typeof part !== "object") {
+    return undefined;
+  }
+
+  if (part.text) {
+    return {
+      type: "text",
+      text: part.text.text,
+    };
+  }
+
+  if (part.image) {
+    return {
+      type: "image",
+      source: fromProtoSource(part.image.source),
+      metadata: part.image.metadata,
+    };
+  }
+
+  if (part.audio) {
+    return {
+      type: "audio",
+      source: fromProtoSource(part.audio.source),
+      metadata: part.audio.metadata,
+    };
+  }
+
+  if (part.video) {
+    return {
+      type: "video",
+      source: fromProtoSource(part.video.source),
+      metadata: part.video.metadata,
+    };
+  }
+
+  if (part.document) {
+    return {
+      type: "document",
+      source: fromProtoSource(part.document.source),
+      metadata: part.document.metadata,
+    };
+  }
+
+  return undefined;
+};
+
 function toCamelCase(str: string): string {
   return str.toLowerCase().replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
 }
@@ -39,10 +205,22 @@ export function encode(event: BaseEvent): Uint8Array {
   if (type === EventType.MESSAGES_SNAPSHOT && Array.isArray(rest.messages)) {
     rest.messages = (rest.messages as Message[]).map((message) => {
       const untypedMessage = message as any;
-      if (untypedMessage.toolCalls === undefined) {
-        return { ...message, toolCalls: [] };
+      const normalizedMessage: any = { ...untypedMessage, contentParts: [] };
+
+      if (Array.isArray(untypedMessage.content)) {
+        const contentParts = untypedMessage.content
+          .map((part: any) => toProtoContentPart(part))
+          .filter((part: any) => part !== undefined);
+
+        normalizedMessage.contentParts = contentParts;
+        normalizedMessage.content = undefined;
       }
-      return message;
+
+      if (untypedMessage.toolCalls === undefined) {
+        normalizedMessage.toolCalls = [];
+      }
+
+      return normalizedMessage;
     });
   }
 
@@ -85,6 +263,21 @@ export function decode(data: Uint8Array): BaseEvent {
   if (decoded.type === EventType.MESSAGES_SNAPSHOT) {
     for (const message of (decoded as any).messages as Message[]) {
       const untypedMessage = message as any;
+
+      if (untypedMessage.role === "user" && Array.isArray(untypedMessage.contentParts)) {
+        const contentParts = untypedMessage.contentParts
+          .map((part: any) => fromProtoContentPart(part))
+          .filter((part: any) => part !== undefined);
+
+        if (contentParts.length > 0) {
+          untypedMessage.content = contentParts;
+        }
+      }
+
+      if (Array.isArray(untypedMessage.contentParts) && untypedMessage.contentParts.length === 0) {
+        untypedMessage.contentParts = undefined;
+      }
+
       if (untypedMessage.toolCalls?.length === 0) {
         untypedMessage.toolCalls = undefined;
       }

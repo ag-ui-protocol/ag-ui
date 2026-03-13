@@ -385,7 +385,20 @@ describe("parseProtoStream", () => {
         {
           id: "msg3",
           role: "user",
-          content: "I need help with coding",
+          content: [
+            {
+              type: "text",
+              text: "I need help with coding",
+            },
+            {
+              type: "image",
+              source: {
+                type: "url",
+                value: "https://example.com/mock.png",
+                mimeType: "image/png",
+              },
+            },
+          ],
         },
         {
           id: "msg4",
