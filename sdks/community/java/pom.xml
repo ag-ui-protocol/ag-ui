@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.ag-ui.community</groupId>
+    <groupId>io.github.pascalwilbrink.ag-ui.community</groupId>
     <artifactId>java-ag-ui</artifactId>
     <version>0.0.1</version>
     <packaging>pom</packaging>
@@ -122,7 +122,7 @@
                     <configuration>
                         <source>17</source>
                         <sourcepath>${basedir}/src/main/java</sourcepath>
-                        <subpackages>com.ag-ui</subpackages>
+                        <subpackages>com.agui</subpackages>
                         <skip>false</skip>
                     </configuration>
                 </plugin>
@@ -224,20 +224,6 @@
             </plugin>
 
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-gpg-plugin</artifactId>
-                <version>3.1.0</version>
-                <executions>
-                    <execution>
-                        <id>sign-artifacts</id>
-                        <phase>verify</phase>
-                        <goals>
-                            <goal>sign</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
                 <groupId>org.sonatype.central</groupId>
                 <artifactId>central-publishing-maven-plugin</artifactId>
                 <version>0.9.0</version>
@@ -288,6 +274,24 @@
                 <maven.javadoc.skip>false</maven.javadoc.skip>
                 <maven.source.skip>false</maven.source.skip>
             </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
         <profile>
             <id>local</id>
