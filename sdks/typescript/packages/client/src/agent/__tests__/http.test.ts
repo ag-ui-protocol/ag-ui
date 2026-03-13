@@ -1,4 +1,4 @@
-import { HttpAgent } from "../http";
+import { HttpAgent } from "../full-http";
 import { runHttpRequest, HttpEvent, HttpEventType } from "@/run/http-request";
 import { v4 as uuidv4 } from "uuid";
 import { Observable, of } from "rxjs";

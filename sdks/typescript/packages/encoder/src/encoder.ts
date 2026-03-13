@@ -1,7 +1,6 @@
 import { BaseEvent } from "@ag-ui/core";
-import * as proto from "@ag-ui/proto";
+import {AGUI_MEDIA_TYPE, encode,} from "@ag-ui/proto";
 import { preferredMediaTypes } from "./media-type";
-
 export interface EventEncoderParams {
   accept?: string;
 }
@@ -15,7 +14,7 @@ export class EventEncoder {
 
   getContentType(): string {
     if (this.acceptsProtobuf) {
-      return proto.AGUI_MEDIA_TYPE;
+      return AGUI_MEDIA_TYPE;
     } else {
       return "text/event-stream";
     }
@@ -41,7 +40,7 @@ export class EventEncoder {
   }
 
   encodeProtobuf(event: BaseEvent): Uint8Array {
-    const messageBytes = proto.encode(event);
+    const messageBytes = encode(event);
     const length = messageBytes.length;
 
     // Create a buffer for 4 bytes (for the uint32 length) plus the message bytes
@@ -61,9 +60,9 @@ export class EventEncoder {
 
   private isProtobufAccepted(acceptHeader: string): boolean {
     // Pass the Accept header and an array with your media type
-    const preferred = preferredMediaTypes(acceptHeader, [proto.AGUI_MEDIA_TYPE]);
+    const preferred = preferredMediaTypes(acceptHeader, [AGUI_MEDIA_TYPE]);
 
     // If the returned array includes your media type, it's acceptable
-    return preferred.includes(proto.AGUI_MEDIA_TYPE);
+    return preferred.includes(AGUI_MEDIA_TYPE);
   }
 }

@@ -1,6 +1,6 @@
 import { EventEncoder } from "../encoder";
 import { BaseEvent, EventType, TextMessageStartEvent } from "@ag-ui/core";
-import * as proto from "@ag-ui/proto";
+import { AGUI_MEDIA_TYPE } from "@ag-ui/proto";
 
 describe("Encoder Tests", () => {
   // Create a valid TextMessageStartEvent event
@@ -15,7 +15,7 @@ describe("Encoder Tests", () => {
     it("should return protobuf encoded data when accept header includes protobuf media type", () => {
       // Setup an encoder with protobuf accepted
       const encoder = new EventEncoder({
-        accept: `text/event-stream, ${proto.AGUI_MEDIA_TYPE}`,
+        accept: `text/event-stream, ${AGUI_MEDIA_TYPE}`,
       });
 
       // Get the binary encoding

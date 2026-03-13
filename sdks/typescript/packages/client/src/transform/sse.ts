@@ -1,5 +1,7 @@
 import { Observable, Subject } from "rxjs";
 import { HttpEvent, HttpEventType } from "../run/http-request";
+import { EventStreamParser } from "./base-type";
+import { BaseEvent, EventSchemas, EventType } from "@ag-ui/core";
 
 /**
  * Parses a stream of HTTP events into a stream of JSON objects using Server-Sent Events (SSE) format.
@@ -84,3 +86,46 @@ export const parseSSEStream = (source$: Observable<HttpEvent>): Observable<any> 
 
   return jsonSubject.asObservable();
 };
+
+
+/**
+ * SSE Stream Parser that converts a stream of HttpEvents into parsed JSON objects based on the SSE format.
+ * It listens for HttpDataEvents, decodes the data as UTF-8 text, and processes it according to SSE rules (lines starting with "data:").
+ * Parsed JSON objects are emitted through the provided eventSubject.
+ * Errors in parsing or unexpected formats will be emitted as errors on the eventSubject.
+ * The parser will ignore HttpHeadersEvents and only process HttpDataEvents.
+ * 
+ * To use as part of the argument for transformHttpEventStreamFactory, simply pass in the parser function along with a condition that checks for the appropriate media type in the headers.
+ * 
+ * Example usage:
+ * 
+ * const transformStream = transformHttpEventStreamFactory([
+ *  {
+ *   condition: (event) => event.headers.get("content-type") === "text/event-stream", parser: defaultSSEStreamParser
+ *  },
+ * ]);
+ */
+export const defaultSSEStreamParser: EventStreamParser = (source$, eventSubject) => parseSSEStream(source$).subscribe({
+  next: (json) => {
+    try {
+      const parsedEvent = EventSchemas.parse(json);
+      eventSubject.next(parsedEvent as BaseEvent);
+    } catch (err) {
+      eventSubject.error(err);
+    }
+  },
+  error: (err) => {
+    if ((err as DOMException)?.name === "AbortError") {
+      eventSubject.next({
+        type: EventType.RUN_ERROR,
+        message: (err as DOMException).message || "Request aborted",
+        code: "abort",
+        rawEvent: err,
+      });
+      eventSubject.complete();
+      return;
+    }
+    return eventSubject.error(err)
+  },
+  complete: () => eventSubject.complete(),
+})

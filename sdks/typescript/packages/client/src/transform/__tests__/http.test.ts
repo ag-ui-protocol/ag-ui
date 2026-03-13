@@ -1,8 +1,8 @@
 import { transformHttpEventStream } from "../http";
 import { HttpEvent, HttpEventType } from "../../run/http-request";
 import { parseProtoStream } from "../proto";
-import * as proto from "@ag-ui/proto";
 import { BaseEvent, EventType } from "@ag-ui/core";
+import { AGUI_MEDIA_TYPE } from "@ag-ui/proto";
 import { Subject, of, throwError } from "rxjs";
 import { describe, it, expect, vi, beforeEach, Mock, test } from "vitest";
 
@@ -40,7 +40,7 @@ describe("transformHttpEventStream", () => {
     mockHttpSource.next({
       type: HttpEventType.HEADERS,
       status: 200,
-      headers: new Headers([["content-type", proto.AGUI_MEDIA_TYPE]]),
+      headers: new Headers([["content-type", AGUI_MEDIA_TYPE]]),
     });
 
     // Send a DATA event
@@ -118,7 +118,7 @@ describe("transformHttpEventStream", () => {
       mockHttpSource.next({
         type: HttpEventType.HEADERS,
         status: 200,
-        headers: new Headers([["content-type", proto.AGUI_MEDIA_TYPE]]),
+        headers: new Headers([["content-type", AGUI_MEDIA_TYPE]]),
       });
     });
   });
