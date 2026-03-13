@@ -1036,7 +1036,6 @@ class LangGraphAgent:
             version: Literal["v1", "v2"] = "v2",
             config: Optional[RunnableConfig] = None,
             context: Optional[Dict[str, Any]] = None,
-            fork: Optional[Any] = None,
     ):
         kwargs = dict(
             input=input,
@@ -1057,9 +1056,6 @@ class LangGraphAgent:
 
         if config:
             kwargs['config'] = config
-
-        if fork:
-            kwargs.update(fork)
 
         return kwargs
 
