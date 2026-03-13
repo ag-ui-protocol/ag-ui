@@ -22,8 +22,6 @@
 
         <module>servers/spring</module>
 
-        <module>integrations/spring-ai</module>
-        <module>examples/spring-ai-example</module>
     </modules>
 
     <properties>
@@ -47,6 +45,9 @@
         <maven.deploy.skip>true</maven.deploy.skip>
     </properties>
 
+
+    <name>AG-UI Java SDK</name>
+    <description>Java SDK for the AG-UI protocol — standardized agent-user interaction over event streams</description>
 
     <url>https://github.com/ag-ui-protocol/ag-ui</url>
 
@@ -75,13 +76,6 @@
         <repository>
             <id>central</id>
             <url>https://repo1.maven.org/maven2</url>
-        </repository>
-        <repository>
-            <id>github</id>
-            <url>https://maven.pkg.github.com/work-m8/ag-ui-4j</url>
-            <snapshots>
-                <enabled>true</enabled>
-            </snapshots>
         </repository>
     </repositories>
 
@@ -122,7 +116,7 @@
                     <configuration>
                         <source>17</source>
                         <sourcepath>${basedir}/src/main/java</sourcepath>
-                        <subpackages>com.ag-ui</subpackages>
+                        <subpackages>com.agui</subpackages>
                         <skip>false</skip>
                     </configuration>
                 </plugin>
@@ -224,20 +218,6 @@
             </plugin>
 
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-gpg-plugin</artifactId>
-                <version>3.1.0</version>
-                <executions>
-                    <execution>
-                        <id>sign-artifacts</id>
-                        <phase>verify</phase>
-                        <goals>
-                            <goal>sign</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
                 <groupId>org.sonatype.central</groupId>
                 <artifactId>central-publishing-maven-plugin</artifactId>
                 <version>0.9.0</version>
@@ -288,6 +268,30 @@
                 <maven.javadoc.skip>false</maven.javadoc.skip>
                 <maven.source.skip>false</maven.source.skip>
             </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <configuration>
+                            <gpgArguments>
+                                <arg>--pinentry-mode</arg>
+                                <arg>loopback</arg>
+                            </gpgArguments>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
         <profile>
             <id>local</id>
