@@ -272,6 +272,15 @@ def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
                 index=data.get("index", 0)
             )
 
+        # DeepSeek-style format: additional_kwargs.reasoning_content (plain string)
+        reasoning_content = chunk.additional_kwargs.get("reasoning_content")
+        if reasoning_content and isinstance(reasoning_content, str):
+            return LangGraphReasoning(
+                type="text",
+                text=reasoning_content,
+                index=0
+            )
+
     return None
 
 
