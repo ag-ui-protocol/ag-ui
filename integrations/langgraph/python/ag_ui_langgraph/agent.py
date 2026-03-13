@@ -240,7 +240,8 @@ class LangGraphAgent:
                     if first_name:
                         predict_state_meta = event.get("metadata", {}).get("predict_state", [])
                         tool_used_to_predict_state = any(
-                            p.get("tool") == first_name for p in predict_state_meta
+                            (p.get("tool") if isinstance(p, dict) else getattr(p, "tool", None)) == first_name
+                            for p in predict_state_meta
                         )
                         if tool_used_to_predict_state:
                             self.active_run["model_made_tool_call"] = True
@@ -651,7 +652,7 @@ class LangGraphAgent:
             tool_call_used_to_predict_state = False
             if tool_call_data and tool_call_data.get("name") and predict_state_metadata:
                 tool_call_used_to_predict_state = any(
-                    predict_tool.get("tool") == tool_call_data["name"]
+                    (predict_tool.get("tool") if isinstance(predict_tool, dict) else getattr(predict_tool, "tool", None)) == tool_call_data["name"]
                     for predict_tool in predict_state_metadata
                 )
 
