@@ -42,6 +42,9 @@ jobs:
             </servers>
           </settings>
           EOF
+          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
+          echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
+          gpgconf --kill gpg-agent
 
       - name: Publish to Maven Central
         run: mvn --batch-mode deploy
