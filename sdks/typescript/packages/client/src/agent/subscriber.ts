@@ -215,18 +215,16 @@ export async function runSubscribersWithMutation(
     state: State,
   ) => MaybePromise<AgentStateMutation | void>,
 ): Promise<AgentStateMutation> {
-  let messages: Message[] = initialMessages;
-  let state: State = initialState;
+  const messages0 = structuredClone_(initialMessages);
+  const state0 = structuredClone_(initialState);
+  let messages: Message[] = messages0;
+  let state: State = state0;
 
   let stopPropagation: boolean | undefined = undefined;
 
   for (const subscriber of subscribers) {
     try {
-      const mutation = await executor(
-        subscriber,
-        structuredClone_(messages),
-        structuredClone_(state),
-      );
+      const mutation = await executor(subscriber, messages, state);
 
       if (mutation === undefined) {
         // Nothing returned – keep going
@@ -235,11 +233,11 @@ export async function runSubscribersWithMutation(
 
       // Merge messages/state so next subscriber sees latest view
       if (mutation.messages !== undefined) {
-        messages = mutation.messages;
+        messages = structuredClone_(mutation.messages);
       }
 
       if (mutation.state !== undefined) {
-        state = mutation.state;
+        state = structuredClone_(mutation.state);
       }
 
       stopPropagation = mutation.stopPropagation;
@@ -261,8 +259,8 @@ export async function runSubscribersWithMutation(
   }
 
   return {
-    ...(JSON.stringify(messages) !== JSON.stringify(initialMessages) ? { messages } : {}),
-    ...(JSON.stringify(state) !== JSON.stringify(initialState) ? { state } : {}),
+    ...(messages !== messages0 ? { messages } : {}),
+    ...(state !== state0 ? { state } : {}),
     ...(stopPropagation !== undefined ? { stopPropagation } : {}),
   };
 }
