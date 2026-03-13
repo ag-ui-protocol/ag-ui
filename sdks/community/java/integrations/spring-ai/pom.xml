@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>io.github.pascalwilbrink.ag-ui.community</groupId>
+        <groupId>.ag-ui.community</groupId>
         <artifactId>java-ag-ui</artifactId>
         <version>0.0.1</version>
         <relativePath>../../pom.xml</relativePath>
@@ -39,17 +39,17 @@
 
     <dependencies>
         <dependency>
-            <groupId>io.github.pascalwilbrink.ag-ui.community</groupId>
+            <groupId>.ag-ui.community</groupId>
             <artifactId>java-core</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>
         <dependency>
-            <groupId>io.github.pascalwilbrink.ag-ui.community</groupId>
+            <groupId>.ag-ui.community</groupId>
             <artifactId>java-json</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>
         <dependency>
-            <groupId>io.github.pascalwilbrink.ag-ui.community</groupId>
+            <groupId>.ag-ui.community</groupId>
             <artifactId>java-server</artifactId>
             <version>${ag-ui.version}</version>
         </dependency>
