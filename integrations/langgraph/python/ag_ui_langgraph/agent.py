@@ -1,5 +1,6 @@
 import uuid
 import json
+import contextvars
 from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Literal, Dict
 import inspect
 
@@ -95,15 +96,36 @@ ProcessedEvents = Union[
     StepFinishedEvent,
 ]
 
+_active_run_var: contextvars.ContextVar[Optional["RunMetadata"]] = contextvars.ContextVar("_active_run_var", default=None)
+_messages_in_process_var: contextvars.ContextVar["MessagesInProgressRecord"] = contextvars.ContextVar("_messages_in_process_var", default=None)
+
 class LangGraphAgent:
     def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None):
         self.name = name
         self.description = description
         self.graph = graph
         self.config = config or {}
-        self.messages_in_process: MessagesInProgressRecord = {}
-        self.active_run: Optional[RunMetadata] = None
         self.constant_schema_keys = ['messages', 'tools']
+
+    @property
+    def active_run(self) -> Optional["RunMetadata"]:
+        return _active_run_var.get()
+
+    @active_run.setter
+    def active_run(self, value: Optional["RunMetadata"]) -> None:
+        _active_run_var.set(value)
+
+    @property
+    def messages_in_process(self) -> "MessagesInProgressRecord":
+        val = _messages_in_process_var.get()
+        if val is None:
+            val = {}
+            _messages_in_process_var.set(val)
+        return val
+
+    @messages_in_process.setter
+    def messages_in_process(self, value: "MessagesInProgressRecord") -> None:
+        _messages_in_process_var.set(value)
 
     def _dispatch_event(self, event: ProcessedEvents) -> str:
         if event.type == EventType.RAW:
@@ -123,6 +145,10 @@ class LangGraphAgent:
             yield event_str
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[str, None]:
+        # Initialize per-request state via contextvars for concurrency isolation
+        _active_run_var.set(None)
+        _messages_in_process_var.set({})
+
         thread_id = input.thread_id or str(uuid.uuid4())
         INITIAL_ACTIVE_RUN = {
             "id": input.run_id,
@@ -411,7 +437,7 @@ class LangGraphAgent:
         return self.messages_in_process.get(run_id)
 
     def set_message_in_progress(self, run_id: str, data: MessageInProgress):
-        current_message_in_progress = self.messages_in_process.get(run_id, {})
+        current_message_in_progress = self.messages_in_process.get(run_id) or {}
         self.messages_in_process[run_id] = {
             **current_message_in_progress,
             **data,
