@@ -1,7 +1,10 @@
-import { Page, Locator, expect } from '@playwright/test';
-import { CopilotSelectors } from '../../utils/copilot-selectors';
-import { sendChatMessage, awaitLLMResponseDone } from '../../utils/copilot-actions';
-import { DEFAULT_WELCOME_MESSAGE } from '../../lib/constants';
+import { Page, Locator, expect } from "@playwright/test";
+import { CopilotSelectors } from "../../utils/copilot-selectors";
+import {
+  sendChatMessage,
+  awaitLLMResponseDone,
+} from "../../utils/copilot-actions";
+import { DEFAULT_WELCOME_MESSAGE } from "../../lib/constants";
 
 export class PredictiveStateUpdatesPage {
   readonly page: Page;
@@ -23,12 +26,18 @@ export class PredictiveStateUpdatesPage {
     this.agentGreeting = page.getByText(DEFAULT_WELCOME_MESSAGE);
     this.chatInput = CopilotSelectors.chatTextarea(page);
     this.sendButton = CopilotSelectors.sendButton(page);
-    this.agentResponsePrompt = page.locator('div.tiptap.ProseMirror');
-    this.userApprovalModal = page.locator('div.bg-white.rounded.shadow-lg >> text=Confirm Changes');
-    this.acceptedButton = page.getByText('✓ Accepted');
-    this.confirmedChangesResponse = CopilotSelectors.assistantMessages(page).first();
-    this.rejectedChangesResponse = CopilotSelectors.assistantMessages(page).last();
-    this.highlights = page.locator('.tiptap em');
+    this.agentResponsePrompt = page.locator("div.tiptap.ProseMirror");
+    this.userApprovalModal = page.locator(
+      '[data-testid="confirm-changes-modal"]',
+    );
+    this.acceptedButton = page.getByText("✓ Accepted");
+    this.confirmedChangesResponse = page
+      .locator('[data-testid="status-display"]', { hasText: "✓ Accepted" })
+      .last();
+    this.rejectedChangesResponse = page
+      .locator('[data-testid="status-display"]', { hasText: "✗ Rejected" })
+      .last();
+    this.highlights = page.locator(".tiptap em");
     this.agentMessage = CopilotSelectors.assistantMessages(page);
     this.userMessage = CopilotSelectors.userMessages(page);
   }
@@ -47,7 +56,7 @@ export class PredictiveStateUpdatesPage {
   }
 
   async getButton(page, buttonName) {
-    return page.getByRole('button', { name: buttonName }).click();
+    return page.getByRole("button", { name: buttonName }).click();
   }
 
   async getStatusLabelOfButton(page, statusText) {
@@ -56,7 +65,7 @@ export class PredictiveStateUpdatesPage {
 
   async getUserApproval() {
     const modal = this.userApprovalModal.last();
-    const confirmBtn = modal.getByRole('button', { name: 'Confirm' });
+    const confirmBtn = modal.locator('[data-testid="confirm-button"]');
     await expect(confirmBtn).toBeEnabled();
     await confirmBtn.click();
     await awaitLLMResponseDone(this.page);
@@ -64,30 +73,32 @@ export class PredictiveStateUpdatesPage {
 
   async getUserRejection() {
     const modal = this.userApprovalModal.last();
-    const rejectBtn = modal.getByRole('button', { name: 'Reject' });
+    const rejectBtn = modal.locator('[data-testid="reject-button"]');
     await expect(rejectBtn).toBeEnabled();
     await rejectBtn.click();
     await awaitLLMResponseDone(this.page);
   }
 
   async verifyAgentResponse(dragonName) {
-    const paragraphWithName = await this.page.locator(`div.tiptap >> text=${dragonName}`).first();
+    const paragraphWithName = await this.page
+      .locator(`div.tiptap >> text=${dragonName}`)
+      .first();
 
     const fullText = await paragraphWithName.textContent();
     if (!fullText) {
       return null;
     }
 
-    const match = fullText.match(new RegExp(dragonName, 'i'));
+    const match = fullText.match(new RegExp(dragonName, "i"));
     return match ? match[0] : null;
   }
 
-  async verifyHighlightedText(){
+  async verifyHighlightedText() {
     const highlightSelectors = [
-      '.tiptap em',
-      '.tiptap s',
-      'div.tiptap em',
-      'div.tiptap s'
+      ".tiptap em",
+      ".tiptap s",
+      "div.tiptap em",
+      "div.tiptap s",
     ];
 
     let count = 0;
@@ -101,7 +112,9 @@ export class PredictiveStateUpdatesPage {
     if (count > 0) {
       expect(count).toBeGreaterThan(0);
     } else {
-      const modal = this.page.locator('div.bg-white.rounded.shadow-lg').last();
+      const modal = this.page
+        .locator('[data-testid="confirm-changes-modal"]')
+        .last();
       await expect(modal).toBeVisible();
     }
   }

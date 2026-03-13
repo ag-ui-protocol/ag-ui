@@ -1,3 +1,4 @@
+import re
 import uuid
 import json
 from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Literal, Dict
@@ -12,7 +13,7 @@ except ImportError:
     from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage
     
 from langchain_core.runnables import RunnableConfig, ensure_config
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 
 from .types import (
@@ -173,106 +174,110 @@ class LangGraphAgent:
 
         should_exit = False
         current_graph_state = state
-        
-        async for event in stream:
-            subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs') if input.forwarded_props else False
-            is_subgraph_stream = (subgraphs_stream_enabled and (
-                event.get("event", "").startswith("events") or 
-                event.get("event", "").startswith("values")
-            ))
-            if event["event"] == "error":
+
+        try:
+            async for event in stream:
+                subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs') if input.forwarded_props else False
+                is_subgraph_stream = (subgraphs_stream_enabled and (
+                    event.get("event", "").startswith("events") or
+                    event.get("event", "").startswith("values")
+                ))
+                if event["event"] == "error":
+                    yield self._dispatch_event(
+                        RunErrorEvent(type=EventType.RUN_ERROR, message=event["data"]["message"], raw_event=event)
+                    )
+                    break
+
+                current_node_name = event.get("metadata", {}).get("langgraph_node")
+                event_type = event.get("event")
+                self.active_run["id"] = event.get("run_id")
+                exiting_node = False
+
+                if event_type == "on_chain_end" and isinstance(
+                        event.get("data", {}).get("output"), dict
+                ):
+                    current_graph_state.update(event["data"]["output"])
+                    exiting_node = self.active_run["node_name"] == current_node_name
+
+                should_exit = should_exit or (
+                        event_type == "on_custom_event" and
+                        event["name"] == "exit"
+                    )
+
+                if current_node_name and current_node_name != self.active_run.get("node_name"):
+                    for ev in self.handle_node_change(current_node_name):
+                        yield ev
+
+                updated_state = self.active_run.get("manually_emitted_state") or current_graph_state
+                has_state_diff = updated_state != state
+                if exiting_node or (has_state_diff and not self.get_message_in_progress(self.active_run["id"])):
+                    state = updated_state
+                    self.active_run["prev_node_name"] = self.active_run["node_name"]
+                    current_graph_state.update(updated_state)
+                    yield self._dispatch_event(
+                        StateSnapshotEvent(
+                            type=EventType.STATE_SNAPSHOT,
+                            snapshot=self.get_state_snapshot(state),
+                            raw_event=event,
+                        )
+                    )
+
                 yield self._dispatch_event(
-                    RunErrorEvent(type=EventType.RUN_ERROR, message=event["data"]["message"], raw_event=event)
-                )
-                break
-
-            current_node_name = event.get("metadata", {}).get("langgraph_node")
-            event_type = event.get("event")
-            self.active_run["id"] = event.get("run_id")
-            exiting_node = False
-
-            if event_type == "on_chain_end" and isinstance(
-                    event.get("data", {}).get("output"), dict
-            ):
-                current_graph_state.update(event["data"]["output"])
-                exiting_node = self.active_run["node_name"] == current_node_name
-
-            should_exit = should_exit or (
-                    event_type == "on_custom_event" and
-                    event["name"] == "exit"
+                    RawEvent(type=EventType.RAW, event=event)
                 )
 
-            if current_node_name and current_node_name != self.active_run.get("node_name"):
-                for ev in self.handle_node_change(current_node_name):
-                    yield ev
+                async for single_event in self._handle_single_event(event, state):
+                    yield single_event
 
-            updated_state = self.active_run.get("manually_emitted_state") or current_graph_state
-            has_state_diff = updated_state != state
-            if exiting_node or (has_state_diff and not self.get_message_in_progress(self.active_run["id"])):
-                state = updated_state
-                self.active_run["prev_node_name"] = self.active_run["node_name"]
-                current_graph_state.update(updated_state)
+            state = await self.graph.aget_state(config)
+
+            tasks = state.tasks if len(state.tasks) > 0 else None
+            interrupts = tasks[0].interrupts if tasks else []
+
+            writes = state.metadata.get("writes", {}) or {}
+            node_name = self.active_run["node_name"] if interrupts else next(iter(writes), None)
+            next_nodes = state.next or ()
+            is_end_node = len(next_nodes) == 0 and not interrupts
+
+            node_name = "__end__" if is_end_node else node_name
+
+            for interrupt in interrupts:
                 yield self._dispatch_event(
-                    StateSnapshotEvent(
-                        type=EventType.STATE_SNAPSHOT,
-                        snapshot=self.get_state_snapshot(state),
-                        raw_event=event,
+                    CustomEvent(
+                        type=EventType.CUSTOM,
+                        name=LangGraphEventTypes.OnInterrupt.value,
+                        value=dump_json_safe(interrupt.value),
+                        raw_event=interrupt,
                     )
                 )
 
+            if self.active_run.get("node_name") != node_name:
+                for ev in self.handle_node_change(node_name):
+                    yield ev
+
+            state_values = state.values if state.values else state
             yield self._dispatch_event(
-                RawEvent(type=EventType.RAW, event=event)
+                StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(state_values))
             )
 
-            async for single_event in self._handle_single_event(event, state):
-                yield single_event
-
-        state = await self.graph.aget_state(config)
-
-        tasks = state.tasks if len(state.tasks) > 0 else None
-        interrupts = tasks[0].interrupts if tasks else []
-
-        writes = state.metadata.get("writes", {}) or {}
-        node_name = self.active_run["node_name"] if interrupts else next(iter(writes), None)
-        next_nodes = state.next or ()
-        is_end_node = len(next_nodes) == 0 and not interrupts
-
-        node_name = "__end__" if is_end_node else node_name
-
-        for interrupt in interrupts:
+            snapshot_messages = self._filter_orphan_tool_messages(state_values.get("messages", []))
             yield self._dispatch_event(
-                CustomEvent(
-                    type=EventType.CUSTOM,
-                    name=LangGraphEventTypes.OnInterrupt.value,
-                    value=dump_json_safe(interrupt.value),
-                    raw_event=interrupt,
+                MessagesSnapshotEvent(
+                    type=EventType.MESSAGES_SNAPSHOT,
+                    messages=langchain_messages_to_agui(snapshot_messages),
                 )
             )
 
-        if self.active_run.get("node_name") != node_name:
-            for ev in self.handle_node_change(node_name):
+            for ev in self.handle_node_change(None):
                 yield ev
 
-        state_values = state.values if state.values else state
-        yield self._dispatch_event(
-            StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=self.get_state_snapshot(state_values))
-        )
-
-        yield self._dispatch_event(
-            MessagesSnapshotEvent(
-                type=EventType.MESSAGES_SNAPSHOT,
-                messages=langchain_messages_to_agui(state_values.get("messages", [])),
+            yield self._dispatch_event(
+                RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
             )
-        )
-
-        for ev in self.handle_node_change(None):
-            yield ev
-
-        yield self._dispatch_event(
-            RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
-        )
-        # Reset active run to how it was before the stream started
-        self.active_run = INITIAL_ACTIVE_RUN
+            # Reset active run to how it was before the stream started
+            self.active_run = INITIAL_ACTIVE_RUN
+        except Exception:
+            raise
 
 
     async def prepare_stream(self, input: RunAgentInput, agent_state: State, config: RunnableConfig):
@@ -411,7 +416,7 @@ class LangGraphAgent:
         return self.messages_in_process.get(run_id)
 
     def set_message_in_progress(self, run_id: str, data: MessageInProgress):
-        current_message_in_progress = self.messages_in_process.get(run_id, {})
+        current_message_in_progress = self.messages_in_process.get(run_id) or {}
         self.messages_in_process[run_id] = {
             **current_message_in_progress,
             **data,
@@ -452,9 +457,60 @@ class LangGraphAgent:
             messages = messages[1:]
 
         existing_messages: List[LangGraphPlatformMessage] = state.get("messages", [])
+
+        # Fix tool_call args that are strings instead of dicts.
+        # This happens when CopilotKit's after_agent restores frontend tool_calls
+        # and the checkpoint saves them with string args. Bedrock Converse API
+        # requires toolUse.input to be a JSON object (dict).
+        for msg in existing_messages:
+            if isinstance(msg, AIMessage) and getattr(msg, 'tool_calls', None):
+                for tc in msg.tool_calls:
+                    if isinstance(tc.get('args'), str):
+                        try:
+                            tc['args'] = json.loads(tc['args'])
+                        except (json.JSONDecodeError, TypeError):
+                            tc['args'] = {}
+
+        # Fix orphan ToolMessages injected by patch_orphan_tool_calls:
+        # Find the real content from AG-UI messages and replace the fake content.
+        # Only scan from the last HumanMessage to the end of existing_messages.
+        # Track replaced tool_call_ids so we don't also add the AG-UI duplicate.
+        agui_tool_content = {
+            m.tool_call_id: m.content
+            for m in messages
+            if isinstance(m, ToolMessage) and hasattr(m, 'tool_call_id')
+        }
+        replaced_tool_call_ids = set()
+        if agui_tool_content:
+            last_human_idx = -1
+            for i in range(len(existing_messages) - 1, -1, -1):
+                if isinstance(existing_messages[i], HumanMessage):
+                    last_human_idx = i
+                    break
+            if last_human_idx >= 0:
+                for i in range(last_human_idx + 1, len(existing_messages)):
+                    msg = existing_messages[i]
+                    if (
+                        isinstance(msg, ToolMessage)
+                        and isinstance(msg.content, str)
+                        and self._ORPHAN_TOOL_MSG_RE.match(msg.content)
+                        and hasattr(msg, 'tool_call_id')
+                        and msg.tool_call_id in agui_tool_content
+                    ):
+                        msg.content = agui_tool_content[msg.tool_call_id]
+                        replaced_tool_call_ids.add(msg.tool_call_id)
+
         existing_message_ids = {msg.id for msg in existing_messages}
 
-        new_messages = [msg for msg in messages if msg.id not in existing_message_ids]
+        new_messages = [
+            msg for msg in messages
+            if msg.id not in existing_message_ids
+            and not (
+                isinstance(msg, ToolMessage)
+                and hasattr(msg, 'tool_call_id')
+                and msg.tool_call_id in replaced_tool_call_ids
+            )
+        ]
 
         tools = input.tools or []
         tools_as_dicts = []
@@ -494,6 +550,36 @@ class LangGraphAgent:
                 "actions": unique_tools,
             },
         }
+
+    _ORPHAN_TOOL_MSG_RE = re.compile(
+        r"^Tool call '.+' with id '.+' was interrupted before completion\.$"
+    )
+
+    def _filter_orphan_tool_messages(self, messages: list) -> list:
+        """Remove fake ToolMessages injected by patch_orphan_tool_calls,
+        but only between the last user message and the end of the list."""
+        # Find the index of the last HumanMessage
+        last_human_idx = -1
+        for i in range(len(messages) - 1, -1, -1):
+            if isinstance(messages[i], HumanMessage):
+                last_human_idx = i
+                break
+
+        if last_human_idx == -1:
+            return messages
+
+        # Keep everything before the last user message as-is,
+        # filter the tail
+        head = messages[:last_human_idx + 1]
+        tail = [
+            m for m in messages[last_human_idx + 1:]
+            if not (
+                isinstance(m, ToolMessage)
+                and isinstance(m.content, str)
+                and self._ORPHAN_TOOL_MSG_RE.match(m.content)
+            )
+        ]
+        return head + tail
 
     def get_state_snapshot(self, state: State) -> State:
         schema_keys = self.active_run["schema_keys"]

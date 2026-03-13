@@ -176,7 +176,7 @@ class Tool(ConfiguredBaseModel):
     """
     name: str
     description: str
-    parameters: Any  # JSON Schema for the tool parameters
+    parameters: Optional[Any] = None  # JSON Schema for the tool parameters
 
 
 class RunAgentInput(ConfiguredBaseModel):

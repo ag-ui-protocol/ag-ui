@@ -1,0 +1,138 @@
+name: Publish Python Preview to TestPyPI
+
+# Triggered when the build workflow completes. Runs in the base repo context,
+# so it has access to secrets even for fork PRs. The code executed here comes
+# from the base branch, not the fork — only the built wheel artifacts come
+# from the fork's workflow run.
+on:
+  workflow_run:
+    workflows: ["Build Python Preview"]
+    types: [completed]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request'
+    permissions:
+      actions: read
+      pull-requests: write
+
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-preview-dist
+          path: dist-preview/
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Download PR metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: python-preview-metadata
+          path: pr-metadata/
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Read PR metadata
+        id: meta
+        run: |
+          echo "pr-number=$(cat pr-metadata/pr-number)" >> "$GITHUB_OUTPUT"
+          echo "version=$(cat pr-metadata/version)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(cat pr-metadata/sha)" >> "$GITHUB_OUTPUT"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: ">=0.8.0"
+
+      - name: Publish all packages to TestPyPI
+        run: |
+          echo "Publishing artifacts:"
+          ls -1 dist-preview/
+          uv publish \
+            --publish-url https://test.pypi.org/legacy/ \
+            --check-url https://test.pypi.org/simple/ \
+            dist-preview/*
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
+
+      - name: Find existing preview comment
+        if: always()
+        id: find-comment
+        uses: peter-evans/find-comment@v4
+        with:
+          issue-number: ${{ steps.meta.outputs.pr-number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: '<!-- ag-ui-python-preview -->'
+
+      - name: Post or update install instructions
+        if: success()
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ steps.meta.outputs.pr-number }}
+          edit-mode: replace
+          body: |
+            <!-- ag-ui-python-preview -->
+            ## Python Preview Packages
+
+            Version `${{ steps.meta.outputs.version }}` published to [TestPyPI](https://test.pypi.org).
+
+            > **Warning**: These packages are built from contributor code that may not yet have been vetted for correctness or security. Install at your own risk and do not use in production.
+
+            ### Install with uv
+
+            Add the TestPyPI index to your `pyproject.toml`:
+
+            ```toml
+            [[tool.uv.index]]
+            name = "testpypi"
+            url = "https://test.pypi.org/simple/"
+            explicit = true
+            ```
+
+            Then install the packages you need:
+
+            ```bash
+            # Core SDK
+            uv add 'ag-ui-protocol==${{ steps.meta.outputs.version }}' --index testpypi
+
+            # Integrations (each already depends on the matching ag-ui-protocol preview)
+            uv add 'ag-ui-langgraph==${{ steps.meta.outputs.version }}' --index testpypi
+            uv add 'ag-ui-crewai==${{ steps.meta.outputs.version }}' --index testpypi
+            # NOTE: ag-ui-agent-spec depends on pyagentspec (git-only, not on PyPI).
+            # You will need to install pyagentspec separately from its git repo.
+            uv add 'ag-ui-agent-spec==${{ steps.meta.outputs.version }}' --index testpypi
+            uv add 'ag_ui_adk==${{ steps.meta.outputs.version }}' --index testpypi
+            uv add 'ag_ui_strands==${{ steps.meta.outputs.version }}' --index testpypi
+            ```
+
+            ### Install with pip
+
+            ```bash
+            pip install \
+              --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple/ \
+              ag-ui-protocol==${{ steps.meta.outputs.version }}
+            ```
+
+            > Use `--extra-index-url https://pypi.org/simple/` so pip can resolve
+            > transitive dependencies (pydantic, fastapi, etc.) from real PyPI.
+
+            ---
+            _Commit: ${{ steps.meta.outputs.sha }}_
+
+      - name: Post failure comment
+        if: failure()
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ steps.meta.outputs.pr-number }}
+          edit-mode: replace
+          body: |
+            <!-- ag-ui-python-preview -->
+            ## Python Preview Packages — Publish Failed
+
+            Preview publish failed for commit ${{ steps.meta.outputs.sha }}.
+            See the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.

@@ -131,6 +131,8 @@ export class LangGraphAgent extends AbstractAgent {
   // Stop control flags
   private cancelRequested: boolean = false;
   private cancelSent: boolean = false;
+  // messages-tuple fallback: tracks whether "events" mode is producing data
+  private eventsStreamActive: boolean = false;
   // @ts-expect-error no need to initialize subscriber right now
   subscriber: Subscriber<ProcessedEvents>;
   constantSchemaKeys: string[] = DEFAULT_SCHEMA_KEYS;
@@ -191,16 +193,17 @@ export class LangGraphAgent extends AbstractAgent {
       threadId: input.threadId,
       hasFunctionStreaming: false,
     };
-    // Reset cancel flags for this run
+    // Reset per-run flags
     this.cancelRequested = false;
     this.cancelSent = false;
+    this.eventsStreamActive = false;
     this.subscriber = subscriber;
     if (!this.assistant) {
       this.assistant = await this.getAssistant();
     }
     const threadId = input.threadId ?? randomUUID();
     const streamMode =
-      input.forwardedProps?.streamMode ?? (["events", "values", "updates"] satisfies StreamMode[]);
+      input.forwardedProps?.streamMode ?? (["events", "values", "updates", "messages-tuple"] satisfies StreamMode[]);
     const preparedStream = await this.prepareStream({ ...input, threadId }, streamMode);
 
     if (!preparedStream) {
@@ -465,8 +468,14 @@ export class LangGraphAgent extends AbstractAgent {
           (streamResponseChunk.event.startsWith("events") ||
             streamResponseChunk.event.startsWith("values"));
 
+        // "messages-tuple" stream mode produces SSE events with type "messages",
+        // so we need to check for that mapping in addition to the direct mode name.
+        const isMessagesTupleEvent =
+          streamResponseChunk.event === "messages" &&
+          (Array.isArray(streamModes) ? streamModes : [streamModes]).includes("messages-tuple" as StreamMode);
+
         // @ts-ignore
-        if (!streamModes.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream && streamResponseChunk.event !== 'error') {
+        if (!streamModes.includes(streamResponseChunk.event as StreamMode) && !isSubgraphStream && !isMessagesTupleEvent && streamResponseChunk.event !== 'error') {
           continue;
         }
 
@@ -631,6 +640,21 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   handleSingleEvent(event: any): void {
+    // messages-tuple data arrives as [AIMessageChunk, metadata] arrays,
+    // not objects with an .event property like events-mode data.
+    if (Array.isArray(event)) {
+      if (!this.eventsStreamActive) {
+        this.handleMessagesTupleEvent(event);
+      }
+      return;
+    }
+
+    // Track if events-mode streaming is producing data — when it does,
+    // messages-tuple events are skipped to avoid duplicate streaming.
+    if (event.event === LangGraphEventTypes.OnChatModelStream) {
+      this.eventsStreamActive = true;
+    }
+
     switch (event.event) {
       case LangGraphEventTypes.OnChatModelStream:
         let shouldEmitMessages = event.metadata["emit-messages"] ?? true;
@@ -953,6 +977,104 @@ export class LangGraphAgent extends AbstractAgent {
           rawEvent: event,
         })
         break;
+    }
+  }
+
+  /**
+   * Process [AIMessageChunk, metadata] tuples from messages-tuple stream mode
+   * and convert them into AG-UI text message and tool call events.
+   * Uses the same messagesInProcess tracking as events-mode streaming.
+   */
+  private handleMessagesTupleEvent(data: any[]) {
+    const chunk = data[0];
+
+    // Skip non-AI chunks (e.g., tool result messages, human messages)
+    if (chunk.type && chunk.type !== "AIMessageChunk") return;
+
+    const content =
+      typeof chunk.content === "string"
+        ? chunk.content
+        : Array.isArray(chunk.content)
+          ? chunk.content.find((c: any) => c.type === "text")?.text
+          : null;
+    const toolCallChunks = chunk.tool_call_chunks;
+    const isFinished = chunk.response_metadata?.finish_reason === "stop";
+    const currentStream = this.getMessageInProgress(this.activeRun!.id);
+
+    // Handle tool call chunks
+    if (toolCallChunks?.length > 0) {
+      const tc = toolCallChunks[0];
+      if (tc.name) {
+        // End any text message in progress
+        if (currentStream?.id && !currentStream?.toolCallId) {
+          this.dispatchEvent({
+            type: EventType.TEXT_MESSAGE_END,
+            messageId: currentStream.id,
+          });
+          this.messagesInProcess[this.activeRun!.id] = null;
+        }
+        // Start new tool call
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_START,
+          toolCallId: tc.id || chunk.id,
+          toolCallName: tc.name,
+          parentMessageId: chunk.id,
+        });
+        this.setMessageInProgress(this.activeRun!.id, {
+          id: chunk.id,
+          toolCallId: tc.id || chunk.id,
+          toolCallName: tc.name,
+        });
+        this.activeRun!.hasFunctionStreaming = true;
+      } else if (tc.args && currentStream?.toolCallId) {
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: currentStream.toolCallId,
+          delta: tc.args,
+        });
+      }
+      return;
+    }
+
+    // Handle finish
+    if (isFinished) {
+      if (currentStream?.toolCallId) {
+        this.dispatchEvent({
+          type: EventType.TOOL_CALL_END,
+          toolCallId: currentStream.toolCallId,
+        });
+      } else if (currentStream?.id) {
+        this.dispatchEvent({
+          type: EventType.TEXT_MESSAGE_END,
+          messageId: currentStream.id,
+        });
+      }
+      this.messagesInProcess[this.activeRun!.id] = null;
+      return;
+    }
+
+    // Skip empty initialization chunks
+    if (!content && !toolCallChunks?.length) return;
+
+    // Handle text content streaming
+    if (content) {
+      if (!currentStream) {
+        this.dispatchEvent({
+          type: EventType.TEXT_MESSAGE_START,
+          role: "assistant",
+          messageId: chunk.id,
+        });
+        this.setMessageInProgress(this.activeRun!.id, {
+          id: chunk.id,
+          toolCallId: null,
+          toolCallName: null,
+        });
+      }
+      this.dispatchEvent({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: (this.getMessageInProgress(this.activeRun!.id) ?? { id: chunk.id }).id,
+        delta: content,
+      });
     }
   }
 

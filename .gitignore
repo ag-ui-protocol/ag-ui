@@ -25,6 +25,14 @@ node_modules
 *.egg-info
 
 **/python/**/__pycache__/
+**/python/**/.venv/
+
+**/typescript/**/node_modules/
+**/typescript/**/dist/
+
+# Turborepo
+.turbo
+**/.turbo
 
 # Build artifacts and binaries
 **/build/

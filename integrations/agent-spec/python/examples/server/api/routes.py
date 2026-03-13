@@ -13,6 +13,7 @@ from server.api.backend_tool_rendering import (
 )
 from server.api.human_in_the_loop import human_in_the_loop_agent_json
 from server.api.tool_based_generative_ui import tool_based_generative_ui_agent_json
+from server.api.a2ui_chat import a2ui_chat_json
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -50,6 +51,11 @@ def _mount(router: APIRouter):
             ),
             path="/langgraph/tool_based_generative_ui",
         )
+        add_agentspec_fastapi_endpoint(
+            app=router,
+            agentspec_agent=AgentSpecAgent(a2ui_chat_json, runtime="langgraph"),
+            path="/langgraph/a2ui_chat",
+        )
     else:
         logger.info("LangGraph not available. Skipping Agent Spec (LangGraph) endpoints.")
 
@@ -79,6 +85,11 @@ def _mount(router: APIRouter):
                 tool_based_generative_ui_agent_json, runtime="wayflow"
             ),
             path="/wayflow/tool_based_generative_ui",
+        )
+        add_agentspec_fastapi_endpoint(
+            app=router,
+            agentspec_agent=AgentSpecAgent(a2ui_chat_json, runtime="wayflow"),
+            path="/wayflow/a2ui_chat",
         )
     else:
         logger.info("Wayflow (wayflowcore) not available. Skipping Agent Spec (Wayflow) endpoints.")
