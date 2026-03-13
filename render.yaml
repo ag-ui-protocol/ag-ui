@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: ag-ui-claude-sdk-python
+    runtime: docker
+    plan: standard
+    dockerfilePath: integrations/claude-agent-sdk/python/examples/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    buildFilter:
+      paths:
+        - integrations/claude-agent-sdk/python/**
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+  - type: web
+    name: ag-ui-claude-sdk-typescript
+    runtime: docker
+    plan: standard
+    dockerfilePath: integrations/claude-agent-sdk/typescript/examples/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    buildFilter:
+      paths:
+        - integrations/claude-agent-sdk/typescript/**
+        - sdks/typescript/packages/**
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
