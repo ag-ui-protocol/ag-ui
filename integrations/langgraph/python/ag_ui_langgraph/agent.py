@@ -848,49 +848,79 @@ class LangGraphAgent:
                             )
                         )
 
+                    try:
+                        normalized_content = normalize_tool_content(tool_msg.content)
+                    except Exception:  # noqa: BLE001
+                        normalized_content = dump_json_safe(tool_msg.content)
+
                     yield self._dispatch_event(
                         ToolCallResultEvent(
                             type=EventType.TOOL_CALL_RESULT,
                             tool_call_id=tool_msg.tool_call_id,
                             message_id=str(uuid.uuid4()),
-                            content=normalize_tool_content(tool_msg.content),
+                            content=normalized_content,
                             role="tool"
                         )
                     )
                 return
 
+            # Get tool_call_id. Check output attributes, metadata, or input.
+            tool_call_id = getattr(tool_call_output, "tool_call_id", None)
+            if not tool_call_id:
+                input_data = event.get("data", {}).get("input") or {}
+                tool_call_id = (
+                    event.get("metadata", {}).get("langgraph_tool_call_id") or
+                    input_data.get("id") or
+                    input_data.get("tool_call_id") or
+                    event.get("run_id")
+                )
+
             if not self.active_run["has_function_streaming"]:
+                tool_call_name = (
+                    getattr(tool_call_output, "name", None)
+                    or event.get("name")
+                    or event.get("data", {}).get("name")
+                    or "tool"
+                )
+                parent_message_id = getattr(tool_call_output, "id", None) or tool_call_id
+                input_payload = event.get("data", {}).get("input", {})
+
                 yield self._dispatch_event(
                     ToolCallStartEvent(
                         type=EventType.TOOL_CALL_START,
-                        tool_call_id=tool_call_output.tool_call_id,
-                        tool_call_name=tool_call_output.name,
-                        parent_message_id=tool_call_output.id,
+                        tool_call_id=tool_call_id,
+                        tool_call_name=tool_call_name,
+                        parent_message_id=parent_message_id,
                         raw_event=event,
                     )
                 )
                 yield self._dispatch_event(
                     ToolCallArgsEvent(
                         type=EventType.TOOL_CALL_ARGS,
-                        tool_call_id=tool_call_output.tool_call_id,
-                        delta=dump_json_safe(event["data"]["input"]),
+                        tool_call_id=tool_call_id,
+                        delta=dump_json_safe(input_payload),
                         raw_event=event
                     )
                 )
                 yield self._dispatch_event(
                     ToolCallEndEvent(
                         type=EventType.TOOL_CALL_END,
-                        tool_call_id=tool_call_output.tool_call_id,
+                        tool_call_id=tool_call_id,
                         raw_event=event
                     )
                 )
 
+            try:
+                normalized_content = normalize_tool_content(getattr(tool_call_output, "content", tool_call_output))
+            except Exception:  # noqa: BLE001
+                normalized_content = dump_json_safe(getattr(tool_call_output, "content", tool_call_output))
+
             yield self._dispatch_event(
                 ToolCallResultEvent(
                     type=EventType.TOOL_CALL_RESULT,
-                    tool_call_id=tool_call_output.tool_call_id,
+                    tool_call_id=tool_call_id,
                     message_id=str(uuid.uuid4()),
-                    content=normalize_tool_content(tool_call_output.content),
+                    content=normalized_content,
                     role="tool"
                 )
             )
