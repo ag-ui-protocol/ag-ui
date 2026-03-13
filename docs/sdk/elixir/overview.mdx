@@ -1,0 +1,169 @@
+---
+title: "Elixir SDK Overview"
+description: "Connect to AG-UI agents using the community Elixir SDK (ag_ui_ex)"
+---
+
+The AG-UI Elixir SDK (`ag_ui_ex`) provides a complete, idiomatic Elixir implementation of the AG-UI protocol. It includes typed event structs, SSE and Phoenix Channel transports, a composable middleware pipeline, GenServer-based state management with RFC 6902 JSON Patch, and an HTTP client for consuming AG-UI event streams.
+
+## Installation
+
+Add `ag_ui_ex` to your dependencies in `mix.exs`:
+
+```elixir
+def deps do
+  [
+    {:ag_ui_ex, "~> 0.1.0"}
+  ]
+end
+```
+
+Then fetch dependencies:
+
+```bash
+mix deps.get
+```
+
+## Quick Start
+
+### Emit Events
+
+```elixir
+alias AgUi.Core.Events
+
+# Create a run started event
+event = %Events.RunStarted{
+  run_id: "run-001",
+  thread_id: "thread-001",
+  timestamp: DateTime.utc_now() |> DateTime.to_unix(:millisecond)
+}
+
+# Encode as SSE
+{:ok, sse_data} = AgUi.Encoder.EventEncoder.encode(event)
+```
+
+### SSE Transport (Plug / Phoenix)
+
+```elixir
+# In your Phoenix router
+forward "/ag-ui/events", AgUi.Transport.SSE
+
+# Or use directly in a controller
+def stream(conn, _params) do
+  AgUi.Transport.SSE.stream_events(conn, fn send_fn ->
+    send_fn.(%Events.RunStarted{run_id: "run-001"})
+    Process.sleep(100)
+    send_fn.(%Events.RunFinished{run_id: "run-001"})
+  end)
+end
+```
+
+### Channel Transport (Phoenix WebSocket)
+
+```elixir
+defmodule MyApp.AgUiChannel do
+  use Phoenix.Channel
+  use AgUi.Transport.Channel
+
+  def join("ag_ui:" <> _scope, _payload, socket) do
+    {:ok, socket}
+  end
+end
+```
+
+### State Management
+
+```elixir
+# Start the state manager
+{:ok, pid} = AgUi.State.Manager.start_link(name: :my_agent_state)
+
+# Set state
+AgUi.State.Manager.set(pid, %{status: "running", progress: 0})
+
+# Apply a JSON Patch delta (RFC 6902)
+AgUi.State.Manager.patch(pid, [
+  %{"op" => "replace", "path" => "/progress", "value" => 75}
+])
+
+# Read current state
+{:ok, state} = AgUi.State.Manager.get(pid)
+# => %{status: "running", progress: 75}
+```
+
+### Middleware Pipeline
+
+```elixir
+alias AgUi.Middleware.Pipeline
+
+pipeline =
+  Pipeline.new()
+  |> Pipeline.add(&Pipeline.add_timestamp/2)
+  |> Pipeline.add(&Pipeline.validate_type/2)
+
+{:ok, processed_event} = Pipeline.run(pipeline, event)
+```
+
+### HTTP Client
+
+```elixir
+# Consume an AG-UI event stream over SSE
+{:ok, _client} = AgUi.Client.HttpAgent.start_link(
+  url: "http://localhost:4000/ag-ui/events",
+  handler: fn event -> IO.inspect(event, label: "AG-UI Event") end
+)
+```
+
+## Package Structure
+
+### Core (`AgUi.Core`)
+
+Defines all 30+ typed event structs with validation. Events are organized by category:
+
+| Category | Events |
+|:---------|:-------|
+| Lifecycle | `RunStarted`, `RunFinished`, `RunError` |
+| Progress | `StepStarted`, `StepFinished` |
+| Text | `TextMessageStart`, `TextMessageContent`, `TextMessageEnd` |
+| Thinking | `ThinkingTextMessageStart`, `ThinkingTextMessageContent`, `ThinkingTextMessageEnd`, `ThinkingStart`, `ThinkingEnd` |
+| Tools | `ToolCallStart`, `ToolCallArgs`, `ToolCallEnd` |
+| State | `StateSnapshot`, `StateDelta` |
+| Messages | `MessagesSnapshot` |
+| Activity | `ActivitySnapshot`, `ActivityDelta` |
+| Reasoning | `ReasoningStart`, `ReasoningMessageStart`, `ReasoningMessageContent`, `ReasoningMessageEnd`, `ReasoningMessageChunk`, `ReasoningEnd` |
+| Other | `EncryptedValue`, `Raw`, `Custom` |
+
+### Encoder (`AgUi.Encoder`)
+
+SSE and JSON encoding/decoding with automatic camelCase ↔ snake_case conversion.
+
+```elixir
+{:ok, sse_string} = AgUi.Encoder.EventEncoder.encode(event)
+{:ok, event_struct} = AgUi.Encoder.EventEncoder.decode(sse_string)
+```
+
+### Transports (`AgUi.Transport`)
+
+- **`AgUi.Transport.SSE`** — Plug-compatible SSE handler for streaming events to browser clients
+- **`AgUi.Transport.Channel`** — Phoenix Channel macros for WebSocket-based event streaming
+
+### State (`AgUi.State`)
+
+GenServer-backed state manager using a snapshot/delta pattern with full RFC 6902 JSON Patch support via the `json_patch` library.
+
+### Middleware (`AgUi.Middleware`)
+
+Composable pipeline for event processing. Ships with built-in middleware for timestamp injection and type validation. Add custom middleware with any `(event, opts) -> {:ok, event} | {:error, reason}` function.
+
+### Client (`AgUi.Client`)
+
+`AgUi.Client.HttpAgent` — A GenServer that connects to a remote AG-UI event stream over HTTP SSE and dispatches events to a handler function.
+
+## Requirements
+
+- Elixir ~> 1.15
+- Erlang/OTP ~> 26
+
+## Source & Package
+
+- **Hex.pm**: [hex.pm/packages/ag_ui_ex](https://hex.pm/packages/ag_ui_ex)
+- **GitHub**: [github.com/peguesj/ag_ui_ex](https://github.com/peguesj/ag_ui_ex)
+- **License**: MIT
