@@ -4,7 +4,7 @@ import importlib.util
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 
 from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 from langchain_core.runnables.config import var_child_runnable_config
@@ -21,11 +21,7 @@ _ss_spec.loader.exec_module(_ss_mod)
 
 _with_intermediate_state = _ss_mod._with_intermediate_state
 
-try:
-    from ag_ui_langgraph.middlewares.state_streaming import StateStreamingMiddleware, StateItem
-    _MIDDLEWARE_AVAILABLE = True
-except ImportError:
-    _MIDDLEWARE_AVAILABLE = False
+from ag_ui_langgraph.middlewares.state_streaming import StateStreamingMiddleware, StateItem
 
 
 def _make_request(messages):
@@ -35,7 +31,6 @@ def _make_request(messages):
     return req
 
 
-@unittest.skipUnless(_MIDDLEWARE_AVAILABLE, "langchain>=1.2.0 required for StateStreamingMiddleware")
 class TestIsPreToolCall(unittest.TestCase):
     """Unit tests for StateStreamingMiddleware._is_pre_tool_call."""
 
@@ -62,7 +57,6 @@ class TestIsPreToolCall(unittest.TestCase):
         self.assertFalse(self.middleware._is_pre_tool_call(req))
 
 
-@unittest.skipUnless(_MIDDLEWARE_AVAILABLE, "langchain>=1.2.0 required for StateStreamingMiddleware")
 class TestWrapModelCall(unittest.TestCase):
     """Unit tests for wrap_model_call and awrap_model_call."""
 
@@ -174,18 +168,12 @@ class TestWithIntermediateState(unittest.TestCase):
 
 
 class TestWrapModelCallConfigInjection(unittest.TestCase):
-    """Tests that wrap_model_call injects predict_state into var_child_runnable_config.
-
-    Uses patch to bypass the langchain>=1.2.0 availability guard so these tests
-    always run, even when AgentMiddleware is not installed.
-    """
+    """Tests that wrap_model_call injects predict_state into var_child_runnable_config."""
 
     def _make_middleware(self):
-        # Patch on the directly-loaded module to bypass the availability guard.
-        with patch.object(_ss_mod, "_MIDDLEWARE_AVAILABLE", True):
-            return _ss_mod.StateStreamingMiddleware(
-                _ss_mod.StateItem(state_key="recipe", tool="write_recipe", tool_argument="draft")
-            )
+        return _ss_mod.StateStreamingMiddleware(
+            _ss_mod.StateItem(state_key="recipe", tool="write_recipe", tool_argument="draft")
+        )
 
     def test_predict_state_injected_pre_tool_call(self):
         """predict_state metadata is set in the config var when last msg is not ToolMessage."""
@@ -281,16 +269,6 @@ class TestWrapModelCallConfigInjection(unittest.TestCase):
 
         meta = (var_child_runnable_config.get() or {}).get("metadata", {})
         self.assertNotIn("predict_state", meta)
-
-    def test_instantiation_raises_when_middleware_unavailable(self):
-        """StateStreamingMiddleware raises ImportError on instantiation when langchain<1.2.0."""
-        with patch.object(_ss_mod, "_MIDDLEWARE_AVAILABLE", False):
-            with self.assertRaises(ImportError) as ctx:
-                _ss_mod.StateStreamingMiddleware(
-                    _ss_mod.StateItem(state_key="s", tool="t", tool_argument="a")
-                )
-        self.assertIn("langchain>=1.2.0", str(ctx.exception))
-
 
 class TestSnapshotSuppressionCondition(unittest.TestCase):
     """

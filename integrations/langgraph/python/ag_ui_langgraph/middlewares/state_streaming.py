@@ -4,14 +4,7 @@ Custom middleware helpers for ag-ui LangGraph agents.
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-try:
-    from langchain.agents.middleware import AgentMiddleware, ModelRequest
-    _MIDDLEWARE_AVAILABLE = True
-except ImportError:
-    AgentMiddleware = object  # type: ignore[assignment,misc]
-    ModelRequest = None  # type: ignore[assignment,misc]
-    _MIDDLEWARE_AVAILABLE = False
-
+from langchain.agents.middleware import AgentMiddleware, ModelRequest
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables.config import ensure_config, var_child_runnable_config
 
@@ -29,11 +22,6 @@ class StateItem:
 
 class StateStreamingMiddleware(AgentMiddleware):
     def __init__(self, *items: StateItem) -> None:
-        if not _MIDDLEWARE_AVAILABLE:
-            raise ImportError(
-                "StateStreamingMiddleware requires langchain>=1.2.0. "
-                "Please upgrade: pip install 'langchain>=1.2.0'"
-            )
         self._emit_intermediate_state = [
             {"state_key": i.state_key, "tool": i.tool, "tool_argument": i.tool_argument}
             for i in items
@@ -70,8 +58,7 @@ class StateStreamingMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[Any]],
     ) -> Any:
-        pre = self._is_pre_tool_call(request)
-        if not pre:
+        if not self._is_pre_tool_call(request):
             return await handler(request)
         config = _with_intermediate_state(ensure_config(), self._emit_intermediate_state)
         token = var_child_runnable_config.set(config)
