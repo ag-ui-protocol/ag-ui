@@ -50,6 +50,7 @@ export const menuIntegrations = [
       "tool_based_generative_ui",
       "subgraphs",
       "a2ui_chat",
+      "gomoku",
     ],
   },
   {
@@ -67,6 +68,7 @@ export const menuIntegrations = [
       "tool_based_generative_ui",
       "subgraphs",
       "a2ui_chat",
+      "gomoku",
     ],
   },
   {

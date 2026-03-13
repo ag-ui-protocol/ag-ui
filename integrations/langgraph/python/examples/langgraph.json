@@ -12,7 +12,8 @@
     "tool_based_generative_ui": "./agents/tool_based_generative_ui/agent.py:graph",
     "agentic_chat_reasoning": "./agents/agentic_chat_reasoning/agent.py:graph",
     "subgraphs": "./agents/subgraphs/agent.py:graph",
-    "a2ui_chat": "./agents/a2ui_chat/agent.py:graph"
+    "a2ui_chat": "./agents/a2ui_chat/agent.py:graph",
+    "gomoku": "./agents/gomoku/agent.py:gomoku_graph"
   },
   "env": ".env"
 }
