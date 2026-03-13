@@ -1,73 +1,78 @@
-import { AbstractAgent } from "@ag-ui/client";
+import type { AbstractAgent } from '@ag-ui/client';
 import {
   CopilotRuntime,
   copilotRuntimeNodeHttpEndpoint,
   CopilotServiceAdapter,
   ExperimentalEmptyAdapter,
-} from "@copilotkit/runtime";
-import { RequestContext } from "@mastra/core/request-context";
-import { registerApiRoute } from "@mastra/core/server";
-import { MastraAgent } from "./mastra";
+} from '@copilotkit/runtime';
+import type { Mastra } from '@mastra/core';
+import { RequestContext } from '@mastra/core/request-context';
+import type { ContextWithMastra } from '@mastra/core/server';
+import { registerApiRoute } from '@mastra/core/server';
+import { MastraAgentAdapter } from './mastra';
 
 /**
- * Registers a CopilotKit endpoint that exposes Mastra agents through the AG-UI protocol.
- * This function creates an API route that handles CopilotKit requests and forwards them to Mastra agents, enabling seamless integration between CopilotKit's UI components and Mastra's agent framework.
- *
- * @example
- * ```ts
- * registerCopilotKit({
- *   path: "/api/copilotkit"
- * });
- * ```
+ * Optional hook to enrich Mastra request context before agent execution.
+ * @param context Current API route context.
+ * @param requestContext Mutable Mastra request context.
  */
-export function registerCopilotKit<
-  T extends Record<string, any> | unknown = unknown,
->({
-  path,
-  resourceId,
-  serviceAdapter = new ExperimentalEmptyAdapter(),
-  agents,
-  setContext,
-}: {
+export type SetCopilotKitContext = (
+  context: ContextWithMastra,
+  requestContext: RequestContext<unknown>,
+) => void | Promise<void>;
+
+/** Configuration for registering the CopilotKit API route. */
+export interface RegisterCopilotKitOptions {
+  /** Route path handled by `registerApiRoute`. */
   path: string;
+  /** Default resource ID used for local Mastra agents. */
   resourceId: string;
+  /** Optional CopilotKit service adapter override. */
   serviceAdapter?: CopilotServiceAdapter;
+  /** Optional prebuilt AG-UI agents; falls back to local Mastra agents. */
   agents?: Record<string, AbstractAgent>;
-  setContext?: (
-    c: any,
-    requestContext: RequestContext<T>,
-  ) => void | Promise<void>;
-}) {
-  return registerApiRoute(path, {
-    method: `ALL`,
-    handler: async (c) => {
-      const mastra = c.get("mastra");
+  /** Optional per-request context initialization callback. */
+  setContext?: SetCopilotKitContext;
+}
 
-      const requestContext = new RequestContext<T>();
+/**
+ * Registers a CopilotKit endpoint backed by Mastra AG-UI agent adapters.
+ * @param options Route and runtime registration options.
+ */
+export function registerCopilotKit(options: RegisterCopilotKitOptions) {
+  const resolvedOptions = {
+    ...options,
+    serviceAdapter: options.serviceAdapter ?? new ExperimentalEmptyAdapter(),
+  };
 
-      if (setContext) {
-        await setContext(c, requestContext);
+  return registerApiRoute(resolvedOptions.path, {
+    method: 'ALL',
+    handler: async (context) => {
+      const routeContext = context as ContextWithMastra;
+      const mastra = routeContext.get('mastra') as Mastra;
+
+      const requestContext = routeContext.get('requestContext') ?? new RequestContext();
+
+      if (resolvedOptions.setContext) {
+        await resolvedOptions.setContext(routeContext, requestContext);
       }
 
       const aguiAgents =
-        agents ||
-        MastraAgent.getLocalAgents({
-          resourceId,
+        resolvedOptions.agents ??
+        MastraAgentAdapter.getLocalAgents({
+          resourceId: resolvedOptions.resourceId,
           mastra,
-          requestContext: requestContext as RequestContext,
+          requestContext,
         });
 
-      const runtime = new CopilotRuntime({
-        agents: aguiAgents as any,
-      });
-
+      const runtime = new CopilotRuntime({ agents: aguiAgents });
       const handler = copilotRuntimeNodeHttpEndpoint({
-        endpoint: path,
+        endpoint: resolvedOptions.path,
         runtime,
-        serviceAdapter,
+        serviceAdapter: resolvedOptions.serviceAdapter,
       });
 
-      return handler(c.req.raw);
+      return handler(routeContext.req.raw);
     },
   });
 }
