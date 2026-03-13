@@ -6,8 +6,6 @@ import {
   BaseEvent,
   EventType,
   Message,
-  AssistantMessage,
-  ToolMessage,
   ToolCall,
   ActivitySnapshotEvent,
   ActivityDeltaEvent,
@@ -19,9 +17,8 @@ import { Observable } from "rxjs";
 import {
   A2UIMiddlewareConfig,
   A2UIForwardedProps,
-  A2UIUserAction,
 } from "./types";
-import { SEND_A2UI_JSON_TOOL, SEND_A2UI_TOOL_NAME, LOG_A2UI_EVENT_TOOL_NAME } from "./tools";
+import { SEND_A2UI_JSON_TOOL, SEND_A2UI_TOOL_NAME } from "./tools";
 import { getOperationSurfaceId, tryParseA2UIOperations } from "./schema";
 
 // Re-exports
@@ -57,7 +54,7 @@ export class A2UIMiddleware extends Middleware {
    * Main middleware run method
    */
   run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
-    // Process user action from forwardedProps (append synthetic messages)
+    // Process user action from forwardedProps (append user message)
     const enhancedInput = this.processUserAction(input);
 
     // Conditionally inject the send_a2ui_json_to_client tool
@@ -70,7 +67,9 @@ export class A2UIMiddleware extends Middleware {
   }
 
   /**
-   * Check forwardedProps for a2uiAction and append synthetic tool call messages
+   * Check forwardedProps for a2uiAction and append a user message describing
+   * the action. A button click IS a user action, so it should appear as a
+   * user message — not a synthetic assistant+tool pair that confuses the LLM.
    */
   private processUserAction(input: RunAgentInput): RunAgentInput {
     const forwardedProps = input.forwardedProps as A2UIForwardedProps | undefined;
@@ -80,42 +79,26 @@ export class A2UIMiddleware extends Middleware {
       return input;
     }
 
-    // Generate IDs for the synthetic messages
-    const assistantMessageId = randomUUID();
-    const toolCallId = randomUUID();
-    const toolMessageId = randomUUID();
+    const actionName = userAction.name ?? "unknown_action";
+    const surfaceId = userAction.surfaceId ?? "unknown_surface";
+    const context = userAction.context ?? {};
+    const contextEntries = Object.entries(context);
 
-    // Create synthetic assistant message with tool call
-    const syntheticAssistantMessage: AssistantMessage = {
-      id: assistantMessageId,
-      role: "assistant",
-      content: "",
-      toolCalls: [
-        {
-          id: toolCallId,
-          type: "function",
-          function: {
-            name: LOG_A2UI_EVENT_TOOL_NAME,
-            arguments: JSON.stringify(userAction),
-          },
-        },
-      ],
+    // Build a clear user message describing the action
+    let content = `[A2UI Action] I clicked "${actionName}" on surface "${surfaceId}".`;
+    if (contextEntries.length > 0) {
+      content += `\n\nForm data:\n${JSON.stringify(context, null, 2)}`;
+    }
+
+    const actionMessage: Message = {
+      id: randomUUID(),
+      role: "system",
+      content,
     };
 
-    // Create synthetic tool result message
-    const resultContent = this.formatUserActionResult(userAction);
-    const syntheticToolMessage: ToolMessage = {
-      id: toolMessageId,
-      role: "tool",
-      toolCallId: toolCallId,
-      content: resultContent,
-    };
-
-    // Append synthetic messages to existing messages (so they appear as the latest action)
     const messages: Message[] = [
       ...(input.messages || []),
-      syntheticAssistantMessage,
-      syntheticToolMessage,
+      actionMessage,
     ];
 
     return {
@@ -124,22 +107,6 @@ export class A2UIMiddleware extends Middleware {
     };
   }
 
-  /**
-   * Format the user action result message for the agent
-   */
-  private formatUserActionResult(action: A2UIUserAction): string {
-    const actionName = action.name ?? "unknown_action";
-    const surfaceId = action.surfaceId ?? "unknown_surface";
-    const componentId = action.sourceComponentId;
-    const contextStr = action.context ? JSON.stringify(action.context) : "{}";
-
-    let message = `User performed action "${actionName}" on surface "${surfaceId}"`;
-    if (componentId) {
-      message += ` (component: ${componentId})`;
-    }
-    message += `. Context: ${contextStr}`;
-    return message;
-  }
 
   /**
    * Inject the send_a2ui_json_to_client tool into the input.
