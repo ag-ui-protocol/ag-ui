@@ -28,9 +28,12 @@ jobs:
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
 
-      - name: Configure Maven settings
+      - name: Configure GPG and Maven settings
         run: |
-          mkdir -p ~/.m2
+          mkdir -p ~/.gnupg ~/.m2
+          chmod 700 ~/.gnupg
+          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
+          gpgconf --kill gpg-agent
           cat > ~/.m2/settings.xml <<EOF
           <settings>
             <servers>
