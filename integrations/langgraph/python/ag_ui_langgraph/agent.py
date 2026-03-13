@@ -149,8 +149,10 @@ class LangGraphAgent:
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[str, None]:
         thread_id = input.thread_id or str(uuid.uuid4())
+        protocol_run_id = input.run_id
         INITIAL_ACTIVE_RUN = {
             "id": input.run_id,
+            "protocol_run_id": protocol_run_id,
             "thread_id": thread_id,
             "reasoning_process": None,
             "node_name": None,
@@ -180,7 +182,7 @@ class LangGraphAgent:
         prepared_stream_response = await self.prepare_stream(input=input, agent_state=agent_state, config=config)
 
         yield self._dispatch_event(
-            RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["id"])
+            RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["protocol_run_id"])
         )
         self.handle_node_change(node_name_input)
 
@@ -356,7 +358,7 @@ class LangGraphAgent:
                 yield ev
 
             yield self._dispatch_event(
-                RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
+                RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["protocol_run_id"])
             )
             self.active_run = None
         except Exception:
@@ -418,7 +420,7 @@ class LangGraphAgent:
         events_to_dispatch = []
         if has_active_interrupts and not resume_input:
             events_to_dispatch.append(
-                RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["id"])
+                RunStartedEvent(type=EventType.RUN_STARTED, thread_id=thread_id, run_id=self.active_run["protocol_run_id"])
             )
 
             for interrupt in interrupts:
@@ -432,7 +434,7 @@ class LangGraphAgent:
                 )
 
             events_to_dispatch.append(
-                RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["id"])
+                RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=self.active_run["protocol_run_id"])
             )
             return {
                 "stream": None,
