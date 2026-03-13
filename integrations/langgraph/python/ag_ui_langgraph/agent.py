@@ -861,10 +861,11 @@ class LangGraphAgent:
             )
 
         elif event_type == LangGraphEventTypes.OnToolEnd:
-            # The tool has finished — clear the flag so future snapshots are not
+            # The tool has finished — clear both flags so future snapshots are not
             # incorrectly suppressed.  Mirrors TypeScript: hasPredictState = false
             # on OnToolEnd (agent.ts line 879).
             self.active_run["model_made_tool_call"] = False
+            self.active_run["state_reliable"] = True
             tool_call_output = event["data"]["output"]
 
             if isinstance(tool_call_output, Command):
