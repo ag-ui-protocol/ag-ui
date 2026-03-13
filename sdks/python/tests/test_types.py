@@ -4,6 +4,7 @@ from pydantic import TypeAdapter
 
 from ag_ui.core.types import (
     FunctionCall,
+    Tool,
     ToolCall,
     DeveloperMessage,
     SystemMessage,
@@ -757,6 +758,55 @@ class TestBaseTypes(unittest.TestCase):
             deserialized.state["session"]["user"]["preferences"]["filters"],
             ["important", "urgent"]
         )
+
+
+    def test_tool_without_parameters(self):
+        """Test that Tool can be created without parameters (issue #1185).
+
+        In TypeScript, z.any() accepts undefined, making parameters optional.
+        The Python SDK should match this behavior by allowing parameters to be
+        omitted.
+        """
+        # Creating a Tool without parameters should succeed
+        tool = Tool(name="simple_tool", description="A tool with no parameters")
+        self.assertEqual(tool.name, "simple_tool")
+        self.assertEqual(tool.description, "A tool with no parameters")
+        self.assertIsNone(tool.parameters)
+
+    def test_tool_without_parameters_json(self):
+        """Test that Tool can be deserialized from JSON without parameters."""
+        json_data = {
+            "name": "simple_tool",
+            "description": "A tool with no parameters"
+        }
+        tool = Tool.model_validate(json_data)
+        self.assertEqual(tool.name, "simple_tool")
+        self.assertIsNone(tool.parameters)
+
+    def test_tool_with_parameters_still_works(self):
+        """Test that Tool with parameters continues to work after the fix."""
+        tool = Tool(
+            name="parameterized_tool",
+            description="A tool with parameters",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"}
+                },
+                "required": ["query"]
+            }
+        )
+        self.assertEqual(tool.name, "parameterized_tool")
+        self.assertIsNotNone(tool.parameters)
+        self.assertEqual(tool.parameters["type"], "object")
+
+    def test_tool_without_parameters_serialization_round_trip(self):
+        """Test serialization round-trip for Tool without parameters."""
+        tool = Tool(name="no_params", description="No params tool")
+        serialized = tool.model_dump(by_alias=True)
+        deserialized = Tool.model_validate(serialized)
+        self.assertEqual(deserialized.name, "no_params")
+        self.assertIsNone(deserialized.parameters)
 
 
 if __name__ == "__main__":
