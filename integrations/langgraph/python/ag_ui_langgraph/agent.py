@@ -638,8 +638,8 @@ class LangGraphAgent:
     async def _handle_single_event(self, event: Any, state: State) -> AsyncGenerator[str, None]:
         event_type = event.get("event")
         if event_type == LangGraphEventTypes.OnChatModelStream:
-            should_emit_messages = event["metadata"].get("emit-messages", True)
-            should_emit_tool_calls = event["metadata"].get("emit-tool-calls", True)
+            should_emit_messages = event.get("metadata", {}).get("emit-messages", True)
+            should_emit_tool_calls = event.get("metadata", {}).get("emit-tool-calls", True)
 
             if event["data"]["chunk"].response_metadata.get('finish_reason', None):
                 return
