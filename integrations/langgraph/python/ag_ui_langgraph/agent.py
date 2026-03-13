@@ -199,13 +199,13 @@ class LangGraphAgent:
                         event.get("data", {}).get("output"), dict
                 ):
                     output = event["data"]["output"]
-                current_graph_state.update(output)
-                exiting_node = self.active_run["node_name"] == current_node_name
-                # If output contains any key outside the protocol-internal set
-                # ("messages", "tools", "ag-ui"), the local current_graph_state
-                # is reliably up-to-date again.
-                if any(k not in ("messages", "tools", "ag-ui") for k in output):
-                    self.active_run["state_reliable"] = True
+                    current_graph_state.update(output)
+                    exiting_node = self.active_run["node_name"] == current_node_name
+                    # If output contains any key outside the protocol-internal set
+                    # ("messages", "tools", "ag-ui"), the local current_graph_state
+                    # is reliably up-to-date again.
+                    if any(k not in ("messages", "tools", "ag-ui") for k in output):
+                        self.active_run["state_reliable"] = True
 
                 should_exit = should_exit or (
                         event_type == "on_custom_event" and
@@ -217,59 +217,59 @@ class LangGraphAgent:
                         yield ev
 
                 # Track whether the current model turn is making a predict_state tool
-            # call so we can suppress the model-node exit snapshot.  The model-node
-            # exit fires *before* the tool runs, so current_graph_state still
-            # carries the previous value — emitting it would wipe predict_state
-            # progress on the client.  This applies to every iteration, not just
-            # the first.  Note: _handle_single_event uses the same predict_state
-            # metadata check to emit the PredictState custom event — keep both
-            # sites in sync if the check logic changes.
-            if event_type == LangGraphEventTypes.OnChatModelStream.value:
-                chunk = event.get("data", {}).get("chunk") or {}
-                tool_call_chunks = (
-                    chunk.get("tool_call_chunks") or []
-                    if isinstance(chunk, dict)
-                    else getattr(chunk, "tool_call_chunks", None) or []
-                )
-                if tool_call_chunks:
-                    first = tool_call_chunks[0]
-                    first_name = (
-                        first.get("name") if isinstance(first, dict)
-                        else getattr(first, "name", None)
+                # call so we can suppress the model-node exit snapshot.  The model-node
+                # exit fires *before* the tool runs, so current_graph_state still
+                # carries the previous value — emitting it would wipe predict_state
+                # progress on the client.  This applies to every iteration, not just
+                # the first.  Note: _handle_single_event uses the same predict_state
+                # metadata check to emit the PredictState custom event — keep both
+                # sites in sync if the check logic changes.
+                if event_type == LangGraphEventTypes.OnChatModelStream.value:
+                    chunk = event.get("data", {}).get("chunk") or {}
+                    tool_call_chunks = (
+                        chunk.get("tool_call_chunks") or []
+                        if isinstance(chunk, dict)
+                        else getattr(chunk, "tool_call_chunks", None) or []
                     )
-                    if first_name:
-                        predict_state_meta = event.get("metadata", {}).get("predict_state", [])
-                        tool_used_to_predict_state = any(
-                            (p.get("tool") if isinstance(p, dict) else getattr(p, "tool", None)) == first_name
-                            for p in predict_state_meta
+                    if tool_call_chunks:
+                        first = tool_call_chunks[0]
+                        first_name = (
+                            first.get("name") if isinstance(first, dict)
+                            else getattr(first, "name", None)
                         )
-                        if tool_used_to_predict_state:
-                            self.active_run["model_made_tool_call"] = True
+                        if first_name:
+                            predict_state_meta = event.get("metadata", {}).get("predict_state", [])
+                            tool_used_to_predict_state = any(
+                                (p.get("tool") if isinstance(p, dict) else getattr(p, "tool", None)) == first_name
+                                for p in predict_state_meta
+                            )
+                            if tool_used_to_predict_state:
+                                self.active_run["model_made_tool_call"] = True
 
-            updated_state = self.active_run.get("manually_emitted_state") or current_graph_state
-            has_state_diff = updated_state != state
-            if exiting_node or (has_state_diff and not self.get_message_in_progress(self.active_run["id"])):
-                state = updated_state
-                self.active_run["prev_node_name"] = self.active_run["node_name"]
-                current_graph_state.update(updated_state)
-                mmtc = self.active_run.get("model_made_tool_call")
-                state_reliable = self.active_run.get("state_reliable", True)
-                suppressed = exiting_node and (mmtc or not state_reliable)
-                if suppressed:
-                    self.active_run["model_made_tool_call"] = False
-                    if mmtc:
-                        # A predict_state tool call was detected — the tool has
-                        # not yet run, so current_graph_state does not yet reflect
-                        # the forthcoming state update.
-                        self.active_run["state_reliable"] = False
-                else:
-                    yield self._dispatch_event(
-                        StateSnapshotEvent(
-                            type=EventType.STATE_SNAPSHOT,
-                            snapshot=self.get_state_snapshot(state),
-                            raw_event=event,
+                updated_state = self.active_run.get("manually_emitted_state") or current_graph_state
+                has_state_diff = updated_state != state
+                if exiting_node or (has_state_diff and not self.get_message_in_progress(self.active_run["id"])):
+                    state = updated_state
+                    self.active_run["prev_node_name"] = self.active_run["node_name"]
+                    current_graph_state.update(updated_state)
+                    mmtc = self.active_run.get("model_made_tool_call")
+                    state_reliable = self.active_run.get("state_reliable", True)
+                    suppressed = exiting_node and (mmtc or not state_reliable)
+                    if suppressed:
+                        self.active_run["model_made_tool_call"] = False
+                        if mmtc:
+                            # A predict_state tool call was detected — the tool has
+                            # not yet run, so current_graph_state does not yet reflect
+                            # the forthcoming state update.
+                            self.active_run["state_reliable"] = False
+                    else:
+                        yield self._dispatch_event(
+                            StateSnapshotEvent(
+                                type=EventType.STATE_SNAPSHOT,
+                                snapshot=self.get_state_snapshot(state),
+                                raw_event=event,
+                            )
                         )
-                    )
 
                 yield self._dispatch_event(
                     RawEvent(type=EventType.RAW, event=event)
