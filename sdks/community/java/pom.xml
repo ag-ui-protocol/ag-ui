@@ -48,6 +48,9 @@
     </properties>
 
 
+    <name>AG-UI Java SDK</name>
+    <description>Java SDK for the AG-UI protocol — standardized agent-user interaction over event streams</description>
+
     <url>https://github.com/ag-ui-protocol/ag-ui</url>
 
     <licenses>
