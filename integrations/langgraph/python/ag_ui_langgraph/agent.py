@@ -1,3 +1,4 @@
+import logging
 import re
 import uuid
 import json
@@ -95,6 +96,8 @@ ProcessedEvents = Union[
     StepStartedEvent,
     StepFinishedEvent,
 ]
+
+logger = logging.getLogger(__name__)
 
 class LangGraphAgent:
     def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None):
@@ -256,6 +259,10 @@ class LangGraphAgent:
                     state_reliable = self.active_run.get("state_reliable", True)
                     suppressed = exiting_node and (mmtc or not state_reliable)
                     if suppressed:
+                        logger.debug(
+                            "Suppressing STATE_SNAPSHOT on node exit (node=%s, model_made_tool_call=%s, state_reliable=%s)",
+                            self.active_run.get("node_name"), mmtc, state_reliable,
+                        )
                         self.active_run["model_made_tool_call"] = False
                         if mmtc:
                             # A predict_state tool call was detected — the tool has
@@ -864,7 +871,7 @@ class LangGraphAgent:
         elif event_type == LangGraphEventTypes.OnToolEnd:
             # The tool has finished — clear both flags so future snapshots are not
             # incorrectly suppressed.  Mirrors TypeScript: hasPredictState = false
-            # on OnToolEnd (agent.ts line 879).
+            # on OnToolEnd (agent.ts OnToolEnd handler).
             self.active_run["model_made_tool_call"] = False
             self.active_run["state_reliable"] = True
             tool_call_output = event["data"]["output"]
