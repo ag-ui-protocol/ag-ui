@@ -16,11 +16,6 @@ export interface A2UIToolSchema {
    * E.g. "flights" means the tool arg `{ flights: [...] }` is used for dataModelUpdate.
    */
   dataKey: string;
-  /**
-   * Minimum interval (ms) between streaming data updates. Default: 0 (emit immediately).
-   * Useful for testing progressive rendering or throttling rapid updates.
-   */
-  streamingThrottleMs?: number;
 }
 
 /**
