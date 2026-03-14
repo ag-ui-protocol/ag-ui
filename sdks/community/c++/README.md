@@ -4,14 +4,14 @@
 [![C++17](https://img.shields.io/badge/C++-17-blue.svg)](https://en.cppreference.com/w/cpp/17)
 [![CMake](https://img.shields.io/badge/CMake-3.10+-064F8C.svg)](https://cmake.org/)
 
-A production-ready C++ implementation of the [AG-UI Protocol](https://github.com/ag-ui/protocol), providing a complete SDK for AI Agent interaction with applications. This SDK implements all features, protocols, and specifications defined in the AG-UI protocol.
+A community C++ implementation of the [AG-UI Protocol](https://github.com/ag-ui-protocol/ag-ui), providing a complete SDK for AI Agent interaction with applications. This SDK implements all features, protocols, and specifications defined in the AG-UI protocol.
 
 ## Features
 
 - **C++ Implementation** - Cross-platform support with high performance
 - **HTTP Connectivity** - Built on libcurl for both standard and streaming HTTP requests
 - **Stream Processing** - SSE (Server-Sent Events) parser for real-time data streaming
-- **Event & State Management** - Complete implementation of all 23 AG-UI event types with state management
+- **Event & State Management** - Complete implementation of all 26 AG-UI event types with state management
 - **Middleware Support** - Flexible request/response pipeline with middleware architecture
 - **Subscriber Pattern** - External subscriber support for event handling and processing
 - **Synchronous API Design** - Intentionally synchronous for maximum threading model flexibility
@@ -69,8 +69,8 @@ sudo apt-get install libgtest-dev
 
 ```bash
 # Clone the repository
-git clone https://github.com/acoder-ai-infra/ag-ui-cpp.git
-cd ag-ui-cpp
+git clone https://github.com/ag-ui-protocol/ag-ui.git
+cd ag-ui/sdks/community/c++
 
 # Create build directory
 mkdir build && cd build

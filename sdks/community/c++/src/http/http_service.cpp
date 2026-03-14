@@ -22,7 +22,8 @@ HttpService::~HttpService() {
 
 void HttpService::sendRequest(const HttpRequest& request, HttpResponseCallback responseCallbackFunc,
                                   HttpErrorCallback errorCallbackFunc) {
-    // Network requests should be executed in a separate thread to avoid blocking
+    // Blocking call: returns only after the full response is received.
+    // The caller is responsible for running this on a worker thread if needed.
     CURL* curl = curl_easy_init();
     if (!curl) {
         throw std::runtime_error("Failed to initialize CURL");
@@ -85,7 +86,8 @@ void HttpService::sendRequest(const HttpRequest& request, HttpResponseCallback r
 
 void HttpService::sendSseRequest(const HttpRequest& request, SseDataCallback sseDataCallbackFunc,
                                     SseCompleteCallback completeCallbackFunc, HttpErrorCallback errorCallbackFunc) {
-    // Network requests should be executed in a separate thread to avoid blocking
+    // Blocking call: streams SSE data synchronously until the connection closes.
+    // The caller is responsible for running this on a worker thread if needed.
     CURL* curl = curl_easy_init();
     if (!curl) {
         Logger::errorf("[HttpService] Failed to initialize CURL");

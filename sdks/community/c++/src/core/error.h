@@ -11,8 +11,8 @@ namespace agui {
 
 enum class ErrorType { Network, Parse, Execution, Timeout, Validation, State, Unknown };
 
-// Error code format: XXYYZZ
-// XX - Error type (01-99)
+// Error code format: XYYZZ
+// X  - Error type (1-9)
 // YY - Sub-type (00-99)
 // ZZ - Specific error (00-99)
 enum class ErrorCode {
