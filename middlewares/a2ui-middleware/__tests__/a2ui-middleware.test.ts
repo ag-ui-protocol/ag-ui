@@ -493,6 +493,21 @@ describe("tryParseA2UIOperations", () => {
     expect(tryParseA2UIOperations('"hello"')).toBeNull();
     expect(tryParseA2UIOperations("true")).toBeNull();
   });
+
+  it("should extract operations from a2ui_operations container", () => {
+    const input = JSON.stringify({
+      a2ui_operations: [
+        { surfaceUpdate: { surfaceId: "s1", components: [] } },
+        { dataModelUpdate: { surfaceId: "s1", contents: [] } },
+        { beginRendering: { surfaceId: "s1", root: "root" } },
+      ],
+    });
+    const result = tryParseA2UIOperations(input);
+    expect(result).toHaveLength(3);
+    expect(result![0]).toHaveProperty("surfaceUpdate");
+    expect(result![1]).toHaveProperty("dataModelUpdate");
+    expect(result![2]).toHaveProperty("beginRendering");
+  });
 });
 
 describe("extractSurfaceIds", () => {
