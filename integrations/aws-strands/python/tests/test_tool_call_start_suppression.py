@@ -3,9 +3,7 @@ new tool calls in the same turn after a pending tool result is consumed."""
 
 from __future__ import annotations
 
-import pytest
 
-from ag_ui_strands.agent import StrandsAgent
 
 
 class TestPendingToolResultIds:
