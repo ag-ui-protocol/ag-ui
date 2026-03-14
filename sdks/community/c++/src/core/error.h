@@ -120,11 +120,7 @@ public:
     }
 
     AgentError& withCause(const AgentError& cause) {
-#if __cplusplus >= 201402L
         m_cause = std::make_unique<AgentError>(cause);
-#else
-        m_cause.reset(new AgentError(cause));
-#endif
         buildWhatMessage();
         return *this;
     }
@@ -137,15 +133,9 @@ public:
 
         if (!m_context.empty()) {
             oss << "Context:\n";
-#if __cplusplus >= 201703L
             for (const auto& [key, value] : m_context) {
                 oss << "  " << key << ": " << value << "\n";
             }
-#else
-            for (const auto& kv : m_context) {
-                oss << "  " << kv.first << ": " << kv.second << "\n";
-            }
-#endif
         }
 
         if (!m_stackTrace.empty()) {

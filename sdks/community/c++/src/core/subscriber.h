@@ -6,9 +6,7 @@
 #include <memory>
 #include <vector>
 
-#if __cplusplus >= 201703L
 #include <optional>
-#endif
 
 #include "core/error.h"
 #include "core/event.h"
@@ -18,32 +16,17 @@
 namespace agui {
 
 struct AgentStateMutation {
-#if __cplusplus >= 201703L
     std::optional<std::vector<Message>> messages;
     std::optional<nlohmann::json> state;
-#else
-    std::unique_ptr<std::vector<Message>> messages;
-    std::unique_ptr<nlohmann::json> state;
-#endif
-    bool stopPropagation;
-
-    AgentStateMutation() : stopPropagation(false) {}
+    bool stopPropagation = false;
 
     AgentStateMutation& withMessages(const std::vector<Message>& msgs) {
-#if __cplusplus >= 201703L
         messages = msgs;
-#else
-        messages.reset(new std::vector<Message>(msgs));
-#endif
         return *this;
     }
 
     AgentStateMutation& withState(const nlohmann::json& s) {
-#if __cplusplus >= 201703L
         state = s;
-#else
-        state.reset(new nlohmann::json(s));
-#endif
         return *this;
     }
 
@@ -53,11 +36,7 @@ struct AgentStateMutation {
     }
 
     bool hasChanges() const {
-#if __cplusplus >= 201703L
         return messages.has_value() || state.has_value();
-#else
-        return (messages != nullptr) || (state != nullptr);
-#endif
     }
 };
 

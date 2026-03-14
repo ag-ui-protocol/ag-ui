@@ -252,7 +252,6 @@ AgentStateMutation EventHandler::handleEvent(std::unique_ptr<Event> event) {
 }
 
 void EventHandler::applyMutation(const AgentStateMutation& mutation) {
-#if __cplusplus >= 201703L
     if (mutation.messages.has_value()) {
         m_messages = mutation.messages.value();
         notifyMessagesChanged();
@@ -262,17 +261,6 @@ void EventHandler::applyMutation(const AgentStateMutation& mutation) {
         m_state = mutation.state.value().dump();
         notifyStateChanged();
     }
-#else
-    if (mutation.messages) {
-        m_messages = *mutation.messages;
-        notifyMessagesChanged();
-    }
-
-    if (mutation.state) {
-        m_state = mutation.state->dump();
-        notifyStateChanged();
-    }
-#endif
 }
 
 void EventHandler::addSubscriber(std::shared_ptr<IAgentSubscriber> subscriber) {
@@ -397,21 +385,12 @@ AgentStateMutation EventHandler::notifySubscribers(
     for (auto& subscriber : m_subscribers) {
         AgentStateMutation mutation = notifyFunc(subscriber.get(), params);
 
-#if __cplusplus >= 201703L
         if (mutation.messages.has_value()) {
             finalMutation.messages = mutation.messages;
         }
         if (mutation.state.has_value()) {
             finalMutation.state = mutation.state;
         }
-#else
-        if (mutation.messages) {
-            finalMutation.messages.reset(new std::vector<Message>(*mutation.messages));
-        }
-        if (mutation.state) {
-            finalMutation.state.reset(new nlohmann::json(*mutation.state));
-        }
-#endif
 
         if (mutation.stopPropagation) {
             finalMutation.stopPropagation = true;

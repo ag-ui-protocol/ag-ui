@@ -3,6 +3,7 @@
 #include <chrono>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 
 #include "core/error.h"
@@ -65,11 +66,7 @@ enum class EventType {
 struct BaseEventData {
     std::chrono::system_clock::time_point timestamp;
 
-#if __cplusplus >= 201703L
     std::optional<nlohmann::json> rawEvent;
-#else
-    std::unique_ptr<nlohmann::json> rawEvent;
-#endif
 
     BaseEventData();
 

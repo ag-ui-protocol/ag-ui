@@ -16,15 +16,9 @@ nlohmann::json BaseEventData::toJson() const {
                          timestamp.time_since_epoch()).count();
 
     // Add raw event data if present
-#if __cplusplus >= 201703L
     if (rawEvent.has_value()) {
         j["rawEvent"] = rawEvent.value();
     }
-#else
-    if (rawEvent) {
-        j["rawEvent"] = *rawEvent;
-    }
-#endif
 
     return j;
 }
@@ -39,11 +33,7 @@ BaseEventData BaseEventData::fromJson(const nlohmann::json& j) {
 
     // Parse raw event data if present
     if (j.contains("rawEvent")) {
-#if __cplusplus >= 201703L
         data.rawEvent = j["rawEvent"];
-#else
-        data.rawEvent.reset(new nlohmann::json(j["rawEvent"]));
-#endif
     }
 
     return data;
@@ -52,11 +42,7 @@ BaseEventData BaseEventData::fromJson(const nlohmann::json& j) {
 // Event Base Class Implementation
 
 void Event::setRawEvent(const nlohmann::json& raw) {
-#if __cplusplus >= 201703L
     m_baseData.rawEvent = raw;
-#else
-    m_baseData.rawEvent.reset(new nlohmann::json(raw));
-#endif
 }
 
 // TextMessageStartEvent Implementation
