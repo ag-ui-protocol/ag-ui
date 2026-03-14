@@ -235,11 +235,13 @@ private:
     // Middleware chain
     MiddlewareChain _middlewareChain;
 
-    // Store error callback for event processing errors
-    AgentErrorCallback _currentErrorCallback;
-
     // Per-run subscribers added via RunAgentParams; removed after each runAgent() call
     std::vector<std::shared_ptr<IAgentSubscriber>> _perRunSubscribers;
+    
+    // Set to true when a RUN_ERROR event or a fatal event-processing error is
+    // encountered during streaming
+    bool m_runErrorOccurred = false;
+    std::string m_runErrorMessage;
 };
 
 }  // namespace agui

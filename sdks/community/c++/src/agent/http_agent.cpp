@@ -162,7 +162,8 @@ MiddlewareChain& HttpAgent::middlewareChain() {
 void HttpAgent::runAgent(const RunAgentParams& params, AgentSuccessCallback onSuccess, AgentErrorCallback onError) {
     Logger::info("Starting agent run");
 
-    _currentErrorCallback = onError;
+    m_runErrorOccurred = false;
+    m_runErrorMessage.clear();
 
     // Clear SSE parser for new request
     _sseParser->clear();
@@ -281,9 +282,10 @@ void HttpAgent::processAvailableEvents() {
             // Process event through middleware
             if (_middlewareChain.size() > 0) {
                 auto processedEvents = _middlewareChain.processEvent(std::move(event), middlewareContext);
-                
-                // Process all returned events
+
+                bool shouldStop = false;
                 for (auto& processedEvent : processedEvents) {
+                    EventType processedType = processedEvent->type();
                     AgentStateMutation mutation = _eventHandler->handleEvent(std::move(processedEvent));
                     if (mutation.hasChanges()) {
                         _eventHandler->applyMutation(mutation);
@@ -291,24 +293,33 @@ void HttpAgent::processAvailableEvents() {
                         middlewareContext.currentMessages = &_eventHandler->messages();
                         middlewareContext.currentState = &_eventHandler->state();
                     }
+                    if (processedType == EventType::RunError) {
+                        m_runErrorOccurred = true;
+                        m_runErrorMessage = "Agent reported a run error";
+                        shouldStop = true;
+                        break;
+                    }
+                }
+                if (shouldStop) {
+                    break;
                 }
             } else {
                 // No middleware, process directly
+                EventType eventType = event->type();
                 AgentStateMutation mutation = _eventHandler->handleEvent(std::move(event));
                 if (mutation.hasChanges()) {
                     _eventHandler->applyMutation(mutation);
                 }
+                if (eventType == EventType::RunError) {
+                    m_runErrorOccurred = true;
+                    m_runErrorMessage = "Agent reported a run error";
+                    break;
+                }
             }
         } catch (const std::exception& e) {
             Logger::errorf("Error processing event: ", e.what());
-            
-            // Call user's error callback if available
-            if (_currentErrorCallback) {
-                AgentError error(ErrorType::Parse, ErrorCode::ParseEventError, e.what());
-                _currentErrorCallback(error.fullMessage());
-            }
-            
-            // Stop processing further events after error
+            m_runErrorOccurred = true;
+            m_runErrorMessage = std::string("Event processing error: ") + e.what();
             break;
         }
     }
@@ -338,6 +349,17 @@ void HttpAgent::handleStreamComplete(const HttpResponse& response, AgentSuccessC
 
     // Process any remaining events
     processAvailableEvents();
+
+    // If a RUN_ERROR event or fatal parse error occurred during streaming,
+    // call onError instead of onSuccess — protocol requires these to be mutually exclusive.
+    if (m_runErrorOccurred) {
+        Logger::errorf("[HttpAgent] Run terminated with error: ", m_runErrorMessage);
+        cleanupPerRunSubscribers();
+        if (onError) {
+            onError(m_runErrorMessage);
+        }
+        return;
+    }
 
     // Collect results
     RunAgentResult result;
