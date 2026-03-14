@@ -16,8 +16,14 @@ nlohmann::json BaseEventData::toJson() const {
     nlohmann::json j;
 
     // Convert timestamp to ISO 8601 format
-    auto time_t = std::chrono::system_clock::to_time_t(timestamp);
-    std::tm tm = *std::gmtime(&time_t);
+    auto time_t_val = std::chrono::system_clock::to_time_t(timestamp);
+    std::tm tm{};
+#ifdef _WIN32
+    gmtime_s(&tm, &time_t_val);
+#else
+    // gmtime_r writes the result into a caller-supplied buffer, avoiding the static buffer data race.
+    gmtime_r(&time_t_val, &tm);
+#endif
     std::ostringstream oss;
     oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
     j["timestamp"] = oss.str();

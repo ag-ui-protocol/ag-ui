@@ -19,6 +19,7 @@ public:
     /**
      * @brief Generate a new UUID
      * @return UUID string
+     * @note Thread-safe: uses thread-local PRNG and atomic counter
      */
     static std::string generate();
 

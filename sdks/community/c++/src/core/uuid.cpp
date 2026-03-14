@@ -11,8 +11,7 @@ std::atomic<uint32_t> UuidGenerator::_counter(0);
 
 // Global random number generator
 static std::mt19937& getGenerator() {
-    static std::random_device rd;
-    static std::mt19937 generator(rd());
+    thread_local std::mt19937 generator(std::random_device{}());
     return generator;
 }
 

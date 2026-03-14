@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <mutex>
 #include <sstream>
 #include <string>
 
@@ -153,6 +154,7 @@ public:
     }
     
 private:
+    static std::mutex s_mutex;
     static LogCallback s_callback;
     static LogLevel s_minLevel;
     
@@ -164,11 +166,9 @@ private:
      */
     template<typename... Args>
     static void logf(LogLevel level, Args&&... args) {
-        if (s_callback && level >= s_minLevel) {
-            std::ostringstream oss;
-            (oss << ... << args);
-            s_callback(level, oss.str());
-        }
+        std::ostringstream oss;
+        (oss << ... << args);
+        log(level, oss.str());
     }
 };
 

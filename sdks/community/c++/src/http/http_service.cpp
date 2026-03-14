@@ -1,22 +1,21 @@
 #include "http/http_service.h"
 #include <iostream>
+#include <mutex>
 #include <thread>
 #include <curl/curl.h>
 #include "core/logger.h"
 
 namespace agui {
 
+static std::once_flag s_curlInitFlag;
 std::unique_ptr<IHttpService> HttpServiceFactory::createCurlService() {
     return std::make_unique<HttpService>();
 }
 
 HttpService::HttpService() {
-    // Initialize libcurl (global initialization, only once)
-    static bool initialized = false;
-    if (!initialized) {
+    std::call_once(s_curlInitFlag, []() {
         curl_global_init(CURL_GLOBAL_DEFAULT);
-        initialized = true;
-    }
+    });
 }
 
 HttpService::~HttpService() {
@@ -126,16 +125,16 @@ void HttpService::sendSseRequest(const HttpRequest& request, SseDataCallback sse
         headers = curl_slist_append(headers, "Connection: keep-alive");
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-        // Create cancel flag
-        std::atomic<bool> cancelFlag(false);
+        // Create a shared cancel flag so that cancelRequest() and the libcurl
+        // write callback operate on the same atomic object.
+        auto cancelFlag = std::make_shared<std::atomic<bool>>(false);
         {
             std::lock_guard<std::mutex> lock(m_cancelMutex);
-            m_cancelFlags[request.url];
-            m_cancelFlags[request.url].store(false);
+            m_cancelFlags[request.url] = cancelFlag;
         }
 
         // Set streaming callback (pass curl handle for status code access)
-        SseCallbackContext context(sseDataCallbackFunc, &cancelFlag, curl);
+        SseCallbackContext context(sseDataCallbackFunc, cancelFlag.get(), curl);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, sseWriteCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &context);
 
@@ -225,11 +224,11 @@ void HttpService::sendSseRequest(const HttpRequest& request, SseDataCallback sse
     Logger::debugf("[HttpService] sendSseRequest finished");
 }
 
-void HttpService::cancelRequest(const std::string& requestId) {
+void HttpService::cancelRequest(const std::string& requestUrl) {
     std::lock_guard<std::mutex> lock(m_cancelMutex);
-    auto it = m_cancelFlags.find(requestId);
+    auto it = m_cancelFlags.find(requestUrl);
     if (it != m_cancelFlags.end()) {
-        it->second.store(true);
+        it->second->store(true);  // dereference shared_ptr, then set the shared atomic flag
     }
 }
 

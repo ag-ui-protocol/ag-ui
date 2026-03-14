@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <map>
 #include <memory>
@@ -54,7 +55,7 @@ public:
     virtual void sendSseRequest(const HttpRequest& request, SseDataCallback sseDataCallbackFunc,
                                 SseCompleteCallback completeCallbackFunc, HttpErrorCallback errorCallbackFunc) = 0;
 
-    virtual void cancelRequest(const std::string& requestId) {}
+    virtual void cancelRequest(const std::string& requestUrl) {}
 };
 
 class HttpServiceFactory {
@@ -90,7 +91,7 @@ public:
     /**
      * @brief Cancel request
      */
-    void cancelRequest(const std::string& requestId) override;
+    void cancelRequest(const std::string& requestUrl) override;
 
 private:
     /**
@@ -120,20 +121,33 @@ private:
     static bool parseUrl(const std::string& url, std::string& scheme, std::string& host, int& port,
                          std::string& path);
 
-    // Request cancellation management
-    std::map<std::string, std::atomic<bool>> m_cancelFlags;
+    // Each SSE request registers a shared_ptr<atomic<bool>> here so that
+    // cancelRequest() and the libcurl write callback share the exact same flag object.
+    std::map<std::string, std::shared_ptr<std::atomic<bool>>> m_cancelFlags;
     std::mutex m_cancelMutex;
 };
 
 /**
  * @brief Context for SSE streaming callbacks
+ *
+ * @note Thread-safety model:
+ * - `httpStatusCode` and `abortedDueToHttpError` are plain (non-atomic) types.
+ *   Both are accessed only within curl_easy_perform():
+ *   sseHeaderCallback writes httpStatusCode before sseWriteCallback reads it.
+ *   And sseWriteCallback writes abortedDueToHttpError before sendSseRequest() reads it after
+ *   curl_easy_perform() returns.
+ *   The libcurl easy interface guarantees all callbacks run sequentially on the calling thread.
+ * - `cancelFlag` is intentionally `std::atomic<bool>*` because cancelRequest()
+ *   may be called from a different thread to interrupt an in-flight request.
+ * - NOTE: This module is documented as single-threaded. Applications with different concurrency requirements
+ *   should adapt the threading model accordingly before use.
  */
 struct SseCallbackContext {
     SseDataCallback onData;
-    std::atomic<bool>* cancelFlag;
+    std::atomic<bool>* cancelFlag;  ///< Shared with cancelRequest(); must be atomic (cross-thread write).
     CURL* curlHandle;               ///< CURL handle reference for curl_easy_getinfo in callbacks
-    int httpStatusCode;              ///< HTTP status code extracted by header callback
-    bool abortedDueToHttpError;     ///< Set to true when write callback aborts due to non-2xx status
+    int httpStatusCode;             ///< Written by sseHeaderCallback, read by sseWriteCallback (same thread).
+    bool abortedDueToHttpError;     ///< Written by sseWriteCallback, read after curl_easy_perform() (same thread).
 
     SseCallbackContext(SseDataCallback callback, std::atomic<bool>* flag, CURL* curl)
         : onData(std::move(callback)), cancelFlag(flag), curlHandle(curl),
