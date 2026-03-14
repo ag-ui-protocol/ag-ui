@@ -968,7 +968,8 @@ export const A2UI_OPERATIONS_KEY = "a2ui_operations";
 
 /**
  * Try to parse text as A2UI operations.
- * Returns the array of operations if the text contains valid A2UI JSON, or null otherwise.
+ * Returns the array of operations if the text contains a valid { a2ui_operations: [...] } container,
+ * or null otherwise.
  */
 export function tryParseA2UIOperations(text: string): Array<Record<string, unknown>> | null {
   let parsed: unknown;
@@ -978,7 +979,6 @@ export function tryParseA2UIOperations(text: string): Array<Record<string, unkno
     return null;
   }
 
-  // Explicit container: { a2ui_operations: [...] }
   if (
     typeof parsed === "object" &&
     parsed !== null &&
@@ -986,24 +986,6 @@ export function tryParseA2UIOperations(text: string): Array<Record<string, unkno
     Array.isArray((parsed as Record<string, unknown>)[A2UI_OPERATIONS_KEY])
   ) {
     return (parsed as Record<string, unknown>)[A2UI_OPERATIONS_KEY] as Array<Record<string, unknown>>;
-  }
-
-  // Legacy: bare array of operations
-  if (Array.isArray(parsed)) {
-    const hasA2UI = parsed.some(
-      (item) =>
-        typeof item === "object" &&
-        item !== null &&
-        getOperationSurfaceId(item as Record<string, unknown>) !== undefined
-    );
-    return hasA2UI ? (parsed as Array<Record<string, unknown>>) : null;
-  }
-
-  // Legacy: single operation object
-  if (typeof parsed === "object" && parsed !== null) {
-    if (getOperationSurfaceId(parsed as Record<string, unknown>) !== undefined) {
-      return [parsed as Record<string, unknown>];
-    }
   }
 
   return null;

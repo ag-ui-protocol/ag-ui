@@ -312,14 +312,16 @@ describe("A2UI auto-detection in tool results", () => {
     consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
   });
 
-  it("should emit ACTIVITY_SNAPSHOT when TOOL_CALL_RESULT contains valid A2UI JSON", async () => {
+  it("should emit ACTIVITY_SNAPSHOT when TOOL_CALL_RESULT contains a2ui_operations container", async () => {
     const middleware = new A2UIMiddleware();
     const toolCallId = "tc-custom";
 
-    const a2uiResult = JSON.stringify([
-      { surfaceUpdate: { surfaceId: "login-form", components: [{ id: "root", component: { Text: { text: { literalString: "Login" } } } }] } },
-      { beginRendering: { surfaceId: "login-form", root: "root" } },
-    ]);
+    const a2uiResult = JSON.stringify({
+      a2ui_operations: [
+        { surfaceUpdate: { surfaceId: "login-form", components: [{ id: "root", component: { Text: { text: { literalString: "Login" } } } }] } },
+        { beginRendering: { surfaceId: "login-form", root: "root" } },
+      ],
+    });
 
     const mockAgent = new MockAgent([
       { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
@@ -428,7 +430,7 @@ describe("A2UI auto-detection in tool results", () => {
     expect(activitySnapshots).toHaveLength(1);
   });
 
-  it("should handle TOOL_CALL_RESULT with a single A2UI operation object", async () => {
+  it("should NOT emit ACTIVITY_SNAPSHOT for tool results without a2ui_operations container", async () => {
     const middleware = new A2UIMiddleware();
     const toolCallId = "tc-single";
 
@@ -458,42 +460,11 @@ describe("A2UI auto-detection in tool results", () => {
     const events = await collectEvents(middleware.run(input, mockAgent));
 
     const activitySnapshots = events.filter((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
-    expect(activitySnapshots).toHaveLength(1);
-    expect((activitySnapshots[0] as any).messageId).toBe("a2ui-surface-card-1");
+    expect(activitySnapshots).toHaveLength(0);
   });
 });
 
 describe("tryParseA2UIOperations", () => {
-  it("should return operations for a valid A2UI array", () => {
-    const input = JSON.stringify([
-      { beginRendering: { surfaceId: "s1", root: "root" } },
-    ]);
-    const result = tryParseA2UIOperations(input);
-    expect(result).toHaveLength(1);
-    expect(result![0]).toHaveProperty("beginRendering");
-  });
-
-  it("should return wrapped array for a single A2UI operation object", () => {
-    const input = JSON.stringify({ surfaceUpdate: { surfaceId: "s1", components: [] } });
-    const result = tryParseA2UIOperations(input);
-    expect(result).toHaveLength(1);
-  });
-
-  it("should return null for non-JSON text", () => {
-    expect(tryParseA2UIOperations("not json")).toBeNull();
-  });
-
-  it("should return null for JSON without A2UI keys", () => {
-    expect(tryParseA2UIOperations(JSON.stringify({ foo: "bar" }))).toBeNull();
-    expect(tryParseA2UIOperations(JSON.stringify([{ foo: "bar" }]))).toBeNull();
-  });
-
-  it("should return null for primitive JSON values", () => {
-    expect(tryParseA2UIOperations("42")).toBeNull();
-    expect(tryParseA2UIOperations('"hello"')).toBeNull();
-    expect(tryParseA2UIOperations("true")).toBeNull();
-  });
-
   it("should extract operations from a2ui_operations container", () => {
     const input = JSON.stringify({
       a2ui_operations: [
@@ -507,6 +478,29 @@ describe("tryParseA2UIOperations", () => {
     expect(result![0]).toHaveProperty("surfaceUpdate");
     expect(result![1]).toHaveProperty("dataModelUpdate");
     expect(result![2]).toHaveProperty("beginRendering");
+  });
+
+  it("should return null for non-JSON text", () => {
+    expect(tryParseA2UIOperations("not json")).toBeNull();
+  });
+
+  it("should return null for JSON without a2ui_operations key", () => {
+    expect(tryParseA2UIOperations(JSON.stringify({ foo: "bar" }))).toBeNull();
+    expect(tryParseA2UIOperations(JSON.stringify([{ foo: "bar" }]))).toBeNull();
+    expect(tryParseA2UIOperations(JSON.stringify({ surfaceUpdate: { surfaceId: "s1", components: [] } }))).toBeNull();
+  });
+
+  it("should return null for primitive JSON values", () => {
+    expect(tryParseA2UIOperations("42")).toBeNull();
+    expect(tryParseA2UIOperations('"hello"')).toBeNull();
+    expect(tryParseA2UIOperations("true")).toBeNull();
+  });
+
+  it("should return null for bare arrays (no container)", () => {
+    const input = JSON.stringify([
+      { beginRendering: { surfaceId: "s1", root: "root" } },
+    ]);
+    expect(tryParseA2UIOperations(input)).toBeNull();
   });
 });
 
