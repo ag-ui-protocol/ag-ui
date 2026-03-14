@@ -15,23 +15,28 @@ void EventVerifier::verify(const Event& event) {
 
     switch (eventType) {
         // Text message events
-        case EventType::TextMessageStart:
-        case EventType::TextMessageContent:
-        case EventType::TextMessageEnd: {
+        case EventType::TextMessageStart: {
             const auto* startEvent = static_cast<const TextMessageStartEvent*>(&event);
-            const auto* contentEvent = static_cast<const TextMessageContentEvent*>(&event);
-            const auto* endEvent = static_cast<const TextMessageEndEvent*>(&event);
-            std::string messageId;
-            
             if (startEvent) {
-                messageId = startEvent->messageId;
-            } else if (contentEvent) {
-                messageId = contentEvent->messageId;
-            } else if (endEvent) {
-                messageId = endEvent->messageId;
+                std::string messageId = startEvent->messageId;
+                verifyTextMessage(eventType, messageId);
             }
-            
-            verifyTextMessage(eventType, messageId);
+            break;
+        }
+        case EventType::TextMessageContent: {
+            const auto* contentEvent = static_cast<const TextMessageContentEvent*>(&event);
+            if (contentEvent) {
+                std::string messageId = contentEvent->messageId;
+                verifyTextMessage(eventType, messageId);
+            }
+            break;
+        }
+        case EventType::TextMessageEnd: {
+            const auto* endEvent = static_cast<const TextMessageEndEvent*>(&event);
+            if (endEvent) {
+                std::string messageId = endEvent->messageId;
+                verifyTextMessage(eventType, messageId);
+            }
             break;
         }
 
@@ -43,23 +48,30 @@ void EventVerifier::verify(const Event& event) {
             break;
 
         // Tool call events
-        case EventType::ToolCallStart:
-        case EventType::ToolCallArgs:
-        case EventType::ToolCallEnd: {
+        case EventType::ToolCallStart: {
             const auto* startEvent = static_cast<const ToolCallStartEvent*>(&event);
+            if (startEvent) {
+                std::string toolCallId = startEvent->toolCallId;
+                verifyToolCall(eventType, toolCallId);
+            }
+            break;
+        }
+        case EventType::ToolCallArgs: {
             const auto* argsEvent = static_cast<const ToolCallArgsEvent*>(&event);
+            if (argsEvent) {
+                std::string toolCallId = argsEvent->toolCallId;
+                verifyToolCall(eventType, toolCallId);
+            }
+            break;
+        }
+        case EventType::ToolCallEnd: {
             const auto* endEvent = static_cast<const ToolCallEndEvent*>(&event);
             std::string toolCallId;
             
-            if (startEvent) {
-                toolCallId = startEvent->toolCallId;
-            } else if (argsEvent) {
-                toolCallId = argsEvent->toolCallId;
-            } else if (endEvent) {
-                toolCallId = endEvent->toolCallId;
+            if (endEvent) {
+                std::string toolCallId = endEvent->toolCallId;
+                verifyToolCall(eventType, toolCallId);
             }
-            
-            verifyToolCall(eventType, toolCallId);
             break;
         }
 

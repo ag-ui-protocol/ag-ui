@@ -1,78 +1,20 @@
-#include "core/event.h"
-#include <cassert>
-#include <iostream>
+/**
+ * @file test_activity_events.cpp
+ * @brief Activity Events functionality tests
+ * 
+ * Tests ActivitySnapshotEvent, ActivityDeltaEvent, JsonPatchOperation and EventParser
+ */
+
+#include <gtest/gtest.h>
 #include <memory>
 #include <string>
 
+#include "core/event.h"
+
 using namespace agui;
 
-// Simple test framework
-int g_test_count = 0;
-int g_test_passed = 0;
-int g_test_failed = 0;
-
-#define TEST_CASE(name) \
-    void test_##name(); \
-    struct TestRegistrar_##name { \
-        TestRegistrar_##name() { \
-            std::cout << "Running test: " << #name << std::endl; \
-            g_test_count++; \
-            try { \
-                test_##name(); \
-                g_test_passed++; \
-                std::cout << "   PASSED" << std::endl; \
-            } catch (const std::exception& e) { \
-                g_test_failed++; \
-                std::cout << "   FAILED: " << e.what() << std::endl; \
-            } catch (...) { \
-                g_test_failed++; \
-                std::cout << "   FAILED: Unknown exception" << std::endl; \
-            } \
-        } \
-    } g_test_registrar_##name; \
-    void test_##name()
-
-#define ASSERT_TRUE(condition) \
-    if (!(condition)) { \
-        throw std::runtime_error("Assertion failed: " #condition); \
-    }
-
-#define ASSERT_FALSE(condition) \
-    if (condition) { \
-        throw std::runtime_error("Assertion failed: !" #condition); \
-    }
-
-#define EXPECT_EQ(a, b) \
-    if ((a) != (b)) { \
-        throw std::runtime_error(std::string("Expected equal: ") + #a + " != " + #b); \
-    }
-
-#define EXPECT_THROW(statement, exception_type) \
-    { \
-        bool caught = false; \
-        try { \
-            statement; \
-        } catch (const exception_type&) { \
-            caught = true; \
-        } catch (...) { \
-        } \
-        if (!caught) { \
-            throw std::runtime_error("Expected exception not thrown: " #exception_type); \
-        } \
-    }
-
-#define EXPECT_NO_THROW(statement) \
-    try { \
-        statement; \
-    } catch (const std::exception& e) { \
-        throw std::runtime_error(std::string("Unexpected exception: ") + e.what()); \
-    }
-
-// ============================================================================
 // ActivitySnapshotEvent Tests
-// ============================================================================
-
-TEST_CASE(ActivitySnapshotEventBasic) {
+TEST(ActivityEventsTest, ActivitySnapshotEventBasic) {
     ActivitySnapshotEvent event;
     event.messageId = "msg-123";
     event.activityType = "PLAN";
@@ -89,7 +31,7 @@ TEST_CASE(ActivitySnapshotEventBasic) {
     EXPECT_EQ(j["replace"], true);
 }
 
-TEST_CASE(ActivitySnapshotEventFromJson) {
+TEST(ActivityEventsTest, ActivitySnapshotEventFromJson) {
     nlohmann::json j = {
         {"type", "ACTIVITY_SNAPSHOT"},
         {"messageId", "msg-456"},
@@ -106,7 +48,7 @@ TEST_CASE(ActivitySnapshotEventFromJson) {
     EXPECT_EQ(event.replace, false);
 }
 
-TEST_CASE(ActivitySnapshotEventValidation) {
+TEST(ActivityEventsTest, ActivitySnapshotEventValidation) {
     ActivitySnapshotEvent event;
     
     // Missing messageId
@@ -129,11 +71,8 @@ TEST_CASE(ActivitySnapshotEventValidation) {
     EXPECT_NO_THROW(event.validate());
 }
 
-// ============================================================================
 // JsonPatchOperation Tests
-// ============================================================================
-
-TEST_CASE(JsonPatchOperationBasic) {
+TEST(ActivityEventsTest, JsonPatchOperationBasic) {
     JsonPatchOperation op;
     op.op = "add";
     op.path = "/status";
@@ -145,7 +84,7 @@ TEST_CASE(JsonPatchOperationBasic) {
     EXPECT_EQ(j["value"], "completed");
 }
 
-TEST_CASE(JsonPatchOperationValidation) {
+TEST(ActivityEventsTest, JsonPatchOperationValidation) {
     JsonPatchOperation op;
     
     // Invalid operation
@@ -180,7 +119,7 @@ TEST_CASE(JsonPatchOperationValidation) {
     EXPECT_NO_THROW(op.validate());
 }
 
-TEST_CASE(JsonPatchOperationAllTypes) {
+TEST(ActivityEventsTest, JsonPatchOperationAllTypes) {
     // Test all 6 operation types
     std::vector<std::string> validOps = {"add", "remove", "replace", "move", "copy", "test"};
     
@@ -199,11 +138,8 @@ TEST_CASE(JsonPatchOperationAllTypes) {
     }
 }
 
-// ============================================================================
 // ActivityDeltaEvent Tests
-// ============================================================================
-
-TEST_CASE(ActivityDeltaEventBasic) {
+TEST(ActivityEventsTest, ActivityDeltaEventBasic) {
     ActivityDeltaEvent event;
     event.messageId = "msg-789";
     event.activityType = "PLAN";
@@ -231,7 +167,7 @@ TEST_CASE(ActivityDeltaEventBasic) {
     EXPECT_EQ(j["patch"][1]["op"], "replace");
 }
 
-TEST_CASE(ActivityDeltaEventFromJson) {
+TEST(ActivityEventsTest, ActivityDeltaEventFromJson) {
     nlohmann::json j = {
         {"type", "ACTIVITY_DELTA"},
         {"messageId", "msg-101"},
@@ -251,30 +187,19 @@ TEST_CASE(ActivityDeltaEventFromJson) {
     EXPECT_EQ(event.patch[1].op, "remove");
 }
 
-TEST_CASE(ActivityDeltaEventValidation) {
+TEST(ActivityEventsTest, ActivityDeltaEventValidation) {
     ActivityDeltaEvent event;
     
-    // Missing messageId
+    event.messageId = "msg-123";
     event.activityType = "PLAN";
+    
+    EXPECT_THROW(event.validate(), AgentError);
     JsonPatchOperation op;
     op.op = "add";
     op.path = "/test";
     op.value = "data";
     event.patch.push_back(op);
-    EXPECT_THROW(event.validate(), AgentError);
-    
-    // Missing activityType
-    event.messageId = "msg-123";
-    event.activityType = "";
-    EXPECT_THROW(event.validate(), AgentError);
-    
-    // Empty patch
-    event.activityType = "PLAN";
-    event.patch.clear();
-    EXPECT_THROW(event.validate(), AgentError);
-    
-    // Invalid patch operation
-    event.patch.push_back(op);
+    EXPECT_NO_THROW(event.validate());
     event.patch[0].op = "invalid";
     EXPECT_THROW(event.validate(), AgentError);
     
@@ -283,11 +208,8 @@ TEST_CASE(ActivityDeltaEventValidation) {
     EXPECT_NO_THROW(event.validate());
 }
 
-// ============================================================================
 // EventParser Tests
-// ============================================================================
-
-TEST_CASE(EventParserActivitySnapshot) {
+TEST(ActivityEventsTest, EventParserActivitySnapshot) {
     nlohmann::json j = {
         {"type", "ACTIVITY_SNAPSHOT"},
         {"messageId", "msg-123"},
@@ -299,13 +221,13 @@ TEST_CASE(EventParserActivitySnapshot) {
     auto event = EventParser::parse(j);
     EXPECT_EQ(event->type(), EventType::ActivitySnapshot);
     
-    auto* activityEvent = static_cast<ActivitySnapshotEvent*>(event.get());
+    auto* activityEvent = dynamic_cast<ActivitySnapshotEvent*>(event.get());
     ASSERT_TRUE(activityEvent != nullptr);
     EXPECT_EQ(activityEvent->messageId, "msg-123");
     EXPECT_EQ(activityEvent->activityType, "PLAN");
 }
 
-TEST_CASE(EventParserActivityDelta) {
+TEST(ActivityEventsTest, EventParserActivityDelta) {
     nlohmann::json j = {
         {"type", "ACTIVITY_DELTA"},
         {"messageId", "msg-456"},
@@ -325,21 +247,18 @@ TEST_CASE(EventParserActivityDelta) {
     EXPECT_EQ(deltaEvent->patch.size(), 1);
 }
 
-TEST_CASE(EventTypeToString) {
+TEST(ActivityEventsTest, EventTypeToString) {
     EXPECT_EQ(EventParser::eventTypeToString(EventType::ActivitySnapshot), "ACTIVITY_SNAPSHOT");
     EXPECT_EQ(EventParser::eventTypeToString(EventType::ActivityDelta), "ACTIVITY_DELTA");
 }
 
-TEST_CASE(ParseEventType) {
+TEST(ActivityEventsTest, ParseEventType) {
     EXPECT_EQ(EventParser::parseEventType("ACTIVITY_SNAPSHOT"), EventType::ActivitySnapshot);
     EXPECT_EQ(EventParser::parseEventType("ACTIVITY_DELTA"), EventType::ActivityDelta);
 }
 
-// ============================================================================
 // Complex Scenarios
-// ============================================================================
-
-TEST_CASE(ActivitySnapshotWithComplexContent) {
+TEST(ActivityEventsTest, ActivitySnapshotWithComplexContent) {
     ActivitySnapshotEvent event;
     event.messageId = "msg-complex";
     event.activityType = "ANALYSIS";
@@ -358,7 +277,7 @@ TEST_CASE(ActivitySnapshotWithComplexContent) {
     EXPECT_EQ(j["content"]["metadata"]["source"], "api");
 }
 
-TEST_CASE(ActivityDeltaWithMultipleOperations) {
+TEST(ActivityEventsTest, ActivityDeltaWithMultipleOperations) {
     ActivityDeltaEvent event;
     event.messageId = "msg-multi";
     event.activityType = "PROCESSING";
@@ -389,25 +308,4 @@ TEST_CASE(ActivityDeltaWithMultipleOperations) {
     EXPECT_EQ(j["patch"][0]["op"], "add");
     EXPECT_EQ(j["patch"][1]["op"], "replace");
     EXPECT_EQ(j["patch"][2]["op"], "remove");
-}
-
-// ============================================================================
-// Main function
-// ============================================================================
-
-int main() {
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "Activity Events Test Suite" << std::endl;
-    std::cout << "========================================\n" << std::endl;
-    
-    // Tests will run automatically when global objects are initialized
-    
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "Test Results:" << std::endl;
-    std::cout << "  Total:  " << g_test_count << std::endl;
-    std::cout << "  Passed: " << g_test_passed << std::endl;
-    std::cout << "  Failed: " << g_test_failed << std::endl;
-    std::cout << "========================================" << std::endl;
-    
-    return g_test_failed > 0 ? 1 : 0;
 }

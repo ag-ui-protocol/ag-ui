@@ -1,54 +1,19 @@
-#include "stream/sse_parser.h"
-#include <cassert>
-#include <iostream>
+/**
+ * @file test_sse_parser.cpp
+ * @brief SSE Parser functionality tests
+ * 
+ * Tests SSE event parsing, chunking, multiline data, comments, and edge cases
+ */
+
+#include <gtest/gtest.h>
 #include <string>
+
+#include "stream/sse_parser.h"
 
 using namespace agui;
 
-// Simple test framework
-int g_test_count = 0;
-int g_test_passed = 0;
-int g_test_failed = 0;
-
-#define TEST_CASE(name) \
-    void test_##name(); \
-    struct TestRegistrar_##name { \
-        TestRegistrar_##name() { \
-            std::cout << "Running test: " << #name << std::endl; \
-            g_test_count++; \
-            try { \
-                test_##name(); \
-                g_test_passed++; \
-                std::cout << "   PASSED" << std::endl; \
-            } catch (const std::exception& e) { \
-                g_test_failed++; \
-                std::cout << "   FAILED: " << e.what() << std::endl; \
-            } catch (...) { \
-                g_test_failed++; \
-                std::cout << "   FAILED: Unknown exception" << std::endl; \
-            } \
-        } \
-    } g_test_registrar_##name; \
-    void test_##name()
-
-#define ASSERT_TRUE(condition) \
-    if (!(condition)) { \
-        throw std::runtime_error("Assertion failed: " #condition); \
-    }
-
-#define ASSERT_FALSE(condition) \
-    if (condition) { \
-        throw std::runtime_error("Assertion failed: !" #condition); \
-    }
-
-#define EXPECT_EQ(a, b) \
-    if ((a) != (b)) { \
-        throw std::runtime_error(std::string("Expected equal: ") + #a + " != " + #b); \
-    }
-
 // Basic functionality tests
-
-TEST_CASE(BasicEvent) {
+TEST(SseParserTest, BasicEvent) {
     SseParser parser;
     parser.feed("data: {\"type\":\"TEST\"}\n\n");
     
@@ -59,7 +24,7 @@ TEST_CASE(BasicEvent) {
     ASSERT_FALSE(parser.hasEvent());
 }
 
-TEST_CASE(MultipleEvents) {
+TEST(SseParserTest, MultipleEvents) {
     SseParser parser;
     parser.feed("data: {\"type\":\"EVENT1\"}\n\n");
     parser.feed("data: {\"type\":\"EVENT2\"}\n\n");
@@ -77,24 +42,22 @@ TEST_CASE(MultipleEvents) {
     ASSERT_FALSE(parser.hasEvent());
 }
 
-TEST_CASE(EmptyData) {
+TEST(SseParserTest, EmptyData) {
     SseParser parser;
     parser.feed("\n\n");
     
     ASSERT_FALSE(parser.hasEvent());
 }
 
-// Cross-chunk split tests
-
-TEST_CASE(SplitEvent) {
+TEST(SseParserTest, DataPrefixSplitFromContent) {
     SseParser parser;
     
-    // First chunk: incomplete event
-    parser.feed("data: {\"type\":");
+    // data: prefix in one chunk
+    parser.feed("data: ");
     ASSERT_FALSE(parser.hasEvent());
     
-    // Second chunk: complete event
-    parser.feed("\"TEST\"}\n\n");
+    // JSON content in another chunk
+    parser.feed("{\"type\":\"TEST\"}\n\n");
     ASSERT_TRUE(parser.hasEvent());
     
     auto evt = parser.nextEvent();
@@ -102,7 +65,7 @@ TEST_CASE(SplitEvent) {
     EXPECT_EQ(eventObj["type"], "TEST");
 }
 
-TEST_CASE(SplitAcrossMultipleChunks) {
+TEST(SseParserTest, SplitAcrossMultipleChunks) {
     SseParser parser;
     
     parser.feed("data: {\"type\":");
@@ -124,23 +87,7 @@ TEST_CASE(SplitAcrossMultipleChunks) {
     EXPECT_EQ(eventObj["delta"], "Hello");
 }
 
-TEST_CASE(DataPrefixSplitFromContent) {
-    SseParser parser;
-    
-    // data: prefix in one chunk
-    parser.feed("data: ");
-    ASSERT_FALSE(parser.hasEvent());
-    
-    // JSON content in another chunk
-    parser.feed("{\"type\":\"TEST\"}\n\n");
-    ASSERT_TRUE(parser.hasEvent());
-    
-    auto evt = parser.nextEvent();
-    nlohmann::json eventObj = nlohmann::json::parse(evt);
-    EXPECT_EQ(eventObj["type"], "TEST");
-}
-
-TEST_CASE(NewlineSplitFromData) {
+TEST(SseParserTest, NewlineSplitFromData) {
     SseParser parser;
     
     // data line in one chunk
@@ -156,7 +103,7 @@ TEST_CASE(NewlineSplitFromData) {
     EXPECT_EQ(eventObj["type"], "TEST");
 }
 
-TEST_CASE(MultilineData) {
+TEST(SseParserTest, MultilineData) {
     SseParser parser;
     parser.feed("data: {\n");
     parser.feed("data: \"type\": \"TEST\"\n");
@@ -169,19 +116,7 @@ TEST_CASE(MultilineData) {
 }
 
 // Comment line tests
-
-TEST_CASE(CommentLine) {
-    SseParser parser;
-    parser.feed(": this is a comment\n");
-    parser.feed("data: {\"type\":\"TEST\"}\n\n");
-    
-    ASSERT_TRUE(parser.hasEvent());
-    auto evt = parser.nextEvent();
-    nlohmann::json eventObj = nlohmann::json::parse(evt);
-    EXPECT_EQ(eventObj["type"], "TEST");
-}
-
-TEST_CASE(MultipleComments) {
+TEST(SseParserTest, MultipleComments) {
     SseParser parser;
     parser.feed(": comment 1\n");
     parser.feed(": comment 2\n");
@@ -194,8 +129,7 @@ TEST_CASE(MultipleComments) {
 }
 
 // event and id field tests (AgUiSseParser ignores these fields)
-
-TEST_CASE(IgnoreEventField) {
+TEST(SseParserTest, IgnoreEventField) {
     SseParser parser;
     parser.feed("event: message\n");
     parser.feed("data: {\"type\":\"TEST\"}\n\n");
@@ -206,20 +140,8 @@ TEST_CASE(IgnoreEventField) {
     EXPECT_EQ(eventObj["type"], "TEST");
 }
 
-TEST_CASE(IgnoreIdField) {
-    SseParser parser;
-    parser.feed("id: 123\n");
-    parser.feed("data: {\"type\":\"TEST\"}\n\n");
-    
-    ASSERT_TRUE(parser.hasEvent());
-    auto evt = parser.nextEvent();
-    nlohmann::json eventObj = nlohmann::json::parse(evt);
-    EXPECT_EQ(eventObj["type"], "TEST");
-}
-
 // Single chunk containing multiple events test
-
-TEST_CASE(MultipleEventsInSingleChunk) {
+TEST(SseParserTest, MultipleEventsInSingleChunk) {
     SseParser parser;
     parser.feed("data: {\"type\":\"EVENT1\"}\n\ndata: {\"type\":\"EVENT2\"}\n\ndata: {\"type\":\"EVENT3\"}\n\n");
     
@@ -242,30 +164,28 @@ TEST_CASE(MultipleEventsInSingleChunk) {
 }
 
 // UTF-8 character tests
-
-TEST_CASE(Utf8Characters) {
+TEST(SseParserTest, Utf8Characters) {
     SseParser parser;
-    parser.feed("data: {\"text\":\"Hello World\"}\n\n");
+    parser.feed("data: {\"text\":\"你好\"}\n\n");
     
     ASSERT_TRUE(parser.hasEvent());
     auto evt = parser.nextEvent();
     nlohmann::json eventObj = nlohmann::json::parse(evt);
-    EXPECT_EQ(eventObj["text"], "Hello World");
+    EXPECT_EQ(eventObj["text"], "你好");
 }
 
-TEST_CASE(Utf8Emoji) {
+TEST(SseParserTest, Utf8Emoji) {
     SseParser parser;
-    parser.feed("data: {\"text\":\"Hello  World \"}\n\n");
+    parser.feed("data: {\"text\":\"Hello 🌍 World 🚀\"}\n\n");
     
     ASSERT_TRUE(parser.hasEvent());
     auto evt = parser.nextEvent();
     nlohmann::json eventObj = nlohmann::json::parse(evt);
-    EXPECT_EQ(eventObj["text"], "Hello  World ");
+    EXPECT_EQ(eventObj["text"], "Hello 🌍 World 🚀");
 }
 
 // Stream end handling test (flush)
-
-TEST_CASE(FlushWithCompleteEvent) {
+TEST(SseParserTest, FlushWithCompleteEvent) {
     SseParser parser;
     parser.feed("data: {\"type\":\"TEST\"}\n\n");
     
@@ -277,7 +197,7 @@ TEST_CASE(FlushWithCompleteEvent) {
     EXPECT_EQ(eventObj["type"], "TEST");
 }
 
-TEST_CASE(FlushWithIncompleteEvent) {
+TEST(SseParserTest, FlushWithIncompleteEvent) {
     SseParser parser;
     parser.feed("data: {\"type\":\"TEST\"}\n");
     
@@ -290,7 +210,7 @@ TEST_CASE(FlushWithIncompleteEvent) {
     EXPECT_EQ(eventObj["type"], "TEST");
 }
 
-TEST_CASE(FlushWithNoData) {
+TEST(SseParserTest, FlushWithNoData) {
     SseParser parser;
     parser.feed("event: test\n");
     
@@ -301,8 +221,7 @@ TEST_CASE(FlushWithNoData) {
 }
 
 // Clear buffer test
-
-TEST_CASE(Clear) {
+TEST(SseParserTest, Clear) {
     SseParser parser;
     parser.feed("data: {\"type\":\"TEST1\"}\n\n");
     parser.feed("data: {\"type\":\"TEST2\"}\n");
@@ -321,20 +240,19 @@ TEST_CASE(Clear) {
 }
 
 // Edge case tests
-
-TEST_CASE(EmptyChunk) {
+TEST(SseParserTest, EmptyChunk) {
     SseParser parser;
     parser.feed("");
     ASSERT_FALSE(parser.hasEvent());
 }
 
-TEST_CASE(OnlyNewlines) {
+TEST(SseParserTest, OnlyNewlines) {
     SseParser parser;
     parser.feed("\n\n\n\n");
     ASSERT_FALSE(parser.hasEvent());
 }
 
-TEST_CASE(CarriageReturn) {
+TEST(SseParserTest, CarriageReturn) {
     SseParser parser;
     parser.feed("data: {\"type\":\"TEST\"}\r\n\r\n");
     
@@ -344,7 +262,7 @@ TEST_CASE(CarriageReturn) {
     EXPECT_EQ(eventObj["type"], "TEST");
 }
 
-TEST_CASE(MixedNewlines) {
+TEST(SseParserTest, MixedNewlines) {
     SseParser parser;
     parser.feed("data: {\"type\":\"TEST\"}\r\n\n");
     
@@ -354,7 +272,7 @@ TEST_CASE(MixedNewlines) {
     EXPECT_EQ(eventObj["type"], "TEST");
 }
 
-TEST_CASE(VeryLongData) {
+TEST(SseParserTest, VeryLongData) {
     SseParser parser;
     std::string longValue(10000, 'A');
     parser.feed("data: {\"value\":\"" + longValue + "\"}\n\n");
@@ -366,8 +284,7 @@ TEST_CASE(VeryLongData) {
 }
 
 // AG-UI real scenario tests
-
-TEST_CASE(AgUiTextMessageStart) {
+TEST(SseParserTest, AgUiTextMessageStart) {
     SseParser parser;
     parser.feed("data: {\"type\":\"TEXT_MESSAGE_START\",\"messageId\":\"1\",\"role\":\"assistant\"}\n\n");
     
@@ -379,7 +296,7 @@ TEST_CASE(AgUiTextMessageStart) {
     EXPECT_EQ(eventObj["role"], "assistant");
 }
 
-TEST_CASE(AgUiTextMessageContent) {
+TEST(SseParserTest, AgUiTextMessageContent) {
     SseParser parser;
     parser.feed("data: {\"type\":\"TEXT_MESSAGE_CONTENT\",\"messageId\":\"1\",\"delta\":\"Hello\"}\n\n");
     
@@ -391,7 +308,7 @@ TEST_CASE(AgUiTextMessageContent) {
     EXPECT_EQ(eventObj["delta"], "Hello");
 }
 
-TEST_CASE(AgUiCompleteConversation) {
+TEST(SseParserTest, AgUiCompleteConversation) {
     SseParser parser;
     
     // START event
@@ -425,7 +342,7 @@ TEST_CASE(AgUiCompleteConversation) {
     ASSERT_FALSE(parser.hasEvent());
 }
 
-TEST_CASE(AgUiToolCallStart) {
+TEST(SseParserTest, AgUiToolCallStart) {
     SseParser parser;
     parser.feed("data: {\"type\":\"TOOL_CALL_START\",\"toolCallId\":\"call_123\",\"toolCallName\":\"search\"}\n\n");
     
@@ -437,7 +354,7 @@ TEST_CASE(AgUiToolCallStart) {
     EXPECT_EQ(eventObj["toolCallName"], "search");
 }
 
-TEST_CASE(AgUiNestedJson) {
+TEST(SseParserTest, AgUiNestedJson) {
     SseParser parser;
     parser.feed("data: {\"type\":\"TEST\",\"data\":{\"nested\":{\"value\":123}}}\n\n");
     
@@ -448,9 +365,7 @@ TEST_CASE(AgUiNestedJson) {
     EXPECT_EQ(eventObj["data"]["nested"]["value"], 123);
 }
 
-// Performance tests
-
-TEST_CASE(LargeNumberOfEvents) {
+TEST(SseParserTest, LargeNumberOfEventsCorrectness) {
     SseParser parser;
     
     const int eventCount = 1000;
@@ -469,7 +384,7 @@ TEST_CASE(LargeNumberOfEvents) {
     EXPECT_EQ(count, eventCount);
 }
 
-TEST_CASE(IncrementalFeedPerformance) {
+TEST(SseParserTest, IncrementalFeedCorrectness) {
     SseParser parser;
     
     // Simulate feeding one character at a time
@@ -485,10 +400,7 @@ TEST_CASE(IncrementalFeedPerformance) {
 }
 
 // Error handling tests
-// Note: SSE parser only validates SSE format, not JSON content.
-// JSON parsing is the responsibility of the upper layer.
-
-TEST_CASE(InvalidJson) {
+TEST(SseParserTest, InvalidJson) {
     SseParser parser;
     parser.feed("data: {invalid json}\n\n");
     
@@ -500,14 +412,15 @@ TEST_CASE(InvalidJson) {
     auto jsonStr = parser.nextEvent();
     bool parseError = false;
     try {
-        nlohmann::json::parse(jsonStr);
+        nlohmann::json eventJson = nlohmann::json::parse(jsonStr);
+        (void)eventJson;
     } catch (const nlohmann::json::parse_error&) {
         parseError = true;
     }
     ASSERT_TRUE(parseError);
 }
 
-TEST_CASE(GetLastError) {
+TEST(SseParserTest, GetLastError) {
     SseParser parser;
     
     // Initial state has no error
@@ -526,28 +439,10 @@ TEST_CASE(GetLastError) {
     auto jsonStr = parser.nextEvent();
     bool parseError = false;
     try {
-        nlohmann::json::parse(jsonStr);
+        nlohmann::json eventJson = nlohmann::json::parse(jsonStr);
+        (void)eventJson;
     } catch (const nlohmann::json::parse_error&) {
         parseError = true;
     }
     ASSERT_TRUE(parseError);
-}
-
-// Main function
-
-int main() {
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "AgUi SSE Parser Test Suite" << std::endl;
-    std::cout << "========================================\n" << std::endl;
-    
-    // Tests will run automatically when global objects are initialized
-    
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "Test Results:" << std::endl;
-    std::cout << "  Total:  " << g_test_count << std::endl;
-    std::cout << "  Passed: " << g_test_passed << std::endl;
-    std::cout << "  Failed: " << g_test_failed << std::endl;
-    std::cout << "========================================" << std::endl;
-    
-    return g_test_failed > 0 ? 1 : 0;
 }

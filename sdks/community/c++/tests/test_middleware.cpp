@@ -1,3 +1,4 @@
+#include <gtest/gtest.h>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -7,8 +8,6 @@
 #include "core/event.h"
 
 using namespace agui;
-using namespace std;
-
 // Test Middleware implementations
 
 /**
@@ -17,8 +16,6 @@ using namespace std;
 class RequestModifierMiddleware : public IMiddleware {
 public:
     RunAgentInput onRequest(const RunAgentInput& input, MiddlewareContext& context) override {
-        cout << "[TEST] RequestModifierMiddleware: Modifying request" << endl;
-        
         RunAgentInput modifiedInput = input;
         modifiedInput.context.push_back(Context());
         
@@ -34,7 +31,6 @@ public:
 class ResponseModifierMiddleware : public IMiddleware {
 public:
     RunAgentResult onResponse(const RunAgentResult& result, MiddlewareContext& context) override {
-        cout << "[TEST] ResponseModifierMiddleware: Modifying response" << endl;
         RunAgentResult modifiedResult = result;
         modifiedResult.result = "modified content";
         context.metadata["response_modified"] = "true";
@@ -53,8 +49,6 @@ public:
     
     bool shouldProcessEvent(const Event& event, MiddlewareContext& context) override {
         if (event.type() == _filterType) {
-            cout << "[TEST] EventFilterMiddleware: Filtering event type "
-                 << static_cast<int>(_filterType) << endl;
             return false;
         }
         return true;
@@ -73,20 +67,20 @@ public:
     
     RunAgentInput onRequest(const RunAgentInput& input, MiddlewareContext& context) override {
         requestCount++;
-        cout << "[TEST] LoggingTestMiddleware: Request #" << requestCount << endl;
+        std::cout << "[TEST] LoggingTestMiddleware: Request #" << requestCount << std::endl;
         return input;
     }
     
     RunAgentResult onResponse(const RunAgentResult& result, MiddlewareContext& context) override {
         responseCount++;
-        cout << "[TEST] LoggingTestMiddleware: Response #" << responseCount << endl;
+        std::cout << "[TEST] LoggingTestMiddleware: Response #" << responseCount << std::endl;
         return result;
     }
     
     std::unique_ptr<Event> onEvent(std::unique_ptr<Event> event, MiddlewareContext& context) override {
         eventCount++;
-        cout << "[TEST] LoggingTestMiddleware: Event #" << eventCount
-             << " (type=" << static_cast<int>(event->type()) << ")" << endl;
+        std::cout << "[TEST] LoggingTestMiddleware: Event #" << eventCount
+             << " (type=" << static_cast<int>(event->type()) << ")" << std::endl;
         return event;
     }
     
@@ -105,7 +99,6 @@ public:
     
     bool shouldContinue(const RunAgentInput& input, MiddlewareContext& context) override {
         if (_shouldStop) {
-            cout << "[TEST] ExecutionControlMiddleware: Stopping execution" << endl;
             context.shouldContinue = false;
             return false;
         }
@@ -116,431 +109,220 @@ private:
     bool _shouldStop;
 };
 
-// Test helper functions
-
-void printTestHeader(const string& testName) {
-    cout << "\n========================================" << endl;
-    cout << "Test: " << testName << endl;
-    cout << "========================================" << endl;
-}
-
-void printTestResult(const string& testName, bool passed) {
-    if (passed) {
-        cout << " " << testName << " - Passed" << endl;
-    } else {
-        cout << " " << testName << " - Failed" << endl;
-    }
-}
-
 // Test cases
 const std::string MOCK_SERVER_URL = "http://localhost:8080/api/agent/run";
 
-void test_add_single_middleware() {
-    printTestHeader("Add single middleware");
+// Middleware Management Tests
+TEST(MiddlewareTest, AddSingleMiddleware) {
+    auto agent = HttpAgent::builder()
+        .withUrl(MOCK_SERVER_URL)
+        .withAgentId("test-agent")
+        .build();
     
-    try {
-        auto agent = HttpAgent::builder()
-            .withUrl(MOCK_SERVER_URL)
-            .withAgentId("test-agent")
-            .build();
-        
-        auto middleware = make_shared<LoggingTestMiddleware>();
-        agent->use(middleware);
-        
-        bool passed = (agent->middlewareChain().size() == 1);
-        printTestResult("Add single middleware", passed);
-        
-        cout << "Middleware count: " << agent->middlewareChain().size() << endl;
-    } catch (const AgentError& e) {
-        cout << " Failed: " << e.fullMessage() << endl;
-    }
+    auto middleware = std::make_shared<LoggingTestMiddleware>();
+    agent->use(middleware);
+    
+    EXPECT_EQ(agent->middlewareChain().size(), 1);
 }
 
-void test_add_multiple_middlewares() {
-    printTestHeader("Add multiple middlewares");
+TEST(MiddlewareTest, AddMultipleMiddlewares) {
+    auto agent = HttpAgent::builder()
+        .withUrl(MOCK_SERVER_URL)
+        .build();
     
-    try {
-        auto agent = HttpAgent::builder()
-            .withUrl(MOCK_SERVER_URL)
-            .build();
-        
-        auto middleware1 = make_shared<LoggingTestMiddleware>();
-        auto middleware2 = make_shared<RequestModifierMiddleware>();
-        auto middleware3 = make_shared<ResponseModifierMiddleware>();
-        
-        agent->use(middleware1)
-              .use(middleware2)
-              .use(middleware3);
-        
-        bool passed = (agent->middlewareChain().size() == 3);
-        printTestResult("Add multiple middlewares", passed);
-        
-        cout << "Middleware count: " << agent->middlewareChain().size() << endl;
-    } catch (const AgentError& e) {
-        cout << " Failed: " << e.fullMessage() << endl;
-    }
+    auto middleware1 = std::make_shared<LoggingTestMiddleware>();
+    auto middleware2 = std::make_shared<RequestModifierMiddleware>();
+    auto middleware3 = std::make_shared<ResponseModifierMiddleware>();
+    
+    agent->use(middleware1)
+          .use(middleware2)
+          .use(middleware3);
+    
+    EXPECT_EQ(agent->middlewareChain().size(), 3);
 }
 
-void test_request_modification() {
-    printTestHeader("Request modification test");
+// Request/Response Modification Tests
+TEST(MiddlewareTest, RequestModification) {
+    auto agent = HttpAgent::builder()
+        .withUrl(MOCK_SERVER_URL)
+        .build();
     
-    try {
-        auto agent = HttpAgent::builder()
-            .withUrl(MOCK_SERVER_URL)
-            .build();
-        
-        auto requestMod = make_shared<RequestModifierMiddleware>();
-        agent->use(requestMod);
-        
-        RunAgentInput input;
-        input.threadId = "test-thread";
-        input.runId = "test-run";
-        input.messages = {};
-        input.state = "initialize state";
-        
-        MiddlewareContext context(&input, nullptr);
-        
-        RunAgentInput modifiedInput = agent->middlewareChain().processRequest(input, context);
-        
-        bool hasContext = !modifiedInput.context.empty();
-        bool hasMetadata = (context.metadata["request_modified"] == "true");
-        
-        bool passed = hasContext && hasMetadata;
-        printTestResult("Request modification", passed);
-        cout << "Context added: " << (hasContext ? "Yes" : "No") << endl;
-        cout << "Metadata set: " << (hasMetadata ? "Yes" : "No") << endl;
-    } catch (const AgentError& e) {
-        cout << " Failed: " << e.fullMessage() << endl;
-    }
+    auto requestMod = std::make_shared<RequestModifierMiddleware>();
+    agent->use(requestMod);
+    
+    RunAgentInput input;
+    input.threadId = "test-thread";
+    input.runId = "test-run";
+    input.messages = {};
+    input.state = "initialize state";
+    
+    MiddlewareContext context(&input, nullptr);
+    
+    RunAgentInput modifiedInput = agent->middlewareChain().processRequest(input, context);
+    
+    bool hasContext = !modifiedInput.context.empty();
+    bool hasMetadata = (context.metadata["request_modified"] == "true");
+    
+    EXPECT_TRUE(hasContext);
+    EXPECT_TRUE(hasMetadata);
 }
 
-void test_response_modification() {
-    printTestHeader("Response modification test");
+TEST(MiddlewareTest, ResponseModification) {
+    auto agent = HttpAgent::builder()
+        .withUrl(MOCK_SERVER_URL)
+        .build();
     
-    try {
-        auto agent = HttpAgent::builder()
-            .withUrl(MOCK_SERVER_URL)
-            .build();
-        
-        auto responseMod = make_shared<ResponseModifierMiddleware>();
-        agent->use(responseMod);
-        
-        RunAgentResult result;
-        result.result = "response content";
-        result.newState = "new state";
-        result.newMessages = {};
-        
-        MiddlewareContext context(nullptr, &result);
-        
-        RunAgentResult modifiedResult = agent->middlewareChain().processResponse(result, context);
-        
-        bool hasMetadata = (context.metadata["response_modified"] == "true");
-        
-        bool passed = hasMetadata;
-        printTestResult("Response modification", passed);
-        cout << "Metadata set: " << (hasMetadata ? "Yes" : "No") << endl;
-    } catch (const AgentError& e) {
-        cout << " Failed: " << e.fullMessage() << endl;
-    }
+    auto responseMod = std::make_shared<ResponseModifierMiddleware>();
+    agent->use(responseMod);
+    
+    RunAgentResult result;
+    result.result = "response content";
+    result.newState = "new state";
+    result.newMessages = {};
+    
+    MiddlewareContext context(nullptr, &result);
+    
+    RunAgentResult modifiedResult = agent->middlewareChain().processResponse(result, context);
+    
+    bool hasMetadata = (context.metadata["response_modified"] == "true");
+    EXPECT_TRUE(hasMetadata);
+    EXPECT_EQ(modifiedResult.result, "modified content");
 }
 
-void test_multiple_middlewares_chain() {
-    printTestHeader("Multiple middleware chain test");
+TEST(MiddlewareTest, MultipleMiddlewaresChain) {
+    auto agent = HttpAgent::builder()
+        .withUrl(MOCK_SERVER_URL)
+        .build();
     
-    try {
-        auto agent = HttpAgent::builder()
-            .withUrl(MOCK_SERVER_URL)
-            .build();
-        
-        auto logging = make_shared<LoggingTestMiddleware>();
-        auto requestMod = make_shared<RequestModifierMiddleware>();
-        auto responseMod = make_shared<ResponseModifierMiddleware>();
-        
-        agent->use(logging)
-              .use(requestMod)
-              .use(responseMod);
-        
-        RunAgentInput input;
-        input.threadId = "test-thread";
-        input.runId = "test-run";
-        input.messages = {};
-        input.state = "current state";
-        
-        MiddlewareContext requestContext(&input, nullptr);
-        RunAgentInput modifiedInput = agent->middlewareChain().processRequest(input, requestContext);
-        
-        bool requestPassed = (logging->requestCount == 1);
-        
-        RunAgentResult result;
-        result.result = "agent result";
-        result.newState = "new state";
-        result.newMessages = {};
-        
-        MiddlewareContext responseContext(nullptr, &result);
-        RunAgentResult modifiedResult = agent->middlewareChain().processResponse(result, responseContext);
-        
-        bool responsePassed = (logging->responseCount == 1);
-        
-        bool passed = requestPassed && responsePassed;
-        printTestResult("Multiple middleware chain", passed);
-        
-        cout << "Logging request count: " << logging->requestCount << endl;
-        cout << "Logging response count: " << logging->responseCount << endl;
-    } catch (const AgentError& e) {
-        cout << " Failed: " << e.fullMessage() << endl;
-    }
+    auto logging = std::make_shared<LoggingTestMiddleware>();
+    auto requestMod = std::make_shared<RequestModifierMiddleware>();
+    auto responseMod = std::make_shared<ResponseModifierMiddleware>();
+    
+    agent->use(logging)
+          .use(requestMod)
+          .use(responseMod);
+    
+    RunAgentInput input;
+    input.threadId = "test-thread";
+    input.runId = "test-run";
+    input.messages = {};
+    input.state = "current state";
+    
+    MiddlewareContext requestContext(&input, nullptr);
+    RunAgentInput modifiedInput = agent->middlewareChain().processRequest(input, requestContext);
+    
+    EXPECT_EQ(logging->requestCount, 1);
+    
+    RunAgentResult result;
+    result.result = "agent result";
+    result.newState = "new state";
+    result.newMessages = {};
+    
+    MiddlewareContext responseContext(nullptr, &result);
+    RunAgentResult modifiedResult = agent->middlewareChain().processResponse(result, responseContext);
+    
+    EXPECT_EQ(logging->responseCount, 1);
 }
 
-void test_event_filtering() {
-    printTestHeader("Event filtering test");
+// Event Filtering Tests
+TEST(MiddlewareTest, EventFiltering) {
+    auto agent = HttpAgent::builder()
+        .withUrl(MOCK_SERVER_URL)
+        .build();
     
-    try {
-        auto agent = HttpAgent::builder()
-            .withUrl(MOCK_SERVER_URL)
-            .build();
-        
-        auto eventFilter = make_shared<EventFilterMiddleware>(EventType::RunStarted);
-        agent->use(eventFilter);
-        
-        auto event1 = make_unique<RunStartedEvent>();
-        MiddlewareContext context1(nullptr, nullptr);
-        auto processedEvents1 = agent->middlewareChain().processEvent(std::move(event1), context1);
-        
-        bool filtered = processedEvents1.empty();
-        
-        auto event2 = make_unique<RunFinishedEvent>();
-        MiddlewareContext context2(nullptr, nullptr);
-        auto processedEvents2 = agent->middlewareChain().processEvent(std::move(event2), context2);
-        
-        bool notFiltered = (processedEvents2.size() == 1);
-        
-        bool passed = filtered && notFiltered;
-        printTestResult("Event filtering", passed);
-        
-        cout << "RUN_STARTED filtered: " << (filtered ? "Yes" : "No") << endl;
-        cout << "RUN_FINISHED not filtered: " << (notFiltered ? "Yes" : "No") << endl;
-    } catch (const AgentError& e) {
-        cout << " Failed: " << e.fullMessage() << endl;
-    }
+    auto eventFilter = std::make_shared<EventFilterMiddleware>(EventType::RunStarted);
+    agent->use(eventFilter);
+    
+    auto event1 = std::make_unique<RunStartedEvent>();
+    MiddlewareContext context1(nullptr, nullptr);
+    auto processedEvents1 = agent->middlewareChain().processEvent(std::move(event1), context1);
+    
+    EXPECT_TRUE(processedEvents1.empty());
+    
+    auto event2 = std::make_unique<RunFinishedEvent>();
+    MiddlewareContext context2(nullptr, nullptr);
+    auto processedEvents2 = agent->middlewareChain().processEvent(std::move(event2), context2);
+    
+    EXPECT_EQ(processedEvents2.size(), 1);
 }
 
-void test_execution_control() {
-    printTestHeader("Execution control test");
+// Execution Control Tests
+TEST(MiddlewareTest, ExecutionControlAllow) {
+    auto agent = HttpAgent::builder()
+        .withUrl(MOCK_SERVER_URL)
+        .build();
     
-    try {
-        {
-            auto agent = HttpAgent::builder()
-                .withUrl(MOCK_SERVER_URL)
-                .build();
-            
-            auto execControl = make_shared<ExecutionControlMiddleware>(false);
-            agent->use(execControl);
-            
-            RunAgentInput input;
-            MiddlewareContext context(&input, nullptr);
-            agent->middlewareChain().processRequest(input, context);
-            
-            bool continuePassed = context.shouldContinue;
-            cout << "Allow continue execution: " << (continuePassed ? "Yes" : "No") << endl;
-        }
-        
-        {
-            auto agent = HttpAgent::builder()
-                .withUrl(MOCK_SERVER_URL)
-                .build();
-            
-            auto execControl = make_shared<ExecutionControlMiddleware>(true);
-            agent->use(execControl);
-            
-            RunAgentInput input;
-            MiddlewareContext context(&input, nullptr);
-            agent->middlewareChain().processRequest(input, context);
-            
-            bool stopPassed = !context.shouldContinue;
-            cout << "Stop execution: " << (stopPassed ? "Yes" : "No") << endl;
-            
-            printTestResult("Execution control", stopPassed);
-        }
-    } catch (const AgentError& e) {
-        cout << " Failed: " << e.fullMessage() << endl;
-    }
+    auto execControl = std::make_shared<ExecutionControlMiddleware>(false);
+    agent->use(execControl);
+    
+    RunAgentInput input;
+    MiddlewareContext context(&input, nullptr);
+    agent->middlewareChain().processRequest(input, context);
+    
+    EXPECT_TRUE(context.shouldContinue);
 }
 
-void test_complex_middleware_chain() {
-    printTestHeader("Complex middleware chain test");
+TEST(MiddlewareTest, ExecutionControlStop) {
+    auto agent = HttpAgent::builder()
+        .withUrl(MOCK_SERVER_URL)
+        .build();
     
-    try {
-        auto agent = HttpAgent::builder()
-            .withUrl(MOCK_SERVER_URL)
-            .build();
-        
-        auto logging = make_shared<LoggingTestMiddleware>();
-        auto requestMod = make_shared<RequestModifierMiddleware>();
-        auto eventFilter = make_shared<EventFilterMiddleware>(EventType::RunStarted);
-        auto responseMod = make_shared<ResponseModifierMiddleware>();
-        
-        agent->use(logging)
-              .use(requestMod)
-              .use(eventFilter)
-              .use(responseMod);
-        
-        cout << "Middleware chain size: " << agent->middlewareChain().size() << endl;
-        
-        RunAgentInput input;
-        input.threadId = "test-thread";
-        input.runId = "test-run";
-        input.messages = {};
-        input.state = "current state";
-        
-        MiddlewareContext requestContext(&input, nullptr);
-        RunAgentInput modifiedInput = agent->middlewareChain().processRequest(input, requestContext);
-        cout << "Logging request count: " << logging->requestCount << endl;
-        
-        auto event1 = make_unique<RunStartedEvent>();
-        MiddlewareContext eventContext1(nullptr, nullptr);
-        auto processedEvents1 = agent->middlewareChain().processEvent(std::move(event1), eventContext1);
-        
-        bool event1Filtered = processedEvents1.empty();
-        cout << "RUN_STARTED filtered: " << (event1Filtered ? "Yes" : "No") << endl;
-        
-        auto event2 = make_unique<RunFinishedEvent>();
-        MiddlewareContext eventContext2(nullptr, nullptr);
-        auto processedEvents2 = agent->middlewareChain().processEvent(std::move(event2), eventContext2);
-        
-        bool event2NotFiltered = (processedEvents2.size() == 1);
-        cout << "RUN_FINISHED not filtered: " << (event2NotFiltered ? "Yes" : "No") << endl;
-        cout << "Logging event count: " << logging->eventCount << endl;
-        
-        RunAgentResult result;
-        result.result = "agent result";
-        result.newState = "new state";
-        result.newMessages = {};
-        
-        MiddlewareContext responseContext(nullptr, &result);
-        RunAgentResult modifiedResult = agent->middlewareChain().processResponse(result, responseContext);
-        cout << "Logging response count: " << logging->responseCount << endl;
-        
-        bool passed = event1Filtered && event2NotFiltered;
-        printTestResult("Complex middleware chain", passed);
-    } catch (const AgentError& e) {
-        cout << " Failed: " << e.fullMessage() << endl;
-    }
+    auto execControl = std::make_shared<ExecutionControlMiddleware>(true);
+    agent->use(execControl);
+    
+    RunAgentInput input;
+    MiddlewareContext context(&input, nullptr);
+    agent->middlewareChain().processRequest(input, context);
+    
+    EXPECT_FALSE(context.shouldContinue);
 }
 
-void test_real_http_request_with_middleware() {
-    printTestHeader("Real HTTP request + Middleware test");
+// Complex Middleware Chain Tests
+TEST(MiddlewareTest, ComplexMiddlewareChain) {
+    auto agent = HttpAgent::builder()
+        .withUrl(MOCK_SERVER_URL)
+        .build();
     
-    cout << "This requires that the server should be RUNNING and AVAILABLE!" << endl;
-    cout << endl;
+    auto logging = std::make_shared<LoggingTestMiddleware>();
+    auto requestMod = std::make_shared<RequestModifierMiddleware>();
+    auto eventFilter = std::make_shared<EventFilterMiddleware>(EventType::RunStarted);
+    auto responseMod = std::make_shared<ResponseModifierMiddleware>();
     
-    try {
-        auto agent = HttpAgent::builder()
-            .withUrl(MOCK_SERVER_URL)
-            .withAgentId("test-agent-with-middleware")
-            .build();
-        
-        auto logging = make_shared<LoggingTestMiddleware>();
-        auto requestMod = make_shared<RequestModifierMiddleware>();
-        auto responseMod = make_shared<ResponseModifierMiddleware>();
-        
-        agent->use(logging)
-              .use(requestMod)
-              .use(responseMod);
-        
-        cout << "Added " << agent->middlewareChain().size() << " middlewares" << endl;
-        cout << "Starting HTTP request..." << endl;
-        
-        RunAgentParams params;
-        params.threadId = "test-thread-123";
-        params.runId = "test-run-456";
-        
-        Message userMsg;
-        userMsg.setRole(MessageRole::User);
-        userMsg.setContent("Hello, this is a test message with middleware!");
-        agent->addMessage(userMsg);
-        
-        bool testCompleted = false;
-        bool testPassed = false;
-        
-        agent->runAgent(
-            params,
-            [&](const RunAgentResult& result) {
-                cout << "\n HTTP request successful!" << endl;
-                cout << "Received " << result.newMessages.size() << " new messages" << endl;
-                
-                cout << "\nMiddleware call statistics:" << endl;
-                cout << "- Request processing count: " << logging->requestCount << endl;
-                cout << "- Response processing count: " << logging->responseCount << endl;
-                cout << "- Event processing count: " << logging->eventCount << endl;
-                
-                cout << "\nResult details:" << endl;
-                cout << "- Thread ID: " << result.threadId << endl;
-                cout << "- New message count: " << result.newMessages.size() << endl;
-                cout << "- Result: " << result.result << endl;
-                
-                testCompleted = true;
-                testPassed = true;
-            },
-            [&](const string& error) {
-                cout << "\n HTTP request failed: " << error << endl;
-                cout << "\nPossible reasons:" << endl;
-                cout << "1. AG-UI server not running" << endl;
-                cout << "2. Server address incorrect" << endl;
-                cout << "3. Network connection issue" << endl;
-                
-                testCompleted = true;
-                testPassed = false;
-            }
-        );
-        
-        cout << "\nWaiting for HTTP response..." << endl;
-        int waitCount = 0;
-        while (!testCompleted && waitCount < 100) {
-            for (int i = 0; i < 100000000; i++) {
-                // Empty loop for delay
-            }
-            waitCount++;
-            if (waitCount % 10 == 0) {
-                cout << "." << flush;
-            }
-        }
-        cout << endl;
-        
-        if (!testCompleted) {
-            cout << "\n  Request timeout (10 seconds)" << endl;
-            testPassed = false;
-        }
-        
-        printTestResult("Real HTTP request + Middleware", testPassed);
-    } catch (const AgentError& e) {
-        cout << " Failed: " << e.fullMessage() << endl;
-    }
-}
-
-int main(int argc, char** argv) {
-    cout << "\n" << endl;
-    cout << "========================================" << endl;
-    cout << "  HttpAgent Middleware Test Suite" << endl;
-    cout << "========================================" << endl;
+    agent->use(logging)
+          .use(requestMod)
+          .use(eventFilter)
+          .use(responseMod);
     
-    cout << "\n========================================" << endl;
-    cout << "  Unit Tests (no server required)" << endl;
-    cout << "========================================" << endl;
+    EXPECT_EQ(agent->middlewareChain().size(), 4);
     
-    test_add_single_middleware();
-    test_add_multiple_middlewares();
-    test_request_modification();
-    test_response_modification();
-    test_multiple_middlewares_chain();
-    test_event_filtering();
-    test_execution_control();
-    test_complex_middleware_chain();
+    RunAgentInput input;
+    input.threadId = "test-thread";
+    input.runId = "test-run";
+    input.messages = {};
+    input.state = "current state";
     
-    test_real_http_request_with_middleware();
+    MiddlewareContext requestContext(&input, nullptr);
+    RunAgentInput modifiedInput = agent->middlewareChain().processRequest(input, requestContext);
+    EXPECT_EQ(logging->requestCount, 1);
     
-    cout << "\n========================================" << endl;
-    cout << "All tests completed!" << endl;
-    cout << "========================================\n" << endl;
+    auto event1 = std::make_unique<RunStartedEvent>();
+    MiddlewareContext eventContext1(nullptr, nullptr);
+    auto processedEvents1 = agent->middlewareChain().processEvent(std::move(event1), eventContext1);
     
-    return 0;
+    EXPECT_TRUE(processedEvents1.empty());
+    
+    auto event2 = std::make_unique<RunFinishedEvent>();
+    MiddlewareContext eventContext2(nullptr, nullptr);
+    auto processedEvents2 = agent->middlewareChain().processEvent(std::move(event2), eventContext2);
+    
+    EXPECT_EQ(processedEvents2.size(), 1);
+    
+    RunAgentResult result;
+    result.result = "agent result";
+    result.newState = "new state";
+    result.newMessages = {};
+    
+    MiddlewareContext responseContext(nullptr, &result);
+    RunAgentResult modifiedResult = agent->middlewareChain().processResponse(result, responseContext);
+    EXPECT_EQ(logging->responseCount, 1);
 }

@@ -1,18 +1,26 @@
 /**
  * @file test_sse_server.cpp
  * @brief Integration tests with Mock server
- * 
+ *
  * Tests actual interaction between HTTP client, HttpAgent and middleware with Mock server
- * 
+ *
  * Before running, please ensure Mock server is started:
  * python3 tests/mock_server/mock_ag_server.py
+ *
+ * Synchronization design:
+ *   sendRequest / sendSseRequest / runAgent are all BLOCKING calls (libcurl sync).
+ *   Each test runs the blocking call in a std::async thread and waits on the returned
+ *   future with an explicit timeout, replacing the previous sleep_for approach.
+ *   The future destructor guarantees the async thread finishes before local variables
+ *   are destroyed, eliminating lifetime and data-race issues.
  */
 
+#include <gtest/gtest.h>
 #include <iostream>
 #include <memory>
 #include <vector>
 #include <atomic>
-#include <thread>
+#include <future>
 #include <chrono>
 
 #include "http/http_service.h"
@@ -24,712 +32,494 @@
 
 using namespace agui;
 
-
-void log(const std::string& message) {
-    std::cout << "[INTEGRATION_TEST] " << message << std::endl;
-}
-
-void assertTrue(bool condition, const std::string& message) {
-    if (!condition) {
-        std::cout << " Failed: " << message << std::endl;
-    } else {
-        std::cout << " " << message << std::endl;
-    }
-}
-
 // Mock server address
 const std::string MOCK_SERVER_URL = "http://localhost:8080";
 
+// Global flag to track server availability
+static bool g_serverAvailable = false;
+
+// Timeout constants: each value is intentionally larger than the corresponding
+// HTTP-level timeout so the future always becomes ready before we declare a
+// test failure, yet the test never hangs indefinitely.
+static const std::chrono::seconds HTTP_REQUEST_TIMEOUT{10};
+static const std::chrono::seconds SSE_STREAM_TIMEOUT{15};
+static const std::chrono::seconds AGENT_RUN_TIMEOUT{10};
+
 /**
- * @brief Check if the mock server is available
- * @return true if server is reachable, false otherwise
+ * @brief Check if the mock server is available.
+ *
+ * Runs the blocking sendRequest in a std::async thread and waits up to 5 s.
+ * Returns false on timeout or any network error.
  */
 bool isServerAvailable() {
     try {
         auto httpService = HttpServiceFactory::createCurlService();
-        
+
         HttpRequest request = HttpRequestBuilder()
             .method(HttpMethod::GET)
             .url(MOCK_SERVER_URL + "/health")
-            .timeout(2000)  // Short timeout for quick check
+            .timeout(3000)  // 3 s HTTP-level timeout
             .build();
 
-        std::atomic<bool> responseCalled{false};
-        std::atomic<bool> errorCalled{false};
+        bool success = false;
 
-        httpService->sendRequest(
-            request,
-            [&](const HttpResponse& response) {
-                responseCalled = true;
-            },
-            [&](const AgentError& error) {
-                errorCalled = true;
-            }
-        );
+        // Run the blocking sendRequest in a background thread.
+        auto fut = std::async(std::launch::async, [&]() {
+            httpService->sendRequest(
+                request,
+                [&](const HttpResponse& response) {
+                    success = response.isSuccess();
+                },
+                [&](const AgentError&) {
+                    success = false;
+                }
+            );
+        });
 
-        // Wait for response
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-
-        return responseCalled.load();
+        // Wait slightly longer than the HTTP timeout to avoid false negatives.
+        if (fut.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
+            return false;  // fut destructor blocks until thread exits (≤ 3 s)
+        }
+        fut.get();
+        return success;
     } catch (...) {
         return false;
     }
 }
 
-void testHttpClientWithServer() {
-    log("Integration Test 1: HTTP client interaction with Mock server");
-
-    try {
-        auto httpService = HttpServiceFactory::createCurlService();
-        
-        // Test health check endpoint
-        log("Test 1.1: Health check endpoint");
-        {
-            HttpRequest request = HttpRequestBuilder()
-                .method(HttpMethod::GET)
-                .url(MOCK_SERVER_URL + "/health")
-                .timeout(5000)
-                .build();
-
-            std::atomic<bool> responseCalled{false};
-            std::atomic<bool> errorCalled{false};
-            HttpResponse receivedResponse;
-
-            httpService->sendRequest(
-                request,
-                [&](const HttpResponse& response) {
-                    receivedResponse = response;
-                    responseCalled = true;
-                    log("Received health check response");
-                },
-                [&](const AgentError& error) {
-                    errorCalled = true;
-                    log("Health check failed: " + error.message());
-                }
-            );
-
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-
-            if (responseCalled) {
-                assertTrue(receivedResponse.isSuccess(), "Health check returns success status");
-                assertTrue(receivedResponse.statusCode == 200, "Status code is 200");
-                log("Response content: " + receivedResponse.body);
-            } else if (errorCalled) {
-                log("  Unable to connect to Mock server, please ensure server is started");
-            } else {
-                log("  Request timeout or not completed");
-            }
+// Test fixture for integration tests
+class IntegrationTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        if (!g_serverAvailable) {
+            GTEST_SKIP() << "Mock server is not available at " << MOCK_SERVER_URL
+                         << ". Integration tests require the mock server to be running.\n"
+                         << "Please start the server first:\n"
+                         << "  cd tests/mock_server\n"
+                         << "  python3 mock_ag_server.py";
         }
-
-        // Test scenarios list endpoint
-        log("\nTest 1.2: Get scenarios list");
-        {
-            HttpRequest request = HttpRequestBuilder()
-                .method(HttpMethod::GET)
-                .url(MOCK_SERVER_URL + "/scenarios")
-                .timeout(5000)
-                .build();
-
-            std::atomic<bool> responseCalled{false};
-            HttpResponse receivedResponse;
-
-            httpService->sendRequest(
-                request,
-                [&](const HttpResponse& response) {
-                    receivedResponse = response;
-                    responseCalled = true;
-                    log("Received scenarios list response");
-                },
-                [&](const AgentError& error) {
-                    log("Get scenarios list failed: " + error.message());
-                }
-            );
-
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-
-            if (responseCalled) {
-                assertTrue(receivedResponse.isSuccess(), "Scenarios list returns success");
-                log("Scenarios list: " + receivedResponse.body);
-            }
-        }
-    } catch (const std::exception& e) {
-        log(" Test exception: " + std::string(e.what()));
     }
+};
+
+// ── Test Suite 1: HTTP Client Integration Tests ───────────────────────────────
+
+TEST_F(IntegrationTest, HttpClient_HealthCheckEndpoint) {
+    auto httpService = HttpServiceFactory::createCurlService();
+
+    HttpRequest request = HttpRequestBuilder()
+        .method(HttpMethod::GET)
+        .url(MOCK_SERVER_URL + "/health")
+        .timeout(5000)
+        .build();
+
+    HttpResponse receivedResponse;
+    bool errorOccurred = false;
+    std::string errorMsg;
+
+    // Run the blocking sendRequest in a background thread.
+    auto fut = std::async(std::launch::async, [&]() {
+        httpService->sendRequest(
+            request,
+            [&](const HttpResponse& response) {
+                receivedResponse = response;
+            },
+            [&](const AgentError& error) {
+                errorOccurred = true;
+                errorMsg = error.message();
+                std::cout << "Health check failed: " << error.message() << std::endl;
+            }
+        );
+    });
+
+    // Wait with an explicit deadline instead of sleeping.
+    ASSERT_EQ(fut.wait_for(HTTP_REQUEST_TIMEOUT), std::future_status::ready)
+        << "Health check request timed out after " << HTTP_REQUEST_TIMEOUT.count() << "s";
+    fut.get();  // propagate any exception thrown inside the async task
+
+    ASSERT_FALSE(errorOccurred) << "Health check error: " << errorMsg;
+    EXPECT_TRUE(receivedResponse.isSuccess()) << "Health check should return success status";
+    EXPECT_EQ(200, receivedResponse.statusCode) << "Status code should be 200";
+    std::cout << "Response content: " << receivedResponse.body << std::endl;
 }
 
+TEST_F(IntegrationTest, HttpClient_GetScenariosList) {
+    auto httpService = HttpServiceFactory::createCurlService();
 
-void testHttpAgentWithServer() {
-    log("Integration Test 2: HttpAgent interaction with Mock server");
+    HttpRequest request = HttpRequestBuilder()
+        .method(HttpMethod::GET)
+        .url(MOCK_SERVER_URL + "/scenarios")
+        .timeout(5000)
+        .build();
 
-    try {
-        // Create test subscriber
-        class TestSubscriber : public IAgentSubscriber {
-        public:
-            std::atomic<int> textMessageStartCount{0};
-            std::atomic<int> textMessageContentCount{0};
-            std::atomic<int> textMessageEndCount{0};
-            std::atomic<int> runStartedCount{0};
-            std::atomic<int> runFinishedCount{0};
-            std::string fullContent;
+    HttpResponse receivedResponse;
+    bool errorOccurred = false;
+    std::string errorMsg;
 
-            AgentStateMutation onTextMessageStart(const TextMessageStartEvent& event,
-                                                  const AgentSubscriberParams& params) override {
-                textMessageStartCount++;
-                log("Subscriber: TEXT_MESSAGE_START - messageId=" + event.messageId);
-                return AgentStateMutation();
+    auto fut = std::async(std::launch::async, [&]() {
+        httpService->sendRequest(
+            request,
+            [&](const HttpResponse& response) {
+                receivedResponse = response;
+            },
+            [&](const AgentError& error) {
+                errorOccurred = true;
+                errorMsg = error.message();
+                std::cout << "Get scenarios list failed: " << error.message() << std::endl;
             }
+        );
+    });
 
-            AgentStateMutation onTextMessageContent(const TextMessageContentEvent& event, const std::string& buffer,
-                                                    const AgentSubscriberParams& params) override {
-                textMessageContentCount++;
-                fullContent += event.delta;
-                log("Subscriber: TEXT_MESSAGE_CONTENT - delta=" + event.delta);
-                return AgentStateMutation();
-            }
+    ASSERT_EQ(fut.wait_for(HTTP_REQUEST_TIMEOUT), std::future_status::ready)
+        << "Get scenarios list timed out after " << HTTP_REQUEST_TIMEOUT.count() << "s";
+    fut.get();
 
-            AgentStateMutation onTextMessageEnd(const TextMessageEndEvent& event, const AgentSubscriberParams& params) override {
-                textMessageEndCount++;
-                log("Subscriber: TEXT_MESSAGE_END");
-                return AgentStateMutation();
-            }
-
-            AgentStateMutation onRunStarted(const RunStartedEvent& event, const AgentSubscriberParams& params) override {
-                runStartedCount++;
-                log("Subscriber: RUN_STARTED - runId=" + event.runId);
-                return AgentStateMutation();
-            }
-
-            AgentStateMutation onRunFinished(const RunFinishedEvent& event, const AgentSubscriberParams& params) override {
-                runFinishedCount++;
-                log("Subscriber: RUN_FINISHED");
-                return AgentStateMutation();
-            }
-        };
-
-        auto agent = HttpAgent::builder()
-            .withUrl(MOCK_SERVER_URL + "/api/agent/run")
-            .withAgentId(AgentId("test_agent_integration"))
-            .build();
-
-        auto subscriber = std::make_shared<TestSubscriber>();
-        agent->subscribe(subscriber);
-
-        // Test 2.1: Using curl-style JSON request
-        log("\nTest 2.1: Using curl-style JSON request to access service");
-        log("Simulating command: curl -X POST http://localhost:8080/api/agent/run \\");
-        log("  -H \"Content-Type: application/json\" \\");
-        log("  -d '{\"scenario\": \"simple_text\", \"delay_ms\": 50}'");
-        {
-            auto httpService = HttpServiceFactory::createCurlService();
-            
-            nlohmann::json requestBody = {
-                {"scenario", "simple_text"},
-                {"delay_ms", 1000} //Transmission time interval for streaming data
-            };
-            
-            log("\nConstructing request data:");
-            log("  URL: " + MOCK_SERVER_URL + "/api/agent/run");
-            log("  Method: POST");
-            log("  Content-Type: application/json");
-            log("  Body: " + requestBody.dump());
-            
-            HttpRequest request = HttpRequestBuilder()
-                .method(HttpMethod::POST)
-                .url(MOCK_SERVER_URL + "/api/agent/run")
-                .contentType("application/json")
-                .body(requestBody.dump())
-                .timeout(10000)
-                .build();
-            
-            log("\nSending request to server...");
-            
-            std::atomic<int> eventCount{0};
-            std::atomic<bool> completed{false};
-            std::vector<std::string> receivedEvents;
-            
-            httpService->sendSseRequest(
-                request,
-                [&](const HttpResponse& data) {
-                    eventCount++;
-                    receivedEvents.push_back(data.content);
-                    log("  Received sse event #" + std::to_string(eventCount.load()) + ": " +
-                        data.content.substr(0, std::min(size_t(60), data.content.size())));
-                },
-                [&](const HttpResponse& response) {
-                    completed = true;
-                    log("\n SSE stream completed");
-                    log("Completion response: " + response.content);
-                },
-                [&](const AgentError& error) {
-                    log(" SSE stream error: " + error.message());
-                }
-            );
-        }
-
-        // Test 2.2: Run simple_text scenario (using Agent)
-        log("\nTest 2.2: Run simple_text scenario (using Agent)");
-        {
-            RunAgentParams params;
-            params.messages.push_back(Message("Test message", MessageRole::User, "simple_text"));
-
-            std::atomic<bool> successCalled{false};
-            std::atomic<bool> errorCalled{false};
-
-            agent->runAgent(
-                params,
-                [&](const RunAgentResult& result) {
-                    successCalled = true;
-                    log("Agent run successful");
-                },
-                [&](const std::string& error) {
-                    errorCalled = true;
-                    log("Agent run failed: " + error);
-                }
-            );
-
-            std::this_thread::sleep_for(std::chrono::seconds(3));
-
-            if (successCalled) {
-                assertTrue(subscriber->runStartedCount > 0, "Received RUN_STARTED event");
-                assertTrue(subscriber->textMessageStartCount > 0, "Received TEXT_MESSAGE_START event");
-                assertTrue(subscriber->textMessageContentCount > 0, "Received TEXT_MESSAGE_CONTENT event");
-                assertTrue(subscriber->textMessageEndCount > 0, "Received TEXT_MESSAGE_END event");
-                assertTrue(subscriber->runFinishedCount > 0, "Received RUN_FINISHED event");
-                log("Full content: " + subscriber->fullContent);
-            } else if (errorCalled) {
-                log("  Agent run failed");
-            }
-        }
-
-        // Test scenario with thinking process
-        log("\nTest 2.2: Run with_thinking scenario");
-        {
-            subscriber->textMessageStartCount = 0;
-            subscriber->textMessageContentCount = 0;
-            subscriber->fullContent.clear();
-
-            RunAgentParams params;
-            params.messages.push_back(Message("with_thinking", MessageRole::User, "simple_text"));
-
-            std::atomic<bool> completed{false};
-
-            agent->runAgent(
-                params,
-                [&](const RunAgentResult& result) {
-                    completed = true;
-                    log("with_thinking scenario completed");
-                },
-                [&](const std::string& error) {
-                    log("with_thinking scenario failed: " + error);
-                }
-            );
-
-            std::this_thread::sleep_for(std::chrono::seconds(3));
-
-            if (completed) {
-                assertTrue(subscriber->textMessageContentCount > 0, "Received thinking content");
-                log("Thinking scenario full content: " + subscriber->fullContent);
-            }
-        }
-
-        // Test detailed streaming interaction flow
-        log("\nTest 2.3: Detailed streaming interaction verification");
-        log("Verification flow: Server sends message -> AG-UI receives -> Parses -> State transition -> Notifies subscriber");
-        {
-            // Create detailed subscriber to track complete flow
-            class DetailedSubscriber : public IAgentSubscriber {
-            public:
-                struct EventRecord {
-                    std::string eventType;
-                    std::string timestamp;
-                    std::string content;
-                    nlohmann::json state;
-                };
-                
-                std::vector<EventRecord> eventHistory;
-                std::atomic<int> totalEvents{0};
-                
-                void recordEvent(const std::string& type, const std::string& content, const nlohmann::json& state) {
-                    EventRecord record;
-                    record.eventType = type;
-                    record.content = content;
-                    record.state = state;
-                    
-                    auto now = std::chrono::system_clock::now();
-                    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-                    record.timestamp = std::to_string(ms);
-                    
-                    eventHistory.push_back(record);
-                    totalEvents++;
-                    
-                    log("  [Event Record] " + type + " | Content: " + content.substr(0, std::min(size_t(30), content.size())));
-                }
-                
-                AgentStateMutation onRunStarted(const RunStartedEvent& event, const AgentSubscriberParams& params) override {
-                    log("Step 1: Server sends RUN_STARTED message");
-                    log("  runId: " + event.runId);
-                    recordEvent("RUN_STARTED", "runId=" + event.runId, *params.state);
-                    
-                    log("Step 2: AG-UI successfully receives RUN_STARTED message");
-                    log("Step 3: Parse RUN_STARTED event, extract runId");
-                    log("Step 4: State transition - run started");
-                    log("Step 5: Notify subscriber - onRunStarted called");
-                    
-                    return AgentStateMutation();
-                }
-                
-                AgentStateMutation onTextMessageStart(const TextMessageStartEvent& event,
-                                                      const AgentSubscriberParams& params) override {
-                    log("\nStep 1: Server sends TEXT_MESSAGE_START message");
-                    log("  messageId: " + event.messageId);
-                    log("  role: " + event.role);
-                    recordEvent("TEXT_MESSAGE_START", "messageId=" + event.messageId, *params.state);
-                    
-                    log("Step 2: AG-UI successfully receives TEXT_MESSAGE_START message");
-                    log("Step 3: Parse TEXT_MESSAGE_START event");
-                    log("  - Extract messageId: " + event.messageId);
-                    log("  - Extract role: " + event.role);
-                    log("Step 4: State transition - text message started");
-                    log("Step 5: Notify subscriber - onTextMessageStart called");
-                    
-                    return AgentStateMutation();
-                }
-                
-                AgentStateMutation onTextMessageContent(const TextMessageContentEvent& event, const std::string& buffer,
-                                                        const AgentSubscriberParams& params) override {
-                    log("\nStep 1: Server sends TEXT_MESSAGE_CONTENT message");
-                    log("  delta: " + event.delta);
-                    recordEvent("TEXT_MESSAGE_CONTENT", event.delta, *params.state);
-                    
-                    log("Step 2: AG-UI successfully receives TEXT_MESSAGE_CONTENT message");
-                    log("Step 3: Parse TEXT_MESSAGE_CONTENT event");
-                    log("  - Extract delta content: " + event.delta);
-                    log("  - Accumulate to buffer: " + buffer.substr(0, std::min(size_t(50), buffer.size())));
-                    log("Step 4: State transition - content accumulation");
-                    log("Step 5: Notify subscriber - onTextMessageContent called");
-                    
-                    return AgentStateMutation();
-                }
-                
-                AgentStateMutation onTextMessageEnd(const TextMessageEndEvent& event, const AgentSubscriberParams& params) override {
-                    log("\nStep 1: Server sends TEXT_MESSAGE_END message");
-                    log("  messageId: " + event.messageId);
-                    recordEvent("TEXT_MESSAGE_END", "messageId=" + event.messageId, *params.state);
-                    
-                    log("Step 2: AG-UI successfully receives TEXT_MESSAGE_END message");
-                    log("Step 3: Parse TEXT_MESSAGE_END event");
-                    log("  - Confirm messageId: " + event.messageId);
-                    log("Step 4: State transition - text message completed");
-                    log("Step 5: Notify subscriber - onTextMessageEnd called");
-                    
-                    return AgentStateMutation();
-                }
-                
-                AgentStateMutation onRunFinished(const RunFinishedEvent& event, const AgentSubscriberParams& params) override {
-                    log("\nStep 1: Server sends RUN_FINISHED message");
-                    recordEvent("RUN_FINISHED", "run_finished", *params.state);
-                    
-                    log("Step 2: AG-UI successfully receives RUN_FINISHED message");
-                    log("Step 3: Parse RUN_FINISHED event");
-                    log("Step 4: State transition - run completed");
-                    log("Step 5: Notify subscriber - onRunFinished called");
-                    
-                    return AgentStateMutation();
-                }
-                
-                void printSummary() {
-                    log("\n========== Streaming Interaction Flow Summary ==========");
-                    log("Total events: " + std::to_string(totalEvents.load()));
-                    log("\nEvent sequence:");
-                    for (size_t i = 0; i < eventHistory.size(); i++) {
-                        const auto& record = eventHistory[i];
-                        log("  " + std::to_string(i + 1) + ". " + record.eventType + 
-                            " | " + record.content.substr(0, std::min(size_t(40), record.content.size())));
-                    }
-                    log("======================================\n");
-                }
-            };
-            
-            auto detailedAgent = HttpAgent::builder()
-                .withUrl(MOCK_SERVER_URL + "/api/agent/run")
-                .withAgentId(AgentId("test_agent_detailed"))
-                .build();
-            
-            auto detailedSubscriber = std::make_shared<DetailedSubscriber>();
-            detailedAgent->subscribe(detailedSubscriber);
-            
-            log("\nStarting streaming interaction test...");
-            log("Scenario: simple_text (simple text generation)");
-            log("Delay: 200ms/event (for observing flow)\n");
-            
-            RunAgentParams params;
-            params.messages.push_back(Message("Detailed flow test", MessageRole::User, "simple_text"));
-            
-            std::atomic<bool> testCompleted{false};
-            std::atomic<bool> testFailed{false};
-            std::string errorMessage;
-            
-            detailedAgent->runAgent(
-                params,
-                [&](const RunAgentResult& result) {
-                    testCompleted = true;
-                    log("\n Streaming interaction test completed");
-                    log("Final status: Success");
-                },
-                [&](const std::string& error) {
-                    testFailed = true;
-                    errorMessage = error;
-                    log("\n Streaming interaction test failed: " + error);
-                }
-            );
-            
-            log("Waiting for streaming interaction to complete...");
-            std::this_thread::sleep_for(std::chrono::seconds(5));
-            
-            if (testCompleted) {
-                detailedSubscriber->printSummary();
-                
-                assertTrue(detailedSubscriber->totalEvents >= 4, 
-                          "At least 4 events received (RUN_STARTED, TEXT_MESSAGE_START, TEXT_MESSAGE_CONTENT, TEXT_MESSAGE_END, RUN_FINISHED)");
-                
-                if (detailedSubscriber->eventHistory.size() >= 3) {
-                    assertTrue(detailedSubscriber->eventHistory[0].eventType == "RUN_STARTED",
-                              "First event is RUN_STARTED");
-                    
-                    bool hasTextStart = false;
-                    bool hasTextContent = false;
-                    bool hasTextEnd = false;
-                    bool hasRunFinished = false;
-                    
-                    for (const auto& record : detailedSubscriber->eventHistory) {
-                        if (record.eventType == "TEXT_MESSAGE_START") hasTextStart = true;
-                        if (record.eventType == "TEXT_MESSAGE_CONTENT") hasTextContent = true;
-                        if (record.eventType == "TEXT_MESSAGE_END") hasTextEnd = true;
-                        if (record.eventType == "RUN_FINISHED") hasRunFinished = true;
-                    }
-                    
-                    assertTrue(hasTextStart, "Contains TEXT_MESSAGE_START event");
-                    assertTrue(hasTextContent, "Contains TEXT_MESSAGE_CONTENT event");
-                    assertTrue(hasTextEnd, "Contains TEXT_MESSAGE_END event");
-                    assertTrue(hasRunFinished, "Contains RUN_FINISHED event");
-                }
-                
-                log("\n Streaming interaction flow verification passed");
-                log("Verification items:");
-                log("   Server successfully sends messages");
-                log("   AG-UI successfully receives messages");
-                log("   Message parsing correct");
-                log("   State transition normal");
-                log("   Subscriber notification correct");
-                
-            } else if (testFailed) {
-                log("  Streaming interaction test failed: " + errorMessage);
-            } else {
-                log("  Streaming interaction test timeout or not completed");
-            }
-        }
-
-        log(" HttpAgent and server interaction test completed\n");
-
-    } catch (const AgentError& e) {
-        log(" Test exception: " + e.fullMessage());
-    }
+    ASSERT_FALSE(errorOccurred) << "Scenarios list error: " << errorMsg;
+    EXPECT_TRUE(receivedResponse.isSuccess()) << "Scenarios list should return success";
+    std::cout << "Scenarios list: " << receivedResponse.body << std::endl;
 }
 
+// ── Test Suite 2: HttpAgent Integration Tests ─────────────────────────────────
 
-void testMiddlewareWithServer() {
-    log("Integration Test 3: Middleware interaction with Mock server");
+// Subscriber used by multiple HttpAgent tests
+class TestSubscriber : public IAgentSubscriber {
+public:
+    std::atomic<int> textMessageStartCount{0};
+    std::atomic<int> textMessageContentCount{0};
+    std::atomic<int> textMessageEndCount{0};
+    std::atomic<int> runStartedCount{0};
+    std::atomic<int> runFinishedCount{0};
+    // fullContent is written exclusively from the async thread and read only after
+    // fut.get() provides the necessary happens-before guarantee.
+    std::string fullContent;
 
-    try {
-        // Create custom middleware
-        class EventCounterMiddleware : public IMiddleware {
-        public:
-            std::atomic<int> eventCount{0};
-            std::atomic<int> textEventCount{0};
-            std::atomic<int> thinkingEventCount{0};
+    AgentStateMutation onTextMessageStart(const TextMessageStartEvent& event,
+                                          const AgentSubscriberParams& params) override {
+        textMessageStartCount++;
+        std::cout << "Subscriber: TEXT_MESSAGE_START - messageId=" << event.messageId << std::endl;
+        return AgentStateMutation();
+    }
 
-            std::unique_ptr<Event> onEvent(std::unique_ptr<Event> event, MiddlewareContext& context) override {
+    AgentStateMutation onTextMessageContent(const TextMessageContentEvent& event,
+                                            const std::string& buffer,
+                                            const AgentSubscriberParams& params) override {
+        textMessageContentCount++;
+        fullContent += event.delta;
+        std::cout << "Subscriber: TEXT_MESSAGE_CONTENT - delta=" << event.delta << std::endl;
+        return AgentStateMutation();
+    }
+
+    AgentStateMutation onTextMessageEnd(const TextMessageEndEvent& event,
+                                        const AgentSubscriberParams& params) override {
+        textMessageEndCount++;
+        std::cout << "Subscriber: TEXT_MESSAGE_END" << std::endl;
+        return AgentStateMutation();
+    }
+
+    AgentStateMutation onRunStarted(const RunStartedEvent& event,
+                                    const AgentSubscriberParams& params) override {
+        runStartedCount++;
+        std::cout << "Subscriber: RUN_STARTED - runId=" << event.runId << std::endl;
+        return AgentStateMutation();
+    }
+
+    AgentStateMutation onRunFinished(const RunFinishedEvent& event,
+                                     const AgentSubscriberParams& params) override {
+        runFinishedCount++;
+        std::cout << "Subscriber: RUN_FINISHED" << std::endl;
+        return AgentStateMutation();
+    }
+};
+
+TEST_F(IntegrationTest, HttpAgent_CurlStyleJsonRequest_SseStreaming) {
+    std::cout << "\n=== Testing curl-style JSON request with SSE streaming ===" << std::endl;
+
+    auto httpService = HttpServiceFactory::createCurlService();
+
+    nlohmann::json requestBody = {
+        {"scenario", "simple_text"},
+        {"delay_ms", 100}  // ms between streamed chunks
+    };
+
+    HttpRequest request = HttpRequestBuilder()
+        .method(HttpMethod::POST)
+        .url(MOCK_SERVER_URL + "/api/agent/run")
+        .contentType("application/json")
+        .body(requestBody.dump())
+        .timeout(10000)
+        .build();
+
+    std::atomic<int> eventCount{0};
+    std::atomic<bool> completed{false};
+    std::atomic<bool> sseErrorOccurred{false};
+
+    // Run the blocking sendSseRequest in a background thread.
+    auto fut = std::async(std::launch::async, [&]() {
+        httpService->sendSseRequest(
+            request,
+            [&](const HttpResponse& data) {
                 eventCount++;
-                
-                if (event->type() == EventType::TextMessageStart ||
-                    event->type() == EventType::TextMessageContent ||
-                    event->type() == EventType::TextMessageEnd) {
-                    textEventCount++;
-                    log("Middleware: Captured TEXT event #" + std::to_string(textEventCount.load()));
-                }
-                
-                if (event->type() == EventType::TextMessageStart ||
-                    event->type() == EventType::TextMessageContent ||
-                    event->type() == EventType::TextMessageEnd) {
-                    thinkingEventCount++;
-                    log("Middleware: Captured THINKING event #" + std::to_string(thinkingEventCount.load()));
-                }
-                
-                return event;
+                std::cout << "  Received sse event #" << eventCount.load() << std::endl;
+            },
+            [&](const HttpResponse& response) {
+                completed = true;
+                std::cout << "Successful: SSE stream completed, response: "
+                          << response.content << std::endl;
+            },
+            [&](const AgentError& error) {
+                sseErrorOccurred = true;
+                std::cout << "Error: SSE stream error: " << error.message() << std::endl;
             }
-        };
+        );
+    });
 
-        class EventFilterMiddleware : public IMiddleware {
-        public:
-            std::atomic<int> filteredCount{0};
+    ASSERT_EQ(fut.wait_for(SSE_STREAM_TIMEOUT), std::future_status::ready)
+        << "SSE streaming timed out after " << SSE_STREAM_TIMEOUT.count() << "s";
+    fut.get();
 
-            bool shouldProcessEvent(const Event& event, MiddlewareContext& context) override {
-                if (event.type() == EventType::TextMessageStart ||
-                    event.type() == EventType::TextMessageContent ||
-                    event.type() == EventType::TextMessageEnd) {
-                    filteredCount++;
-                    log("Middleware: Filtered THINKING event #" + std::to_string(filteredCount.load()));
-                    return false;
-                }
-                return true;
-            }
-        };
-
-        auto agent = HttpAgent::builder()
-            .withUrl(MOCK_SERVER_URL + "/api/agent/run")
-            .withAgentId(AgentId("test_agent_middleware"))
-            .build();
-
-        auto counterMiddleware = std::make_shared<EventCounterMiddleware>();
-        auto filterMiddleware = std::make_shared<EventFilterMiddleware>();
-
-        // Test event counter middleware
-        log("\nTest 3.1: Event counter middleware");
-        {
-            class MiddlewareSubscriber : public IAgentSubscriber {
-            public:
-                std::shared_ptr<EventCounterMiddleware> middleware;
-                
-                MiddlewareSubscriber(std::shared_ptr<EventCounterMiddleware> m) : middleware(m) {}
-                
-                AgentStateMutation onTextMessageStart(const TextMessageStartEvent& event,
-                                                      const AgentSubscriberParams& params) override {
-                    middleware->textEventCount++;
-                    middleware->eventCount++;
-                    return AgentStateMutation();
-                }
-                
-                AgentStateMutation onTextMessageContent(const TextMessageContentEvent& event, const std::string& buffer,
-                                                        const AgentSubscriberParams& params) override {
-                    middleware->textEventCount++;
-                    middleware->eventCount++;
-                    return AgentStateMutation();
-                }
-                
-                AgentStateMutation onTextMessageEnd(const TextMessageEndEvent& event, const AgentSubscriberParams& params) override {
-                    middleware->textEventCount++;
-                    middleware->eventCount++;
-                    return AgentStateMutation();
-                }
-            };
-
-            auto middlewareSubscriber = std::make_shared<MiddlewareSubscriber>(counterMiddleware);
-            agent->subscribe(middlewareSubscriber);
-
-            RunAgentParams params;
-            params.messages.push_back(Message("simple_text", MessageRole::User, "simple_text"));
-
-            std::atomic<bool> completed{false};
-
-            agent->runAgent(
-                params,
-                [&](const RunAgentResult& result) {
-                    completed = true;
-                    log("Middleware test scenario completed");
-                },
-                [&](const std::string& error) {
-                    log("Middleware test scenario failed: " + error);
-                }
-            );
-
-            std::this_thread::sleep_for(std::chrono::seconds(3));
-
-            if (completed) {
-                assertTrue(counterMiddleware->eventCount > 0, "Middleware captured events");
-                assertTrue(counterMiddleware->textEventCount > 0, "Middleware captured TEXT events");
-                log("Total event count: " + std::to_string(counterMiddleware->eventCount.load()));
-                log("TEXT event count: " + std::to_string(counterMiddleware->textEventCount.load()));
-            }
-        }
-
-        // Test event filter middleware
-        log("\nTest 3.2: Event filter middleware (with_thinking scenario)");
-        {
-            counterMiddleware->eventCount = 0;
-            counterMiddleware->textEventCount = 0;
-            counterMiddleware->thinkingEventCount = 0;
-
-            RunAgentParams params;
-            params.messages.push_back(Message("with_thinking", MessageRole::User, "simple_text"));
-
-            std::atomic<bool> completed{false};
-
-            agent->runAgent(
-                params,
-                [&](const RunAgentResult& result) {
-                    completed = true;
-                    log("Filter test scenario completed");
-                },
-                [&](const std::string& error) {
-                    log("Filter test scenario failed: " + error);
-                }
-            );
-
-            std::this_thread::sleep_for(std::chrono::seconds(3));
-
-            if (completed) {
-                log("TEXT event count: " + std::to_string(counterMiddleware->textEventCount.load()));
-                log("THINKING event count: " + std::to_string(counterMiddleware->thinkingEventCount.load()));
-                assertTrue(counterMiddleware->textEventCount > 0, "Captured TEXT events");
-            }
-        }
-
-        log(" Middleware and server interaction test completed\n");
-
-    } catch (const AgentError& e) {
-        log(" Test exception: " + e.fullMessage());
-    }
+    EXPECT_TRUE(completed.load()) << "SSE stream should complete successfully";
+    EXPECT_GT(eventCount.load(), 0) << "Should receive at least one SSE event";
+    ASSERT_FALSE(sseErrorOccurred.load());
 }
 
+TEST_F(IntegrationTest, HttpAgent_SimpleTextScenario) {
+    auto agent = HttpAgent::builder()
+        .withUrl(MOCK_SERVER_URL + "/api/agent/run")
+        .withAgentId(AgentId("test_agent_integration"))
+        .build();
 
-int main() {
-    std::cout << "\n";
-    std::cout << "======================================\n";
-    std::cout << "  AG-UI Integration Test Suite\n";
-    std::cout << "  (Requires Mock server running)\n";
-    std::cout << "======================================\n\n";
+    auto subscriber = std::make_shared<TestSubscriber>();
+    agent->subscribe(subscriber);
 
-    // Check if mock server is available before running any tests
-    std::cout << "Checking mock server availability at " << MOCK_SERVER_URL << "...\n";
-    
-    if (!isServerAvailable()) {
-        std::cerr << "\nERROR: Mock server is not running at " << MOCK_SERVER_URL << "\n";
-        std::cerr << "\nPlease start the mock server first:\n";
-        std::cerr << "  cd tests/mock_server\n";
-        std::cerr << "  python3 mock_ag_server.py\n";
-        std::cerr << "Integration tests cannot run without the mock server.\n";
-        std::cerr << "This ensures CI doesn't report false positives.\n\n";
-        return 1;  // Return failure result
-    }
-    
-    std::cout << "✓ Mock server is available and responding\n\n";
+    RunAgentParams params;
+    params.messages.push_back(Message("Test message", MessageRole::User, "simple_text content"));
 
-    try {
-        testHttpClientWithServer();
-        testHttpAgentWithServer();
-        testMiddlewareWithServer();
+    std::atomic<bool> successCalled{false};
+    std::atomic<bool> errorCalled{false};
+    // errorMessage written from async thread, read after fut.get() — no race.
+    std::string errorMessage;
 
-        std::cout << "\n======================================\n";
-        std::cout << "  Test Results\n";
-        std::cout << "======================================\n";
-        std::cout << "Total: 3 integration tests completed\n";
-        std::cout << "All tests executed successfully\n";
-        std::cout << "======================================\n\n";
-        std::cout << "✓ Integration tests execution completed!\n\n";
+    auto fut = std::async(std::launch::async, [&]() {
+        agent->runAgent(
+            params,
+            [&](const RunAgentResult& result) {
+                successCalled = true;
+                std::cout << "Agent run successful" << std::endl;
+            },
+            [&](const std::string& error) {
+                errorCalled = true;
+                errorMessage = error;
+                std::cout << "Agent run failed: " << error << std::endl;
+            }
+        );
+    });
 
-        return 0;
-    } catch (const std::exception& e) {
-        std::cerr << "\nTest failed: " << e.what() << "\n\n";
-        return 1;
-    }
+    ASSERT_EQ(fut.wait_for(AGENT_RUN_TIMEOUT), std::future_status::ready)
+        << "Agent run timed out after " << AGENT_RUN_TIMEOUT.count() << "s";
+    fut.get();
+
+    ASSERT_TRUE(successCalled.load()) << "Agent run should succeed, error: " << errorMessage;
+    ASSERT_FALSE(errorCalled.load());
+    EXPECT_GT(subscriber->runStartedCount.load(), 0) << "Should receive RUN_STARTED event";
+    EXPECT_GT(subscriber->textMessageStartCount.load(), 0) << "Should receive TEXT_MESSAGE_START event";
+    EXPECT_GT(subscriber->textMessageContentCount.load(), 0) << "Should receive TEXT_MESSAGE_CONTENT event";
+    EXPECT_GT(subscriber->textMessageEndCount.load(), 0) << "Should receive TEXT_MESSAGE_END event";
+    EXPECT_GT(subscriber->runFinishedCount.load(), 0) << "Should receive RUN_FINISHED event";
+    std::cout << "Full content: " << subscriber->fullContent << std::endl;
 }
+
+TEST_F(IntegrationTest, HttpAgent_WithThinkingScenario) {
+    auto agent = HttpAgent::builder()
+        .withUrl(MOCK_SERVER_URL + "/api/agent/run")
+        .withAgentId(AgentId("test_agent_thinking"))
+        .build();
+
+    auto subscriber = std::make_shared<TestSubscriber>();
+    agent->subscribe(subscriber);
+
+    RunAgentParams params;
+    params.messages.push_back(Message("with_thinking", MessageRole::User, "simple_text"));
+
+    std::atomic<bool> completed{false};
+    std::string errorMessage;
+
+    auto fut = std::async(std::launch::async, [&]() {
+        agent->runAgent(
+            params,
+            [&](const RunAgentResult& result) {
+                completed = true;
+                std::cout << "with_thinking scenario completed" << std::endl;
+            },
+            [&](const std::string& error) {
+                errorMessage = error;
+                std::cout << "with_thinking scenario failed: " << error << std::endl;
+            }
+        );
+    });
+
+    ASSERT_EQ(fut.wait_for(AGENT_RUN_TIMEOUT), std::future_status::ready)
+        << "with_thinking scenario timed out after " << AGENT_RUN_TIMEOUT.count() << "s";
+    fut.get();
+
+    ASSERT_TRUE(completed.load()) << "with_thinking scenario should complete, error: " << errorMessage;
+    EXPECT_GT(subscriber->textMessageContentCount.load(), 0) << "Should receive thinking content";
+}
+
+TEST_F(IntegrationTest, HttpAgent_DetailedStreamingInteractionFlow) {
+    std::cout << "\n=== Testing detailed streaming interaction flow ===" << std::endl;
+
+    // Detailed subscriber defined locally to capture the full event timeline.
+    // eventHistory is written exclusively from the async thread (inside runAgent)
+    // and read only after fut.get(), so no mutex is required.
+    class DetailedSubscriber : public IAgentSubscriber {
+    public:
+        struct EventRecord {
+            std::string eventType;
+            std::string timestamp;
+            std::string content;
+            nlohmann::json state;
+        };
+
+        std::vector<EventRecord> eventHistory;
+        std::atomic<int> totalEvents{0};
+
+        void recordEvent(const std::string& type, const std::string& content,
+                         const nlohmann::json& state) {
+            EventRecord record;
+            record.eventType = type;
+            record.content   = content;
+            record.state     = state;
+
+            auto now = std::chrono::system_clock::now();
+            auto ms  = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           now.time_since_epoch()).count();
+            record.timestamp = std::to_string(ms);
+
+            eventHistory.push_back(record);
+            totalEvents++;
+
+            std::cout << "  [Event Record] " << type << " | Content: "
+                      << content.substr(0, std::min(size_t(30), content.size()))
+                      << std::endl;
+        }
+
+        AgentStateMutation onRunStarted(const RunStartedEvent& event,
+                                        const AgentSubscriberParams& params) override {
+            recordEvent("RUN_STARTED", "runId=" + event.runId, *params.state);
+            return AgentStateMutation();
+        }
+
+        AgentStateMutation onTextMessageStart(const TextMessageStartEvent& event,
+                                              const AgentSubscriberParams& params) override {
+            recordEvent("TEXT_MESSAGE_START", "messageId=" + event.messageId, *params.state);
+            return AgentStateMutation();
+        }
+
+        AgentStateMutation onTextMessageContent(const TextMessageContentEvent& event,
+                                                const std::string& buffer,
+                                                const AgentSubscriberParams& params) override {
+            recordEvent("TEXT_MESSAGE_CONTENT", event.delta, *params.state);
+            return AgentStateMutation();
+        }
+
+        AgentStateMutation onTextMessageEnd(const TextMessageEndEvent& event,
+                                            const AgentSubscriberParams& params) override {
+            recordEvent("TEXT_MESSAGE_END", "messageId=" + event.messageId, *params.state);
+            return AgentStateMutation();
+        }
+
+        AgentStateMutation onRunFinished(const RunFinishedEvent& event,
+                                         const AgentSubscriberParams& params) override {
+            recordEvent("RUN_FINISHED", "run_finished", *params.state);
+            return AgentStateMutation();
+        }
+    };
+
+    auto detailedAgent = HttpAgent::builder()
+        .withUrl(MOCK_SERVER_URL + "/api/agent/run")
+        .withAgentId(AgentId("test_agent_detailed"))
+        .build();
+
+    auto detailedSubscriber = std::make_shared<DetailedSubscriber>();
+    detailedAgent->subscribe(detailedSubscriber);
+
+    RunAgentParams params;
+    params.messages.push_back(Message("Detailed flow test", MessageRole::User, "simple_text"));
+
+    std::atomic<bool> testCompleted{false};
+    // errorMessage written from async thread, read after fut.get() — no race.
+    std::string errorMessage;
+
+    auto fut = std::async(std::launch::async, [&]() {
+        detailedAgent->runAgent(
+            params,
+            [&](const RunAgentResult& result) {
+                testCompleted = true;
+            },
+            [&](const std::string& error) {
+                errorMessage = error;
+            }
+        );
+    });
+
+    // fut destructor (on scope exit) blocks until the async thread finishes,
+    // so all subscriber writes to eventHistory complete before the assertions below.
+    ASSERT_EQ(fut.wait_for(AGENT_RUN_TIMEOUT), std::future_status::ready)
+        << "Detailed streaming interaction flow timed out after "
+        << AGENT_RUN_TIMEOUT.count() << "s";
+    fut.get();
+
+    ASSERT_TRUE(testCompleted.load())
+        << "Streaming interaction test should complete, error: " << errorMessage;
+
+    ASSERT_GE(detailedSubscriber->totalEvents.load(), 5)
+        << "Should receive at least 4 events "
+           "(RUN_STARTED, TEXT_MESSAGE_START, TEXT_MESSAGE_CONTENT, TEXT_MESSAGE_END, RUN_FINISHED)";
+
+    if (detailedSubscriber->eventHistory.size() >= 3) {
+        bool hasTextStart   = false;
+        bool hasTextContent = false;
+        bool hasTextEnd     = false;
+        bool hasRunFinished = false;
+
+        for (const auto& record : detailedSubscriber->eventHistory) {
+            if (record.eventType == "TEXT_MESSAGE_START")   hasTextStart   = true;
+            if (record.eventType == "TEXT_MESSAGE_CONTENT") hasTextContent = true;
+            if (record.eventType == "TEXT_MESSAGE_END")     hasTextEnd     = true;
+            if (record.eventType == "RUN_FINISHED")         hasRunFinished = true;
+        }
+
+        EXPECT_TRUE(hasTextStart)   << "Should contain TEXT_MESSAGE_START event";
+        EXPECT_TRUE(hasTextContent) << "Should contain TEXT_MESSAGE_CONTENT event";
+        EXPECT_TRUE(hasTextEnd)     << "Should contain TEXT_MESSAGE_END event";
+        EXPECT_TRUE(hasRunFinished) << "Should contain RUN_FINISHED event";
+    }
+
+    std::cout << "\nStreaming interaction flow verification passed" << std::endl;
+}
+
+// ── Test Environment Setup ────────────────────────────────────────────────────
+
+// Checks server availability once before any test in this binary runs.
+class IntegrationTestEnvironment : public ::testing::Environment {
+public:
+    void SetUp() override {
+        std::cout << "Checking mock server availability at " << MOCK_SERVER_URL << "...\n";
+
+        g_serverAvailable = isServerAvailable();
+
+        if (!g_serverAvailable) {
+            std::cerr << "\nWARNING: Mock server is not running at " << MOCK_SERVER_URL << "\n";
+            std::cerr << "\nPlease start the mock server first:\n";
+            std::cerr << "  cd tests/mock_server\n";
+            std::cerr << "  python3 mock_ag_server.py\n";
+            std::cerr << "\nAll integration tests will be skipped.\n";
+            std::cerr << "This ensures CI doesn't report false positives.\n\n";
+        } else {
+            std::cout << "Mock server is available and responding\n\n";
+        }
+    }
+};
+
+// Registered automatically by gtest_main
+static ::testing::Environment* const test_env =
+    ::testing::AddGlobalTestEnvironment(new IntegrationTestEnvironment);

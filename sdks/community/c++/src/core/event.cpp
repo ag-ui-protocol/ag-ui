@@ -391,9 +391,16 @@ void JsonPatchOperation::validate() const {
     }
     
     // move and copy operations require from field
-    if ((op == "move" || op == "copy") && from.empty()) {
-        throw AGUI_ERROR(validation, ErrorCode::ValidationError,
-                        "Operation '" + op + "' requires 'from' field");
+    if ((op == "move" || op == "copy")) {
+        if (from.empty()) {
+            throw AGUI_ERROR(validation, ErrorCode::ValidationError,
+                            "Operation '" + op + "' requires 'from' field");
+        }
+        // Validate from field format (must also start with /)
+        if (from[0] != '/') {
+            throw AGUI_ERROR(validation, ErrorCode::ValidationError,
+                            "Invalid JSON Pointer 'from' path: " + from);
+        }
     }
     
     // add, replace, test operations require value field

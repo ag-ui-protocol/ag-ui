@@ -1,69 +1,34 @@
-#include "core/state.h"
-#include <cassert>
-#include <iostream>
+/**
+ * @file test_state_manager.cpp
+ * @brief StateManager functionality tests
+ * 
+ * Tests JSON Patch operations, path parsing, history tracking and state management
+ */
+
+#include <gtest/gtest.h>
 #include <string>
+
+#include "core/state.h"
 
 using namespace agui;
 
-// Simple test framework
-int g_test_count = 0;
-int g_test_passed = 0;
-int g_test_failed = 0;
+// Validation Tests
+TEST(StateManagerTest, ValidateEmptyState) {
+    StateManager manager;
+    
+    // m_currentState default set to nlohmann::json::object
+    ASSERT_TRUE(manager.validateState());
+}
 
-#define TEST_CASE(name) \
-    void test_##name(); \
-    struct TestRegistrar_##name { \
-        TestRegistrar_##name() { \
-            std::cout << "Running test: " << #name << std::endl; \
-            g_test_count++; \
-            try { \
-                test_##name(); \
-                g_test_passed++; \
-                std::cout << "   PASSED" << std::endl; \
-            } catch (const std::exception& e) { \
-                g_test_failed++; \
-                std::cout << "   FAILED: " << e.what() << std::endl; \
-            } catch (...) { \
-                g_test_failed++; \
-                std::cout << "   FAILED: Unknown exception" << std::endl; \
-            } \
-        } \
-    } g_test_registrar_##name; \
-    void test_##name()
+TEST(StateManagerTest, ValidateState) {
+    nlohmann::json validState = {{"a", 1}};
+    StateManager manager(validState);
+    
+    ASSERT_TRUE(manager.validateState());
+}
 
-#define ASSERT_TRUE(condition) \
-    if (!(condition)) { \
-        throw std::runtime_error("Assertion failed: " #condition); \
-    }
-
-#define ASSERT_FALSE(condition) \
-    if (condition) { \
-        throw std::runtime_error("Assertion failed: !" #condition); \
-    }
-
-#define EXPECT_EQ(a, b) \
-    if ((a) != (b)) { \
-        throw std::runtime_error(std::string("Expected equal: ") + #a + " != " + #b); \
-    }
-
-#define EXPECT_THROW(statement) \
-    { \
-        bool threw = false; \
-        try { \
-            statement; \
-        } catch (...) { \
-            threw = true; \
-        } \
-        if (!threw) { \
-            throw std::runtime_error("Expected exception but none was thrown"); \
-        } \
-    }
-
-// ============================================================================
 // Add Operation Tests
-// ============================================================================
-
-TEST_CASE(AddToEmptyObject) {
+TEST(StateManagerTest, AddToEmptyObject) {
     StateManager manager;
     
     nlohmann::json patch = nlohmann::json::array();
@@ -79,7 +44,7 @@ TEST_CASE(AddToEmptyObject) {
     EXPECT_EQ(manager.currentState()["name"], "test");
 }
 
-TEST_CASE(AddToExistingObject) {
+TEST(StateManagerTest, AddToExistingObject) {
     nlohmann::json initialState = {{"existing", "value"}};
     StateManager manager(initialState);
     
@@ -97,7 +62,7 @@ TEST_CASE(AddToExistingObject) {
     EXPECT_EQ(manager.currentState()["newField"], 42);
 }
 
-TEST_CASE(AddToArray) {
+TEST(StateManagerTest, AddToArray) {
     nlohmann::json initialState = {{"arr", nlohmann::json::array({1, 2, 3})}};
     StateManager manager(initialState);
     
@@ -118,7 +83,7 @@ TEST_CASE(AddToArray) {
     EXPECT_EQ(arr[3], 3);
 }
 
-TEST_CASE(AddToArrayWithDashIndex) {
+TEST(StateManagerTest, AddToArrayWithDashIndex) {
     nlohmann::json initialState = {{"arr", nlohmann::json::array({1, 2, 3})}};
     StateManager manager(initialState);
     
@@ -136,7 +101,7 @@ TEST_CASE(AddToArrayWithDashIndex) {
     EXPECT_EQ(arr[3], 4);
 }
 
-TEST_CASE(AddNestedPath) {
+TEST(StateManagerTest, AddNestedPath) {
     StateManager manager;
     
     nlohmann::json patch = nlohmann::json::array();
@@ -154,11 +119,8 @@ TEST_CASE(AddNestedPath) {
     EXPECT_EQ(manager.currentState()["user"]["profile"]["name"], "John");
 }
 
-// ============================================================================
 // Remove Operation Tests
-// ============================================================================
-
-TEST_CASE(RemoveObjectProperty) {
+TEST(StateManagerTest, RemoveObjectProperty) {
     nlohmann::json initialState = {{"a", 1}, {"b", 2}, {"c", 3}};
     StateManager manager(initialState);
     
@@ -175,7 +137,7 @@ TEST_CASE(RemoveObjectProperty) {
     ASSERT_TRUE(manager.currentState().contains("c"));
 }
 
-TEST_CASE(RemoveArrayElement) {
+TEST(StateManagerTest, RemoveArrayElement) {
     nlohmann::json initialState = {{"arr", nlohmann::json::array({1, 2, 3, 4})}};
     StateManager manager(initialState);
     
@@ -194,7 +156,7 @@ TEST_CASE(RemoveArrayElement) {
     EXPECT_EQ(arr[2], 4);
 }
 
-TEST_CASE(RemoveNonExistentPath) {
+TEST(StateManagerTest, RemoveNonExistentPath) {
     nlohmann::json initialState = {{"a", 1}};
     StateManager manager(initialState);
     
@@ -204,10 +166,10 @@ TEST_CASE(RemoveNonExistentPath) {
         {"path", "/nonexistent"}
     });
     
-    EXPECT_THROW(manager.applyPatch(patch));
+    EXPECT_THROW(manager.applyPatch(patch), std::exception);
 }
 
-TEST_CASE(RemoveRoot) {
+TEST(StateManagerTest, RemoveRoot) {
     nlohmann::json initialState = {{"a", 1}};
     StateManager manager(initialState);
     
@@ -217,14 +179,11 @@ TEST_CASE(RemoveRoot) {
         {"path", "/"}
     });
     
-    EXPECT_THROW(manager.applyPatch(patch));
+    EXPECT_THROW(manager.applyPatch(patch), std::exception);
 }
 
-// ============================================================================
 // Replace Operation Tests
-// ============================================================================
-
-TEST_CASE(ReplaceObjectProperty) {
+TEST(StateManagerTest, ReplaceObjectProperty) {
     nlohmann::json initialState = {{"name", "old"}};
     StateManager manager(initialState);
     
@@ -240,7 +199,7 @@ TEST_CASE(ReplaceObjectProperty) {
     EXPECT_EQ(manager.currentState()["name"], "new");
 }
 
-TEST_CASE(ReplaceArrayElement) {
+TEST(StateManagerTest, ReplaceArrayElement) {
     nlohmann::json initialState = {{"arr", nlohmann::json::array({1, 2, 3})}};
     StateManager manager(initialState);
     
@@ -257,7 +216,7 @@ TEST_CASE(ReplaceArrayElement) {
     EXPECT_EQ(arr[1], 99);
 }
 
-TEST_CASE(ReplaceRoot) {
+TEST(StateManagerTest, ReplaceRoot) {
     nlohmann::json initialState = {{"old", "state"}};
     StateManager manager(initialState);
     
@@ -276,7 +235,7 @@ TEST_CASE(ReplaceRoot) {
     EXPECT_EQ(manager.currentState()["new"], "state");
 }
 
-TEST_CASE(ReplaceNonExistentPath) {
+TEST(StateManagerTest, ReplaceNonExistentPath) {
     nlohmann::json initialState = {{"a", 1}};
     StateManager manager(initialState);
     
@@ -287,14 +246,11 @@ TEST_CASE(ReplaceNonExistentPath) {
         {"value", "test"}
     });
     
-    EXPECT_THROW(manager.applyPatch(patch));
+    EXPECT_THROW(manager.applyPatch(patch), std::exception);
 }
 
-// ============================================================================
 // Move Operation Tests
-// ============================================================================
-
-TEST_CASE(MoveObjectProperty) {
+TEST(StateManagerTest, MoveObjectProperty) {
     nlohmann::json initialState = {{"a", 1}, {"b", 2}};
     StateManager manager(initialState);
     
@@ -313,7 +269,7 @@ TEST_CASE(MoveObjectProperty) {
     EXPECT_EQ(manager.currentState()["c"], 1);
 }
 
-TEST_CASE(MoveArrayElement) {
+TEST(StateManagerTest, MoveArrayElement) {
     nlohmann::json initialState = {{"arr", nlohmann::json::array({1, 2, 3, 4})}};
     StateManager manager(initialState);
     
@@ -331,8 +287,8 @@ TEST_CASE(MoveArrayElement) {
     EXPECT_EQ(arr[3], 1);
 }
 
-TEST_CASE(MoveToNewLocation) {
-    nlohmann::json initialState = {{"source", {"value", 42}}};
+TEST(StateManagerTest, MoveToNewLocation) {
+    nlohmann::json initialState = {{"source", nlohmann::json{{"value", 42}}}};
     StateManager manager(initialState);
     
     nlohmann::json patch = nlohmann::json::array();
@@ -348,7 +304,7 @@ TEST_CASE(MoveToNewLocation) {
     ASSERT_TRUE(manager.currentState().contains("destination"));
 }
 
-TEST_CASE(MoveNonExistentSource) {
+TEST(StateManagerTest, MoveNonExistentSource) {
     nlohmann::json initialState = {{"a", 1}};
     StateManager manager(initialState);
     
@@ -359,14 +315,11 @@ TEST_CASE(MoveNonExistentSource) {
         {"path", "/b"}
     });
     
-    EXPECT_THROW(manager.applyPatch(patch));
+    EXPECT_THROW(manager.applyPatch(patch), std::exception);
 }
 
-// ============================================================================
 // Copy Operation Tests
-// ============================================================================
-
-TEST_CASE(CopyObjectProperty) {
+TEST(StateManagerTest, CopyObjectProperty) {
     nlohmann::json initialState = {{"a", 1}};
     StateManager manager(initialState);
     
@@ -385,7 +338,7 @@ TEST_CASE(CopyObjectProperty) {
     EXPECT_EQ(manager.currentState()["b"], 1);
 }
 
-TEST_CASE(CopyArrayElement) {
+TEST(StateManagerTest, CopyArrayElement) {
     nlohmann::json initialState = {{"arr", nlohmann::json::array({1, 2, 3})}};
     StateManager manager(initialState);
     
@@ -404,7 +357,7 @@ TEST_CASE(CopyArrayElement) {
     EXPECT_EQ(arr[3], 1);
 }
 
-TEST_CASE(CopyNonExistentSource) {
+TEST(StateManagerTest, CopyNonExistentSource) {
     nlohmann::json initialState = {{"a", 1}};
     StateManager manager(initialState);
     
@@ -415,14 +368,11 @@ TEST_CASE(CopyNonExistentSource) {
         {"path", "/b"}
     });
     
-    EXPECT_THROW(manager.applyPatch(patch));
+    EXPECT_THROW(manager.applyPatch(patch), std::exception);
 }
 
-// ============================================================================
 // Test Operation Tests
-// ============================================================================
-
-TEST_CASE(TestValueMatch) {
+TEST(StateManagerTest, TestValueMatch) {
     nlohmann::json initialState = {{"value", 42}};
     StateManager manager(initialState);
     
@@ -434,10 +384,10 @@ TEST_CASE(TestValueMatch) {
     });
     
     // Should not throw exception
-    manager.applyPatch(patch);
+    EXPECT_NO_THROW(manager.applyPatch(patch));
 }
 
-TEST_CASE(TestValueMismatch) {
+TEST(StateManagerTest, TestValueMismatch) {
     nlohmann::json initialState = {{"value", 42}};
     StateManager manager(initialState);
     
@@ -448,10 +398,10 @@ TEST_CASE(TestValueMismatch) {
         {"value", 99}
     });
     
-    EXPECT_THROW(manager.applyPatch(patch));
+    EXPECT_THROW(manager.applyPatch(patch), std::exception);
 }
 
-TEST_CASE(TestNonExistentPath) {
+TEST(StateManagerTest, TestNonExistentPath) {
     nlohmann::json initialState = {{"a", 1}};
     StateManager manager(initialState);
     
@@ -462,14 +412,11 @@ TEST_CASE(TestNonExistentPath) {
         {"value", "test"}
     });
     
-    EXPECT_THROW(manager.applyPatch(patch));
+    EXPECT_THROW(manager.applyPatch(patch), std::exception);
 }
 
-// ============================================================================
 // Path Parsing Tests
-// ============================================================================
-
-TEST_CASE(ParseSimplePath) {
+TEST(StateManagerTest, ParseSimplePath) {
     nlohmann::json initialState = {{"a", {{"b", {{"c", 123}}}}}};
     StateManager manager(initialState);
     
@@ -485,7 +432,7 @@ TEST_CASE(ParseSimplePath) {
     EXPECT_EQ(manager.currentState()["a"]["b"]["c"], 456);
 }
 
-TEST_CASE(ParsePathWithEscaping) {
+TEST(StateManagerTest, ParsePathWithEscaping) {
     nlohmann::json initialState = {{"a~b", 1}, {"c/d", 2}};
     StateManager manager(initialState);
     
@@ -502,7 +449,7 @@ TEST_CASE(ParsePathWithEscaping) {
     EXPECT_EQ(manager.currentState()["a~b"], 99);
 }
 
-TEST_CASE(ParseArrayIndexPath) {
+TEST(StateManagerTest, ParseArrayIndexPath) {
     nlohmann::json initialState = {{"arr", nlohmann::json::array({10, 20, 30})}};
     StateManager manager(initialState);
     
@@ -518,11 +465,8 @@ TEST_CASE(ParseArrayIndexPath) {
     EXPECT_EQ(manager.currentState()["arr"][0], 100);
 }
 
-// ============================================================================
 // History and Rollback Tests
-// ============================================================================
-
-TEST_CASE(EnableHistoryTracking) {
+TEST(StateManagerTest, EnableHistoryTracking) {
     StateManager manager;
     manager.enableHistory(true, 5);
     
@@ -537,7 +481,7 @@ TEST_CASE(EnableHistoryTracking) {
     EXPECT_EQ(manager.historySize(), 2);
 }
 
-TEST_CASE(RollbackToPreviousState) {
+TEST(StateManagerTest, RollbackToPreviousState) {
     StateManager manager;
     manager.enableHistory(true);
     
@@ -559,7 +503,7 @@ TEST_CASE(RollbackToPreviousState) {
     ASSERT_FALSE(manager.currentState().contains("b"));
 }
 
-TEST_CASE(MultipleRollbacks) {
+TEST(StateManagerTest, MultipleRollbacks) {
     StateManager manager;
     manager.enableHistory(true);
     
@@ -581,7 +525,7 @@ TEST_CASE(MultipleRollbacks) {
     ASSERT_FALSE(manager.currentState().contains("v0"));
 }
 
-TEST_CASE(HistorySizeLimit) {
+TEST(StateManagerTest, HistorySizeLimit) {
     StateManager manager;
     manager.enableHistory(true, 3);
     
@@ -595,11 +539,8 @@ TEST_CASE(HistorySizeLimit) {
     EXPECT_EQ(manager.historySize(), 3);
 }
 
-// ============================================================================
 // Batch Patch Tests
-// ============================================================================
-
-TEST_CASE(ApplyMultiplePatchOperations) {
+TEST(StateManagerTest, ApplyMultiplePatchOperations) {
     StateManager manager;
     
     nlohmann::json patch = nlohmann::json::array();
@@ -617,7 +558,7 @@ TEST_CASE(ApplyMultiplePatchOperations) {
     EXPECT_EQ(manager.currentState()["c"], 3);
 }
 
-TEST_CASE(PatchArrayWithMultipleOps) {
+TEST(StateManagerTest, PatchArrayWithMultipleOps) {
     nlohmann::json initialState = {{"arr", nlohmann::json::array({1, 2, 3})}};
     StateManager manager(initialState);
     
@@ -633,11 +574,8 @@ TEST_CASE(PatchArrayWithMultipleOps) {
     EXPECT_EQ(arr[0], 10);
 }
 
-// ============================================================================
 // Snapshot and Restore Tests
-// ============================================================================
-
-TEST_CASE(CreateSnapshot) {
+TEST(StateManagerTest, CreateSnapshot) {
     nlohmann::json initialState = {{"a", 1}, {"b", 2}};
     StateManager manager(initialState);
     
@@ -647,7 +585,7 @@ TEST_CASE(CreateSnapshot) {
     EXPECT_EQ(snapshot["b"], 2);
 }
 
-TEST_CASE(RestoreFromSnapshot) {
+TEST(StateManagerTest, RestoreFromSnapshot) {
     StateManager manager;
     
     nlohmann::json patch = nlohmann::json::array();
@@ -660,42 +598,4 @@ TEST_CASE(RestoreFromSnapshot) {
     ASSERT_FALSE(manager.currentState().contains("a"));
     ASSERT_TRUE(manager.currentState().contains("restored"));
     EXPECT_EQ(manager.currentState()["restored"], "state");
-}
-
-// ============================================================================
-// Validation Tests
-// ============================================================================
-
-TEST_CASE(ValidateState) {
-    nlohmann::json validState = {{"a", 1}};
-    StateManager manager(validState);
-    
-    ASSERT_TRUE(manager.validateState());
-}
-
-TEST_CASE(ValidateEmptyState) {
-    StateManager manager;
-    
-    ASSERT_TRUE(manager.validateState());
-}
-
-// ============================================================================
-// Main function
-// ============================================================================
-
-int main() {
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "StateManager Test Suite" << std::endl;
-    std::cout << "========================================\n" << std::endl;
-    
-    // Tests will run automatically when global objects are initialized
-    
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "Test Results:" << std::endl;
-    std::cout << "  Total:  " << g_test_count << std::endl;
-    std::cout << "  Passed: " << g_test_passed << std::endl;
-    std::cout << "  Failed: " << g_test_failed << std::endl;
-    std::cout << "========================================" << std::endl;
-    
-    return g_test_failed > 0 ? 1 : 0;
 }

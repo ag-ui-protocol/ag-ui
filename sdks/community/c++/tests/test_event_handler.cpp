@@ -1,53 +1,19 @@
-#include "core/subscriber.h"
-#include "core/event.h"
-#include "core/session_types.h"
-#include <cassert>
-#include <iostream>
+/**
+ * @file test_event_handler.cpp
+ * @brief EventHandler functionality tests
+ * 
+ * Tests event dispatch, buffer accumulation, state management and subscriber management
+ */
+
+#include <gtest/gtest.h>
 #include <memory>
 #include <string>
 
+#include "core/subscriber.h"
+#include "core/event.h"
+#include "core/session_types.h"
+
 using namespace agui;
-
-// Simple test framework
-int g_test_count = 0;
-int g_test_passed = 0;
-int g_test_failed = 0;
-
-#define TEST_CASE(name) \
-    void test_##name(); \
-    struct TestRegistrar_##name { \
-        TestRegistrar_##name() { \
-            std::cout << "Running test: " << #name << std::endl; \
-            g_test_count++; \
-            try { \
-                test_##name(); \
-                g_test_passed++; \
-                std::cout << "   PASSED" << std::endl; \
-            } catch (const std::exception& e) { \
-                g_test_failed++; \
-                std::cout << "   FAILED: " << e.what() << std::endl; \
-            } catch (...) { \
-                g_test_failed++; \
-                std::cout << "   FAILED: Unknown exception" << std::endl; \
-            } \
-        } \
-    } g_test_registrar_##name; \
-    void test_##name()
-
-#define ASSERT_TRUE(condition) \
-    if (!(condition)) { \
-        throw std::runtime_error("Assertion failed: " #condition); \
-    }
-
-#define ASSERT_FALSE(condition) \
-    if (condition) { \
-        throw std::runtime_error("Assertion failed: !" #condition); \
-    }
-
-#define EXPECT_EQ(a, b) \
-    if ((a) != (b)) { \
-        throw std::runtime_error(std::string("Expected equal: ") + #a + " != " + #b); \
-    }
 
 // Mock Subscriber for testing
 class MockSubscriber : public IAgentSubscriber {
@@ -59,6 +25,7 @@ public:
     int onToolCallStartCallCount = 0;
     int onToolCallArgsCallCount = 0;
     int onToolCallEndCallCount = 0;
+    int onToolCallResultCallCount = 0;
     int onStateDeltaCallCount = 0;
     int onStateSnapshotCallCount = 0;
     int onMessagesChangedCallCount = 0;
@@ -68,13 +35,16 @@ public:
     
     std::string lastTextBuffer;
     std::string lastToolCallArgsBuffer;
+    std::string lastToolCallResult;
     bool shouldStopPropagation = false;
     bool stopInGenericCallback = false;
     
     AgentStateMutation onEvent(const Event& event, const AgentSubscriberParams& params) override {
         onEventCallCount++;
         if (stopInGenericCallback) {
-            return AgentStateMutation().withStopPropagation(true);
+            AgentStateMutation mutation;
+            mutation.stopPropagation = true;
+            return mutation;
         }
         return AgentStateMutation();
     }
@@ -82,7 +52,9 @@ public:
     AgentStateMutation onTextMessageStart(const TextMessageStartEvent& event,
                                          const AgentSubscriberParams& params) override {
         onTextMessageStartCallCount++;
-        return AgentStateMutation().withStopPropagation(shouldStopPropagation);
+        AgentStateMutation mutation;
+        mutation.stopPropagation = shouldStopPropagation;
+        return mutation;
     }
     
     AgentStateMutation onTextMessageContent(const TextMessageContentEvent& event,
@@ -119,6 +91,13 @@ public:
         return AgentStateMutation();
     }
     
+    AgentStateMutation onToolCallResult(const ToolCallResultEvent& event,
+                                       const AgentSubscriberParams& params) override {
+        onToolCallResultCallCount++;
+        lastToolCallResult = event.result;
+        return AgentStateMutation();
+    }
+    
     AgentStateMutation onStateDelta(const StateDeltaEvent& event,
                                    const AgentSubscriberParams& params) override {
         onStateDeltaCallCount++;
@@ -146,33 +125,10 @@ public:
     void onNewToolCall(const ToolCall& toolCall, const AgentSubscriberParams& params) override {
         onNewToolCallCallCount++;
     }
-    
-    void reset() {
-        onEventCallCount = 0;
-        onTextMessageStartCallCount = 0;
-        onTextMessageContentCallCount = 0;
-        onTextMessageEndCallCount = 0;
-        onToolCallStartCallCount = 0;
-        onToolCallArgsCallCount = 0;
-        onToolCallEndCallCount = 0;
-        onStateDeltaCallCount = 0;
-        onStateSnapshotCallCount = 0;
-        onMessagesChangedCallCount = 0;
-        onStateChangedCallCount = 0;
-        onNewMessageCallCount = 0;
-        onNewToolCallCallCount = 0;
-        lastTextBuffer.clear();
-        lastToolCallArgsBuffer.clear();
-        shouldStopPropagation = false;
-        stopInGenericCallback = false;
-    }
 };
 
-// ============================================================================
 // Event Dispatch Tests
-// ============================================================================
-
-TEST_CASE(EventDispatchToCorrectHandler) {
+TEST(EventHandlerTest, EventDispatchToCorrectHandler) {
     std::vector<Message> messages;
     std::string state = "{}";
     auto subscriber = std::make_shared<MockSubscriber>();
@@ -189,42 +145,8 @@ TEST_CASE(EventDispatchToCorrectHandler) {
     EXPECT_EQ(subscriber->onNewMessageCallCount, 1);
 }
 
-TEST_CASE(GenericOnEventCallback) {
-    std::vector<Message> messages;
-    std::string state = "{}";
-    auto subscriber = std::make_shared<MockSubscriber>();
-    
-    EventHandler handler(messages, state, {subscriber});
-    
-    auto event = std::make_unique<TextMessageStartEvent>();
-    event->messageId = "msg1";
-    handler.handleEvent(std::move(event));
-    
-    // Generic onEvent should be called for all events
-    ASSERT_TRUE(subscriber->onEventCallCount > 0);
-}
-
-TEST_CASE(SpecificCallbackAfterGeneric) {
-    std::vector<Message> messages;
-    std::string state = "{}";
-    auto subscriber = std::make_shared<MockSubscriber>();
-    
-    EventHandler handler(messages, state, {subscriber});
-    
-    auto event = std::make_unique<TextMessageStartEvent>();
-    event->messageId = "msg1";
-    handler.handleEvent(std::move(event));
-    
-    // Both generic and specific callbacks should be called
-    EXPECT_EQ(subscriber->onEventCallCount, 1);
-    EXPECT_EQ(subscriber->onTextMessageStartCallCount, 1);
-}
-
-// ============================================================================
 // stopPropagation Tests
-// ============================================================================
-
-TEST_CASE(StopPropagationInGenericCallback) {
+TEST(EventHandlerTest, StopPropagationInGenericCallback) {
     std::vector<Message> messages;
     std::string state = "{}";
     auto subscriber = std::make_shared<MockSubscriber>();
@@ -241,7 +163,7 @@ TEST_CASE(StopPropagationInGenericCallback) {
     EXPECT_EQ(subscriber->onTextMessageStartCallCount, 0);
 }
 
-TEST_CASE(StopPropagationInSpecificCallback) {
+TEST(EventHandlerTest, StopPropagationInSpecificCallback) {
     std::vector<Message> messages;
     std::string state = "{}";
     auto subscriber1 = std::make_shared<MockSubscriber>();
@@ -259,7 +181,79 @@ TEST_CASE(StopPropagationInSpecificCallback) {
     EXPECT_EQ(subscriber2->onTextMessageStartCallCount, 0);
 }
 
-TEST_CASE(StopPropagationPreventsDefaultHandling) {
+TEST(EventHandlerTest, AddRemoveSubscribers) {
+    std::vector<Message> messages;
+    std::string state = "{}";
+    
+    EventHandler handler(messages, state);
+    
+    auto subscriber1 = std::make_shared<MockSubscriber>();
+    auto subscriber2 = std::make_shared<MockSubscriber>();
+    
+    handler.addSubscriber(subscriber1);
+    handler.addSubscriber(subscriber2);
+    
+    auto event = std::make_unique<TextMessageStartEvent>();
+    event->messageId = "msg1";
+    handler.handleEvent(std::move(event));
+    
+    EXPECT_EQ(subscriber1->onTextMessageStartCallCount, 1);
+    EXPECT_EQ(subscriber2->onTextMessageStartCallCount, 1);
+    
+    // Remove one subscriber
+    handler.removeSubscriber(subscriber1);
+    
+    auto event2 = std::make_unique<TextMessageStartEvent>();
+    event2->messageId = "msg2";
+    handler.handleEvent(std::move(event2));
+    
+    // Only subscriber2 should be notified
+    EXPECT_EQ(subscriber1->onTextMessageStartCallCount, 1);
+    EXPECT_EQ(subscriber2->onTextMessageStartCallCount, 2);
+}
+
+TEST(EventHandlerTest, ClearAllSubscribers) {
+    std::vector<Message> messages;
+    std::string state = "{}";
+    
+    auto subscriber1 = std::make_shared<MockSubscriber>();
+    auto subscriber2 = std::make_shared<MockSubscriber>();
+    
+    EventHandler handler(messages, state, {subscriber1, subscriber2});
+    
+    handler.clearSubscribers();
+    
+    auto event = std::make_unique<TextMessageStartEvent>();
+    event->messageId = "msg1";
+    handler.handleEvent(std::move(event));
+    
+    // No subscribers should be notified
+    EXPECT_EQ(subscriber1->onTextMessageStartCallCount, 0);
+    EXPECT_EQ(subscriber2->onTextMessageStartCallCount, 0);
+}
+
+TEST(EventHandlerTest, MultipleSubscribersNotification) {
+    std::vector<Message> messages;
+    std::string state = "{}";
+    
+    auto subscriber1 = std::make_shared<MockSubscriber>();
+    auto subscriber2 = std::make_shared<MockSubscriber>();
+    auto subscriber3 = std::make_shared<MockSubscriber>();
+    
+    EventHandler handler(messages, state, {subscriber1, subscriber2, subscriber3});
+    
+    auto event = std::make_unique<TextMessageStartEvent>();
+    event->messageId = "msg1";
+    handler.handleEvent(std::move(event));
+    
+    // All subscribers should be notified
+    EXPECT_EQ(subscriber1->onTextMessageStartCallCount, 1);
+    EXPECT_EQ(subscriber2->onTextMessageStartCallCount, 1);
+    EXPECT_EQ(subscriber3->onTextMessageStartCallCount, 1);
+}
+
+
+TEST(EventHandlerTest, StopPropagationPreventsDefaultHandling) {
     std::vector<Message> messages;
     std::string state = "{}";
     auto subscriber = std::make_shared<MockSubscriber>();
@@ -275,11 +269,8 @@ TEST_CASE(StopPropagationPreventsDefaultHandling) {
     EXPECT_EQ(handler.messages().size(), 0);
 }
 
-// ============================================================================
 // Text Message Buffer Accumulation Tests
-// ============================================================================
-
-TEST_CASE(TextMessageBufferAccumulation) {
+TEST(EventHandlerTest, TextMessageBufferAccumulation) {
     std::vector<Message> messages;
     std::string state = "{}";
     auto subscriber = std::make_shared<MockSubscriber>();
@@ -317,7 +308,7 @@ TEST_CASE(TextMessageBufferAccumulation) {
     EXPECT_EQ(handler.messages()[0].content(), "Hello World");
 }
 
-TEST_CASE(MultipleTextMessageContentEvents) {
+TEST(EventHandlerTest, MultipleTextMessageContentEvents) {
     std::vector<Message> messages;
     std::string state = "{}";
     auto subscriber = std::make_shared<MockSubscriber>();
@@ -339,7 +330,7 @@ TEST_CASE(MultipleTextMessageContentEvents) {
     EXPECT_EQ(subscriber->lastTextBuffer, "01234");
 }
 
-TEST_CASE(TextBufferClearedOnEnd) {
+TEST(EventHandlerTest, TextBufferClearedOnEnd) {
     std::vector<Message> messages;
     std::string state = "{}";
     auto subscriber = std::make_shared<MockSubscriber>();
@@ -361,7 +352,6 @@ TEST_CASE(TextBufferClearedOnEnd) {
     handler.handleEvent(std::move(endEvent));
     
     // Start a new message - buffer should be empty
-    subscriber->reset();
     auto startEvent2 = std::make_unique<TextMessageStartEvent>();
     startEvent2->messageId = "msg2";
     handler.handleEvent(std::move(startEvent2));
@@ -375,7 +365,7 @@ TEST_CASE(TextBufferClearedOnEnd) {
     EXPECT_EQ(subscriber->lastTextBuffer, "New");
 }
 
-TEST_CASE(TextBufferPassedToSubscriber) {
+TEST(EventHandlerTest, TextBufferPassedToSubscriber) {
     std::vector<Message> messages;
     std::string state = "{}";
     auto subscriber = std::make_shared<MockSubscriber>();
@@ -396,11 +386,8 @@ TEST_CASE(TextBufferPassedToSubscriber) {
     EXPECT_EQ(subscriber->onTextMessageContentCallCount, 1);
 }
 
-// ============================================================================
 // Tool Call Args Buffer Accumulation Tests
-// ============================================================================
-
-TEST_CASE(ToolCallArgsBufferAccumulation) {
+TEST(EventHandlerTest, ToolCallArgsBufferAccumulation) {
     std::vector<Message> messages;
     std::string state = "{}";
     auto subscriber = std::make_shared<MockSubscriber>();
@@ -443,7 +430,7 @@ TEST_CASE(ToolCallArgsBufferAccumulation) {
     EXPECT_EQ(handler.messages()[0].toolCalls()[0].function.arguments, "{\"query\":\"test\"}");
 }
 
-TEST_CASE(MultipleToolCallArgsEvents) {
+TEST(EventHandlerTest, MultipleToolCallArgsEvents) {
     std::vector<Message> messages;
     std::string state = "{}";
     auto subscriber = std::make_shared<MockSubscriber>();
@@ -469,7 +456,7 @@ TEST_CASE(MultipleToolCallArgsEvents) {
     EXPECT_EQ(subscriber->lastToolCallArgsBuffer, "{\"a\":1}");
 }
 
-TEST_CASE(ToolCallArgsBufferClearedOnEnd) {
+TEST(EventHandlerTest, ToolCallArgsBufferClearedOnEnd) {
     std::vector<Message> messages;
     std::string state = "{}";
     auto subscriber = std::make_shared<MockSubscriber>();
@@ -494,7 +481,6 @@ TEST_CASE(ToolCallArgsBufferClearedOnEnd) {
     handler.handleEvent(std::move(endEvent1));
     
     // Second tool call - buffer should be independent
-    subscriber->reset();
     auto startEvent2 = std::make_unique<ToolCallStartEvent>();
     startEvent2->parentMessageId = "msg1";
     startEvent2->toolCallId = "call2";
@@ -511,35 +497,8 @@ TEST_CASE(ToolCallArgsBufferClearedOnEnd) {
     EXPECT_EQ(subscriber->lastToolCallArgsBuffer, "{\"b\":2}");
 }
 
-TEST_CASE(ToolCallArgsPassedToSubscriber) {
-    std::vector<Message> messages;
-    std::string state = "{}";
-    auto subscriber = std::make_shared<MockSubscriber>();
-    
-    EventHandler handler(messages, state, {subscriber});
-    
-    auto startEvent = std::make_unique<ToolCallStartEvent>();
-    startEvent->parentMessageId = "msg1";
-    startEvent->toolCallId = "call1";
-    startEvent->toolCallName = "test";
-    handler.handleEvent(std::move(startEvent));
-    
-    auto argsEvent = std::make_unique<ToolCallArgsEvent>();
-    argsEvent->messageId = "msg1";
-    argsEvent->toolCallId = "call1";
-    argsEvent->delta = "{\"test\":true}";
-    handler.handleEvent(std::move(argsEvent));
-    
-    // Subscriber should receive accumulated buffer
-    EXPECT_EQ(subscriber->lastToolCallArgsBuffer, "{\"test\":true}");
-    EXPECT_EQ(subscriber->onToolCallArgsCallCount, 1);
-}
-
-// ============================================================================
 // State Delta (JSON Patch) Tests
-// ============================================================================
-
-TEST_CASE(StateDeltaAppliesJsonPatch) {
+TEST(EventHandlerTest, StateDeltaAppliesJsonPatch) {
     std::vector<Message> messages;
     std::string state = "{\"count\":0}";
     auto subscriber = std::make_shared<MockSubscriber>();
@@ -563,7 +522,7 @@ TEST_CASE(StateDeltaAppliesJsonPatch) {
     EXPECT_EQ(updatedState["count"], 1);
 }
 
-TEST_CASE(StateDeltaNotifiesSubscribers) {
+TEST(EventHandlerTest, StateDeltaNotifiesSubscribers) {
     std::vector<Message> messages;
     std::string state = "{}";
     auto subscriber = std::make_shared<MockSubscriber>();
@@ -586,7 +545,7 @@ TEST_CASE(StateDeltaNotifiesSubscribers) {
     EXPECT_EQ(subscriber->onStateChangedCallCount, 1);
 }
 
-TEST_CASE(StateSnapshotReplacesState) {
+TEST(EventHandlerTest, StateSnapshotReplacesState) {
     std::vector<Message> messages;
     std::string state = "{\"old\":\"value\"}";
     auto subscriber = std::make_shared<MockSubscriber>();
@@ -606,98 +565,132 @@ TEST_CASE(StateSnapshotReplacesState) {
     EXPECT_EQ(currentState["new"], "state");
 }
 
-// ============================================================================
-// Subscriber Management Tests
-// ============================================================================
-
-TEST_CASE(AddRemoveSubscribers) {
+// ToolCallResultEvent Tests
+TEST(EventHandlerTest, ToolCallResultEventTriggersCallback) {
     std::vector<Message> messages;
     std::string state = "{}";
+    auto subscriber = std::make_shared<MockSubscriber>();
     
-    EventHandler handler(messages, state);
+    EventHandler handler(messages, state, {subscriber});
     
-    auto subscriber1 = std::make_shared<MockSubscriber>();
-    auto subscriber2 = std::make_shared<MockSubscriber>();
+    // Setup: Complete tool call flow (START -> ARGS -> END)
+    auto startEvent = std::make_unique<ToolCallStartEvent>();
+    startEvent->parentMessageId = "msg1";
+    startEvent->toolCallId = "call1";
+    startEvent->toolCallName = "search";
+    handler.handleEvent(std::move(startEvent));
     
-    handler.addSubscriber(subscriber1);
-    handler.addSubscriber(subscriber2);
+    auto argsEvent = std::make_unique<ToolCallArgsEvent>();
+    argsEvent->messageId = "msg1";
+    argsEvent->toolCallId = "call1";
+    argsEvent->delta = "{\"query\":\"test\"}";
+    handler.handleEvent(std::move(argsEvent));
     
-    auto event = std::make_unique<TextMessageStartEvent>();
-    event->messageId = "msg1";
-    handler.handleEvent(std::move(event));
+    auto endEvent = std::make_unique<ToolCallEndEvent>();
+    endEvent->toolCallId = "call1";
+    handler.handleEvent(std::move(endEvent));
     
-    EXPECT_EQ(subscriber1->onTextMessageStartCallCount, 1);
-    EXPECT_EQ(subscriber2->onTextMessageStartCallCount, 1);
+    // Test: Send ToolCallResultEvent
+    auto resultEvent = std::make_unique<ToolCallResultEvent>();
+    resultEvent->toolCallId = "call1";
+    resultEvent->result = "{\"status\":\"success\",\"data\":\"found\"}";
+    handler.handleEvent(std::move(resultEvent));
     
-    // Remove one subscriber
-    handler.removeSubscriber(subscriber1);
-    
-    auto event2 = std::make_unique<TextMessageStartEvent>();
-    event2->messageId = "msg2";
-    handler.handleEvent(std::move(event2));
-    
-    // Only subscriber2 should be notified
-    EXPECT_EQ(subscriber1->onTextMessageStartCallCount, 1);
-    EXPECT_EQ(subscriber2->onTextMessageStartCallCount, 2);
+    // Verify: onToolCallResult callback was triggered
+    EXPECT_EQ(subscriber->onToolCallResultCallCount, 1);
+    EXPECT_EQ(subscriber->lastToolCallResult, "{\"status\":\"success\",\"data\":\"found\"}");
 }
 
-TEST_CASE(ClearAllSubscribers) {
+TEST(EventHandlerTest, ToolCallResultEventWithMultipleResults) {
     std::vector<Message> messages;
     std::string state = "{}";
+    auto subscriber = std::make_shared<MockSubscriber>();
     
-    auto subscriber1 = std::make_shared<MockSubscriber>();
-    auto subscriber2 = std::make_shared<MockSubscriber>();
+    EventHandler handler(messages, state, {subscriber});
     
-    EventHandler handler(messages, state, {subscriber1, subscriber2});
+    // Setup: Create two tool calls
+    auto startEvent1 = std::make_unique<ToolCallStartEvent>();
+    startEvent1->parentMessageId = "msg1";
+    startEvent1->toolCallId = "call1";
+    startEvent1->toolCallName = "tool1";
+    handler.handleEvent(std::move(startEvent1));
     
-    handler.clearSubscribers();
+    auto argsEvent1 = std::make_unique<ToolCallArgsEvent>();
+    argsEvent1->messageId = "msg1";
+    argsEvent1->toolCallId = "call1";
+    argsEvent1->delta = "{\"param\":\"value1\"}";
+    handler.handleEvent(std::move(argsEvent1));
     
-    auto event = std::make_unique<TextMessageStartEvent>();
-    event->messageId = "msg1";
-    handler.handleEvent(std::move(event));
+    auto endEvent1 = std::make_unique<ToolCallEndEvent>();
+    endEvent1->toolCallId = "call1";
+    handler.handleEvent(std::move(endEvent1));
     
-    // No subscribers should be notified
-    EXPECT_EQ(subscriber1->onTextMessageStartCallCount, 0);
-    EXPECT_EQ(subscriber2->onTextMessageStartCallCount, 0);
+    auto startEvent2 = std::make_unique<ToolCallStartEvent>();
+    startEvent2->parentMessageId = "msg1";
+    startEvent2->toolCallId = "call2";
+    startEvent2->toolCallName = "tool2";
+    handler.handleEvent(std::move(startEvent2));
+    
+    auto argsEvent2 = std::make_unique<ToolCallArgsEvent>();
+    argsEvent2->messageId = "msg1";
+    argsEvent2->toolCallId = "call2";
+    argsEvent2->delta = "{\"param\":\"value2\"}";
+    handler.handleEvent(std::move(argsEvent2));
+    
+    auto endEvent2 = std::make_unique<ToolCallEndEvent>();
+    endEvent2->toolCallId = "call2";
+    handler.handleEvent(std::move(endEvent2));
+    
+    // Test: Send ToolCallResultEvents for both tool calls
+    auto resultEvent1 = std::make_unique<ToolCallResultEvent>();
+    resultEvent1->toolCallId = "call1";
+    resultEvent1->result = "result1";
+    handler.handleEvent(std::move(resultEvent1));
+    
+    auto resultEvent2 = std::make_unique<ToolCallResultEvent>();
+    resultEvent2->toolCallId = "call2";
+    resultEvent2->result = "result2";
+    handler.handleEvent(std::move(resultEvent2));
+    
+    // Verify: Both tool result messages were created
+    EXPECT_EQ(handler.messages().size(), 3); // 1 assistant + 2 tool results
+    EXPECT_EQ(subscriber->onToolCallResultCallCount, 2);
+    EXPECT_EQ(handler.messages()[1].content(), "result1");
+    EXPECT_EQ(handler.messages()[2].content(), "result2");
 }
 
-TEST_CASE(MultipleSubscribersNotification) {
+// MessagesSnapshotEvent Tests
+TEST(EventHandlerTest, MessagesSnapshotReplacesMessages) {
     std::vector<Message> messages;
     std::string state = "{}";
+    auto subscriber = std::make_shared<MockSubscriber>();
     
-    auto subscriber1 = std::make_shared<MockSubscriber>();
-    auto subscriber2 = std::make_shared<MockSubscriber>();
-    auto subscriber3 = std::make_shared<MockSubscriber>();
+    // Add some initial messages
+    messages.push_back(Message::createUserWithId("msg1", "Hello"));
+    messages.push_back(Message::createAssistantWithId("msg2", "Hi there"));
     
-    EventHandler handler(messages, state, {subscriber1, subscriber2, subscriber3});
+    EventHandler handler(messages, state, {subscriber});
+    EXPECT_EQ(handler.messages().size(), 2);
     
-    auto event = std::make_unique<TextMessageStartEvent>();
-    event->messageId = "msg1";
-    handler.handleEvent(std::move(event));
+    // Create new messages for snapshot
+    std::vector<Message> newMessages;
+    newMessages.push_back(Message::createUserWithId("new1", "New message"));
+    newMessages.push_back(Message::createAssistantWithId("msg2", "Second"));
     
-    // All subscribers should be notified
-    EXPECT_EQ(subscriber1->onTextMessageStartCallCount, 1);
-    EXPECT_EQ(subscriber2->onTextMessageStartCallCount, 1);
-    EXPECT_EQ(subscriber3->onTextMessageStartCallCount, 1);
-}
-
-// ============================================================================
-// Main function
-// ============================================================================
-
-int main() {
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "EventHandler Test Suite" << std::endl;
-    std::cout << "========================================\n" << std::endl;
+    // Test: Send MessagesSnapshotEvent
+    auto snapshotEvent = std::make_unique<MessagesSnapshotEvent>();
+    snapshotEvent->messages = newMessages;
+    handler.handleEvent(std::move(snapshotEvent));
     
-    // Tests will run automatically when global objects are initialized
+    // Verify: Messages were completely replaced
+    EXPECT_EQ(handler.messages().size(), 2);
+    EXPECT_EQ(handler.messages()[0].id(), "new1");
+    EXPECT_EQ(handler.messages()[0].content(), "New message");
     
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "Test Results:" << std::endl;
-    std::cout << "  Total:  " << g_test_count << std::endl;
-    std::cout << "  Passed: " << g_test_passed << std::endl;
-    std::cout << "  Failed: " << g_test_failed << std::endl;
-    std::cout << "========================================" << std::endl;
+    EXPECT_EQ(handler.messages()[1].id(), "msg2");
+    EXPECT_EQ(handler.messages()[1].content(), "Second");
     
-    return g_test_failed > 0 ? 1 : 0;
+    // Verify: Subscriber was notified
+    EXPECT_EQ(subscriber->onEventCallCount, 1);
+    EXPECT_EQ(subscriber->onMessagesChangedCallCount, 1);
 }

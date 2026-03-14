@@ -18,22 +18,14 @@ class IMiddleware;
 class MiddlewareChain;
 
 struct MiddlewareContext {
-    const RunAgentInput* input;
-    RunAgentResult* result;
+    const RunAgentInput* input = nullptr;
+    RunAgentResult* result = nullptr;
     
     const std::vector<Message>* currentMessages;
-    const std::string *currentState;
-    bool shouldContinue;
+    const std::string *currentState = nullptr;
+    bool shouldContinue = true;
     
     std::map<std::string, std::string> metadata;
-
-    MiddlewareContext() 
-        : input(nullptr), 
-          result(nullptr),
-          currentMessages(nullptr),
-          currentState(nullptr),
-          shouldContinue(true) {}
-
     MiddlewareContext(const RunAgentInput* inp, RunAgentResult* res) 
         : input(inp), 
           result(res),

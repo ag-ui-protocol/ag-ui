@@ -1,5 +1,5 @@
 #include "core/subscriber.h"
-
+#include "logger.h"
 #include <algorithm>
 
 namespace agui {
@@ -358,10 +358,14 @@ void EventHandler::handleStateSnapshot(const StateSnapshotEvent& event) {
 }
 
 void EventHandler::handleStateDelta(const StateDeltaEvent& event) {
-    StateManager stateManager(nlohmann::json::parse(m_state));
-    stateManager.applyPatch(event.delta);
-    m_state = stateManager.currentState().dump();
-    notifyStateChanged();
+    try {
+        StateManager stateManager(nlohmann::json::parse(m_state));
+        stateManager.applyPatch(event.delta);
+        m_state = stateManager.currentState().dump();
+        notifyStateChanged();
+    } catch(const std::exception &e) {
+        Logger::errorf("incorrect json object: %s", m_state);
+    }
 }
 
 void EventHandler::handleMessagesSnapshot(const MessagesSnapshotEvent& event) {
@@ -375,7 +379,7 @@ void EventHandler::handleRunStarted(const RunStartedEvent& event) {
 
 void EventHandler::handleRunFinished(const RunFinishedEvent& event) {
     if (!event.result.is_null()) {
-        m_result = event.result;
+        m_result = event.result.dump();
     }
 }
 

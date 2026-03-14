@@ -110,6 +110,10 @@ endif()
 option(BUILD_TESTS "Build test programs" OFF)
 if(BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     enable_testing()
+    
+    # Find Google Test (required for building tests)
+    find_package(GTest REQUIRED)
+    
     add_subdirectory(tests)
 endif()
 

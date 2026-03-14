@@ -51,8 +51,8 @@ void ApplyModule::applyJsonPatch(nlohmann::json& state, const nlohmann::json& pa
 }
 
 bool ApplyModule::validateState(const nlohmann::json& stateObj) {
-    // State must be a JSON object or null
-    return stateObj.is_object() || stateObj.is_null();
+    // State must be a JSON object, null is not allowed
+    return stateObj.is_object();
 }
 
 Message ApplyModule::createAssistantMessage(const MessageId& id) {

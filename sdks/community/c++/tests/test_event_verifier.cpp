@@ -1,79 +1,21 @@
-#include "core/event.h"
-#include "core/event_verifier.h"
-#include <cassert>
-#include <iostream>
+/**
+ * @file test_event_verifier.cpp
+ * @brief Event Verifier functionality tests
+ * 
+ * Tests event lifecycle verification, state tracking, and validation
+ */
+
+#include <gtest/gtest.h>
 #include <memory>
 #include <string>
 
+#include "core/event.h"
+#include "core/event_verifier.h"
+
 using namespace agui;
 
-// Simple test framework
-int g_test_count = 0;
-int g_test_passed = 0;
-int g_test_failed = 0;
-
-#define TEST_CASE(name) \
-    void test_##name(); \
-    struct TestRegistrar_##name { \
-        TestRegistrar_##name() { \
-            std::cout << "Running test: " << #name << std::endl; \
-            g_test_count++; \
-            try { \
-                test_##name(); \
-                g_test_passed++; \
-                std::cout << "   PASSED" << std::endl; \
-            } catch (const std::exception& e) { \
-                g_test_failed++; \
-                std::cout << "   FAILED: " << e.what() << std::endl; \
-            } catch (...) { \
-                g_test_failed++; \
-                std::cout << "   FAILED: Unknown exception" << std::endl; \
-            } \
-        } \
-    } g_test_registrar_##name; \
-    void test_##name()
-
-#define ASSERT_TRUE(condition) \
-    if (!(condition)) { \
-        throw std::runtime_error("Assertion failed: " #condition); \
-    }
-
-#define ASSERT_FALSE(condition) \
-    if (condition) { \
-        throw std::runtime_error("Assertion failed: !" #condition); \
-    }
-
-#define EXPECT_EQ(a, b) \
-    if ((a) != (b)) { \
-        throw std::runtime_error(std::string("Expected equal: ") + #a + " != " + #b); \
-    }
-
-#define EXPECT_THROW(statement, exception_type) \
-    { \
-        bool caught = false; \
-        try { \
-            statement; \
-        } catch (const exception_type&) { \
-            caught = true; \
-        } catch (...) { \
-        } \
-        if (!caught) { \
-            throw std::runtime_error("Expected exception not thrown: " #exception_type); \
-        } \
-    }
-
-#define EXPECT_NO_THROW(statement) \
-    try { \
-        statement; \
-    } catch (const std::exception& e) { \
-        throw std::runtime_error(std::string("Unexpected exception: ") + e.what()); \
-    }
-
-// ============================================================================
 // Basic Message Lifecycle Tests
-// ============================================================================
-
-TEST_CASE(ValidMessageLifecycle) {
+TEST(EventVerifierTest, ValidMessageLifecycle) {
     EventVerifier verifier;
     
     TextMessageStartEvent startEvent;
@@ -95,7 +37,7 @@ TEST_CASE(ValidMessageLifecycle) {
     ASSERT_TRUE(verifier.isComplete());
 }
 
-TEST_CASE(IncompleteMessage) {
+TEST(EventVerifierTest, IncompleteMessage) {
     EventVerifier verifier;
     
     TextMessageStartEvent startEvent;
@@ -110,7 +52,7 @@ TEST_CASE(IncompleteMessage) {
     ASSERT_TRUE(incomplete.find("msg-1") != incomplete.end());
 }
 
-TEST_CASE(ContentBeforeStart) {
+TEST(EventVerifierTest, ContentBeforeStart) {
     EventVerifier verifier;
     
     TextMessageContentEvent contentEvent;
@@ -121,7 +63,7 @@ TEST_CASE(ContentBeforeStart) {
     EXPECT_THROW(verifier.verify(contentEvent), AgentError);
 }
 
-TEST_CASE(EndBeforeStart) {
+TEST(EventVerifierTest, EndBeforeStart) {
     EventVerifier verifier;
     
     TextMessageEndEvent endEvent;
@@ -131,7 +73,7 @@ TEST_CASE(EndBeforeStart) {
     EXPECT_THROW(verifier.verify(endEvent), AgentError);
 }
 
-TEST_CASE(DuplicateStart) {
+TEST(EventVerifierTest, DuplicateStart) {
     EventVerifier verifier;
     
     TextMessageStartEvent startEvent;
@@ -144,7 +86,7 @@ TEST_CASE(DuplicateStart) {
     EXPECT_THROW(verifier.verify(startEvent), AgentError);
 }
 
-TEST_CASE(DuplicateEnd) {
+TEST(EventVerifierTest, DuplicateEnd) {
     EventVerifier verifier;
     
     TextMessageStartEvent startEvent;
@@ -161,11 +103,8 @@ TEST_CASE(DuplicateEnd) {
     EXPECT_THROW(verifier.verify(endEvent), AgentError);
 }
 
-// ============================================================================
 // Concurrent Messages Tests
-// ============================================================================
-
-TEST_CASE(ConcurrentMessages) {
+TEST(EventVerifierTest, ConcurrentMessages) {
     EventVerifier verifier;
     
     TextMessageStartEvent start1;
@@ -193,11 +132,8 @@ TEST_CASE(ConcurrentMessages) {
     ASSERT_TRUE(verifier.isComplete());
 }
 
-// ============================================================================
 // Tool Call Lifecycle Tests
-// ============================================================================
-
-TEST_CASE(ValidToolCallLifecycle) {
+TEST(EventVerifierTest, ValidToolCallLifecycle) {
     EventVerifier verifier;
     
     ToolCallStartEvent startEvent;
@@ -220,7 +156,7 @@ TEST_CASE(ValidToolCallLifecycle) {
     ASSERT_TRUE(verifier.isComplete());
 }
 
-TEST_CASE(ToolCallArgsBeforeStart) {
+TEST(EventVerifierTest, ToolCallArgsBeforeStart) {
     EventVerifier verifier;
     
     ToolCallArgsEvent argsEvent;
@@ -230,7 +166,7 @@ TEST_CASE(ToolCallArgsBeforeStart) {
     EXPECT_THROW(verifier.verify(argsEvent), AgentError);
 }
 
-TEST_CASE(ConcurrentToolCalls) {
+TEST(EventVerifierTest, ConcurrentToolCalls) {
     EventVerifier verifier;
     
     ToolCallStartEvent start1;
@@ -255,30 +191,27 @@ TEST_CASE(ConcurrentToolCalls) {
     ASSERT_TRUE(verifier.isComplete());
 }
 
-// ============================================================================
 // Thinking Lifecycle Tests
-// ============================================================================
-
-TEST_CASE(ValidThinkingLifecycle) {
+TEST(EventVerifierTest, ValidThinkingLifecycle) {
     EventVerifier verifier;
     
     ThinkingStartEvent startEvent;
     ThinkingEndEvent endEvent;
 
     EXPECT_NO_THROW(verifier.verify(startEvent));
-    ASSERT_TRUE(verifier.isThinkingActive());  // Started but not in progress
+    ASSERT_TRUE(verifier.isThinkingActive());
     EXPECT_NO_THROW(verifier.verify(endEvent));
     ASSERT_FALSE(verifier.isThinkingActive());
 }
 
-TEST_CASE(ThinkingEndBeforeStart) {
+TEST(EventVerifierTest, ThinkingEndBeforeStart) {
     EventVerifier verifier;
     
     ThinkingEndEvent endEvent;
     EXPECT_THROW(verifier.verify(endEvent), AgentError);
 }
 
-TEST_CASE(DuplicateThinkingStart) {
+TEST(EventVerifierTest, DuplicateThinkingStart) {
     EventVerifier verifier;
     
     ThinkingStartEvent startEvent;
@@ -287,7 +220,7 @@ TEST_CASE(DuplicateThinkingStart) {
     EXPECT_THROW(verifier.verify(startEvent), AgentError);
 }
 
-TEST_CASE(ValidThinkingTextMessageLifecycle) {
+TEST(EventVerifierTest, ValidThinkingTextMessageLifecycle) {
     EventVerifier verifier;
     
     ThinkingTextMessageStartEvent startEvent;
@@ -302,7 +235,7 @@ TEST_CASE(ValidThinkingTextMessageLifecycle) {
     ASSERT_TRUE(verifier.isComplete());
 }
 
-TEST_CASE(ThinkingContentBeforeStart) {
+TEST(EventVerifierTest, ThinkingContentBeforeStart) {
     EventVerifier verifier;
     
     ThinkingTextMessageContentEvent contentEvent;
@@ -311,11 +244,8 @@ TEST_CASE(ThinkingContentBeforeStart) {
     EXPECT_THROW(verifier.verify(contentEvent), AgentError);
 }
 
-// ============================================================================
 // State Query Tests
-// ============================================================================
-
-TEST_CASE(GetMessageState) {
+TEST(EventVerifierTest, GetMessageState) {
     EventVerifier verifier;
     
     TextMessageStartEvent startEvent;
@@ -339,7 +269,7 @@ TEST_CASE(GetMessageState) {
     EXPECT_EQ(verifier.getMessageState("msg-1"), EventVerifier::EventState::Ended);
 }
 
-TEST_CASE(GetToolCallState) {
+TEST(EventVerifierTest, GetToolCallState) {
     EventVerifier verifier;
     
     ToolCallStartEvent startEvent;
@@ -357,11 +287,8 @@ TEST_CASE(GetToolCallState) {
     EXPECT_EQ(verifier.getToolCallState("tool-1"), EventVerifier::EventState::Ended);
 }
 
-// ============================================================================
 // Reset Tests
-// ============================================================================
-
-TEST_CASE(ResetVerifier) {
+TEST(EventVerifierTest, ResetVerifier) {
     EventVerifier verifier;
     
     TextMessageStartEvent startEvent;
@@ -378,11 +305,8 @@ TEST_CASE(ResetVerifier) {
     EXPECT_NO_THROW(verifier.verify(startEvent));
 }
 
-// ============================================================================
 // Complex Scenario Tests
-// ============================================================================
-
-TEST_CASE(ComplexScenario) {
+TEST(EventVerifierTest, ComplexScenario) {
     EventVerifier verifier;
     
     // Start message
@@ -430,11 +354,8 @@ TEST_CASE(ComplexScenario) {
     ASSERT_TRUE(verifier.isComplete());
 }
 
-// ============================================================================
 // Validation Tests
-// ============================================================================
-
-TEST_CASE(EmptyMessageId) {
+TEST(EventVerifierTest, EmptyMessageId) {
     EventVerifier verifier;
     
     TextMessageStartEvent startEvent;
@@ -444,7 +365,7 @@ TEST_CASE(EmptyMessageId) {
     EXPECT_THROW(verifier.verify(startEvent), AgentError);
 }
 
-TEST_CASE(EmptyToolCallId) {
+TEST(EventVerifierTest, EmptyToolCallId) {
     EventVerifier verifier;
     
     ToolCallStartEvent startEvent;
@@ -454,7 +375,7 @@ TEST_CASE(EmptyToolCallId) {
     EXPECT_THROW(verifier.verify(startEvent), AgentError);
 }
 
-TEST_CASE(MultipleIncompleteEvents) {
+TEST(EventVerifierTest, MultipleIncompleteEvents) {
     EventVerifier verifier;
     
     // Start multiple messages without ending them
@@ -480,25 +401,4 @@ TEST_CASE(MultipleIncompleteEvents) {
     
     EXPECT_EQ(incompleteMessages.size(), 2);
     EXPECT_EQ(incompleteToolCalls.size(), 1);
-}
-
-// ============================================================================
-// Main function
-// ============================================================================
-
-int main() {
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "Event Verifier Test Suite" << std::endl;
-    std::cout << "========================================\n" << std::endl;
-    
-    // Tests will run automatically when global objects are initialized
-    
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "Test Results:" << std::endl;
-    std::cout << "  Total:  " << g_test_count << std::endl;
-    std::cout << "  Passed: " << g_test_passed << std::endl;
-    std::cout << "  Failed: " << g_test_failed << std::endl;
-    std::cout << "========================================" << std::endl;
-    
-    return g_test_failed > 0 ? 1 : 0;
 }

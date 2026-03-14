@@ -37,18 +37,30 @@ The synchronous behavior is implemented using libcurl's blocking I/O. Events are
 - **libcurl** - HTTP client library
 - **pthread** - Threading library
 
+### Test Dependencies (Optional)
+
+- **Google Test** (>= 1.10.0) - Required only if building tests
+
 ### Installation
 
 #### macOS
 ```bash
+# Install build dependencies
 brew install cmake nlohmann-json curl
+
+# Install Google Test (for testing)
+brew install googletest
 ```
 
 #### Ubuntu/Debian
 ```bash
+# Install build dependencies
 sudo apt-get update
 sudo apt-get install cmake g++ pkg-config
 sudo apt-get install nlohmann-json3-dev libcurl4-openssl-dev
+
+# Install Google Test (for testing)
+sudo apt-get install libgtest-dev
 ```
 
 ## Quick Start
@@ -63,12 +75,14 @@ cd ag-ui-cpp
 # Create build directory
 mkdir build && cd build
 
-# Configure with CMake
+# configure with tests enabled
 cmake -DBUILD_TESTS=ON ..
 
 # Build
 make -j4
 ```
+
+**Note**: When `BUILD_TESTS=ON` is specified, CMake will search for Google Test using `find_package(GTest REQUIRED)`. If Google Test is not installed, the configuration will fail with an error message. Install Google Test first (see [Test Dependencies](#test-dependencies-optional)) before enabling tests.
 
 ### Basic Usage
 
@@ -116,47 +130,40 @@ int main() {
 
 ## Testing
 
-The SDK includes comprehensive test suites to verify functionality and demonstrate usage patterns.
+The SDK includes comprehensive test suites built with **Google Test** framework to verify functionality and demonstrate usage patterns.
+
+### Prerequisites for Testing
+
+Before building and running tests, ensure Google Test is installed on your system:
+
+#### macOS
+```bash
+brew install googletest
+```
+
+#### Ubuntu/Debian
+```bash
+sudo apt-get install libgtest-dev
+```
+
+The CMake configuration uses `find_package(GTest REQUIRED)` to locate the system-installed Google Test library. If Google Test is not found, CMake will report an error during configuration.
 
 ### Test Cases
 
-1. **test_http_agent.cpp** - HttpAgent functionality tests
-   - Agent construction and configuration
-   - Message management
-   - Subscriber management
-
-2. **test_middleware.cpp** - Middleware system tests
-   - Middleware construction and chaining
-   - Request/response modification
-   - Event filtering
-
-3. **test_sse_parser.cpp** - SSE Parser robustness tests
-   - Normal and edge case scenarios
-   - Cross-chunk data handling
-   - UTF-8 character support
-
-4. **test_sse_server.cpp** - Integration tests
-   - Streaming service connection
-   - Real-time data parsing
-   - Event forwarding
-
-5. **test_event_verifier.cpp** - Event sequence verification tests
-   - Message lifecycle validation (START → CONTENT → END)
-   - Tool call lifecycle validation
-   - Thinking event validation
-   - Concurrent event support
-   - Invalid sequence detection
-
-6. **test_activity_events.cpp** - Activity event tests
-   - ACTIVITY_SNAPSHOT event serialization/deserialization
-   - ACTIVITY_DELTA event with JSON Patch operations
-   - Event validation and error handling
-   - Complex activity scenarios
+**1. test_sse_parser.cpp** - SSE Parser robustness tests (30 tests)
+**2. test_activity_events.cpp** - Activity event tests (15 tests)
+**3. test_event_verifier.cpp** - Event sequence verification tests (27 tests)
+**4. test_http_agent.cpp** - HttpAgent functionality tests
+**5. test_middleware.cpp** - Middleware system tests
+**6. test_sse_server.cpp** - Integration tests
+**7. test_event_handler.cpp** - Event handler tests
+**8. test_state_manager.cpp** - State manager tests
+**9. test_apply_module.cpp** - Apply module tests
 
 ### Running Tests
 
 #### 1. Start the Mock Server
-
+**Important**: Always start the mock server before running integration tests
 ```bash
 cd tests/mock_server
 python3 mock_ag_server.py --host 127.0.0.1 --port 8080
@@ -191,8 +198,6 @@ curl -X POST http://localhost:8080/api/agent/run \
   -d '{"scenario": "simple_text", "delay_ms": 500}'
 ```
 
-#### 3. Run Test Suites
-
 ```bash
 cd build
 
@@ -206,10 +211,8 @@ cd build
 ./tests/test_event_handler
 ./tests/test_state_manager
 ./tests/test_apply_module
-
-# Or run all tests with CTest
-ctest -V
 ```
+
 
 ## Logging
 
