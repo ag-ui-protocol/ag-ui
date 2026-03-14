@@ -7,7 +7,7 @@ from ag_ui.encoder import EventEncoder
 from .agent import LangGraphAgent
 
 
-def add_langgraph_fastapi_endpoints(
+def add_langgraph_fastapi_endpoint(
     app: FastAPI, agent: LangGraphAgent, path: str = "/"
 ):
     """Adds endpoints to the FastAPI app."""
