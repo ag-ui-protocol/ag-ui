@@ -971,8 +971,18 @@ export function tryParseA2UIOperations(text: string): Array<Record<string, unkno
     return null;
   }
 
+  // Explicit container: { a2ui_operations: [...] }
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    !Array.isArray(parsed) &&
+    Array.isArray((parsed as Record<string, unknown>).a2ui_operations)
+  ) {
+    return (parsed as Record<string, unknown>).a2ui_operations as Array<Record<string, unknown>>;
+  }
+
+  // Legacy: bare array of operations
   if (Array.isArray(parsed)) {
-    // Check if at least one item is a valid A2UI operation
     const hasA2UI = parsed.some(
       (item) =>
         typeof item === "object" &&
@@ -982,8 +992,8 @@ export function tryParseA2UIOperations(text: string): Array<Record<string, unkno
     return hasA2UI ? (parsed as Array<Record<string, unknown>>) : null;
   }
 
+  // Legacy: single operation object
   if (typeof parsed === "object" && parsed !== null) {
-    // Single object — check if it's a valid A2UI operation
     if (getOperationSurfaceId(parsed as Record<string, unknown>) !== undefined) {
       return [parsed as Record<string, unknown>];
     }
