@@ -192,6 +192,7 @@ export class LangGraphAgent extends AbstractAgent {
       id: input.runId,
       threadId: input.threadId,
       hasFunctionStreaming: false,
+      hasPredictState: false,
     };
     // Reset per-run flags
     this.cancelRequested = false;
@@ -563,12 +564,16 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         const hasStateDiff = JSON.stringify(updatedState) !== JSON.stringify(state);
-        // We should not update snapshot while a message is in progress.
+        // We should not update snapshot while a message is in progress or when
+        // a predict_state tool call is pending (the model node exits before the
+        // tool runs, so the state would be stale).
+        const suppressedByPredictState = this.activeRun!.exitingNode && this.activeRun!.hasPredictState;
         if (
           (hasStateDiff ||
             this.activeRun!.prevNodeName != this.activeRun!.nodeName ||
             this.activeRun!.exitingNode) &&
-          !Boolean(this.getMessageInProgress(this.activeRun!.id))
+          !Boolean(this.getMessageInProgress(this.activeRun!.id)) &&
+          !suppressedByPredictState
         ) {
           state = updatedState;
           this.activeRun!.prevNodeName = this.activeRun!.nodeName;
@@ -578,6 +583,10 @@ export class LangGraphAgent extends AbstractAgent {
             snapshot: this.getStateSnapshot(state),
             rawEvent: chunk,
           });
+        } else if (suppressedByPredictState) {
+          console.debug(
+            `[ag-ui/langgraph] Suppressing STATE_SNAPSHOT on node exit (node=${this.activeRun!.nodeName}, hasPredictState=${this.activeRun!.hasPredictState})`,
+          );
         }
 
         this.dispatchEvent({
@@ -657,14 +666,14 @@ export class LangGraphAgent extends AbstractAgent {
 
     switch (event.event) {
       case LangGraphEventTypes.OnChatModelStream:
-        let shouldEmitMessages = event.metadata["emit-messages"] ?? true;
-        let shouldEmitToolCalls = event.metadata["emit-tool-calls"] ?? true;
+        let shouldEmitMessages = event.metadata?.["emit-messages"] ?? true;
+        let shouldEmitToolCalls = event.metadata?.["emit-tool-calls"] ?? true;
 
         if (event.data.chunk.response_metadata.finish_reason) return;
         let currentStream = this.getMessageInProgress(this.activeRun!.id);
         const hasCurrentStream = Boolean(currentStream?.id);
         const toolCallData = event.data.chunk.tool_call_chunks?.[0];
-        const toolCallUsedToPredictState = event.metadata["predict_state"]?.some(
+        const toolCallUsedToPredictState = event.metadata?.["predict_state"]?.some(
           (predictStateTool: PredictStateTool) => predictStateTool.tool === toolCallData?.name,
         );
 
@@ -723,10 +732,11 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         if (toolCallUsedToPredictState) {
+          this.activeRun!.hasPredictState = true;
           this.dispatchEvent({
             type: EventType.CUSTOM,
             name: "PredictState",
-            value: event.metadata["predict_state"],
+            value: event.metadata?.["predict_state"],
           });
         }
 
@@ -898,6 +908,7 @@ export class LangGraphAgent extends AbstractAgent {
         });
         break;
       case LangGraphEventTypes.OnToolEnd:
+        this.activeRun!.hasPredictState = false;
         let toolCallOutput = event.data?.output
 
         // Command from within a tool. We need to grab result from the tool result message

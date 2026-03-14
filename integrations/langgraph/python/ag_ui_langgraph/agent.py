@@ -1,3 +1,4 @@
+import logging
 import re
 import uuid
 import json
@@ -96,6 +97,8 @@ ProcessedEvents = Union[
     StepFinishedEvent,
 ]
 
+logger = logging.getLogger(__name__)
+
 class LangGraphAgent:
     def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None):
         self.name = name
@@ -131,6 +134,8 @@ class LangGraphAgent:
             "reasoning_process": None,
             "node_name": None,
             "has_function_streaming": False,
+            "model_made_tool_call": False,
+            "state_reliable": True,
         }
         self.active_run = INITIAL_ACTIVE_RUN
 
@@ -196,8 +201,14 @@ class LangGraphAgent:
                 if event_type == "on_chain_end" and isinstance(
                         event.get("data", {}).get("output"), dict
                 ):
-                    current_graph_state.update(event["data"]["output"])
+                    output = event["data"]["output"]
+                    current_graph_state.update(output)
                     exiting_node = self.active_run["node_name"] == current_node_name
+                    # If output contains any key outside the protocol-internal set
+                    # ("messages", "tools", "ag-ui"), the local current_graph_state
+                    # is reliably up-to-date again.
+                    if any(k not in ("messages", "tools", "ag-ui") for k in output):
+                        self.active_run["state_reliable"] = True
 
                 should_exit = should_exit or (
                         event_type == "on_custom_event" and
@@ -208,19 +219,64 @@ class LangGraphAgent:
                     for ev in self.handle_node_change(current_node_name):
                         yield ev
 
+                # Track whether the current model turn is making a predict_state tool
+                # call so we can suppress the model-node exit snapshot.  The model-node
+                # exit fires *before* the tool runs, so current_graph_state still
+                # carries the previous value — emitting it would wipe predict_state
+                # progress on the client.  This applies to every iteration, not just
+                # the first.  Note: _handle_single_event uses the same predict_state
+                # metadata check to emit the PredictState custom event — keep both
+                # sites in sync if the check logic changes.
+                if event_type == LangGraphEventTypes.OnChatModelStream.value:
+                    chunk = event.get("data", {}).get("chunk") or {}
+                    tool_call_chunks = (
+                        chunk.get("tool_call_chunks") or []
+                        if isinstance(chunk, dict)
+                        else getattr(chunk, "tool_call_chunks", None) or []
+                    )
+                    if tool_call_chunks:
+                        first = tool_call_chunks[0]
+                        first_name = (
+                            first.get("name") if isinstance(first, dict)
+                            else getattr(first, "name", None)
+                        )
+                        if first_name:
+                            predict_state_meta = event.get("metadata", {}).get("predict_state", [])
+                            tool_used_to_predict_state = any(
+                                (p.get("tool") if isinstance(p, dict) else getattr(p, "tool", None)) == first_name
+                                for p in predict_state_meta
+                            )
+                            if tool_used_to_predict_state:
+                                self.active_run["model_made_tool_call"] = True
+
                 updated_state = self.active_run.get("manually_emitted_state") or current_graph_state
                 has_state_diff = updated_state != state
                 if exiting_node or (has_state_diff and not self.get_message_in_progress(self.active_run["id"])):
                     state = updated_state
                     self.active_run["prev_node_name"] = self.active_run["node_name"]
                     current_graph_state.update(updated_state)
-                    yield self._dispatch_event(
-                        StateSnapshotEvent(
-                            type=EventType.STATE_SNAPSHOT,
-                            snapshot=self.get_state_snapshot(state),
-                            raw_event=event,
+                    mmtc = self.active_run.get("model_made_tool_call")
+                    state_reliable = self.active_run.get("state_reliable", True)
+                    suppressed = exiting_node and (mmtc or not state_reliable)
+                    if suppressed:
+                        logger.debug(
+                            "Suppressing STATE_SNAPSHOT on node exit (node=%s, model_made_tool_call=%s, state_reliable=%s)",
+                            self.active_run.get("node_name"), mmtc, state_reliable,
                         )
-                    )
+                        self.active_run["model_made_tool_call"] = False
+                        if mmtc:
+                            # A predict_state tool call was detected — the tool has
+                            # not yet run, so current_graph_state does not yet reflect
+                            # the forthcoming state update.
+                            self.active_run["state_reliable"] = False
+                    else:
+                        yield self._dispatch_event(
+                            StateSnapshotEvent(
+                                type=EventType.STATE_SNAPSHOT,
+                                snapshot=self.get_state_snapshot(state),
+                                raw_event=event,
+                            )
+                        )
 
                 yield self._dispatch_event(
                     RawEvent(type=EventType.RAW, event=event)
@@ -590,8 +646,8 @@ class LangGraphAgent:
     async def _handle_single_event(self, event: Any, state: State) -> AsyncGenerator[str, None]:
         event_type = event.get("event")
         if event_type == LangGraphEventTypes.OnChatModelStream:
-            should_emit_messages = event["metadata"].get("emit-messages", True)
-            should_emit_tool_calls = event["metadata"].get("emit-tool-calls", True)
+            should_emit_messages = event.get("metadata", {}).get("emit-messages", True)
+            should_emit_tool_calls = event.get("metadata", {}).get("emit-tool-calls", True)
 
             if event["data"]["chunk"].response_metadata.get('finish_reason', None):
                 return
@@ -599,11 +655,11 @@ class LangGraphAgent:
             current_stream = self.get_message_in_progress(self.active_run["id"])
             has_current_stream = bool(current_stream and current_stream.get("id"))
             tool_call_data = event["data"]["chunk"].tool_call_chunks[0] if event["data"]["chunk"].tool_call_chunks else None
-            predict_state_metadata = event["metadata"].get("predict_state", [])
+            predict_state_metadata = event.get("metadata", {}).get("predict_state", [])
             tool_call_used_to_predict_state = False
             if tool_call_data and tool_call_data.get("name") and predict_state_metadata:
                 tool_call_used_to_predict_state = any(
-                    predict_tool.get("tool") == tool_call_data["name"]
+                    (predict_tool.get("tool") if isinstance(predict_tool, dict) else getattr(predict_tool, "tool", None)) == tool_call_data["name"]
                     for predict_tool in predict_state_metadata
                 )
 
@@ -813,6 +869,11 @@ class LangGraphAgent:
             )
 
         elif event_type == LangGraphEventTypes.OnToolEnd:
+            # The tool has finished — clear both flags so future snapshots are not
+            # incorrectly suppressed.  Mirrors TypeScript: hasPredictState = false
+            # on OnToolEnd (agent.ts OnToolEnd handler).
+            self.active_run["model_made_tool_call"] = False
+            self.active_run["state_reliable"] = True
             tool_call_output = event["data"]["output"]
 
             if isinstance(tool_call_output, Command):

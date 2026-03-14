@@ -9,7 +9,7 @@ readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "ag-ui-protocol>=0.1.10",
-    "langchain>=0.3.0",
+    "langchain>=1.2.0",
     "langchain-core>=0.3.0",
     "langgraph>=0.3.25,<1.1.0",
     "pydantic>=2.0.0",
