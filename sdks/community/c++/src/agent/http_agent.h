@@ -198,7 +198,7 @@ private:
      * @brief Constructor (private)
      */
     HttpAgent(const std::string& baseUrl, const std::map<std::string, std::string>& headers, const AgentId& agentId,
-              const std::vector<Message>& initialMessages, const std::string& initialState);
+              const std::vector<Message>& initialMessages, const std::string& initialState, uint32_t timeoutSeconds);
 
     /**
      * @brief Handle streaming data chunk (called for each SSE data chunk)
@@ -215,9 +215,16 @@ private:
      */
     void processAvailableEvents();
 
+    /**
+     * @brief Remove all per-run subscribers from EventHandler and clear the tracking list.
+     *        Called from all runAgent() exit paths to prevent subscriber accumulation.
+     */
+    void cleanupPerRunSubscribers();
+
     std::string _baseUrl;
     std::map<std::string, std::string> _headers;
     AgentId _agentId;
+    uint32_t _timeoutSeconds;
 
     // Persistent EventHandler
     std::shared_ptr<EventHandler> _eventHandler;
@@ -227,9 +234,12 @@ private:
     
     // Middleware chain
     MiddlewareChain _middlewareChain;
-    
+
     // Store error callback for event processing errors
     AgentErrorCallback _currentErrorCallback;
+
+    // Per-run subscribers added via RunAgentParams; removed after each runAgent() call
+    std::vector<std::shared_ptr<IAgentSubscriber>> _perRunSubscribers;
 };
 
 }  // namespace agui

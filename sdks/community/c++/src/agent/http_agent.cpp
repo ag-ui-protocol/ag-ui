@@ -44,7 +44,7 @@ HttpAgent::Builder& HttpAgent::Builder::withInitialMessages(const std::vector<Me
 }
 
 HttpAgent::Builder& HttpAgent::Builder::withInitialState(const nlohmann::json& state) {
-    _initialState = state;
+    _initialState = state.dump();
     return *this;
 }
 
@@ -58,7 +58,7 @@ std::unique_ptr<HttpAgent> HttpAgent::Builder::build() {
         _headers["Content-Type"] = "application/json";
     }
 
-    return std::unique_ptr<HttpAgent>(new HttpAgent(_url, _headers, _agentId, _initialMessages, _initialState));
+    return std::unique_ptr<HttpAgent>(new HttpAgent(_url, _headers, _agentId, _initialMessages, _initialState, _timeout));
 }
 
 HttpAgent::Builder HttpAgent::builder() {
@@ -69,8 +69,8 @@ HttpAgent::Builder HttpAgent::builder() {
 
 HttpAgent::HttpAgent(const std::string& baseUrl, const std::map<std::string, std::string>& headers,
                      const AgentId& agentId, const std::vector<Message>& initialMessages,
-                     const std::string& initialState)
-    : _baseUrl(baseUrl), _headers(headers), _agentId(agentId) {
+                     const std::string& initialState, uint32_t timeoutSeconds)
+    : _baseUrl(baseUrl), _headers(headers), _agentId(agentId), _timeoutSeconds(timeoutSeconds) {
     _httpService = std::unique_ptr<HttpService>(new HttpService());
     _sseParser = std::unique_ptr<SseParser>(new SseParser());
 
@@ -171,8 +171,13 @@ void HttpAgent::runAgent(const RunAgentParams& params, AgentSuccessCallback onSu
     RunAgentInput input;
     input.threadId = params.threadId.empty() ? UuidGenerator::generate() : params.threadId;
     input.runId = params.runId.empty() ? UuidGenerator::generate() : params.runId;
-    input.state = _eventHandler->state();
+    // params.state overrides EventHandler state if provided; otherwise use persistent state
+    input.state = params.state.empty() ? _eventHandler->state() : params.state;
+    // Start with persistent message history, then append any per-call messages from params
     input.messages = _eventHandler->messages();
+    for (const auto& msg : params.messages) {
+        input.messages.push_back(msg);
+    }
     input.tools = params.tools;
     input.context = params.context;
     input.forwardedProps = params.forwardedProps;
@@ -192,7 +197,7 @@ void HttpAgent::runAgent(const RunAgentParams& params, AgentSuccessCallback onSu
         
         // Check if should continue
         if (!middlewareContext.shouldContinue) {
-            Logger::info("Middleware stopped execution");
+            Logger::errorf("Middleware stopped execution");
             if (onError) {
                 onError("Middleware stopped execution");
             }
@@ -200,11 +205,12 @@ void HttpAgent::runAgent(const RunAgentParams& params, AgentSuccessCallback onSu
         }
     }
 
-    // 3. Add subscribers from params to EventHandler
-    for (auto& subscriber : params.subscribers) {
+    // 3. Add per-run subscribers to EventHandler (tracked for cleanup after run)
+    _perRunSubscribers = params.subscribers;
+    for (auto& subscriber : _perRunSubscribers) {
         _eventHandler->addSubscriber(subscriber);
     }
-    Logger::debugf("Total subscribers: ", params.subscribers.size());
+    Logger::debugf("Per-run subscribers added: ", _perRunSubscribers.size());
 
     // 4. Build HTTP request
     HttpRequest request;
@@ -212,6 +218,7 @@ void HttpAgent::runAgent(const RunAgentParams& params, AgentSuccessCallback onSu
     request.method = HttpMethod::POST;
     request.headers = _headers;
     request.body = input.toJson().dump();
+    request.timeoutMs = static_cast<int>(_timeoutSeconds) * 1000;
 
     Logger::debugf("Sending request to ", _baseUrl);
     Logger::debugf("Request body size: ", request.body.size(), " bytes");
@@ -227,9 +234,20 @@ void HttpAgent::runAgent(const RunAgentParams& params, AgentSuccessCallback onSu
         [this, onSuccess, onError](const HttpResponse& response) {
             this->handleStreamComplete(response, onSuccess, onError);
         },
-        [onError](const AgentError& error) {
-            onError(error.fullMessage());
+        [this, onError](const AgentError& error) {
+            Logger::errorf("SSE request error: ", error.fullMessage());
+            cleanupPerRunSubscribers();
+            if (onError) {
+                onError(error.fullMessage());
+            }
         });
+}
+
+void HttpAgent::cleanupPerRunSubscribers() {
+    for (auto& subscriber : _perRunSubscribers) {
+        _eventHandler->removeSubscriber(subscriber);
+    }
+    _perRunSubscribers.clear();
 }
 
 void HttpAgent::handleStreamData(const HttpResponse& response) {
@@ -309,6 +327,7 @@ void HttpAgent::handleStreamComplete(const HttpResponse& response, AgentSuccessC
         if (onError) {
             onError("HTTP request failed with status: " + std::to_string(response.statusCode));
         }
+        cleanupPerRunSubscribers();
         return;
     }
 
@@ -316,7 +335,7 @@ void HttpAgent::handleStreamComplete(const HttpResponse& response, AgentSuccessC
 
     // Flush any remaining data in parser buffer
     _sseParser->flush();
-    
+
     // Process any remaining events
     processAvailableEvents();
 
@@ -342,6 +361,9 @@ void HttpAgent::handleStreamComplete(const HttpResponse& response, AgentSuccessC
     if (onSuccess) {
         onSuccess(result);
     }
+
+    // Cleanup per-run subscribers after run completes
+    cleanupPerRunSubscribers();
 }
 
 }  // namespace agui

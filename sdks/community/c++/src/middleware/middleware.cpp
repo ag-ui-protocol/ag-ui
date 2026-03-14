@@ -2,8 +2,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <iostream>
-#include <thread>
 #include "core/logger.h"
 
 namespace agui {
@@ -26,8 +24,13 @@ RunAgentInput MiddlewareChain::processRequest(const RunAgentInput& input, Middle
     RunAgentInput processedInput = input;
 
     for (auto& middleware : m_middlewares) {
-        if (middleware->shouldContinue(input, context)) {
-            processedInput = middleware->onRequest(processedInput, context);
+        if (!middleware->shouldContinue(processedInput, context)) {
+            context.shouldContinue = false;
+            break;
+        }
+        processedInput = middleware->onRequest(processedInput, context);
+        if (!context.shouldContinue) {
+            break;
         }
     }
 
@@ -112,26 +115,26 @@ std::unique_ptr<AgentError> MiddlewareChain::processError(std::unique_ptr<AgentE
 
 RunAgentInput LoggingMiddleware::onRequest(const RunAgentInput& input, MiddlewareContext& context) {
     Logger::debugf("[LoggingMiddleware] Request:");
-    Logger::debugf("  Thread ID: %s", input.threadId);
-    Logger::debugf("  Run ID: %s", input.runId);
-    Logger::debugf("  Messages: %zu", input.messages.size());
-    Logger::debugf("  Tools: %zu", input.tools.size());
+    Logger::debugf("  Thread ID: ", input.threadId);
+    Logger::debugf("  Run ID: ", input.runId);
+    Logger::debugf("  Messages: ", input.messages.size());
+    Logger::debugf("  Tools: ", input.tools.size());
 
     return input;
 }
 
 RunAgentResult LoggingMiddleware::onResponse(const RunAgentResult& result, MiddlewareContext& context) {
     Logger::debugf("[LoggingMiddleware] Response:");
-    Logger::debugf("  New Messages: %zu", result.newMessages.size());
-    Logger::debugf("  Has Result: %d", (!result.result.empty()));
-    Logger::debugf("  Has New State: %d", (!result.newState.empty()));
+    Logger::debugf("  New Messages: ", result.newMessages.size());
+    Logger::debugf("  Has Result: ", (!result.result.empty()));
+    Logger::debugf("  Has New State: ", (!result.newState.empty()));
 
     return result;
 }
 
 std::unique_ptr<Event> LoggingMiddleware::onEvent(std::unique_ptr<Event> event, MiddlewareContext& context) {
     if (event) {
-        Logger::debugf("[LoggingMiddleware] Event: %s", EventParser::eventTypeToString(event->type()));
+        Logger::debugf("[LoggingMiddleware] Event: ", EventParser::eventTypeToString(event->type()));
     }
 
     return event;
@@ -139,9 +142,9 @@ std::unique_ptr<Event> LoggingMiddleware::onEvent(std::unique_ptr<Event> event, 
 
 std::unique_ptr<AgentError> LoggingMiddleware::onError(std::unique_ptr<AgentError> error, MiddlewareContext& context) {
     if (error) {
-        std::cerr << "[LoggingMiddleware] Error:" << std::endl;
-        std::cerr << "  Code: " << static_cast<int>(error->code()) << std::endl;
-        std::cerr << "  Message: " << error->message() << std::endl;
+        Logger::errorf("[LoggingMiddleware] Error:");
+        Logger::errorf("  Code: ", static_cast<int>(error->code()));
+        Logger::errorf("  Message: ", error->message());
     }
 
     return error;

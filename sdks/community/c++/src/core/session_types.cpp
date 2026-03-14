@@ -321,12 +321,12 @@ RunAgentParams& RunAgentParams::addContext(const Context& ctx) {
 }
 
 RunAgentParams& RunAgentParams::withForwardedProps(const nlohmann::json& props) {
-    forwardedProps = props.dump();
+    forwardedProps = props;
     return *this;
 }
 
 RunAgentParams& RunAgentParams::withState(const nlohmann::json& s) {
-    state = s;
+    state = s.dump();
     return *this;
 }
 

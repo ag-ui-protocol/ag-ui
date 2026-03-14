@@ -1,5 +1,7 @@
 #include "apply.h"
 
+#include "core/logger.h"
+
 namespace agui {
 
 Message* ApplyModule::findMessageById(std::vector<Message>& messages, const MessageId& id) {
@@ -44,8 +46,8 @@ void ApplyModule::applyJsonPatch(nlohmann::json& state, const nlohmann::json& pa
         // Apply JSON Patch (RFC 6902)
         state = state.patch(patch);
     } catch (const std::exception& e) {
-        std::cerr << "Failed to apply JSON patch: " << e.what() << std::endl;
-        throw AgentError(ErrorType::State, ErrorCode::StatePatchFailed, 
+        Logger::errorf("Failed to apply JSON patch: ", e.what());
+        throw AgentError(ErrorType::State, ErrorCode::StatePatchFailed,
                         "Failed to apply JSON patch: " + std::string(e.what()));
     }
 }

@@ -21,7 +21,7 @@ struct MiddlewareContext {
     const RunAgentInput* input = nullptr;
     RunAgentResult* result = nullptr;
     
-    const std::vector<Message>* currentMessages;
+    const std::vector<Message>* currentMessages = nullptr;
     const std::string *currentState = nullptr;
     bool shouldContinue = true;
     

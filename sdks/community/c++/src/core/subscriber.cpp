@@ -364,7 +364,7 @@ void EventHandler::handleStateDelta(const StateDeltaEvent& event) {
         m_state = stateManager.currentState().dump();
         notifyStateChanged();
     } catch(const std::exception &e) {
-        Logger::errorf("incorrect json object: %s", m_state);
+        Logger::errorf("incorrect json object: ", m_state);
     }
 }
 

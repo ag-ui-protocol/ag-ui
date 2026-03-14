@@ -1,9 +1,6 @@
 #include "event.h"
 
-#include <ctime>
-#include <iomanip>
 #include <set>
-#include <sstream>
 #include "core/error.h"
 
 namespace agui {
@@ -15,18 +12,8 @@ BaseEventData::BaseEventData() : timestamp(std::chrono::system_clock::now()) {}
 nlohmann::json BaseEventData::toJson() const {
     nlohmann::json j;
 
-    // Convert timestamp to ISO 8601 format
-    auto time_t_val = std::chrono::system_clock::to_time_t(timestamp);
-    std::tm tm{};
-#ifdef _WIN32
-    gmtime_s(&tm, &time_t_val);
-#else
-    // gmtime_r writes the result into a caller-supplied buffer, avoiding the static buffer data race.
-    gmtime_r(&time_t_val, &tm);
-#endif
-    std::ostringstream oss;
-    oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
-    j["timestamp"] = oss.str();
+    j["timestamp"] = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         timestamp.time_since_epoch()).count();
 
     // Add raw event data if present
 #if __cplusplus >= 201703L
@@ -45,9 +32,9 @@ nlohmann::json BaseEventData::toJson() const {
 BaseEventData BaseEventData::fromJson(const nlohmann::json& j) {
     BaseEventData data;
 
-    // Parse timestamp if present
-    if (j.contains("timestamp")) {
-        data.timestamp = std::chrono::system_clock::now();
+    if (j.contains("timestamp") && j["timestamp"].is_number()) {
+        data.timestamp = std::chrono::system_clock::time_point(
+            std::chrono::milliseconds(j["timestamp"].get<int64_t>()));
     }
 
     // Parse raw event data if present
@@ -94,12 +81,14 @@ TextMessageStartEvent TextMessageStartEvent::fromJson(const nlohmann::json& j) {
 nlohmann::json TextMessageContentEvent::toJson() const {
     nlohmann::json j;
     j["type"] = "TEXT_MESSAGE_CONTENT";
+    j["messageId"] = messageId;
     j["delta"] = delta;
     return j;
 }
 
 TextMessageContentEvent TextMessageContentEvent::fromJson(const nlohmann::json& j) {
     TextMessageContentEvent e;
+    e.messageId = j.value("messageId", "");
     e.delta = j.value("delta", "");
     return e;
 }
@@ -203,6 +192,8 @@ ToolCallStartEvent ToolCallStartEvent::fromJson(const nlohmann::json& j) {
 nlohmann::json ToolCallArgsEvent::toJson() const {
     nlohmann::json j;
     j["type"] = "TOOL_CALL_ARGS";
+    j["toolCallId"] = toolCallId;
+    j["messageId"] = messageId;
     j["delta"] = delta;
     return j;
 }

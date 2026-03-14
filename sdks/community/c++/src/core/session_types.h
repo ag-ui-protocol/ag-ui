@@ -133,7 +133,7 @@ public:
     std::vector<Message> messages;
     std::vector<Tool> tools;
     std::vector<Context> context;
-    std::string forwardedProps;
+    nlohmann::json forwardedProps;
 
     nlohmann::json toJson() const;
     static RunAgentInput fromJson(const nlohmann::json& j);
@@ -166,7 +166,7 @@ public:
     RunId runId;
     std::vector<Tool> tools;
     std::vector<Context> context;
-    std::string forwardedProps;
+    nlohmann::json forwardedProps;
     std::vector<Message> messages;
     std::string state;
     std::vector<std::shared_ptr<IAgentSubscriber>> subscribers;

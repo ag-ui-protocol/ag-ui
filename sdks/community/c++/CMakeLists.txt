@@ -74,12 +74,15 @@ target_include_directories(ag-ui
         $<INSTALL_INTERFACE:include>
 )
 
+# Find thread library (must come before target_link_libraries)
+find_package(Threads REQUIRED)
+
 # Link dependencies
 target_link_libraries(ag-ui
     PUBLIC
         nlohmann_json::nlohmann_json
     PRIVATE
-        ${CMAKE_THREAD_LIBS_INIT}
+        Threads::Threads
         ${CURL_LIBRARIES}
 )
 
@@ -89,15 +92,9 @@ target_include_directories(ag-ui PRIVATE ${CURL_INCLUDE_DIRS})
 # Set curl compile options
 target_compile_options(ag-ui PRIVATE ${CURL_CFLAGS_OTHER})
 
-# Find thread library
-find_package(Threads REQUIRED)
-target_link_libraries(ag-ui PRIVATE Threads::Threads)
-
-# Set library properties
+# Set library properties (SOVERSION omitted: not applicable for static libraries)
 set_target_properties(ag-ui PROPERTIES
     VERSION ${PROJECT_VERSION}
-    SOVERSION 1
-    PUBLIC_HEADER "${AG_UI_HEADERS}"
 )
 
 # Optional: Build examples
@@ -125,7 +122,12 @@ install(TARGETS ag-ui
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/ag-ui
+)
+
+# Install headers preserving subdirectory structure so that #include "core/event.h" etc. remain valid
+install(DIRECTORY src/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/ag-ui
+    FILES_MATCHING PATTERN "*.h"
 )
 
 install(EXPORT ag-ui-targets

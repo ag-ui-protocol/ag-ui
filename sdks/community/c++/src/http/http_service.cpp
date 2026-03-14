@@ -1,7 +1,5 @@
 #include "http/http_service.h"
-#include <iostream>
 #include <mutex>
-#include <thread>
 #include <curl/curl.h>
 #include "core/logger.h"
 
@@ -90,7 +88,7 @@ void HttpService::sendSseRequest(const HttpRequest& request, SseDataCallback sse
     // Network requests should be executed in a separate thread to avoid blocking
     CURL* curl = curl_easy_init();
     if (!curl) {
-        Logger::debugf("[HttpService] Failed to initialize CURL");
+        Logger::errorf("[HttpService] Failed to initialize CURL");
         if (errorCallbackFunc) {
             errorCallbackFunc(AgentError(ErrorType::Network, ErrorCode::NetworkError, "Failed to initialize CURL"));
         }
@@ -107,8 +105,9 @@ void HttpService::sendSseRequest(const HttpRequest& request, SseDataCallback sse
         // 1. Remove total timeout limit for long-lived SSE connections
         curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 0L);
         
-        // 2. Set connection timeout only (30 seconds is sufficient)
-        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 30000L);
+        // 2. Set connection timeout from request (falls back to 30s if not set)
+        long connectTimeoutMs = request.timeoutMs > 0 ? static_cast<long>(request.timeoutMs) : 30000L;
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, connectTimeoutMs);
         
         // 3. Set low-speed timeout to detect network failures
         curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);
@@ -133,8 +132,8 @@ void HttpService::sendSseRequest(const HttpRequest& request, SseDataCallback sse
             m_cancelFlags[request.url] = cancelFlag;
         }
 
-        // Set streaming callback (pass curl handle for status code access)
-        SseCallbackContext context(sseDataCallbackFunc, cancelFlag.get(), curl);
+        // Set streaming callback
+        SseCallbackContext context(sseDataCallbackFunc, cancelFlag.get());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, sseWriteCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &context);
 
@@ -210,7 +209,7 @@ void HttpService::sendSseRequest(const HttpRequest& request, SseDataCallback sse
         curl_easy_cleanup(curl);
 
     } catch (const std::exception& e) {
-        Logger::debugf("[HttpService] Exception caught: %s", e.what());
+        Logger::debugf("[HttpService] Exception caught: ", e.what());
         if (headers) {
             curl_slist_free_all(headers);
         }
@@ -307,9 +306,10 @@ size_t HttpService::sseWriteCallback(void* contents, size_t size, size_t nmemb, 
         return 0;  // Returning 0 causes CURL to abort the request
     }
 
-    // Check HTTP status code — abort if non-2xx to prevent feeding error body to SSE parser
+    // Check HTTP status code — abort if non-2xx or sentinel (-1: malformed header)
+    // to prevent feeding error body to SSE parser
     int statusCode = context->httpStatusCode;
-    if (statusCode > 0 && (statusCode < 200 || statusCode >= 300)) {
+    if (statusCode != 0 && (statusCode < 200 || statusCode >= 300)) {
         context->abortedDueToHttpError = true;
         Logger::errorf("[HttpService] SSE received non-2xx status: ", statusCode, ", aborting stream");
         return 0;  // Abort transfer for non-2xx responses
@@ -342,46 +342,14 @@ size_t HttpService::sseHeaderCallback(char* buffer, size_t size, size_t nitems, 
                 context->httpStatusCode = std::stoi(headerLine.substr(spacePos + 1, 3));
                 Logger::debugf("[HttpService] SSE HTTP status code: ", context->httpStatusCode);
             } catch (...) {
-                // Failed to parse status code, keep previous value
+                Logger::errorf("[HttpService] Failed to parse HTTP status code from header: ", headerLine);
+                // set to -1, triggers error path in sseWriteCallback
+                context->httpStatusCode = -1;
             }
         }
     }
 
     return realsize;
-}
-
-bool HttpService::parseUrl(const std::string& url, std::string& scheme, std::string& host, int& port,
-                               std::string& path) {
-    // Simplified URL parsing
-    size_t schemeEnd = url.find("://");
-    if (schemeEnd == std::string::npos) {
-        return false;
-    }
-
-    scheme = url.substr(0, schemeEnd);
-
-    size_t hostStart = schemeEnd + 3;
-    size_t pathStart = url.find('/', hostStart);
-
-    if (pathStart == std::string::npos) {
-        host = url.substr(hostStart);
-        path = "/";
-    } else {
-        host = url.substr(hostStart, pathStart - hostStart);
-        path = url.substr(pathStart);
-    }
-
-    // Parse port
-    size_t portStart = host.find(':');
-    if (portStart != std::string::npos) {
-        std::string portStr = host.substr(portStart + 1);
-        host = host.substr(0, portStart);
-        port = std::stoi(portStr);
-    } else {
-        port = (scheme == "https") ? 443 : 80;
-    }
-
-    return true;
 }
 
 }  // namespace agui

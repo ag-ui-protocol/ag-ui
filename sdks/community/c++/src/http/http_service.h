@@ -115,12 +115,6 @@ private:
      */
     static size_t sseHeaderCallback(char* buffer, size_t size, size_t nitems, void* userdata);
 
-    /**
-     * @brief Parse URL
-     */
-    static bool parseUrl(const std::string& url, std::string& scheme, std::string& host, int& port,
-                         std::string& path);
-
     // Each SSE request registers a shared_ptr<atomic<bool>> here so that
     // cancelRequest() and the libcurl write callback share the exact same flag object.
     std::map<std::string, std::shared_ptr<std::atomic<bool>>> m_cancelFlags;
@@ -145,12 +139,11 @@ private:
 struct SseCallbackContext {
     SseDataCallback onData;
     std::atomic<bool>* cancelFlag;  ///< Shared with cancelRequest(); must be atomic (cross-thread write).
-    CURL* curlHandle;               ///< CURL handle reference for curl_easy_getinfo in callbacks
     int httpStatusCode;             ///< Written by sseHeaderCallback, read by sseWriteCallback (same thread).
     bool abortedDueToHttpError;     ///< Written by sseWriteCallback, read after curl_easy_perform() (same thread).
 
-    SseCallbackContext(SseDataCallback callback, std::atomic<bool>* flag, CURL* curl)
-        : onData(std::move(callback)), cancelFlag(flag), curlHandle(curl),
+    SseCallbackContext(SseDataCallback callback, std::atomic<bool>* flag)
+        : onData(std::move(callback)), cancelFlag(flag),
           httpStatusCode(0), abortedDueToHttpError(false) {}
 };
 
