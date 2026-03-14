@@ -960,6 +960,13 @@ When the last messages are a \`log_a2ui_event\` tool call + result:
 ---END A2UI JSON SCHEMA---`;
 
 /**
+ * The container key used to wrap A2UI operations for explicit detection.
+ * Must match the key used by copilotkit.a2ui.render() (Python SDK)
+ * and A2UIMessageRenderer (React).
+ */
+export const A2UI_OPERATIONS_KEY = "a2ui_operations";
+
+/**
  * Try to parse text as A2UI operations.
  * Returns the array of operations if the text contains valid A2UI JSON, or null otherwise.
  */
@@ -976,9 +983,9 @@ export function tryParseA2UIOperations(text: string): Array<Record<string, unkno
     typeof parsed === "object" &&
     parsed !== null &&
     !Array.isArray(parsed) &&
-    Array.isArray((parsed as Record<string, unknown>).a2ui_operations)
+    Array.isArray((parsed as Record<string, unknown>)[A2UI_OPERATIONS_KEY])
   ) {
-    return (parsed as Record<string, unknown>).a2ui_operations as Array<Record<string, unknown>>;
+    return (parsed as Record<string, unknown>)[A2UI_OPERATIONS_KEY] as Array<Record<string, unknown>>;
   }
 
   // Legacy: bare array of operations
