@@ -21,7 +21,7 @@ import {
   A2UIMiddlewareConfig,
   A2UIForwardedProps,
   A2UIUserAction,
-  A2UIToolSchema,
+  A2UISurfaceConfig,
 } from "./types";
 import { SEND_A2UI_JSON_TOOL, SEND_A2UI_TOOL_NAME, LOG_A2UI_EVENT_TOOL_NAME } from "./tools";
 import { getOperationSurfaceId, tryParseA2UIOperations, A2UI_OPERATIONS_KEY, toA2UIContents, extractCompleteItems } from "./schema";
@@ -48,7 +48,7 @@ type EventWithState = ExtractObservableType<RunNextWithStateReturn>;
  */
 function emitStreamingData(
   subscriber: { next: (event: BaseEvent) => void },
-  schema: A2UIToolSchema,
+  schema: A2UISurfaceConfig,
   dataKey: string,
   items: unknown[],
 ) {
@@ -189,11 +189,15 @@ export class A2UIMiddleware extends Middleware {
    * Process the event stream, holding back RUN_FINISHED to process pending A2UI tool calls.
    * Uses runNextWithState for automatic message tracking.
    *
-   * For tools with registered schemas (config.schemas), emits surfaceUpdate + beginRendering
+   * For tools with registered streaming surfaces, emits surfaceUpdate + beginRendering
    * on TOOL_CALL_START and streams dataModelUpdate as args are generated.
    */
   private processStream(source: Observable<EventWithState>): Observable<BaseEvent> {
-    const schemas = this.config.schemas ?? {};
+    // Build lookup: toolName → surface config
+    const surfacesByTool = new Map<string, A2UISurfaceConfig>();
+    for (const entry of this.config.streamingSurfaces ?? []) {
+      surfacesByTool.set(entry.toolName, entry.surface);
+    }
 
     return new Observable<BaseEvent>((subscriber) => {
       let heldRunFinished: EventWithState | null = null;
@@ -201,7 +205,7 @@ export class A2UIMiddleware extends Middleware {
       const a2uiToolCallIds = new Set<string>();
       // Track streaming A2UI tool calls
       const streamingToolCalls = new Map<string, {
-        schema: A2UIToolSchema;
+        schema: A2UISurfaceConfig;
         args: string;
         emittedCount: number;
       }>();
@@ -217,8 +221,8 @@ export class A2UIMiddleware extends Middleware {
               a2uiToolCallIds.add(startEvent.toolCallId);
             }
 
-            // Check if this tool has a registered A2UI schema
-            const schema = schemas[startEvent.toolCallName];
+            // Check if this tool has a registered streaming surface
+            const schema = surfacesByTool.get(startEvent.toolCallName);
             if (schema) {
               // Track this tool call for streaming
               streamingToolCalls.set(startEvent.toolCallId, { schema, args: "", emittedCount: 0 });

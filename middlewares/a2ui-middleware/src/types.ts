@@ -1,10 +1,7 @@
 /**
- * Pre-registered A2UI schema for a tool. When the middleware sees a
- * TOOL_CALL_START for a tool with a registered schema, it emits
- * surfaceUpdate + beginRendering immediately (before any args stream in).
- * As args stream in, it partial-parses and emits dataModelUpdate progressively.
+ * A2UI surface configuration: the component tree, root, and data binding.
  */
-export interface A2UIToolSchema {
+export interface A2UISurfaceConfig {
   /** Unique surface ID */
   surfaceId: string;
   /** Root component ID */
@@ -16,6 +13,18 @@ export interface A2UIToolSchema {
    * E.g. "flights" means the tool arg `{ flights: [...] }` is used for dataModelUpdate.
    */
   dataKey: string;
+}
+
+/**
+ * Binds a tool to an A2UI surface. When the middleware sees a TOOL_CALL_START
+ * for this tool, it emits the surface schema immediately. As the LLM streams
+ * tool args, it partial-parses and emits dataModelUpdate progressively.
+ */
+export interface A2UIStreamingSurface {
+  /** The tool name that triggers this surface */
+  toolName: string;
+  /** The A2UI surface to render */
+  surface: A2UISurfaceConfig;
 }
 
 /**
@@ -34,11 +43,10 @@ export interface A2UIMiddlewareConfig {
   injectA2UITool?: boolean;
 
   /**
-   * Pre-registered A2UI schemas keyed by tool name. When a tool call starts
-   * for a registered tool, the middleware emits the schema immediately and
-   * streams data updates as args are generated.
+   * Surfaces that stream progressively when their tool is called.
+   * Schema is emitted at TOOL_CALL_START, data streams as args are generated.
    */
-  schemas?: Record<string, A2UIToolSchema>;
+  streamingSurfaces?: A2UIStreamingSurface[];
 }
 
 /**
