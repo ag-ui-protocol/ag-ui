@@ -1042,3 +1042,84 @@ export function extractSurfaceIds(
   }
   return Array.from(surfaceIds);
 }
+
+/**
+ * Convert a plain JavaScript value to A2UI typed ValueMap format.
+ * Used by the middleware to convert streaming tool args to dataModelUpdate contents.
+ */
+export function toA2UITypedValue(value: unknown): Record<string, unknown> {
+  if (typeof value === "boolean") return { valueBoolean: value };
+  if (typeof value === "string") return { valueString: value };
+  if (typeof value === "number") return { valueNumber: value };
+  if (Array.isArray(value)) {
+    return {
+      valueMap: value.map((item, i) => ({
+        key: String(i),
+        ...toA2UITypedValue(item),
+      })),
+    };
+  }
+  if (typeof value === "object" && value !== null) {
+    return {
+      valueMap: Object.entries(value).map(([k, v]) => ({
+        key: k,
+        ...toA2UITypedValue(v),
+      })),
+    };
+  }
+  return { valueString: String(value) };
+}
+
+/**
+ * Convert a plain JavaScript object to A2UI dataModelUpdate contents array.
+ */
+export function toA2UIContents(data: Record<string, unknown>): Array<Record<string, unknown>> {
+  return Object.entries(data).map(([k, v]) => ({
+    key: k,
+    ...toA2UITypedValue(v),
+  }));
+}
+
+/**
+ * Extract complete items from a partially-streamed JSON object.
+ * Given partial JSON like `{"flights": [{"id":"1",...}, {"id":"2"` and dataKey "flights",
+ * returns an array of all complete objects parsed so far, or null if none found.
+ */
+export function extractCompleteItems(partial: string, dataKey: string): unknown[] | null {
+  // Find the start of the array value for this key
+  const keyPattern = `"${dataKey}"`;
+  const keyIdx = partial.indexOf(keyPattern);
+  if (keyIdx === -1) return null;
+
+  const bracketStart = partial.indexOf("[", keyIdx + keyPattern.length);
+  if (bracketStart === -1) return null;
+
+  // Walk through tracking brace depth to find complete objects
+  let depth = 0;
+  let lastCompleteEnd = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = bracketStart + 1; i < partial.length; i++) {
+    const ch = partial[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === "\\") { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") depth++;
+    if (ch === "}") {
+      depth--;
+      if (depth === 0) lastCompleteEnd = i;
+    }
+  }
+
+  if (lastCompleteEnd === -1) return null;
+
+  // Build a valid JSON array from the complete objects
+  const arrayStr = partial.substring(bracketStart, lastCompleteEnd + 1) + "]";
+  try {
+    return JSON.parse(arrayStr);
+  } catch {
+    return null;
+  }
+}

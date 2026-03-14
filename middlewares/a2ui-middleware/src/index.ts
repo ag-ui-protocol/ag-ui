@@ -13,6 +13,7 @@ import {
   ActivityDeltaEvent,
   ToolCallResultEvent,
   ToolCallStartEvent,
+  ToolCallArgsEvent,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
 
@@ -20,9 +21,10 @@ import {
   A2UIMiddlewareConfig,
   A2UIForwardedProps,
   A2UIUserAction,
+  A2UIToolSchema,
 } from "./types";
 import { SEND_A2UI_JSON_TOOL, SEND_A2UI_TOOL_NAME, LOG_A2UI_EVENT_TOOL_NAME } from "./tools";
-import { getOperationSurfaceId, tryParseA2UIOperations } from "./schema";
+import { getOperationSurfaceId, tryParseA2UIOperations, A2UI_OPERATIONS_KEY, toA2UIContents, extractCompleteItems } from "./schema";
 
 // Re-exports
 export * from "./types";
@@ -40,6 +42,33 @@ export const A2UIActivityType = "a2ui-surface";
 type ExtractObservableType<T> = T extends Observable<infer U> ? U : never;
 type RunNextWithStateReturn = ReturnType<Middleware["runNextWithState"]>;
 type EventWithState = ExtractObservableType<RunNextWithStateReturn>;
+
+/**
+ * Emit a streaming data snapshot for an A2UI surface.
+ */
+function emitStreamingData(
+  subscriber: { next: (event: BaseEvent) => void },
+  schema: A2UIToolSchema,
+  dataKey: string,
+  items: unknown[],
+) {
+  const surfaceId = schema.surfaceId;
+  const messageId = `a2ui-surface-${surfaceId}`;
+  const contents = toA2UIContents({ [dataKey]: items });
+  const allOps = [
+    { surfaceUpdate: { surfaceId, components: schema.components } },
+    { dataModelUpdate: { surfaceId, contents } },
+    { beginRendering: { surfaceId, root: schema.root } },
+  ];
+  const snapshotEvent: ActivitySnapshotEvent = {
+    type: EventType.ACTIVITY_SNAPSHOT,
+    messageId,
+    activityType: A2UIActivityType,
+    content: { operations: allOps },
+    replace: true,
+  };
+  subscriber.next(snapshotEvent);
+}
 
 /**
  * A2UI Middleware - Enables AG-UI agents to render A2UI surfaces
@@ -159,12 +188,23 @@ export class A2UIMiddleware extends Middleware {
   /**
    * Process the event stream, holding back RUN_FINISHED to process pending A2UI tool calls.
    * Uses runNextWithState for automatic message tracking.
+   *
+   * For tools with registered schemas (config.schemas), emits surfaceUpdate + beginRendering
+   * on TOOL_CALL_START and streams dataModelUpdate as args are generated.
    */
   private processStream(source: Observable<EventWithState>): Observable<BaseEvent> {
+    const schemas = this.config.schemas ?? {};
+
     return new Observable<BaseEvent>((subscriber) => {
       let heldRunFinished: EventWithState | null = null;
       // Track tool call IDs belonging to send_a2ui_json_to_client so we skip them
       const a2uiToolCallIds = new Set<string>();
+      // Track streaming A2UI tool calls
+      const streamingToolCalls = new Map<string, {
+        schema: A2UIToolSchema;
+        args: string;
+        emittedCount: number;
+      }>();
 
       const subscription = source.subscribe({
         next: (eventWithState) => {
@@ -175,6 +215,39 @@ export class A2UIMiddleware extends Middleware {
             const startEvent = event as ToolCallStartEvent;
             if (startEvent.toolCallName === SEND_A2UI_TOOL_NAME) {
               a2uiToolCallIds.add(startEvent.toolCallId);
+            }
+
+            // Check if this tool has a registered A2UI schema
+            const schema = schemas[startEvent.toolCallName];
+            if (schema) {
+              // Track this tool call for streaming
+              streamingToolCalls.set(startEvent.toolCallId, { schema, args: "", emittedCount: 0 });
+
+              // Emit schema immediately: surfaceUpdate + beginRendering
+              const schemaOps = [
+                { surfaceUpdate: { surfaceId: schema.surfaceId, components: schema.components } },
+                { beginRendering: { surfaceId: schema.surfaceId, root: schema.root } },
+              ];
+              for (const activityEvent of this.createA2UIActivityEvents(schemaOps)) {
+                subscriber.next(activityEvent);
+              }
+            }
+          }
+
+          // Stream data updates as tool args come in
+          if (event.type === EventType.TOOL_CALL_ARGS) {
+            const argsEvent = event as ToolCallArgsEvent;
+            const streaming = streamingToolCalls.get(argsEvent.toolCallId);
+            if (streaming) {
+              streaming.args += argsEvent.delta;
+              const dataKey = streaming.schema.dataKey;
+
+              // Extract complete items from partial JSON (e.g. complete flight objects)
+              const items = extractCompleteItems(streaming.args, dataKey);
+              if (items && items.length > streaming.emittedCount) {
+                streaming.emittedCount = items.length;
+                emitStreamingData(subscriber, streaming.schema, dataKey, items);
+              }
             }
           }
 
@@ -193,7 +266,9 @@ export class A2UIMiddleware extends Middleware {
             // Auto-detect A2UI JSON in tool call results from other tools
             if (event.type === EventType.TOOL_CALL_RESULT) {
               const resultEvent = event as ToolCallResultEvent;
-              if (!a2uiToolCallIds.has(resultEvent.toolCallId)) {
+              // Skip if this is a streaming tool call (already handled) or send_a2ui tool
+              if (!a2uiToolCallIds.has(resultEvent.toolCallId) &&
+                  !streamingToolCalls.has(resultEvent.toolCallId)) {
                 const operations = tryParseA2UIOperations(resultEvent.content);
                 if (operations) {
                   for (const activityEvent of this.createA2UIActivityEvents(operations)) {
@@ -213,17 +288,11 @@ export class A2UIMiddleware extends Middleware {
           subscriber.error(err);
         },
         complete: () => {
-          // Stream ended - process pending A2UI tool calls if we have a held RUN_FINISHED
           if (heldRunFinished) {
-            // Find tool calls that don't have a corresponding result message
             const pendingToolCalls = this.findPendingToolCalls(heldRunFinished.messages);
-
-            // Filter for A2UI tool calls
             const pendingA2UIToolCalls = pendingToolCalls.filter(
               (tc) => tc.function.name === SEND_A2UI_TOOL_NAME
             );
-
-            // Process each pending A2UI tool call
             for (const toolCall of pendingA2UIToolCalls) {
               const events = this.processSendA2UIToolCall(
                 toolCall.id,
@@ -233,8 +302,6 @@ export class A2UIMiddleware extends Middleware {
                 subscriber.next(event);
               }
             }
-
-            // Emit the held RUN_FINISHED
             subscriber.next(heldRunFinished.event);
             heldRunFinished = null;
           }

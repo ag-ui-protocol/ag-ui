@@ -1,4 +1,29 @@
 /**
+ * Pre-registered A2UI schema for a tool. When the middleware sees a
+ * TOOL_CALL_START for a tool with a registered schema, it emits
+ * surfaceUpdate + beginRendering immediately (before any args stream in).
+ * As args stream in, it partial-parses and emits dataModelUpdate progressively.
+ */
+export interface A2UIToolSchema {
+  /** Unique surface ID */
+  surfaceId: string;
+  /** Root component ID */
+  root: string;
+  /** The fixed component tree */
+  components: Array<Record<string, unknown>>;
+  /**
+   * Which arg key contains the data to bind.
+   * E.g. "flights" means the tool arg `{ flights: [...] }` is used for dataModelUpdate.
+   */
+  dataKey: string;
+  /**
+   * Minimum interval (ms) between streaming data updates. Default: 0 (emit immediately).
+   * Useful for testing progressive rendering or throttling rapid updates.
+   */
+  streamingThrottleMs?: number;
+}
+
+/**
  * Configuration for the A2UI Middleware
  */
 export interface A2UIMiddlewareConfig {
@@ -12,6 +37,13 @@ export interface A2UIMiddlewareConfig {
    * render any valid A2UI JSON that appears in the event stream.
    */
   injectA2UITool?: boolean;
+
+  /**
+   * Pre-registered A2UI schemas keyed by tool name. When a tool call starts
+   * for a registered tool, the middleware emits the schema immediately and
+   * streams data updates as args are generated.
+   */
+  schemas?: Record<string, A2UIToolSchema>;
 }
 
 /**
