@@ -53,11 +53,33 @@ export function convertAGUIMessagesToMastra(messages: Message[]): CoreMessage[] 
         content: parts,
       });
     } else if (message.role === "user") {
-      const userContent = toMastraTextContent(message.content);
-      result.push({
-        role: "user",
-        content: userContent,
-      });
+      const content = message.content;
+      if (
+        Array.isArray(content) &&
+        content.some((part) => part.type === "binary")
+      ) {
+        const parts: any[] = [];
+        for (const part of content) {
+          if (part.type === "text") {
+            const text = part.text.trim();
+            if (text) {
+              parts.push({ type: "text", text });
+            }
+          } else if (part.type === "binary") {
+            parts.push({
+              type: "image",
+              image: part.data,
+              mimeType: part.mimeType,
+            });
+          }
+        }
+        result.push({ role: "user", content: parts });
+      } else {
+        result.push({
+          role: "user",
+          content: toMastraTextContent(content),
+        });
+      }
     } else if (message.role === "tool") {
       let toolName = "unknown";
       for (const msg of messages) {
