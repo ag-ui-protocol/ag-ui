@@ -59,6 +59,89 @@ describe("convertAGUIMessagesToMastra", () => {
       expect(result).toEqual([{ role: "user", content: "Keep this" }]);
     });
 
+    it("converts binary content parts to image format", () => {
+      const messages: Message[] = [
+        {
+          id: "1",
+          role: "user",
+          content: [
+            { type: "text", text: "What is in this image?" },
+            {
+              type: "binary",
+              mimeType: "image/png",
+              data: "iVBORw0KGgoAAAANS",
+            },
+          ],
+        },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      expect(result).toEqual([
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "What is in this image?" },
+            {
+              type: "image",
+              image: "iVBORw0KGgoAAAANS",
+              mimeType: "image/png",
+            },
+          ],
+        },
+      ]);
+    });
+
+    it("handles binary-only content", () => {
+      const messages: Message[] = [
+        {
+          id: "1",
+          role: "user",
+          content: [
+            {
+              type: "binary",
+              mimeType: "image/jpeg",
+              data: "/9j/4AAQ",
+            },
+          ],
+        },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      expect(result).toEqual([
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              image: "/9j/4AAQ",
+              mimeType: "image/jpeg",
+            },
+          ],
+        },
+      ]);
+    });
+
+    it("falls back to text-only for content without binary parts", () => {
+      const messages: Message[] = [
+        {
+          id: "1",
+          role: "user",
+          content: [
+            { type: "text", text: "Just text" },
+            { type: "text", text: "More text" },
+          ],
+        },
+      ];
+
+      const result = convertAGUIMessagesToMastra(messages);
+
+      expect(result).toEqual([
+        { role: "user", content: "Just text\nMore text" },
+      ]);
+    });
+
     it("trims whitespace from text parts and filters empty", () => {
       const messages: Message[] = [
         {
