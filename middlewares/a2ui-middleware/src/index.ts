@@ -61,7 +61,7 @@ function emitStreamingData(
     { dataModelUpdate: { surfaceId, contents } },
     { beginRendering: { surfaceId, root: schema.root } },
   ];
-  const content: Record<string, unknown> = { operations: allOps };
+  const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: allOps };
   if (schema.actionHandlers) {
     content.actionHandlers = schema.actionHandlers;
   }
@@ -470,14 +470,14 @@ export class A2UIMiddleware extends Middleware {
         activityType: A2UIActivityType,
         patch: surfaceOps.map((op) => ({
           op: "add" as const,
-          path: "/operations/-",
+          path: `/${A2UI_OPERATIONS_KEY}/-`,
           value: op,
         })),
       };
       events.push(deltaEvent);
 
       // 2. ACTIVITY_SNAPSHOT with action handlers if provided
-      const content: Record<string, unknown> = { operations: surfaceOps };
+      const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: surfaceOps };
       if (actionHandlers) {
         content.actionHandlers = actionHandlers;
       }

@@ -212,7 +212,7 @@ describe("A2UIMiddleware", () => {
       );
       expect(activityEvent).toBeDefined();
       expect((activityEvent as any).activityType).toBe(A2UIActivityType);
-      expect((activityEvent as any).content.operations).toHaveLength(2);
+      expect((activityEvent as any).content.a2ui_operations).toHaveLength(2);
 
       // Find TOOL_CALL_RESULT event
       const resultEvent = events.find((e) => e.type === EventType.TOOL_CALL_RESULT);
@@ -300,7 +300,7 @@ describe("A2UIMiddleware", () => {
         (e) => e.type === EventType.ACTIVITY_SNAPSHOT
       );
       expect(activityEvent).toBeDefined();
-      expect((activityEvent as any).content.operations).toHaveLength(1);
+      expect((activityEvent as any).content.a2ui_operations).toHaveLength(1);
     });
 
     it("should produce distinct messageIds for different tool calls with the same surfaceId", async () => {
@@ -482,7 +482,7 @@ describe("A2UI auto-detection in tool results", () => {
     const activitySnapshots = events.filter((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
     expect(activitySnapshots).toHaveLength(1);
     expect((activitySnapshots[0] as any).activityType).toBe(A2UIActivityType);
-    expect((activitySnapshots[0] as any).content.operations).toHaveLength(2);
+    expect((activitySnapshots[0] as any).content.a2ui_operations).toHaveLength(2);
 
     const activityDeltas = events.filter((e) => e.type === EventType.ACTIVITY_DELTA);
     expect(activityDeltas).toHaveLength(1);
