@@ -1,18 +1,22 @@
 #!/usr/bin/env node
 /**
- * Post a PR merge-readiness analysis to Notion.
+ * One-off script: post the 2026-03-13 PR merge-readiness analysis to Notion.
+ *
+ * This script is intentionally single-use — the analysis content is hardcoded
+ * to the specific review session from 2026-03-13. Once posted, the resulting
+ * Notion page is the canonical artifact; this script can be deleted.
  *
  * Usage:
  *   NOTION_TOKEN=<your_token> node scripts/post-to-notion.js
- *
- * Creates a new page under the ag-ui team's Notion workspace
- * (parent page ID from PR #1250: 2e63aa38185280648a35dc4f43a80749).
+ *   NOTION_TOKEN=<token> NOTION_PARENT_PAGE_ID=<page_id> node scripts/post-to-notion.js
  *
  * Requires: Node.js 18+ (uses built-in fetch)
  */
 
 const NOTION_TOKEN = process.env.NOTION_TOKEN;
-const PARENT_PAGE_ID = "2e63aa38185280648a35dc4f43a80749";
+// Default parent page ID from PR #1250 (2e63aa38185280648a35dc4f43a80749).
+// Override with NOTION_PARENT_PAGE_ID if posting under a different page.
+const PARENT_PAGE_ID = process.env.NOTION_PARENT_PAGE_ID ?? "2e63aa38185280648a35dc4f43a80749";
 
 if (!NOTION_TOKEN) {
   console.error("Error: NOTION_TOKEN environment variable is required.");
@@ -20,19 +24,20 @@ if (!NOTION_TOKEN) {
   process.exit(1);
 }
 
-const PAGE_TITLE = "PR Merge-Readiness Analysis \u2014 Safe to Merge After Rebase";
+const PAGE_TITLE = "PR Merge-Readiness Analysis — Safe to Merge After Rebase";
+const ANALYSIS_DATE = new Date().toISOString().slice(0, 10);
 
 const ANALYSIS_BLOCKS = [
   {
     object: "block",
     type: "callout",
     callout: {
-      rich_text: [{ type: "text", text: { content: "Analysis generated on 2026-03-13. In-depth Claude Code reviews launched on all 10 PRs for code-level verification." } }],
-      icon: { emoji: "\uD83D\uDCCB" },
+      rich_text: [{ type: "text", text: { content: `Analysis generated on ${ANALYSIS_DATE}. In-depth Claude Code reviews launched on all 10 PRs for code-level verification.` } }],
+      icon: { emoji: "📋" },
       color: "blue_background",
     },
   },
-  { object: "block", type: "heading_2", heading_2: { rich_text: [{ type: "text", text: { content: "\uD83D\uDFE2 Tier 1: Almost Certainly Safe to Merge (after rebase)" } }] } },
+  { object: "block", type: "heading_2", heading_2: { rich_text: [{ type: "text", text: { content: "🟢 Tier 1: Almost Certainly Safe to Merge (after rebase)" } }] } },
   {
     object: "block", type: "table",
     table: {
@@ -46,7 +51,7 @@ const ANALYSIS_BLOCKS = [
       ],
     },
   },
-  { object: "block", type: "heading_2", heading_2: { rich_text: [{ type: "text", text: { content: "\uD83D\uDFE1 Tier 2: Very Likely Safe \u2014 Reviews Will Confirm" } }] } },
+  { object: "block", type: "heading_2", heading_2: { rich_text: [{ type: "text", text: { content: "🟡 Tier 2: Very Likely Safe — Reviews Will Confirm" } }] } },
   {
     object: "block", type: "table",
     table: {
@@ -61,7 +66,7 @@ const ANALYSIS_BLOCKS = [
       ],
     },
   },
-  { object: "block", type: "heading_2", heading_2: { rich_text: [{ type: "text", text: { content: "\uD83D\uDFE0 Tier 3: Needs Careful Review \u2014 Potential Subtle Risk" } }] } },
+  { object: "block", type: "heading_2", heading_2: { rich_text: [{ type: "text", text: { content: "🟠 Tier 3: Needs Careful Review — Potential Subtle Risk" } }] } },
   {
     object: "block", type: "table",
     table: {
@@ -89,7 +94,7 @@ async function createNotionPage() {
     },
     body: JSON.stringify({
       parent: { page_id: PARENT_PAGE_ID },
-      icon: { emoji: "\uD83D\uDCCA" },
+      icon: { emoji: "📊" },
       properties: {
         title: { title: [{ type: "text", text: { content: PAGE_TITLE } }] },
       },
@@ -100,6 +105,7 @@ async function createNotionPage() {
   if (!response.ok) {
     const error = await response.text();
     console.error(`Notion API error ${response.status}: ${error}`);
+    console.error(`  Parent page ID used: ${PARENT_PAGE_ID}`);
     process.exit(1);
   }
 
