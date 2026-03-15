@@ -965,13 +965,23 @@ When the last messages are a \`log_a2ui_event\` tool call + result:
  * and A2UIMessageRenderer (React).
  */
 export const A2UI_OPERATIONS_KEY = "a2ui_operations";
+export const A2UI_ACTION_HANDLERS_KEY = "a2ui_action_handlers";
 
 /**
- * Try to parse text as A2UI operations.
- * Returns the array of operations if the text contains a valid { a2ui_operations: [...] } container,
+ * Parsed A2UI container result.
+ */
+export interface A2UIParseResult {
+  operations: Array<Record<string, unknown>>;
+  actionHandlers?: Record<string, Array<Record<string, unknown>>>;
+}
+
+/**
+ * Try to parse text as an A2UI container.
+ * Returns operations and optional action handlers if the text contains
+ * a valid { a2ui_operations: [...], a2ui_action_handlers?: {...} } container,
  * or null otherwise.
  */
-export function tryParseA2UIOperations(text: string): Array<Record<string, unknown>> | null {
+export function tryParseA2UIOperations(text: string): A2UIParseResult | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -985,7 +995,15 @@ export function tryParseA2UIOperations(text: string): Array<Record<string, unkno
     !Array.isArray(parsed) &&
     Array.isArray((parsed as Record<string, unknown>)[A2UI_OPERATIONS_KEY])
   ) {
-    return (parsed as Record<string, unknown>)[A2UI_OPERATIONS_KEY] as Array<Record<string, unknown>>;
+    const obj = parsed as Record<string, unknown>;
+    const result: A2UIParseResult = {
+      operations: obj[A2UI_OPERATIONS_KEY] as Array<Record<string, unknown>>,
+    };
+    const handlers = obj[A2UI_ACTION_HANDLERS_KEY];
+    if (handlers && typeof handlers === "object" && !Array.isArray(handlers)) {
+      result.actionHandlers = handlers as Record<string, Array<Record<string, unknown>>>;
+    }
+    return result;
   }
 
   return null;

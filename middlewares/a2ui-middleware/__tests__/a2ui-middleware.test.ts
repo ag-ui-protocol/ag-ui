@@ -474,10 +474,30 @@ describe("tryParseA2UIOperations", () => {
       ],
     });
     const result = tryParseA2UIOperations(input);
-    expect(result).toHaveLength(3);
-    expect(result![0]).toHaveProperty("surfaceUpdate");
-    expect(result![1]).toHaveProperty("dataModelUpdate");
-    expect(result![2]).toHaveProperty("beginRendering");
+    expect(result).not.toBeNull();
+    expect(result!.operations).toHaveLength(3);
+    expect(result!.operations[0]).toHaveProperty("surfaceUpdate");
+    expect(result!.operations[1]).toHaveProperty("dataModelUpdate");
+    expect(result!.operations[2]).toHaveProperty("beginRendering");
+    expect(result!.actionHandlers).toBeUndefined();
+  });
+
+  it("should extract action handlers from container", () => {
+    const input = JSON.stringify({
+      a2ui_operations: [
+        { beginRendering: { surfaceId: "s1", root: "root" } },
+      ],
+      a2ui_action_handlers: {
+        book_flight: [{ surfaceUpdate: { surfaceId: "s1", components: [] } }],
+        "*": [{ beginRendering: { surfaceId: "s1", root: "root" } }],
+      },
+    });
+    const result = tryParseA2UIOperations(input);
+    expect(result).not.toBeNull();
+    expect(result!.operations).toHaveLength(1);
+    expect(result!.actionHandlers).toBeDefined();
+    expect(result!.actionHandlers!["book_flight"]).toHaveLength(1);
+    expect(result!.actionHandlers!["*"]).toHaveLength(1);
   });
 
   it("should return null for non-JSON text", () => {
