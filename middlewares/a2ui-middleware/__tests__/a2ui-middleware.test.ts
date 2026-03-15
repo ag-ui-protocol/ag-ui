@@ -302,6 +302,132 @@ describe("A2UIMiddleware", () => {
       expect(activityEvent).toBeDefined();
       expect((activityEvent as any).content.operations).toHaveLength(1);
     });
+
+    it("should produce distinct messageIds for different tool calls with the same surfaceId", async () => {
+      const middleware = new A2UIMiddleware();
+      const toolCallId1 = "tc-first";
+      const toolCallId2 = "tc-second";
+
+      const a2uiJson1 = JSON.stringify([
+        { beginRendering: { surfaceId: "shared-surface", root: "root" } },
+      ]);
+      const a2uiJson2 = JSON.stringify([
+        { surfaceUpdate: { surfaceId: "shared-surface", components: [] } },
+      ]);
+
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        // First tool call
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: toolCallId1,
+          toolCallName: SEND_A2UI_TOOL_NAME,
+        },
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: toolCallId1,
+          delta: JSON.stringify({ a2ui_json: a2uiJson1 }),
+        },
+        { type: EventType.TOOL_CALL_END, toolCallId: toolCallId1 },
+        // Second tool call (same surfaceId, different toolCallId)
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: toolCallId2,
+          toolCallName: SEND_A2UI_TOOL_NAME,
+        },
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: toolCallId2,
+          delta: JSON.stringify({ a2ui_json: a2uiJson2 }),
+        },
+        { type: EventType.TOOL_CALL_END, toolCallId: toolCallId2 },
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const input = createRunAgentInput();
+      const events = await collectEvents(middleware.run(input, mockAgent));
+
+      // Should have two distinct ACTIVITY_SNAPSHOT events with different messageIds
+      const snapshots = events.filter((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+      expect(snapshots).toHaveLength(2);
+
+      const messageId1 = (snapshots[0] as any).messageId;
+      const messageId2 = (snapshots[1] as any).messageId;
+      expect(messageId1).not.toBe(messageId2);
+
+      // Both should include the surfaceId
+      expect(messageId1).toContain("shared-surface");
+      expect(messageId2).toContain("shared-surface");
+
+      // Each should include its own toolCallId
+      expect(messageId1).toContain(toolCallId1);
+      expect(messageId2).toContain(toolCallId2);
+    });
+
+    it("should produce distinct messageIds for auto-detected A2UI in different tool results", async () => {
+      const middleware = new A2UIMiddleware();
+      const toolCallId1 = "tc-auto-1";
+      const toolCallId2 = "tc-auto-2";
+
+      const a2uiResult = JSON.stringify({
+        a2ui_operations: [
+          { beginRendering: { surfaceId: "shared-surface", root: "root" } },
+        ],
+      });
+
+      const mockAgent = new MockAgent([
+        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
+        // First tool call
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: toolCallId1,
+          toolCallName: "render_flights",
+        },
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: toolCallId1,
+          delta: '{}',
+        },
+        { type: EventType.TOOL_CALL_END, toolCallId: toolCallId1 },
+        {
+          type: EventType.TOOL_CALL_RESULT,
+          messageId: "msg-1",
+          toolCallId: toolCallId1,
+          content: a2uiResult,
+        },
+        // Second tool call (same tool, same surfaceId, different toolCallId)
+        {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: toolCallId2,
+          toolCallName: "render_flights",
+        },
+        {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: toolCallId2,
+          delta: '{}',
+        },
+        { type: EventType.TOOL_CALL_END, toolCallId: toolCallId2 },
+        {
+          type: EventType.TOOL_CALL_RESULT,
+          messageId: "msg-2",
+          toolCallId: toolCallId2,
+          content: a2uiResult,
+        },
+        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+      ]);
+
+      const input = createRunAgentInput();
+      const events = await collectEvents(middleware.run(input, mockAgent));
+
+      const snapshots = events.filter((e) => e.type === EventType.ACTIVITY_SNAPSHOT);
+      expect(snapshots).toHaveLength(2);
+
+      const messageId1 = (snapshots[0] as any).messageId;
+      const messageId2 = (snapshots[1] as any).messageId;
+      expect(messageId1).not.toBe(messageId2);
+      expect(messageId1).toContain(toolCallId1);
+      expect(messageId2).toContain(toolCallId2);
+    });
   });
 });
 

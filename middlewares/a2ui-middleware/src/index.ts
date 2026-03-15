@@ -51,9 +51,10 @@ function emitStreamingData(
   schema: A2UISurfaceConfig,
   dataKey: string,
   items: unknown[],
+  toolCallId: string,
 ) {
   const surfaceId = schema.surfaceId;
-  const messageId = `a2ui-surface-${surfaceId}`;
+  const messageId = `a2ui-surface-${surfaceId}-${toolCallId}`;
   const contents = toA2UIContents({ [dataKey]: items });
   const allOps = [
     { surfaceUpdate: { surfaceId, components: schema.components } },
@@ -239,6 +240,7 @@ export class A2UIMiddleware extends Middleware {
               for (const activityEvent of this.createA2UIActivityEvents(
                 schemaOps,
                 schema.actionHandlers,
+                startEvent.toolCallId,
               )) {
                 subscriber.next(activityEvent);
               }
@@ -257,7 +259,7 @@ export class A2UIMiddleware extends Middleware {
               const items = extractCompleteItems(streaming.args, dataKey);
               if (items && items.length > streaming.emittedCount) {
                 streaming.emittedCount = items.length;
-                emitStreamingData(subscriber, streaming.schema, dataKey, items);
+                emitStreamingData(subscriber, streaming.schema, dataKey, items, argsEvent.toolCallId);
               }
             }
           }
@@ -285,6 +287,7 @@ export class A2UIMiddleware extends Middleware {
                   for (const activityEvent of this.createA2UIActivityEvents(
                     parsed.operations,
                     parsed.actionHandlers,
+                    resultEvent.toolCallId,
                   )) {
                     subscriber.next(activityEvent);
                   }
@@ -413,7 +416,7 @@ export class A2UIMiddleware extends Middleware {
     }
 
     // Create activity events from the parsed operations
-    events.push(...this.createA2UIActivityEvents(operations));
+    events.push(...this.createA2UIActivityEvents(operations, undefined, toolCallId));
 
     // Create TOOL_CALL_RESULT event
     const resultEvent: ToolCallResultEvent = {
@@ -430,10 +433,15 @@ export class A2UIMiddleware extends Middleware {
   /**
    * Create ACTIVITY_DELTA + ACTIVITY_SNAPSHOT events from A2UI operations,
    * grouped by surfaceId.
+   *
+   * @param operations - A2UI operations to emit
+   * @param actionHandlers - Optional pre-declared action handlers
+   * @param toolCallId - Unique tool call ID to isolate surfaces between invocations
    */
   private createA2UIActivityEvents(
     operations: Array<Record<string, unknown>>,
     actionHandlers?: Record<string, Array<Record<string, unknown>>>,
+    toolCallId?: string,
   ): BaseEvent[] {
     const events: BaseEvent[] = [];
 
@@ -449,7 +457,11 @@ export class A2UIMiddleware extends Middleware {
 
     // Emit events per surface: always emit delta first, then snapshot
     for (const [surfaceId, surfaceOps] of operationsBySurface) {
-      const messageId = `a2ui-surface-${surfaceId}`;
+      // Include toolCallId in messageId to ensure each tool invocation
+      // creates a distinct activity message, even for the same surfaceId
+      const messageId = toolCallId
+        ? `a2ui-surface-${surfaceId}-${toolCallId}`
+        : `a2ui-surface-${surfaceId}`;
 
       // 1. ACTIVITY_DELTA - appends operations if message exists, no-op if not
       const deltaEvent: ActivityDeltaEvent = {
