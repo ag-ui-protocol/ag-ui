@@ -308,11 +308,18 @@ class LangGraphAgent:
                     break
 
             if last_user_message:
-                return await self.prepare_regenerate_stream(
+                regenerate_result = await self.prepare_regenerate_stream(
                     input=input,
                     message_checkpoint=last_user_message,
                     config=config
                 )
+                # If regeneration succeeded, return its result; otherwise fall
+                # through to normal continuation.  This handles the case where
+                # the client's message ID is not found in checkpoint history
+                # (e.g. after a dropped SSE connection) — the count mismatch
+                # is due to a missed snapshot, not a genuine regeneration.
+                if regenerate_result is not None:
+                    return regenerate_result
 
         events_to_dispatch = []
         if has_active_interrupts and not resume_input:
@@ -985,7 +992,11 @@ class LangGraphAgent:
 
                 return checkpoint
 
-        raise ValueError("Message ID not found in history")
+        # Message ID not found — this can happen after a dropped SSE connection
+        # where the client never received the MESSAGES_SNAPSHOT with the real
+        # message IDs.  Return None so the caller can fall back to normal
+        # continuation instead of crashing.
+        return None
 
     def handle_node_change(self, node_name: Optional[str]):
         """
