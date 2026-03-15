@@ -60,11 +60,15 @@ function emitStreamingData(
     { dataModelUpdate: { surfaceId, contents } },
     { beginRendering: { surfaceId, root: schema.root } },
   ];
+  const content: Record<string, unknown> = { operations: allOps };
+  if (schema.actionHandlers) {
+    content.actionHandlers = schema.actionHandlers;
+  }
   const snapshotEvent: ActivitySnapshotEvent = {
     type: EventType.ACTIVITY_SNAPSHOT,
     messageId,
     activityType: A2UIActivityType,
-    content: { operations: allOps },
+    content,
     replace: true,
   };
   subscriber.next(snapshotEvent);
@@ -227,12 +231,15 @@ export class A2UIMiddleware extends Middleware {
               // Track this tool call for streaming
               streamingToolCalls.set(startEvent.toolCallId, { schema, args: "", emittedCount: 0 });
 
-              // Emit schema immediately: surfaceUpdate + beginRendering
+              // Emit schema immediately: surfaceUpdate + beginRendering + actionHandlers
               const schemaOps = [
                 { surfaceUpdate: { surfaceId: schema.surfaceId, components: schema.components } },
                 { beginRendering: { surfaceId: schema.surfaceId, root: schema.root } },
               ];
-              for (const activityEvent of this.createA2UIActivityEvents(schemaOps)) {
+              for (const activityEvent of this.createA2UIActivityEvents(
+                schemaOps,
+                schema.actionHandlers,
+              )) {
                 subscriber.next(activityEvent);
               }
             }
@@ -273,9 +280,12 @@ export class A2UIMiddleware extends Middleware {
               // Skip if this is a streaming tool call (already handled) or send_a2ui tool
               if (!a2uiToolCallIds.has(resultEvent.toolCallId) &&
                   !streamingToolCalls.has(resultEvent.toolCallId)) {
-                const operations = tryParseA2UIOperations(resultEvent.content);
-                if (operations) {
-                  for (const activityEvent of this.createA2UIActivityEvents(operations)) {
+                const parsed = tryParseA2UIOperations(resultEvent.content);
+                if (parsed) {
+                  for (const activityEvent of this.createA2UIActivityEvents(
+                    parsed.operations,
+                    parsed.actionHandlers,
+                  )) {
                     subscriber.next(activityEvent);
                   }
                 }
@@ -422,7 +432,8 @@ export class A2UIMiddleware extends Middleware {
    * grouped by surfaceId.
    */
   private createA2UIActivityEvents(
-    operations: Array<Record<string, unknown>>
+    operations: Array<Record<string, unknown>>,
+    actionHandlers?: Record<string, Array<Record<string, unknown>>>,
   ): BaseEvent[] {
     const events: BaseEvent[] = [];
 
@@ -453,12 +464,17 @@ export class A2UIMiddleware extends Middleware {
       };
       events.push(deltaEvent);
 
-      // 2. ACTIVITY_SNAPSHOT with replace: false - creates if doesn't exist, ignored if exists
+      // 2. ACTIVITY_SNAPSHOT with action handlers if provided
+      const content: Record<string, unknown> = { operations: surfaceOps };
+      if (actionHandlers) {
+        content.actionHandlers = actionHandlers;
+      }
+
       const snapshotEvent: ActivitySnapshotEvent = {
         type: EventType.ACTIVITY_SNAPSHOT,
         messageId,
         activityType: A2UIActivityType,
-        content: { operations: surfaceOps },
+        content,
         replace: false,
       };
       events.push(snapshotEvent);

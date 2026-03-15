@@ -13,6 +13,12 @@ export interface A2UISurfaceConfig {
    * E.g. "flights" means the tool arg `{ flights: [...] }` is used for dataModelUpdate.
    */
   dataKey: string;
+  /**
+   * Pre-declared action handlers. When a button action is dispatched,
+   * the renderer checks for an exact action name match, then "*" catch-all.
+   * Same interface as a2ui.render(action_handlers={...}) in the Python SDK.
+   */
+  actionHandlers?: Record<string, Array<Record<string, unknown>>>;
 }
 
 /**
