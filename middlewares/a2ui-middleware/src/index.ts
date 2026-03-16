@@ -24,7 +24,7 @@ import {
   A2UISurfaceConfig,
 } from "./types";
 import { SEND_A2UI_JSON_TOOL, SEND_A2UI_TOOL_NAME, LOG_A2UI_EVENT_TOOL_NAME } from "./tools";
-import { getOperationSurfaceId, tryParseA2UIOperations, A2UI_OPERATIONS_KEY, toA2UIContents, extractCompleteItems } from "./schema";
+import { getOperationSurfaceId, tryParseA2UIOperations, A2UI_OPERATIONS_KEY, toA2UIContents, extractCompleteItems, extractCompleteItemsWithStatus, extractCompleteA2UIOperations, extractStringField } from "./schema";
 
 // Re-exports
 export * from "./types";
@@ -42,6 +42,19 @@ export const A2UIActivityType = "a2ui-surface";
 type ExtractObservableType<T> = T extends Observable<infer U> ? U : never;
 type RunNextWithStateReturn = ReturnType<Middleware["runNextWithState"]>;
 type EventWithState = ExtractObservableType<RunNextWithStateReturn>;
+
+/**
+ * Group operations by surfaceId.
+ */
+function groupBySurface(ops: Array<Record<string, unknown>>): Map<string, Array<Record<string, unknown>>> {
+  const groups = new Map<string, Array<Record<string, unknown>>>();
+  for (const op of ops) {
+    const sid = getOperationSurfaceId(op) ?? "default";
+    if (!groups.has(sid)) groups.set(sid, []);
+    groups.get(sid)!.push(op);
+  }
+  return groups;
+}
 
 /**
  * Emit a streaming data snapshot for an A2UI surface.
@@ -204,13 +217,26 @@ export class A2UIMiddleware extends Middleware {
       surfacesByTool.set(entry.toolName, entry.surface);
     }
 
+    const RENDER_A2UI_TOOL = "render_a2ui";
+
     return new Observable<BaseEvent>((subscriber) => {
       let heldRunFinished: EventWithState | null = null;
-      // Track tool call IDs belonging to send_a2ui_json_to_client so we skip them
+      // Tool call IDs belonging to A2UI tools (skip auto-detection in TOOL_CALL_RESULT)
       const a2uiToolCallIds = new Set<string>();
-      // Track streaming A2UI tool calls
+
+      // Unified streaming tracker: used by both fixed-schema and dynamic render_a2ui.
+      // Fixed-schema: schema is set on TOOL_CALL_START from config.
+      // Dynamic: schema is extracted from streaming args when surfaceUpdate completes.
       const streamingToolCalls = new Map<string, {
-        schema: A2UISurfaceConfig;
+        schema: A2UISurfaceConfig | null; // null until schema is extracted (dynamic case)
+        args: string;
+        emittedCount: number;
+        dataKey: string;         // which key to extract items from
+        schemaEmitted: boolean;  // whether schema has been sent to the renderer
+      }>();
+
+      // Track send_a2ui_json_to_client for progressive streaming (legacy/direct path)
+      const a2uiJsonStreams = new Map<string, {
         args: string;
         emittedCount: number;
       }>();
@@ -219,28 +245,39 @@ export class A2UIMiddleware extends Middleware {
         next: (eventWithState) => {
           const event = eventWithState.event;
 
-          // Track send_a2ui_json_to_client tool call IDs from TOOL_CALL_START events
           if (event.type === EventType.TOOL_CALL_START) {
             const startEvent = event as ToolCallStartEvent;
+
+            // send_a2ui_json_to_client: track for progressive parsing
             if (startEvent.toolCallName === SEND_A2UI_TOOL_NAME) {
               a2uiToolCallIds.add(startEvent.toolCallId);
+              a2uiJsonStreams.set(startEvent.toolCallId, { args: "", emittedCount: 0 });
             }
 
-            // Check if this tool has a registered streaming surface
+            // render_a2ui: dynamic streaming — schema will come from the stream
+            if (startEvent.toolCallName === RENDER_A2UI_TOOL) {
+              a2uiToolCallIds.add(startEvent.toolCallId);
+              streamingToolCalls.set(startEvent.toolCallId, {
+                schema: null, args: "", emittedCount: 0,
+                dataKey: "items", schemaEmitted: false,
+              });
+            }
+
+            // Fixed-schema streaming surfaces: schema comes from config
             const schema = surfacesByTool.get(startEvent.toolCallName);
             if (schema) {
-              // Track this tool call for streaming
-              streamingToolCalls.set(startEvent.toolCallId, { schema, args: "", emittedCount: 0 });
+              streamingToolCalls.set(startEvent.toolCallId, {
+                schema, args: "", emittedCount: 0,
+                dataKey: schema.dataKey, schemaEmitted: true,
+              });
 
-              // Emit schema immediately: surfaceUpdate + beginRendering + actionHandlers
+              // Emit schema immediately
               const schemaOps = [
                 { surfaceUpdate: { surfaceId: schema.surfaceId, components: schema.components } },
                 { beginRendering: { surfaceId: schema.surfaceId, root: schema.root } },
               ];
               for (const activityEvent of this.createA2UIActivityEvents(
-                schemaOps,
-                schema.actionHandlers,
-                startEvent.toolCallId,
+                schemaOps, schema.actionHandlers, startEvent.toolCallId,
               )) {
                 subscriber.next(activityEvent);
               }
@@ -250,16 +287,74 @@ export class A2UIMiddleware extends Middleware {
           // Stream data updates as tool args come in
           if (event.type === EventType.TOOL_CALL_ARGS) {
             const argsEvent = event as ToolCallArgsEvent;
+
+            // ── Unified streaming handler (fixed-schema + render_a2ui) ──
             const streaming = streamingToolCalls.get(argsEvent.toolCallId);
             if (streaming) {
               streaming.args += argsEvent.delta;
-              const dataKey = streaming.schema.dataKey;
 
-              // Extract complete items from partial JSON (e.g. complete flight objects)
-              const items = extractCompleteItems(streaming.args, dataKey);
-              if (items && items.length > streaming.emittedCount) {
-                streaming.emittedCount = items.length;
-                emitStreamingData(subscriber, streaming.schema, dataKey, items, argsEvent.toolCallId);
+              // For dynamic (render_a2ui): extract schema from the structured args.
+              // We wait for the components array to be fully closed before setting
+              // the schema, because partial components (e.g., only the root Column
+              // without its children) cause the Lit processor to fail validation.
+              if (!streaming.schema) {
+                const result = extractCompleteItemsWithStatus(streaming.args, "components");
+                const surfaceId = extractStringField(streaming.args, "surfaceId");
+                const root = extractStringField(streaming.args, "root");
+                if (result?.arrayClosed && result.items.length > 0 && surfaceId && root) {
+                  streaming.schema = { surfaceId, root, components: result.items as any[], dataKey: "items" };
+                  streaming.dataKey = "items";
+                }
+              }
+
+              // Stream data items progressively — shared by both fixed-schema and dynamic.
+              // For dynamic surfaces where schema was just extracted, we defer the schema
+              // emission until we have at least one data item.  This ensures the surface is
+              // always created with data, avoiding a race condition where an empty-data
+              // ACTIVITY_SNAPSHOT followed by a data ACTIVITY_SNAPSHOT can cause the
+              // frontend to lose the data update.
+              if (streaming.schema) {
+                const items = extractCompleteItems(streaming.args, streaming.dataKey);
+                if (items && items.length > streaming.emittedCount) {
+                  // Mark schema as emitted on the first data emission (deferred for dynamic)
+                  streaming.schemaEmitted = true;
+                  streaming.emittedCount = items.length;
+                  emitStreamingData(subscriber, streaming.schema, streaming.dataKey, items, argsEvent.toolCallId);
+                }
+              }
+            }
+
+            // ── send_a2ui_json_to_client: progressive parsing (non-streaming path) ──
+            const a2uiStream = a2uiJsonStreams.get(argsEvent.toolCallId);
+            if (a2uiStream) {
+              a2uiStream.args += argsEvent.delta;
+              const ops = extractCompleteA2UIOperations(a2uiStream.args);
+              if (ops && ops.length > a2uiStream.emittedCount) {
+                a2uiStream.emittedCount = ops.length;
+
+                // Auto-inject beginRendering for surfaceUpdates that don't have one yet
+                const opsToEmit = [...ops];
+                const surfaceIds = new Set<string>();
+                const hasBeginRendering = new Set<string>();
+                for (const op of opsToEmit) {
+                  const su = (op as any).surfaceUpdate;
+                  if (su?.surfaceId) surfaceIds.add(su.surfaceId);
+                  const br = (op as any).beginRendering;
+                  if (br?.surfaceId) hasBeginRendering.add(br.surfaceId);
+                }
+                for (const sid of surfaceIds) {
+                  if (!hasBeginRendering.has(sid)) {
+                    const su = opsToEmit.find((op: any) => op.surfaceUpdate?.surfaceId === sid) as any;
+                    const root = su?.surfaceUpdate?.components?.[0]?.id ?? "root";
+                    opsToEmit.push({ beginRendering: { surfaceId: sid, root } });
+                  }
+                }
+
+                for (const activityEvent of this.createA2UIActivityEvents(
+                  opsToEmit, undefined, argsEvent.toolCallId,
+                )) {
+                  subscriber.next(activityEvent);
+                }
               }
             }
           }
