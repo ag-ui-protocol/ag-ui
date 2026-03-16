@@ -65,6 +65,7 @@ function emitStreamingData(
   dataKey: string,
   items: unknown[],
   toolCallId: string,
+  dynamicActionHandlers?: Record<string, Array<Record<string, unknown>>>,
 ) {
   const surfaceId = schema.surfaceId;
   const messageId = `a2ui-surface-${surfaceId}-${toolCallId}`;
@@ -75,8 +76,10 @@ function emitStreamingData(
     { beginRendering: { surfaceId, root: schema.root } },
   ];
   const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: allOps };
-  if (schema.actionHandlers) {
-    content.actionHandlers = schema.actionHandlers;
+  // Include actionHandlers from either the fixed-schema config or dynamic extraction
+  const actionHandlers = schema.actionHandlers ?? dynamicActionHandlers;
+  if (actionHandlers) {
+    content.actionHandlers = actionHandlers;
   }
   const snapshotEvent: ActivitySnapshotEvent = {
     type: EventType.ACTIVITY_SNAPSHOT,
@@ -233,6 +236,7 @@ export class A2UIMiddleware extends Middleware {
         emittedCount: number;
         dataKey: string;         // which key to extract items from
         schemaEmitted: boolean;  // whether schema has been sent to the renderer
+        actionHandlers?: Record<string, Array<Record<string, unknown>>>; // dynamic action handlers
       }>();
 
       // Track send_a2ui_json_to_client for progressive streaming (legacy/direct path)
@@ -307,6 +311,21 @@ export class A2UIMiddleware extends Middleware {
                 }
               }
 
+              // Try to extract actionHandlers from the accumulated args.
+              // actionHandlers is a dict, so we attempt to parse the full args JSON
+              // and extract it when available.
+              const hadActionHandlers = !!streaming.actionHandlers;
+              if (!streaming.actionHandlers) {
+                try {
+                  const fullArgs = JSON.parse(streaming.args);
+                  if (fullArgs.actionHandlers && typeof fullArgs.actionHandlers === "object" && !Array.isArray(fullArgs.actionHandlers)) {
+                    streaming.actionHandlers = fullArgs.actionHandlers;
+                  }
+                } catch {
+                  // Partial JSON — not yet parseable, will try again on next delta
+                }
+              }
+
               // Stream data items progressively — shared by both fixed-schema and dynamic.
               // For dynamic surfaces where schema was just extracted, we defer the schema
               // emission until we have at least one data item.  This ensures the surface is
@@ -315,11 +334,15 @@ export class A2UIMiddleware extends Middleware {
               // frontend to lose the data update.
               if (streaming.schema) {
                 const items = extractCompleteItems(streaming.args, streaming.dataKey);
-                if (items && items.length > streaming.emittedCount) {
+                const newItems = items && items.length > streaming.emittedCount;
+                // Re-emit if actionHandlers were just extracted (even with no new items)
+                const actionHandlersJustExtracted = !hadActionHandlers && !!streaming.actionHandlers && streaming.emittedCount > 0;
+                if (newItems || actionHandlersJustExtracted) {
+                  const currentItems = items ?? [];
                   // Mark schema as emitted on the first data emission (deferred for dynamic)
                   streaming.schemaEmitted = true;
-                  streaming.emittedCount = items.length;
-                  emitStreamingData(subscriber, streaming.schema, streaming.dataKey, items, argsEvent.toolCallId);
+                  if (newItems) streaming.emittedCount = currentItems.length;
+                  emitStreamingData(subscriber, streaming.schema, streaming.dataKey, currentItems, argsEvent.toolCallId, streaming.actionHandlers);
                 }
               }
             }
