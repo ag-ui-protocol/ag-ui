@@ -297,11 +297,18 @@ export class A2UIMiddleware extends Middleware {
             if (streaming) {
               streaming.args += argsEvent.delta;
 
+              // Performance: only attempt extraction when the delta contains
+              // characters that could complete a JSON structure. Most deltas
+              // are mid-string/mid-number and can't change parse results.
+              const deltaHasClosingBrace = argsEvent.delta.includes("}");
+              const deltaHasClosingBracket = argsEvent.delta.includes("]");
+              const deltaHasStructuralChar = deltaHasClosingBrace || deltaHasClosingBracket;
+
               // For dynamic (render_a2ui): extract schema from the structured args.
               // We wait for the components array to be fully closed before setting
               // the schema, because partial components (e.g., only the root Column
               // without its children) cause the Lit processor to fail validation.
-              if (!streaming.schema) {
+              if (!streaming.schema && deltaHasStructuralChar) {
                 const result = extractCompleteItemsWithStatus(streaming.args, "components");
                 const surfaceId = extractStringField(streaming.args, "surfaceId");
                 const root = extractStringField(streaming.args, "root");
@@ -313,16 +320,21 @@ export class A2UIMiddleware extends Middleware {
 
               // Try to extract actionHandlers from the accumulated args.
               // actionHandlers is a dict, so we attempt to parse the full args JSON
-              // and extract it when available.
+              // and extract it when available. Only attempt JSON.parse when the
+              // accumulated string ends with '}', avoiding costly exception creation
+              // on every delta (the actionHandlers field comes last in the JSON).
               const hadActionHandlers = !!streaming.actionHandlers;
-              if (!streaming.actionHandlers) {
-                try {
-                  const fullArgs = JSON.parse(streaming.args);
-                  if (fullArgs.actionHandlers && typeof fullArgs.actionHandlers === "object" && !Array.isArray(fullArgs.actionHandlers)) {
-                    streaming.actionHandlers = fullArgs.actionHandlers;
+              if (!streaming.actionHandlers && deltaHasClosingBrace) {
+                const trimmed = streaming.args.trimEnd();
+                if (trimmed.endsWith("}")) {
+                  try {
+                    const fullArgs = JSON.parse(streaming.args);
+                    if (fullArgs.actionHandlers && typeof fullArgs.actionHandlers === "object" && !Array.isArray(fullArgs.actionHandlers)) {
+                      streaming.actionHandlers = fullArgs.actionHandlers;
+                    }
+                  } catch {
+                    // Partial JSON — not yet parseable, will try again on next delta
                   }
-                } catch {
-                  // Partial JSON — not yet parseable, will try again on next delta
                 }
               }
 
@@ -332,7 +344,7 @@ export class A2UIMiddleware extends Middleware {
               // always created with data, avoiding a race condition where an empty-data
               // ACTIVITY_SNAPSHOT followed by a data ACTIVITY_SNAPSHOT can cause the
               // frontend to lose the data update.
-              if (streaming.schema) {
+              if (streaming.schema && deltaHasStructuralChar) {
                 const items = extractCompleteItems(streaming.args, streaming.dataKey);
                 const newItems = items && items.length > streaming.emittedCount;
                 // Re-emit if actionHandlers were just extracted (even with no new items)
@@ -351,7 +363,11 @@ export class A2UIMiddleware extends Middleware {
             const a2uiStream = a2uiJsonStreams.get(argsEvent.toolCallId);
             if (a2uiStream) {
               a2uiStream.args += argsEvent.delta;
-              const ops = extractCompleteA2UIOperations(a2uiStream.args);
+              // Only attempt extraction when the delta contains a closing brace,
+              // which could complete an operation object.
+              const ops = argsEvent.delta.includes("}")
+                ? extractCompleteA2UIOperations(a2uiStream.args)
+                : null;
               if (ops && ops.length > a2uiStream.emittedCount) {
                 a2uiStream.emittedCount = ops.length;
 
