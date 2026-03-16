@@ -72,17 +72,8 @@ describe("HttpAgent", () => {
     // Call run method directly, which should call runHttpRequest
     agent.run(input);
 
-    // Verify runHttpRequest was called with correct config
-    expect(runHttpRequest).toHaveBeenCalledWith("https://api.example.com/v1/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer test-token",
-        Accept: "text/event-stream",
-      },
-      body: JSON.stringify(input),
-      signal: expect.any(AbortSignal),
-    });
+    // Verify runHttpRequest was called with a fetch thunk
+    expect(runHttpRequest).toHaveBeenCalledWith(expect.any(Function));
   });
 
   it("should abort the request when abortRun is called", () => {
@@ -225,15 +216,52 @@ describe("HttpAgent", () => {
     // Call run method directly
     agent.run(input);
 
-    // Verify runHttpRequest was called with correct config
-    expect(runHttpRequest).toHaveBeenCalledWith("https://api.example.com/v1/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-      },
-      body: JSON.stringify(input),
-      signal: expect.any(AbortSignal),
+    // Verify runHttpRequest was called with a fetch thunk
+    expect(runHttpRequest).toHaveBeenCalledWith(expect.any(Function));
+  });
+
+  it("should use custom fetch function when provided in config", async () => {
+    const customFetch = vi.fn().mockResolvedValue(new Response());
+
+    const mockObservable = of({
+      type: HttpEventType.HEADERS,
+      status: 200,
+      headers: new Headers(),
     });
+
+    (runHttpRequest as Mock).mockReturnValue(mockObservable);
+
+    const agent = new HttpAgent({
+      url: "https://api.example.com/v1/chat",
+      headers: {},
+      fetch: customFetch,
+    });
+
+    const input = {
+      threadId: agent.threadId,
+      runId: "mock-run-id",
+      tools: [],
+      context: [],
+      forwardedProps: {},
+      state: agent.state,
+      messages: agent.messages,
+    };
+
+    agent.run(input);
+
+    // Verify runHttpRequest was called with a thunk
+    expect(runHttpRequest).toHaveBeenCalledWith(expect.any(Function));
+
+    // Execute the thunk to verify it uses the custom fetch
+    const thunk = (runHttpRequest as Mock).mock.calls[0][0];
+    await thunk();
+
+    expect(customFetch).toHaveBeenCalledWith(
+      "https://api.example.com/v1/chat",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    );
   });
 });

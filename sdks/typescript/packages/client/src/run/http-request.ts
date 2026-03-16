@@ -19,9 +19,11 @@ export interface HttpHeadersEvent {
 
 export type HttpEvent = HttpDataEvent | HttpHeadersEvent;
 
-export const runHttpRequest = (url: string, requestInit: RequestInit): Observable<HttpEvent> => {
+export const runHttpRequest = (
+  fetchResponse: () => Promise<Response>,
+): Observable<HttpEvent> => {
   // Defer the fetch so that it's executed when subscribed to
-  return defer(() => from(fetch(url, requestInit))).pipe(
+  return defer(() => from(fetchResponse())).pipe(
     switchMap((response) => {
       if (!response.ok) {
         const contentType = response.headers.get("content-type") || "";

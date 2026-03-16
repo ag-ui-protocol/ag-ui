@@ -1,35 +1,14 @@
 import { runHttpRequest, HttpEventType } from "../http-request";
-import { describe, it, expect, vi, beforeEach, afterEach, Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach, Mock } from "vitest";
 
 describe("runHttpRequest", () => {
-  let originalFetch: any;
   let fetchMock: Mock;
 
   beforeEach(() => {
-    // Save original fetch
-    originalFetch = global.fetch;
-
-    // Create a mock fetch function with proper response structure
     fetchMock = vi.fn();
-    global.fetch = fetchMock;
   });
 
-  afterEach(() => {
-    // Restore original fetch
-    global.fetch = originalFetch;
-  });
-
-  it("should call fetch with the provided configuration", async () => {
-    // Set up test configuration
-    const config = {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer test-token",
-      },
-      body: JSON.stringify({ key: "value" }),
-    };
-
+  it("should call the provided fetch thunk", async () => {
     // Mock a proper response
     const mockHeaders = new Headers();
     mockHeaders.append("Content-Type", "application/json");
@@ -48,10 +27,8 @@ describe("runHttpRequest", () => {
 
     fetchMock.mockResolvedValue(mockResponse);
 
-    // Create the run agent function
-
     // Execute the function which should trigger a fetch call
-    const observable = runHttpRequest("https://example.com/api", config);
+    const observable = runHttpRequest(() => fetchMock());
 
     // Subscribe to trigger the fetch
     const subscription = observable.subscribe({
@@ -63,63 +40,8 @@ describe("runHttpRequest", () => {
     // Give time for async operations to complete
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    // Verify fetch was called with the expected parameters
-    expect(fetchMock).toHaveBeenCalledWith("https://example.com/api", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer test-token",
-      },
-      body: JSON.stringify({ key: "value" }),
-    });
-
-    // Clean up subscription
-    subscription.unsubscribe();
-  });
-
-  it("should pass an abort signal when provided", async () => {
-    // Create an abort controller
-    const abortController = new AbortController();
-
-    // Set up test configuration with abort signal
-    const config = {
-      method: "GET",
-      abortSignal: abortController.signal,
-    };
-
-    // Mock a proper response
-    const mockHeaders = new Headers();
-    mockHeaders.append("Content-Type", "application/json");
-
-    const mockResponse = {
-      ok: true,
-      status: 200,
-      headers: mockHeaders,
-      body: {
-        getReader: vi.fn().mockReturnValue({
-          read: vi.fn().mockResolvedValue({ done: true }),
-          cancel: vi.fn(),
-        }),
-      },
-    };
-
-    fetchMock.mockResolvedValue(mockResponse);
-
-    // Create the run agent function
-    const observable = runHttpRequest("https://example.com/api", config);
-
-    // Subscribe to trigger the fetch
-    const subscription = observable.subscribe();
-
-    // Give time for async operations to complete
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    // Verify fetch was called with the expected configuration
-    // The implementation passes the config directly, including abortSignal property
-    expect(fetchMock).toHaveBeenCalledWith("https://example.com/api", {
-      method: "GET",
-      abortSignal: abortController.signal,
-    });
+    // Verify the fetch thunk was called
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     // Clean up subscription
     subscription.unsubscribe();
@@ -153,16 +75,10 @@ describe("runHttpRequest", () => {
       },
     };
 
-    // Override the fetch mock for this specific test
     fetchMock.mockResolvedValue(mockResponse);
 
-    // Set up test configuration
-    const config = {
-      method: "GET",
-    };
-
     // Create and execute the run agent function
-    const observable = runHttpRequest("https://example.com/api", config);
+    const observable = runHttpRequest(() => fetchMock());
 
     // Collect the emitted events
     const emittedEvents: any[] = [];
@@ -215,7 +131,7 @@ describe("runHttpRequest", () => {
     // Override fetch for this test
     fetchMock.mockResolvedValue(mockResponse);
 
-    const observable = runHttpRequest("https://example.com/api", { method: "GET" });
+    const observable = runHttpRequest(() => Promise.resolve(mockResponse) as Promise<Response>);
 
     const nextSpy = vi.fn();
 
