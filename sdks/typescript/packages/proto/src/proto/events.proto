@@ -54,6 +54,7 @@ message ToolCallStartEvent {
   string tool_call_id = 2;
   string tool_call_name = 3;
   optional string parent_message_id = 4;
+  map<string, google.protobuf.Struct> provider_metadata = 5;
 }
 
 message ToolCallArgsEvent {

@@ -39,6 +39,49 @@ describe("Tool Call Events", () => {
 
       expectRoundTripEquality(event);
     });
+
+    it("should round-trip encode/decode providerMetadata", () => {
+      const event: ToolCallStartEvent = {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "tool-1",
+        toolCallName: "search",
+        providerMetadata: {
+          google: { thought_signature: "sig_abc123" },
+        },
+      };
+
+      expectRoundTripEquality(event);
+    });
+
+    it("should round-trip encode/decode providerMetadata with multiple providers", () => {
+      const event: ToolCallStartEvent = {
+        type: EventType.TOOL_CALL_START,
+        timestamp: 1698765432123,
+        toolCallId: "tool-1",
+        toolCallName: "run_query",
+        parentMessageId: "msg-99",
+        providerMetadata: {
+          google: { thought_signature: "sig_xyz", grounding_score: 0.95 },
+          openai: { reasoning_tokens: 128 },
+        },
+      };
+
+      expectRoundTripEquality(event);
+    });
+
+    it("should decode absent providerMetadata as undefined, not empty object", () => {
+      // The proto encoder normalises undefined -> {} (proto3 map default).
+      // The decoder must normalise {} back to undefined so the Zod optional field is satisfied.
+      const event: ToolCallStartEvent = {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "tool-1",
+        toolCallName: "search",
+        // providerMetadata intentionally absent
+      };
+
+      const decoded = decode(encode(event)) as ToolCallStartEvent;
+      expect(decoded.providerMetadata).toBeUndefined();
+    });
   });
 
   describe("ToolCallArgsEvent", () => {

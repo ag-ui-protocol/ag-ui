@@ -39,11 +39,19 @@ export function encode(event: BaseEvent): Uint8Array {
   if (type === EventType.MESSAGES_SNAPSHOT && Array.isArray(rest.messages)) {
     rest.messages = (rest.messages as Message[]).map((message) => {
       const untypedMessage = message as any;
-      if (untypedMessage.toolCalls === undefined) {
-        return { ...message, toolCalls: [] };
-      }
-      return message;
+      // normalise providerMetadata on each tool call so the generated encoder's Object.entries() call is safe;
+      // always return a new object to avoid mutating the caller's original message reference
+      const toolCalls = (untypedMessage.toolCalls ?? []).map((tc: any) => ({
+        ...tc,
+        providerMetadata: tc.providerMetadata ?? {},
+      }));
+      return { ...message, toolCalls };
     });
+  }
+
+  // normalise providerMetadata to {} so the generated encoder's Object.entries() call is safe
+  if (type === EventType.TOOL_CALL_START && rest.providerMetadata === undefined) {
+    rest.providerMetadata = {};
   }
 
   // custom mapping for json patch operations
@@ -88,7 +96,24 @@ export function decode(data: Uint8Array): BaseEvent {
       if (untypedMessage.toolCalls?.length === 0) {
         untypedMessage.toolCalls = undefined;
       }
+      // normalise providerMetadata: empty map => undefined (matches optional Zod field)
+      if (Array.isArray(untypedMessage.toolCalls)) {
+        for (const tc of untypedMessage.toolCalls) {
+          if (tc.providerMetadata !== undefined && Object.keys(tc.providerMetadata).length === 0) {
+            tc.providerMetadata = undefined;
+          }
+        }
+      }
     }
+  }
+
+  // normalise empty providerMetadata map on ToolCallStartEvent to undefined
+  if (
+    decoded.type === EventType.TOOL_CALL_START &&
+    decoded.providerMetadata !== undefined &&
+    Object.keys(decoded.providerMetadata).length === 0
+  ) {
+    delete decoded.providerMetadata;
   }
 
   // custom mapping for json patch operations

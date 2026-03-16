@@ -117,6 +117,51 @@ class TestBaseTypes(unittest.TestCase):
         self.assertEqual(tool_call.function.name, "get_weather")
         self.assertEqual(tool_call.function.arguments, '{"location":"New York"}')
 
+    def test_tool_call_provider_metadata(self):
+        """Test that ToolCall supports provider_metadata field"""
+        metadata = {"google": {"thought_signature": "abc123"}}
+        tool_call = ToolCall(
+            id="call_meta",
+            function=FunctionCall(name="search", arguments="{}"),
+            provider_metadata=metadata
+        )
+
+        self.assertEqual(tool_call.provider_metadata, metadata)
+
+        # Serialization should use camelCase key
+        serialized = tool_call.model_dump(by_alias=True)
+        self.assertIn("providerMetadata", serialized)
+        self.assertEqual(serialized["providerMetadata"], metadata)
+
+    def test_tool_call_provider_metadata_camel_case_parse(self):
+        """Test that ToolCall parses provider_metadata from camelCase JSON"""
+        json_data = {
+            "id": "call_meta",
+            "type": "function",
+            "function": {
+                "name": "search",
+                "arguments": "{}"
+            },
+            "providerMetadata": {"google": {"thought_signature": "abc123"}}
+        }
+
+        tool_call = ToolCall.model_validate(json_data)
+
+        self.assertIsNotNone(tool_call.provider_metadata)
+        self.assertEqual(tool_call.provider_metadata["google"]["thought_signature"], "abc123")
+
+    def test_tool_call_provider_metadata_optional(self):
+        """Test that provider_metadata is optional and defaults to None"""
+        tool_call = ToolCall(
+            id="call_no_meta",
+            function=FunctionCall(name="noop", arguments="{}")
+        )
+
+        self.assertIsNone(tool_call.provider_metadata)
+
+        serialized = tool_call.model_dump(by_alias=True)
+        self.assertIsNone(serialized["providerMetadata"])
+
     def test_developer_message(self):
         """Test creating and serializing a developer message"""
         msg = DeveloperMessage(

@@ -3,7 +3,7 @@ This module contains the event types for the Agent User Interaction Protocol Pyt
 """
 
 from enum import Enum
-from typing import Annotated, Any, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import Field
 
@@ -124,6 +124,7 @@ class ToolCallStartEvent(BaseEvent):
     tool_call_id: str
     tool_call_name: str
     parent_message_id: Optional[str] = None
+    provider_metadata: Optional[Dict[str, Dict[str, Any]]] = None
 
 
 class ToolCallArgsEvent(BaseEvent):
