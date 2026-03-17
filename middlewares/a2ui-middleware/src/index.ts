@@ -258,9 +258,10 @@ export class A2UIMiddleware extends Middleware {
               a2uiJsonStreams.set(startEvent.toolCallId, { args: "", emittedCount: 0 });
             }
 
-            // render_a2ui: dynamic streaming — schema will come from the stream
+            // render_a2ui: dynamic streaming — schema will come from the stream.
+            // NOT added to a2uiToolCallIds so the TOOL_CALL_RESULT auto-detect
+            // also processes it (render_a2ui now returns a2ui.render_dynamic()).
             if (startEvent.toolCallName === RENDER_A2UI_TOOL) {
-              a2uiToolCallIds.add(startEvent.toolCallId);
               streamingToolCalls.set(startEvent.toolCallId, {
                 schema: null, args: "", emittedCount: 0,
                 dataKey: "items", schemaEmitted: false,
@@ -410,12 +411,17 @@ export class A2UIMiddleware extends Middleware {
           } else {
             subscriber.next(event);
 
-            // Auto-detect A2UI JSON in tool call results from other tools
+            // Auto-detect A2UI JSON in tool call results.
+            // This handles both:
+            // - Fixed-schema tools (search_flights) that return a2ui.render()
+            // - Dynamic tools (render_a2ui) that now also return a2ui.render_dynamic()
+            // For streaming tools (render_a2ui, fixed-schema streaming), the streaming
+            // handler already rendered progressively; this final result serves as a
+            // complete snapshot with the same surfaceId (replace: true).
             if (event.type === EventType.TOOL_CALL_RESULT) {
               const resultEvent = event as ToolCallResultEvent;
-              // Skip if this is a streaming tool call (already handled) or send_a2ui tool
-              if (!a2uiToolCallIds.has(resultEvent.toolCallId) &&
-                  !streamingToolCalls.has(resultEvent.toolCallId)) {
+              // Skip send_a2ui_json_to_client (handled separately)
+              if (!a2uiToolCallIds.has(resultEvent.toolCallId)) {
                 const parsed = tryParseA2UIOperations(resultEvent.content);
                 if (parsed) {
                   for (const activityEvent of this.createA2UIActivityEvents(
