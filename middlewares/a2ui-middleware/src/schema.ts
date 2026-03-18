@@ -960,10 +960,28 @@ When the last messages are a \`log_a2ui_event\` tool call + result:
 ---END A2UI JSON SCHEMA---`;
 
 /**
- * Try to parse text as A2UI operations.
- * Returns the array of operations if the text contains valid A2UI JSON, or null otherwise.
+ * The container key used to wrap A2UI operations for explicit detection.
+ * Must match the key used by copilotkit.a2ui.render() (Python SDK)
+ * and A2UIMessageRenderer (React).
  */
-export function tryParseA2UIOperations(text: string): Array<Record<string, unknown>> | null {
+export const A2UI_OPERATIONS_KEY = "a2ui_operations";
+export const A2UI_ACTION_HANDLERS_KEY = "a2ui_action_handlers";
+
+/**
+ * Parsed A2UI container result.
+ */
+export interface A2UIParseResult {
+  operations: Array<Record<string, unknown>>;
+  actionHandlers?: Record<string, Array<Record<string, unknown>>>;
+}
+
+/**
+ * Try to parse text as an A2UI container.
+ * Returns operations and optional action handlers if the text contains
+ * a valid { a2ui_operations: [...], a2ui_action_handlers?: {...} } container,
+ * or null otherwise.
+ */
+export function tryParseA2UIOperations(text: string): A2UIParseResult | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -971,22 +989,21 @@ export function tryParseA2UIOperations(text: string): Array<Record<string, unkno
     return null;
   }
 
-  if (Array.isArray(parsed)) {
-    // Check if at least one item is a valid A2UI operation
-    const hasA2UI = parsed.some(
-      (item) =>
-        typeof item === "object" &&
-        item !== null &&
-        getOperationSurfaceId(item as Record<string, unknown>) !== undefined
-    );
-    return hasA2UI ? (parsed as Array<Record<string, unknown>>) : null;
-  }
-
-  if (typeof parsed === "object" && parsed !== null) {
-    // Single object — check if it's a valid A2UI operation
-    if (getOperationSurfaceId(parsed as Record<string, unknown>) !== undefined) {
-      return [parsed as Record<string, unknown>];
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    !Array.isArray(parsed) &&
+    Array.isArray((parsed as Record<string, unknown>)[A2UI_OPERATIONS_KEY])
+  ) {
+    const obj = parsed as Record<string, unknown>;
+    const result: A2UIParseResult = {
+      operations: obj[A2UI_OPERATIONS_KEY] as Array<Record<string, unknown>>,
+    };
+    const handlers = obj[A2UI_ACTION_HANDLERS_KEY];
+    if (handlers && typeof handlers === "object" && !Array.isArray(handlers)) {
+      result.actionHandlers = handlers as Record<string, Array<Record<string, unknown>>>;
     }
+    return result;
   }
 
   return null;
@@ -1024,4 +1041,265 @@ export function extractSurfaceIds(
     }
   }
   return Array.from(surfaceIds);
+}
+
+/**
+ * Convert a plain JavaScript value to A2UI typed ValueMap format.
+ * Used by the middleware to convert streaming tool args to dataModelUpdate contents.
+ */
+export function toA2UITypedValue(value: unknown): Record<string, unknown> {
+  if (typeof value === "boolean") return { valueBoolean: value };
+  if (typeof value === "string") return { valueString: value };
+  if (typeof value === "number") return { valueNumber: value };
+  if (Array.isArray(value)) {
+    return {
+      valueMap: value.map((item, i) => ({
+        key: String(i),
+        ...toA2UITypedValue(item),
+      })),
+    };
+  }
+  if (typeof value === "object" && value !== null) {
+    return {
+      valueMap: Object.entries(value).map(([k, v]) => ({
+        key: k,
+        ...toA2UITypedValue(v),
+      })),
+    };
+  }
+  return { valueString: String(value) };
+}
+
+/**
+ * Convert a plain JavaScript object to A2UI dataModelUpdate contents array.
+ */
+export function toA2UIContents(data: Record<string, unknown>): Array<Record<string, unknown>> {
+  return Object.entries(data).map(([k, v]) => ({
+    key: k,
+    ...toA2UITypedValue(v),
+  }));
+}
+
+/**
+ * Extract complete items from a partially-streamed JSON object.
+ * Given partial JSON like `{"flights": [{"id":"1",...}, {"id":"2"` and dataKey "flights",
+ * returns an array of all complete objects parsed so far, or null if none found.
+ */
+export function extractCompleteItems(partial: string, dataKey: string): unknown[] | null {
+  const result = extractCompleteItemsWithStatus(partial, dataKey);
+  return result?.items ?? null;
+}
+
+/**
+ * Extended version of extractCompleteItems that also reports whether the
+ * array has been fully closed in the stream (i.e., the closing `]` has
+ * been received).  Callers that need the complete array (e.g., schema
+ * components) should wait for `arrayClosed === true`.
+ */
+export function extractCompleteItemsWithStatus(
+  partial: string,
+  dataKey: string,
+): { items: unknown[]; arrayClosed: boolean } | null {
+  // Find the start of the array value for this key
+  const keyPattern = `"${dataKey}"`;
+  const keyIdx = partial.indexOf(keyPattern);
+  if (keyIdx === -1) return null;
+
+  const bracketStart = partial.indexOf("[", keyIdx + keyPattern.length);
+  if (bracketStart === -1) return null;
+
+  // Walk through tracking brace depth AND bracket depth to find complete objects.
+  // We must stop at the closing ']' of the target array to avoid scanning into
+  // sibling properties (e.g., "components" followed by "items").
+  let braceDepth = 0;
+  let bracketDepth = 1; // we're inside the opening '['
+  let lastCompleteEnd = -1;
+  let inString = false;
+  let escaped = false;
+  let arrayClosed = false;
+
+  for (let i = bracketStart + 1; i < partial.length; i++) {
+    const ch = partial[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === "\\") { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "[") bracketDepth++;
+    if (ch === "]") {
+      bracketDepth--;
+      if (bracketDepth === 0) { arrayClosed = true; break; } // end of our target array
+    }
+    if (ch === "{") braceDepth++;
+    if (ch === "}") {
+      braceDepth--;
+      if (braceDepth === 0) lastCompleteEnd = i;
+    }
+  }
+
+  if (lastCompleteEnd === -1) return null;
+
+  // Build a valid JSON array from the complete objects
+  const arrayStr = partial.substring(bracketStart, lastCompleteEnd + 1) + "]";
+  try {
+    const items = JSON.parse(arrayStr);
+    return { items, arrayClosed };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract complete A2UI operation objects from the partially-streamed tool call args
+ * for `send_a2ui_json_to_client`.
+ *
+ * The tool call args JSON looks like: `{"a2ui_json": "[{\"surfaceUpdate\":...}, ...]"}`
+ * The `a2ui_json` value is a JSON-encoded string containing an array of operations.
+ * As the LLM streams, we get a partial version of this outer JSON.
+ *
+ * This function:
+ * 1. Extracts the partial string value of `a2ui_json` from the partial outer JSON
+ * 2. Unescapes JSON escape sequences to recover the inner JSON
+ * 3. Finds complete top-level objects in the inner partial array
+ *
+ * Returns an array of parsed operation objects, or null if none are complete yet.
+ */
+export function extractCompleteA2UIOperations(partialArgs: string): Array<Record<string, unknown>> | null {
+  // Step 1: Find the start of the a2ui_json string value.
+  // We look for `"a2ui_json"` followed by `:` and then `"`.
+  const keyPattern = '"a2ui_json"';
+  const keyIdx = partialArgs.indexOf(keyPattern);
+  if (keyIdx === -1) return null;
+
+  // Find the opening quote of the string value
+  const afterKey = partialArgs.indexOf(":", keyIdx + keyPattern.length);
+  if (afterKey === -1) return null;
+
+  let valueStart = -1;
+  for (let i = afterKey + 1; i < partialArgs.length; i++) {
+    if (partialArgs[i] === '"') {
+      valueStart = i + 1; // position after the opening quote
+      break;
+    }
+    if (partialArgs[i] !== ' ' && partialArgs[i] !== '\n' && partialArgs[i] !== '\r' && partialArgs[i] !== '\t') {
+      // Non-whitespace, non-quote character — value isn't a string
+      return null;
+    }
+  }
+  if (valueStart === -1) return null;
+
+  // Step 2: Extract and unescape the partial string value.
+  // Walk through the outer JSON string, handling escape sequences.
+  // The string ends when we hit an unescaped `"`, but since it's partial,
+  // we may not find the closing quote yet.
+  let innerJson = "";
+  let i = valueStart;
+  while (i < partialArgs.length) {
+    const ch = partialArgs[i];
+    if (ch === '\\') {
+      // Escape sequence
+      if (i + 1 >= partialArgs.length) break; // truncated escape
+      const next = partialArgs[i + 1];
+      switch (next) {
+        case '"': innerJson += '"'; i += 2; break;
+        case '\\': innerJson += '\\'; i += 2; break;
+        case '/': innerJson += '/'; i += 2; break;
+        case 'n': innerJson += '\n'; i += 2; break;
+        case 'r': innerJson += '\r'; i += 2; break;
+        case 't': innerJson += '\t'; i += 2; break;
+        case 'b': innerJson += '\b'; i += 2; break;
+        case 'f': innerJson += '\f'; i += 2; break;
+        case 'u': {
+          // Unicode escape: \uXXXX
+          if (i + 5 < partialArgs.length) {
+            const hex = partialArgs.substring(i + 2, i + 6);
+            innerJson += String.fromCharCode(parseInt(hex, 16));
+            i += 6;
+          } else {
+            break; // truncated unicode escape
+          }
+          break;
+        }
+        default:
+          // Unknown escape, just include as-is
+          innerJson += next;
+          i += 2;
+          break;
+      }
+    } else if (ch === '"') {
+      // End of the string value (unescaped quote)
+      break;
+    } else {
+      innerJson += ch;
+      i++;
+    }
+  }
+
+  // Step 3: Find complete top-level objects in the inner JSON array.
+  // The inner JSON looks like: `[{"surfaceUpdate": ...}, {"beginRendering": ...}, ...`
+  // Find the opening bracket
+  const bracketStart = innerJson.indexOf("[");
+  if (bracketStart === -1) return null;
+
+  // Walk through tracking brace depth to find complete objects
+  let depth = 0;
+  let lastCompleteEnd = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let j = bracketStart + 1; j < innerJson.length; j++) {
+    const ch = innerJson[j];
+    if (escaped) { escaped = false; continue; }
+    if (ch === "\\") { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") depth++;
+    if (ch === "}") {
+      depth--;
+      if (depth === 0) lastCompleteEnd = j;
+    }
+  }
+
+  if (lastCompleteEnd === -1) return null;
+
+  // Build a valid JSON array from the complete objects
+  const arrayStr = innerJson.substring(bracketStart, lastCompleteEnd + 1) + "]";
+  try {
+    return JSON.parse(arrayStr) as Array<Record<string, unknown>>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract a simple string field value from partial JSON.
+ * Looks for `"key": "value"` and returns the value, or null if incomplete.
+ */
+export function extractStringField(partialJson: string, key: string): string | null {
+  const pattern = `"${key}"`;
+  const keyIdx = partialJson.indexOf(pattern);
+  if (keyIdx === -1) return null;
+
+  const colonIdx = partialJson.indexOf(":", keyIdx + pattern.length);
+  if (colonIdx === -1) return null;
+
+  // Find opening quote
+  let start = -1;
+  for (let i = colonIdx + 1; i < partialJson.length; i++) {
+    const ch = partialJson[i];
+    if (ch === '"') { start = i + 1; break; }
+    if (ch !== ' ' && ch !== '\n' && ch !== '\r' && ch !== '\t') return null;
+  }
+  if (start === -1) return null;
+
+  // Find closing quote (handling escapes)
+  let value = "";
+  let escaped = false;
+  for (let i = start; i < partialJson.length; i++) {
+    const ch = partialJson[i];
+    if (escaped) { value += ch; escaped = false; continue; }
+    if (ch === '\\') { escaped = true; continue; }
+    if (ch === '"') return value;
+    value += ch;
+  }
+  return null;
 }

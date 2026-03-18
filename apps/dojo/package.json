@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "mastra:dev": "mastra dev",
     "generate-content-json": "npx tsx scripts/generate-content-json.ts",
-    "run-everything": "./scripts/prep-dojo-everything.js && ./scripts/run-dojo-everything.js"
+    "run-everything": "./scripts/prep-dojo-everything.js && ./scripts/run-dojo-everything.js",
+    "local-install": "bash scripts/local-install.sh"
   },
   "dependencies": {
     "@a2a-js/sdk": "0.2.5",

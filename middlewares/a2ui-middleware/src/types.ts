@@ -1,4 +1,39 @@
 /**
+ * A2UI surface configuration: the component tree, root, and data binding.
+ */
+export interface A2UISurfaceConfig {
+  /** Unique surface ID */
+  surfaceId: string;
+  /** Root component ID */
+  root: string;
+  /** The fixed component tree */
+  components: Array<Record<string, unknown>>;
+  /**
+   * Which arg key contains the data to bind.
+   * E.g. "flights" means the tool arg `{ flights: [...] }` is used for dataModelUpdate.
+   */
+  dataKey: string;
+  /**
+   * Pre-declared action handlers. When a button action is dispatched,
+   * the renderer checks for an exact action name match, then "*" catch-all.
+   * Same interface as a2ui.render(action_handlers={...}) in the Python SDK.
+   */
+  actionHandlers?: Record<string, Array<Record<string, unknown>>>;
+}
+
+/**
+ * Binds a tool to an A2UI surface. When the middleware sees a TOOL_CALL_START
+ * for this tool, it emits the surface schema immediately. As the LLM streams
+ * tool args, it partial-parses and emits dataModelUpdate progressively.
+ */
+export interface A2UIStreamingSurface {
+  /** The tool name that triggers this surface */
+  toolName: string;
+  /** The A2UI surface to render */
+  surface: A2UISurfaceConfig;
+}
+
+/**
  * Configuration for the A2UI Middleware
  */
 export interface A2UIMiddlewareConfig {
@@ -12,6 +47,12 @@ export interface A2UIMiddlewareConfig {
    * render any valid A2UI JSON that appears in the event stream.
    */
   injectA2UITool?: boolean;
+
+  /**
+   * Surfaces that stream progressively when their tool is called.
+   * Schema is emitted at TOOL_CALL_START, data streams as args are generated.
+   */
+  streamingSurfaces?: A2UIStreamingSurface[];
 }
 
 /**

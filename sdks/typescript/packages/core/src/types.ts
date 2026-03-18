@@ -135,6 +135,7 @@ export const ToolSchema = z.object({
   name: z.string(),
   description: z.string(),
   parameters: z.any(), // JSON Schema for the tool parameters
+  metadata: z.record(z.any()).optional(), // Arbitrary tool metadata (e.g. a2ui schema)
 });
 
 export const RunAgentInputSchema = z.object({
