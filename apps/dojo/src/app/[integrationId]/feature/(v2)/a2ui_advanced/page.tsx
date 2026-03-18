@@ -1,34 +1,116 @@
 "use client";
-import React from "react";
+import React, { memo } from "react";
 import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
 import {
   CopilotChat,
   useConfigureSuggestions,
+  useRenderTool,
   useA2UIActionHandler,
 } from "@copilotkit/react-core/v2";
 import { CopilotKit } from "@copilotkit/react-core";
+import { z } from "zod";
 
 export const dynamic = "force-dynamic";
 
 // ---------------------------------------------------------------------------
-// Frontend Action Handler (optimistic UI on button clicks)
-//
-// When the user clicks a button in the A2UI surface, this handler fires
-// instantly — no server round-trip needed. It can return custom A2UI
-// operations for immediate feedback, or fall back to the agent's
-// pre-declared ops.
-//
-// This is a key advanced pattern: the same dynamic schema agent is used,
-// but the frontend adds instant interactivity via useA2UIActionHandler.
-// Compare with the "A2UI Dynamic Schema" demo which has no action handler.
-//
-// NOTE: Custom progress rendering via useRenderTool("render_a2ui") requires
-// CopilotKit infrastructure changes to coordinate with the built-in A2UI
-// progress renderer. This will be added in a future update.
+// 1. Custom Progress Renderer for Dynamic A2UI
+//    Overrides the built-in render_a2ui progress indicator with a branded
+//    violet skeleton showing live component/item counters.
+// ---------------------------------------------------------------------------
+
+const A2UIProgress = memo(function A2UIProgress({
+  parameters,
+}: {
+  parameters: Record<string, unknown>;
+}) {
+  const componentCount = Array.isArray(parameters?.components)
+    ? parameters.components.length
+    : 0;
+  const itemCount = Array.isArray(parameters?.items)
+    ? parameters.items.length
+    : 0;
+
+  return (
+    <div className="rounded-xl border-2 border-violet-300 bg-gradient-to-br from-violet-50 via-white to-indigo-50 p-5 space-y-4 shadow-lg shadow-violet-100/50">
+      {/* Header with branded spinner */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="relative h-8 w-8">
+            <div className="absolute inset-0 rounded-full border-[3px] border-violet-200" />
+            <div className="absolute inset-0 rounded-full border-[3px] border-transparent border-t-violet-600 animate-spin" />
+            <div className="absolute inset-[6px] rounded-full bg-violet-600/10" />
+          </div>
+          <div>
+            <span className="text-sm font-semibold text-violet-900">
+              Custom A2UI Progress
+            </span>
+            <p className="text-[11px] text-violet-500">
+              useRenderTool(&quot;render_a2ui&quot;)
+            </p>
+          </div>
+        </div>
+        <span className="text-xs font-mono bg-violet-100 text-violet-700 px-2 py-1 rounded-full">
+          {componentCount > 0 ? `${componentCount} nodes` : "parsing..."}
+        </span>
+      </div>
+
+      {/* Live streaming counters */}
+      <div className="grid grid-cols-3 gap-2">
+        <div className="rounded-lg bg-violet-100/60 p-2 text-center">
+          <div className="text-lg font-bold text-violet-700">{componentCount}</div>
+          <div className="text-[10px] uppercase tracking-wider text-violet-500">Components</div>
+        </div>
+        <div className="rounded-lg bg-indigo-100/60 p-2 text-center">
+          <div className="text-lg font-bold text-indigo-700">{itemCount}</div>
+          <div className="text-[10px] uppercase tracking-wider text-indigo-500">Data Items</div>
+        </div>
+        <div className="rounded-lg bg-purple-100/60 p-2 text-center">
+          <div className="text-lg font-bold text-purple-700">
+            {parameters?.root ? "1" : "0"}
+          </div>
+          <div className="text-[10px] uppercase tracking-wider text-purple-500">Root Set</div>
+        </div>
+      </div>
+
+      {/* Animated skeleton cards that light up as items stream in */}
+      <div className="flex gap-2">
+        {[0, 1, 2].map((i) => (
+          <div
+            key={i}
+            className="flex-1 rounded-lg border border-violet-200/60 bg-white/80 p-3 space-y-2"
+            style={{ opacity: itemCount > i ? 1 : 0.4, transition: "opacity 0.3s" }}
+          >
+            <div className="h-3 w-2/3 rounded-full bg-violet-200 animate-pulse" />
+            <div className="h-2 w-full rounded-full bg-violet-100 animate-pulse" />
+            <div className="h-2 w-4/5 rounded-full bg-violet-100 animate-pulse" />
+            <div className="h-6 w-full rounded-md bg-violet-300/40 mt-2 animate-pulse" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 2. Frontend Action Handler (optimistic UI on button clicks)
+//    Instant response when buttons are clicked — no server round-trip.
 // ---------------------------------------------------------------------------
 
 function useAdvancedA2UIFeatures() {
+  // Custom progress renderer — overrides the built-in render_a2ui indicator
+  useRenderTool(
+    {
+      name: "render_a2ui",
+      parameters: z.any(),
+      render: ({ status, parameters }) => {
+        if (status === "complete") return <></>;
+        return <A2UIProgress parameters={parameters ?? {}} />;
+      },
+    },
+    [],
+  );
+
   // Optimistic action handler for button clicks
   useA2UIActionHandler((action, declaredOps) => {
     // Use pre-declared ops from the agent if available
@@ -41,12 +123,7 @@ function useAdvancedA2UIFeatures() {
         surfaceUpdate: {
           surfaceId,
           components: [
-            {
-              id: "root",
-              component: {
-                Card: { child: "confirm-col" },
-              },
-            },
+            { id: "root", component: { Card: { child: "confirm-col" } } },
             {
               id: "confirm-col",
               component: {
@@ -57,24 +134,8 @@ function useAdvancedA2UIFeatures() {
                 },
               },
             },
-            {
-              id: "confirm-title",
-              component: {
-                Text: {
-                  text: { path: "/title" },
-                  usageHint: "h2",
-                },
-              },
-            },
-            {
-              id: "confirm-detail",
-              component: {
-                Text: {
-                  text: { path: "/detail" },
-                  usageHint: "body",
-                },
-              },
-            },
+            { id: "confirm-title", component: { Text: { text: { path: "/title" }, usageHint: "h2" } } },
+            { id: "confirm-detail", component: { Text: { text: { path: "/detail" }, usageHint: "body" } } },
           ],
         },
       },
@@ -82,11 +143,8 @@ function useAdvancedA2UIFeatures() {
         dataModelUpdate: {
           surfaceId,
           contents: [
-            { key: "title", valueString: "Action Received" },
-            {
-              key: "detail",
-              valueString: `"${action.name}" triggered${action.context ? ` with ${JSON.stringify(action.context)}` : ""}.`,
-            },
+            { key: "title", valueString: "Product Selected!" },
+            { key: "detail", valueString: "Your selection has been received." },
           ],
         },
       },
