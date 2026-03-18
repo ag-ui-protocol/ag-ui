@@ -108,8 +108,8 @@ export const featureConfig: FeatureConfig[] = [
   createFeatureConfig({
     id: "a2ui_advanced",
     name: "A2UI Advanced",
-    description: "Dynamic A2UI with frontend action handlers for instant optimistic button responses",
-    tags: ["A2UI", "Advanced", "Action Handlers", "Optimistic UI"],
+    description: "Dynamic A2UI with custom progress renderer and frontend action handlers",
+    tags: ["A2UI", "Advanced", "Progress", "Action Handlers"],
   }),
 ];
 
