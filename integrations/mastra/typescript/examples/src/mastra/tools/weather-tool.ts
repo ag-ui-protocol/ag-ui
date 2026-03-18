@@ -21,7 +21,7 @@ interface WeatherResponse {
 }
 
 export const weatherTool = createTool({
-  id: "get-weather",
+  id: "get_weather",
   description: "Get current weather for a location",
   inputSchema: z.object({
     location: z.string().describe("City name"),
@@ -35,8 +35,8 @@ export const weatherTool = createTool({
     conditions: z.string(),
     location: z.string(),
   }),
-  execute: async ({ context }) => {
-    return await getWeather(context.location);
+  execute: async (inputData) => {
+    return await getWeather(inputData.location);
   },
 });
 

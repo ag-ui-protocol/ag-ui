@@ -47,7 +47,7 @@ approval_tool = Tool(
 ### Creating Tools
 
 ```python
-from ag_ui_adk import ADKAgent
+from ag_ui_adk import ADKAgent, AGUIToolset
 from google.adk.agents import LlmAgent
 from ag_ui.core import RunAgentInput, UserMessage, Tool
 
@@ -99,6 +99,9 @@ agent = LlmAgent(
     instruction="""You are a helpful assistant that can request approvals and perform calculations.
     Use request_approval for sensitive operations that need human review.
     Use calculate for math operations and get_weather for weather information."""
+    tools=[
+        AGUIToolset(), # Add the tools provided by the AG-UI client
+    ]
 )
 
 # 3. Create middleware

@@ -18,9 +18,9 @@ internal actual fun createPlatformHttpClient(
     install(ContentNegotiation) {
         json(AgUiJson)
     }
-    
+
     install(SSE)
-    
+
     install(HttpTimeout) {
         requestTimeoutMillis = requestTimeout
         connectTimeoutMillis = connectTimeout

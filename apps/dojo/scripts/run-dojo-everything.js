@@ -1,27 +1,31 @@
 #!/usr/bin/env node
 
-const { execSync } = require('child_process');
-const path = require('path');
-const concurrently = require('concurrently');
+const { execSync } = require("child_process");
+const path = require("path");
+const concurrently = require("concurrently");
+
+// Pinned: @langchain/langgraph-api@1.1.14 regressed schema extraction, causing
+// worker timeouts on CI runners. Re-evaluate when a newer version fixes the issue.
+const LANGGRAPH_CLI_VERSION = '1.1.13';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
-const showHelp = args.includes('--help') || args.includes('-h');
-const dryRun = args.includes('--dry-run');
+const showHelp = args.includes("--help") || args.includes("-h");
+const dryRun = args.includes("--dry-run");
 
 function parseList(flag) {
   const idx = args.indexOf(flag);
   if (idx !== -1 && args[idx + 1]) {
     return args[idx + 1]
-      .split(',')
+      .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
   }
   return null;
 }
 
-const onlyList = parseList('--only') || parseList('--include');
-const excludeList = parseList('--exclude') || [];
+const onlyList = parseList("--only") || parseList("--include");
+const excludeList = parseList("--exclude") || [];
 
 if (showHelp) {
   console.log(`
@@ -42,23 +46,31 @@ Examples:
   process.exit(0);
 }
 
-const gitRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim();
-const integrationsRoot = path.join(gitRoot, 'integrations');
-const middlewaresRoot = path.join(gitRoot, 'middlewares');
+const gitRoot = execSync("git rev-parse --show-toplevel", {
+  encoding: "utf-8",
+}).trim();
+const integrationsRoot = path.join(gitRoot, "integrations");
+const middlewaresRoot = path.join(gitRoot, "middlewares");
 
 // Define all runnable services keyed by a stable id
 const ALL_SERVICES = {
   'server-starter': [{
-    command: 'poetry run dev',
+    command: 'uv run dev',
     name: 'Server Starter',
     cwd: path.join(integrationsRoot, 'server-starter/python/examples'),
     env: { PORT: 8000 },
   }],
   'server-starter-all': [{
-    command: 'poetry run dev',
+    command: 'uv run dev',
     name: 'Server AF',
     cwd: path.join(integrationsRoot, 'server-starter-all-features/python/examples'),
     env: { PORT: 8001 },
+  }],
+  'ag2': [{
+    command: 'uv run dev',
+    name: 'AG2',
+    cwd: path.join(integrationsRoot, 'ag2/python/examples'),
+    env: { PORT: 8018 },
   }],
   'agno': [{
     command: 'uv run dev',
@@ -73,25 +85,28 @@ const ALL_SERVICES = {
     env: { PORT: 8003 },
   }],
   'langgraph-fastapi': [{
-    command: 'poetry run dev',
+    command: 'uv run dev',
     name: 'LG FastAPI',
     cwd: path.join(integrationsRoot, 'langgraph/python/examples'),
-    env: {
-      PORT: 8004,
-      POETRY_VIRTUALENVS_IN_PROJECT: 'false',
-    },
+    env: { PORT: 8004 },
   }],
   'langgraph-platform-python': [{
-    command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8005',
+    command: `pnpx @langchain/langgraph-cli@${LANGGRAPH_CLI_VERSION} dev --no-browser --host 127.0.0.1 --port 8005`,
     name: 'LG Platform Py',
     cwd: path.join(integrationsRoot, 'langgraph/python/examples'),
     env: { PORT: 8005 },
   }],
   'langgraph-platform-typescript': [{
-    command: 'pnpx @langchain/langgraph-cli@latest dev --no-browser --host 127.0.0.1 --port 8006',
+    command: `pnpx @langchain/langgraph-cli@${LANGGRAPH_CLI_VERSION} dev --no-browser --host 127.0.0.1 --port 8006`,
     name: 'LG Platform TS',
     cwd: path.join(integrationsRoot, 'langgraph/typescript/examples'),
     env: { PORT: 8006 },
+  }],
+  'langroid': [{
+    command: 'uv run dev',
+    name: 'Langroid',
+    cwd: path.join(integrationsRoot, 'langroid/python/examples'),
+    env: { PORT: 8021 },
   }],
   'llama-index': [{
     command: 'uv run dev',
@@ -103,7 +118,11 @@ const ALL_SERVICES = {
     command: 'npm run dev',
     name: 'Mastra',
     cwd: path.join(integrationsRoot, 'mastra/typescript/examples'),
-    env: { PORT: 8008 },
+    env: {
+      PORT: 8008,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY || 'test-key',
+      ...(!process.env.OPENAI_API_KEY && { OPENAI_BASE_URL: 'http://localhost:5555/v1' }),
+    },
   }],
   'pydantic-ai': [{
     command: 'uv run dev',
@@ -147,6 +166,26 @@ const ALL_SERVICES = {
     cwd: path.join(middlewaresRoot, "a2a-middleware/examples"),
     env: { PORT: 8014 },
   }],
+  'claude-agent-sdk-python': [{
+    command: 'uv run dev',
+    name: 'Claude Agent SDK (Python)',
+    cwd: path.join(integrationsRoot, 'claude-agent-sdk/python/examples'),
+    env: {
+      PORT: 8019,
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || 'sk-ant-api03-test-key-for-llmock-000000000000000000000000000000000000000000000000-000000000000AA',
+      ...(!process.env.ANTHROPIC_API_KEY && { ANTHROPIC_BASE_URL: 'http://localhost:5555' }),
+    },
+  }],
+  'claude-agent-sdk-typescript': [{
+    command: 'npx tsx examples/server.ts',
+    name: 'Claude Agent SDK (TypeScript)',
+    cwd: path.join(integrationsRoot, 'claude-agent-sdk/typescript'),
+    env: {
+      PORT: 8020,
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || 'sk-ant-api03-test-key-for-llmock-000000000000000000000000000000000000000000000000-000000000000AA',
+      ...(!process.env.ANTHROPIC_API_KEY && { ANTHROPIC_BASE_URL: 'http://localhost:5555' }),
+    },
+  }],
   'microsoft-agent-framework-python': [{
     command: 'uv run dev',
     name: 'Microsoft Agent Framework (Python)',
@@ -165,6 +204,7 @@ const ALL_SERVICES = {
     cwd: path.join(gitRoot, 'apps/dojo'),
     env: {
       PORT: 9999,
+      AG2_URL: 'http://localhost:8018',
       SERVER_STARTER_URL: 'http://localhost:8000',
       SERVER_STARTER_ALL_FEATURES_URL: 'http://localhost:8001',
       AGNO_URL: 'http://localhost:8002',
@@ -181,6 +221,9 @@ const ALL_SERVICES = {
       A2A_MIDDLEWARE_IT_URL: 'http://localhost:8013',
       A2A_MIDDLEWARE_ORCHESTRATOR_URL: 'http://localhost:8014',
       AWS_STRANDS_URL: 'http://localhost:8017',
+      CLAUDE_AGENT_SDK_PYTHON_URL: 'http://localhost:8019',
+      CLAUDE_AGENT_SDK_TYPESCRIPT_URL: 'http://localhost:8020',
+      LANGROID_URL: 'http://localhost:8021',
       NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: 'cpkdojo.local___CopilotKit Feature Viewer',
     },
   }],
@@ -190,6 +233,7 @@ const ALL_SERVICES = {
     cwd: gitRoot,
     env: {
       PORT: 9999,
+      AG2_URL: 'http://localhost:8018',
       SERVER_STARTER_URL: 'http://localhost:8000',
       SERVER_STARTER_ALL_FEATURES_URL: 'http://localhost:8001',
       AGNO_URL: 'http://localhost:8002',
@@ -206,14 +250,17 @@ const ALL_SERVICES = {
       A2A_MIDDLEWARE_IT_URL: 'http://localhost:8013',
       A2A_MIDDLEWARE_ORCHESTRATOR_URL: 'http://localhost:8014',
       AWS_STRANDS_URL: 'http://localhost:8017',
+      CLAUDE_AGENT_SDK_PYTHON_URL: 'http://localhost:8019',
+      CLAUDE_AGENT_SDK_TYPESCRIPT_URL: 'http://localhost:8020',
+      LANGROID_URL: 'http://localhost:8021',
       NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: 'cpkdojo.local___CopilotKit Feature Viewer',
     },
   }],
 };
 
 function printDryRunServices(procs) {
-  console.log('Dry run - would start the following services:');
-  procs.forEach(proc => {
+  console.log("Dry run - would start the following services:");
+  procs.forEach((proc) => {
     console.log(`  - ${proc.name} (${proc.cwd})`);
     console.log(`    Command: ${proc.command}`);
     console.log(`    Environment variables:`);
@@ -222,9 +269,9 @@ function printDryRunServices(procs) {
         console.log(`      ${key}: ${value}`);
       });
     } else {
-      console.log('      No environment variables specified.');
+      console.log("      No environment variables specified.");
     }
-    console.log('');
+    console.log("");
   });
   process.exit(0);
 }
@@ -240,8 +287,27 @@ async function main() {
   }
 
   if (selectedKeys.includes("dojo") && selectedKeys.includes("dojo-dev")) {
-    selectedKeys= selectedKeys.filter(x => x != "dojo-dev");
+    selectedKeys = selectedKeys.filter((x) => x != "dojo-dev");
   }
+
+  // LLMock: inject OPENAI_BASE_URL, OPENAI_API_BASE, and OPENAI_API_KEY
+  // defaults so all framework agents route OpenAI API calls to the mock server
+  // when running.  OPENAI_API_BASE is the legacy env var used by llama-index
+  // (via resolve_openai_credentials) and litellm (used by crew-ai).
+  const openaiEnvDefaults = {
+    OPENAI_BASE_URL: process.env.OPENAI_BASE_URL || 'http://localhost:5555/v1',
+    OPENAI_API_BASE: process.env.OPENAI_API_BASE || 'http://localhost:5555/v1',
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY || 'sk-mock',
+  };
+
+  // LLMock: inject GOOGLE_GEMINI_BASE_URL so ADK middleware agents (which keep
+  // their native Gemini model strings) route to the mock server via the genai
+  // client's built-in env var support. No /v1 suffix — the genai client appends
+  // the full /v1beta/models/{model}:generateContent path itself.
+  const geminiEnvDefaults = {
+    GOOGLE_GEMINI_BASE_URL: process.env.GOOGLE_GEMINI_BASE_URL || 'http://localhost:5555',
+    GOOGLE_API_KEY: process.env.GOOGLE_API_KEY || 'fake-gemini-key',
+  };
 
   // Build processes, warn for unknown keys
   const procs = [];
@@ -251,6 +317,9 @@ async function main() {
       console.warn(`Skipping unknown service: ${key}`);
       continue;
     }
+    for (const svc of svcs) {
+      svc.env = { ...openaiEnvDefaults, ...geminiEnvDefaults, ...svc.env };
+    }
     procs.push(...svcs);
   }
 
@@ -258,9 +327,11 @@ async function main() {
     printDryRunServices(procs);
   }
 
-  console.log('Starting services: ', procs.map((p) => p.name).join(', '));
+  console.log("Starting services: ", procs.map((p) => p.name).join(", "));
 
-  const { result } = concurrently(procs, { killOthersOn: ['failure', 'success'] });
+  const { result } = concurrently(procs, {
+    killOthersOn: ["failure", "success"],
+  });
 
   result
     .then(() => process.exit(0))

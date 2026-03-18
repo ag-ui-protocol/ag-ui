@@ -19,7 +19,8 @@ open class AgUiAgent(
     protected val url: String,
     configure: AgUiAgentConfig.() -> Unit = {}
 ) {
-    protected val config = AgUiAgentConfig().apply(configure)
+    /** Configuration for this agent. Mutable properties like forwardedProps can be updated. */
+    val config = AgUiAgentConfig().apply(configure)
 
     // Create HttpAgent which extends AbstractAgent
     protected val agent = HttpAgent(

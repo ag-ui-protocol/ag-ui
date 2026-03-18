@@ -50,6 +50,38 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for diagrams and a deeper dive.
 | `src/ag_ui_strands/endpoint.py` | FastAPI endpoint helper |
 | `examples/server/api/*.py` | Ready-to-run demo apps |
 
+## Amazon Bedrock AgentCore considerations
+
+If you are planning to deploy your agent into Amazon Bedrock AgentCore (AC), please note that AC expects the following:
+- The server is running on port 8080.
+- The path `/invocations - POST` is implemented and can be used for interacting with the agent.
+- The path `/ping - GET` is implemented and can be used for verifying that the agent is operational and ready to handle requests.
+
+To implement the path mentioned above, you can use the helper function `create_strands_app` and pass the agent interaction path and the ping path as shown below:
+```python
+    create_strands_app(agui_agent, "/invocations", "/ping")
+```
+You can also use the helper functions `add_strands_fastapi_endpoint` and `add_ping` for adding the mentioned paths to a FastAPI app that you are creating separately:
+
+```python
+    add_strands_fastapi_endpoint(app, agent, "/invocations")
+    add_ping(app, "/ping")
+```
+
+Requests to the AC endpoint must be authenticated. You can configure your agent runtime to accept JWT bearer tokens (via Amazon Cognito) or use SigV4. See [Set up authentication](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui.html) in the AgentCore documentation.
+
+For details on how AgentCore handles AG-UI requests, event streaming, and error formatting, see the [AG-UI protocol contract](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui-protocol-contract.html).
+
+To deploy, use the [AgentCore Starter Toolkit](https://github.com/awslabs/bedrock-agentcore-starter-toolkit):
+```bash
+pip install bedrock-agentcore-starter-toolkit
+agentcore configure -e my_agui_server.py --protocol AGUI
+agentcore deploy
+```
+
+For the complete deployment walkthrough, see [Deploy AG-UI servers in AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui.html).
+
+
 ## Next Steps
 
 - Wire Strands’ callback handler into the wrapper to expose multi-agent metadata.

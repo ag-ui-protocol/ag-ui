@@ -1,4 +1,5 @@
 type envVars = {
+  ag2Url: string;
   serverStarterUrl: string;
   serverStarterAllFeaturesUrl: string;
   mastraUrl: string;
@@ -9,6 +10,7 @@ type envVars = {
   springAiUrl: string;
   llamaIndexUrl: string;
   crewAiUrl: string;
+  agentSpecUrl: string;
   pydanticAIUrl: string;
   adkMiddlewareUrl: string;
   agentFrameworkPythonUrl: string;
@@ -19,6 +21,9 @@ type envVars = {
   a2aMiddlewareItUrl: string;
   a2aMiddlewareOrchestratorUrl: string;
   awsStrandsUrl: string;
+  claudeAgentSdkPythonUrl: string;
+  claudeAgentSdkTypescriptUrl: string;
+  langroidUrl: string;
   customDomainTitle: Record<string, string>;
 }
 
@@ -32,6 +37,7 @@ export default function getEnvVars(): envVars {
   }
 
   return {
+    ag2Url: process.env.AG2_URL || 'http://localhost:8018',
     serverStarterUrl: process.env.SERVER_STARTER_URL || 'http://localhost:8000',
     serverStarterAllFeaturesUrl: process.env.SERVER_STARTER_ALL_FEATURES_URL || 'http://localhost:8000',
     mastraUrl: process.env.MASTRA_URL || 'http://localhost:4111',
@@ -41,9 +47,10 @@ export default function getEnvVars(): envVars {
     agnoUrl: process.env.AGNO_URL || 'http://localhost:9001',
     llamaIndexUrl: process.env.LLAMA_INDEX_URL || 'http://localhost:9000',
     crewAiUrl: process.env.CREW_AI_URL || 'http://localhost:9002',
+    agentSpecUrl: process.env.AGENT_SPEC_URL || 'http://localhost:9003',
     pydanticAIUrl: process.env.PYDANTIC_AI_URL || 'http://localhost:9000',
     adkMiddlewareUrl: process.env.ADK_MIDDLEWARE_URL || 'http://localhost:8000',
-    agentFrameworkPythonUrl: process.env.AGENT_FRAMEWORK_PYTHON_URL || 'http://localhost:8888',
+    agentFrameworkPythonUrl: process.env.AGENT_FRAMEWORK_PYTHON_URL || 'http://localhost:8019',
     agentFrameworkDotnetUrl: process.env.AGENT_FRAMEWORK_DOTNET_URL || 'http://localhost:5018',
     springAiUrl: process.env.SPRING_AI_URL || 'http://localhost:8080',
     a2aUrl: process.env.A2A_URL || 'http://localhost:10002',
@@ -52,6 +59,9 @@ export default function getEnvVars(): envVars {
     a2aMiddlewareItUrl: process.env.A2A_MIDDLEWARE_IT_URL || 'http://localhost:9003',
     a2aMiddlewareOrchestratorUrl: process.env.A2A_MIDDLEWARE_ORCHESTRATOR_URL || 'http://localhost:9000',
     awsStrandsUrl: process.env.AWS_STRANDS_URL || 'http://localhost:8000',
+    claudeAgentSdkPythonUrl: process.env.CLAUDE_AGENT_SDK_PYTHON_URL || 'http://localhost:8019',
+    claudeAgentSdkTypescriptUrl: process.env.CLAUDE_AGENT_SDK_TYPESCRIPT_URL || 'http://localhost:8020',
+    langroidUrl: process.env.LANGROID_URL || 'http://localhost:8021',
     customDomainTitle: customDomainTitle,
   }
 }

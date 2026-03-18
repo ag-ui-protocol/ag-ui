@@ -47,6 +47,7 @@ kotlin {
         val commonMain by getting {
             dependencies {
                 implementation(libs.agui.client)
+                implementation(libs.a2ui4k)
                 implementation(libs.kotlinx.coroutines.core)
                 implementation("org.jetbrains.kotlinx:atomicfu:0.23.2")
                 implementation(libs.kotlinx.serialization.json)
@@ -55,6 +56,10 @@ kotlin {
                 implementation("co.touchlab:kermit:2.0.6")
                 implementation(libs.kotlinx.datetime)
                 implementation(libs.okio)
+                // Ktor client for clawg-ui pairing
+                implementation(libs.ktor.client.core)
+                implementation(libs.ktor.client.content.negotiation)
+                implementation(libs.ktor.serialization.kotlinx.json)
             }
         }
 
@@ -93,6 +98,9 @@ kotlin {
 
         val iosMain by creating {
             dependsOn(commonMain)
+            dependencies {
+                implementation(libs.ktor.client.darwin)
+            }
             val iosX64Main by getting
             val iosArm64Main by getting
             val iosSimulatorArm64Main by getting
@@ -129,3 +137,4 @@ pluginManager.withPlugin("com.android.library") {
         }
     }
 }
+

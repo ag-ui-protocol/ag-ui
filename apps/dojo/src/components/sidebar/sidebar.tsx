@@ -21,7 +21,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "../ui/button";
 import { menuIntegrations } from "@/menu";
-import { Feature } from "@/types/integration";
+import type { Feature } from "@/types/integration";
 import { useURLParams } from "@/contexts/url-params-context";
 import { View } from "@/types/interface";
 import { getTitleForCurrentDomain } from "@/utils/domain-config";
@@ -62,7 +62,7 @@ export function Sidebar({ isMobile, onMobileClose }: SidebarProps) {
   // Filter demos based on current integration's features
   const filteredDemos = currentIntegration
     ? featureConfig.filter((demo) =>
-        currentIntegration.features.includes(demo.id as unknown as Feature),
+        (currentIntegration.features as Feature[]).includes(demo.id as Feature),
       )
     : []; // Show no demos if no integration is selected
 

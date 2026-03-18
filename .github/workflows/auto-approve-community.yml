@@ -17,9 +17,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fetch PR branch
+      - name: Fetch PR head
         run: |
-          git fetch origin ${{ github.event.pull_request.head.ref }}:${{ github.event.pull_request.head.ref }}
+          git fetch origin pull/${{ github.event.pull_request.number }}/head:pr-head
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -32,7 +32,6 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           node << 'EOF'
           const { execSync } = require('child_process');
@@ -42,9 +41,9 @@ jobs:
           const prAuthor = process.env.PR_AUTHOR;
           const prNumber = process.env.PR_NUMBER;
 
-          // Get changed files
+          // Get changed files (use pr-head ref which works for both forks and same-repo PRs)
           const changedFiles = execSync(
-            `git diff --name-only origin/${process.env.BASE_REF}...origin/${process.env.HEAD_REF}`,
+            `git diff --name-only origin/${process.env.BASE_REF}...pr-head`,
             { encoding: 'utf-8' }
           )
             .trim()

@@ -1,4 +1,8 @@
 **/.claude/settings.local.json
+.claude/worktrees
+
+# Test coverage
+coverage/
 
 mastra.db*
 
@@ -7,7 +11,8 @@ mastra.db*
 test-results/
 
 **/target
-.turbo
+.nx/cache
+.nx/workspace-data
 
 node_modules
 .vscode
@@ -17,3 +22,27 @@ node_modules
 .pnpm-store
 
 **/.poetry-cache
+*.egg-info
+
+**/python/**/__pycache__/
+**/python/**/.venv/
+
+**/typescript/**/node_modules/
+**/typescript/**/dist/
+
+# Turborepo
+.turbo
+**/.turbo
+
+# Build artifacts and binaries
+**/build/
+*.dSYM/
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.obj
+*.a
+*.lib
+*.wasm

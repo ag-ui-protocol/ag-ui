@@ -88,15 +88,15 @@ AG-UI was born from CopilotKit's initial **partnership** with LangGraph and Crew
 
 | Framework                                                          | Status                   | AG-UI Resources                                                                 |
 | ------------------------------------------------------------------ | ------------------------ | -------------------------------------------------------------------------------- |
-| Direct to LLM                                                  | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/direct-to-llm)  |
+| Built-in Agent                                                | ✅ Supported             | ➡️ [Docs](https://docs.copilotkit.ai/direct-to-llm)  |
 
-#### 🤝 Partnerships
+### 🤝 Partnerships
 | Framework | Status | AG-UI Resources |
 | ---------- | ------- | ---------------- |
 | [LangGraph](https://www.langchain.com/langgraph) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/langgraph/) 🎮 [Demos](https://dojo.ag-ui.com/langgraph-fastapi/feature/shared_state) |
 | [CrewAI](https://crewai.com/) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/crewai-flows) 🎮 [Demos](https://dojo.ag-ui.com/crewai/feature/shared_state) |
 
-#### 🧩 1st Party
+### 🧩 1st Party
 | Framework | Status | AG-UI Resources |
 | ---------- | ------- | ---------------- |
 | [Microsoft Agent Framework](https://azure.microsoft.com/en-us/blog/introducing-microsoft-agent-framework/) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/microsoft-agent-framework) 🎮 [Demos](https://dojo.ag-ui.com/microsoft-agent-framework-dotnet/feature/shared_state) |
@@ -106,15 +106,14 @@ AG-UI was born from CopilotKit's initial **partnership** with LangGraph and Crew
 | [Pydantic AI](https://github.com/pydantic/pydantic-ai) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/pydantic-ai/) 🎮 [Demos](https://dojo.ag-ui.com/pydantic-ai/feature/shared_state) |
 | [Agno](https://github.com/agno-agi/agno) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/agno/) 🎮 [Demos](https://dojo.ag-ui.com/agno/feature/tool_based_generative_ui) |
 | [LlamaIndex](https://github.com/run-llama/llama_index) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/llamaindex/) 🎮 [Demos](https://dojo.ag-ui.com/llamaindex/feature/shared_state) |
-| [AG2](https://ag2.ai/) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/ag2/) |
+| [AG2](https://ag2.ai/) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/ag2/)  🎮 [Demos](https://dojo.ag-ui.com/ag2/feature/shared_state) |
 | [AWS Bedrock Agents](https://aws.amazon.com/bedrock/agents/) | 🛠️ In Progress | – |
 
 
 
-#### 🌐 Community
+### 🌐 Community
 | Framework | Status | AG-UI Resources |
 | ---------- | ------- | ---------------- |
-| [Vercel AI SDK](https://github.com/vercel/ai) | ✅ Supported | ➡️ [Docs](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/vercel-ai-sdk/typescript) |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress | – |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/) | 🛠️ In Progress | – |
 
@@ -125,7 +124,23 @@ AG-UI was born from CopilotKit's initial **partnership** with LangGraph and Crew
 | ---------- | ------- | ---------------- | ------------- |
 | [A2A]() | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/a2a-protocol) | Partnership |
 
----
+
+## Infrastructure / Deployment
+| Platform | Status | AG-UI Resources | Integrations |
+| ---------- | ------- | ---------------- | ------------- |
+| [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/) | ✅ Supported | ➡️ [Docs](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui.html) | 1st Party |
+
+
+## Specification (standard)
+| Framework | Status | AG-UI Resources |
+| ---------- | ------- | ---------------- |
+| [Oracle Agent Spec](http://oracle.github.io/agent-spec/) | ✅ Supported | ➡️ [Docs](https://go.copilotkit.ai/copilotkit-oracle-docs) 🎮 [Demos](https://dojo.ag-ui.com/agent-spec-langgraph/feature/tool_based_generative_ui) |
+
+## Generative UI
+| Framework | Status | AG-UI Resources |
+| ---------- | ------- | ---------------- |
+| [MCP Apps](https://blog.modelcontextprotocol.io/posts/2025-11-21-mcp-apps/) | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/generative-ui-specs/mcp-apps) 🎮 [Demos]() |
+
 
 ## SDKs
 
@@ -136,6 +151,7 @@ AG-UI was born from CopilotKit's initial **partnership** with LangGraph and Crew
 | [Dart]() | ✅ Supported | ➡️ [Getting Started](https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/community/dart) | Community |
 | [Java]() | ✅ Supported | ➡️ [Getting Started](https://github.com/ag-ui-protocol/ag-ui/blob/main/docs/sdk/java/overview.mdx) | Community |
 | [Rust]() | ✅ Supported | ➡️ [Getting Started](https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/community/rust/crates/ag-ui-client) | Community |
+| [Ruby]() | ✅ Supported | ➡️ [Getting Started](https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/community/ruby) | Community |
 | [.NET]() | 🛠️ In Progress | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/38) | Community |
 | [Nim]() | 🛠️ In Progress | ➡️ [PR](https://github.com/ag-ui-protocol/ag-ui/pull/29) | Community |
 | [Flowise]() | 🛠️ In Progress | ➡️ [GitHub Source](https://github.com/ag-ui-protocol/ag-ui/issues/367) | Community |

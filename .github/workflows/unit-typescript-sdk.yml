@@ -6,20 +6,22 @@ on:
     paths:
       - "sdks/typescript/**"
       - "typescript-sdk/**"
+      - "integrations/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "package.json"
-      - "turbo.json"
+      - "nx.json"
       - ".github/workflows/unit-typescript-sdk.yml"
   pull_request:
     branches: [main]
     paths:
       - "sdks/typescript/**"
       - "typescript-sdk/**"
+      - "integrations/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "package.json"
-      - "turbo.json"
+      - "nx.json"
       - ".github/workflows/unit-typescript-sdk.yml"
 
 jobs:

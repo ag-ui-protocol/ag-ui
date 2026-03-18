@@ -1,10 +1,9 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../../test-isolation-helper";
 import { ToolBaseGenUIPage } from "../../featurePages/ToolBaseGenUIPage";
 
-const pageURL =
-  "/langgraph-fastapi/feature/tool_based_generative_ui";
+const pageURL = "/langgraph-fastapi/feature/tool_based_generative_ui";
 
-test('[LangGraph FastAPI] Haiku generation and display verification', async ({
+test("[LangGraph FastAPI] Haiku generation and display verification", async ({
   page,
 }) => {
   await page.goto(pageURL);
@@ -17,7 +16,7 @@ test('[LangGraph FastAPI] Haiku generation and display verification', async ({
   await genAIAgent.checkHaikuDisplay(page);
 });
 
-test('[LangGraph FastAPI] Haiku generation and UI consistency for two different prompts', async ({
+test("[LangGraph FastAPI] Haiku generation and UI consistency for two different prompts", async ({
   page,
 }) => {
   await page.goto(pageURL);

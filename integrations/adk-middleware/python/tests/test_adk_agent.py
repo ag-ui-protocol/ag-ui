@@ -1,6 +1,10 @@
 # tests/test_adk_agent.py
 
 """Tests for ADKAgent middleware."""
+from ag_ui_adk.client_proxy_toolset import ClientProxyToolset
+from typing import AsyncGenerator
+from ag_ui.core import BaseEvent
+from ag_ui_adk.agui_toolset import AGUIToolset
 
 import pytest
 import asyncio
@@ -13,7 +17,7 @@ from ag_ui_adk.event_translator import EventTranslator
 from ag_ui.core import (
     RunAgentInput, EventType, UserMessage, Context,
     RunStartedEvent, RunFinishedEvent, TextMessageChunkEvent, SystemMessage,
-    TextMessageContentEvent
+    TextMessageContentEvent, ToolCallResultEvent
 )
 from google.adk.agents import Agent
 
@@ -384,8 +388,9 @@ class TestADKAgent:
         session_mgr = adk_agent._session_manager
 
         # Create a session through get_or_create_session
-        await session_mgr.get_or_create_session(
-            session_id="session1",
+        # Note: thread_id is used as the lookup key, backend may generate different session_id
+        session1, backend_id1 = await session_mgr.get_or_create_session(
+            thread_id="thread1",
             app_name="agent1",
             user_id="user1"
         )
@@ -393,8 +398,8 @@ class TestADKAgent:
         assert session_mgr.get_session_count() == 1
 
         # Add another session
-        await session_mgr.get_or_create_session(
-            session_id="session2",
+        session2, backend_id2 = await session_mgr.get_or_create_session(
+            thread_id="thread2",
             app_name="agent1",
             user_id="user1"
         )
@@ -404,7 +409,7 @@ class TestADKAgent:
     async def test_error_handling(self, adk_agent, sample_input):
         """Test error handling in run method."""
         # Force an error by making the underlying agent fail
-        adk_agent._adk_agent = None  # This will cause an error
+        adk_agent._adk_agent.side_effect = Exception('test exception')  # This will cause an error
 
         events = []
         async for event in adk_agent.run(sample_input):
@@ -464,7 +469,7 @@ class TestADKAgent:
         captured_agent = None
         original_run_background = adk_agent._run_adk_in_background
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             # Just put a completion event in the queue and return
@@ -519,7 +524,7 @@ class TestADKAgent:
         captured_agent = None
         original_run_background = adk_agent._run_adk_in_background
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             # Just put a completion event in the queue and return
@@ -576,7 +581,7 @@ class TestADKAgent:
         captured_agent = None
         original_run_background = adk_agent._run_adk_in_background
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             # Just put a completion event in the queue and return
@@ -635,7 +640,7 @@ class TestADKAgent:
         captured_agent = None
         original_run_background = adk_agent._run_adk_in_background
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             # Just put a completion event in the queue and return
@@ -686,7 +691,7 @@ class TestADKAgent:
         # Mock the background execution to capture the agent
         captured_agent = None
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             await event_queue.put(None)
@@ -719,7 +724,7 @@ class TestADKAgent:
 
         captured_agent = None
 
-        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue):
+        async def mock_run_background(input, adk_agent, user_id, app_name, event_queue, client_proxy_toolsets, tool_results=None, message_batch=None):
             nonlocal captured_agent
             captured_agent = adk_agent
             await event_queue.put(None)
@@ -731,4 +736,614 @@ class TestADKAgent:
         # Verify the SystemMessage became the instruction
         assert captured_agent.instruction == "You are a math tutor."
 
+    @pytest.mark.asyncio
+    async def test_final_response_after_backend_tool_emits_text(self, adk_agent, sample_input):
+        """Test that final response with content after backend tool is properly emitted.
+
+        This is a regression test for issue #796: when a backend (non-LRO) tool completes
+        and the model generates a final response with finish_reason set, the text content
+        must still be translated and emitted to the client.
+
+        Previously, the condition excluded events with finish_reason set, causing them to
+        go through translate_lro_function_calls() which silently dropped the text content.
+        """
+        translate_calls = 0
+        lro_calls = 0
+
+        async def fake_translate(self, adk_event, thread_id, run_id):
+            nonlocal translate_calls
+            translate_calls += 1
+            yield TextMessageContentEvent(
+                type=EventType.TEXT_MESSAGE_CONTENT,
+                message_id="msg-final",
+                delta="Final response after tool"
+            )
+
+        async def fake_translate_lro(self, adk_event):
+            nonlocal lro_calls
+            lro_calls += 1
+            if False:
+                yield  # pragma: no cover - keeps this an async generator
+
+        # Simulate a final response after backend tool completion:
+        # - is_final_response() = True
+        # - finish_reason = "STOP"
+        # - has_content = True
+        # - NO long_running_tool_ids (it was a backend tool, not client/LRO tool)
+        final_event = SimpleNamespace(
+            id="event-final-after-backend-tool",
+            author="assistant",
+            content=SimpleNamespace(parts=[SimpleNamespace(text="The weather in NYC is 72°F")]),
+            partial=False,
+            turn_complete=True,
+            usage_metadata={"tokens": 10},
+            finish_reason="STOP",
+            actions=None,
+            custom_data=None,
+            long_running_tool_ids=[],  # No LRO tools - this was a backend tool
+            get_function_calls=lambda: [],
+            get_function_responses=lambda: [],
+            is_final_response=lambda: True
+        )
+
+        class FakeRunner:
+            async def run_async(self, *args, **kwargs):
+                yield final_event
+
+        with patch("ag_ui_adk.adk_agent.EventTranslator.translate", new=fake_translate), \
+             patch("ag_ui_adk.adk_agent.EventTranslator.translate_lro_function_calls", new=fake_translate_lro), \
+             patch.object(adk_agent, "_create_runner", return_value=FakeRunner()):
+            events = [event async for event in adk_agent.run(sample_input)]
+
+        # The key assertion: translate() should be called (not translate_lro_function_calls)
+        # This means the text content is properly emitted
+        assert translate_calls == 1, f"Expected translate() to be called once, got {translate_calls}"
+        assert lro_calls == 0, f"Expected translate_lro_function_calls() not to be called, got {lro_calls}"
+
+        # Verify we got the text content event
+        content_events = [e for e in events if isinstance(e, TextMessageContentEvent)]
+        assert len(content_events) == 1, "Expected one TextMessageContentEvent"
+        assert content_events[0].delta == "Final response after tool"
+
+    @pytest.mark.asyncio
+    async def test_skip_summarization_routes_through_translate_for_tool_result(self, adk_agent, sample_input):
+        """Test that skip_summarization scenario routes through translate() to emit ToolCallResultEvent.
+
+        This is a regression test for issue #765: when skip_summarization=True is set,
+        the model returns a final response with:
+        - No text content (has_content=False)
+        - Function responses containing the tool result
+
+        Previously, the routing logic at line 1395 would send this to the LRO branch
+        because `(is_streaming_chunk or has_content)` was False. This caused
+        ToolCallResultEvent to not be emitted.
+
+        The fix adds `has_function_responses` to the routing condition.
+        """
+        translate_calls = 0
+        lro_calls = 0
+
+        async def fake_translate(self, adk_event, thread_id, run_id):
+            nonlocal translate_calls
+            translate_calls += 1
+            yield ToolCallResultEvent(
+                type=EventType.TOOL_CALL_RESULT,
+                message_id="msg-result",
+                tool_call_id="tool-skip-sum",
+                content='{"success": true}'
+            )
+
+        async def fake_translate_lro(self, adk_event):
+            nonlocal lro_calls
+            lro_calls += 1
+            if False:
+                yield  # pragma: no cover - keeps this an async generator
+
+        # Simulate skip_summarization scenario:
+        # - is_final_response() = True
+        # - has_content = False (no text parts - this is the key!)
+        # - has function_responses (tool result)
+        # - NO long_running_tool_ids (backend tool)
+        func_response = SimpleNamespace(id="tool-skip-sum", response={"success": True})
+        skip_sum_event = SimpleNamespace(
+            id="event-skip-summarization",
+            author="assistant",
+            content=SimpleNamespace(parts=[]),  # Empty parts - no text!
+            partial=False,
+            turn_complete=True,
+            usage_metadata={"tokens": 5},
+            finish_reason="STOP",
+            actions=None,
+            custom_data=None,
+            long_running_tool_ids=[],
+            get_function_calls=lambda: [],
+            get_function_responses=lambda: [func_response],  # Has function response!
+            is_final_response=lambda: True
+        )
+
+        class FakeRunner:
+            async def run_async(self, *args, **kwargs):
+                yield skip_sum_event
+
+        with patch("ag_ui_adk.adk_agent.EventTranslator.translate", new=fake_translate), \
+             patch("ag_ui_adk.adk_agent.EventTranslator.translate_lro_function_calls", new=fake_translate_lro), \
+             patch.object(adk_agent, "_create_runner", return_value=FakeRunner()):
+            events = [event async for event in adk_agent.run(sample_input)]
+
+        # KEY ASSERTION: translate() should be called to emit ToolCallResultEvent
+        # If this fails, the routing logic is incorrectly sending to LRO branch
+        assert translate_calls == 1, (
+            f"Expected translate() to be called once for skip_summarization event, got {translate_calls}. "
+            "Events with function_responses but no content must route through translate()."
+        )
+        assert lro_calls == 0, (
+            f"Expected translate_lro_function_calls() NOT to be called, got {lro_calls}. "
+            "skip_summarization events should not go through LRO path."
+        )
+
+        # Verify ToolCallResultEvent was emitted
+        tool_results = [e for e in events if isinstance(e, ToolCallResultEvent)]
+        assert len(tool_results) == 1, "Expected one ToolCallResultEvent"
+        assert tool_results[0].tool_call_id == "tool-skip-sum"
+
+    @pytest.mark.asyncio
+    async def test_agui_tools_properly_converted_in_subagents(self):
+        deep_agent = Agent(
+            name="deep_agent",
+            instruction="An agent deep in the hierarchy",
+            tools=[AGUIToolset(tool_filter=['deep_tool'])]
+        )
+
+        hello_agent = Agent(
+            name="hello_agent",
+            instruction="Says hello",
+            tools=[AGUIToolset(tool_filter=['hello_tool'])],
+            sub_agents=[deep_agent]
+        )
+
+        goodbye_agent = Agent(
+            name="goodbye_agent",
+            instruction="Says goodbye",
+            tools=[AGUIToolset(tool_filter=['goodbye_tool'])]
+        )
+
+        root_agent = Agent(
+            name="root_agent",
+            instruction="Root agent that delegates to sub-agents",
+            sub_agents=[hello_agent, goodbye_agent]
+        )
+        with patch.object(ADKAgent, "_run_adk_in_background") as submethod_mocked:
+
+            async def empty_async_generator() -> AsyncGenerator[BaseEvent, None]:
+                """An async generator that is always empty."""
+                if False:
+                    yield # Required to make it an async generator
+                return # The function simply returns, ending iteration
+
+            adk_agent = ADKAgent(
+                adk_agent=root_agent,
+                app_name="test_app",
+                user_id="test_user",
+                use_in_memory_services=True
+            )
+            input = RunAgentInput(
+                thread_id="test_thread",
+                run_id="test_run",
+                messages=[
+                    UserMessage(id="msg_1", role="user", content="Start conversation")
+                ],
+                context=[],
+                state={},
+                tools=[],
+                forwarded_props={}
+            )
+            async for e in adk_agent.run(input):
+                if not isinstance(e, RunStartedEvent):
+                    break  # We only care about tool registration side effects so stop after the RunStartedEvent
+
+            submethod_mocked.assert_called_once()
+            agent_under_test = submethod_mocked.call_args.kwargs['adk_agent']
+
+            # assert the base agent has no tools, and has two sub-agents
+            assert isinstance(agent_under_test, Agent)
+            assert agent_under_test.tools == []
+            assert len(agent_under_test.sub_agents) == 2
+
+            # assert that the hello_agent has only the hello_tool via ClientProxyToolset
+            assert agent_under_test.sub_agents[0].name == "hello_agent"
+            assert len(agent_under_test.sub_agents[0].tools) == 1
+            assert isinstance(agent_under_test.sub_agents[0].tools[0], ClientProxyToolset)
+            assert agent_under_test.sub_agents[0].tools[0].tool_filter == ['hello_tool']
+
+            # assert that the deep_agent has only the deep_tool via ClientProxyToolset
+            assert agent_under_test.sub_agents[0].sub_agents[0].name == "deep_agent"
+            assert len(agent_under_test.sub_agents[0].sub_agents[0].tools) == 1
+            assert isinstance(agent_under_test.sub_agents[0].sub_agents[0].tools[0], ClientProxyToolset)
+            assert agent_under_test.sub_agents[0].sub_agents[0].tools[0].tool_filter == ['deep_tool']
+
+            # assert that the goodbye_agent has only the goodbye_tool via ClientProxyToolset
+            assert agent_under_test.sub_agents[1].name == "goodbye_agent"
+            assert len(agent_under_test.sub_agents[1].tools) == 1
+            assert isinstance(agent_under_test.sub_agents[1].tools[0], ClientProxyToolset)
+            assert agent_under_test.sub_agents[1].tools[0].tool_filter == ['goodbye_tool']
+
+    @pytest.mark.asyncio
+    async def test_non_deepcopyable_tool_does_not_crash(self):
+        """Agents with non-deep-copyable tools (e.g. McpToolset) must not crash.
+
+        Regression test for https://github.com/ag-ui-protocol/ag-ui/issues/1264
+        """
+        import sys
+        from google.adk.tools.base_toolset import BaseToolset as ADKBaseToolset
+
+        class UnpicklableToolset(ADKBaseToolset):
+            """Mock toolset that holds an unpicklable attribute like McpToolset."""
+            def __init__(self):
+                super().__init__()
+                self.errlog = sys.stderr  # _io.TextIOWrapper – cannot be pickled
+
+            async def get_tools(self, readonly_context=None):
+                return []
+
+        unpicklable = UnpicklableToolset()
+
+        root_agent = Agent(
+            name="root_agent",
+            instruction="Root agent",
+            tools=[AGUIToolset(), unpicklable],
+        )
+
+        with patch.object(ADKAgent, "_run_adk_in_background") as submethod_mocked:
+            adk_agent = ADKAgent(
+                adk_agent=root_agent,
+                app_name="test_app",
+                user_id="test_user",
+                use_in_memory_services=True,
+            )
+            input = RunAgentInput(
+                thread_id="test_thread",
+                run_id="test_run",
+                messages=[
+                    UserMessage(id="msg_1", role="user", content="Hello")
+                ],
+                context=[],
+                state={},
+                tools=[],
+                forwarded_props={},
+            )
+            # Should not raise TypeError: cannot pickle 'TextIOWrapper' instances
+            async for e in adk_agent.run(input):
+                if not isinstance(e, RunStartedEvent):
+                    break
+
+            submethod_mocked.assert_called_once()
+            agent_under_test = submethod_mocked.call_args.kwargs['adk_agent']
+
+            # The unpicklable toolset should be preserved (shared by reference)
+            non_proxy_tools = [
+                t for t in agent_under_test.tools
+                if not isinstance(t, ClientProxyToolset)
+            ]
+            assert len(non_proxy_tools) == 1
+            assert non_proxy_tools[0] is unpicklable
+            assert non_proxy_tools[0].errlog is sys.stderr
+
+    @pytest.mark.asyncio
+    async def test_original_agent_not_mutated_after_run(self):
+        """Running the agent must not mutate the original ADK agent."""
+        root_agent = Agent(
+            name="root_agent",
+            instruction="Original instruction",
+            tools=[AGUIToolset()],
+            sub_agents=[
+                Agent(
+                    name="child",
+                    instruction="Child instruction",
+                    tools=[AGUIToolset(tool_filter=['child_tool'])],
+                )
+            ],
+        )
+        original_instruction = root_agent.instruction
+        original_tools = list(root_agent.tools)
+        original_child_tools = list(root_agent.sub_agents[0].tools)
+
+        with patch.object(ADKAgent, "_run_adk_in_background"):
+            adk_agent = ADKAgent(
+                adk_agent=root_agent,
+                app_name="test_app",
+                user_id="test_user",
+                use_in_memory_services=True,
+            )
+            input = RunAgentInput(
+                thread_id="test_thread",
+                run_id="test_run",
+                messages=[
+                    SystemMessage(id="sys_1", role="system", content="Extra instruction"),
+                    UserMessage(id="msg_1", role="user", content="Hello"),
+                ],
+                context=[],
+                state={},
+                tools=[],
+                forwarded_props={},
+            )
+            async for e in adk_agent.run(input):
+                if not isinstance(e, RunStartedEvent):
+                    break
+
+        # Original agent must be unmodified
+        assert root_agent.instruction == original_instruction
+        assert root_agent.tools == original_tools
+        assert all(isinstance(t, AGUIToolset) for t in root_agent.tools)
+        assert root_agent.sub_agents[0].tools == original_child_tools
+        assert all(isinstance(t, AGUIToolset) for t in root_agent.sub_agents[0].tools)
+
+
+class TestThreadIdSessionIdMapping:
+    """Test cases for thread_id to session_id mapping and initial state."""
+
+    @pytest.fixture(autouse=True)
+    def reset_session_manager(self):
+        """Reset session manager before each test."""
+        try:
+            SessionManager.reset_instance()
+        except RuntimeError:
+            pass
+        yield
+        try:
+            SessionManager.reset_instance()
+        except RuntimeError:
+            pass
+
+    @pytest.fixture
+    def mock_agent(self):
+        """Create a mock ADK agent."""
+        agent = Mock(spec=Agent)
+        agent.name = "test_agent"
+        agent.instruction = "Test instruction"
+        agent.tools = []
+        return agent
+
+    @pytest.fixture
+    def adk_agent(self, mock_agent):
+        """Create an ADKAgent instance."""
+        return ADKAgent(
+            adk_agent=mock_agent,
+            app_name="test_app",
+            user_id="test_user",
+            use_in_memory_services=True
+        )
+
+    @pytest.mark.asyncio
+    async def test_thread_id_becomes_session_id(self, adk_agent):
+        """Test that thread_id from RunAgentInput is used as session_id in ADK session."""
+        test_thread_id = "my-unique-thread-123"
+
+        input_data = RunAgentInput(
+            thread_id=test_thread_id,
+            run_id="run_001",
+            messages=[
+                UserMessage(id="msg1", role="user", content="Hello")
+            ],
+            context=[],
+            state={},
+            tools=[],
+            forwarded_props={}
+        )
+
+        # Track calls to _ensure_session_exists
+        ensure_session_calls = []
+        original_ensure_session = adk_agent._ensure_session_exists
+
+        async def tracking_ensure_session(app_name, user_id, session_id, initial_state):
+            ensure_session_calls.append({
+                "app_name": app_name,
+                "user_id": user_id,
+                "session_id": session_id,
+                "initial_state": initial_state
+            })
+            return await original_ensure_session(app_name, user_id, session_id, initial_state)
+
+        with patch.object(adk_agent, '_ensure_session_exists', side_effect=tracking_ensure_session), \
+             patch.object(adk_agent, '_create_runner') as mock_create_runner:
+
+            # Create a mock runner that yields a simple event
+            mock_runner = AsyncMock()
+            mock_runner.close = AsyncMock()
+
+            async def mock_run_async(*args, **kwargs):
+                mock_event = Mock()
+                mock_event.id = "event1"
+                mock_event.author = "test_agent"
+                mock_event.content = Mock()
+                mock_event.content.parts = [Mock(text="Response")]
+                mock_event.partial = False
+                mock_event.actions = None
+                mock_event.get_function_calls = Mock(return_value=[])
+                mock_event.get_function_responses = Mock(return_value=[])
+                yield mock_event
+
+            mock_runner.run_async = mock_run_async
+            mock_create_runner.return_value = mock_runner
+
+            # Run the agent
+            events = [event async for event in adk_agent.run(input_data)]
+
+        # Verify _ensure_session_exists was called with thread_id as session_id
+        assert len(ensure_session_calls) == 1
+        assert ensure_session_calls[0]["session_id"] == test_thread_id
+
+    @pytest.mark.asyncio
+    async def test_initial_state_passed_to_session(self, adk_agent):
+        """Test that state from RunAgentInput is passed as initial_state to session."""
+        initial_state = {
+            "user_preferences": {"theme": "dark", "language": "en"},
+            "selected_document": "doc-456",
+            "context_data": {"project_id": "proj-123"}
+        }
+
+        input_data = RunAgentInput(
+            thread_id="session_with_state",
+            run_id="run_001",
+            messages=[
+                UserMessage(id="msg1", role="user", content="Hello")
+            ],
+            context=[],
+            state=initial_state,
+            tools=[],
+            forwarded_props={}
+        )
+
+        # Track calls to _ensure_session_exists
+        ensure_session_calls = []
+        original_ensure_session = adk_agent._ensure_session_exists
+
+        async def tracking_ensure_session(app_name, user_id, session_id, state):
+            ensure_session_calls.append({
+                "app_name": app_name,
+                "user_id": user_id,
+                "session_id": session_id,
+                "initial_state": state
+            })
+            return await original_ensure_session(app_name, user_id, session_id, state)
+
+        with patch.object(adk_agent, '_ensure_session_exists', side_effect=tracking_ensure_session), \
+             patch.object(adk_agent, '_create_runner') as mock_create_runner:
+
+            mock_runner = AsyncMock()
+            mock_runner.close = AsyncMock()
+
+            async def mock_run_async(*args, **kwargs):
+                mock_event = Mock()
+                mock_event.id = "event1"
+                mock_event.author = "test_agent"
+                mock_event.content = Mock()
+                mock_event.content.parts = [Mock(text="Response")]
+                mock_event.partial = False
+                mock_event.actions = None
+                mock_event.get_function_calls = Mock(return_value=[])
+                mock_event.get_function_responses = Mock(return_value=[])
+                yield mock_event
+
+            mock_runner.run_async = mock_run_async
+            mock_create_runner.return_value = mock_runner
+
+            events = [event async for event in adk_agent.run(input_data)]
+
+        # Verify _ensure_session_exists was called with the initial state
+        assert len(ensure_session_calls) == 1
+        assert ensure_session_calls[0]["initial_state"] == initial_state
+
+    @pytest.mark.asyncio
+    async def test_state_synced_via_update_session_state(self, adk_agent):
+        """Test that state is synced to backend via update_session_state on each request."""
+        state_to_sync = {
+            "counter": 42,
+            "items": ["a", "b", "c"]
+        }
+
+        input_data = RunAgentInput(
+            thread_id="session_sync_test",
+            run_id="run_001",
+            messages=[
+                UserMessage(id="msg1", role="user", content="Hello")
+            ],
+            context=[],
+            state=state_to_sync,
+            tools=[],
+            forwarded_props={}
+        )
+
+        # Track calls to update_session_state
+        update_state_calls = []
+
+        async def tracking_update_state(session_id, app_name, user_id, state):
+            update_state_calls.append({
+                "session_id": session_id,
+                "app_name": app_name,
+                "user_id": user_id,
+                "state": state
+            })
+            return True
+
+        with patch.object(adk_agent._session_manager, 'update_session_state', side_effect=tracking_update_state), \
+             patch.object(adk_agent, '_create_runner') as mock_create_runner:
+
+            mock_runner = AsyncMock()
+            mock_runner.close = AsyncMock()
+
+            async def mock_run_async(*args, **kwargs):
+                mock_event = Mock()
+                mock_event.id = "event1"
+                mock_event.author = "test_agent"
+                mock_event.content = Mock()
+                mock_event.content.parts = [Mock(text="Response")]
+                mock_event.partial = False
+                mock_event.actions = None
+                mock_event.get_function_calls = Mock(return_value=[])
+                mock_event.get_function_responses = Mock(return_value=[])
+                yield mock_event
+
+            mock_runner.run_async = mock_run_async
+            mock_create_runner.return_value = mock_runner
+
+            events = [event async for event in adk_agent.run(input_data)]
+
+        # Verify update_session_state was called with the state
+        # Note: session_id is the backend-generated ID, which may differ from thread_id
+        # There may be 2 calls: one for state sync, one for invocation_id storage
+        assert len(update_state_calls) >= 1
+        assert update_state_calls[0]["session_id"] is not None  # Backend generates session_id
+        assert update_state_calls[0]["state"] == state_to_sync
+
+    @pytest.mark.asyncio
+    async def test_empty_initial_state(self, adk_agent):
+        """Test that empty state is handled correctly."""
+        input_data = RunAgentInput(
+            thread_id="empty_state_session",
+            run_id="run_001",
+            messages=[
+                UserMessage(id="msg1", role="user", content="Hello")
+            ],
+            context=[],
+            state={},
+            tools=[],
+            forwarded_props={}
+        )
+
+        ensure_session_calls = []
+        original_ensure_session = adk_agent._ensure_session_exists
+
+        async def tracking_ensure_session(app_name, user_id, session_id, state):
+            ensure_session_calls.append({
+                "session_id": session_id,
+                "initial_state": state
+            })
+            return await original_ensure_session(app_name, user_id, session_id, state)
+
+        with patch.object(adk_agent, '_ensure_session_exists', side_effect=tracking_ensure_session), \
+             patch.object(adk_agent, '_create_runner') as mock_create_runner:
+
+            mock_runner = AsyncMock()
+            mock_runner.close = AsyncMock()
+
+            async def mock_run_async(*args, **kwargs):
+                mock_event = Mock()
+                mock_event.id = "event1"
+                mock_event.author = "test_agent"
+                mock_event.content = Mock()
+                mock_event.content.parts = [Mock(text="Response")]
+                mock_event.partial = False
+                mock_event.actions = None
+                mock_event.get_function_calls = Mock(return_value=[])
+                mock_event.get_function_responses = Mock(return_value=[])
+                yield mock_event
+
+            mock_runner.run_async = mock_run_async
+            mock_create_runner.return_value = mock_runner
+
+            events = [event async for event in adk_agent.run(input_data)]
+
+        # Verify empty state is passed
+        assert len(ensure_session_calls) == 1
+        assert ensure_session_calls[0]["initial_state"] == {}
 

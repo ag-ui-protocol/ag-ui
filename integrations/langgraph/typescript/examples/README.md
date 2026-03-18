@@ -24,7 +24,7 @@ For TypeScript development, run:
 
 ```bash
 npm run build
-pnpx @langchain/langgraph-cli@latest dev
+pnpx @langchain/langgraph-cli@1.1.13 dev
 ```
 
 ## Available Agents

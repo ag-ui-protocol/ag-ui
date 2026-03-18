@@ -127,7 +127,7 @@ async def flights_finder(state: TravelAgentState, config: RunnableConfig):
             },
             "messages": state["messages"] + [{
                 "role": "assistant",
-                "content": f"Flights Agent: Great. I'll book you the {selected_flight["airline"]} flight from {selected_flight["departure"]} to {selected_flight["arrival"]}."
+                "content": f"Flights Agent: Great. I'll book you the {selected_flight['airline']} flight from {selected_flight['departure']} to {selected_flight['arrival']}."
             }]
         }
     )
@@ -161,7 +161,7 @@ async def hotels_finder(state: TravelAgentState, config: RunnableConfig):
                 },
                 "messages": state["messages"] + [{
                     "role": "assistant",
-                    "content": f"Hotels Agent: Excellent choice! You'll like {selected_hotel["name"]}."
+                    "content": f"Hotels Agent: Excellent choice! You'll like {selected_hotel['name']}."
                 }]
             }
         )
@@ -175,7 +175,7 @@ async def experiences_finder(state: TravelAgentState, config: RunnableConfig):
     activities = [exp for exp in STATIC_EXPERIENCES if exp.type == "activity"][:2]
     experiences = restaurants + activities
 
-    model = ChatOpenAI(model="gpt-4o")
+    model = ChatOpenAI(model="gpt-4.1-mini")
 
     if config is None:
         config = RunnableConfig(recursion_limit=25)
@@ -246,7 +246,7 @@ async def supervisor_agent(state: TravelAgentState, config: RunnableConfig):
     """
 
     # Define the model
-    model = ChatOpenAI(model="gpt-4o")
+    model = ChatOpenAI(model="gpt-4.1-mini")
 
     if config is None:
         config = RunnableConfig(recursion_limit=25)

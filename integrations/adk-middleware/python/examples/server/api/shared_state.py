@@ -8,7 +8,7 @@ import json
 from enum import Enum
 from typing import Dict, List, Any, Optional
 from fastapi import FastAPI
-from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint, AGUIToolset
 
 # ADK imports
 from google.adk.agents import LlmAgent
@@ -264,7 +264,10 @@ shared_state_agent = LlmAgent(
 
         Always provide complete, practical recipes that users can actually cook.
         """,
-        tools=[generate_recipe],
+        tools=[
+            AGUIToolset(), # Add the tools provided by the AG-UI client
+            generate_recipe,
+        ],
         before_agent_callback=on_before_agent,
         before_model_callback=before_model_modifier,
         after_model_callback = simple_after_model_modifier

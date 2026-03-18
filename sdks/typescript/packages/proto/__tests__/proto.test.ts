@@ -6,7 +6,7 @@ import {
   ToolCallStartEvent,
   MessagesSnapshotEvent,
 } from "@ag-ui/core";
-import { describe, it, expect } from "@jest/globals";
+import { describe, it, expect } from "vitest";
 import * as protoEvents from "../src/generated/events";
 
 describe("Proto", () => {
@@ -14,6 +14,8 @@ describe("Proto", () => {
     const event: BaseEvent = {
       type: EventType.TOOL_CALL_START,
       timestamp: Date.now(),
+      toolCallId: "call-1",
+      toolCallName: "test-tool",
     };
     const encoded = encode(event);
     expect(encoded).toBeInstanceOf(Uint8Array);

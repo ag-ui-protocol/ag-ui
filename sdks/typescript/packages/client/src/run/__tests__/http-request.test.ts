@@ -1,15 +1,16 @@
 import { runHttpRequest, HttpEventType } from "../http-request";
+import { describe, it, expect, vi, beforeEach, afterEach, Mock } from "vitest";
 
 describe("runHttpRequest", () => {
   let originalFetch: any;
-  let fetchMock: jest.Mock;
+  let fetchMock: Mock;
 
   beforeEach(() => {
     // Save original fetch
     originalFetch = global.fetch;
 
     // Create a mock fetch function with proper response structure
-    fetchMock = jest.fn();
+    fetchMock = vi.fn();
     global.fetch = fetchMock;
   });
 
@@ -38,9 +39,9 @@ describe("runHttpRequest", () => {
       status: 200,
       headers: mockHeaders,
       body: {
-        getReader: jest.fn().mockReturnValue({
-          read: jest.fn().mockResolvedValue({ done: true }),
-          cancel: jest.fn(),
+        getReader: vi.fn().mockReturnValue({
+          read: vi.fn().mockResolvedValue({ done: true }),
+          cancel: vi.fn(),
         }),
       },
     };
@@ -95,9 +96,9 @@ describe("runHttpRequest", () => {
       status: 200,
       headers: mockHeaders,
       body: {
-        getReader: jest.fn().mockReturnValue({
-          read: jest.fn().mockResolvedValue({ done: true }),
-          cancel: jest.fn(),
+        getReader: vi.fn().mockReturnValue({
+          read: vi.fn().mockResolvedValue({ done: true }),
+          cancel: vi.fn(),
         }),
       },
     };
@@ -131,12 +132,12 @@ describe("runHttpRequest", () => {
 
     // Mock reader that returns multiple chunks before completing
     const mockReader = {
-      read: jest
+      read: vi
         .fn()
         .mockResolvedValueOnce({ done: false, value: chunk1 })
         .mockResolvedValueOnce({ done: false, value: chunk2 })
         .mockResolvedValueOnce({ done: true }),
-      cancel: jest.fn(),
+      cancel: vi.fn(),
     };
 
     // Mock response with our custom reader and headers
@@ -148,7 +149,7 @@ describe("runHttpRequest", () => {
       status: 200,
       headers: mockHeaders,
       body: {
-        getReader: jest.fn().mockReturnValue(mockReader),
+        getReader: vi.fn().mockReturnValue(mockReader),
       },
     };
 
@@ -167,7 +168,7 @@ describe("runHttpRequest", () => {
     const emittedEvents: any[] = [];
     const subscription = observable.subscribe({
       next: (event) => emittedEvents.push(event),
-      error: (err) => fail(`Should not have errored: ${err}`),
+      error: (err) => expect.fail(`Should not have errored: ${err}`),
       complete: () => {},
     });
 
@@ -208,7 +209,7 @@ describe("runHttpRequest", () => {
       status: 404,
       headers: mockHeaders,
       // our error-path reads .text() (not streaming)
-      text: jest.fn().mockResolvedValue(mockText),
+      text: vi.fn().mockResolvedValue(mockText),
     } as unknown as Response;
 
     // Override fetch for this test
@@ -216,7 +217,7 @@ describe("runHttpRequest", () => {
 
     const observable = runHttpRequest("https://example.com/api", { method: "GET" });
 
-    const nextSpy = jest.fn();
+    const nextSpy = vi.fn();
 
     await new Promise<void>((resolve) => {
       const sub = observable.subscribe({
@@ -233,7 +234,7 @@ describe("runHttpRequest", () => {
           sub.unsubscribe();
         },
         complete: () => {
-          fail("Should not complete on HTTP error");
+          expect.fail("Should not complete on HTTP error");
         },
       });
     });

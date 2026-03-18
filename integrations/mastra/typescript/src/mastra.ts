@@ -12,13 +12,12 @@ import type {
   ToolCallStartEvent,
 } from "@ag-ui/client";
 import { AbstractAgent, EventType } from "@ag-ui/client";
-import type { StorageThreadType } from "@mastra/core";
-import { Agent as LocalMastraAgent } from "@mastra/core/agent";
-import { RuntimeContext } from "@mastra/core/runtime-context";
+import type { StorageThreadType } from "@mastra/core/memory";
+import type { Agent as LocalMastraAgent } from "@mastra/core/agent";
+import { RequestContext } from "@mastra/core/request-context";
 import { randomUUID } from "@ag-ui/client";
 import { Observable } from "rxjs";
-import { MastraClient } from "@mastra/client-js";
-type RemoteMastraAgent = ReturnType<MastraClient["getAgent"]>;
+import type { MastraClient } from "@mastra/client-js";
 import {
   convertAGUIMessagesToMastra,
   GetLocalAgentsOptions,
@@ -31,10 +30,12 @@ import {
   getNetwork,
 } from "./utils";
 
+type RemoteMastraAgent = ReturnType<MastraClient["getAgent"]>;
+
 export interface MastraAgentConfig extends AgentConfig {
   agent: LocalMastraAgent | RemoteMastraAgent;
-  resourceId?: string;
-  runtimeContext?: RuntimeContext;
+  resourceId: string;
+  requestContext?: RequestContext;
 }
 
 interface MastraAgentStreamOptions {
@@ -52,15 +53,15 @@ interface MastraAgentStreamOptions {
 
 export class MastraAgent extends AbstractAgent {
   agent: LocalMastraAgent | RemoteMastraAgent;
-  resourceId?: string;
-  runtimeContext?: RuntimeContext;
+  resourceId: string;
+  requestContext?: RequestContext;
 
   constructor(private config: MastraAgentConfig) {
-    const { agent, resourceId, runtimeContext, ...rest } = config;
+    const { agent, resourceId, requestContext, ...rest } = config;
     super(rest);
     this.agent = agent;
     this.resourceId = resourceId;
-    this.runtimeContext = runtimeContext ?? new RuntimeContext();
+    this.requestContext = requestContext ?? new RequestContext();
   }
 
   public clone() {
@@ -82,12 +83,14 @@ export class MastraAgent extends AbstractAgent {
 
         // Handle local agent memory management (from Mastra implementation)
         if (this.isLocalMastraAgent(this.agent)) {
-          const memory = await this.agent.getMemory();
+          const memory = await this.agent.getMemory({
+            requestContext: this.requestContext,
+          });
 
           if (
             memory &&
             input.state &&
-            Object.keys(input.state || {}).length > 0
+            Object.keys(input.state).length > 0
           ) {
             let thread: StorageThreadType | null = await memory.getThreadById({
               threadId: input.threadId,
@@ -104,9 +107,14 @@ export class MastraAgent extends AbstractAgent {
               };
             }
 
-            const existingMemory = JSON.parse(
-              (thread.metadata?.workingMemory as string) ?? "{}",
-            );
+            let existingMemory: Record<string, any> = {};
+            try {
+              existingMemory = JSON.parse(
+                (thread.metadata?.workingMemory as string) ?? "{}",
+              );
+            } catch {
+              // Working memory metadata is not valid JSON - start fresh
+            }
             const { messages, ...rest } = input.state;
             const workingMemory = JSON.stringify({
               ...existingMemory,
@@ -181,9 +189,12 @@ export class MastraAgent extends AbstractAgent {
             onRunFinished: async () => {
               if (this.isLocalMastraAgent(this.agent)) {
                 try {
-                  const memory = await this.agent.getMemory();
+                  const memory = await this.agent.getMemory({
+                    requestContext: this.requestContext,
+                  });
                   if (memory) {
                     const workingMemory = await memory.getWorkingMemory({
+                      resourceId: this.resourceId,
                       threadId: input.threadId,
                       memoryConfig: {
                         workingMemory: {
@@ -193,7 +204,14 @@ export class MastraAgent extends AbstractAgent {
                     });
 
                     if (typeof workingMemory === "string") {
-                      const snapshot = JSON.parse(workingMemory);
+                      let snapshot: Record<string, any> | null = null;
+                      try {
+                        snapshot = JSON.parse(workingMemory);
+                      } catch {
+                        // Working memory is not valid JSON (e.g. markdown template)
+                        // Wrap it so the client still receives the state
+                        snapshot = { workingMemory };
+                      }
 
                       if (snapshot && !("$schema" in snapshot)) {
                         const stateSnapshotEvent: StateSnapshotEvent = {
@@ -270,18 +288,20 @@ export class MastraAgent extends AbstractAgent {
     const resourceId = this.resourceId ?? threadId;
 
     const convertedMessages = convertAGUIMessagesToMastra(messages);
-    this.runtimeContext?.set("ag-ui", { context: inputContext });
-    const runtimeContext = this.runtimeContext;
+    this.requestContext?.set("ag-ui", { context: inputContext });
+    const requestContext = this.requestContext;
 
     if (this.isLocalMastraAgent(this.agent)) {
       // Local agent - use the agent's stream method directly
       try {
         const response = await this.agent.stream(convertedMessages, {
-          threadId,
-          resourceId,
+          memory: {
+            thread: threadId,
+            resource: resourceId,
+          },
           runId,
           clientTools,
-          runtimeContext,
+          requestContext,
         });
 
         // For local agents, the response should already be a stream
@@ -331,12 +351,14 @@ export class MastraAgent extends AbstractAgent {
     } else {
       // Remote agent - use the remote agent's stream method
       try {
-        const response = await this.agent.stream({
-          threadId,
-          resourceId,
+        const response = await this.agent.stream(convertedMessages, {
+          memory: {
+            thread: threadId,
+            resource: resourceId,
+          },
           runId,
-          messages: convertedMessages,
           clientTools,
+          requestContext,
         });
 
         // Remote agents should have a processDataStream method

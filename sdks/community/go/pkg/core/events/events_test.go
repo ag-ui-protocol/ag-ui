@@ -308,7 +308,7 @@ func TestStateEvents(t *testing.T) {
 			{
 				ID:      "msg-1",
 				Role:    "user",
-				Content: strPtr("Hello"),
+				Content: "Hello",
 			},
 			{
 				ID:   "msg-2",
@@ -328,7 +328,7 @@ func TestStateEvents(t *testing.T) {
 				ID:           "activity-1",
 				Role:         RoleActivity,
 				ActivityType: "PLAN",
-				ActivityContent: map[string]any{
+				Content: map[string]any{
 					"status": "draft",
 				},
 			},
@@ -370,7 +370,7 @@ func TestStateEvents(t *testing.T) {
 				ID:   "activity-1",
 				Role: RoleActivity,
 				// Missing activityType
-				ActivityContent: map[string]any{
+				Content: map[string]any{
 					"status": "draft",
 				},
 			},
@@ -478,7 +478,7 @@ func TestMessageSerialization(t *testing.T) {
 		msg := Message{
 			ID:      "msg-1",
 			Role:    "user",
-			Content: strPtr("hello"),
+			Content: "hello",
 		}
 
 		data, err := json.Marshal(msg)
@@ -488,18 +488,20 @@ func TestMessageSerialization(t *testing.T) {
 		require.NoError(t, json.Unmarshal(data, &decoded))
 
 		assert.Equal(t, "msg-1", decoded.ID)
-		assert.Equal(t, "user", decoded.Role)
-		require.NotNil(t, decoded.Content)
-		assert.Equal(t, "hello", *decoded.Content)
-		assert.Nil(t, decoded.ActivityContent)
+		assert.Equal(t, "user", string(decoded.Role))
+		content, ok := decoded.ContentString()
+		require.True(t, ok)
+		assert.Equal(t, "hello", content)
+		_, ok = decoded.ContentActivity()
+		assert.False(t, ok)
 	})
 
 	t.Run("MarshalAndUnmarshal_ActivityMessage", func(t *testing.T) {
 		msg := Message{
-			ID:              "activity-1",
-			Role:            "activity",
-			ActivityType:    "PLAN",
-			ActivityContent: map[string]any{"status": "draft"},
+			ID:           "activity-1",
+			Role:         "activity",
+			ActivityType: "PLAN",
+			Content:      map[string]any{"status": "draft"},
 		}
 
 		data, err := json.Marshal(msg)
@@ -509,11 +511,14 @@ func TestMessageSerialization(t *testing.T) {
 		require.NoError(t, json.Unmarshal(data, &decoded))
 
 		assert.Equal(t, "activity-1", decoded.ID)
-		assert.Equal(t, "activity", decoded.Role)
+		assert.Equal(t, "activity", string(decoded.Role))
 		assert.Equal(t, "PLAN", decoded.ActivityType)
-		require.Nil(t, decoded.Content)
-		require.NotNil(t, decoded.ActivityContent)
-		assert.Equal(t, "draft", decoded.ActivityContent["status"])
+		_, ok := decoded.ContentString()
+		assert.False(t, ok)
+
+		content, ok := decoded.ContentActivity()
+		require.True(t, ok)
+		assert.Equal(t, "draft", content["status"])
 	})
 }
 
@@ -528,6 +533,30 @@ func TestEventSequenceValidation(t *testing.T) {
 			NewToolCallArgsEvent("tool-1", "{\"location\": \"SF\"}"),
 			NewToolCallEndEvent("tool-1"),
 			NewRunFinishedEvent("thread-1", "run-1"),
+		}
+
+		assert.NoError(t, ValidateSequence(events))
+	})
+
+	t.Run("ValidSequence_ReasoningMessageLifecycle", func(t *testing.T) {
+		events := []Event{
+			NewReasoningStartEvent("reasoning-1"),
+			NewReasoningMessageStartEvent("reasoning-msg-1", "assistant"),
+			NewReasoningMessageContentEvent("reasoning-msg-1", "Thinking..."),
+			NewReasoningMessageEndEvent("reasoning-msg-1"),
+			NewReasoningEncryptedValueEvent(ReasoningEncryptedValueSubtypeMessage, "reasoning-msg-1", "encrypted-reasoning"),
+			NewReasoningEndEvent("reasoning-1"),
+		}
+
+		assert.NoError(t, ValidateSequence(events))
+	})
+
+	t.Run("ValidSequence_AllowsChunkAndResultEvents", func(t *testing.T) {
+		events := []Event{
+			NewTextMessageChunkEvent(nil, nil, nil).WithChunkMessageID("msg-1").WithChunkDelta("Hello"),
+			NewToolCallChunkEvent().WithToolCallChunkID("tool-1").WithToolCallChunkDelta("{\"location\":\"SF\"}"),
+			NewToolCallResultEvent("msg-1", "tool-1", "ok"),
+			NewReasoningMessageChunkEvent(nil, nil).WithChunkMessageID("reasoning-msg-1").WithChunkDelta("Thinking..."),
 		}
 
 		assert.NoError(t, ValidateSequence(events))
@@ -577,6 +606,31 @@ func TestEventSequenceValidation(t *testing.T) {
 		assert.Error(t, ValidateSequence(events))
 	})
 
+	t.Run("InvalidSequence_DuplicateReasoningMessageStart", func(t *testing.T) {
+		events := []Event{
+			NewReasoningMessageStartEvent("reasoning-msg-1", "assistant"),
+			NewReasoningMessageStartEvent("reasoning-msg-1", "assistant"),
+		}
+
+		assert.Error(t, ValidateSequence(events))
+	})
+
+	t.Run("InvalidSequence_ContentWithoutReasoningMessageStart", func(t *testing.T) {
+		events := []Event{
+			NewReasoningMessageContentEvent("reasoning-msg-1", "Thinking..."),
+		}
+
+		assert.Error(t, ValidateSequence(events))
+	})
+
+	t.Run("InvalidSequence_EndNonExistentReasoningMessage", func(t *testing.T) {
+		events := []Event{
+			NewReasoningMessageEndEvent("reasoning-msg-1"),
+		}
+
+		assert.Error(t, ValidateSequence(events))
+	})
+
 	t.Run("InvalidSequence_DuplicateToolCallStart", func(t *testing.T) {
 		events := []Event{
 			NewToolCallStartEvent("tool-1", "get_weather"),
@@ -604,6 +658,12 @@ func TestJSONSerialization(t *testing.T) {
 			NewTextMessageContentEvent("msg-1", "Hello"),
 			NewTextMessageChunkEvent(strPtr("msg-1"), strPtr("assistant"), strPtr("Chunk")),
 			NewToolCallStartEvent("tool-1", "get_weather", WithParentMessageID("msg-1")),
+			NewReasoningStartEvent("reasoning-1"),
+			NewReasoningMessageStartEvent("reasoning-msg-1", "assistant"),
+			NewReasoningMessageContentEvent("reasoning-msg-1", "Thinking..."),
+			NewReasoningMessageEndEvent("reasoning-msg-1"),
+			NewReasoningEncryptedValueEvent(ReasoningEncryptedValueSubtypeMessage, "reasoning-msg-1", "encrypted-reasoning"),
+			NewReasoningEndEvent("reasoning-1"),
 			NewStateSnapshotEvent(map[string]any{"counter": 42}),
 			NewActivitySnapshotEvent("activity-1", "PLAN", map[string]any{"status": "draft"}),
 			NewActivityDeltaEvent("activity-1", "PLAN", []JSONPatchOperation{{Op: "replace", Path: "/status", Value: "done"}}),

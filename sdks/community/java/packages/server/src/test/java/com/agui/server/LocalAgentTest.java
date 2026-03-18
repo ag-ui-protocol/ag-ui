@@ -28,65 +28,31 @@ import static org.junit.jupiter.api.Assertions.*;
 class LocalAgentTest {
 
     @Test
-    public void shouldCreateAgentWithSystemMessage() throws AGUIException {
-        var agentId = UUID.randomUUID().toString();
-        var systemMessage = "Static System Message";
-        var agent = new TestAgent(agentId, new State(), null, systemMessage);
-
-        assertThat(agent.getSystemMessage())
-            .contains(systemMessage);
-    }
-
-    @Test
-    public void shouldCreateAgentWithSystemMessageFromProvider() throws AGUIException {
-        var agentId = UUID.randomUUID().toString();
-        var systemMessage = "Dynamic system message";
-        var systemMessageProvider = new Function<LocalAgent, String>() {
-            @Override
-            public String apply(LocalAgent localAgent) {
-                return systemMessage;
-            }
-        };
-
-        var agent = new TestAgent(agentId, new State(), systemMessageProvider, null);
-
-        assertThat(agent.getSystemMessage())
-                .contains(systemMessage);
-    }
-
-    @Test
-    public void shouldThrowExceptionOnNullSystemMessageAndProvider() throws AGUIException {
-        assertThatExceptionOfType(AGUIException.class)
-            .isThrownBy(() -> new TestAgent(null, new State(), null, null))
-            .withMessage("Either SystemMessage or SystemMessageProvider should be set.");
-    }
-
-    @Test
     public void shouldGetLatestUserMessage() throws AGUIException {
         var message1 = new UserMessage();
         message1.setContent("Hi");
         var message2 = new UserMessage();
         message2.setContent("Bye");
 
-        var agent = new TestAgent(null, null, null, "System");
+        var agent = new TestAgent(null, null);
 
         assertThat(agent.getLatestUserMessageContent(asList(message1, message2)))
-            .isEqualTo("Bye");
+                .isEqualTo("Bye");
     }
 
     @Test
     public void shouldThrowExceptionOnNoUserMessage() throws AGUIException {
-        var agent = new TestAgent(null, null, null,"System");
+        var agent = new TestAgent(null, null);
 
         assertThatExceptionOfType(AGUIException.class)
-            .isThrownBy(() -> agent.getLatestUserMessageContent(emptyList()))
-            .withMessage("No User Message found.");
+                .isThrownBy(() -> agent.getLatestUserMessageContent(emptyList()))
+                .withMessage("No User Message found.");
     }
 
     @Test
     public void shouldSetAgentId() throws AGUIException {
         var agentId = UUID.randomUUID().toString();
-        var agent = new TestAgent(agentId, new State(), null, "Message");
+        var agent = new TestAgent(agentId, new State());
 
         assertThat(agent.getAgentId()).isEqualTo(agentId);
     }
@@ -95,26 +61,26 @@ class LocalAgentTest {
     public void shouldRunAgent() throws AGUIException {
         var message = new UserMessage();
         message.setContent("Hi");
-        var agent = new TestAgent(null, null, null, "System");
+        var agent = new TestAgent(null, null);
         var runId = UUID.randomUUID().toString();
 
         agent.runAgent(
-            RunAgentParameters.builder()
-                .runId(runId)
-                .messages(List.of(message))
-                .tools(emptyList())
-                .threadId("thread-1")
-                .build(),
-            new AgentSubscriber() {
-                @Override
-                public void onRunFinalized(AgentSubscriberParams params) {
-                    assertThat(agent.input.messages()).containsExactly(message);
+                RunAgentParameters.builder()
+                        .runId(runId)
+                        .messages(List.of(message))
+                        .tools(emptyList())
+                        .threadId("thread-1")
+                        .build(),
+                new AgentSubscriber() {
+                    @Override
+                    public void onRunFinalized(AgentSubscriberParams params) {
+                        assertThat(agent.input.messages()).containsExactly(message);
+                    }
+                    @Override
+                    public void onRunFailed(AgentSubscriberParams params, Throwable error) {
+                        AgentSubscriber.super.onRunFailed(params, error);
+                    }
                 }
-                @Override
-                public void onRunFailed(AgentSubscriberParams params, Throwable error) {
-                    AgentSubscriber.super.onRunFailed(params, error);
-                }
-            }
         ).whenComplete((unused, throwable) -> {
             assertThat(agent.input.messages()).containsExactly(message);
         });
@@ -122,7 +88,7 @@ class LocalAgentTest {
 
     @Test
     public void shouldEmitEvents() throws AGUIException {
-        var agent = new TestAgent(null, null, null, "Message");
+        var agent = new TestAgent(null, null);
 
         var agentSubscriber = new AgentSubscriber(){
             private List<BaseEvent> events = new ArrayList<>();
@@ -134,9 +100,9 @@ class LocalAgentTest {
 
             public BaseEvent getLastEvent() {
                 return this.events
-                    .stream()
-                    .reduce((first, second) -> second)
-                    .orElse(null);
+                        .stream()
+                        .reduce((first, second) -> second)
+                        .orElse(null);
             }
         };
 
@@ -208,7 +174,7 @@ class LocalAgentTest {
 
     @Test
     public void shouldSetState() throws AGUIException {
-        var agent = new TestAgent(null, null, null, "Message");
+        var agent = new TestAgent(null, null);
 
         var state = new State();
 
@@ -223,8 +189,8 @@ class LocalAgentTest {
 
         RunAgentInput input;
 
-        public TestAgent(String agentId, State state, Function<LocalAgent, String> systemMessageProvider, String systemMessage) throws AGUIException {
-            super(agentId, state, systemMessageProvider, systemMessage, new ArrayList<>());
+        public TestAgent(String agentId, State state) throws AGUIException {
+            super(agentId, state, new ArrayList<>());
         }
 
         @Override
@@ -238,7 +204,7 @@ class LocalAgentTest {
         }
 
         public String getSystemMessage() {
-            return super.createSystemMessage(new State(), emptyList()).getContent();
+            return super.createSystemMessage(new State(), emptyList(), "System Message").getContent();
         }
 
         public String getLatestUserMessageContent(List<BaseMessage> messages) throws AGUIException {

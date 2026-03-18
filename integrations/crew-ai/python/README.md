@@ -14,7 +14,7 @@ pip install ag-ui-crewai
 
 ```python
 from crewai.flow.flow import Flow, start
-from litellm import completion
+from litellm import acompletion
 from ag_ui_crewai import (
     add_crewai_flow_fastapi_endpoint,
     copilotkit_stream,
@@ -26,7 +26,7 @@ class MyFlow(Flow[CopilotKitState]):
     @start()
     async def chat(self):
         response = await copilotkit_stream(
-            completion(
+            await acompletion(
                 model="openai/gpt-4o",
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant."},

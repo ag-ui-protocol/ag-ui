@@ -5,7 +5,7 @@ from enum import Enum
 from pydantic import TypeAdapter
 from pydantic_core import PydanticSerializationError
 from typing import List, Any, Dict, Union
-from dataclasses import is_dataclass, asdict
+from dataclasses import is_dataclass, asdict, fields
 from datetime import date, datetime
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
@@ -219,19 +219,46 @@ def agui_messages_to_langchain(messages: List[AGUIMessage]) -> List[BaseMessage]
 def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
     content = chunk.content
     if not content:
-        return None
+        # Fall through to check additional_kwargs for OpenAI legacy format
+        pass
 
-    # Anthropic reasoning response
     if isinstance(content, list) and content and content[0]:
-        if not content[0].get("thinking"):
-            return None
-        return LangGraphReasoning(
-            text=content[0]["thinking"],
-            type="text",
-            index=content[0].get("index", 0)
-        )
+        block = content[0]
+        block_type = block.get("type") if isinstance(block, dict) else None
 
-    # OpenAI reasoning response
+        # Old langchain-anthropic format: { type: "thinking", thinking: "..." }
+        if block_type == "thinking" and block.get("thinking"):
+            result = LangGraphReasoning(
+                text=block["thinking"],
+                type="text",
+                index=block.get("index", 0)
+            )
+            # Extract signature if present (Anthropic extended thinking signature)
+            if block.get("signature"):
+                result["signature"] = block["signature"]
+            return result
+
+        # New LangChain standardized format: { type: "reasoning", reasoning: "..." }
+        if block_type == "reasoning" and block.get("reasoning"):
+            return LangGraphReasoning(
+                text=block["reasoning"],
+                type="text",
+                index=block.get("index", 0)
+            )
+
+        # OpenAI Responses API v1 format: { type: "reasoning", summary: [{ text: "..." }] }
+        if block_type == "reasoning" and block.get("summary"):
+            summaries = block["summary"]
+            if summaries and isinstance(summaries, list) and summaries[0]:
+                data = summaries[0]
+                if data.get("text"):
+                    return LangGraphReasoning(
+                        type="text",
+                        text=data["text"],
+                        index=data.get("index", 0)
+                    )
+
+    # OpenAI legacy format via additional_kwargs
     if hasattr(chunk, "additional_kwargs"):
         reasoning = chunk.additional_kwargs.get("reasoning", {})
         summary = reasoning.get("summary", [])
@@ -244,6 +271,23 @@ def resolve_reasoning_content(chunk: Any) -> LangGraphReasoning | None:
                 text=data["text"],
                 index=data.get("index", 0)
             )
+
+    return None
+
+
+def resolve_encrypted_reasoning_content(chunk: Any) -> str | None:
+    """
+    Resolves encrypted reasoning content from Anthropic responses.
+    This handles:
+    - `redacted_thinking` blocks with encrypted `data` (redacted chain-of-thought)
+    """
+    content = chunk.content if chunk else None
+    if not content or not isinstance(content, list) or not content or not content[0]:
+        return None
+
+    # Anthropic redacted_thinking block: { type: "redacted_thinking", data: "..." }
+    if content[0].get("type") == "redacted_thinking" and content[0].get("data"):
+        return content[0]["data"]
 
     return None
 
@@ -290,21 +334,44 @@ def flatten_user_content(content: Any) -> str:
 
     return str(content)
 
+
+def normalize_tool_content(content: Any) -> str:
+    """
+    Normalize tool message content to a string.
+    Handles the various content block formats from LangChain/LangGraph.
+
+    Content can be:
+    - A plain string
+    - A list of strings or content blocks (e.g., {"type": "text", "text": "..."})
+    """
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get('type') == 'text':
+                parts.append(block.get('text', ''))
+            else:
+                parts.append(json.dumps(block))
+        return ''.join(parts)
+
+    return json.dumps(content)
+
+
 def camel_to_snake(name):
     return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
 
 def json_safe_stringify(o):
-    if is_dataclass(o):          # dataclasses like Flight(...)
-        return asdict(o)
-    if hasattr(o, "model_dump"): # pydantic v2
-        return o.model_dump()
-    if hasattr(o, "dict"):       # pydantic v1
-        return o.dict()
-    if hasattr(o, "__dict__"):   # plain objects
-        return vars(o)
+    """Fallback encoder used by json.dumps(default=...)."""
     if isinstance(o, (datetime, date)):
         return o.isoformat()
-    return str(o)                # last resort
+    try:
+        return make_json_safe(o)
+    except Exception:
+        return str(o)
 
 def make_json_safe(value: Any, _seen: set[int] | None = None) -> Any:
     """
@@ -340,9 +407,11 @@ def make_json_safe(value: Any, _seen: set[int] | None = None) -> Any:
     # --- 3. Dicts ----------------------------------------------------------
     if isinstance(value, dict):
         _seen.add(obj_id)
+        # LangGraph/LangChain tool calls inject non-serializable runtime/config; skip them.
         return {
             make_json_safe(k, _seen): make_json_safe(v, _seen)
             for k, v in value.items()
+            if k not in ("runtime", "config")
         }
 
     # --- 4. Iterable containers -------------------------------------------
@@ -353,7 +422,9 @@ def make_json_safe(value: Any, _seen: set[int] | None = None) -> Any:
     # --- 5. Dataclasses ----------------------------------------------------
     if is_dataclass(value):
         _seen.add(obj_id)
-        return make_json_safe(asdict(value), _seen)
+        # Skip runtime/config (LangGraph-injected, not serializable)
+        d = {f.name: getattr(value, f.name) for f in fields(value) if f.name not in ("runtime", "config")}
+        return make_json_safe(d, _seen)
 
     # --- 6. Pydantic-like models (v2: model_dump) -------------------------
     if hasattr(value, "model_dump") and callable(getattr(value, "model_dump")):

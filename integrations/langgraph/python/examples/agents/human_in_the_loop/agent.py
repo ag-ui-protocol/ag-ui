@@ -72,7 +72,7 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     """
 
     # Define the model
-    model = ChatOpenAI(model="gpt-4o-mini")
+    model = ChatOpenAI(model="gpt-4.1-mini")
 
     # Define config for the model
     if config is None:
@@ -197,7 +197,7 @@ async def process_steps_node(state: Dict[str, Any], config: RunnableConfig):
     Don't just repeat a list of steps, come up with a creative but short description (3 sentences max) of how you are performing the task.
     """
 
-    final_response = await ChatOpenAI(model="gpt-4o").ainvoke([
+    final_response = await ChatOpenAI(model="gpt-4.1-mini").ainvoke([
         SystemMessage(content=final_prompt),
         {"role": "user", "content": user_response}
     ], config)

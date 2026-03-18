@@ -1,24 +1,34 @@
 [project]
 name = "ag_ui_adk"
-version = "0.3.6"
+description = "ADK Middleware for AG-UI Protocol"
+version = "0.5.1"
 readme = "README.md"
 authors = [
     { name = "Mark Fogle", email = "mark@contextable.com" }
 ]
-requires-python = ">=3.9, <3.14"
+requires-python = ">=3.10, <3.15"
 dependencies = [
-    "ag-ui-protocol>=0.1.10",
+    "ag-ui-protocol>=0.1.11",
     "aiohttp>=3.12.0",
     "asyncio>=3.4.3",
     "fastapi>=0.115.2",
-    "google-adk>=1.14.0",
+    "google-adk>=1.16.0",
     "pydantic>=2.11.7",
     "uvicorn>=0.35.0",
 ]
+license = "MIT"
+
+[tool.ag-ui.scripts]
+test = "python -m pytest"
 
 [build-system]
-requires = ["uv_build>=0.8.0,<0.9"]
+requires = ["uv_build>=0.8.0,<0.11"]
 build-backend = "uv_build"
+
+[project.urls]
+Homepage = "https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/adk-middleware/python"
+Issues = "https://github.com/ag-ui-protocol/ag-ui/issues"
+
 
 [dependency-groups]
 dev = [
@@ -30,4 +40,5 @@ dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
     "pytest-cov>=6.2.1",
+    "pytest-xdist>=3.8.0",
 ]

@@ -47,9 +47,11 @@ RunMetadata = TypedDict("RunMetadata", {
     "prev_node_name": NotRequired[Optional[str]],
     "exiting_node": NotRequired[bool],
     "manually_emitted_state": NotRequired[Optional[State]],
-    "thread_id": NotRequired[Optional[ThinkingProcess]],
-    "thinking_process": NotRequired[Optional[str]],
+    "thread_id": NotRequired[Optional[str]],
+    "reasoning_process": NotRequired[Optional[ThinkingProcess]],
     "has_function_streaming": NotRequired[bool],
+    "model_made_tool_call": NotRequired[bool],
+    "state_reliable": NotRequired[bool],
 })
 
 MessagesInProgressRecord = Dict[str, Optional[MessageInProgress]]
@@ -89,5 +91,6 @@ PredictStateTool = TypedDict("PredictStateTool", {
 LangGraphReasoning = TypedDict("LangGraphReasoning", {
     "type": str,
     "text": str,
-    "index": int
+    "index": int,
+    "signature": NotRequired[Optional[str]],
 })
