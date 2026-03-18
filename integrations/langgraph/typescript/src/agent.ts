@@ -1256,7 +1256,13 @@ export class LangGraphAgent extends AbstractAgent {
 
   async getAssistant(): Promise<Assistant> {
     try {
-      const assistants = await this.client.assistants.search();
+      const assistants = await this.client.assistants.search({
+        graphId: this.graphId,
+        // The LangGraph API defaults list endpoints to 10 items. Once dojo
+        // registers more than 10 graphs, an unbounded search can miss the
+        // requested graph and cause lookups to fail nondeterministically.
+        limit: 100,
+      });
       const retrievedAssistant = assistants.find(
         (searchResult) => searchResult.graph_id === this.graphId,
       );
