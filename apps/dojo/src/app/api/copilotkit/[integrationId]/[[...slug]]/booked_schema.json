@@ -1,0 +1,86 @@
+[
+  {
+    "id": "root",
+    "component": {
+      "Card": {
+        "child": "main-col"
+      }
+    }
+  },
+  {
+    "id": "main-col",
+    "component": {
+      "Column": {
+        "children": {
+          "explicitList": [
+            "booked-title",
+            "booked-detail",
+            "divider",
+            "ref-row",
+            "email-note"
+          ]
+        },
+        "alignment": "center",
+        "gap": "small"
+      }
+    }
+  },
+  {
+    "id": "booked-title",
+    "component": {
+      "Text": {
+        "text": { "path": "/title" },
+        "usageHint": "h2"
+      }
+    }
+  },
+  {
+    "id": "booked-detail",
+    "component": {
+      "Text": {
+        "text": { "path": "/detail" },
+        "usageHint": "body"
+      }
+    }
+  },
+  { "id": "divider", "component": { "Divider": {} } },
+  {
+    "id": "ref-row",
+    "component": {
+      "Row": {
+        "children": {
+          "explicitList": ["ref-label", "ref-value"]
+        },
+        "distribution": "spaceBetween",
+        "alignment": "center"
+      }
+    }
+  },
+  {
+    "id": "ref-label",
+    "component": {
+      "Text": {
+        "text": { "literalString": "Confirmation" },
+        "usageHint": "caption"
+      }
+    }
+  },
+  {
+    "id": "ref-value",
+    "component": {
+      "Text": {
+        "text": { "path": "/reference" },
+        "usageHint": "h3"
+      }
+    }
+  },
+  {
+    "id": "email-note",
+    "component": {
+      "Text": {
+        "text": { "literalString": "Details sent to your email" },
+        "usageHint": "caption"
+      }
+    }
+  }
+]
