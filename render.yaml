@@ -1,0 +1,266 @@
+# Exported from Render on 2026-03-19T22:30:30Z
+version: "1"
+projects:
+- name: AG-UI Dojo
+  environments:
+  - name: Production
+    services:
+    - type: web
+      name: ag-ui-dojo-langgraph-fastapi
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: PYTHON_VERSION
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: uv sync
+      startCommand: uv run agents/dojo.py
+      autoDeployTrigger: commit
+      rootDir: integrations/langgraph/python/examples
+    - type: web
+      name: ag-ui-dojo-crewai
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: poetry install
+      startCommand: poetry run dev
+      autoDeployTrigger: commit
+      rootDir: integrations/crew-ai/python
+    - type: web
+      name: ag-ui-dojo-pydantic-ai
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: UVICORN_HOST
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: uv sync
+      startCommand: uv run dev
+      autoDeployTrigger: commit
+      rootDir: integrations/pydantic-ai/python/examples
+    - type: web
+      name: ag-ui-dojo-mastra
+      runtime: node
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: npm install
+      startCommand: npm run dev
+      autoDeployTrigger: commit
+      rootDir: integrations/mastra/typescript/examples
+    - type: web
+      name: ag-ui-dojo-ag2
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: uv sync
+      startCommand: uv run dev
+      autoDeployTrigger: commit
+      rootDir: integrations/ag2/python/examples
+    - type: web
+      name: ag-ui-dojo-server-starter-all-features
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: poetry install
+      startCommand: poetry run dev
+      autoDeployTrigger: commit
+      rootDir: integrations/server-starter-all-features/python/examples
+    - type: web
+      name: ag-ui-dojo-strands-python
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: standard
+      envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: poetry install
+      startCommand: poetry run dev
+      autoDeployTrigger: commit
+      rootDir: integrations/aws-strands/python/examples
+    - type: web
+      name: ag-ui-dojo-agno
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: PORT
+        sync: false
+      region: virginia
+      buildCommand: uv sync
+      startCommand: uv run dev
+      autoDeployTrigger: commit
+      rootDir: integrations/agno/python/examples
+    - type: web
+      name: ag-ui-dojo-a2a-middleware-finance
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: uv sync
+      startCommand: uv run finance.py
+      autoDeployTrigger: commit
+      rootDir: middlewares/a2a-middleware/examples
+    - type: web
+      name: ag-ui-dojo-a2a-middleware-orchestrator
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: uv sync
+      startCommand: uv run orchestrator.py
+      autoDeployTrigger: commit
+      rootDir: middlewares/a2a-middleware/examples
+    - type: web
+      name: ag-ui-dojo-a2a-middleware-businesses_management
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: uv sync
+      startCommand: uv run buildings_management.py
+      autoDeployTrigger: commit
+      rootDir: middlewares/a2a-middleware/examples
+    - type: web
+      name: ag-ui-dojo-server-starter
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      region: virginia
+      buildCommand: poetry install
+      startCommand: poetry run dev
+      autoDeployTrigger: commit
+      rootDir: integrations/server-starter/python/examples
+    - type: web
+      name: ag-ui-dojo-llamaindex
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: uv sync
+      startCommand: uv run dev
+      autoDeployTrigger: commit
+      rootDir: integrations/llama-index/python/examples
+    - type: web
+      name: ag-ui-dojo-open-agent-spec
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: OPENAI_MODEL
+        sync: false
+      - key: OPENAI_BASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: uv sync --extra langgraph --extra wayflow
+      startCommand: uv run dev
+      autoDeployTrigger: commit
+      rootDir: integrations/agent-spec/python/examples
+    - type: web
+      name: ag-ui-dojo-maf-dotnet
+      runtime: docker
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: AZURE_CLIENT_ID
+        sync: false
+      - key: AZURE_CLIENT_SECRET
+        sync: false
+      - key: AZURE_TENANT_ID
+        sync: false
+      - key: AZURE_OPENAI_DEPLOYMENT_NAME
+        sync: false
+      - key: AZURE_OPENAI_ENDPOINT
+        sync: false
+      region: virginia
+      dockerContext: .
+      dockerfilePath: ./Dockerfile
+      autoDeployTrigger: commit
+      rootDir: integrations/microsoft-agent-framework/dotnet/examples/AGUIDojoServer
+    - type: web
+      name: ag-ui-dojo-maf-python
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: AZURE_TENANT_ID
+        sync: false
+      - key: AZURE_OPENAI_ENDPOINT
+        sync: false
+      - key: AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
+        sync: false
+      - key: AZURE_CLIENT_SECRET
+        sync: false
+      - key: AZURE_CLIENT_ID
+        sync: false
+      region: virginia
+      buildCommand: uv sync
+      startCommand: uv run dev
+      autoDeployTrigger: commit
+      rootDir: integrations/microsoft-agent-framework/python/examples
+    - type: web
+      name: ag-ui-dojo-a2a-middleware-it
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: uv sync
+      startCommand: uv run it.py
+      autoDeployTrigger: commit
+      rootDir: middlewares/a2a-middleware/examples
+    - type: web
+      name: ag-ui-adk
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: uv sync
+      startCommand: uv run dev
+      autoDeployTrigger: commit
+      rootDir: integrations/adk-middleware/python/examples
