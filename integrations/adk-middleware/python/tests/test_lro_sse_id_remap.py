@@ -84,7 +84,7 @@ class TestExtractLroIdRemap:
 
     def test_remap_detected_when_ids_differ(self, adk_agent, translator):
         """When the translator emitted ID-A but the final event has ID-B, a remap is produced."""
-        translator.lro_emitted_ids_by_name["my_tool"] = "partial-id-AAA"
+        translator.lro_emitted_ids_by_name["my_tool"] = ["partial-id-AAA"]
         final_event = self._make_event("my_tool", "final-id-BBB")
 
         remap = adk_agent._extract_lro_id_remap(final_event, translator)
@@ -93,7 +93,7 @@ class TestExtractLroIdRemap:
 
     def test_no_remap_when_ids_match(self, adk_agent, translator):
         """When partial and final IDs are the same, no remap is needed."""
-        translator.lro_emitted_ids_by_name["my_tool"] = "same-id"
+        translator.lro_emitted_ids_by_name["my_tool"] = ["same-id"]
         final_event = self._make_event("my_tool", "same-id")
 
         remap = adk_agent._extract_lro_id_remap(final_event, translator)
@@ -110,7 +110,7 @@ class TestExtractLroIdRemap:
 
     def test_no_remap_for_empty_event(self, adk_agent, translator):
         """Events without content produce no remap."""
-        translator.lro_emitted_ids_by_name["my_tool"] = "partial-id"
+        translator.lro_emitted_ids_by_name["my_tool"] = ["partial-id"]
         evt = MagicMock()
         evt.content = None
 
@@ -120,8 +120,8 @@ class TestExtractLroIdRemap:
 
     def test_multiple_tools_remapped(self, adk_agent, translator):
         """Multiple LRO tool calls in one event all get remapped."""
-        translator.lro_emitted_ids_by_name["tool_a"] = "partial-A"
-        translator.lro_emitted_ids_by_name["tool_b"] = "partial-B"
+        translator.lro_emitted_ids_by_name["tool_a"] = ["partial-A"]
+        translator.lro_emitted_ids_by_name["tool_b"] = ["partial-B"]
 
         fc_a = MagicMock(); fc_a.id = "final-A"; fc_a.name = "tool_a"
         fc_b = MagicMock(); fc_b.id = "final-B"; fc_b.name = "tool_b"
@@ -134,6 +134,31 @@ class TestExtractLroIdRemap:
         remap = adk_agent._extract_lro_id_remap(evt, translator)
 
         assert remap == {"partial-A": "final-A", "partial-B": "final-B"}
+
+    def test_parallel_same_name_tools_remapped(self, adk_agent, translator):
+        """Multiple parallel calls to the same tool all get remapped (issue #1334)."""
+        # Simulate 3 parallel calls to create_item with different partial IDs
+        translator.lro_emitted_ids_by_name["create_item"] = [
+            "partial-1", "partial-2", "partial-3"
+        ]
+
+        fc_1 = MagicMock(); fc_1.id = "final-1"; fc_1.name = "create_item"
+        fc_2 = MagicMock(); fc_2.id = "final-2"; fc_2.name = "create_item"
+        fc_3 = MagicMock(); fc_3.id = "final-3"; fc_3.name = "create_item"
+        part_1 = MagicMock(); part_1.function_call = fc_1
+        part_2 = MagicMock(); part_2.function_call = fc_2
+        part_3 = MagicMock(); part_3.function_call = fc_3
+        evt = MagicMock()
+        evt.content = MagicMock()
+        evt.content.parts = [part_1, part_2, part_3]
+
+        remap = adk_agent._extract_lro_id_remap(evt, translator)
+
+        assert remap == {
+            "partial-1": "final-1",
+            "partial-2": "final-2",
+            "partial-3": "final-3",
+        }
 
 
 class TestLroIdRemapSessionState:
@@ -242,14 +267,51 @@ class TestEventTranslatorLroTracking:
         assert events[0].tool_call_id == "adk-partial-123"
 
         # Verify the name→ID mapping
-        assert translator.lro_emitted_ids_by_name == {"get_approval": "adk-partial-123"}
+        assert translator.lro_emitted_ids_by_name == {"get_approval": ["adk-partial-123"]}
 
     @pytest.mark.asyncio
     async def test_lro_emitted_ids_cleared_on_reset(self, translator):
         """reset() should clear lro_emitted_ids_by_name."""
-        translator.lro_emitted_ids_by_name["some_tool"] = "some-id"
+        translator.lro_emitted_ids_by_name["some_tool"] = ["some-id"]
         translator.reset()
         assert translator.lro_emitted_ids_by_name == {}
+
+    @pytest.mark.asyncio
+    async def test_parallel_same_name_lro_calls_all_emitted(self, translator):
+        """Multiple parallel LRO calls to the same tool should all be emitted (issue #1334)."""
+        # Build an event with 3 parallel calls to the same tool
+        parts = []
+        lro_ids = []
+        for i in range(3):
+            fc = MagicMock()
+            fc.id = f"partial-{i}"
+            fc.name = "create_item"
+            fc.args = {"name": f"item-{i}"}
+            part = MagicMock()
+            part.function_call = fc
+            part.text = None
+            parts.append(part)
+            lro_ids.append(fc.id)
+
+        evt = MagicMock()
+        evt.content = MagicMock()
+        evt.content.parts = parts
+        evt.long_running_tool_ids = lro_ids
+
+        events = []
+        async for e in translator.translate_lro_function_calls(evt):
+            events.append(e)
+
+        # Should have 3 × (START, ARGS, END) = 9 events
+        assert len(events) == 9
+        start_events = [e for e in events if e.type == EventType.TOOL_CALL_START]
+        assert len(start_events) == 3
+        assert {e.tool_call_id for e in start_events} == {"partial-0", "partial-1", "partial-2"}
+
+        # All 3 IDs should be tracked
+        assert translator.lro_emitted_ids_by_name == {
+            "create_item": ["partial-0", "partial-1", "partial-2"]
+        }
 
 
 class TestDrainPathCapturesRemap:

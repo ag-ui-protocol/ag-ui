@@ -208,10 +208,12 @@ class EventTranslator:
         self._last_streamed_text: Optional[str] = None  # Snapshot of most recently streamed text
         self._last_streamed_run_id: Optional[str] = None  # Run identifier for the last streamed text
         self.long_running_tool_ids: List[str] = []  # Track the long running tool IDs
-        # Maps LRO function call name → the ID we emitted to the client.
+        # Maps LRO function call name → list of IDs we emitted to the client.
         # Used to build a remap when the final (non-partial) event arrives
         # with a different ID for the same logical function call.
-        self.lro_emitted_ids_by_name: Dict[str, str] = {}
+        # A list is used because the same tool can be called multiple times
+        # in parallel (e.g. 5 concurrent create_item calls).
+        self.lro_emitted_ids_by_name: Dict[str, List[str]] = {}
 
         # Track thinking message streaming state (for thought parts)
         self._is_thinking: bool = False  # Whether we're currently in a thinking block
@@ -739,45 +741,46 @@ class EventTranslator:
             Tool call events (START, ARGS, END)
         """
 
-        long_running_function_call = None
         if adk_event.content and adk_event.content.parts:
+            lro_ids = set(adk_event.long_running_tool_ids or [])
             for i, part in enumerate(adk_event.content.parts):
                 if part.function_call:
-                    if not long_running_function_call and part.function_call.id in (
-                        adk_event.long_running_tool_ids or []
-                    ) and part.function_call.id not in self._client_emitted_tool_call_ids \
+                    fc = part.function_call
+                    if fc.id in lro_ids \
+                      and fc.id not in self._client_emitted_tool_call_ids \
                       and (not self._is_resumable
-                           or getattr(part.function_call, 'name', None) not in self._client_tool_names):
-                        long_running_function_call = part.function_call
-                        self.long_running_tool_ids.append(long_running_function_call.id)
-                        self.lro_emitted_ids_by_name[long_running_function_call.name] = long_running_function_call.id
+                           or getattr(fc, 'name', None) not in self._client_tool_names):
+                        self.long_running_tool_ids.append(fc.id)
+                        if fc.name not in self.lro_emitted_ids_by_name:
+                            self.lro_emitted_ids_by_name[fc.name] = []
+                        self.lro_emitted_ids_by_name[fc.name].append(fc.id)
                         yield ToolCallStartEvent(
                             type=EventType.TOOL_CALL_START,
-                            tool_call_id=long_running_function_call.id,
-                            tool_call_name=long_running_function_call.name,
+                            tool_call_id=fc.id,
+                            tool_call_name=fc.name,
                             parent_message_id=None
                         )
-                        if hasattr(long_running_function_call, 'args') and long_running_function_call.args:
+                        if hasattr(fc, 'args') and fc.args:
                             # Convert args to string (JSON format)
                             import json
-                            args_str = json.dumps(long_running_function_call.args) if isinstance(long_running_function_call.args, dict) else str(long_running_function_call.args)
+                            args_str = json.dumps(fc.args) if isinstance(fc.args, dict) else str(fc.args)
                             yield ToolCallArgsEvent(
                                 type=EventType.TOOL_CALL_ARGS,
-                                tool_call_id=long_running_function_call.id,
+                                tool_call_id=fc.id,
                                 delta=args_str
                             )
-                        
+
                         # Emit TOOL_CALL_END
                         yield ToolCallEndEvent(
                             type=EventType.TOOL_CALL_END,
-                            tool_call_id=long_running_function_call.id
+                            tool_call_id=fc.id
                         )
 
                         # Record so ClientProxyTool can skip duplicate emission
-                        self.emitted_tool_call_ids.add(long_running_function_call.id)
+                        self.emitted_tool_call_ids.add(fc.id)
 
                         # Clean up tracking
-                        self._active_tool_calls.pop(long_running_function_call.id, None)
+                        self._active_tool_calls.pop(fc.id, None)
     
     async def _translate_function_calls(
         self,

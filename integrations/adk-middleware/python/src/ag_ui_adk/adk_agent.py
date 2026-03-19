@@ -600,6 +600,10 @@ class ADKAgent:
         if not adk_event.content or not hasattr(adk_event.content, 'parts'):
             return remap
 
+        # Track consumption index per tool name so that parallel calls to the
+        # same tool (e.g. 5 × create_item) are matched by position (FIFO).
+        consumed: Dict[str, int] = {}
+
         for part in (adk_event.content.parts or []):
             fc = getattr(part, 'function_call', None)
             if not fc:
@@ -609,13 +613,17 @@ class ADKAgent:
             if not final_id or not fc_name:
                 continue
 
-            emitted_id = event_translator.lro_emitted_ids_by_name.get(fc_name)
-            if emitted_id and emitted_id != final_id:
-                remap[emitted_id] = final_id
-                logger.info(
-                    f"LRO ID remap: client_id={emitted_id} -> persisted_id={final_id} "
-                    f"(tool={fc_name})"
-                )
+            emitted_ids = event_translator.lro_emitted_ids_by_name.get(fc_name, [])
+            idx = consumed.get(fc_name, 0)
+            if idx < len(emitted_ids):
+                emitted_id = emitted_ids[idx]
+                consumed[fc_name] = idx + 1
+                if emitted_id != final_id:
+                    remap[emitted_id] = final_id
+                    logger.info(
+                        f"LRO ID remap: client_id={emitted_id} -> persisted_id={final_id} "
+                        f"(tool={fc_name})"
+                    )
 
         return remap
 
