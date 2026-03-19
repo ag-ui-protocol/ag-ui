@@ -1,16 +1,16 @@
 /**
- * A2UI surface configuration: the component tree, root, and data binding.
+ * A2UI surface configuration: the component tree and data binding (v0.9).
  */
 export interface A2UISurfaceConfig {
   /** Unique surface ID */
   surfaceId: string;
-  /** Root component ID */
-  root: string;
-  /** The fixed component tree */
+  /** Catalog ID for the v0.9 renderer */
+  catalogId: string;
+  /** The fixed component tree (v0.9 flat format) */
   components: Array<Record<string, unknown>>;
   /**
    * Which arg key contains the data to bind.
-   * E.g. "flights" means the tool arg `{ flights: [...] }` is used for dataModelUpdate.
+   * E.g. "flights" means the tool arg `{ flights: [...] }` is used for updateDataModel.
    */
   dataKey: string;
   /**

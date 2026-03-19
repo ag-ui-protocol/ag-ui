@@ -24,7 +24,7 @@ import {
   A2UISurfaceConfig,
 } from "./types";
 import { SEND_A2UI_JSON_TOOL, SEND_A2UI_TOOL_NAME, LOG_A2UI_EVENT_TOOL_NAME } from "./tools";
-import { getOperationSurfaceId, tryParseA2UIOperations, A2UI_OPERATIONS_KEY, toA2UIContents, extractCompleteItems, extractCompleteItemsWithStatus, extractCompleteA2UIOperations, extractStringField } from "./schema";
+import { getOperationSurfaceId, tryParseA2UIOperations, A2UI_OPERATIONS_KEY, extractCompleteItems, extractCompleteItemsWithStatus, extractCompleteA2UIOperations, extractStringField } from "./schema";
 
 // Re-exports
 export * from "./types";
@@ -57,7 +57,7 @@ function groupBySurface(ops: Array<Record<string, unknown>>): Map<string, Array<
 }
 
 /**
- * Emit a streaming data snapshot for an A2UI surface.
+ * Emit a streaming data snapshot for an A2UI surface (v0.9 format).
  */
 function emitStreamingData(
   subscriber: { next: (event: BaseEvent) => void },
@@ -69,11 +69,10 @@ function emitStreamingData(
 ) {
   const surfaceId = schema.surfaceId;
   const messageId = `a2ui-surface-${surfaceId}-${toolCallId}`;
-  const contents = toA2UIContents({ [dataKey]: items });
   const allOps = [
-    { surfaceUpdate: { surfaceId, components: schema.components } },
-    { dataModelUpdate: { surfaceId, contents } },
-    { beginRendering: { surfaceId, root: schema.root } },
+    { version: "v0.9", createSurface: { surfaceId, catalogId: schema.catalogId } },
+    { version: "v0.9", updateComponents: { surfaceId, components: schema.components } },
+    { version: "v0.9", updateDataModel: { surfaceId, value: { [dataKey]: items } } },
   ];
   const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: allOps };
   // Include actionHandlers from either the fixed-schema config or dynamic extraction
@@ -210,8 +209,8 @@ export class A2UIMiddleware extends Middleware {
    * Process the event stream, holding back RUN_FINISHED to process pending A2UI tool calls.
    * Uses runNextWithState for automatic message tracking.
    *
-   * For tools with registered streaming surfaces, emits surfaceUpdate + beginRendering
-   * on TOOL_CALL_START and streams dataModelUpdate as args are generated.
+   * For tools with registered streaming surfaces, emits createSurface + updateComponents
+   * on TOOL_CALL_START and streams updateDataModel as args are generated.
    */
   private processStream(source: Observable<EventWithState>): Observable<BaseEvent> {
     // Build lookup: toolName → surface config
@@ -229,7 +228,7 @@ export class A2UIMiddleware extends Middleware {
 
       // Unified streaming tracker: used by both fixed-schema and dynamic render_a2ui.
       // Fixed-schema: schema is set on TOOL_CALL_START from config.
-      // Dynamic: schema is extracted from streaming args when surfaceUpdate completes.
+      // Dynamic: schema is extracted from streaming args when updateComponents completes.
       const streamingToolCalls = new Map<string, {
         schema: A2UISurfaceConfig | null; // null until schema is extracted (dynamic case)
         args: string;
@@ -275,10 +274,10 @@ export class A2UIMiddleware extends Middleware {
                 dataKey: schema.dataKey, schemaEmitted: true,
               });
 
-              // Emit schema immediately
+              // Emit schema immediately (v0.9 format)
               const schemaOps = [
-                { surfaceUpdate: { surfaceId: schema.surfaceId, components: schema.components } },
-                { beginRendering: { surfaceId: schema.surfaceId, root: schema.root } },
+                { version: "v0.9", createSurface: { surfaceId: schema.surfaceId, catalogId: schema.catalogId } },
+                { version: "v0.9", updateComponents: { surfaceId: schema.surfaceId, components: schema.components } },
               ];
               for (const activityEvent of this.createA2UIActivityEvents(
                 schemaOps, schema.actionHandlers, startEvent.toolCallId,
@@ -311,9 +310,9 @@ export class A2UIMiddleware extends Middleware {
               if (!streaming.schema && deltaHasStructuralChar) {
                 const result = extractCompleteItemsWithStatus(streaming.args, "components");
                 const surfaceId = extractStringField(streaming.args, "surfaceId");
-                const root = extractStringField(streaming.args, "root");
-                if (result?.arrayClosed && result.items.length > 0 && surfaceId && root) {
-                  streaming.schema = { surfaceId, root, components: result.items as any[], dataKey: "items" };
+                const catalogId = extractStringField(streaming.args, "catalogId") ?? "basic";
+                if (result?.arrayClosed && result.items.length > 0 && surfaceId) {
+                  streaming.schema = { surfaceId, catalogId, components: result.items as any[], dataKey: "items" };
                   streaming.dataKey = "items";
                 }
               }
@@ -371,21 +370,19 @@ export class A2UIMiddleware extends Middleware {
               if (ops && ops.length > a2uiStream.emittedCount) {
                 a2uiStream.emittedCount = ops.length;
 
-                // Auto-inject beginRendering for surfaceUpdates that don't have one yet
+                // Auto-inject createSurface for updateComponents that don't have one yet (v0.9)
                 const opsToEmit = [...ops];
                 const surfaceIds = new Set<string>();
-                const hasBeginRendering = new Set<string>();
+                const hasCreateSurface = new Set<string>();
                 for (const op of opsToEmit) {
-                  const su = (op as any).surfaceUpdate;
-                  if (su?.surfaceId) surfaceIds.add(su.surfaceId);
-                  const br = (op as any).beginRendering;
-                  if (br?.surfaceId) hasBeginRendering.add(br.surfaceId);
+                  const uc = (op as any).updateComponents;
+                  if (uc?.surfaceId) surfaceIds.add(uc.surfaceId);
+                  const cs = (op as any).createSurface;
+                  if (cs?.surfaceId) hasCreateSurface.add(cs.surfaceId);
                 }
                 for (const sid of surfaceIds) {
-                  if (!hasBeginRendering.has(sid)) {
-                    const su = opsToEmit.find((op: any) => op.surfaceUpdate?.surfaceId === sid) as any;
-                    const root = su?.surfaceUpdate?.components?.[0]?.id ?? "root";
-                    opsToEmit.push({ beginRendering: { surfaceId: sid, root } });
+                  if (!hasCreateSurface.has(sid)) {
+                    opsToEmit.unshift({ version: "v0.9", createSurface: { surfaceId: sid, catalogId: "https://a2ui.org/specification/v0_9/basic_catalog.json" } });
                   }
                 }
 
