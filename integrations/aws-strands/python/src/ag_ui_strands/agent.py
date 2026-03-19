@@ -78,13 +78,37 @@ class StrandsAgent:
     async def run(self, input_data: RunAgentInput) -> AsyncIterator[Any]:
         """Run the Strands agent and yield AG-UI events."""
 
-        # Get or create agent instance for this thread
-        # Each thread (user session) maintains its own conversation state
+        # Get or create agent instance for this thread. When a
+        # session_manager_provider is configured, the SessionManager handles
+        # conversation persistence; otherwise state is held in-memory per thread.
         thread_id = input_data.thread_id or "default"
         if thread_id not in self._agents_by_thread:
             session_manager = None
             if self.config.session_manager_provider:
-                session_manager = self.config.session_manager_provider(input_data)
+                try:
+                    session_manager = await maybe_await(
+                        self.config.session_manager_provider(input_data)
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"session_manager_provider failed: {e}", exc_info=True
+                    )
+                    yield RunStartedEvent(
+                        type=EventType.RUN_STARTED,
+                        thread_id=input_data.thread_id,
+                        run_id=input_data.run_id,
+                    )
+                    yield RunErrorEvent(
+                        type=EventType.RUN_ERROR,
+                        message=f"Failed to initialize session manager: {e}",
+                        code="SESSION_MANAGER_ERROR",
+                    )
+                    return
+            if session_manager is None and self.config.session_manager_provider:
+                logger.warning(
+                    f"session_manager_provider returned None for thread_id={thread_id}; "
+                    "agent will run without session persistence"
+                )
             self._agents_by_thread[thread_id] = StrandsAgentCore(
                 model=self._model,
                 system_prompt=self._system_prompt,

@@ -47,7 +47,7 @@ StateFromArgs = Callable[[ToolCallContext], Awaitable[Optional[StatePayload]] | 
 StateFromResult = Callable[[ToolResultContext], Awaitable[Optional[StatePayload]] | Optional[StatePayload]]
 CustomResultHandler = Callable[[ToolResultContext], AsyncIterator[Any]]
 StateContextBuilder = Callable[[RunAgentInput, str], str]
-SessionManagerProvider = Callable[[RunAgentInput], SessionManager]
+SessionManagerProvider = Callable[[RunAgentInput], Awaitable[Optional[SessionManager]] | Optional[SessionManager]]
 
 
 @dataclass
@@ -87,7 +87,22 @@ class StrandsAgentConfig:
     tool_behaviors: Dict[str, ToolBehavior] = field(default_factory=dict)
     state_context_builder: Optional[StateContextBuilder] = None
     session_manager_provider: Optional[SessionManagerProvider] = None
+    """Optional factory for creating per-thread SessionManager instances.
 
+    Called exactly once per thread_id the first time that thread is seen.
+    Subsequent requests on the same thread reuse the cached agent (and its
+    SessionManager). If the provider depends on per-request data (e.g. auth
+    tokens in ``forwarded_props``), be aware that only the first request's
+    data is used to initialise the session manager.
+
+    If the provider raises an exception the run yields a ``RUN_ERROR`` event
+    and returns early; the thread is NOT cached so the provider will be
+    retried on the next request.
+
+    If the provider returns ``None`` a warning is logged and the agent runs
+    without session persistence; the thread IS cached in this state, so the
+    provider will not be called again for the same thread.
+    """
 
 
 async def maybe_await(value: Any) -> Any:
