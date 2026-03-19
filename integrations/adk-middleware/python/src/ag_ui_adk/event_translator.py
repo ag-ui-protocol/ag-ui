@@ -759,8 +759,10 @@ class EventTranslator:
                         )
                         if hasattr(long_running_function_call, 'args') and long_running_function_call.args:
                             # Convert args to string (JSON format)
-                            import json
-                            args_str = json.dumps(long_running_function_call.args) if isinstance(long_running_function_call.args, dict) else str(long_running_function_call.args)
+                            from pydantic import TypeAdapter
+                            args_str = TypeAdapter(dict[str, Any]).dump_json(
+                                long_running_function_call.args
+                            ).decode()
                             yield ToolCallArgsEvent(
                                 type=EventType.TOOL_CALL_ARGS,
                                 tool_call_id=long_running_function_call.id,
