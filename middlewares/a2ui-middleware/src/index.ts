@@ -69,8 +69,9 @@ function emitStreamingData(
 ) {
   const surfaceId = schema.surfaceId;
   const messageId = `a2ui-surface-${surfaceId}-${toolCallId}`;
+  // No createSurface here — the surface is already created by the
+  // TOOL_CALL_START handler. Streaming snapshots only update content.
   const allOps = [
-    { version: "v0.9", createSurface: { surfaceId, catalogId: schema.catalogId } },
     { version: "v0.9", updateComponents: { surfaceId, components: schema.components } },
     { version: "v0.9", updateDataModel: { surfaceId, value: { [dataKey]: items } } },
   ];
