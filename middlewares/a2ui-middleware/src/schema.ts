@@ -55,7 +55,7 @@ Here is the simplest possible A2UI surface - a button:
         {
           "id": "root",
           "component": "Button",
-          "content": "btn-text",
+          "child": "btn-text",
           "action": { "event": { "name": "button_clicked" } }
         },
         {
@@ -83,7 +83,7 @@ Here is the simplest possible A2UI surface - a button:
 10. **Production ready** - The UI you generate will be shown to real users. It must be complete, polished, and functional.
 11. **No placeholder images** - NEVER use fake or placeholder image URLs. Only use real, valid image URLs. If unavailable, use an Icon component instead.
 12. **Root must be a layout component** - The root should be Column, Row, Card, or similar. Do NOT use Modal, Button, Text as root.
-13. **Button uses content, not child** - Use \`"content": "text-id"\` for the button's label component.
+13. **Button uses child** - Use \`"child": "text-id"\` for the button's label component.
 14. **Button variant** - Use \`"variant": "primary"\` instead of \`"primary": true\`.
 15. **Layout uses justify/align** - Use \`"justify"\` (not \`"distribution"\`) and \`"align"\` (not \`"alignment"\`).
 16. **Text variant** - Use \`"variant"\` (not \`"usageHint"\`) for text style: h1, h2, h3, h4, h5, caption, body.
@@ -160,7 +160,7 @@ A2UI supports forms where user input is stored in a data model and retrieved whe
         { "id": "root", "component": "Card", "child": "form-col" },
         { "id": "form-col", "component": "Column", "children": ["name-field", "submit-btn"] },
         { "id": "name-field", "component": "TextField", "label": "Name", "text": { "path": "/form/name" } },
-        { "id": "submit-btn", "component": "Button", "content": "btn-text", "action": { "event": { "name": "submit", "context": { "userName": { "path": "/form/name" } } } } },
+        { "id": "submit-btn", "component": "Button", "child": "btn-text", "action": { "event": { "name": "submit", "context": { "userName": { "path": "/form/name" } } } } },
         { "id": "btn-text", "component": "Text", "text": "Submit" }
       ]
     }
@@ -241,7 +241,7 @@ Each component is a flat object with \`id\`, \`component\` (type name as string)
 - **Modal**: \`{ component: "Modal", entryPointChild: "trigger-id", contentChild: "content-id" }\`
 
 **Interactive Components:**
-- **Button**: \`{ component: "Button", content: "text-id", action: { event: { name: "action_name", context?: { key: value | { path } } } }, variant?: "primary"|"secondary"|"text" }\`
+- **Button**: \`{ component: "Button", child: "text-id", action: { event: { name: "action_name", context?: { key: value | { path } } } }, variant?: "primary"|"secondary"|"text" }\`
 - **TextField**: \`{ component: "TextField", label: "string" | { path }, text?: "string" | { path }, textFieldType?: "shortText"|"longText"|"number"|"date"|"obscured" }\`
 - **CheckBox**: \`{ component: "CheckBox", label: "string" | { path }, checked?: boolean | { path } }\`
 - **Slider**: \`{ component: "Slider", value: number | { path }, minValue?: number, maxValue?: number }\`

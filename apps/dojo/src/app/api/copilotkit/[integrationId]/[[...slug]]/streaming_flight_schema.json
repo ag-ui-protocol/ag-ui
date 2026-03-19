@@ -12,7 +12,7 @@
   {
     "id": "flight-card",
     "component": "Card",
-    "content": "main-col"
+    "child": "main-col"
   },
   {
     "id": "main-col",
@@ -172,7 +172,7 @@
   {
     "id": "book-btn",
     "component": "Button",
-    "content": "book-btn-text",
+    "child": "book-btn-text",
     "action": {
       "event": {
         "name": "book_flight",
