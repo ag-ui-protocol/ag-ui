@@ -70,7 +70,6 @@ def search_flights(flights: list[Flight]) -> str:
         ],
         action_handlers={
             "book_flight": [
-                a2ui.create_surface(SURFACE_ID),
                 a2ui.update_components(SURFACE_ID, BOOKED_SCHEMA),
                 a2ui.update_data_model(SURFACE_ID, {
                     "title": "Booking Confirmed",

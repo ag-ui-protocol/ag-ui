@@ -50,13 +50,6 @@ async function getHandler(integrationId: string) {
               book_flight: [
                 {
                   version: "v0.9",
-                  createSurface: {
-                    surfaceId: "flight-search-streaming",
-                    catalogId: "https://a2ui.org/specification/v0_9/basic_catalog.json",
-                  },
-                },
-                {
-                  version: "v0.9",
                   updateComponents: {
                     surfaceId: "flight-search-streaming",
                     components: bookedSchema,
