@@ -20,3 +20,9 @@ packages = ["src/ag_ui_strands"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+[dependency-groups]
+dev = [
+    "pytest (>=9.0.2,<10.0.0)",
+    "pytest-asyncio (>=1.3.0,<2.0.0)"
+]
