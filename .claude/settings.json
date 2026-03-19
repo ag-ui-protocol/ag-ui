@@ -8,5 +8,18 @@
       "Bash(pnpm nx show project demo-viewer)",
       "Bash(pnpm nx run demo-viewer:lint)"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx block-no-verify@1.1.2"
+          }
+        ]
+      }
+    ]
   }
 }
