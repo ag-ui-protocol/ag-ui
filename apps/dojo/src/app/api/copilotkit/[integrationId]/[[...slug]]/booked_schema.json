@@ -14,8 +14,7 @@
       "ref-row",
       "email-note"
     ],
-    "align": "center",
-    "gap": "small"
+    "align": "center"
   },
   {
     "id": "booked-title",

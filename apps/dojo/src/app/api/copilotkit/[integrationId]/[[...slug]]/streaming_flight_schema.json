@@ -27,7 +27,6 @@
       "status-row",
       "book-btn"
     ],
-    "gap": "small",
     "align": "stretch"
   },
 
@@ -42,27 +41,25 @@
     "id": "airline-info",
     "component": "Row",
     "children": ["airline-logo", "airline-name"],
-    "gap": "small",
     "align": "center"
   },
   {
     "id": "airline-logo",
     "component": "Image",
-    "url": { "path": "/airlineLogo" },
-    "altText": { "path": "/airline" },
+    "url": { "path": "airlineLogo" },
     "fit": "contain",
     "variant": "avatar"
   },
   {
     "id": "airline-name",
     "component": "Text",
-    "text": { "path": "/airline" },
+    "text": { "path": "airline" },
     "variant": "h3"
   },
   {
     "id": "price-text",
     "component": "Text",
-    "text": { "path": "/price" },
+    "text": { "path": "price" },
     "variant": "h2"
   },
 
@@ -76,13 +73,13 @@
   {
     "id": "flight-number",
     "component": "Text",
-    "text": { "path": "/flightNumber" },
+    "text": { "path": "flightNumber" },
     "variant": "caption"
   },
   {
     "id": "date-text",
     "component": "Text",
-    "text": { "path": "/date" },
+    "text": { "path": "date" },
     "variant": "caption"
   },
 
@@ -98,19 +95,19 @@
   {
     "id": "depart-time",
     "component": "Text",
-    "text": { "path": "/departureTime" },
+    "text": { "path": "departureTime" },
     "variant": "h2"
   },
   {
     "id": "duration-text",
     "component": "Text",
-    "text": { "path": "/duration" },
+    "text": { "path": "duration" },
     "variant": "caption"
   },
   {
     "id": "arrive-time",
     "component": "Text",
-    "text": { "path": "/arrivalTime" },
+    "text": { "path": "arrivalTime" },
     "variant": "h2"
   },
 
@@ -124,7 +121,7 @@
   {
     "id": "origin-code",
     "component": "Text",
-    "text": { "path": "/origin" },
+    "text": { "path": "origin" },
     "variant": "h3"
   },
   {
@@ -136,7 +133,7 @@
   {
     "id": "dest-code",
     "component": "Text",
-    "text": { "path": "/destination" },
+    "text": { "path": "destination" },
     "variant": "h3"
   },
 
@@ -146,21 +143,19 @@
     "id": "status-row",
     "component": "Row",
     "children": ["status-dot", "status-text"],
-    "gap": "small",
     "align": "center"
   },
   {
     "id": "status-dot",
     "component": "Image",
-    "url": { "path": "/statusIcon" },
-    "altText": { "path": "/status" },
+    "url": { "path": "statusIcon" },
     "fit": "contain",
     "variant": "icon"
   },
   {
     "id": "status-text",
     "component": "Text",
-    "text": { "path": "/status" },
+    "text": { "path": "status" },
     "variant": "caption"
   },
 
@@ -177,10 +172,10 @@
       "event": {
         "name": "book_flight",
         "context": {
-          "flightNumber": { "path": "/flightNumber" },
-          "origin": { "path": "/origin" },
-          "destination": { "path": "/destination" },
-          "price": { "path": "/price" }
+          "flightNumber": { "path": "flightNumber" },
+          "origin": { "path": "origin" },
+          "destination": { "path": "destination" },
+          "price": { "path": "price" }
         }
       }
     }
