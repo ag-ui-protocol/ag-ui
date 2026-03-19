@@ -264,3 +264,142 @@ projects:
       startCommand: uv run dev
       autoDeployTrigger: commit
       rootDir: integrations/adk-middleware/python/examples
+    - type: web
+      name: ag-ui-dojo-claude-agent-sdk-python
+      runtime: python
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: uv sync
+      startCommand: uv run dev
+      autoDeployTrigger: commit
+      rootDir: integrations/claude-agent-sdk/python/examples
+    - type: web
+      name: ag-ui-dojo-claude-agent-sdk-typescript
+      runtime: node
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      region: virginia
+      buildCommand: npm install
+      startCommand: npx tsx examples/server.ts
+      autoDeployTrigger: commit
+      rootDir: integrations/claude-agent-sdk/typescript
+    - type: web
+      name: ag-ui-dojo-app
+      runtime: node
+      repo: https://github.com/ag-ui-protocol/ag-ui
+      plan: starter
+      envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: AG2_URL
+        fromService:
+          name: ag-ui-dojo-ag2
+          type: web
+          property: host
+      - key: SERVER_STARTER_URL
+        fromService:
+          name: ag-ui-dojo-server-starter
+          type: web
+          property: host
+      - key: SERVER_STARTER_ALL_FEATURES_URL
+        fromService:
+          name: ag-ui-dojo-server-starter-all-features
+          type: web
+          property: host
+      - key: MASTRA_URL
+        fromService:
+          name: ag-ui-dojo-mastra
+          type: web
+          property: host
+      - key: LANGGRAPH_FAST_API_URL
+        fromService:
+          name: ag-ui-dojo-langgraph-fastapi
+          type: web
+          property: host
+      - key: AGNO_URL
+        fromService:
+          name: ag-ui-dojo-agno
+          type: web
+          property: host
+      - key: LLAMA_INDEX_URL
+        fromService:
+          name: ag-ui-dojo-llamaindex
+          type: web
+          property: host
+      - key: CREW_AI_URL
+        fromService:
+          name: ag-ui-dojo-crewai
+          type: web
+          property: host
+      - key: AGENT_SPEC_URL
+        fromService:
+          name: ag-ui-dojo-open-agent-spec
+          type: web
+          property: host
+      - key: PYDANTIC_AI_URL
+        fromService:
+          name: ag-ui-dojo-pydantic-ai
+          type: web
+          property: host
+      - key: ADK_MIDDLEWARE_URL
+        fromService:
+          name: ag-ui-adk
+          type: web
+          property: host
+      - key: AGENT_FRAMEWORK_PYTHON_URL
+        fromService:
+          name: ag-ui-dojo-maf-python
+          type: web
+          property: host
+      - key: AGENT_FRAMEWORK_DOTNET_URL
+        fromService:
+          name: ag-ui-dojo-maf-dotnet
+          type: web
+          property: host
+      - key: A2A_MIDDLEWARE_BUILDINGS_MANAGEMENT_URL
+        fromService:
+          name: ag-ui-dojo-a2a-middleware-businesses_management
+          type: web
+          property: host
+      - key: A2A_MIDDLEWARE_FINANCE_URL
+        fromService:
+          name: ag-ui-dojo-a2a-middleware-finance
+          type: web
+          property: host
+      - key: A2A_MIDDLEWARE_IT_URL
+        fromService:
+          name: ag-ui-dojo-a2a-middleware-it
+          type: web
+          property: host
+      - key: A2A_MIDDLEWARE_ORCHESTRATOR_URL
+        fromService:
+          name: ag-ui-dojo-a2a-middleware-orchestrator
+          type: web
+          property: host
+      - key: AWS_STRANDS_URL
+        fromService:
+          name: ag-ui-dojo-strands-python
+          type: web
+          property: host
+      - key: CLAUDE_AGENT_SDK_PYTHON_URL
+        fromService:
+          name: ag-ui-dojo-claude-agent-sdk-python
+          type: web
+          property: host
+      - key: CLAUDE_AGENT_SDK_TYPESCRIPT_URL
+        fromService:
+          name: ag-ui-dojo-claude-agent-sdk-typescript
+          type: web
+          property: host
+      region: virginia
+      buildCommand: cd ../.. && pnpm install && cd apps/dojo && pnpm build
+      startCommand: pnpm start
+      autoDeployTrigger: commit
+      rootDir: apps/dojo
