@@ -2,7 +2,7 @@
   {
     "id": "root",
     "component": "Card",
-    "content": "main-col"
+    "child": "main-col"
   },
   {
     "id": "main-col",
