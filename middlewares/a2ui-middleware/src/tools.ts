@@ -18,16 +18,16 @@ export const LOG_A2UI_EVENT_TOOL_NAME = "log_a2ui_event";
 export const SEND_A2UI_JSON_TOOL: Tool = {
   name: SEND_A2UI_TOOL_NAME,
   description:
-    "Sends A2UI JSON to the client to render rich UI for the user. " +
-    "This tool can be called multiple times in the same call to render multiple UI surfaces. " +
-    "Args: a2ui_json: Valid A2UI JSON Schema to send to the client. " +
+    "Sends A2UI v0.9 JSON to the client to render rich UI for the user. " +
+    "This tool can be called multiple times to render multiple UI surfaces. " +
+    "Each message must include version: 'v0.9' and one operation (createSurface, updateComponents, updateDataModel, or deleteSurface). " +
     "The A2UI JSON Schema definition is between ---BEGIN A2UI JSON SCHEMA--- and ---END A2UI JSON SCHEMA--- in the system instructions.",
   parameters: {
     type: "object",
     properties: {
       a2ui_json: {
         type: "string",
-        description: "Valid A2UI JSON Schema to send to the client.",
+        description: "Valid A2UI v0.9 JSON array of operations to send to the client.",
       },
     },
     required: ["a2ui_json"],
