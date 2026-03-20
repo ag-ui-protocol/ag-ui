@@ -7,6 +7,8 @@ import {
   useConfigureSuggestions,
 } from "@copilotkit/react-core/v2";
 import { CopilotKit } from "@copilotkit/react-core";
+import { basicCatalog } from "@a2ui/react/v0_9";
+import { customCatalog } from "../a2ui_fixed_schema/custom-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -22,8 +24,8 @@ function Chat() {
         message: "Find flights from SFO to JFK for next Tuesday.",
       },
       {
-        title: "Compare routes",
-        message: "Show me flights from LAX to ORD with different airlines.",
+        title: "Search hotels (streaming)",
+        message: "Find hotels in downtown Manhattan for next weekend.",
       },
     ],
     available: "always",
@@ -45,7 +47,7 @@ export default function Page({ params }: PageProps) {
       runtimeUrl={`/api/copilotkit/${integrationId}`}
       showDevConsole={false}
       agent="a2ui_fixed_schema_streaming"
-      a2ui={{}}
+      a2ui={{ catalogs: [basicCatalog, customCatalog] }}
     >
       <div className="flex justify-center items-center h-full w-full">
         <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">

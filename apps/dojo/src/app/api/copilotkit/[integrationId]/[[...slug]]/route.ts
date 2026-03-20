@@ -11,6 +11,8 @@ import { agentsIntegrations } from "@/agents";
 import { IntegrationId } from "@/menu";
 import flightSchema from "./streaming_flight_schema.json";
 import bookedSchema from "./booked_schema.json";
+import hotelSchema from "./hotel_schema.json";
+import hotelBookedSchema from "./hotel_booked_schema.json";
 
 type RouteParams = {
   params: Promise<{
@@ -63,6 +65,37 @@ async function getHandler(integrationId: string) {
                       title: "Booking Confirmed",
                       detail: "Your flight has been booked successfully.",
                       reference: "CK-38291",
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+        {
+          toolName: "search_hotels_streaming",
+          surface: {
+            surfaceId: "hotel-search-streaming",
+            catalogId: "https://a2ui.org/demos/dojo/custom_catalog.json",
+            components: hotelSchema,
+            dataKey: "hotels",
+            actionHandlers: {
+              book_hotel: [
+                {
+                  version: "v0.9",
+                  updateComponents: {
+                    surfaceId: "hotel-search-streaming",
+                    components: hotelBookedSchema,
+                  },
+                },
+                {
+                  version: "v0.9",
+                  updateDataModel: {
+                    surfaceId: "hotel-search-streaming",
+                    value: {
+                      title: "Hotel Booked!",
+                      detail: "Your reservation is confirmed.",
+                      reference: "HT-59201",
                     },
                   },
                 },
