@@ -17,7 +17,7 @@ projects:
         sync: false
       region: virginia
       buildCommand: uv sync
-      startCommand: uv run agents/dojo.py
+      startCommand: uv run dev
       autoDeployTrigger: commit
       rootDir: integrations/langgraph/python/examples
     - type: web
