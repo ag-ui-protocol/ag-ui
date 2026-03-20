@@ -299,105 +299,45 @@ projects:
       - key: OPENAI_API_KEY
         sync: false
       - key: AG2_URL
-        fromService:
-          name: ag-ui-dojo-ag2
-          type: web
-          property: host
+        value: https://ag-ui-dojo-ag2.onrender.com
       - key: SERVER_STARTER_URL
-        fromService:
-          name: ag-ui-dojo-server-starter
-          type: web
-          property: host
+        value: https://ag-ui-dojo-server-starter.onrender.com
       - key: SERVER_STARTER_ALL_FEATURES_URL
-        fromService:
-          name: ag-ui-dojo-server-starter-all-features
-          type: web
-          property: host
+        value: https://ag-ui-dojo-server-starter-all-features.onrender.com
       - key: MASTRA_URL
-        fromService:
-          name: ag-ui-dojo-mastra
-          type: web
-          property: host
+        value: https://ag-ui-dojo-mastra.onrender.com
       - key: LANGGRAPH_FAST_API_URL
-        fromService:
-          name: ag-ui-dojo-langgraph-fastapi
-          type: web
-          property: host
+        value: https://ag-ui-dojo-langgraph-fastapi.onrender.com
       - key: AGNO_URL
-        fromService:
-          name: ag-ui-dojo-agno
-          type: web
-          property: host
+        value: https://ag-ui-dojo-agno.onrender.com
       - key: LLAMA_INDEX_URL
-        fromService:
-          name: ag-ui-dojo-llamaindex
-          type: web
-          property: host
+        value: https://ag-ui-dojo-llamaindex.onrender.com
       - key: CREW_AI_URL
-        fromService:
-          name: ag-ui-dojo-crewai
-          type: web
-          property: host
+        value: https://ag-ui-dojo-crewai.onrender.com
       - key: AGENT_SPEC_URL
-        fromService:
-          name: ag-ui-dojo-open-agent-spec
-          type: web
-          property: host
+        value: https://ag-ui-dojo-open-agent-spec.onrender.com
       - key: PYDANTIC_AI_URL
-        fromService:
-          name: ag-ui-dojo-pydantic-ai
-          type: web
-          property: host
+        value: https://ag-ui-dojo-pydantic-ai.onrender.com
       - key: ADK_MIDDLEWARE_URL
-        fromService:
-          name: ag-ui-adk
-          type: web
-          property: host
+        value: https://ag-ui-adk.onrender.com
       - key: AGENT_FRAMEWORK_PYTHON_URL
-        fromService:
-          name: ag-ui-dojo-maf-python
-          type: web
-          property: host
+        value: https://ag-ui-dojo-maf-python.onrender.com
       - key: AGENT_FRAMEWORK_DOTNET_URL
-        fromService:
-          name: ag-ui-dojo-maf-dotnet
-          type: web
-          property: host
+        value: https://ag-ui-dojo-maf-dotnet.onrender.com
       - key: A2A_MIDDLEWARE_BUILDINGS_MANAGEMENT_URL
-        fromService:
-          name: ag-ui-dojo-a2a-middleware-businesses_management
-          type: web
-          property: host
+        value: https://ag-ui-dojo-a2a-middleware-businesses-management.onrender.com
       - key: A2A_MIDDLEWARE_FINANCE_URL
-        fromService:
-          name: ag-ui-dojo-a2a-middleware-finance
-          type: web
-          property: host
+        value: https://ag-ui-dojo-a2a-middleware-finance.onrender.com
       - key: A2A_MIDDLEWARE_IT_URL
-        fromService:
-          name: ag-ui-dojo-a2a-middleware-it
-          type: web
-          property: host
+        value: https://ag-ui-dojo-a2a-middleware-it.onrender.com
       - key: A2A_MIDDLEWARE_ORCHESTRATOR_URL
-        fromService:
-          name: ag-ui-dojo-a2a-middleware-orchestrator
-          type: web
-          property: host
+        value: https://ag-ui-dojo-a2a-middleware-orchestrator.onrender.com
       - key: AWS_STRANDS_URL
-        fromService:
-          name: ag-ui-dojo-strands-python
-          type: web
-          property: host
+        value: https://ag-ui-dojo-strands-python.onrender.com
       - key: CLAUDE_AGENT_SDK_PYTHON_URL
-        fromService:
-          name: ag-ui-dojo-claude-agent-sdk-python
-          type: web
-          property: host
+        value: https://ag-ui-dojo-claude-agent-sdk-python.onrender.com
       - key: CLAUDE_AGENT_SDK_TYPESCRIPT_URL
-        fromService:
-          name: ag-ui-dojo-claude-agent-sdk-typescript
-          type: web
-          property: host
+        value: https://ag-ui-dojo-claude-agent-sdk-typescript.onrender.com
       region: virginia
       buildCommand: cd ../.. && pnpm install && npx nx run demo-viewer:build
       startCommand: pnpm start
