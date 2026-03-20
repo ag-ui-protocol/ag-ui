@@ -286,7 +286,7 @@ projects:
       - key: ANTHROPIC_API_KEY
         sync: false
       region: virginia
-      buildCommand: cd ../../.. && npm install -g pnpm && pnpm install
+      buildCommand: cd ../../.. && npm install -g pnpm && pnpm install && npx nx run-many -t build --projects='@ag-ui/core,@ag-ui/encoder'
       startCommand: npx tsx examples/server.ts
       autoDeployTrigger: commit
       rootDir: integrations/claude-agent-sdk/typescript
@@ -399,7 +399,7 @@ projects:
           type: web
           property: host
       region: virginia
-      buildCommand: cd ../.. && pnpm install && cd apps/dojo && pnpm build
+      buildCommand: cd ../.. && pnpm install && npx nx run demo-viewer:build
       startCommand: pnpm start
       autoDeployTrigger: commit
       rootDir: apps/dojo
