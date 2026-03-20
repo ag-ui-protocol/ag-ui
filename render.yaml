@@ -286,7 +286,7 @@ projects:
       - key: ANTHROPIC_API_KEY
         sync: false
       region: virginia
-      buildCommand: npm install
+      buildCommand: cd ../../.. && npm install -g pnpm && pnpm install
       startCommand: npx tsx examples/server.ts
       autoDeployTrigger: commit
       rootDir: integrations/claude-agent-sdk/typescript
