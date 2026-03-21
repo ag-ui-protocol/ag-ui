@@ -68,6 +68,7 @@ class TextMessageStartEvent(BaseEvent):
     type: Literal[EventType.TEXT_MESSAGE_START] = EventType.TEXT_MESSAGE_START  # pyright: ignore[reportIncompatibleVariableOverride]
     message_id: str
     role: TextMessageRole = "assistant"
+    name: Optional[str] = None
 
 
 class TextMessageContentEvent(BaseEvent):
@@ -94,6 +95,7 @@ class TextMessageChunkEvent(BaseEvent):
     message_id: Optional[str] = None
     role: Optional[TextMessageRole] = None
     delta: Optional[str] = None
+    name: Optional[str] = None
 
 class ThinkingTextMessageStartEvent(BaseEvent):
     """
@@ -280,8 +282,8 @@ class StepFinishedEvent(BaseEvent):
     step_name: str
 
 
-# Text message role for reasoning messages (only assistant can reason)
-ReasoningMessageRole = Literal["assistant"]
+# Text message role for reasoning messages (aligned with ReasoningMessage.role)
+ReasoningMessageRole = Literal["reasoning"]
 
 # Subtype for encrypted value
 ReasoningEncryptedValueSubtype = Literal["tool-call", "message"]

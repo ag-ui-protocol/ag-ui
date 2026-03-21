@@ -24,10 +24,11 @@ import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
 import { AWSStrandsAgent } from "@ag-ui/aws-strands";
 import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
-import { LangChainAgent } from "@ag-ui/langchain"; 
+import { LangChainAgent } from "@ag-ui/langchain";
 import { BuiltInAgent } from "@copilotkit/runtime/v2";
 import { A2UIMiddleware, A2UI_PROMPT } from "@ag-ui/a2ui-middleware";
 import { Ag2Agent } from "@ag-ui/ag2";
+import { LangroidHttpAgent } from "@ag-ui/langroid";
 
 const envVars = getEnvVars();
 
@@ -65,8 +66,7 @@ export const agentsIntegrations = {
         human_in_the_loop: "adk-human-in-loop-agent",
         backend_tool_rendering: "backend_tool_rendering",
         shared_state: "adk-shared-state-agent",
-        // TODO: @contextablemark Re-enable predictive state updates once it is working
-        // predictive_state_updates: "adk-predictive-state-agent",
+        predictive_state_updates: "adk-predictive-state-agent",
       }
     ),
 
@@ -151,7 +151,6 @@ export const agentsIntegrations = {
         predictive_state_updates: "predictive_state_updates",
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
-        agentic_chat_reasoning: "agentic_chat_reasoning",
         subgraphs: "subgraphs",
       }
     ),
@@ -256,27 +255,41 @@ export const agentsIntegrations = {
 
   "agent-spec-langgraph": async () =>
     mapAgents(
-      (path) => new HttpAgent({
-        url: `${envVars.agentSpecUrl}/langgraph/${path}`,
-      }),
+      (path) => {
+        const agent = new HttpAgent({
+          url: `${envVars.agentSpecUrl}/langgraph/${path}`,
+        });
+        if (path === "a2ui_chat") {
+          agent.use(new A2UIMiddleware({ injectA2UITool: true }));
+        }
+        return agent;
+      },
       {
         agentic_chat: "agentic_chat",
         backend_tool_rendering: "backend_tool_rendering",
         human_in_the_loop: "human_in_the_loop",
         tool_based_generative_ui: "tool_based_generative_ui",
+        a2ui_chat: "a2ui_chat",
       }
     ),
 
   "agent-spec-wayflow": async () =>
     mapAgents(
-      (path) => new HttpAgent({
-        url: `${envVars.agentSpecUrl}/wayflow/${path}`,
-      }),
+      (path) => {
+        const agent = new HttpAgent({
+          url: `${envVars.agentSpecUrl}/wayflow/${path}`,
+        });
+        if (path === "a2ui_chat") {
+          agent.use(new A2UIMiddleware({ injectA2UITool: true }));
+        }
+        return agent;
+      },
       {
         agentic_chat: "agentic_chat",
         backend_tool_rendering: "backend_tool_rendering",
         tool_based_generative_ui: "tool_based_generative_ui",
         human_in_the_loop: "human_in_the_loop",
+        a2ui_chat: "a2ui_chat",
       }
     ),
 
@@ -394,6 +407,41 @@ ${A2UI_PROMPT}`;
         agentic_generative_ui: "agentic_generative_ui",
         shared_state: "shared_state",
         tool_based_generative_ui: "tool_based_generative_ui",
+      }
+    ),
+
+  "claude-agent-sdk-python": async () =>
+    mapAgents(
+      (path) => new HttpAgent({ url: `${envVars.claudeAgentSdkPythonUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        shared_state: "shared_state",
+        human_in_the_loop: "human_in_the_loop",
+        tool_based_generative_ui: "tool_based_generative_ui",
+      }
+    ),
+
+  "claude-agent-sdk-typescript": async () =>
+    mapAgents(
+      (path) => new HttpAgent({ url: `${envVars.claudeAgentSdkTypescriptUrl}/${path}` }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        shared_state: "shared_state",
+        human_in_the_loop: "human_in_the_loop",
+        tool_based_generative_ui: "tool_based_generative_ui",
+      }
+    ),
+
+  langroid: async () =>
+    mapAgents(
+      (path) => new LangroidHttpAgent({ url: `${envVars.langroidUrl}/${path}/` }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        agentic_generative_ui: "agentic_generative_ui",
+        shared_state: "shared_state",
       }
     ),
 } satisfies AgentsMap;

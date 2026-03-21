@@ -114,6 +114,7 @@ AG-UI was born from CopilotKit's initial **partnership** with LangGraph and Crew
 ### 🌐 Community
 | Framework | Status | AG-UI Resources |
 | ---------- | ------- | ---------------- |
+| [Langroid](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/langroid) | ✅ Supported | 🎮 [Demos](https://dojo.ag-ui.com/langroid/feature/shared_state) |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress | – |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/) | 🛠️ In Progress | – |
 
@@ -123,6 +124,13 @@ AG-UI was born from CopilotKit's initial **partnership** with LangGraph and Crew
 | Protocols | Status | AG-UI Resources | Integrations |
 | ---------- | ------- | ---------------- | ------------- |
 | [A2A]() | ✅ Supported | ➡️ [Docs](https://docs.copilotkit.ai/a2a-protocol) | Partnership |
+
+
+## Infrastructure / Deployment
+| Platform | Status | AG-UI Resources | Integrations |
+| ---------- | ------- | ---------------- | ------------- |
+| [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/) | ✅ Supported | ➡️ [Docs](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui.html) | 1st Party |
+
 
 ## Specification (standard)
 | Framework | Status | AG-UI Resources |

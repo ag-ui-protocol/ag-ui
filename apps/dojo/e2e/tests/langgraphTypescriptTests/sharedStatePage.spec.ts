@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../../test-isolation-helper";
 import { SharedStatePage } from "../../featurePages/SharedStatePage";
 
 test.describe("Shared State Feature", () => {
@@ -8,16 +8,16 @@ test.describe("Shared State Feature", () => {
     const sharedStateAgent = new SharedStatePage(page);
 
     // Update URL to new domain
-    await page.goto(
-      "/langgraph-typescript/feature/shared_state"
-    );
+    await page.goto("/langgraph-typescript/feature/shared_state");
 
     await sharedStateAgent.openChat();
-    await sharedStateAgent.sendMessage('Please give me a pasta recipe of your choosing, but one of the ingredients should be "Pasta"');
+    await sharedStateAgent.sendMessage(
+      'Please give me a pasta recipe of your choosing, but one of the ingredients should be "Pasta"',
+    );
     await sharedStateAgent.loader();
-    await sharedStateAgent.awaitIngredientCard('Pasta');
+    await sharedStateAgent.awaitIngredientCard("Pasta");
     await sharedStateAgent.getInstructionItems(
-      sharedStateAgent.instructionsContainer
+      sharedStateAgent.instructionsContainer,
     );
   });
 
@@ -26,9 +26,7 @@ test.describe("Shared State Feature", () => {
   }) => {
     const sharedStateAgent = new SharedStatePage(page);
 
-    await page.goto(
-      "/langgraph-typescript/feature/shared_state"
-    );
+    await page.goto("/langgraph-typescript/feature/shared_state");
 
     await sharedStateAgent.openChat();
 
@@ -36,9 +34,9 @@ test.describe("Shared State Feature", () => {
     await sharedStateAgent.addIngredient.click();
 
     // Fill in the new ingredient details
-    const newIngredientCard = page.locator('.ingredient-card').last();
-    await newIngredientCard.locator('.ingredient-name-input').fill('Potatoes');
-    await newIngredientCard.locator('.ingredient-amount-input').fill('12');
+    const newIngredientCard = page.locator(".ingredient-card").last();
+    await newIngredientCard.locator(".ingredient-name-input").fill("Potatoes");
+    await newIngredientCard.locator(".ingredient-amount-input").fill("12");
 
     // Wait for UI to update
     await page.waitForTimeout(1000);
@@ -48,9 +46,15 @@ test.describe("Shared State Feature", () => {
     await sharedStateAgent.loader();
 
     // Verify chat response includes both existing and new ingredients
-    await expect(sharedStateAgent.agentMessage.getByText(/Potatoes/)).toBeVisible();
+    await expect(
+      sharedStateAgent.agentMessage.getByText(/Potatoes/),
+    ).toBeVisible();
     await expect(sharedStateAgent.agentMessage.getByText(/12/)).toBeVisible();
-    await expect(sharedStateAgent.agentMessage.getByText(/Carrots/)).toBeVisible();
-    await expect(sharedStateAgent.agentMessage.getByText(/All-Purpose Flour/)).toBeVisible();
+    await expect(
+      sharedStateAgent.agentMessage.getByText(/Carrots/),
+    ).toBeVisible();
+    await expect(
+      sharedStateAgent.agentMessage.getByText(/All-Purpose Flour/),
+    ).toBeVisible();
   });
 });

@@ -14,6 +14,7 @@ import {
   ToolCallEndEvent,
   ToolCallResultEvent,
   RunAgentInput,
+  RunFinishedEvent,
 } from "@ag-ui/core";
 import { defaultApplyEvents } from "../default";
 import { AbstractAgent } from "@/agent";
@@ -295,5 +296,106 @@ describe("defaultApplyEvents with text messages", () => {
 
     // Total messages should be 2: the assistant message (with tool call + content) and the tool result
     expect(finalMessages?.length).toBe(2);
+  });
+
+  it("should set name on message when TEXT_MESSAGE_START has name", async () => {
+    const events$ = new Subject<BaseEvent>();
+    const initialState: RunAgentInput = {
+      messages: [],
+      state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    };
+
+    const agent = createAgent([]);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    events$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test-thread",
+      runId: "test-run",
+    } as RunStartedEvent);
+    events$.next({
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "msg1",
+      role: "assistant",
+      name: "research-agent",
+    } as TextMessageStartEvent);
+    events$.next({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "msg1",
+      delta: "Hello",
+    } as TextMessageContentEvent);
+    events$.next({
+      type: EventType.TEXT_MESSAGE_END,
+      messageId: "msg1",
+    } as TextMessageEndEvent);
+    events$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test-thread",
+      runId: "test-run",
+    } as RunFinishedEvent);
+
+    events$.complete();
+    const stateUpdates = await stateUpdatesPromise;
+
+    // Find the update where the message was created (TEXT_MESSAGE_START)
+    const msgUpdate = stateUpdates.find(
+      (u) => u.messages?.some((m) => m.id === "msg1"),
+    );
+    expect(msgUpdate).toBeDefined();
+    const msg = msgUpdate!.messages!.find((m) => m.id === "msg1");
+    expect((msg as any).name).toBe("research-agent");
+  });
+
+  it("should not set name on message when TEXT_MESSAGE_START has no name", async () => {
+    const events$ = new Subject<BaseEvent>();
+    const initialState: RunAgentInput = {
+      messages: [],
+      state: {},
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    };
+
+    const agent = createAgent([]);
+    const result$ = defaultApplyEvents(initialState, events$, agent, []);
+    const stateUpdatesPromise = firstValueFrom(result$.pipe(toArray()));
+
+    events$.next({
+      type: EventType.RUN_STARTED,
+      threadId: "test-thread",
+      runId: "test-run",
+    } as RunStartedEvent);
+    events$.next({
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "msg1",
+      role: "assistant",
+    } as TextMessageStartEvent);
+    events$.next({
+      type: EventType.TEXT_MESSAGE_END,
+      messageId: "msg1",
+    } as TextMessageEndEvent);
+    events$.next({
+      type: EventType.RUN_FINISHED,
+      threadId: "test-thread",
+      runId: "test-run",
+    } as RunFinishedEvent);
+
+    events$.complete();
+    const stateUpdates = await stateUpdatesPromise;
+
+    const msgUpdate = stateUpdates.find(
+      (u) => u.messages?.some((m) => m.id === "msg1"),
+    );
+    expect(msgUpdate).toBeDefined();
+    const msg = msgUpdate!.messages!.find((m) => m.id === "msg1");
+    expect((msg as any).name).toBeUndefined();
   });
 });

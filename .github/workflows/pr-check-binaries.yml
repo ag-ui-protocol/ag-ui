@@ -55,9 +55,11 @@ jobs:
           fi
 
           # Check for large files (>1MB) among changed files
+          # Exclude known generated files that are committed intentionally
+          LARGE_FILE_EXCLUDES="apps/dojo/src/files.json"
           LARGE_FILES=""
           while IFS= read -r file; do
-            if [ -f "$file" ]; then
+            if [ -f "$file" ] && ! echo "$LARGE_FILE_EXCLUDES" | grep -qF "$file"; then
               SIZE=$(wc -c < "$file" | tr -d ' ')
               if [ "$SIZE" -gt 1048576 ]; then
                 LARGE_FILES="${LARGE_FILES}${file} ($(( SIZE / 1024 )) KB)\n"
