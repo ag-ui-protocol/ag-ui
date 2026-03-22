@@ -2,8 +2,8 @@ import logging
 import re
 import uuid
 import json
+import contextvars
 from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Literal, Dict
-from typing_extensions import Self
 import inspect
 
 from langgraph.graph.state import CompiledStateGraph
@@ -99,6 +99,14 @@ ProcessedEvents = Union[
 ]
 
 logger = logging.getLogger(__name__)
+_active_run_var: contextvars.ContextVar[Optional["RunMetadata"]] = contextvars.ContextVar(
+    "_active_run_var",
+    default=None,
+)
+_messages_in_process_var: contextvars.ContextVar[Optional["MessagesInProgressRecord"]] = contextvars.ContextVar(
+    "_messages_in_process_var",
+    default=None,
+)
 
 class LangGraphAgent:
     def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None):
@@ -106,29 +114,27 @@ class LangGraphAgent:
         self.description = description
         self.graph = graph
         self.config = config or {}
-        self.messages_in_process: MessagesInProgressRecord = {}
-        self.active_run: Optional[RunMetadata] = None
         self.constant_schema_keys = ['messages', 'tools']
 
-    def clone(self) -> Self:
-        """Create a fresh copy with clean per-request state.
+    @property
+    def active_run(self) -> Optional["RunMetadata"]:
+        return _active_run_var.get()
 
-        Subclasses that add required __init__ parameters must override clone()
-        to pass those parameters through.
-        """
-        try:
-            return type(self)(
-                name=self.name,
-                graph=self.graph,
-                description=self.description,
-                config=dict(self.config) if self.config else None,
-            )
-        except TypeError as exc:
-            raise TypeError(
-                f"{type(self).__name__} must override clone() or ensure its "
-                f"__init__ accepts (name, graph, description, config) as "
-                f"keyword arguments: {exc}"
-            ) from exc
+    @active_run.setter
+    def active_run(self, value: Optional["RunMetadata"]) -> None:
+        _active_run_var.set(value)
+
+    @property
+    def messages_in_process(self) -> "MessagesInProgressRecord":
+        value = _messages_in_process_var.get()
+        if value is None:
+            value = {}
+            _messages_in_process_var.set(value)
+        return value
+
+    @messages_in_process.setter
+    def messages_in_process(self, value: "MessagesInProgressRecord") -> None:
+        _messages_in_process_var.set(value)
 
     def _dispatch_event(self, event: ProcessedEvents) -> str:
         if event.type == EventType.RAW:
@@ -148,6 +154,9 @@ class LangGraphAgent:
             yield event_str
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[str, None]:
+        _active_run_var.set(None)
+        _messages_in_process_var.set({})
+
         thread_id = input.thread_id or str(uuid.uuid4())
         INITIAL_ACTIVE_RUN = {
             "id": input.run_id,
