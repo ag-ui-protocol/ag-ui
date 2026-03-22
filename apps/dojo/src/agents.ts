@@ -24,10 +24,11 @@ import { A2AMiddlewareAgent } from "@ag-ui/a2a-middleware";
 import { AWSStrandsAgent } from "@ag-ui/aws-strands";
 import { A2AAgent } from "@ag-ui/a2a";
 import { A2AClient } from "@a2a-js/sdk/client";
-import { LangChainAgent } from "@ag-ui/langchain"; 
+import { LangChainAgent } from "@ag-ui/langchain";
 import { BuiltInAgent } from "@copilotkit/runtime/v2";
 import { A2UIMiddleware, A2UI_PROMPT } from "@ag-ui/a2ui-middleware";
 import { Ag2Agent } from "@ag-ui/ag2";
+import { LangroidHttpAgent } from "@ag-ui/langroid";
 
 const envVars = getEnvVars();
 
@@ -430,6 +431,17 @@ ${A2UI_PROMPT}`;
         shared_state: "shared_state",
         human_in_the_loop: "human_in_the_loop",
         tool_based_generative_ui: "tool_based_generative_ui",
+      }
+    ),
+
+  langroid: async () =>
+    mapAgents(
+      (path) => new LangroidHttpAgent({ url: `${envVars.langroidUrl}/${path}/` }),
+      {
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        agentic_generative_ui: "agentic_generative_ui",
+        shared_state: "shared_state",
       }
     ),
 } satisfies AgentsMap;

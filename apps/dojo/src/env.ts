@@ -23,6 +23,7 @@ type envVars = {
   awsStrandsUrl: string;
   claudeAgentSdkPythonUrl: string;
   claudeAgentSdkTypescriptUrl: string;
+  langroidUrl: string;
   customDomainTitle: Record<string, string>;
 }
 
@@ -60,6 +61,7 @@ export default function getEnvVars(): envVars {
     awsStrandsUrl: process.env.AWS_STRANDS_URL || 'http://localhost:8000',
     claudeAgentSdkPythonUrl: process.env.CLAUDE_AGENT_SDK_PYTHON_URL || 'http://localhost:8019',
     claudeAgentSdkTypescriptUrl: process.env.CLAUDE_AGENT_SDK_TYPESCRIPT_URL || 'http://localhost:8020',
+    langroidUrl: process.env.LANGROID_URL || 'http://localhost:8021',
     customDomainTitle: customDomainTitle,
   }
 }

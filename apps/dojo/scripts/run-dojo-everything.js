@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-const { execSync } = require('child_process');
-const path = require('path');
-const concurrently = require('concurrently');
+const { execSync } = require("child_process");
+const path = require("path");
+const concurrently = require("concurrently");
 
 // Pinned: @langchain/langgraph-api@1.1.14 regressed schema extraction, causing
 // worker timeouts on CI runners. Re-evaluate when a newer version fixes the issue.
@@ -10,22 +10,22 @@ const LANGGRAPH_CLI_VERSION = '1.1.13';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
-const showHelp = args.includes('--help') || args.includes('-h');
-const dryRun = args.includes('--dry-run');
+const showHelp = args.includes("--help") || args.includes("-h");
+const dryRun = args.includes("--dry-run");
 
 function parseList(flag) {
   const idx = args.indexOf(flag);
   if (idx !== -1 && args[idx + 1]) {
     return args[idx + 1]
-      .split(',')
+      .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
   }
   return null;
 }
 
-const onlyList = parseList('--only') || parseList('--include');
-const excludeList = parseList('--exclude') || [];
+const onlyList = parseList("--only") || parseList("--include");
+const excludeList = parseList("--exclude") || [];
 
 if (showHelp) {
   console.log(`
@@ -46,9 +46,11 @@ Examples:
   process.exit(0);
 }
 
-const gitRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim();
-const integrationsRoot = path.join(gitRoot, 'integrations');
-const middlewaresRoot = path.join(gitRoot, 'middlewares');
+const gitRoot = execSync("git rev-parse --show-toplevel", {
+  encoding: "utf-8",
+}).trim();
+const integrationsRoot = path.join(gitRoot, "integrations");
+const middlewaresRoot = path.join(gitRoot, "middlewares");
 
 // Define all runnable services keyed by a stable id
 const ALL_SERVICES = {
@@ -99,6 +101,12 @@ const ALL_SERVICES = {
     name: 'LG Platform TS',
     cwd: path.join(integrationsRoot, 'langgraph/typescript/examples'),
     env: { PORT: 8006 },
+  }],
+  'langroid': [{
+    command: 'uv run dev',
+    name: 'Langroid',
+    cwd: path.join(integrationsRoot, 'langroid/python/examples'),
+    env: { PORT: 8021 },
   }],
   'llama-index': [{
     command: 'uv run dev',
@@ -215,6 +223,7 @@ const ALL_SERVICES = {
       AWS_STRANDS_URL: 'http://localhost:8017',
       CLAUDE_AGENT_SDK_PYTHON_URL: 'http://localhost:8019',
       CLAUDE_AGENT_SDK_TYPESCRIPT_URL: 'http://localhost:8020',
+      LANGROID_URL: 'http://localhost:8021',
       NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: 'cpkdojo.local___CopilotKit Feature Viewer',
     },
   }],
@@ -243,14 +252,15 @@ const ALL_SERVICES = {
       AWS_STRANDS_URL: 'http://localhost:8017',
       CLAUDE_AGENT_SDK_PYTHON_URL: 'http://localhost:8019',
       CLAUDE_AGENT_SDK_TYPESCRIPT_URL: 'http://localhost:8020',
+      LANGROID_URL: 'http://localhost:8021',
       NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE: 'cpkdojo.local___CopilotKit Feature Viewer',
     },
   }],
 };
 
 function printDryRunServices(procs) {
-  console.log('Dry run - would start the following services:');
-  procs.forEach(proc => {
+  console.log("Dry run - would start the following services:");
+  procs.forEach((proc) => {
     console.log(`  - ${proc.name} (${proc.cwd})`);
     console.log(`    Command: ${proc.command}`);
     console.log(`    Environment variables:`);
@@ -259,9 +269,9 @@ function printDryRunServices(procs) {
         console.log(`      ${key}: ${value}`);
       });
     } else {
-      console.log('      No environment variables specified.');
+      console.log("      No environment variables specified.");
     }
-    console.log('');
+    console.log("");
   });
   process.exit(0);
 }
@@ -277,7 +287,7 @@ async function main() {
   }
 
   if (selectedKeys.includes("dojo") && selectedKeys.includes("dojo-dev")) {
-    selectedKeys= selectedKeys.filter(x => x != "dojo-dev");
+    selectedKeys = selectedKeys.filter((x) => x != "dojo-dev");
   }
 
   // LLMock: inject OPENAI_BASE_URL, OPENAI_API_BASE, and OPENAI_API_KEY
@@ -317,9 +327,11 @@ async function main() {
     printDryRunServices(procs);
   }
 
-  console.log('Starting services: ', procs.map((p) => p.name).join(', '));
+  console.log("Starting services: ", procs.map((p) => p.name).join(", "));
 
-  const { result } = concurrently(procs, { killOthersOn: ['failure', 'success'] });
+  const { result } = concurrently(procs, {
+    killOthersOn: ["failure", "success"],
+  });
 
   result
     .then(() => process.exit(0))

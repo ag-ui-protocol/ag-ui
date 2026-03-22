@@ -74,6 +74,11 @@ const ALL_TARGETS = {
     name: "CrewAI",
     cwd: path.join(integrationsRoot, "crew-ai/python"),
   },
+  'langroid': {
+    command: 'uv sync',
+    name: 'Langroid',
+    cwd: path.join(integrationsRoot, 'langroid/python/examples'),
+  },
   "langgraph-fastapi": {
     command: "uv sync",
     name: "LG FastAPI",
