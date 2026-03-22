@@ -441,6 +441,7 @@ For detailed information about tool support, see [TOOLS.md](./TOOLS.md).
 - **[TOOLS.md](./TOOLS.md)** - Tool support documentation
 - **[USAGE.md](./USAGE.md)** - Usage examples and patterns
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Technical architecture and design details
+- **[MCP_APPS.md](./MCP_APPS.md)** - Using MCPAppsMiddleware with ADK
 
 ## Migration Guide
 

@@ -97,6 +97,17 @@ import {
 } from "@ag-ui/mcp-apps-middleware";
 ```
 
+## Framework Compatibility
+
+MCPAppsMiddleware works with any AG-UI backend, but the behavior varies depending on how the backend framework handles tool execution. In particular, ADK's long-running tool pattern means the agent does not process MCP tool results within the same run, while the UI rendering works identically across all frameworks.
+
+See [FRAMEWORK_COMPATIBILITY.md](./FRAMEWORK_COMPATIBILITY.md) for details on:
+
+- How the middleware behaves with LangGraph (synchronous tools)
+- How the middleware behaves with ADK (long-running tools)
+- Client-side wiring examples for each framework
+- The multi-run pattern for feeding tool results back to ADK agents
+
 ## License
 
 MIT
