@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIX**: Key session lookup cache by `(thread_id, user_id)` to prevent cross-user collision (#1323)
+  - `_session_lookup_cache` and `_active_executions` are now keyed by a `(thread_id, user_id)` tuple instead of `thread_id` alone, preventing one user's session from being returned to another when both share the same thread ID
+  - All internal helpers (`_get_session_metadata`, `_get_backend_session_id`, `_remove_pending_tool_call`, `_get_pending_tool_call_ids`, `_has_pending_tool_calls`) now require `user_id` as a mandatory parameter — no silent `""` defaults that could mask cache misses
+  - Adds test coverage for two users sharing the same thread ID receiving separate sessions
+  - Thanks to **@themavik** for this contribution!
+
 - **FIX**: Replace deep copy with shallow copy to support McpToolset (#1264)
   - `ADKAgent.model_copy(deep=True)` fails when the ADK agent tree contains tools with unpicklable attributes (e.g. `McpToolset.errlog = sys.stderr`)
   - Replaced with a recursive shallow copy (`_shallow_copy_agent_tree`) that isolates only the fields modified per-execution (`instruction`, `tools`, `sub_agents`) while sharing tool objects by reference
