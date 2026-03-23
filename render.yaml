@@ -298,6 +298,8 @@ projects:
       envVars:
       - key: OPENAI_API_KEY
         sync: false
+      - key: LANGSMITH_API_KEY
+        sync: false
       - key: AG2_URL
         value: https://ag-ui-dojo-ag2.onrender.com
       - key: SERVER_STARTER_URL
