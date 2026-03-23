@@ -356,19 +356,37 @@ class LangGraphAgent:
 
         non_system_messages = [msg for msg in langchain_messages if not isinstance(msg, SystemMessage)]
         if len(agent_state.values.get("messages", [])) > len(non_system_messages):
-            # Find the last user message by working backwards from the last message
-            last_user_message = None
-            for i in range(len(langchain_messages) - 1, -1, -1):
-                if isinstance(langchain_messages[i], HumanMessage):
-                    last_user_message = langchain_messages[i]
-                    break
+            # Only trigger time-travel regeneration if the incoming messages are NOT already
+            # in the checkpoint. If they are, this is a continuation (e.g. after CopilotKit
+            # intercepted a tool call), not a time-travel edit — regenerating would loop.
+            #
+            # We exclude ToolMessages from the ID comparison because CopilotKit assigns new
+            # IDs to tool results that won't match the placeholder IDs AgentCoreMemorySaver
+            # wrote to the checkpoint. Human and AI message IDs are stable across requests
+            # and are sufficient to distinguish continuation from time-travel.
+            incoming_non_tool_ids = {
+                getattr(m, "id", None)
+                for m in langchain_messages
+                if getattr(m, "id", None) and not isinstance(m, ToolMessage)
+            }
+            checkpoint_ids = {getattr(m, "id", None) for m in agent_state.values.get("messages", []) if getattr(m, "id", None)}
+            is_continuation = bool(incoming_non_tool_ids) and incoming_non_tool_ids.issubset(checkpoint_ids)
 
-            if last_user_message:
-                return await self.prepare_regenerate_stream(
-                    input=input,
-                    message_checkpoint=last_user_message,
-                    config=config
-                )
+            if not is_continuation:
+                last_user_message = None
+                for i in range(len(langchain_messages) - 1, -1, -1):
+                    if isinstance(langchain_messages[i], HumanMessage):
+                        last_user_message = langchain_messages[i]
+                        break
+
+                if last_user_message:
+                    last_user_id = getattr(last_user_message, "id", None)
+                    if last_user_id and last_user_id in checkpoint_ids:
+                        return await self.prepare_regenerate_stream(
+                            input=input,
+                            message_checkpoint=last_user_message,
+                            config=config
+                        )
 
         events_to_dispatch = []
         if has_active_interrupts and not resume_input:
@@ -441,7 +459,7 @@ class LangGraphAgent:
         tools = input.tools or []
         thread_id = input.thread_id
 
-        time_travel_checkpoint = await self.get_checkpoint_before_message(message_checkpoint.id, thread_id)
+        time_travel_checkpoint = await self.get_checkpoint_before_message(message_checkpoint.id, thread_id, config)
         if time_travel_checkpoint is None:
             return None
 
@@ -547,11 +565,11 @@ class LangGraphAgent:
                 for i in range(last_human_idx + 1, len(existing_messages)):
                     msg = existing_messages[i]
                     if (
-                        isinstance(msg, ToolMessage)
-                        and isinstance(msg.content, str)
-                        and self._ORPHAN_TOOL_MSG_RE.match(msg.content)
-                        and hasattr(msg, 'tool_call_id')
-                        and msg.tool_call_id in agui_tool_content
+                            isinstance(msg, ToolMessage)
+                            and isinstance(msg.content, str)
+                            and self._ORPHAN_TOOL_MSG_RE.match(msg.content)
+                            and hasattr(msg, 'tool_call_id')
+                            and msg.tool_call_id in agui_tool_content
                     ):
                         msg.content = agui_tool_content[msg.tool_call_id]
                         replaced_tool_call_ids.add(msg.tool_call_id)
@@ -561,11 +579,6 @@ class LangGraphAgent:
         new_messages = [
             msg for msg in messages
             if msg.id not in existing_message_ids
-            and not (
-                isinstance(msg, ToolMessage)
-                and hasattr(msg, 'tool_call_id')
-                and msg.tool_call_id in replaced_tool_call_ids
-            )
         ]
 
         tools = input.tools or []
@@ -630,9 +643,9 @@ class LangGraphAgent:
         tail = [
             m for m in messages[last_human_idx + 1:]
             if not (
-                isinstance(m, ToolMessage)
-                and isinstance(m.content, str)
-                and self._ORPHAN_TOOL_MSG_RE.match(m.content)
+                    isinstance(m, ToolMessage)
+                    and isinstance(m.content, str)
+                    and self._ORPHAN_TOOL_MSG_RE.match(m.content)
             )
         ]
         return head + tail
@@ -869,11 +882,6 @@ class LangGraphAgent:
             )
 
         elif event_type == LangGraphEventTypes.OnToolEnd:
-            # The tool has finished — clear both flags so future snapshots are not
-            # incorrectly suppressed.  Mirrors TypeScript: hasPredictState = false
-            # on OnToolEnd (agent.ts OnToolEnd handler).
-            self.active_run["model_made_tool_call"] = False
-            self.active_run["state_reliable"] = True
             tool_call_output = event["data"]["output"]
 
             if isinstance(tool_call_output, Command):
@@ -956,6 +964,9 @@ class LangGraphAgent:
                 )
             )
 
+            self.active_run["model_made_tool_call"] = False
+            self.active_run["state_reliable"] = True
+
     def handle_reasoning_event(self, reasoning_data: LangGraphReasoning) -> Generator[str, Any, str | None]:
         if not reasoning_data or "type" not in reasoning_data or "text" not in reasoning_data:
             return ""
@@ -1018,12 +1029,12 @@ class LangGraphAgent:
                 )
             )
 
-    async def get_checkpoint_before_message(self, message_id: str, thread_id: str):
+    async def get_checkpoint_before_message(self, message_id: str, thread_id: str, config: Optional[RunnableConfig] = None):
         if not thread_id:
             raise ValueError("Missing thread_id in config")
 
         history_list = []
-        async for snapshot in self.graph.aget_state_history({"configurable": {"thread_id": thread_id}}):
+        async for snapshot in self.graph.aget_state_history(history_config):
             history_list.append(snapshot)
 
         history_list.reverse()

@@ -300,23 +300,43 @@ export class LangGraphAgent extends AbstractAgent {
     if (
       (agentState.values.messages ?? []).length > messages.filter((m) => m.role !== "system").length
     ) {
-      let lastUserMessage: LangGraphMessage | null = null;
-      // Find the first user message by working backwards from the last message
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === "user") {
-          lastUserMessage = aguiMessagesToLangChain([messages[i]])[0];
-          break;
+      // Only trigger time-travel regeneration if the incoming messages are NOT already
+      // in the checkpoint. If they are, this is a continuation (e.g. after CopilotKit
+      // intercepted a tool call), not a time-travel edit — regenerating would loop.
+      //
+      // We exclude tool messages from the ID comparison because CopilotKit assigns new
+      // IDs to tool results that won't match the placeholder IDs the checkpointer
+      // wrote. Human and AI message IDs are stable across requests and are sufficient
+      // to distinguish continuation from time-travel.
+      const checkpointIds = new Set(
+        (agentState.values.messages ?? [])
+          .map((m: LangGraphPlatformMessage) => m.id)
+          .filter(Boolean),
+      );
+      const incomingNonToolIds = new Set(
+        messages.filter((m) => m.role !== "tool" && m.id).map((m) => m.id!),
+      );
+      const isContinuation =
+        incomingNonToolIds.size > 0 &&
+        [...incomingNonToolIds].every((id) => checkpointIds.has(id));
+
+      if (!isContinuation) {
+        let lastUserMessage: LangGraphMessage | null = null;
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].role === "user") {
+            lastUserMessage = aguiMessagesToLangChain([messages[i]])[0];
+            break;
+          }
+        }
+
+        const lastUserId = lastUserMessage?.id;
+        if (lastUserId && checkpointIds.has(lastUserId)) {
+          return this.prepareRegenerateStream(
+            { ...input, messageCheckpoint: lastUserMessage! },
+            streamMode,
+          );
         }
       }
-
-      if (!lastUserMessage) {
-        return this.subscriber.error("No user message found in messages to regenerate");
-      }
-
-      return this.prepareRegenerateStream(
-        { ...input, messageCheckpoint: lastUserMessage },
-        streamMode,
-      );
     }
     this.activeRun!.graphInfo = await this.client.assistants.getGraph(this.assistant.assistant_id);
 

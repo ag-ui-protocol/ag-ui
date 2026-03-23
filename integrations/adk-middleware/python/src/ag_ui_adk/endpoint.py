@@ -2,7 +2,6 @@
 
 """FastAPI endpoint for ADK middleware."""
 
-import json
 import logging
 import warnings
 from typing import Any, Callable, Coroutine, List, Optional
@@ -35,8 +34,8 @@ class AgentStateResponse(BaseModel):
     """Response body for /agents/state endpoint."""
     threadId: str
     threadExists: bool
-    state: str  # JSON stringified
-    messages: str  # JSON stringified
+    state: dict
+    messages: list
 
 
 def _header_to_key(header_name: str) -> str:
@@ -277,8 +276,8 @@ def add_adk_fastapi_endpoint(
             return JSONResponse(content={
                 "threadId": thread_id,
                 "threadExists": thread_exists,
-                "state": json.dumps(state),
-                "messages": json.dumps(messages_dict)
+                "state": state,
+                "messages": messages_dict
             })
 
         except Exception as e:
@@ -288,8 +287,8 @@ def add_adk_fastapi_endpoint(
                 content={
                     "threadId": thread_id,
                     "threadExists": False,
-                    "state": "{}",
-                    "messages": "[]",
+                    "state": {},
+                    "messages": [],
                     "error": str(e)
                 }
             )
