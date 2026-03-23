@@ -321,17 +321,17 @@ projects:
       - key: CREW_AI_URL
         value: https://ag-ui-dojo-crewai.onrender.com
       - key: AGENT_SPEC_URL
-        value: https://ag-ui-dojo-open-agent-spec.onrender.com
+        value: https://ag-ui-p7fw.onrender.com
       - key: PYDANTIC_AI_URL
-        value: https://ag-ui-dojo-pydantic-ai.onrender.com
+        value: https://pydantic-ai.onrender.com
       - key: ADK_MIDDLEWARE_URL
-        value: https://ag-ui-adk.onrender.com
+        value: https://ag-ui.onrender.com
       - key: AGENT_FRAMEWORK_PYTHON_URL
         value: https://ag-ui-dojo-maf-python.onrender.com
       - key: AGENT_FRAMEWORK_DOTNET_URL
         value: https://ag-ui-dojo-maf-dotnet.onrender.com
       - key: A2A_MIDDLEWARE_BUILDINGS_MANAGEMENT_URL
-        value: https://ag-ui-dojo-a2a-middleware-businesses-management.onrender.com
+        value: https://ag-ui-dojo-a2a-middleware-businesses.onrender.com
       - key: A2A_MIDDLEWARE_FINANCE_URL
         value: https://ag-ui-dojo-a2a-middleware-finance.onrender.com
       - key: A2A_MIDDLEWARE_IT_URL
