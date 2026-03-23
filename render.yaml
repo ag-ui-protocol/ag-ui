@@ -306,8 +306,12 @@ projects:
         value: https://ag-ui-dojo-server-starter-all-features.onrender.com
       - key: MASTRA_URL
         value: https://ag-ui-dojo-mastra.onrender.com
+      - key: LANGGRAPH_PYTHON_URL
+        value: https://ag-ui-dojo-langgraph-a3e8cf6dfca35b3e85fa7667419dc1cb.us.langgraph.app
       - key: LANGGRAPH_FAST_API_URL
         value: https://ag-ui-dojo-langgraph-fastapi.onrender.com
+      - key: LANGGRAPH_TYPESCRIPT_URL
+        value: https://ag-ui-dojo-langgraph-typesc-d24705783cdd5e189135a5844e5e7a75.us.langgraph.app
       - key: AGNO_URL
         value: https://ag-ui-dojo-agno.onrender.com
       - key: LLAMA_INDEX_URL
