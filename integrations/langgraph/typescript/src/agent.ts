@@ -1287,15 +1287,16 @@ export class LangGraphAgent extends AbstractAgent {
 
   async getAssistant(): Promise<Assistant> {
     try {
-      const assistants = await this.client.assistants.search();
-      const retrievedAssistant = assistants.find(
-        (searchResult) => searchResult.graph_id === this.graphId,
-      );
+      const assistants = await this.client.assistants.search({
+        graphId: this.graphId,
+      });
+      const retrievedAssistant = assistants[0];
       if (!retrievedAssistant) {
+        const allAssistants = await this.client.assistants.search({ limit: 100 });
         const notFoundMessage = `
       No agent found with graph ID ${this.graphId} found..\n
 
-      These are the available agents: [${assistants.map((a) => `${a.graph_id} (ID: ${a.assistant_id})`).join(", ")}]
+      These are the available agents: [${allAssistants.map((a) => `${a.graph_id} (ID: ${a.assistant_id})`).join(", ")}]
       `
         console.error(notFoundMessage);
         throw new Error(notFoundMessage);
