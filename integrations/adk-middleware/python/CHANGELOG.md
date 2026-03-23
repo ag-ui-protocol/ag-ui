@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FIX**: Remove double JSON encoding of `state` and `messages` in `/agents/state` endpoint (#1347)
+  - `AgentStateResponse` declared `state` and `messages` as `str`, and the handler wrapped them with `json.dumps()` before passing to `JSONResponse`, which serializes again
+  - Consumers received doubly-encoded strings (e.g. `"[{...}]"`) instead of native objects (`[{...}]`), breaking CopilotKit's message snapshot functionality
+  - Fixed by changing `AgentStateResponse` fields to `dict`/`list` and removing the redundant `json.dumps()` calls
+
 - **FIX**: Replace deep copy with shallow copy to support McpToolset (#1264)
   - `ADKAgent.model_copy(deep=True)` fails when the ADK agent tree contains tools with unpicklable attributes (e.g. `McpToolset.errlog = sys.stderr`)
   - Replaced with a recursive shallow copy (`_shallow_copy_agent_tree`) that isolates only the fields modified per-execution (`instruction`, `tools`, `sub_agents`) while sharing tool objects by reference
