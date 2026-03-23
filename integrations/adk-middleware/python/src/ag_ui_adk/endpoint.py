@@ -224,7 +224,7 @@ def add_adk_fastapi_endpoint(
             session_id = None
 
             # Fast path: check cache first
-            metadata = agent._get_session_metadata(thread_id)
+            metadata = agent._get_session_metadata(thread_id, user_id)
             if metadata:
                 session_id, cached_app_name, cached_user_id = metadata
                 session = await agent._session_manager._session_service.get_session(
@@ -246,7 +246,7 @@ def add_adk_fastapi_endpoint(
                 if session:
                     # Found - cache for future lookups
                     session_id = session.id
-                    agent._session_lookup_cache[thread_id] = (session_id, app_name, user_id)
+                    agent._session_lookup_cache[(thread_id, user_id)] = (session_id, app_name, user_id)
 
                     # Reload session to populate events (list_sessions returns metadata only)
                     session = await agent._session_manager._session_service.get_session(

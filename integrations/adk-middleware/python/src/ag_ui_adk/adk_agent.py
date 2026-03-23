@@ -200,8 +200,8 @@ class ADKAgent:
             use_thread_id_as_session_id=use_thread_id_as_session_id,
         )
         
-        # Tool execution tracking
-        self._active_executions: Dict[str, ExecutionState] = {}
+        # Tool execution tracking — keyed by (thread_id, user_id) to avoid cross-user collisions
+        self._active_executions: Dict[Tuple[str, str], ExecutionState] = {}
         self._execution_timeout = execution_timeout_seconds
         self._tool_timeout = tool_timeout_seconds
         self._max_concurrent = max_concurrent_executions
@@ -396,24 +396,24 @@ class ADKAgent:
         instance._plugin_close_timeout = plugin_close_timeout
         return instance
 
-    def _get_session_metadata(self, thread_id: str, user_id: str = "") -> Optional[Tuple[str, str, str]]:
+    def _get_session_metadata(self, thread_id: str, user_id: str) -> Optional[Tuple[str, str, str]]:
         """Get session metadata for a (thread_id, user_id) pair efficiently.
 
         Args:
             thread_id: The AG-UI thread_id to lookup
-            user_id: The user identifier to scope the lookup
+            user_id: The user identifier to scope the lookup (use "" only when explicitly anonymous)
 
         Returns:
             Tuple of (session_id, app_name, user_id) or None if not found
         """
         return self._session_lookup_cache.get((thread_id, user_id))
 
-    def _get_backend_session_id(self, thread_id: str, user_id: str = "") -> Optional[str]:
+    def _get_backend_session_id(self, thread_id: str, user_id: str) -> Optional[str]:
         """Get the backend session_id for a (thread_id, user_id) pair.
 
         Args:
             thread_id: The AG-UI thread_id to lookup
-            user_id: The user identifier to scope the lookup
+            user_id: The user identifier to scope the lookup (use "" only when explicitly anonymous)
 
         Returns:
             The backend session_id or None if not found
@@ -498,13 +498,13 @@ class ADKAgent:
         except Exception as e:
             logger.error(f"Failed to add pending tool call {tool_call_id} to thread {thread_id}: {e}")
 
-    async def _remove_pending_tool_call(self, thread_id: str, tool_call_id: str, user_id: str = ""):
+    async def _remove_pending_tool_call(self, thread_id: str, tool_call_id: str, user_id: str):
         """Remove a tool call from the session's pending list.
 
         Args:
             thread_id: The AG-UI thread_id
             tool_call_id: The tool call ID to remove
-            user_id: The user identifier to scope the lookup
+            user_id: The user identifier to scope the lookup (use "" only when explicitly anonymous)
         """
         try:
             # Use efficient session metadata lookup
@@ -540,7 +540,7 @@ class ADKAgent:
         except Exception as e:
             logger.error(f"Failed to remove pending tool call {tool_call_id} from thread {thread_id}: {e}")
     
-    async def _get_pending_tool_call_ids(self, thread_id: str, user_id: str = "") -> Optional[List[str]]:
+    async def _get_pending_tool_call_ids(self, thread_id: str, user_id: str) -> Optional[List[str]]:
         """Fetch the pending tool call identifiers tracked for a thread."""
         try:
             metadata = self._get_session_metadata(thread_id, user_id)
@@ -564,12 +564,12 @@ class ADKAgent:
 
         return None
 
-    async def _has_pending_tool_calls(self, thread_id: str, user_id: str = "") -> bool:
+    async def _has_pending_tool_calls(self, thread_id: str, user_id: str) -> bool:
         """Check if thread has pending tool calls (HITL scenario).
 
         Args:
             thread_id: The AG-UI thread_id
-            user_id: The user identifier to scope the lookup
+            user_id: The user identifier to scope the lookup (use "" only when explicitly anonymous)
 
         Returns:
             True if thread has pending tool calls
@@ -878,7 +878,7 @@ class ADKAgent:
                     for message in tool_batch
                     if getattr(message, "tool_call_id", None)
                 ]
-                pending_tool_call_ids = await self._get_pending_tool_call_ids(input.thread_id)
+                pending_tool_call_ids = await self._get_pending_tool_call_ids(input.thread_id, user_id)
 
                 should_process_tool_batch = True
                 if pending_tool_call_ids is not None:
@@ -991,7 +991,7 @@ class ADKAgent:
                         peek_idx += 1
 
                     if upcoming_tool_call_ids:
-                        pending_ids = await self._get_pending_tool_call_ids(input.thread_id)
+                        pending_ids = await self._get_pending_tool_call_ids(input.thread_id, user_id)
                         if pending_ids is not None:
                             pending_set = set(pending_ids)
                             # If NONE of the upcoming tool results match pending, they're historical
@@ -1430,6 +1430,9 @@ class ADKAgent:
         exec_type = "HITL_RESUME" if tool_results else "NEW_RUN"
         logger.info(f"[EXEC] {exec_type} - thread={input.thread_id}, run={input.run_id}, tool_results={tool_result_ids}, message_batch_len={message_batch_len}")
 
+        user_id = self._get_user_id(input)
+        exec_key = (input.thread_id, user_id)
+
         try:
             # Emit RUN_STARTED
             logger.debug(f"Emitting RUN_STARTED for thread {input.thread_id}, run {input.run_id}")
@@ -1450,8 +1453,8 @@ class ADKAgent:
                             f"Maximum concurrent executions ({self._max_concurrent}) reached"
                         )
                 
-                # Check if there's an existing execution for this thread and wait for it
-                existing_execution = self._active_executions.get(input.thread_id)
+                # Check if there's an existing execution for this thread+user and wait for it
+                existing_execution = self._active_executions.get(exec_key)
 
             # If there was an existing execution, wait for it to complete
             if existing_execution and not existing_execution.is_complete:
@@ -1470,7 +1473,7 @@ class ADKAgent:
             
             # Store execution (replacing any previous one)
             async with self._execution_lock:
-                self._active_executions[input.thread_id] = execution
+                self._active_executions[exec_key] = execution
             
             # Stream events and track tool calls
             logger.debug(f"Starting to stream events for execution {execution.thread_id}")
@@ -1503,7 +1506,6 @@ class ADKAgent:
             # If we found tool calls, add them to session state BEFORE cleanup
             if has_tool_calls:
                 app_name = self._get_app_name(input)
-                user_id = self._get_user_id(input)
                 for tool_call_id in tool_call_ids:
                     await self._add_pending_tool_call_with_context(
                         execution.thread_id, tool_call_id, app_name, user_id
@@ -1528,14 +1530,14 @@ class ADKAgent:
         finally:
             # Clean up execution if complete and no pending tool calls (HITL scenarios)
             async with self._execution_lock:
-                if input.thread_id in self._active_executions:
-                    execution = self._active_executions[input.thread_id]
+                if exec_key in self._active_executions:
+                    execution = self._active_executions[exec_key]
                     execution.is_complete = True
 
                     # Check if session has pending tool calls before cleanup
-                    has_pending = await self._has_pending_tool_calls(input.thread_id, self._get_user_id(input))
+                    has_pending = await self._has_pending_tool_calls(input.thread_id, user_id)
                     if not has_pending:
-                        del self._active_executions[input.thread_id]
+                        del self._active_executions[exec_key]
     
     @staticmethod
     def _shallow_copy_agent_tree(agent: Any) -> Any:
@@ -2368,15 +2370,16 @@ class ADKAgent:
     
     async def _cleanup_stale_executions(self):
         """Clean up stale executions."""
-        stale_threads = []
-        
-        for thread_id, execution in self._active_executions.items():
+        stale_keys: List[Tuple[str, str]] = []
+
+        for exec_key, execution in self._active_executions.items():
             if execution.is_stale(self._execution_timeout):
-                stale_threads.append(thread_id)
-        
-        for thread_id in stale_threads:
-            execution = self._active_executions.pop(thread_id)
+                stale_keys.append(exec_key)
+
+        for exec_key in stale_keys:
+            execution = self._active_executions.pop(exec_key)
             await execution.cancel()
+            thread_id, _uid = exec_key
             logger.info(f"Cleaned up stale execution for thread {thread_id}")
 
     async def close(self):

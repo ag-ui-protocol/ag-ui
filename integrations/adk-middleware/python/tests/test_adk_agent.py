@@ -432,7 +432,7 @@ class TestADKAgent:
         mock_execution.cancel = AsyncMock()
 
         async with adk_agent._execution_lock:
-            adk_agent._active_executions["test_thread"] = mock_execution
+            adk_agent._active_executions[("test_thread", "test_user")] = mock_execution
 
         await adk_agent.close()
 

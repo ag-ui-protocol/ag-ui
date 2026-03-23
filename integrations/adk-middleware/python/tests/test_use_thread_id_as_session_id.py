@@ -290,7 +290,7 @@ class TestADKAgentWithThreadIdAsSessionId:
             thread_id="cached-thread",
             initial_state={},
         )
-        cached = adk_agent._session_lookup_cache.get("cached-thread")
+        cached = adk_agent._session_lookup_cache.get(("cached-thread", "test_user"))
         assert cached is not None
         assert cached[0] == "cached-thread"  # session_id == thread_id
 
@@ -339,7 +339,7 @@ class TestADKAgentWithThreadIdAsSessionId:
         # Should have events (at minimum RUN_STARTED + some content + RUN_FINISHED)
         assert len(events) > 0
         # Verify the session was created with thread_id as session_id
-        cached = adk_agent._session_lookup_cache.get("direct-thread-123")
+        cached = adk_agent._session_lookup_cache.get(("direct-thread-123", "test_user"))
         assert cached is not None
         assert cached[0] == "direct-thread-123"
 

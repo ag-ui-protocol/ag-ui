@@ -257,6 +257,28 @@ class TestVertexSessionServiceMock:
         assert id1 == id2
 
     @pytest.mark.asyncio
+    async def test_same_thread_id_different_users_get_separate_sessions(
+        self, adk_agent, vertex_session_service
+    ):
+        """Same thread_id for two users must not share cache or backend session."""
+        shared_thread = "shared-thread-id"
+        _, id_user_a = await adk_agent._ensure_session_exists(
+            app_name="vertex_test_app",
+            user_id="user_a",
+            thread_id=shared_thread,
+            initial_state={},
+        )
+        _, id_user_b = await adk_agent._ensure_session_exists(
+            app_name="vertex_test_app",
+            user_id="user_b",
+            thread_id=shared_thread,
+            initial_state={},
+        )
+        assert id_user_a != id_user_b
+        assert adk_agent._session_lookup_cache[(shared_thread, "user_a")][0] == id_user_a
+        assert adk_agent._session_lookup_cache[(shared_thread, "user_b")][0] == id_user_b
+
+    @pytest.mark.asyncio
     async def test_initial_state_merged_with_metadata(
         self, adk_agent, vertex_session_service
     ):
@@ -389,7 +411,7 @@ class TestVertexSessionServiceFullRun:
         assert EventType.RUN_FINISHED in event_types
 
         # Session should exist with a numeric ID (not the thread_id)
-        cached = agent._session_lookup_cache.get("vertex-thread-run")
+        cached = agent._session_lookup_cache.get(("vertex-thread-run", "user"))
         assert cached is not None
         backend_id = cached[0]
         assert backend_id.isdigit()
@@ -454,7 +476,7 @@ class TestVertexSessionServiceFullRun:
         )
         events1 = await do_run(input1)
         assert any(e.type == EventType.RUN_FINISHED for e in events1)
-        session_id_1 = agent._session_lookup_cache["vertex-multi"][0]
+        session_id_1 = agent._session_lookup_cache[("vertex-multi", "user")][0]
 
         # Turn 2 — same thread
         input2 = make_input(
@@ -466,7 +488,7 @@ class TestVertexSessionServiceFullRun:
         )
         events2 = await do_run(input2)
         assert any(e.type == EventType.RUN_FINISHED for e in events2)
-        session_id_2 = agent._session_lookup_cache["vertex-multi"][0]
+        session_id_2 = agent._session_lookup_cache[("vertex-multi", "user")][0]
 
         # Same session reused
         assert session_id_1 == session_id_2
@@ -670,7 +692,8 @@ class TestVertexSessionServiceLive:
         assert EventType.RUN_FINISHED in event_types
 
         # Verify session exists and has a Vertex-generated ID
-        cached = agent._session_lookup_cache.get(thread_id)
+        test_uid = agent._static_user_id
+        cached = agent._session_lookup_cache.get((thread_id, test_uid))
         assert cached is not None
         backend_id = cached[0]
         assert backend_id != thread_id  # Vertex generates its own ID

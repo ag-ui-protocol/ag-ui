@@ -330,7 +330,7 @@ class TestDrainPathCapturesRemap:
         assert tool_call_starts[0].tool_call_id == partial_fc_id
 
         # Verify the remap was stored in session state
-        metadata = adk_agent._get_session_metadata(thread_id)
+        metadata = adk_agent._get_session_metadata(thread_id, "u1")
         assert metadata is not None
         session_id, app_name, user_id = metadata
         remap = await adk_agent._get_lro_id_remap(session_id, app_name, user_id)
@@ -627,7 +627,7 @@ class TestMultiRoundLroStatePoisoning:
                 run1_events = [e async for e in adk.run(run1_input)]
 
         # Verify remap was stored
-        metadata = adk._get_session_metadata(thread_id)
+        metadata = adk._get_session_metadata(thread_id, "u1")
         session_id, app_name, user_id = metadata
         remap1 = await adk._get_lro_id_remap(session_id, app_name, user_id)
         assert remap1.get(partial_id_1) == final_id_1
