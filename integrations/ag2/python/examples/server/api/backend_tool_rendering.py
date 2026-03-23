@@ -101,6 +101,7 @@ Your primary function is to help users get weather details for specific location
 Use the get_weather tool to fetch current weather data.""",
     llm_config=LLMConfig({"model": "gpt-4o-mini", "stream": True}),
     functions=[get_weather],
+    human_input_mode="NEVER",
 )
 
 stream = AGUIStream(agent)

@@ -144,6 +144,7 @@ agent = ConversableAgent(
     """),
     llm_config=LLMConfig({"model": "gpt-4o-mini", "stream": True}),
     functions=[get_current_recipe, display_recipe],
+    human_input_mode="NEVER",
 )
 
 stream = AGUIStream(agent)

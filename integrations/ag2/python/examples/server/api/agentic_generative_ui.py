@@ -98,6 +98,7 @@ agent = ConversableAgent(
     """),
     llm_config=LLMConfig({"model": "gpt-4o-mini", "stream": True}),
     functions=[create_plan, update_plan_step],
+    human_input_mode="NEVER",
 )
 
 stream = AGUIStream(agent)
