@@ -174,3 +174,9 @@ agent.run(firstInput).subscribe({
 ```
 
 This multi-run pattern is consistent with how ADK handles all client-side tools. See the [ADK TOOLS.md](../../integrations/adk-middleware/python/TOOLS.md) for more detail on the long-running tool execution flow.
+
+## ADK: `tool_filter` Can Block MCP Tools
+
+If your `AGUIToolset` uses a `tool_filter` (allowlist or predicate), MCP tools injected by the middleware will be subject to that filter. Since MCP tool names are defined by the MCP server, they are unlikely to match an existing allowlist and will be silently dropped.
+
+Use `AGUIToolset()` without a filter, or update your filter to accept MCP tools. See the [ADK MCP_APPS.md](../../integrations/adk-middleware/python/MCP_APPS.md#important-tool_filter-can-block-mcp-tools) for detailed guidance.

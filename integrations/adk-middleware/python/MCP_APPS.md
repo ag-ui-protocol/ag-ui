@@ -77,6 +77,47 @@ app = FastAPI()
 add_adk_fastapi_endpoint(app, adk_agent, path="/chat")
 ```
 
+## Important: `tool_filter` Can Block MCP Tools
+
+If your `AGUIToolset` uses a `tool_filter`, MCP tools injected by the middleware will be subject to that filter. Since MCP tool names are defined by the MCP server (not your application), they are unlikely to appear in an explicit allowlist.
+
+This will silently prevent the ADK agent from seeing MCP tools:
+
+```python
+# These filters will block MCP tools because their names won't match
+AGUIToolset(tool_filter=['sayHello', 'calculate'])  # allowlist - MCP tools excluded
+AGUIToolset(tool_filter=lambda tool, **_: tool.name.startswith('my_'))  # predicate - MCP tools excluded
+```
+
+To support MCP tools alongside a `tool_filter`, either:
+
+1. **Use `AGUIToolset()` without a filter** (simplest — all client tools including MCP tools pass through):
+
+    ```python
+    tools=[AGUIToolset()]
+    ```
+
+2. **Add MCP tool names to your allowlist** (if you know them ahead of time):
+
+    ```python
+    tools=[AGUIToolset(tool_filter=['sayHello', 'weather_dashboard'])]
+    ```
+
+3. **Use a predicate that accepts MCP tools** (e.g., by checking the tool description for the UI resource marker that the middleware injects):
+
+    ```python
+    tools=[
+        AGUIToolset(
+            tool_filter=lambda tool, **_: (
+                tool.name in ['sayHello', 'calculate']
+                or '[UI Resource:' in (tool.description or '')
+            )
+        )
+    ]
+    ```
+
+If you are using `tool_filter` and MCP tools are not being called by the agent, this is the most likely cause.
+
 ## Handling MCP Tool Results Across Runs
 
 For use cases where the agent only needs to trigger a UI widget (e.g., rendering a dashboard), a single run is sufficient — the `ACTIVITY_SNAPSHOT` handles the frontend rendering.
