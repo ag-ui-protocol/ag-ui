@@ -382,11 +382,13 @@ class LangGraphAgent:
                 if last_user_message:
                     last_user_id = getattr(last_user_message, "id", None)
                     if last_user_id and last_user_id in checkpoint_ids:
-                        return await self.prepare_regenerate_stream(
+                        regenerate_result = await self.prepare_regenerate_stream(
                             input=input,
                             message_checkpoint=last_user_message,
                             config=config
                         )
+                        if regenerate_result is not None:
+                            return regenerate_result
 
         events_to_dispatch = []
         if has_active_interrupts and not resume_input:
@@ -1033,6 +1035,11 @@ class LangGraphAgent:
         if not thread_id:
             raise ValueError("Missing thread_id in config")
 
+        history_config = ensure_config(config.copy() if config else {})
+        configurable = history_config.setdefault("configurable", {})
+        if not configurable.get("thread_id"):
+            configurable["thread_id"] = thread_id
+
         history_list = []
         async for snapshot in self.graph.aget_state_history(history_config):
             history_list.append(snapshot)
@@ -1044,9 +1051,9 @@ class LangGraphAgent:
                 if idx == 0:
                     # No snapshot before this
                     # Return synthetic "empty before" version
-                    empty_snapshot = snapshot
-                    empty_snapshot.values["messages"] = []
-                    return empty_snapshot
+                    empty_values = snapshot.values.copy()
+                    empty_values["messages"] = []
+                    return snapshot._replace(values=empty_values)
 
                 snapshot_values_without_messages = snapshot.values.copy()
                 del snapshot_values_without_messages["messages"]
@@ -1057,7 +1064,7 @@ class LangGraphAgent:
 
                 return checkpoint
 
-        raise ValueError("Message ID not found in history")
+        return None
 
     def handle_node_change(self, node_name: Optional[str]):
         """
