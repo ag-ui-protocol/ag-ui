@@ -54,13 +54,12 @@ echo "=== Linking local packages into ag-ui workspace ==="
 cd "$AGUI_ROOT"
 COPILOTKIT_LOCAL=1 A2UI_LOCAL=1 pnpm install
 
-# 4. Build ag-ui SDK + middleware (middleware depends on @ag-ui/client)
+# 4. Build all ag-ui workspace packages (excluding the dojo app itself)
 echo ""
-echo "=== Building ag-ui SDK and middleware ==="
+echo "=== Building ag-ui workspace packages ==="
 cd "$AGUI_ROOT"
-pnpm --filter @ag-ui/core build
-pnpm --filter @ag-ui/client build
-pnpm --filter @ag-ui/a2ui-middleware build
+pnpm --filter @ag-ui/proto generate
+pnpm -r --filter='!demo-viewer' --filter='!client-cli-example' build
 
 # 5. Copy middleware dist to CopilotKit's pnpm store
 #    (CopilotKit has its own npm copy of @ag-ui/a2ui-middleware;
