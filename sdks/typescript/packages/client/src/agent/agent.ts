@@ -16,7 +16,7 @@ import { compareVersions } from "compare-versions";
 import { catchError, map, tap } from "rxjs/operators";
 import { finalize } from "rxjs/operators";
 import { takeUntil } from "rxjs/operators";
-import { pipe, Observable, from, of, EMPTY, Subject } from "rxjs";
+import { pipe, Observable, from, of, EMPTY, Subject, defer } from "rxjs";
 import { verifyEvents } from "@/verify";
 import { convertToLegacyEvents } from "@/legacy/convert";
 import { LegacyRuntimeProtocolEvent } from "@/legacy/types";
@@ -224,7 +224,7 @@ export abstract class AbstractAgent {
       });
 
       const pipeline = pipe(
-        () => this.connect(input),
+        () => defer(() => this.connect(input)),
         transformChunks(this.debug),
         verifyEvents(this.debug),
         // Stop processing immediately when this run is detached
@@ -248,7 +248,9 @@ export abstract class AbstractAgent {
         }),
       );
 
-      await lastValueFrom(pipeline(of(null))); // wait for stream completion before toggling isRunning
+      // defaultValue prevents EmptyError when catchError returns EMPTY
+      // (e.g. ConnectNotImplementedError path)
+      await lastValueFrom(pipeline(of(null)), { defaultValue: undefined });
       const newMessages = structuredClone_(this.messages).filter(
         (message: Message) => !currentMessageIds.has(message.id),
       );
