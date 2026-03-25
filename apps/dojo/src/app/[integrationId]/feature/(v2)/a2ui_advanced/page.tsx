@@ -116,39 +116,26 @@ function useAdvancedA2UIFeatures() {
     // Use pre-declared ops from the agent if available
     if (declaredOps) return declaredOps;
 
-    // Otherwise, show a generic confirmation
+    // Otherwise, show a generic confirmation (v0.9 format)
     const { surfaceId } = action;
     return [
       {
-        surfaceUpdate: {
+        version: "v0.9",
+        updateComponents: {
           surfaceId,
           components: [
-            { id: "root", component: { Card: { child: "confirm-col" } } },
+            { id: "root", component: "Card", child: "confirm-col" },
             {
               id: "confirm-col",
-              component: {
-                Column: {
-                  children: { explicitList: ["confirm-title", "confirm-detail"] },
-                  alignment: "center",
-                  gap: "small",
-                },
-              },
+              component: "Column",
+              children: ["confirm-title", "confirm-detail"],
+              align: "center",
             },
-            { id: "confirm-title", component: { Text: { text: { path: "/title" }, usageHint: "h2" } } },
-            { id: "confirm-detail", component: { Text: { text: { path: "/detail" }, usageHint: "body" } } },
+            { id: "confirm-title", component: "Text", text: "Product Selected!", variant: "h2" },
+            { id: "confirm-detail", component: "Text", text: "Your selection has been received.", variant: "body" },
           ],
         },
       },
-      {
-        dataModelUpdate: {
-          surfaceId,
-          contents: [
-            { key: "title", valueString: "Product Selected!" },
-            { key: "detail", valueString: "Your selection has been received." },
-          ],
-        },
-      },
-      { beginRendering: { surfaceId, root: "root" } },
     ];
   });
 }
