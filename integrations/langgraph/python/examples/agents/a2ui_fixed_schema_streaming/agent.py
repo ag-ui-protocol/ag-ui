@@ -10,7 +10,8 @@ middleware config (streamingSurfaces in the runtime). The middleware:
 """
 
 import os
-from typing import Any, List, TypedDict
+from typing import Any, List
+from typing_extensions import TypedDict
 
 from langchain.tools import tool
 from langchain_openai import ChatOpenAI
