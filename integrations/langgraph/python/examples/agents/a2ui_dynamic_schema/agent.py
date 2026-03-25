@@ -68,6 +68,9 @@ def generate_a2ui(runtime: ToolRuntime[Any]) -> str:
     )
 
     # Extract the render_a2ui tool call arguments
+    if not response.tool_calls:
+        return json.dumps({"error": "LLM did not call render_a2ui"})
+
     tool_call = response.tool_calls[0]
     args = tool_call["args"]
 
@@ -77,7 +80,7 @@ def generate_a2ui(runtime: ToolRuntime[Any]) -> str:
     action_handlers = args.get("actionHandlers")
 
     # Wrap as v0.9 a2ui_operations so the middleware detects it
-    return a2ui.render(
+    result = a2ui.render(
         operations=[
             a2ui.create_surface(surface_id),
             a2ui.update_components(surface_id, components),
@@ -85,6 +88,7 @@ def generate_a2ui(runtime: ToolRuntime[Any]) -> str:
         ],
         action_handlers=action_handlers,
     )
+    return result
 
 
 TOOLS = [generate_a2ui]

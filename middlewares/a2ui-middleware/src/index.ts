@@ -58,6 +58,11 @@ function groupBySurface(ops: Array<Record<string, unknown>>): Map<string, Array<
 
 /**
  * Emit a streaming data snapshot for an A2UI surface (v0.9 format).
+ *
+ * For fixed-schema surfaces, createSurface is already emitted at TOOL_CALL_START,
+ * so `firstEmission` is false. For dynamic surfaces (render_a2ui), the surfaceId
+ * isn't known until schema extraction — `firstEmission` is true on the first call
+ * to include createSurface atomically with the first data snapshot.
  */
 function emitStreamingData(
   subscriber: { next: (event: BaseEvent) => void },
@@ -66,15 +71,18 @@ function emitStreamingData(
   items: unknown[],
   toolCallId: string,
   dynamicActionHandlers?: Record<string, Array<Record<string, unknown>>>,
+  firstEmission: boolean = false,
 ) {
   const surfaceId = schema.surfaceId;
   const messageId = `a2ui-surface-${surfaceId}-${toolCallId}`;
-  // No createSurface here — the surface is already created by the
-  // TOOL_CALL_START handler. Streaming snapshots only update content.
-  const allOps = [
+  const allOps: Array<Record<string, unknown>> = [];
+  if (firstEmission) {
+    allOps.push({ version: "v0.9", createSurface: { surfaceId, catalogId: schema.catalogId } });
+  }
+  allOps.push(
     { version: "v0.9", updateComponents: { surfaceId, components: schema.components } },
-    { version: "v0.9", updateDataModel: { surfaceId, value: { [dataKey]: items } } },
-  ];
+    { version: "v0.9", updateDataModel: { surfaceId, path: "/", value: { [dataKey]: items } } },
+  );
   const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: allOps };
   // Include actionHandlers from either the fixed-schema config or dynamic extraction
   const actionHandlers = schema.actionHandlers ?? dynamicActionHandlers;
@@ -258,14 +266,15 @@ export class A2UIMiddleware extends Middleware {
               a2uiJsonStreams.set(startEvent.toolCallId, { args: "", emittedCount: 0 });
             }
 
-            // render_a2ui: dynamic streaming — schema will come from the stream
-            if (startEvent.toolCallName === RENDER_A2UI_TOOL) {
-              a2uiToolCallIds.add(startEvent.toolCallId);
-              streamingToolCalls.set(startEvent.toolCallId, {
-                schema: null, args: "", emittedCount: 0,
-                dataKey: "items", schemaEmitted: false,
-              });
-            }
+            // render_a2ui: dynamic streaming.
+            // NOTE: When render_a2ui is called as an inner LLM tool inside
+            // generate_a2ui, the auto-detect path on generate_a2ui's
+            // TOOL_CALL_RESULT already provides the complete operations
+            // (createSurface + updateComponents + updateDataModel with proper
+            // data bindings). Tracking render_a2ui for streaming creates a
+            // duplicate surface that interferes with data binding resolution.
+            // Only enable this for standalone render_a2ui calls (not nested).
+            // For now, we rely on the auto-detect path which works correctly.
 
             // Fixed-schema streaming surfaces: schema comes from config
             const schema = surfacesByTool.get(startEvent.toolCallName);
@@ -311,7 +320,10 @@ export class A2UIMiddleware extends Middleware {
               if (!streaming.schema && deltaHasStructuralChar) {
                 const result = extractCompleteItemsWithStatus(streaming.args, "components");
                 const surfaceId = extractStringField(streaming.args, "surfaceId");
-                const catalogId = extractStringField(streaming.args, "catalogId") ?? "basic";
+                const rawCatalogId = extractStringField(streaming.args, "catalogId") ?? "basic";
+                const catalogId = rawCatalogId === "basic"
+                  ? "https://a2ui.org/specification/v0_9/basic_catalog.json"
+                  : rawCatalogId;
                 if (result?.arrayClosed && result.items.length > 0 && surfaceId) {
                   streaming.schema = { surfaceId, catalogId, components: result.items as any[], dataKey: "items" };
                   streaming.dataKey = "items";
@@ -351,10 +363,11 @@ export class A2UIMiddleware extends Middleware {
                 const actionHandlersJustExtracted = !hadActionHandlers && !!streaming.actionHandlers && streaming.emittedCount > 0;
                 if (newItems || actionHandlersJustExtracted) {
                   const currentItems = items ?? [];
-                  // Mark schema as emitted on the first data emission (deferred for dynamic)
+                  // On the first emission for dynamic surfaces, include createSurface
+                  const isFirstEmission = !streaming.schemaEmitted;
                   streaming.schemaEmitted = true;
                   if (newItems) streaming.emittedCount = currentItems.length;
-                  emitStreamingData(subscriber, streaming.schema, streaming.dataKey, currentItems, argsEvent.toolCallId, streaming.actionHandlers);
+                  emitStreamingData(subscriber, streaming.schema, streaming.dataKey, currentItems, argsEvent.toolCallId, streaming.actionHandlers, isFirstEmission);
                 }
               }
             }
@@ -411,9 +424,16 @@ export class A2UIMiddleware extends Middleware {
             // Auto-detect A2UI JSON in tool call results from other tools
             if (event.type === EventType.TOOL_CALL_RESULT) {
               const resultEvent = event as ToolCallResultEvent;
-              // Skip if this is a streaming tool call (already handled) or send_a2ui tool
-              if (!a2uiToolCallIds.has(resultEvent.toolCallId) &&
-                  !streamingToolCalls.has(resultEvent.toolCallId)) {
+              const isTrackedA2UI = a2uiToolCallIds.has(resultEvent.toolCallId);
+              const isStreaming = streamingToolCalls.has(resultEvent.toolCallId);
+
+              // Fallback: if a streaming tool call never emitted its schema (e.g. args
+              // didn't parse), fall through to auto-detection on the final result.
+              const streamingEntry = streamingToolCalls.get(resultEvent.toolCallId);
+              const streamingHandled = isStreaming && streamingEntry?.schemaEmitted;
+
+              // Skip if this is a fully-handled streaming tool call or send_a2ui tool
+              if (!isTrackedA2UI && !streamingHandled) {
                 const parsed = tryParseA2UIOperations(resultEvent.content);
                 if (parsed) {
                   for (const activityEvent of this.createA2UIActivityEvents(
@@ -587,7 +607,10 @@ export class A2UIMiddleware extends Middleware {
       operationsBySurface.get(surfaceId)!.push(op);
     }
 
-    // Emit events per surface: always emit delta first, then snapshot
+    // Emit a single ACTIVITY_SNAPSHOT per surface with replace: true.
+    // Using replace: true ensures all operations (createSurface + updateComponents
+    // + updateDataModel) are delivered atomically, preventing intermediate renders
+    // with partial operations that can break data binding resolution.
     for (const [surfaceId, surfaceOps] of operationsBySurface) {
       // Include toolCallId in messageId to ensure each tool invocation
       // creates a distinct activity message, even for the same surfaceId
@@ -595,20 +618,6 @@ export class A2UIMiddleware extends Middleware {
         ? `a2ui-surface-${surfaceId}-${toolCallId}`
         : `a2ui-surface-${surfaceId}`;
 
-      // 1. ACTIVITY_DELTA - appends operations if message exists, no-op if not
-      const deltaEvent: ActivityDeltaEvent = {
-        type: EventType.ACTIVITY_DELTA,
-        messageId,
-        activityType: A2UIActivityType,
-        patch: surfaceOps.map((op) => ({
-          op: "add" as const,
-          path: `/${A2UI_OPERATIONS_KEY}/-`,
-          value: op,
-        })),
-      };
-      events.push(deltaEvent);
-
-      // 2. ACTIVITY_SNAPSHOT with action handlers if provided
       const content: Record<string, unknown> = { [A2UI_OPERATIONS_KEY]: surfaceOps };
       if (actionHandlers) {
         content.actionHandlers = actionHandlers;
@@ -619,7 +628,7 @@ export class A2UIMiddleware extends Middleware {
         messageId,
         activityType: A2UIActivityType,
         content,
-        replace: false,
+        replace: true,
       };
       events.push(snapshotEvent);
     }

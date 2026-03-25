@@ -851,7 +851,29 @@ export function tryParseA2UIOperations(text: string): A2UIParseResult | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
-  } catch {
+  } catch (e) {
+    // Try double-parse (in case the text is a JSON-encoded string)
+    try {
+      const inner = JSON.parse(JSON.parse(text));
+      if (
+        typeof inner === "object" &&
+        inner !== null &&
+        !Array.isArray(inner) &&
+        Array.isArray((inner as Record<string, unknown>)[A2UI_OPERATIONS_KEY])
+      ) {
+        const obj = inner as Record<string, unknown>;
+        const result: A2UIParseResult = {
+          operations: obj[A2UI_OPERATIONS_KEY] as Array<Record<string, unknown>>,
+        };
+        const handlers = obj[A2UI_ACTION_HANDLERS_KEY];
+        if (handlers && typeof handlers === "object" && !Array.isArray(handlers)) {
+          result.actionHandlers = handlers as Record<string, Array<Record<string, unknown>>>;
+        }
+        return result;
+      }
+    } catch {
+      // Not double-encoded either
+    }
     return null;
   }
 
@@ -870,6 +892,31 @@ export function tryParseA2UIOperations(text: string): A2UIParseResult | null {
       result.actionHandlers = handlers as Record<string, Array<Record<string, unknown>>>;
     }
     return result;
+  }
+
+  // Check if it's a string that needs another parse (double-serialized)
+  if (typeof parsed === "string") {
+    try {
+      const inner = JSON.parse(parsed);
+      if (
+        typeof inner === "object" &&
+        inner !== null &&
+        !Array.isArray(inner) &&
+        Array.isArray((inner as Record<string, unknown>)[A2UI_OPERATIONS_KEY])
+      ) {
+        const obj = inner as Record<string, unknown>;
+        const result: A2UIParseResult = {
+          operations: obj[A2UI_OPERATIONS_KEY] as Array<Record<string, unknown>>,
+        };
+        const handlers = obj[A2UI_ACTION_HANDLERS_KEY];
+        if (handlers && typeof handlers === "object" && !Array.isArray(handlers)) {
+          result.actionHandlers = handlers as Record<string, Array<Record<string, unknown>>>;
+        }
+        return result;
+      }
+    } catch {
+      // Not double-encoded either
+    }
   }
 
   return null;
