@@ -7,7 +7,8 @@ The hotel search demonstrates a custom catalog with a StarRating component.
 
 import os
 from pathlib import Path
-from typing import Any, List, TypedDict
+from typing import Any, List
+from typing_extensions import TypedDict
 
 from copilotkit import a2ui
 from langchain.tools import tool
