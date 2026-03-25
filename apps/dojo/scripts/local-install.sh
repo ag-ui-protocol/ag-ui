@@ -47,16 +47,20 @@ A2UI_LOCAL=1 pnpm install
   @copilotkit/shared \
   @copilotkit/a2ui-renderer
 
-# 3. Build ag-ui middleware
-echo ""
-echo "=== Building ag-ui a2ui-middleware ==="
-cd "$AGUI_ROOT/middlewares/a2ui-middleware" && pnpm build
-
-# 4. Link everything into ag-ui workspace via .pnpmfile.cjs
+# 3. Link everything into ag-ui workspace via .pnpmfile.cjs
+#    (must happen before middleware build so workspace deps are available)
 echo ""
 echo "=== Linking local packages into ag-ui workspace ==="
 cd "$AGUI_ROOT"
 COPILOTKIT_LOCAL=1 A2UI_LOCAL=1 pnpm install
+
+# 4. Build ag-ui SDK + middleware (middleware depends on @ag-ui/client)
+echo ""
+echo "=== Building ag-ui SDK and middleware ==="
+cd "$AGUI_ROOT"
+pnpm --filter @ag-ui/core build
+pnpm --filter @ag-ui/client build
+pnpm --filter @ag-ui/a2ui-middleware build
 
 # 5. Copy middleware dist to CopilotKit's pnpm store
 #    (CopilotKit has its own npm copy of @ag-ui/a2ui-middleware;
@@ -86,13 +90,15 @@ if [ -d "$LANGGRAPH_EXAMPLES" ] && [ -d "$COPILOTKIT_ROOT/sdk-python" ]; then
   echo ""
   echo "=== Installing local CopilotKit Python SDK for langgraph agent ==="
   cd "$LANGGRAPH_EXAMPLES"
+  if [ ! -d ".venv" ] && command -v uv &>/dev/null; then
+    echo "  Creating Python venv and installing dependencies..."
+    uv venv && uv sync
+  fi
   if [ -d ".venv" ]; then
-    .venv/bin/pip install -e "$COPILOTKIT_ROOT/sdk-python"
-  elif command -v uv &>/dev/null; then
     uv pip install -e "$COPILOTKIT_ROOT/sdk-python"
   else
-    echo "  WARNING: No .venv found and uv not available. Skipping Python SDK install."
-    echo "  Create a venv first: cd $LANGGRAPH_EXAMPLES && uv venv && uv sync"
+    echo "  WARNING: No .venv found. Skipping Python SDK install."
+    echo "  Create it manually: cd $LANGGRAPH_EXAMPLES && uv venv && uv sync"
   fi
 fi
 
