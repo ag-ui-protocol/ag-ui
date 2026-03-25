@@ -5,16 +5,31 @@ const fs = require("fs");
  * When COPILOTKIT_LOCAL=1, rewrites @copilotkit/* dependencies to link against
  * locally-built packages from the sibling CopilotKit repo.
  *
+ * When A2UI_LOCAL=1, rewrites @a2ui/* dependencies to link against
+ * locally-built packages from the sibling A2UI repo.
+ *
  * Usage:
- *   COPILOTKIT_LOCAL=1 pnpm install   # link to local packages
- *   pnpm install                       # install from npm (default)
+ *   COPILOTKIT_LOCAL=1 A2UI_LOCAL=1 pnpm install   # link both
+ *   pnpm install                                     # install from npm (default)
  *
  * Expects:
  *   /some/path/ag-ui/       (this repo)
  *   /some/path/CopilotKit/  (sibling CopilotKit repo)
+ *   /some/path/A2UI/        (sibling A2UI repo)
  */
 
 const COPILOTKIT_ROOT = path.resolve(__dirname, "..", "CopilotKit");
+const A2UI_ROOT = path.resolve(__dirname, "..", "A2UI");
+
+// --- A2UI package mapping ---
+
+/** Maps @a2ui/* package names to their local directories within the A2UI repo. */
+const A2UI_PACKAGES = {
+  "@a2ui/web_core": "renderers/web_core",
+  "@a2ui/react": "renderers/react",
+};
+
+// --- CopilotKit helpers ---
 
 function getCopilotKitNamespaceDirs() {
   const pkgDir = path.join(COPILOTKIT_ROOT, "packages");
@@ -32,7 +47,22 @@ function getCopilotKitNamespaceDirs() {
   };
 }
 
+// --- Hook ---
+
 function readPackage(pkg) {
+  // Rewrite @a2ui/* deps to local links when A2UI_LOCAL=1
+  if (process.env.A2UI_LOCAL) {
+    for (const [dep, relPath] of Object.entries(A2UI_PACKAGES)) {
+      if (pkg.dependencies && pkg.dependencies[dep]) {
+        const localPath = path.join(A2UI_ROOT, relPath);
+        if (fs.existsSync(localPath)) {
+          pkg.dependencies[dep] = `link:${localPath}`;
+        }
+      }
+    }
+  }
+
+  // Rewrite @copilotkit/* deps to local links when COPILOTKIT_LOCAL=1
   if (!process.env.COPILOTKIT_LOCAL) return pkg;
 
   const namespaceDirs = getCopilotKitNamespaceDirs();

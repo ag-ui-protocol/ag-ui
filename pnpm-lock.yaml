@@ -7,7 +7,7 @@ settings:
 overrides:
   langium: 3.2.0
 
-pnpmfileChecksum: sha256-kqNqwshjdDEuLIxhnmuon192M3QWmDwiPU606vxnAqo=
+pnpmfileChecksum: sha256-WWcJIQNfheAErT+vJ0Q+lvKnko5xLX6V4NCBzEPCGH0=
 
 importers:
 
@@ -71,9 +71,12 @@ importers:
       '@a2a-js/sdk':
         specifier: 0.2.5
         version: 0.2.5
-      '@a2ui/lit':
-        specifier: ^0.8.1
-        version: 0.8.1(signal-polyfill@0.2.2)
+      '@a2ui/react':
+        specifier: link:/Users/dev/Projects/A2UI/atai/A2UI/renderers/react
+        version: link:../../../A2UI/renderers/react
+      '@a2ui/web_core':
+        specifier: link:/Users/dev/Projects/A2UI/atai/A2UI/renderers/web_core
+        version: link:../../../A2UI/renderers/web_core
       '@ag-ui/a2a':
         specifier: workspace:*
         version: link:../../integrations/a2a/typescript
@@ -153,58 +156,58 @@ importers:
         specifier: ^0.2.58
         version: 0.2.74(zod@3.25.76)
       '@copilotkit/a2ui-renderer':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v1/a2ui-renderer
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v1/a2ui-renderer
         version: link:../../../CopilotKit/packages/v1/a2ui-renderer
       '@copilotkit/react-core':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v1/react-core
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v1/react-core
         version: link:../../../CopilotKit/packages/v1/react-core
       '@copilotkit/react-ui':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v1/react-ui
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v1/react-ui
         version: link:../../../CopilotKit/packages/v1/react-ui
       '@copilotkit/runtime':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v1/runtime
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v1/runtime
         version: link:../../../CopilotKit/packages/v1/runtime
       '@copilotkit/runtime-client-gql':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v1/runtime-client-gql
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v1/runtime-client-gql
         version: link:../../../CopilotKit/packages/v1/runtime-client-gql
       '@copilotkit/shared':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v1/shared
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v1/shared
         version: link:../../../CopilotKit/packages/v1/shared
       '@copilotkitnext/agent':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v2/agent
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v2/agent
         version: link:../../../CopilotKit/packages/v2/agent
       '@copilotkitnext/angular':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v2/angular
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v2/angular
         version: link:../../../CopilotKit/packages/v2/angular
       '@copilotkitnext/core':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v2/core
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v2/core
         version: link:../../../CopilotKit/packages/v2/core
       '@copilotkitnext/demo-agents':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v2/demo-agents
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v2/demo-agents
         version: link:../../../CopilotKit/packages/v2/demo-agents
       '@copilotkitnext/eslint-config':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v2/eslint-config
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v2/eslint-config
         version: link:../../../CopilotKit/packages/v2/eslint-config
       '@copilotkitnext/react':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v2/react
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v2/react
         version: link:../../../CopilotKit/packages/v2/react
       '@copilotkitnext/runtime':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v2/runtime
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v2/runtime
         version: link:../../../CopilotKit/packages/v2/runtime
       '@copilotkitnext/shared':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v2/shared
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v2/shared
         version: link:../../../CopilotKit/packages/v2/shared
       '@copilotkitnext/sqlite-runner':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v2/sqlite-runner
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v2/sqlite-runner
         version: link:../../../CopilotKit/packages/v2/sqlite-runner
       '@copilotkitnext/typescript-config':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v2/typescript-config
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v2/typescript-config
         version: link:../../../CopilotKit/packages/v2/typescript-config
       '@copilotkitnext/voice':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v2/voice
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v2/voice
         version: link:../../../CopilotKit/packages/v2/voice
       '@copilotkitnext/web-inspector':
-        specifier: link:/Users/ataibarkai/LocalGit/CopilotKit/packages/v2/web-inspector
+        specifier: link:/Users/dev/Projects/A2UI/atai/CopilotKit/packages/v2/web-inspector
         version: link:../../../CopilotKit/packages/v2/web-inspector
       '@langchain/openai':
         specifier: 1.0.0
@@ -1335,9 +1338,6 @@ packages:
     resolution: {integrity: sha512-VTDuRS5V0ATbJ/LkaQlisMnTAeYKXAK6scMguVBstf+KIBQ7HIuKhiXLv+G/hvejkV+THoXzoNifInAkU81P1g==}
     engines: {node: '>=18'}
 
-  '@a2ui/lit@0.8.1':
-    resolution: {integrity: sha512-QeqobciZz4OGMSgc2WGLFVidyhy+K7Z2GDpiuHN9NN+QlYMXByZqlzMvYPJsXrqf1lpQcMFRHgmUn1mwPpq9ew==}
-
   '@ag-ui/client@0.0.46':
     resolution: {integrity: sha512-9Bl6GN6N3NWa3Ewqgl8E3nJzo88prIB2LS50bTNgw35h5BxC1UY21c0SImqQWZ+VV5kbhs6AUrriypKEBB7F5A==}
 
@@ -1924,6 +1924,7 @@ packages:
 
   '@copilotkit/llmock@1.3.1':
     resolution: {integrity: sha512-9PL5AzGAqxAK0iJk0vBSfJF5azgrXvEC9yVCwysdahKXEeJds9VuZ4NSy+qfZgrgKTCXYXa8ap8S5LQHdor+WA==}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     hasBin: true
 
   '@copilotkit/runtime@0.0.0-mme-ag-ui-0-0-46-20260227141603':
@@ -3078,18 +3079,6 @@ packages:
     resolution: {integrity: sha512-Fj0j8RnBpo43tVZUVoNK6BV/9AtDUM5S7DF3LB4qTYg1LMSZqi3yeCneUTLJD6XomQJlZzbI4mst89yspVSAnA==}
     cpu: [x64]
     os: [win32]
-
-  '@lit-labs/signals@0.1.3':
-    resolution: {integrity: sha512-P0yWgH5blwVyEwBg+WFspLzeu1i0ypJP1QB0l1Omr9qZLIPsUu0p4Fy2jshOg7oQyha5n163K3GJGeUhQQ682Q==}
-
-  '@lit-labs/ssr-dom-shim@1.4.0':
-    resolution: {integrity: sha512-ficsEARKnmmW5njugNYKipTm4SFnbik7CXtoencDZzmzo/dQ+2Q0bgkzJuoJP20Aj0F+izzJjOqsnkd6F/o1bw==}
-
-  '@lit/context@1.1.6':
-    resolution: {integrity: sha512-M26qDE6UkQbZA2mQ3RjJ3Gzd8TxP+/0obMgE5HfkfLhEEyYE3Bui4A5XHiGPjy0MUGAyxB3QgVuw2ciS0kHn6A==}
-
-  '@lit/reactive-element@2.1.1':
-    resolution: {integrity: sha512-N+dm5PAYdQ8e6UlywyyrgI2t++wFGXfHx+dSJ1oBrg6FAxUj40jId++EaRm80MKX5JnlH1sBsyZ5h0bcZKemCg==}
 
   '@loaderkit/resolve@1.0.4':
     resolution: {integrity: sha512-rJzYKVcV4dxJv+vW6jlvagF8zvGxHJ2+HTr1e2qOejfmGhAApgJHl8Aog4mMszxceTRiKTTbnpgmTO1bEZHV/A==}
@@ -7853,15 +7842,6 @@ packages:
   linkify-it@5.0.0:
     resolution: {integrity: sha512-5aHCbzQRADcdP+ATqnDuhhJ/MRIqDkZX5pyjFHRRysS8vZ5AbqGEoFIb6pYHPZ+L/OC2Lc+xT8uHVVR5CAK/wQ==}
 
-  lit-element@4.2.1:
-    resolution: {integrity: sha512-WGAWRGzirAgyphK2urmYOV72tlvnxw7YfyLDgQ+OZnM9vQQBQnumQ7jUJe6unEzwGU3ahFOjuz1iz1jjrpCPuw==}
-
-  lit-html@3.3.1:
-    resolution: {integrity: sha512-S9hbyDu/vs1qNrithiNyeyv64c9yqiW9l+DBgI18fL+MTvOtWoFR0FWiyq1TxaYef5wNlpEmzlXoBlZEO+WjoA==}
-
-  lit@3.3.1:
-    resolution: {integrity: sha512-Ksr/8L3PTapbdXJCk+EJVB78jDodUMaP54gD24W186zGRARvwrsPfS60wae/SSCTCNZVPd1chXqio1qHQmu4NA==}
-
   load-tsconfig@0.2.5:
     resolution: {integrity: sha512-IXO6OCs9yg8tMKzfPZ1YmheJbZCiEsnBdcB03l0OcfK9prKnJb96siuHCr5Fl37/yo9DnKU+TLpxzTUspw9shg==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
@@ -9401,14 +9381,6 @@ packages:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
 
-  signal-polyfill@0.2.2:
-    resolution: {integrity: sha512-p63Y4Er5/eMQ9RHg0M0Y64NlsQKpiu6MDdhBXpyywRuWiPywhJTpKJ1iB5K2hJEbFZ0BnDS7ZkJ+0AfTuL37Rg==}
-
-  signal-utils@0.21.1:
-    resolution: {integrity: sha512-i9cdLSvVH4j8ql8mz2lyrA93xL499P8wEbIev3ldSriXeUwqh+wM4Q5VPhIZ19gPtIS4BOopJuKB8l1+wH9LCg==}
-    peerDependencies:
-      signal-polyfill: ^0.2.0
-
   simple-wcswidth@1.1.2:
     resolution: {integrity: sha512-j7piyCjAeTDSjzTSQ7DokZtMNwNlEAyxqSZeCS+CXH7fJ4jx3FuJ/mTW3mE+6JLs4VJBbcll0Kjn+KXI5t21Iw==}
 
@@ -9645,6 +9617,7 @@ packages:
   tar@7.5.1:
     resolution: {integrity: sha512-nlGpxf+hv0v7GkWBK2V9spgactGOp0qvfWRxUMjqHyzrt3SgwE48DIv/FhqPHJYLHpgW1opq3nERbz5Anq7n1g==}
     engines: {node: '>=18'}
+    deprecated: Old versions of tar are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 
   test-exclude@6.0.0:
     resolution: {integrity: sha512-cAGWPIyOHU6zlmg88jwm7VRyXnMN7iV68OGAbYDk/Mh/xC/pzVPlQtY6ngoIH/5/tciuhGfvESU8GrHrcxD56w==}
@@ -10437,16 +10410,6 @@ snapshots:
       uuid: 11.1.0
     transitivePeerDependencies:
       - supports-color
-
-  '@a2ui/lit@0.8.1(signal-polyfill@0.2.2)':
-    dependencies:
-      '@lit-labs/signals': 0.1.3
-      '@lit/context': 1.1.6
-      lit: 3.3.1
-      markdown-it: 14.1.0
-      signal-utils: 0.21.1(signal-polyfill@0.2.2)
-    transitivePeerDependencies:
-      - signal-polyfill
 
   '@ag-ui/client@0.0.46':
     dependencies:
@@ -12696,21 +12659,6 @@ snapshots:
   '@libsql/win32-x64-msvc@0.5.22':
     optional: true
 
-  '@lit-labs/signals@0.1.3':
-    dependencies:
-      lit: 3.3.1
-      signal-polyfill: 0.2.2
-
-  '@lit-labs/ssr-dom-shim@1.4.0': {}
-
-  '@lit/context@1.1.6':
-    dependencies:
-      '@lit/reactive-element': 2.1.1
-
-  '@lit/reactive-element@2.1.1':
-    dependencies:
-      '@lit-labs/ssr-dom-shim': 1.4.0
-
   '@loaderkit/resolve@1.0.4':
     dependencies:
       '@braidai/lang': 1.1.2
@@ -14771,7 +14719,8 @@ snapshots:
     dependencies:
       '@types/node': 20.19.21
 
-  '@types/trusted-types@2.0.7': {}
+  '@types/trusted-types@2.0.7':
+    optional: true
 
   '@types/unist@2.0.11': {}
 
@@ -18318,22 +18267,6 @@ snapshots:
     dependencies:
       uc.micro: 2.1.0
 
-  lit-element@4.2.1:
-    dependencies:
-      '@lit-labs/ssr-dom-shim': 1.4.0
-      '@lit/reactive-element': 2.1.1
-      lit-html: 3.3.1
-
-  lit-html@3.3.1:
-    dependencies:
-      '@types/trusted-types': 2.0.7
-
-  lit@3.3.1:
-    dependencies:
-      '@lit/reactive-element': 2.1.1
-      lit-element: 4.2.1
-      lit-html: 3.3.1
-
   load-tsconfig@0.2.5: {}
 
   local-pkg@1.1.2:
@@ -20541,12 +20474,6 @@ snapshots:
   signal-exit@3.0.7: {}
 
   signal-exit@4.1.0: {}
-
-  signal-polyfill@0.2.2: {}
-
-  signal-utils@0.21.1(signal-polyfill@0.2.2):
-    dependencies:
-      signal-polyfill: 0.2.2
 
   simple-wcswidth@1.1.2: {}
 
